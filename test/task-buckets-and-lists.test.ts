@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
-import { buildManualMembershipMap, evaluateTaskListMemberships, getBuiltInTaskLists, getTaskListCapabilities, isAppOwnedSystemTaskListId, isManualTaskListDestination, isTaskListSettingsEligible, parseTaskListRules, resolveEffectiveTaskListRules, taskBelongsToList, taskListUsesRuleEvaluation, type TaskListDefinition } from "../src/lib/task-lists.ts";
+import { buildManualMembershipMap, canSetRoutineTaskMembership, evaluateTaskListMemberships, getBuiltInTaskLists, getTaskListCapabilities, isAppOwnedSystemTaskListId, isManualTaskListDestination, isTaskListSettingsEligible, parseTaskListRules, resolveEffectiveTaskListRules, taskBelongsToList, taskListUsesRuleEvaluation, type TaskListDefinition } from "../src/lib/task-lists.ts";
 import { createTask, getTaskBucket } from "../src/lib/task-buckets.ts";
 
 function createTaskListEvaluationContext(
@@ -91,13 +91,15 @@ test("task list evaluation honors manual memberships and date-added rules", () =
   });
 });
 
-test("built-in task lists include Routine as a persisted manual system list", () => {
+test("built-in task lists keep Routine system-owned while allowing its explicit membership action", () => {
   const routineList = getBuiltInTaskLists().find((list) => list.id === "routine") ?? null;
 
   assert.ok(routineList);
-  assert.equal(routineList?.membershipMode, "manual");
+  assert.equal(routineList?.membershipMode, "system");
   assert.equal(routineList?.type, "system");
   assert.equal(routineList?.name, "Routine");
+  assert.equal(isManualTaskListDestination(routineList!), false);
+  assert.equal(canSetRoutineTaskMembership(routineList!), true);
 });
 
 test("Attention is a visible system-owned derived list and ignores manual membership", () => {
@@ -110,6 +112,8 @@ test("Attention is a visible system-owned derived list and ignores manual member
   assert.deepEqual(attentionList?.rules, { rules: [{ rule: { field: "due", op: "is_overdue" } }] });
   assert.equal(isAppOwnedSystemTaskListId("attention"), true);
   assert.equal(isManualTaskListDestination(attentionList!), false);
+  assert.equal(canSetRoutineTaskMembership(attentionList!), false);
+  assert.equal(canSetRoutineTaskMembership(getBuiltInTaskLists().find((list) => list.id === "milestones")!), false);
   assert.equal(isTaskListSettingsEligible(attentionList!), true);
   assert.equal(taskListUsesRuleEvaluation(attentionList!), true);
   assert.equal(taskListUsesRuleEvaluation(getBuiltInTaskLists().find((list) => list.id === "routine")!), false);

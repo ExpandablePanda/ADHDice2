@@ -8,6 +8,7 @@ import {
   buildHomeTodoHierarchy,
   createHomeTodoTask,
   formatHomeTodoDateLabel,
+  getHomeRoutineTaskIds,
   getHomeTodoSearchText,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
@@ -404,6 +405,46 @@ test("Home todo eligibility follows active task ancestry", () => {
   assert.deepEqual(buildHomeTodoHierarchy(tasks[1]!, tasks), ["parent"]);
 });
 
+test("Home Routine projection uses Routine membership, Home eligibility, and source order", () => {
+  const parent = task("routine-parent");
+  const routineChild = task("routine-child", { parent_task_id: parent.id });
+  const archivedParent = task("routine-archived-parent", { status: "archived" });
+  const archivedChild = task("routine-archived-child", { parent_task_id: archivedParent.id });
+  const trashedParent = task("routine-trashed-parent", { status: "trashed" });
+  const trashedChild = task("routine-trashed-child", { parent_task_id: trashedParent.id });
+  const routineStandalone = task("routine-standalone");
+  const both = task("both");
+  const complete = task("routine-complete", { status: "complete" });
+  const archived = task("routine-archived", { status: "archived" });
+  const trashed = task("routine-trashed", { status: "trashed" });
+  const tasks = [parent, routineChild, archivedParent, archivedChild, trashedParent, trashedChild, routineStandalone, both, complete, archived, trashed];
+  const memberships = {
+    [parent.id]: [{ id: "routine" as const }],
+    [routineChild.id]: [{ id: "routine" as const }],
+    [archivedChild.id]: [{ id: "routine" as const }],
+    [trashedChild.id]: [{ id: "routine" as const }],
+    [routineStandalone.id]: [{ id: "routine" as const }],
+    [both.id]: [{ id: "routine" as const }, { id: "home" as const }],
+    [complete.id]: [{ id: "routine" as const }],
+    [archived.id]: [{ id: "routine" as const }],
+    [trashed.id]: [{ id: "routine" as const }],
+  };
+
+  assert.deepEqual(getHomeRoutineTaskIds(tasks, memberships), [
+    "routine-parent",
+    "routine-child",
+    "routine-standalone",
+    "both",
+  ]);
+});
+
+test("Home Routine projection is unlimited and independent of To-do capacity", () => {
+  const tasks = Array.from({ length: 25 }, (_, index) => task(`routine-${index}`));
+  const memberships = Object.fromEntries(tasks.map((entry) => [entry.id, [{ id: "routine" as const }]]));
+
+  assert.equal(getHomeRoutineTaskIds(tasks, memberships).length, 25);
+});
+
 test("Home todo reconciliation prunes duplicates, missing rows, and unavailable tasks", () => {
   const tasks = [task("a"), task("b"), task("done", { status: "complete" })];
   assert.deepEqual(reconcileHomeTodoTaskIds(["b", "missing", "a", "b", "done"], tasks), ["b", "a"]);
@@ -535,8 +576,8 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.doesNotMatch(source, /updateTaskIds\(\(\) => reconciledTaskIds\)/);
   assert.match(source, /const durableTaskIndex = state\.taskIds\.indexOf\(task\.id\)/);
   assert.match(source, /const renderedDayOffset = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
-  assert.match(source, /const isAtAbsoluteTop = durableTaskIndex === 0 && renderedDayOffset === 0/);
-  assert.match(source, /const isAtAbsoluteBottom = durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
+  assert.match(source, /const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0/);
+  assert.match(source, /const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
   assert.match(source, /updateTaskDayOffset\(task\.id, 0\)/);
@@ -577,12 +618,12 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.doesNotMatch(source, /border-black bg-white text-xs font-semibold/);
   assert.match(source, /relative ml-2 flex h-8 w-8 shrink-0/);
   assert.match(source, /ml-2 min-w-0/);
-  const renderTodoTask = source.slice(source.indexOf("function renderTodoTask"), source.indexOf("\n  useEffect", source.indexOf("function renderTodoTask")));
-  const handleIndex = renderTodoTask.indexOf('className="max-sm:-ml-3 sm:-ml-2 shrink-0"');
-  const numberIndex = renderTodoTask.indexOf('className="ml-1 shrink-0 text-sm font-medium leading-5');
-  const statusIndex = renderTodoTask.indexOf('className="relative ml-2 flex h-8 w-8 shrink-0');
-  const contentIndex = renderTodoTask.indexOf('className="ml-2 min-w-0"');
-  const actionIndex = renderTodoTask.indexOf('<div className="flex shrink-0 items-center gap-1">');
+  const renderHomeTask = source.slice(source.indexOf("function renderHomeTask"), source.indexOf("\n  useEffect", source.indexOf("function renderHomeTask")));
+  const handleIndex = renderHomeTask.indexOf('className="max-sm:-ml-3 sm:-ml-2 shrink-0"');
+  const numberIndex = renderHomeTask.indexOf('className="ml-1 shrink-0 text-sm font-medium leading-5');
+  const statusIndex = renderHomeTask.indexOf('className="relative ml-2 flex h-8 w-8 shrink-0');
+  const contentIndex = renderHomeTask.indexOf('className="ml-2 min-w-0"');
+  const actionIndex = renderHomeTask.indexOf('<div className="flex shrink-0 items-center gap-1">');
   assert.ok(handleIndex >= 0 && handleIndex < numberIndex);
   assert.ok(numberIndex < statusIndex && statusIndex < contentIndex && contentIndex < actionIndex);
   assert.match(source, /<div className="flex shrink-0 items-center gap-1">/);
@@ -595,19 +636,19 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
   assert.match(source, /const durableTaskIndex = state\.taskIds\.indexOf\(task\.id\)/);
   assert.match(source, /const renderedDayOffset = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
-  assert.match(source, /const isAtAbsoluteTop = durableTaskIndex === 0 && renderedDayOffset === 0/);
-  assert.match(source, /const isAtAbsoluteBottom = durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
+  assert.match(source, /const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0/);
+  assert.match(source, /const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
   assert.match(source, /updateTaskDayOffset\(task\.id, 0\)/);
   assert.match(source, /updateTaskDayOffset\(task\.id, 7\)/);
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
-  assert.equal((source.match(/size="sm"/g) ?? []).length, 4);
+  assert.equal((source.match(/size="sm"/g) ?? []).length, 5);
   assert.match(source, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
   assert.match(source, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
-  assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 3);
-  assert.equal((source.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 3);
+  assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 4);
+  assert.equal((source.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 4);
   assert.match(sharedIconButton, /sm: "h-8 w-8"/);
   assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /tone="danger"/);
@@ -617,6 +658,17 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /<div className="relative mt-2" ref=\{searchRef\}>/);
   assert.match(source, /<TaskStatusCircleRail/);
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
+  assert.match(source, /useState<HomePanelTab>\("todo"\)/);
+  assert.match(source, /getHomeRoutineTaskIds/);
+  assert.match(source, /onSetRoutineMembership/);
+  assert.match(source, /routineTasks\.map/);
+  assert.match(source, /No Routine tasks yet\./);
+  assert.match(source, /activeHomeTab === "routine"/);
+  assert.match(source, /const selected = activeHomeTab === "todo" \? new Set\(reconciledTaskIds\) : routineTaskIdSet/);
+  assert.match(source, /async function addSearchResult\(taskId: string\)/);
+  assert.match(source, /onSetRoutineMembership\(taskId, true\)/);
+  assert.match(source, /onSetRoutineMembership\(task\.id, false\)/);
+  assert.match(source, /activeHomeTab === "todo"\s*\? \(taskId\) => updateTaskIds/);
   assert.match(source, /onSubmit=\{handleCreateTask\}/);
   assert.match(source, /const \[newTaskTypeSelection, setNewTaskTypeSelection\] = useState\("task"\)/);
   assert.match(source, /<TaskTypeSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{newTaskTypeSelection\}/);
@@ -640,7 +692,7 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /type="submit"/);
   assert.match(source, /Cancel/);
   assert.match(source, /setIsSearchOpen\(true\)/);
-  assert.doesNotMatch(source, /setQuery\(""\)/);
+  assert.match(source, /setQuery\(""\)/);
   assert.doesNotMatch(source, /font-semibold leading-5/);
   assert.doesNotMatch(source, /text-\[#443d60\]/);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/home-todo-state.ts", import.meta.url), "utf8"), /getLogicalDayKey/);
@@ -667,6 +719,7 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   const homeSource = source.slice(homeStart, source.indexOf("/>", homeStart) + 2);
   assert.match(homeSource, /tasks=\{tasks\}/);
   assert.match(homeSource, /allTags=\{allTaskTags\}/);
+  assert.match(homeSource, /onSetRoutineMembership=\{\(taskId, included\) => setTaskManualListMembership\(taskId, "routine", included\)\}/);
   assert.match(homeSource, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
   assert.doesNotMatch(homeSource, /tasks=\{tasksForActiveStatusRead\}/);
 });

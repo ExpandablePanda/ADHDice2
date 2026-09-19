@@ -3,7 +3,7 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskListManualMembership as DbTaskListManualMembership } from "@/lib/database.types";
-import { getTaskListCapabilities, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
+import { canSetRoutineTaskMembership, getTaskListCapabilities, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 
 type Message = {
@@ -51,12 +51,19 @@ export function useTaskRoutingActions({
     });
   }
 
-  async function setTaskManualListMembership(taskId: string, listId: TaskListId, included: boolean) {
+  async function setTaskManualListMembership(taskId: string, listId: TaskListId, included: boolean): Promise<boolean> {
     const list = taskListDefinitions.find((definition) => definition.id === listId);
-    if (!list || !getTaskListCapabilities(list).canAssignManualMembership) {
-      return;
+    if (!list) {
+      return false;
+    }
+    const canAssignMembership = listId === "routine"
+      ? canSetRoutineTaskMembership(list)
+      : getTaskListCapabilities(list).canAssignManualMembership;
+    if (!canAssignMembership) {
+      return false;
     }
     const isCompatibilityList = listId === "today" || listId === "later" || listId === "quick_wins" || listId === "waiting";
+    const existingMembership = taskListManualMemberships.find((membership) => membership.task_id === taskId && membership.list_id === listId);
 
     setTaskListManualMemberships((current) => {
       const alreadyIncluded = current.some((membership) => membership.task_id === taskId && membership.list_id === listId);
@@ -83,13 +90,12 @@ export function useTaskRoutingActions({
       routeTask(taskId, included ? listId : null);
     }
 
-    const existingMembership = taskListManualMemberships.find((membership) => membership.task_id === taskId && membership.list_id === listId);
     if (included && existingMembership && !existingMembership.id.startsWith("temp:")) {
-      return;
+      return true;
     }
 
     if (!included && !existingMembership) {
-      return;
+      return true;
     }
 
     if (included) {
@@ -105,10 +111,15 @@ export function useTaskRoutingActions({
 
       if (error) {
         if (isMissingTaskListManualMembershipsTableError(error.message)) {
-          return;
+          if (listId === "routine") {
+            setTaskListManualMemberships((current) => current.filter((membership) => !(membership.task_id === taskId && membership.list_id === listId)));
+            setMessage({ tone: "warn", text: "Routine membership could not be saved because the task-list membership store is unavailable." });
+          }
+          return false;
         }
+        setTaskListManualMemberships((current) => current.filter((membership) => !(membership.task_id === taskId && membership.list_id === listId)));
         setMessage({ tone: "warn", text: error.message });
-        return;
+        return false;
       }
 
       if (data) {
@@ -119,7 +130,7 @@ export function useTaskRoutingActions({
         ]);
       }
 
-      return;
+      return Boolean(data);
     }
 
     const membershipId = existingMembership?.id ?? null;
@@ -131,15 +142,33 @@ export function useTaskRoutingActions({
         .eq("user_id", currentUserId);
 
       if (error && !isMissingTaskListManualMembershipsTableError(error.message)) {
+        if (existingMembership) {
+          setTaskListManualMemberships((current) => current.some((membership) => membership.id === existingMembership.id)
+            ? current
+            : [...current, existingMembership]);
+        }
         setMessage({ tone: "warn", text: error.message });
+        return false;
+      }
+      if (error && isMissingTaskListManualMembershipsTableError(error.message)) {
+        if (existingMembership) {
+          setTaskListManualMemberships((current) => current.some((membership) => membership.id === existingMembership.id)
+            ? current
+            : [...current, existingMembership]);
+        }
+        if (listId === "routine") {
+          setMessage({ tone: "warn", text: "Routine membership could not be saved because the task-list membership store is unavailable." });
+        }
+        return false;
       }
     }
+    return true;
   }
 
-  async function toggleTaskManualListMembership(taskId: string, listId: string) {
+  async function toggleTaskManualListMembership(taskId: string, listId: string): Promise<boolean> {
     const typedListId = listId as TaskListId;
     const currentlyIncluded = (manualMembershipsByTaskId[taskId] ?? []).includes(typedListId);
-    await setTaskManualListMembership(taskId, typedListId, !currentlyIncluded);
+    return setTaskManualListMembership(taskId, typedListId, !currentlyIncluded);
   }
 
   return {

@@ -3953,6 +3953,7 @@ export function TaskApp() {
     routeTask,
     saveTaskEditor,
     saveTaskListDefinition,
+    setTaskManualListMembership,
     syncTaskHistoryEntries,
     syncTaskHistoryEntry,
     syncTaskNoteLinks,
@@ -7275,6 +7276,7 @@ export function TaskApp() {
             allTags={allTaskTags}
             listMembershipsByTaskId={taskListMembershipsByTaskId}
             onCreateTaskWithType={createHomeTodoTaskWithType}
+            onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}

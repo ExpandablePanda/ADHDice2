@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.69`.
+- Current working app version: `7.13.70`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -58,6 +58,13 @@ Home New Task keeps its 7.13.68 metadata and canonical creation behavior while
 using the current Edit Task input, chip, cadence, and tag presentation directly
 inside the composer. The legacy Task Details accordion and field components are
 no longer used by Home.
+
+## 2026-09-18 7.13.70 Merge Home To-do and Routine Tabs
+
+Home now presents To-do and the built-in system-owned Routine list in one tabbed
+task panel. To-do retains its seven-day planning and strict capacity projection;
+Routine uses existing Routine memberships as an unlimited active-task list with
+explicit membership removal and search/new-task enablement.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 
