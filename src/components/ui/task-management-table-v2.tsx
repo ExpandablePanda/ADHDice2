@@ -118,6 +118,11 @@ import {
   TASK_TABLE_GRID_ORIGIN_PX,
 } from "@/lib/task-table-alignment";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
+import {
+  buildTaskContentFolderContextMenuState,
+  TaskContentFolderContextMenu,
+  type TaskContentFolderContextMenuState,
+} from "@/components/task-app/task-content-folder-context-menu";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskBehaviorProfiles, TaskBehaviorPolicy, TaskBehaviorPolicyField } from "@/lib/task-state-engine/behavior-policy";
 
@@ -485,6 +490,7 @@ type TaskRowContextMenuProps = {
   isTaskSelected?: boolean;
   menu: RowContextMenuState;
   onClearSelection?: () => void;
+  onCreateTaskContentFolder?: (name: string) => Promise<boolean> | boolean;
   onDeleteTask?: () => void;
   onDelayTask?: (sourceElement?: HTMLElement | null) => void;
   onDismiss: () => void;
@@ -519,6 +525,7 @@ export function TaskRowContextMenu({
   isTaskSelected = false,
   menu,
   onClearSelection,
+  onCreateTaskContentFolder,
   onDeleteTask,
   onDelayTask,
   onDismiss,
@@ -547,6 +554,8 @@ export function TaskRowContextMenu({
 }: TaskRowContextMenuProps) {
   const [isChoosingParent, setIsChoosingParent] = useState(false);
   const [isChoosingFolder, setIsChoosingFolder] = useState(false);
+  const [isCreatingFolder, setIsCreatingFolder] = useState(false);
+  const [newFolderName, setNewFolderName] = useState("");
   const [parentSearch, setParentSearch] = useState("");
   const [folderSearch, setFolderSearch] = useState("");
   const filteredMoveIntoParentOptions = useMemo(() => {
@@ -562,6 +571,13 @@ export function TaskRowContextMenu({
     return taskContentFolderOptions.filter((option) => option.label.toLowerCase().includes(normalizedSearch));
   }, [folderSearch, taskContentFolderOptions]);
 
+  const submitCreateFolder = async () => {
+    const didCreate = await onCreateTaskContentFolder?.(newFolderName);
+    if (didCreate) {
+      onDismiss();
+    }
+  };
+
   return (
     <div
       className="absolute inset-0 z-40"
@@ -576,14 +592,55 @@ export function TaskRowContextMenu({
       >
         <div className="border-b border-[#f0ebfb] px-2 pb-2 dark:border-white/10">
           <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
-            {isChoosingParent ? "Choose parent" : isChoosingFolder ? "Choose Folder" : "Task actions"}
+            {isCreatingFolder ? "Create Folder" : isChoosingParent ? "Choose parent" : isChoosingFolder ? "Choose Folder" : "Task actions"}
           </p>
           <p className={`${UNIFIED_TABLE_TEXT_CLASS} mt-1 truncate text-[#2f294a] dark:text-white`}>
             {task.title}
           </p>
         </div>
 
-        {isChoosingParent ? (
+        {isCreatingFolder ? (
+          <form
+            className="space-y-2 px-1 py-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitCreateFolder();
+            }}
+          >
+            <input
+              autoFocus
+              aria-label="Folder name"
+              className={OVERLAY_INPUT_CLASS}
+              onChange={(event) => setNewFolderName(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setIsCreatingFolder(false);
+                  setNewFolderName("");
+                }
+              }}
+              placeholder="Folder name"
+              type="text"
+              value={newFolderName}
+            />
+            <div className="flex justify-end gap-1.5">
+              <TaskTableChipButton
+                onClick={() => {
+                  setIsCreatingFolder(false);
+                  setNewFolderName("");
+                }}
+                toneClassName={INACTIVE_CHIP_CLASS}
+              >
+                Cancel
+              </TaskTableChipButton>
+              <TaskTableChipButton toneClassName={ACTIVE_LIST_CHIP_CLASS} type="submit">
+                Create
+              </TaskTableChipButton>
+            </div>
+          </form>
+        ) : null}
+
+        {isChoosingParent && !isCreatingFolder ? (
           <div className="space-y-2 px-1 py-2">
             <input
               autoFocus
@@ -622,7 +679,7 @@ export function TaskRowContextMenu({
           </div>
         ) : null}
 
-        {isChoosingFolder && !isChoosingParent ? (
+        {isChoosingFolder && !isChoosingParent && !isCreatingFolder ? (
           <div className="space-y-2 px-1 py-2">
             <input
               autoFocus
@@ -662,7 +719,7 @@ export function TaskRowContextMenu({
           </div>
         ) : null}
 
-        {!isChoosingParent && !isChoosingFolder ? (
+        {!isChoosingParent && !isChoosingFolder && !isCreatingFolder ? (
         <div className="space-y-1 px-1 py-2">
           {(enableInspector || onOpenDetails) ? (
             <TaskTableChipButton
@@ -756,6 +813,15 @@ export function TaskRowContextMenu({
               onClick={() => setIsChoosingParent(true)}
             >
               <span>Move into parent</span>
+            </TaskTableChipButton>
+          ) : null}
+          {onCreateTaskContentFolder ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => setIsCreatingFolder(true)}
+            >
+              <span>Create Folder</span>
+              <Folder className="h-3.5 w-3.5" />
             </TaskTableChipButton>
           ) : null}
           {onMoveToTaskContentFolder && taskContentFolderOptions.length > 0 ? (
@@ -1274,6 +1340,9 @@ type TaskManagementTableV2Props = {
   taskContentFolders?: readonly TaskContentFolder[];
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
+  onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
+  onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
+  onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onPromoteTaskToMilestone?: (taskId: string) => void;
@@ -2655,6 +2724,9 @@ export function TaskManagementTableV2({
   taskContentFolders = [],
   collapsedTaskContentFolderIds = new Set<string>(),
   onToggleTaskContentFolderCollapsed,
+  onCreateTaskContentFolder,
+  onRenameTaskContentFolder,
+  onDeleteTaskContentFolder,
   onMoveTaskToContentFolder,
   onUnlinkTask,
   onPromoteTaskToMilestone,
@@ -2835,6 +2907,7 @@ export function TaskManagementTableV2({
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
   const [columnMenuPosition, setColumnMenuPosition] = useState<ColumnMenuPosition | null>(null);
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
+  const [contentFolderContextMenu, setContentFolderContextMenu] = useState<TaskContentFolderContextMenuState | null>(null);
   const [pendingCustomCadenceTaskId, setPendingCustomCadenceTaskId] = useState<string | null>(null);
   const [tableViewportMetrics, setTableViewportMetrics] = useState<TaskTableViewportMetrics>({ clientWidth: 0, scrollLeft: 0 });
   const [sortState, setSortState] = useState<{ columnId: SortColumnId; optionId: SortOptionId } | null>(() => getInitialSortState(persistedLayoutPreferences));
@@ -4108,6 +4181,7 @@ export function TaskManagementTableV2({
         }
         setOpenColumnMenuId(null);
         setRowContextMenu(null);
+        setContentFolderContextMenu(null);
       }
     };
 
@@ -6610,6 +6684,14 @@ export function TaskManagementTableV2({
     }
     setOpenColumnMenuId(null);
     setRowContextMenu(nextMenu);
+  }
+
+  function openContentFolderContextMenu(folderId: string, clientX: number, clientY: number) {
+    const nextMenu = buildTaskContentFolderContextMenuState(shellRef.current, folderId, clientX, clientY);
+    if (!nextMenu) return;
+    setOpenColumnMenuId(null);
+    setRowContextMenu(null);
+    setContentFolderContextMenu(nextMenu);
   }
 
   function toggleColumnMenu(columnId: SortColumnId, triggerElement: HTMLElement) {
@@ -9119,6 +9201,9 @@ export function TaskManagementTableV2({
               if (rowContextMenu) {
                 setRowContextMenu(null);
               }
+              if (contentFolderContextMenu) {
+                setContentFolderContextMenu(null);
+              }
             }}
             onTouchStart={() => {
               tableUserScrollIntentRef.current = true;
@@ -9285,6 +9370,11 @@ export function TaskManagementTableV2({
                         className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
                         data-style-role="tasks.content-folder.header"
                         onClick={() => onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY);
+                        }}
                         type="button"
                       >
                         <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${entry.collapsed ? "" : "rotate-90"}`} />
@@ -9498,6 +9588,7 @@ export function TaskManagementTableV2({
                 onClearSelection();
                 setRowContextMenu(null);
               } : undefined}
+              onCreateTaskContentFolder={onCreateTaskContentFolder ? (name) => onCreateTaskContentFolder(rowContextMenuTask.id, name) : undefined}
               onDeleteTask={onOpenDeleteTask ? () => {
                 setRowContextMenu(null);
                 onOpenDeleteTask(rowContextMenuTask.id);
@@ -9586,6 +9677,18 @@ export function TaskManagementTableV2({
             />
           </div>
         ) : null}
+        {contentFolderContextMenu && onRenameTaskContentFolder && onDeleteTaskContentFolder ? (() => {
+          const folder = taskContentFolders.find((entry) => entry.id === contentFolderContextMenu.folderId);
+          return folder ? (
+            <TaskContentFolderContextMenu
+              folder={folder}
+              menu={contentFolderContextMenu}
+              onDelete={onDeleteTaskContentFolder}
+              onDismiss={() => setContentFolderContextMenu(null)}
+              onRename={onRenameTaskContentFolder}
+            />
+          ) : null;
+        })() : null}
           </>
         ) : null}
 

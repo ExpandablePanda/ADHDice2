@@ -5,6 +5,7 @@ import { useTaskUpdateAction } from "../src/hooks/useTaskUpdateAction.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { loadCanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/read-model.ts";
+import { mergeTaskWithCanonicalScheduleProjection } from "../src/lib/task-state-canonical/schedule-projection.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 import type { TaskStateRuntimeExecutionResult } from "../src/lib/task-state-runtime-executor.ts";
@@ -77,7 +78,11 @@ function canonicalTask(initialBoundary: CanonicalTaskScheduleBoundary): Task {
     workflow_revision: 1,
     canonical_revision: 1,
     canonical_schedule_boundary: initialBoundary,
-    canonical_schedule_anchor_date: null,
+    canonical_schedule_anchor_date: initialBoundary.schedule_model === "one_time"
+      ? initialBoundary.one_time_due_on
+      : initialBoundary.schedule_model === "unscheduled"
+        ? null
+        : initialBoundary.anchor_date,
   } as Task;
 }
 
@@ -106,7 +111,14 @@ function commandResponse(boundaryId: string, expectedRevision: number) {
 }
 
 test("canonical creation projection survives metadata and exact committed schedule boundaries", async () => {
-  const initialBoundary = boundary();
+  const initialBoundary = boundary({
+    anchor_confidence: "proven",
+    anchor_date: "2026-08-01",
+    anchor_kind: "user_selected",
+    historical_scope_known: true,
+    prospective_only: false,
+    schedule_model: "rolling",
+  });
   const dueBoundary = boundary({
     id: "boundary-due-today",
     boundary_sequence: 2,
@@ -207,6 +219,28 @@ test("canonical creation projection survives metadata and exact committed schedu
   assert.equal(await update.updateTask(taskId, { title: "Renamed" }), true);
   assert.equal(localTasks[0]?.title, "Renamed");
   assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, initialBoundary.id);
+
+  const projectedBeforeFolderMove = localTasks[0]!;
+  const rawFolderMove = Object.fromEntries(
+    Object.entries(projectedBeforeFolderMove).filter(([key]) => key !== "canonical_schedule_anchor_date" && key !== "canonical_schedule_boundary"),
+  ) as unknown as Task;
+  localTasks[0] = mergeTaskWithCanonicalScheduleProjection(projectedBeforeFolderMove, {
+    ...rawFolderMove,
+    parent_task_id: null,
+    task_content_folder_id: "folder-after-metadata-move",
+  });
+  assert.equal(localTasks[0]?.task_content_folder_id, "folder-after-metadata-move");
+  assert.equal(localTasks[0]?.id, taskId);
+  assert.equal(localTasks[0]?.status, "pending");
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, initialBoundary.id);
+  assert.equal(localTasks[0]?.canonical_schedule_anchor_date, "2026-08-01");
+  assert.doesNotThrow(() => resolveActiveTaskStatuses({
+    historyByTaskId: { [taskId]: [] },
+    logicalDayRollover: "00:00",
+    now: "2026-08-19T12:00:00.000Z",
+    tasks: localTasks as never,
+    timezone: "UTC",
+  }));
 
   callbackEvents.length = 0;
   assert.equal(await update.updateTask(taskId, { due_on: "2026-08-19" }, {

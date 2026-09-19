@@ -33,13 +33,14 @@ export function useTaskContentFolderActions({
   updateTaskRow,
   userId,
 }: Options) {
-  const createFolder = useCallback(async (rawName: string) => {
+  const createFolderAndMoveTask = useCallback(async (task: Task, rawName: string) => {
     const name = normalizeTaskContentFolderName(rawName);
     const validationError = validateTaskContentFolderName(name);
     if (validationError || !client || !userId) {
       setMessage({ tone: "warn", text: validationError ?? "Folders are unavailable until you sign in." });
-      return null;
+      return false;
     }
+
     const { data, error } = await client
       .from("adhdice_task_content_folders")
       .insert({ name, user_id: userId })
@@ -48,12 +49,43 @@ export function useTaskContentFolderActions({
     const folder = normalizeTaskContentFolderRow(data);
     if (error || !folder) {
       setMessage({ tone: "warn", text: error?.message ?? "Folder could not be created." });
-      return null;
+      return false;
     }
     setFolders((current) => [...current, folder]);
-    setMessage({ tone: "good", text: `Folder "${folder.name}" created.` });
-    return folder;
-  }, [client, setFolders, setMessage, userId]);
+
+    const rollbackCreatedFolder = async () => {
+      const rollback = await client
+        .from("adhdice_task_content_folders")
+        .delete()
+        .eq("user_id", userId)
+        .eq("id", folder.id);
+      setFolders((current) => current.filter((entry) => entry.id !== folder.id));
+      return rollback.error;
+    };
+
+    let didPersist = false;
+    try {
+      didPersist = await updateTaskRow(task.id, buildTaskContentFolderAssignmentPatch(task, folder.id), task);
+    } catch (moveError) {
+      const rollbackError = await rollbackCreatedFolder();
+      if (rollbackError) {
+        setMessage({ tone: "warn", text: `Task move failed, and the new Folder could not be rolled back: ${rollbackError.message}` });
+      } else {
+        setMessage({ tone: "warn", text: moveError instanceof Error ? moveError.message : "Task could not be moved into the new Folder." });
+      }
+      return false;
+    }
+    if (!didPersist) {
+      const rollbackError = await rollbackCreatedFolder();
+      if (rollbackError) {
+        setMessage({ tone: "warn", text: `Task move failed, and the new Folder could not be rolled back: ${rollbackError.message}` });
+      }
+      return false;
+    }
+
+    setMessage({ tone: "good", text: `Folder "${folder.name}" created and "${task.title}" moved into it.` });
+    return true;
+  }, [client, setFolders, setMessage, updateTaskRow, userId]);
 
   const renameFolder = useCallback(async (folderId: string, rawName: string) => {
     const name = normalizeTaskContentFolderName(rawName);
@@ -123,5 +155,5 @@ export function useTaskContentFolderActions({
     return didPersist;
   }, [folders, setMessage, updateTaskRow]);
 
-  return { createFolder, deleteFolder, moveTaskToFolder, renameFolder };
+  return { createFolderAndMoveTask, deleteFolder, moveTaskToFolder, renameFolder };
 }

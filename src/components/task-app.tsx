@@ -90,7 +90,6 @@ import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
-import { TaskContentFoldersManager } from "./task-app/task-content-folders-manager";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
@@ -2770,6 +2769,10 @@ export function TaskApp() {
     const task = tasks.find((entry) => entry.id === taskId);
     return task ? taskContentFolderActions.moveTaskToFolder(task, folderId) : false;
   }, [taskContentFolderActions.moveTaskToFolder, tasks]);
+  const createTaskContentFolder = useCallback(async (taskId: string, name: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    return task ? taskContentFolderActions.createFolderAndMoveTask(task, name) : false;
+  }, [taskContentFolderActions.createFolderAndMoveTask, tasks]);
   const compatibilityRoutingMemberships = useMemo(
     () =>
       Object.fromEntries(
@@ -6174,7 +6177,10 @@ export function TaskApp() {
 
     if (result.conflict) {
       if (result.conflict.latestTask) {
-        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? result.conflict.latestTask ?? task : task)));
+        const latestTask = previousTask
+          ? mergeTaskWithCanonicalScheduleProjection(previousTask, result.conflict.latestTask)
+          : result.conflict.latestTask;
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? latestTask : task)));
         if (
           result.conflict.latestTask.status === "done"
           || result.conflict.latestTask.status === "did_my_best"
@@ -6196,13 +6202,16 @@ export function TaskApp() {
     const nextData = result.usedActualSecondsFallback && typeof values.actual_seconds === "number"
       ? { ...result.data, actual_seconds: values.actual_seconds }
       : result.data;
-    setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
+    const reconciledNextData = previousTask
+      ? mergeTaskWithCanonicalScheduleProjection(previousTask, nextData)
+      : nextData;
+    setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? reconciledNextData : task)));
     if (
-      nextData.status === "done"
-      || nextData.status === "did_my_best"
-      || nextData.status === "complete"
-      || nextData.status === "archived"
-      || nextData.status === "trashed"
+      reconciledNextData.status === "done"
+      || reconciledNextData.status === "did_my_best"
+      || reconciledNextData.status === "complete"
+      || reconciledNextData.status === "archived"
+      || reconciledNextData.status === "trashed"
     ) {
       routeTask(taskId, null);
     }
@@ -6842,16 +6851,6 @@ export function TaskApp() {
     allListDirectoryEntries: allTaskListDirectoryEntries,
     appVersion: APP_VERSION,
     filterRowsNode: taskFilterRowsNode,
-    taskContentFoldersNode: taskUiState.view === "table" || taskUiState.view === "list"
-      ? (
-        <TaskContentFoldersManager
-          folders={taskContentFolders}
-          onCreate={taskContentFolderActions.createFolder}
-          onDelete={taskContentFolderActions.deleteFolder}
-          onRename={taskContentFolderActions.renameFolder}
-        />
-      )
-      : null,
     hideSearch: duplicateTitleModeActive,
     isKeyboardShortcutsMenuOpen,
     isRailHidden: activeTaskWorkspaceTab.isRailHidden,
@@ -7653,6 +7652,9 @@ export function TaskApp() {
                   taskContentFolders,
                   collapsedTaskContentFolderIds,
                   onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
+                  onCreateTaskContentFolder: createTaskContentFolder,
+                  onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
+                  onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
                   onMoveTaskToContentFolder: moveTaskToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
@@ -7840,6 +7842,9 @@ export function TaskApp() {
                   taskContentFolders,
                   collapsedTaskContentFolderIds,
                   onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
+                  onCreateTaskContentFolder: createTaskContentFolder,
+                  onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
+                  onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
                   onMoveTaskToContentFolder: moveTaskToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,

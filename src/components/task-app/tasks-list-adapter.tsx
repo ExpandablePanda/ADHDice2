@@ -34,6 +34,11 @@ import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summari
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
+import {
+  buildTaskContentFolderContextMenuState,
+  TaskContentFolderContextMenu,
+  type TaskContentFolderContextMenuState,
+} from "./task-content-folder-context-menu";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
@@ -277,6 +282,9 @@ type TasksTableSourceProps = {
   taskContentFolders?: readonly TaskContentFolder[];
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
+  onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
+  onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
+  onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: TaskEditorLinkedNote[];
@@ -698,6 +706,9 @@ export function TasksTableAdapter({
           taskContentFolders={tableProps.taskContentFolders}
           collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
           onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
+          onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+          onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
+          onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
           onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
           onUnlinkTask={tableProps.onUnlinkTask}
           onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
@@ -2656,6 +2667,7 @@ function TasksSimpleList({
     tableProps.rowContext.manualMembershipsByTaskId,
   );
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
+  const [contentFolderContextMenu, setContentFolderContextMenu] = useState<TaskContentFolderContextMenuState | null>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
@@ -3089,6 +3101,14 @@ function TasksSimpleList({
     return true;
   }
 
+  function openContentFolderContextMenu(folderId: string, clientX: number, clientY: number) {
+    const nextMenu = buildTaskContentFolderContextMenuState(listShellRef.current, folderId, clientX, clientY);
+    if (!nextMenu) return false;
+    setRowContextMenu(null);
+    setContentFolderContextMenu(nextMenu);
+    return true;
+  }
+
   async function commitParentStepDraft(parentTaskId: string, taskTypeSelectionValue = "task") {
     const nextTitle = parentStepTitleDrafts[parentTaskId]?.trim() ?? "";
     if (!nextTitle) {
@@ -3208,6 +3228,9 @@ function TasksSimpleList({
               taskContentFolders={tableProps.taskContentFolders}
               collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
               onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
+              onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+              onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
+              onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
               onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
               onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
               onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
@@ -3321,6 +3344,11 @@ function TasksSimpleList({
                         className="flex w-full items-center gap-2 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
                         data-style-role="tasks.content-folder.header"
                         onClick={() => tableProps.onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
+                        onContextMenu={(event) => {
+                          event.preventDefault();
+                          event.stopPropagation();
+                          openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY);
+                        }}
                         type="button"
                       >
                         <ChevronRight className={`h-4 w-4 shrink-0 transition-transform ${entry.collapsed ? "" : "rotate-90"}`} />
@@ -3941,9 +3969,10 @@ function TasksSimpleList({
               isTaskSelected={selectedTaskIdSet.has(rowContextMenuTask.id)}
               menu={rowContextMenu}
               onClearSelection={tableProps.onClearSelection ? () => {
-                tableProps.onClearSelection();
+                tableProps.onClearSelection?.();
                 setRowContextMenu(null);
               } : undefined}
+              onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder ? (name) => tableProps.onCreateTaskContentFolder!(rowContextMenuTask.id, name) : undefined}
               onDeleteTask={tableProps.onOpenDeleteTask ? () => {
                 tableProps.onOpenDeleteTask?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
@@ -4051,6 +4080,18 @@ function TasksSimpleList({
               task={rowContextMenuTask}
             />
           ) : null}
+          {contentFolderContextMenu && tableProps.onRenameTaskContentFolder && tableProps.onDeleteTaskContentFolder ? (() => {
+            const folder = (tableProps.taskContentFolders ?? []).find((entry) => entry.id === contentFolderContextMenu.folderId);
+            return folder ? (
+              <TaskContentFolderContextMenu
+                folder={folder}
+                menu={contentFolderContextMenu}
+                onDelete={tableProps.onDeleteTaskContentFolder}
+                onDismiss={() => setContentFolderContextMenu(null)}
+                onRename={tableProps.onRenameTaskContentFolder}
+              />
+            ) : null;
+          })() : null}
         </div>
       )}
     />

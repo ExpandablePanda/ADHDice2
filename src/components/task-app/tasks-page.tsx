@@ -1372,7 +1372,6 @@ export function TaskOperationsHeader({
   currentFolderBreadcrumbs = [],
   currentFolderId = null,
   filterRowsNode,
-  taskContentFoldersNode,
   hideSearch,
   isKeyboardShortcutsMenuOpen,
   isRailHidden,
@@ -1425,7 +1424,6 @@ export function TaskOperationsHeader({
   currentFolderBreadcrumbs?: Array<{ id: string; name: string }>;
   currentFolderId?: string | null;
   filterRowsNode: ReactNode;
-  taskContentFoldersNode?: ReactNode;
   hideSearch?: boolean;
   isKeyboardShortcutsMenuOpen: boolean;
   isRailHidden: boolean;
@@ -1622,7 +1620,6 @@ export function TaskOperationsHeader({
                 </AdhdChip>
               ) : null}
               <TaskViewsMenu onViewChange={onViewChange} view={view} />
-              {taskContentFoldersNode}
               {view === "table" ? (
                 <TaskChipButton
                   icon={isRailHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
