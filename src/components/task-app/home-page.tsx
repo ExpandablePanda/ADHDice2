@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, GripVertical, ListTodo, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -21,6 +21,7 @@ import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthl
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
 import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
+import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
 import {
   getSelectedTaskPriorityToneClass,
@@ -92,6 +93,17 @@ const HOME_REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = 
 ];
 type HomePanelTab = "todo" | "routine";
 
+type HomeRoutineChildDragState = {
+  depth: number;
+  parentTaskId: string;
+  taskId: string;
+};
+
+type HomeRoutineChildDropTarget = {
+  placement: TaskSiblingDropPlacement;
+  taskId: string;
+};
+
 function RoutineTaskMetadata({
   task,
   streakSummary,
@@ -124,6 +136,7 @@ export function HomePage({
   allTags,
   onCreateTaskWithType,
   onSetRoutineMembership,
+  onReorderChildTask,
   onOpenTask,
   onSetStatus,
   taskDisplayStatusByTaskId,
@@ -145,6 +158,7 @@ export function HomePage({
   allTags: string[];
   onCreateTaskWithType: (title: string, taskTypeSelectionValue: string, metadata: HomeTodoTaskMetadata) => Promise<Task | null>;
   onSetRoutineMembership: (taskId: string, included: boolean) => Promise<boolean>;
+  onReorderChildTask: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
@@ -187,11 +201,15 @@ export function HomePage({
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
   const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
+  const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
+  const [routineChildDropTarget, setRoutineChildDropTarget] = useState<HomeRoutineChildDropTarget | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
   const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const routineSectionRenameCanceledRef = useRef(false);
+  const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
+  const routineChildDropTargetRef = useRef<HomeRoutineChildDropTarget | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const reconciledTaskIds = useMemo(
     () => reconcileHomeTodoTaskIds(state.taskIds, tasks),
@@ -519,6 +537,88 @@ export function HomePage({
     );
   }
 
+  function clearRoutineChildDragState() {
+    routineChildDragStateRef.current = null;
+    routineChildDropTargetRef.current = null;
+    setRoutineChildDragState(null);
+    setRoutineChildDropTarget(null);
+  }
+
+  function beginRoutineChildDrag(event: DragEvent<HTMLElement>, task: Task, depth: number) {
+    event.stopPropagation();
+    if (!task.parent_task_id) return;
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", task.id);
+    const nextDragState = {
+      depth,
+      parentTaskId: task.parent_task_id,
+      taskId: task.id,
+    };
+    routineChildDragStateRef.current = nextDragState;
+    routineChildDropTargetRef.current = null;
+    setRoutineChildDragState(nextDragState);
+    setRoutineChildDropTarget(null);
+  }
+
+  function getRoutineChildDropPlacement(event: DragEvent<HTMLElement>): TaskSiblingDropPlacement {
+    const rect = event.currentTarget.getBoundingClientRect();
+    return event.clientY - rect.top < rect.height / 2 ? "before" : "after";
+  }
+
+  function canDropRoutineChildOnTask(task: Task, depth: number) {
+    const dragState = routineChildDragStateRef.current;
+    return Boolean(
+      dragState
+      && dragState.taskId !== task.id
+      && dragState.parentTaskId === task.parent_task_id
+      && dragState.depth === depth,
+    );
+  }
+
+  function updateRoutineChildDropTarget(event: DragEvent<HTMLElement>, task: Task, depth: number) {
+    if (!routineChildDragStateRef.current) return;
+    event.stopPropagation();
+    if (!canDropRoutineChildOnTask(task, depth)) {
+      if (routineChildDropTargetRef.current) {
+        routineChildDropTargetRef.current = null;
+        setRoutineChildDropTarget(null);
+      }
+      return;
+    }
+
+    event.preventDefault();
+    const placement = getRoutineChildDropPlacement(event);
+    const currentDropTarget = routineChildDropTargetRef.current;
+    if (currentDropTarget?.taskId !== task.id || currentDropTarget.placement !== placement) {
+      const nextDropTarget = { placement, taskId: task.id };
+      routineChildDropTargetRef.current = nextDropTarget;
+      setRoutineChildDropTarget(nextDropTarget);
+    }
+  }
+
+  function dropRoutineChildOnTask(event: DragEvent<HTMLElement>, task: Task, depth: number) {
+    const dragState = routineChildDragStateRef.current;
+    event.stopPropagation();
+    if (!dragState || !canDropRoutineChildOnTask(task, depth)) {
+      clearRoutineChildDragState();
+      return;
+    }
+
+    event.preventDefault();
+    onReorderChildTask(dragState.taskId, {
+      placement: getRoutineChildDropPlacement(event),
+      targetTaskId: task.id,
+    });
+    clearRoutineChildDragState();
+  }
+
+  function getRoutineChildDropIndicatorClassName(taskId: string) {
+    if (routineChildDropTarget?.taskId !== taskId) return "";
+    return routineChildDropTarget.placement === "before"
+      ? "shadow-[inset_0_2px_0_0_rgba(111,87,246,0.95)]"
+      : "shadow-[inset_0_-2px_0_0_rgba(111,87,246,0.95)]";
+  }
+
   function renderHomeTask(
     task: Task,
     index: number,
@@ -543,13 +643,32 @@ export function HomePage({
     return (
       <AdhdCard
         key={rowKey}
-        className={isRoutineChild
-          ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0"
-          : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}
+        className={`${isRoutineChild
+          ? "grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-0"
+          : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}${isRoutineChild && routineChildDragState?.taskId === task.id ? " opacity-60" : ""}${isRoutineChild ? ` ${getRoutineChildDropIndicatorClassName(task.id)}` : ""}`}
         padding="sm"
+        onDragOver={isRoutineChild ? (event) => updateRoutineChildDropTarget(event, task, routineDepth) : undefined}
+        onDrop={isRoutineChild ? (event) => dropRoutineChildOnTask(event, task, routineDepth) : undefined}
         style={isRoutineChild ? { marginLeft: `${Math.min(Math.max(routineDepth, 1), 3) * 0.75}rem` } : undefined}
       >
         {!isRoutineChild ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
+        {isRoutineChild ? (
+          <button
+            aria-label={`Drag to reorder ${routineDepth > 1 ? "substep" : "step"} ${task.title || "Untitled"}`}
+            className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8a79d6] opacity-70 transition hover:bg-[#f3efff] hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:bg-[#22193f] dark:hover:text-[#cabfff]"
+            draggable
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
+            onDragEnd={clearRoutineChildDragState}
+            onDragStart={(event) => beginRoutineChildDrag(event, task, routineDepth)}
+            onPointerDown={(event) => event.stopPropagation()}
+            type="button"
+          >
+            <GripVertical aria-hidden="true" className="h-3.5 w-3.5" />
+          </button>
+        ) : null}
         {!isRoutineChild ? (
           <span className="ml-1 shrink-0 text-sm font-medium leading-5 text-[#26324f] dark:text-white">
             {index + 1}

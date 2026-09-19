@@ -980,6 +980,34 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   assert.doesNotMatch(homeSource, /tasks=\{tasksForActiveStatusRead\}/);
 });
 
+test("Home Routine child drag reuses TaskApp sibling reorder without changing Home state", () => {
+  const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const childDropStart = homeSource.indexOf("function dropRoutineChildOnTask");
+  const childDropEnd = homeSource.indexOf("\n  function getRoutineChildDropIndicatorClassName", childDropStart);
+  const childDropSource = homeSource.slice(childDropStart, childDropEnd);
+
+  assert.match(homeSource, /onReorderChildTask: \(taskId: string, instruction: TaskSiblingReorderInstruction\) => void/);
+  assert.match(homeSource, /type HomeRoutineChildDragState = \{[\s\S]*depth: number;[\s\S]*parentTaskId: string;[\s\S]*taskId: string;/);
+  assert.match(homeSource, /event\.dataTransfer\.setData\("text\/plain", task\.id\)/);
+  assert.match(homeSource, /parentTaskId: task\.parent_task_id/);
+  assert.match(homeSource, /dragState\.taskId !== task\.id/);
+  assert.match(homeSource, /dragState\.parentTaskId === task\.parent_task_id/);
+  assert.match(homeSource, /dragState\.depth === depth/);
+  assert.match(homeSource, /event\.clientY - rect\.top < rect\.height \/ 2 \? "before" : "after"/);
+  assert.match(childDropSource, /onReorderChildTask\(dragState\.taskId, \{[\s\S]*placement: getRoutineChildDropPlacement\(event\),[\s\S]*targetTaskId: task\.id/);
+  assert.doesNotMatch(childDropSource, /sort_order|routineTaskIds|updateRoutineTaskIds|updateRoutineSectionName|updateRoutinesPerSection/);
+  assert.match(homeSource, /<GripVertical aria-hidden="true" className="h-3\.5 w-3\.5" \/>/);
+  assert.match(homeSource, /onDragEnd=\{clearRoutineChildDragState\}/);
+  assert.match(homeSource, /onPointerDown=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.match(homeSource, /shadow-\[inset_0_2px_0_0_rgba\(111,87,246,0\.95\)\]/);
+  assert.match(homeSource, /shadow-\[inset_0_-2px_0_0_rgba\(111,87,246,0\.95\)\]/);
+  assert.match(taskAppSource, /<TaskHomePage[\s\S]*onReorderChildTask=\{\(taskId, instruction\) => \{ void reorderChildTask\(taskId, instruction\); \}\}/);
+  assert.match(homeSource, /items=\{routineGroups\}/);
+  assert.match(homeSource, /onReorder=\{\(nextGroups\) => updateRoutineTaskIds/);
+  assert.match(homeSource, /!isRoutineChild \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+});
+
 test("Home todo migration and schema provide owner-scoped realtime state", () => {
   const migration = readFileSync(new URL("../supabase/add_home_todo_state_7_5_39.sql", import.meta.url), "utf8");
   const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");

@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-18
+Last reviewed: 2026-09-19
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.74`.
+- Current working app version: `7.13.75`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -30,6 +30,15 @@ directly displayed Routine anchors. The controls update the persisted flat
 Routine order, so inherited Steps/Substeps move with their parent group while
 ordinal Section names remain unchanged. To-do ordering and all other Home
 Routine semantics are unchanged.
+
+## 2026-09-19 7.13.75 Drag Routine Steps/Substeps Within Their Parent
+
+Home Routine now exposes a compact child drag handle for visible Steps and
+Substeps. Drops are restricted to visible siblings with the same immediate
+parent and hierarchy depth, and valid before/after placements reuse TaskApp's
+canonical `reorderChildTask` path. Root Routine anchors still use Home's
+`routineTaskIds` ordering, while To-do behavior and Home child-order
+persistence remain unchanged. No SQL or schema change was made.
 
 ## 2026-09-19 7.13.71 Routine Hierarchy, Ordering, and Phase Sections
 
