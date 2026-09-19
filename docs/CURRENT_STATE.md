@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.71`.
+- Current working app version: `7.13.72`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -51,6 +51,12 @@ Food Daily Totals now colors only the projected calorie amount green when it
 is within the target and red when it exceeds the target. A missing target keeps
 the projected amount neutral; consumed calories and all projection behavior are
 unchanged.
+
+## 2026-09-19 7.13.72 Protect Routine Order During Home State Hydration
+
+Home state hydration now defers Routine order reconciliation until hydration
+is resolved and bootstraps meaningful V4 Routine/capacity state even when
+To-do IDs are empty. No Task-domain, SQL, or schema changes.
 
 ## 2026-09-18 7.13.68 Home To-do Metadata and Strict Daily Capacity
 

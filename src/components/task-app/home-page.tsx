@@ -44,6 +44,7 @@ import {
   createHomeTodoTask,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
+  shouldPersistHomeRoutineReconciliation,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskIdToEdge,
@@ -220,9 +221,9 @@ export function HomePage({
   }, [isCreateOpen]);
 
   useEffect(() => {
-    if (!tasks.length) return;
-    updateRoutineTaskIds(() => reconciledRoutineTaskIds);
-  }, [reconciledRoutineTaskIds, tasks.length, updateRoutineTaskIds]);
+    if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
+    updateRoutineTaskIds((currentRoutineTaskIds) => reconcileHomeRoutineTaskIds(currentRoutineTaskIds, routineTaskIds));
+  }, [routineTaskIds, syncStatus, tasks.length, updateRoutineTaskIds]);
 
   function selectHomeTab(nextTab: HomePanelTab) {
     setActiveHomeTab(nextTab);

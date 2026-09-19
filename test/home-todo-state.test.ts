@@ -12,6 +12,7 @@ import {
   formatHomeTodoDateLabel,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
+  hasMeaningfulHomeTodoState,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskId,
@@ -22,6 +23,7 @@ import {
   normalizeHomeTodoState,
   reconcileHomeRoutineTaskIds,
   reconcileHomeTodoTaskIds,
+  shouldPersistHomeRoutineReconciliation,
   sortHomeTodoSearchResults,
   type HomeTodoTaskMetadata,
 } from "../src/lib/home-todo-state.ts";
@@ -510,6 +512,32 @@ test("Home Routine order reconciliation preserves, removes, deduplicates, and ap
   );
 });
 
+test("Home Routine persistence reconciliation uses the saved order and does not reset it to source order", () => {
+  const savedOrder = ["anchor-b", "anchor-a"];
+  const sourceOrder = ["anchor-a", "anchor-b", "anchor-c"];
+
+  assert.deepEqual(reconcileHomeRoutineTaskIds(savedOrder, sourceOrder), ["anchor-b", "anchor-a", "anchor-c"]);
+  assert.deepEqual(reconcileHomeRoutineTaskIds(["anchor-b", "stale"], sourceOrder), ["anchor-b", "anchor-a", "anchor-c"]);
+  assert.deepEqual(reconcileHomeRoutineTaskIds(["anchor-b", "anchor-a", "anchor-c"], sourceOrder), ["anchor-b", "anchor-a", "anchor-c"]);
+});
+
+test("Home Routine persistence reconciliation waits for Home hydration", () => {
+  assert.equal(shouldPersistHomeRoutineReconciliation("loading"), false);
+  assert.equal(shouldPersistHomeRoutineReconciliation("local"), true);
+  assert.equal(shouldPersistHomeRoutineReconciliation("synced"), true);
+  assert.equal(shouldPersistHomeRoutineReconciliation("saving"), true);
+});
+
+test("Home V4 bootstrap recognizes meaningful state outside To-do taskIds", () => {
+  const empty = normalizeHomeTodoState(null);
+  assert.equal(hasMeaningfulHomeTodoState(empty), false);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, taskIds: ["todo"] }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, taskDayOffsets: { todo: 2 }, taskIds: ["todo"] }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, tasksPerDay: 15 }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineTaskIds: ["routine"] }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, routinesPerPhase: 4 }), true);
+});
+
 test("Home Routine sections use capacity without counting descendants", () => {
   assert.equal(normalizeHomeTodoRoutinesPerPhase(undefined), 3);
   assert.equal(normalizeHomeTodoRoutinesPerPhase(99), 3);
@@ -703,6 +731,8 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /buildHomeRoutineSections/);
   assert.match(source, /items=\{routineGroups\}/);
   assert.match(source, /onReorder=\{\(nextGroups\) => updateRoutineTaskIds/);
+  assert.match(source, /shouldPersistHomeRoutineReconciliation\(syncStatus\)/);
+  assert.match(source, /updateRoutineTaskIds\(\(currentRoutineTaskIds\) => reconcileHomeRoutineTaskIds\(currentRoutineTaskIds, routineTaskIds\)/);
   assert.match(source, /Routines per phase/);
   assert.match(source, /setIsSettingsOpen\(false\)/);
   assert.match(source, /event\.key === "Escape"/);
@@ -720,6 +750,7 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(sortableSource, /processPointerMove\(event\.clientY\)/);
   assert.match(hookSource, /state: outgoing/);
   assert.match(hookSource, /tasksPerDay: nextTasksPerDay/);
+  assert.match(hookSource, /hasMeaningfulHomeTodoState\(cached\)/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
   assert.match(hookSource, /state: outgoing,\s*user_id: userId/);

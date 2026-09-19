@@ -38,6 +38,7 @@ export const DEFAULT_HOME_TODO_TASKS_PER_DAY: HomeTodoTasksPerDay = 10;
 export const HOME_ROUTINES_PER_PHASE_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
 export type HomeTodoRoutinesPerPhase = typeof HOME_ROUTINES_PER_PHASE_OPTIONS[number];
 export const DEFAULT_HOME_TODO_ROUTINES_PER_PHASE: HomeTodoRoutinesPerPhase = 3;
+export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
 export const EMPTY_HOME_TODO_STATE: HomeTodoStateV4 = {
   clientUpdatedAt: new Date(0).toISOString(),
@@ -108,6 +109,18 @@ export function normalizeHomeTodoRoutinesPerPhase(value: unknown): HomeTodoRouti
   return HOME_ROUTINES_PER_PHASE_OPTIONS.includes(value as HomeTodoRoutinesPerPhase)
     ? value as HomeTodoRoutinesPerPhase
     : DEFAULT_HOME_TODO_ROUTINES_PER_PHASE;
+}
+
+export function hasMeaningfulHomeTodoState(state: HomeTodoStateV4) {
+  return state.taskIds.length > 0
+    || Object.keys(state.taskDayOffsets).length > 0
+    || state.tasksPerDay !== DEFAULT_HOME_TODO_TASKS_PER_DAY
+    || state.routineTaskIds.length > 0
+    || state.routinesPerPhase !== DEFAULT_HOME_TODO_ROUTINES_PER_PHASE;
+}
+
+export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
+  return syncStatus !== "loading";
 }
 
 function formatOrdinalDay(day: number) {

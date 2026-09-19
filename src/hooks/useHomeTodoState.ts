@@ -5,17 +5,17 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import {
   EMPTY_HOME_TODO_STATE,
+  hasMeaningfulHomeTodoState,
   normalizeHomeTodoRoutinesPerPhase,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
   type HomeTodoStateV4,
+  type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 
 const CACHE_PREFIX = "adhdice-home-todo";
 const WRITE_DELAY_MS = 650;
-
-export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
 function cacheKey(userId: string) {
   return `${CACHE_PREFIX}:${userId}`;
@@ -151,7 +151,7 @@ export function useHomeTodoState(userId: string | null) {
           } else {
             setSyncStatus("synced");
           }
-        } else if (cached.taskIds.length > 0) {
+        } else if (hasMeaningfulHomeTodoState(cached)) {
           dirtyRef.current = true;
           scheduleWrite();
         } else {
