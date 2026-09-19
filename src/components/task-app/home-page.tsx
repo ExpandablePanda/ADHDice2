@@ -1,13 +1,12 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Plus, Search, Settings2 } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Plus, Search, Settings2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { TaskTypeSelect } from "./task-type-identity";
-import { CompactDateTimeField, CompactSelectField, EditorCollapsibleSection, TagChipInput } from "./task-editor-fields";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
@@ -23,7 +22,6 @@ import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
 import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
 import {
-  formatTaskPriorityMenuLabel,
   getSelectedTaskPriorityToneClass,
   getTaskPriorityToneClass,
   TASK_PRIORITY_LEVEL_OPTIONS,
@@ -52,8 +50,14 @@ import {
 } from "@/lib/home-todo-state";
 import {
   CompactRepeatCadenceControls,
+  dedupeTaskTagLabels,
+  formatNewTaskTagLabel,
   TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
+  TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
+  TASK_TABLE_INPUT_CLASS,
+  normalizeTaskTagValue,
+  TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
@@ -130,6 +134,7 @@ export function HomePage({
   const [newTaskRepeatMonthlyOrdinal, setNewTaskRepeatMonthlyOrdinal] = useState<TaskRepeatMonthlyOrdinal | null>(null);
   const [newTaskRepeatMonthlyWeekday, setNewTaskRepeatMonthlyWeekday] = useState<number | null>(null);
   const [newTaskTags, setNewTaskTags] = useState<string[]>([]);
+  const [newTaskTagDraft, setNewTaskTagDraft] = useState("");
   const [newTaskPriority, setNewTaskPriority] = useState<TaskPriorityLevelOption>("0");
   const [isCreating, setIsCreating] = useState(false);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
@@ -148,6 +153,13 @@ export function HomePage({
     () => reconciledTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task)),
     [reconciledTaskIds, taskById],
   );
+  const normalizedNewTaskTagDraft = normalizeTaskTagValue(newTaskTagDraft);
+  const selectedNewTaskTagSet = new Set(newTaskTags.map((tag) => normalizeTaskTagValue(tag)));
+  const dedupedNewTaskTagOptions = dedupeTaskTagLabels(allTags);
+  const availableNewTaskTagOptions = dedupedNewTaskTagOptions
+    .filter((tag) => !selectedNewTaskTagSet.has(normalizeTaskTagValue(tag)))
+    .filter((tag) => !normalizedNewTaskTagDraft || normalizeTaskTagValue(tag).includes(normalizedNewTaskTagDraft));
+  const exactNewTaskTagMatch = dedupedNewTaskTagOptions.find((tag) => normalizeTaskTagValue(tag) === normalizedNewTaskTagDraft) ?? null;
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
@@ -200,6 +212,18 @@ export function HomePage({
     setNewTaskRepeatMonthlyWeekday(null);
   }
 
+  function addNewTaskTag(rawTag: string) {
+    const normalizedTag = formatNewTaskTagLabel(rawTag);
+    if (!normalizedTag) return;
+    setNewTaskTags((current) => dedupeTaskTagLabels([...current, normalizedTag]));
+    setNewTaskTagDraft("");
+  }
+
+  function removeNewTaskTag(tagToRemove: string) {
+    const normalizedTagToRemove = normalizeTaskTagValue(tagToRemove);
+    setNewTaskTags((current) => current.filter((tag) => normalizeTaskTagValue(tag) !== normalizedTagToRemove));
+  }
+
   function buildNewTaskMetadata(): HomeTodoTaskMetadata {
     const repeatInterval = parsePositiveInteger(newTaskRepeatInterval) ?? 1;
     const repeatDayOfMonth = newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "day_of_month"
@@ -236,6 +260,7 @@ export function HomePage({
     setNewTaskRepeatMonthlyOrdinal(null);
     setNewTaskRepeatMonthlyWeekday(null);
     setNewTaskTags([]);
+    setNewTaskTagDraft("");
     setNewTaskPriority("0");
   }
 
@@ -570,58 +595,72 @@ export function HomePage({
                   value={newTaskTypeSelection}
                 />
               </label>
-              <div className="w-full">
-                <EditorCollapsibleSection
-                  summary="Due date, repeat cadence, tags, and priority."
-                  title="Task details"
-                >
-                  <fieldset className="grid gap-4" disabled={isCreating}>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <CompactDateTimeField
-                        clearLabel="Clear due date"
-                        label="Due date"
-                        onChange={(value) => {
-                          setNewTaskDueOn(value);
-                          if (!value) setNewTaskDueTime("");
-                        }}
-                        onClear={() => {
-                          setNewTaskDueOn("");
-                          setNewTaskDueTime("");
-                        }}
-                        type="date"
-                        value={newTaskDueOn}
-                      />
-                      <CompactDateTimeField
-                        clearLabel="Clear due time"
-                        label="Due time"
-                        onChange={setNewTaskDueTime}
-                        onClear={() => setNewTaskDueTime("")}
-                        type="time"
-                        value={newTaskDueTime}
-                      />
+              <fieldset className="grid w-full min-w-0 gap-3" disabled={isCreating}>
+                <div className="grid min-w-0 gap-2 sm:grid-cols-2">
+                  <label className="grid min-w-0 gap-1">
+                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Due date</span>
+                    <input
+                      aria-label="Due date"
+                      className={TASK_TABLE_INPUT_CLASS}
+                      onChange={(event) => {
+                        setNewTaskDueOn(event.target.value);
+                        if (!event.target.value) setNewTaskDueTime("");
+                      }}
+                      type="date"
+                      value={newTaskDueOn}
+                    />
+                  </label>
+                  <label className="grid min-w-0 gap-1">
+                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Due time</span>
+                    <input
+                      aria-label="Due time"
+                      className={TASK_TABLE_INPUT_CLASS}
+                      onChange={(event) => setNewTaskDueTime(event.target.value)}
+                      type="time"
+                      value={newTaskDueTime}
+                    />
+                  </label>
+                </div>
+                <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
+                  <div className="grid min-w-0 gap-1">
+                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Priority</span>
+                    <div className="flex flex-wrap gap-2">
+                      {TASK_PRIORITY_LEVEL_OPTIONS.map((value) => (
+                        <TaskTableChipButton
+                          key={value}
+                          onClick={() => setNewTaskPriority(value)}
+                          toneClassName={newTaskPriority === value ? getSelectedTaskPriorityToneClass(value) : getTaskPriorityToneClass(value)}
+                        >
+                          {value}
+                        </TaskTableChipButton>
+                      ))}
                     </div>
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <CompactSelectField
-                        label="Priority"
-                        onChange={setNewTaskPriority}
-                        optionButtonClassName={(value, selected) => selected
-                          ? getSelectedTaskPriorityToneClass(value)
-                          : getTaskPriorityToneClass(value)}
-                        options={TASK_PRIORITY_LEVEL_OPTIONS}
-                        renderValueLabel={(value) => formatTaskPriorityMenuLabel(Number.parseInt(value, 10) as TaskPriorityLevel)}
-                        triggerClassName={(value) => getTaskPriorityToneClass(value)}
-                        value={newTaskPriority}
-                      />
-                      <CompactSelectField
-                        label="Repeat"
-                        onChange={selectNewTaskRepeatFrequency}
-                        options={HOME_REPEAT_OPTIONS.map((option) => option.value)}
-                        renderValueLabel={(value) => HOME_REPEAT_OPTIONS.find((option) => option.value === value)?.label ?? value}
-                        value={newTaskRepeatFrequency}
-                      />
+                  </div>
+                  <div className="grid min-w-0 gap-1">
+                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Repeat</span>
+                    <div className="flex flex-wrap gap-2">
+                      {HOME_REPEAT_OPTIONS.map((option) => (
+                        <TaskTableChipButton
+                          key={option.value}
+                          onClick={() => selectNewTaskRepeatFrequency(option.value)}
+                          toneClassName={newTaskRepeatFrequency === option.value && option.value !== "none"
+                            ? TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS
+                            : TASK_TABLE_INACTIVE_CHIP_CLASS}
+                        >
+                          {option.label}
+                        </TaskTableChipButton>
+                      ))}
+                      <TaskTableChipButton
+                        onClick={applyNewTaskWeekdaysPreset}
+                        toneClassName={isWeekdaysRepeatSelection(newTaskRepeatFrequency, newTaskRepeatDaysOfWeek, parsePositiveInteger(newTaskRepeatInterval) ?? 1)
+                          ? TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS
+                          : TASK_TABLE_INACTIVE_CHIP_CLASS}
+                      >
+                        Weekdays
+                      </TaskTableChipButton>
                     </div>
                     {newTaskRepeatFrequency !== "none" ? (
-                      <div className="grid gap-2 rounded-[1rem] border border-[#ece6fb] bg-white/70 p-3 dark:border-white/10 dark:bg-white/[0.03]">
+                      <div className="mt-1 space-y-2">
                         <CompactRepeatCadenceControls
                           activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
                           dayInputProps={{
@@ -677,28 +716,76 @@ export function HomePage({
                           repeatDaysOfWeek={newTaskRepeatDaysOfWeek}
                           repeatUnits={HOME_REPEAT_UNITS}
                           showInterval
-                          showMonthDay={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode !== "ordinal_weekday"}
-                          showMonthlyMode={newTaskRepeatFrequency === "monthly"}
-                          showMonthlyOrdinals={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday"}
-                          showMonthlyWeekdays={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday"}
+                          showMonthDay={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode !== "ordinal_weekday"}
+                          showMonthlyMode={newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom"}
+                          showMonthlyOrdinals={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode === "ordinal_weekday"}
+                          showMonthlyWeekdays={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode === "ordinal_weekday"}
                           showWeekdays={newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom"}
-                          weekdayOptions={newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday"
+                          weekdayOptions={newTaskRepeatMonthlyMode === "ordinal_weekday"
                             ? HOME_REPEAT_MONTHLY_WEEKDAY_OPTIONS
                             : HOME_REPEAT_WEEKDAY_OPTIONS}
                         />
-                        <AdhdChip
-                          onClick={applyNewTaskWeekdaysPreset}
-                          selected={isWeekdaysRepeatSelection(newTaskRepeatFrequency, newTaskRepeatDaysOfWeek, parsePositiveInteger(newTaskRepeatInterval) ?? 1)}
-                          type="button"
-                        >
-                          Weekdays
-                        </AdhdChip>
                       </div>
                     ) : null}
-                    <TagChipInput allTags={allTags} onChange={setNewTaskTags} values={newTaskTags} />
-                  </fieldset>
-                </EditorCollapsibleSection>
-              </div>
+                  </div>
+                </div>
+                <div className="grid min-w-0 gap-2">
+                  <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Tags</span>
+                  <div className="flex flex-wrap gap-2">
+                    {newTaskTags.length > 0 ? newTaskTags.map((tag) => (
+                      <TaskTableChipButton
+                        key={tag}
+                        onClick={() => removeNewTaskTag(tag)}
+                        toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
+                      >
+                        #{tag}
+                        <X className="ml-1 h-3.5 w-3.5" />
+                      </TaskTableChipButton>
+                    )) : (
+                      <span className="text-sm text-[#7d7597] dark:text-white/55">No tags on this task yet.</span>
+                    )}
+                  </div>
+                  <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <input
+                      aria-label="Search or add a tag"
+                      className={`${TASK_TABLE_INPUT_CLASS} min-w-[12rem] flex-1 sm:min-w-[16rem]`}
+                      onChange={(event) => setNewTaskTagDraft(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        if (!newTaskTagDraft.trim()) return;
+                        event.preventDefault();
+                        addNewTaskTag(exactNewTaskTagMatch ?? newTaskTagDraft);
+                      }}
+                      placeholder="Search or add a tag"
+                      type="text"
+                      value={newTaskTagDraft}
+                    />
+                    {exactNewTaskTagMatch ? (
+                      <TaskTableChipButton onClick={() => addNewTaskTag(exactNewTaskTagMatch)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+                        Use #{exactNewTaskTagMatch}
+                      </TaskTableChipButton>
+                    ) : null}
+                    {normalizedNewTaskTagDraft && !exactNewTaskTagMatch ? (
+                      <TaskTableChipButton onClick={() => addNewTaskTag(newTaskTagDraft)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+                        {`Add "${formatNewTaskTagLabel(newTaskTagDraft)}"`}
+                      </TaskTableChipButton>
+                    ) : null}
+                  </div>
+                  {availableNewTaskTagOptions.length > 0 ? (
+                    <div className="flex flex-wrap gap-2">
+                      {availableNewTaskTagOptions.map((tag) => (
+                        <TaskTableChipButton key={tag} onClick={() => addNewTaskTag(tag)} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>
+                          #{tag}
+                        </TaskTableChipButton>
+                      ))}
+                    </div>
+                  ) : (
+                    <span className="text-sm text-[#7d7597] dark:text-white/55">
+                      {normalizedNewTaskTagDraft ? "No matching saved tags." : "No saved tags yet."}
+                    </span>
+                  )}
+                </div>
+              </fieldset>
               <div className="flex shrink-0 gap-1.5">
                 <AdhdChip disabled={isCreating} selected type="submit">
                   {isCreating ? "Adding…" : "Add"}

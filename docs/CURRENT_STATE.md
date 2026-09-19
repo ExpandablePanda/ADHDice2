@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-13
+Last reviewed: 2026-09-18
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.68`.
+- Current working app version: `7.13.69`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -51,6 +51,13 @@ numeric priority, and resolved Task Type metadata through the canonical Task
 creation path. Home day projection treats Tasks Per Day as a hard capacity for
 all seven normal sections, spilling preferred-day overflow forward and then to
 Later without rewriting durable offsets or Task rows.
+
+## 2026-09-18 7.13.69 Correct Home New Task Metadata UI
+
+Home New Task keeps its 7.13.68 metadata and canonical creation behavior while
+using the current Edit Task input, chip, cadence, and tag presentation directly
+inside the composer. The legacy Task Details accordion and field components are
+no longer used by Home.
 
 ## 2026-09-13 7.13.63 Custom Task Type Presentation QA Correction
 

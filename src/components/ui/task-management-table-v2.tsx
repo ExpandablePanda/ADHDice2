@@ -91,7 +91,10 @@ import {
   TASK_TABLE_TITLE_CELL_CLASS as TITLE_CELL_CLASS,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS as VISIBLE_TITLE_TEXT_CLASS,
   CompactRepeatCadenceControls,
+  dedupeTaskTagLabels,
+  formatNewTaskTagLabel,
   formatTaskTableEntryTimestamp,
+  normalizeTaskTagValue,
   ScrollUpButton,
   TaskCurrentStreakChip,
   TaskInlineChildDraft,
@@ -2131,33 +2134,6 @@ function inlineAccordionInputCardClass(widthClass = "w-[15rem]") {
 
 function compareText(a: string, b: string) {
   return a.localeCompare(b, undefined, { sensitivity: "base" });
-}
-
-function cleanTaskTagLabel(value: string) {
-  return value.trim().replace(/^#+/, "").replace(/\s+/g, " ");
-}
-
-function normalizeTaskTagValue(value: string) {
-  return cleanTaskTagLabel(value).toLowerCase().replace(/\s+/g, "-");
-}
-
-function formatNewTaskTagLabel(value: string) {
-  return normalizeTaskTagValue(value);
-}
-
-function dedupeTaskTagLabels(tags: string[]) {
-  const seen = new Set<string>();
-  const nextTags: string[] = [];
-  for (const tag of tags) {
-    const cleanedTag = cleanTaskTagLabel(tag);
-    const normalizedTag = normalizeTaskTagValue(cleanedTag);
-    if (!normalizedTag || seen.has(normalizedTag)) {
-      continue;
-    }
-    seen.add(normalizedTag);
-    nextTags.push(cleanedTag);
-  }
-  return nextTags;
 }
 
 function chunkItems<T>(items: T[], size: number) {
