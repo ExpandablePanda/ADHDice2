@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.75`.
+- Current working app version: `7.13.76`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -30,6 +30,14 @@ directly displayed Routine anchors. The controls update the persisted flat
 Routine order, so inherited Steps/Substeps move with their parent group while
 ordinal Section names remain unchanged. To-do ordering and all other Home
 Routine semantics are unchanged.
+
+## 2026-09-19 7.13.76 Keep Complete Confirmation on the Initiating Page
+
+Complete confirmation is now rendered by an app-level `TaskEditFlows`
+instance using the existing `pendingCompleteAction` state. Tasks retains the
+other workspace-only flows while passing `completeFlow={null}`, so Home,
+shared-editor, Table, and List Complete actions show one confirmation over the
+current surface without changing Complete semantics or page routing.
 
 ## 2026-09-19 7.13.75 Drag Routine Steps/Substeps Within Their Parent
 

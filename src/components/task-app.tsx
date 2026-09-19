@@ -6904,38 +6904,40 @@ export function TaskApp() {
     });
   };
 
+  const completeFlow = (() => {
+    if (!pendingCompleteAction) {
+      return null;
+    }
+    const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
+    const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
+    const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
+    const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
+    return {
+      confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
+      description: isMilestoneComplete
+        ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
+        : getTaskCompleteConfirmationDescription(completeFlowTask),
+      modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
+        ? "Mark step complete"
+        : "Mark task permanently complete",
+      onClose: () => setPendingCompleteAction(null),
+      onConfirm: () => { void confirmPendingTaskComplete(); },
+      pending: isMilestoneComplete && isMilestoneLifecyclePending,
+      taskTitle: pendingCompleteTask?.title ?? "Task",
+      title: isMilestoneComplete
+        ? "Complete Milestone and award trophy?"
+        : (pendingCompleteTask?.parent_task_id ?? null)
+        ? "Mark this Step Complete?"
+        : "Mark permanently Complete?",
+    };
+  })();
+
   const taskWorkspaceFlowLayer = (
     <>
       <TaskEditFlows
         batchDeleteFlow={batchDeleteFlow}
         batchEditFlow={batchEditFlow}
-        completeFlow={(() => {
-          if (!pendingCompleteAction) {
-            return null;
-          }
-          const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
-          const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
-          const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
-          const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
-          return {
-            confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
-            description: isMilestoneComplete
-              ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
-              : getTaskCompleteConfirmationDescription(completeFlowTask),
-            modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
-              ? "Mark step complete"
-              : "Mark task permanently complete",
-            onClose: () => setPendingCompleteAction(null),
-            onConfirm: () => { void confirmPendingTaskComplete(); },
-            pending: isMilestoneComplete && isMilestoneLifecyclePending,
-            taskTitle: pendingCompleteTask?.title ?? "Task",
-            title: isMilestoneComplete
-              ? "Complete Milestone and award trophy?"
-              : (pendingCompleteTask?.parent_task_id ?? null)
-              ? "Mark this Step Complete?"
-              : "Mark permanently Complete?",
-          };
-        })()}
+        completeFlow={null}
         focusPlannerFlow={focusPlannerFlow}
         momentumFlow={momentumFlow}
         taskHistoryFlow={taskHistoryFlow}
@@ -6991,6 +6993,14 @@ export function TaskApp() {
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
+      <TaskEditFlows
+        batchDeleteFlow={null}
+        batchEditFlow={null}
+        completeFlow={completeFlow}
+        focusPlannerFlow={null}
+        momentumFlow={null}
+        taskHistoryFlow={null}
+      />
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
         <TaskManagementTableV2
           allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
