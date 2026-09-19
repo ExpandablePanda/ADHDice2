@@ -610,12 +610,38 @@ test("Home Routine drag order moves whole groups and leaves To-do state independ
   const parent = task("parent");
   const child = task("child", { parent_task_id: parent.id });
   const other = task("other");
+  const todoTaskIds = ["todo-a", "todo-b"];
   const groups = buildHomeRoutineGroups([parent.id, other.id], [parent, child, other]);
   const reorderedGroups = reorderListItems(groups, 0, 1);
 
   assert.deepEqual(reorderedGroups.map((group) => group.anchorId), [other.id, parent.id]);
   assert.deepEqual(reorderedGroups[1]?.taskIds, [parent.id, child.id]);
-  assert.deepEqual(["todo-a", "todo-b"], ["todo-a", "todo-b"]);
+  assert.deepEqual(todoTaskIds, ["todo-a", "todo-b"]);
+});
+
+test("Home Routine edge actions move anchors, preserve descendants, and keep ordinal Section names", () => {
+  const parent = task("parent");
+  const child = task("child", { parent_task_id: parent.id });
+  const middle = task("middle");
+  const last = task("last");
+  const routineTaskIds = [parent.id, middle.id, last.id];
+  const sectionNames = { "0": "Morning", "1": "Work" };
+
+  const movedToTop = moveHomeTodoTaskIdToEdge(routineTaskIds, middle.id, "top");
+  const movedToBottom = moveHomeTodoTaskIdToEdge(routineTaskIds, middle.id, "bottom");
+
+  assert.deepEqual(movedToTop, [middle.id, parent.id, last.id]);
+  assert.deepEqual(movedToBottom, [parent.id, last.id, middle.id]);
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(routineTaskIds, parent.id, "top"), routineTaskIds);
+  assert.deepEqual(moveHomeTodoTaskIdToEdge(routineTaskIds, last.id, "bottom"), routineTaskIds);
+
+  const movedGroups = buildHomeRoutineGroups(movedToTop, [parent, child, middle, last]);
+  assert.deepEqual(movedGroups.map((group) => group.anchorId), [middle.id, parent.id, last.id]);
+  assert.deepEqual(movedGroups[1]?.taskIds, [parent.id, child.id]);
+  assert.deepEqual(buildHomeRoutineSections(routineTaskIds, 1, sectionNames).map((section) => section.label), ["Morning", "Work", "Section 3"]);
+  assert.deepEqual(buildHomeRoutineSections(movedToTop, 1, sectionNames).map((section) => section.label), ["Morning", "Work", "Section 3"]);
+  assert.deepEqual(buildHomeRoutineSections(movedToBottom, 1, sectionNames).map((section) => section.label), ["Morning", "Work", "Section 3"]);
+  assert.deepEqual(routineTaskIds, [parent.id, middle.id, last.id]);
 });
 
 test("Home state rejects malformed Routine order, capacity, and names while preserving To-do fields", () => {
@@ -780,6 +806,8 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /const renderedDayOffset = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
   assert.match(source, /const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0/);
   assert.match(source, /const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
+  assert.match(source, /const isAtRoutineTop = isRoutine && index === 0/);
+  assert.match(source, /const isAtRoutineBottom = isRoutine && index === routineGroups\.length - 1/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
   assert.match(source, /updateTaskDayOffset\(task\.id, 0\)/);
@@ -852,6 +880,10 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.doesNotMatch(source, /basis-full/);
   assert.match(source, /<ArrowUpToLine aria-hidden="true" \/>/);
   assert.match(source, /<ArrowDownToLine aria-hidden="true" \/>/);
+  assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)\)/);
+  assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)\)/);
+  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
+  assert.match(source, /!isRoutineChild \? <div className="flex shrink-0 items-center gap-1">/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
   assert.match(source, /const durableTaskIndex = state\.taskIds\.indexOf\(task\.id\)/);
@@ -864,11 +896,11 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /updateTaskDayOffset\(task\.id, 7\)/);
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
-  assert.equal((source.match(/size="sm"/g) ?? []).length, 6);
+  assert.equal((source.match(/size="sm"/g) ?? []).length, 8);
   assert.match(source, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
   assert.match(source, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
-  assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 4);
-  assert.equal((source.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 4);
+  assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 6);
+  assert.equal((source.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 6);
   assert.match(sharedIconButton, /sm: "h-8 w-8"/);
   assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /tone="danger"/);

@@ -538,6 +538,8 @@ export function HomePage({
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
     const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0;
     const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state.taskIds.length - 1 && renderedDayOffset === 7;
+    const isAtRoutineTop = isRoutine && index === 0;
+    const isAtRoutineBottom = isRoutine && index === routineGroups.length - 1;
     return (
       <AdhdCard
         key={rowKey}
@@ -613,17 +615,43 @@ export function HomePage({
         </div>
         {!isRoutineChild ? <div className="flex shrink-0 items-center gap-1">
           {isRoutine ? (
-            <AdhdIconButton
-              aria-label={`Remove ${task.title || "Untitled task"} from Routine`}
-              className={HOME_TODO_ACTION_CLASS}
-              iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-              onClick={() => { void onSetRoutineMembership(task.id, false); }}
-              size="sm"
-              title="Remove from Routine"
-              tone="danger"
-            >
-              <Minus aria-hidden="true" />
-            </AdhdIconButton>
+            <>
+              {!isAtRoutineTop ? (
+                <AdhdIconButton
+                  aria-label={`Move ${task.title || "Untitled task"} to Top`}
+                  className={HOME_TODO_ACTION_CLASS}
+                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                  onClick={() => updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
+                  size="sm"
+                  title="Move task to Top"
+                >
+                  <ArrowUpToLine aria-hidden="true" />
+                </AdhdIconButton>
+              ) : null}
+              {!isAtRoutineBottom ? (
+                <AdhdIconButton
+                  aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+                  className={HOME_TODO_ACTION_CLASS}
+                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                  onClick={() => updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
+                  size="sm"
+                  title="Move task to Bottom"
+                >
+                  <ArrowDownToLine aria-hidden="true" />
+                </AdhdIconButton>
+              ) : null}
+              <AdhdIconButton
+                aria-label={`Remove ${task.title || "Untitled task"} from Routine`}
+                className={HOME_TODO_ACTION_CLASS}
+                iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                onClick={() => { void onSetRoutineMembership(task.id, false); }}
+                size="sm"
+                title="Remove from Routine"
+                tone="danger"
+              >
+                <Minus aria-hidden="true" />
+              </AdhdIconButton>
+            </>
           ) : (
             <>
               {!isAtAbsoluteTop ? (

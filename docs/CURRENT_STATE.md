@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.73`.
+- Current working app version: `7.13.74`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -22,6 +22,14 @@ membership, hierarchy, or order. Routine rows show their own due metadata and
 canonical History streak summaries, with missed streaks taking precedence over
 active streaks. Home save/sync status remains internal and background
 persistence remains unchanged; no SQL or schema change was made.
+
+## 2026-09-19 7.13.74 Add Routine Top / Bottom Controls
+
+Home Routine now exposes the existing Top and Bottom ordering controls on
+directly displayed Routine anchors. The controls update the persisted flat
+Routine order, so inherited Steps/Substeps move with their parent group while
+ordinal Section names remain unchanged. To-do ordering and all other Home
+Routine semantics are unchanged.
 
 ## 2026-09-19 7.13.71 Routine Hierarchy, Ordering, and Phase Sections
 
