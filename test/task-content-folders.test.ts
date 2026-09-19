@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
+  buildTaskContentFolderMemberSummary,
   buildTaskContentFolderAssignmentPatch,
   buildTaskContentFolderPresentation,
   countVisibleTaskContentFolderMembers,
@@ -157,6 +158,30 @@ test("A hidden Folder member is not pulled into a filtered result and collapse d
   assert.deepEqual([...collapsedIds], ["folder-a"]);
 });
 
+test("Folder member summaries use all direct members and keep Steps out of bulk state", () => {
+  const summary = buildTaskContentFolderMemberSummary([
+    { id: "visible", task_content_folder_id: "folder-a", isPinned: true, isRoutine: true, hasAttention: false },
+    { id: "hidden", task_content_folder_id: "folder-a", isPinned: false, isRoutine: false, hasAttention: true },
+    { id: "step", parent_task_id: "visible", task_content_folder_id: null, isPinned: true, isRoutine: true, hasAttention: true },
+  ], "folder-a");
+
+  assert.deepEqual(summary.memberTaskIds, ["visible", "hidden"]);
+  assert.deepEqual(summary.pinnedTaskIds, ["visible"]);
+  assert.deepEqual(summary.routineTaskIds, ["visible"]);
+  assert.equal(summary.anyPinned, true);
+  assert.equal(summary.allPinned, false);
+  assert.equal(summary.anyRoutine, true);
+  assert.equal(summary.allRoutine, false);
+  assert.equal(summary.attentionCount, 1);
+});
+
+test("An empty Folder does not appear fully pinned or fully in Routine", () => {
+  const summary = buildTaskContentFolderMemberSummary([], "folder-a");
+  assert.equal(summary.allPinned, false);
+  assert.equal(summary.allRoutine, false);
+  assert.deepEqual(summary.memberTaskIds, []);
+});
+
 test("Table and List use the shared Folder projection and the Folder stays outside Task State", () => {
   const table = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
   const list = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
@@ -165,6 +190,10 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   const taskType = readFileSync(new URL("../src/lib/task-type.ts", import.meta.url), "utf8");
   assert.match(table, /buildTaskContentFolderPresentation/);
   assert.match(list, /buildTaskContentFolderPresentation/);
+  assert.match(table, /buildTaskContentFolderMemberSummary/);
+  assert.match(list, /buildTaskContentFolderMemberSummary/);
+  assert.match(table, /onToggleMemberPinned={onTaskPinToggle}/);
+  assert.match(list, /onToggleMemberPinned={tableProps\.onTogglePinned}/);
   assert.match(table, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(list, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(table, /block\.members\.map\(\(task\) =>/);

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.23`.
+- Current working app version: `7.14.24`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.24 Polish Folder Rows and Refresh Missed Streaks
+
+Folder headers now share bounded inline rename sizing and aggregate member
+quick actions across Table and List, while remaining presentation-only
+containers. Logical-day rollover, visibility resume, and refreshed History
+snapshots now invalidate the shared Task streak-summary loader so current
+Missed badges do not remain stale across a day boundary.
 
 ## 2026-09-16 7.14.0 Start Development Line
 

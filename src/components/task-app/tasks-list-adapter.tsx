@@ -90,7 +90,12 @@ import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyRes
 import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
 import { buildTaskTypeSelectionOptions, resolveTaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskTypePresentation } from "@/lib/task-type-presentation";
-import { buildTaskContentFolderPresentation, type TaskContentFolderMenuOption } from "@/lib/task-content-folders";
+import {
+  buildTaskContentFolderMemberSummary,
+  buildTaskContentFolderPresentation,
+  type TaskContentFolderMemberSummary,
+  type TaskContentFolderMenuOption,
+} from "@/lib/task-content-folders";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -284,6 +289,7 @@ type TasksTableSourceProps = {
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, title: string) => Promise<boolean> | boolean;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
@@ -709,6 +715,7 @@ export function TasksTableAdapter({
           collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
           onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
           onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+          onAddTaskToContentFolder={tableProps.onAddTaskToContentFolder}
           onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
           onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
           onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
@@ -2711,6 +2718,20 @@ function TasksSimpleList({
     () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? []),
     [tableProps.taskContentFolders, windowedTasks],
   );
+  const allFolderMemberTasks = tableProps.allTasks ?? tableProps.tasks;
+  const folderMemberSummaryById = useMemo(() => {
+    const memberFacts = allFolderMemberTasks.map((task) => ({
+      id: task.id,
+      parent_task_id: task.parent_task_id,
+      task_content_folder_id: task.task_content_folder_id,
+      isPinned: Boolean(task.pinned_at),
+      isRoutine: (tableProps.rowContext.listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"),
+      hasAttention: Boolean(tableProps.rowContext.taskAttentionReasonByTaskId[task.id]),
+    }));
+    return new Map<string, TaskContentFolderMemberSummary>(
+      (tableProps.taskContentFolders ?? []).map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id)]),
+    );
+  }, [allFolderMemberTasks, tableProps.rowContext.listMembershipsByTaskId, tableProps.rowContext.taskAttentionReasonByTaskId, tableProps.taskContentFolders]);
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
@@ -3234,6 +3255,7 @@ function TasksSimpleList({
               collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
               onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
               onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+              onAddTaskToContentFolder={tableProps.onAddTaskToContentFolder}
               onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
               onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
               onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
@@ -3349,13 +3371,17 @@ function TasksSimpleList({
                         activeSurface={activeTaskContentFolderEdit}
                         collapsed={entry.collapsed}
                         folder={entry.folder}
+                        memberSummary={folderMemberSummaryById.get(entry.folder.id)}
                         memberCount={entry.members.length}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
+                        onAddTaskToFolder={tableProps.onAddTaskToContentFolder}
                         onRename={tableProps.onRenameTaskContentFolder}
                         onSurfaceChange={(surface) => {
                           setActiveTaskContentFolderEdit(surface);
                           if (surface) setContentFolderContextMenu(null);
                         }}
+                        onToggleMemberPinned={tableProps.onTogglePinned}
+                        onToggleMemberRoutine={tableProps.onToggleTaskList}
                         onToggle={() => tableProps.onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
                         onUpdateIcon={tableProps.onUpdateTaskContentFolderIcon}
                       />

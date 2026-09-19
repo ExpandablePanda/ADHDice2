@@ -437,6 +437,28 @@ test("summary failure clears only its owned promise so a later retry can start",
   assert.match(summaryLoader, /if \(taskHistoryStreakSummaryLoadPromiseRef\.current === summaryLoadOwner\) \{\s*taskHistoryStreakSummaryLoadPromiseRef\.current = null/);
 });
 
+test("a logical-day transition supersedes the shared streak summary and uses the new day", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  assert.match(source, /if \(todayKeyRef\.current === todayKey\) return;\s*todayKeyRef\.current = todayKey;\s*void loadTaskHistoryStreakSummariesRef\.current\?\.\(tasksRef\.current, \{ supersede: true \}\);/);
+});
+
+test("rollover refreshes streak summaries after the canonical History snapshot, including zero Task mutations", async () => {
+  const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const reconciliation = workspaceSource.slice(
+    workspaceSource.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>"),
+    workspaceSource.indexOf("prepareTaskMutationRef.current = async () =>"),
+  );
+  const rolloverLifecycle = appSource.slice(
+    appSource.indexOf("const runDayReset = useCallback"),
+    appSource.indexOf("await reconcileRolloverWorkspace();"),
+  );
+  assert.match(reconciliation, /const didRefreshHistory = await loadTaskHistory\(\{ silent: true, source: "rollover" \}\);/);
+  assert.match(reconciliation, /if \(didRefreshHistory\) \{[\s\S]*loadTaskHistoryStreakSummaries\(tasksRef\.current, \{ supersede: true \}\);/);
+  assert.doesNotMatch(rolloverLifecycle, /if \(!didMutate\) return/);
+  assert.match(rolloverLifecycle, /Rollover completed; requesting targeted workspace reconciliation/);
+});
+
 test("the full-History summary branch rechecks ownership after waiting for the full load", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));

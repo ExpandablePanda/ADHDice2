@@ -2611,8 +2611,7 @@ export function TaskApp() {
           }
         }
         if (error) setMessage((previous) => previous ?? { tone: "warn", text: error.message });
-        if (!didMutate) return;
-        if (diagnosticsEnabled) console.info("[rollover] Rollover completed; requesting targeted workspace reconciliation.");
+        if (diagnosticsEnabled) console.info(`[rollover] Rollover completed; requesting targeted workspace reconciliation (task mutation=${didMutate}).`);
         await reconcileRolloverWorkspace();
       },
     });
@@ -4153,6 +4152,25 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
+  const addTaskToContentFolder = useCallback(async (folderId: string, rawTitle: string) => {
+    const title = rawTitle.trim();
+    if (!title) {
+      setMessage({ tone: "warn", text: "Task title can't be empty." });
+      return false;
+    }
+    const createdTask = await addTask(buildNewTaskDraft(title));
+    if (!createdTask) return false;
+
+    const didMove = await taskContentFolderActions.moveTaskToFolder(createdTask, folderId);
+    if (!didMove) {
+      setMessage({
+        tone: "warn",
+        text: `"${createdTask.title}" was created, but it could not be added to the Folder.`,
+      });
+      return false;
+    }
+    return true;
+  }, [addTask, setMessage, taskContentFolderActions.moveTaskToFolder]);
   async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
     const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
     const action = taskManualActionForStatus(status);
@@ -7653,6 +7671,7 @@ export function TaskApp() {
                   collapsedTaskContentFolderIds,
                   onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
                   onCreateTaskContentFolder: createTaskContentFolder,
+                  onAddTaskToContentFolder: addTaskToContentFolder,
                   onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
                   onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
@@ -7844,6 +7863,7 @@ export function TaskApp() {
                   collapsedTaskContentFolderIds,
                   onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
                   onCreateTaskContentFolder: createTaskContentFolder,
+                  onAddTaskToContentFolder: addTaskToContentFolder,
                   onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
                   onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,

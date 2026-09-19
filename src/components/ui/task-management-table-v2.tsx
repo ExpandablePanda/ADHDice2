@@ -37,7 +37,12 @@ import {
   X,
 } from "lucide-react";
 import type { CustomBehaviorRuleset, TaskContentFolder, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
-import { buildTaskContentFolderPresentation, type TaskContentFolderMenuOption } from "@/lib/task-content-folders";
+import {
+  buildTaskContentFolderMemberSummary,
+  buildTaskContentFolderPresentation,
+  type TaskContentFolderMemberSummary,
+  type TaskContentFolderMenuOption,
+} from "@/lib/task-content-folders";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import { TaskAttentionChip } from "@/components/task-app/task-attention-chip";
 import type { TaskAttentionReason } from "@/lib/task-attention";
@@ -1343,6 +1348,7 @@ type TaskManagementTableV2Props = {
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, title: string) => Promise<boolean> | boolean;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
@@ -2728,6 +2734,7 @@ export function TaskManagementTableV2({
   collapsedTaskContentFolderIds = new Set<string>(),
   onToggleTaskContentFolderCollapsed,
   onCreateTaskContentFolder,
+  onAddTaskToContentFolder,
   onRenameTaskContentFolder,
   onUpdateTaskContentFolderIcon,
   onDeleteTaskContentFolder,
@@ -3504,6 +3511,23 @@ export function TaskManagementTableV2({
     () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders),
     [renderedTasks, taskContentFolders],
   );
+  const allFolderMemberRows = useMemo(
+    () => getAllRows?.() ?? (allRows && allRows.length > 0 ? allRows : tasks),
+    [allRows, getAllRows, tasks],
+  );
+  const folderMemberSummaryById = useMemo(() => {
+    const memberFacts = allFolderMemberRows.map((task) => ({
+      id: task.id,
+      parent_task_id: task.parent_task_id,
+      task_content_folder_id: task.task_content_folder_id,
+      isPinned: Boolean(task.pinnedAt),
+      isRoutine: taskHasList(task, "Routine"),
+      hasAttention: Boolean(attentionReasonByTaskId[task.id] ?? task.attentionReason),
+    }));
+    return new Map<string, TaskContentFolderMemberSummary>(
+      taskContentFolders.map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id)]),
+    );
+  }, [allFolderMemberRows, attentionReasonByTaskId, taskContentFolders]);
   useLayoutEffect(() => {
     startTableScrollTopHoldFrames(true);
   }, [displayedTasks, renderedTasks.length, startTableScrollTopHoldFrames]);
@@ -9376,13 +9400,17 @@ export function TaskManagementTableV2({
                         activeSurface={activeTaskContentFolderEdit}
                         collapsed={entry.collapsed}
                         folder={entry.folder}
+                        memberSummary={folderMemberSummaryById.get(entry.folder.id)}
                         memberCount={entry.members.length}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
+                        onAddTaskToFolder={onAddTaskToContentFolder}
                         onRename={onRenameTaskContentFolder}
                         onSurfaceChange={(surface) => {
                           setActiveTaskContentFolderEdit(surface);
                           if (surface) setContentFolderContextMenu(null);
                         }}
+                        onToggleMemberPinned={onTaskPinToggle}
+                        onToggleMemberRoutine={onToggleTaskList}
                         onToggle={() => onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
                         onUpdateIcon={onUpdateTaskContentFolderIcon}
                       />

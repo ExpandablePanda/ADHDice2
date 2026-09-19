@@ -22,6 +22,50 @@ export type TaskContentFolderMenuOption = {
   label: string;
 };
 
+export type TaskContentFolderMemberFact = {
+  id: string;
+  parent_task_id?: string | null;
+  task_content_folder_id?: string | null;
+  isPinned: boolean;
+  isRoutine: boolean;
+  hasAttention: boolean;
+};
+
+export type TaskContentFolderMemberSummary = {
+  allPinned: boolean;
+  allRoutine: boolean;
+  anyPinned: boolean;
+  anyRoutine: boolean;
+  attentionCount: number;
+  memberTaskIds: string[];
+  pinnedTaskIds: string[];
+  routineTaskIds: string[];
+};
+
+export function buildTaskContentFolderMemberSummary(
+  tasks: readonly TaskContentFolderMemberFact[],
+  folderId: string,
+): TaskContentFolderMemberSummary {
+  const members = tasks.filter((task) => (
+    (task.parent_task_id ?? null) === null
+    && task.task_content_folder_id === folderId
+  ));
+  const memberTaskIds = members.map((task) => task.id);
+  const pinnedTaskIds = members.filter((task) => task.isPinned).map((task) => task.id);
+  const routineTaskIds = members.filter((task) => task.isRoutine).map((task) => task.id);
+
+  return {
+    allPinned: members.length > 0 && pinnedTaskIds.length === members.length,
+    allRoutine: members.length > 0 && routineTaskIds.length === members.length,
+    anyPinned: pinnedTaskIds.length > 0,
+    anyRoutine: routineTaskIds.length > 0,
+    attentionCount: members.filter((task) => task.hasAttention).length,
+    memberTaskIds,
+    pinnedTaskIds,
+    routineTaskIds,
+  };
+}
+
 export function normalizeTaskContentFolderName(value: string) {
   return value.trim().slice(0, TASK_CONTENT_FOLDER_NAME_MAX_LENGTH);
 }

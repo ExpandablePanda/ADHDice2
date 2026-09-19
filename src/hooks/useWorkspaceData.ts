@@ -427,12 +427,14 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   }, [activePage]);
 
   useEffect(() => {
-    todayKeyRef.current = todayKey;
-  }, [todayKey]);
-
-  useEffect(() => {
     tasksRef.current = tasks;
   }, [tasks]);
+
+  useEffect(() => {
+    if (todayKeyRef.current === todayKey) return;
+    todayKeyRef.current = todayKey;
+    void loadTaskHistoryStreakSummariesRef.current?.(tasksRef.current, { supersede: true });
+  }, [todayKey]);
 
   useEffect(() => {
     behaviorProfilesRef.current = behaviorProfiles;
@@ -647,11 +649,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             return;
           }
 
+          const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
+            taskResult.data ?? [],
+            (boundaryResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
+          );
+          tasksRef.current = nextTasks;
           startTransition(() => {
-            const nextTasks = projectTasksWithCanonicalScheduleBoundaries(
-              taskResult.data ?? [],
-              (boundaryResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
-            );
             setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
           });
           if (isWorkspacePerformanceDiagnosticsEnabled() && source === "rollover") {
@@ -1494,7 +1497,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info("[workspace] Rollover history reconciliation refreshing the shared canonical snapshot.");
       }
-      await loadTaskHistory({ silent: true, source: "rollover" });
+      const didRefreshHistory = await loadTaskHistory({ silent: true, source: "rollover" });
+      if (didRefreshHistory) {
+        await loadTaskHistoryStreakSummaries(tasksRef.current, { supersede: true });
+      }
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info("[workspace] Rollover targeted task reconciliation completed.");
       }

@@ -103,13 +103,15 @@ test("weekly early completion advances from the scheduled occurrence, not the ac
   assert.equal(calcNextDueDateFromDate(mondayWednesdayFriday, "2026-07-22"), "2026-07-24");
 });
 
-test("client rollover uses the coordinator and targeted reconciliation only after owned success", () => {
+test("client rollover uses the coordinator and targeted reconciliation after owned success", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const coordinatorIndex = source.indexOf("taskRolloverCoordinator.run");
   const ownedSettlementIndex = source.indexOf("onOwnedSettled", coordinatorIndex);
   const reconciliationIndex = source.indexOf("await reconcileRolloverWorkspace();", ownedSettlementIndex);
   assert.ok(coordinatorIndex >= 0 && ownedSettlementIndex > coordinatorIndex && reconciliationIndex > ownedSettlementIndex);
-  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(error\)[\s\S]*if \(!didMutate\) return/);
+  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(error\)/);
+  assert.doesNotMatch(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(!didMutate\) return/);
+  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /Rollover completed; requesting targeted workspace reconciliation/);
   assert.doesNotMatch(source, /adhdice_reconcile_task_rollover|adhdice_apply_task_state_engine_rollover/);
   assert.doesNotMatch(source, /lastResetDateRef/);
 });

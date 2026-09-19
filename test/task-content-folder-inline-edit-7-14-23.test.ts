@@ -6,6 +6,7 @@ import { isTaskTypeIconKey, searchTaskTypeIcons } from "../src/lib/task-type-pre
 const headerSource = readFileSync(new URL("../src/components/task-app/task-content-folder-editable-header.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
+const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const actionSource = readFileSync(new URL("../src/hooks/useTaskContentFolderActions.ts", import.meta.url), "utf8");
 const typesSource = readFileSync(new URL("../src/lib/database.types.ts", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
@@ -19,6 +20,25 @@ test("Folder title editing has the required commit, cancel, and duplicate-submit
   assert.match(headerSource, /onRename\(folder\.id, draftName\)/);
   assert.match(headerSource, /onSurfaceChange\(null\)/);
   assert.match(headerSource, /autoFocus/);
+  assert.match(headerSource, /w-\[20rem\]/);
+  assert.match(headerSource, /max-w-\[min\(20rem,calc\(100vw-10rem\)\)\]/);
+  assert.doesNotMatch(headerSource, /TASK_TABLE_INLINE_RENAME_EDITOR_CLASS[^\n]*flex-1/);
+});
+
+test("Folder quick actions remain bulk member actions and preserve neutral row collapse", () => {
+  assert.match(headerSource, /onToggleMemberPinned/);
+  assert.match(headerSource, /onToggleMemberRoutine/);
+  assert.match(headerSource, /onAddTaskToFolder/);
+  assert.match(headerSource, /data-folder-action-control/);
+  assert.match(headerSource, /aria-label=\{`Add Task to \$\{folder\.name\}`\}/);
+  assert.match(headerSource, /summary\.allPinned\s*\?\s*summary\.pinnedTaskIds/);
+  assert.match(headerSource, /summary\.allRoutine\s*\?\s*summary\.routineTaskIds/);
+  assert.match(headerSource, /onClick=\{\(event\) => event\.stopPropagation\(\)\}/);
+  assert.match(tableSource, /onAddTaskToContentFolder/);
+  assert.match(listSource, /onAddTaskToContentFolder/);
+  assert.match(appSource, /const addTaskToContentFolder = useCallback/);
+  assert.match(appSource, /addTask\(buildNewTaskDraft\(title\)\)/);
+  assert.match(appSource, /taskContentFolderActions\.moveTaskToFolder\(createdTask, folderId\)/);
 });
 
 test("Table and List use one shared Folder header with separate icon, title, and collapse paths", () => {

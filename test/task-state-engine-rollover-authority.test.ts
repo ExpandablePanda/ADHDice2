@@ -500,12 +500,13 @@ test("7.6.12 runs one final Achievement evaluation only when History was inserte
   assert.match(sql, /on conflict \(user_id, task_id, entry_date\) do nothing/);
 });
 
-test("zero-commit engine response skips targeted workspace reconciliation", () => {
+test("zero-commit engine response still refreshes logical-day-dependent workspace summaries", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const start = source.indexOf("const runDayReset = useCallback");
   const end = source.indexOf("await reconcileRolloverWorkspace();", start);
   const lifecycle = source.slice(start, end);
   assert.match(lifecycle, /didMutate = canonicalCommitted > 0/);
-  assert.match(lifecycle, /if \(!didMutate\) return/);
+  assert.doesNotMatch(lifecycle, /if \(!didMutate\) return/);
+  assert.match(lifecycle, /Rollover completed; requesting targeted workspace reconciliation \(task mutation=\$\{didMutate\}\)/);
   assert.equal((source.match(/await reconcileRolloverWorkspace\(\);/g) ?? []).length, 1);
 });
