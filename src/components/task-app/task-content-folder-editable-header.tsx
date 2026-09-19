@@ -219,7 +219,7 @@ export function TaskContentFolderEditableHeader({
       role="group"
       tabIndex={0}
     >
-      <div className="flex min-w-0 w-full items-center gap-2">
+      <div className="flex min-w-0 w-full flex-wrap items-center gap-2">
         <button
           aria-expanded={!collapsed}
           aria-label={`${collapsed ? "Expand" : "Collapse"} ${folder.name}`}
@@ -302,7 +302,7 @@ export function TaskContentFolderEditableHeader({
           ) : null}
         </div>
 
-        <div className="flex min-w-0 flex-1 items-center gap-2">
+        <div className="flex min-w-0 max-w-[22rem] flex-none items-center gap-2">
           {isRenaming ? (
             <input
               aria-label={`Rename ${folder.name}`}
@@ -352,10 +352,6 @@ export function TaskContentFolderEditableHeader({
             </button>
           )}
         </div>
-
-        <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">
-          {memberCount} visible {memberCount === 1 ? "Task" : "Tasks"}
-        </span>
 
         <div className="flex shrink-0 items-center gap-0.5" data-folder-action-control="true">
           {onToggleMemberPinned ? (
@@ -431,6 +427,10 @@ export function TaskContentFolderEditableHeader({
             </AdhdIconButton>
           ) : null}
         </div>
+
+        <span className="shrink-0 text-xs text-[#8d87a7] dark:text-white/50" data-style-role="tasks.content-folder.count">
+          {memberCount} visible {memberCount === 1 ? "Task" : "Tasks"}
+        </span>
       </div>
       {isAddingTask ? (
         <TaskInlineChildDraft

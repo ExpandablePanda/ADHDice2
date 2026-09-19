@@ -41,6 +41,16 @@ test("Folder quick actions remain bulk member actions and preserve neutral row c
   assert.match(appSource, /taskContentFolderActions\.moveTaskToFolder\(createdTask, folderId\)/);
 });
 
+test("Folder title, actions, and count use left-aligned content sizing", () => {
+  assert.match(headerSource, /className="flex min-w-0 w-full flex-wrap items-center gap-2"/);
+  assert.match(headerSource, /className="flex min-w-0 max-w-\[22rem\] flex-none items-center gap-2"/);
+  assert.doesNotMatch(headerSource, /className="flex min-w-0 flex-1 items-center gap-2"/);
+  assert.ok(headerSource.indexOf('data-style-role="tasks.content-folder.title"') < headerSource.indexOf('data-folder-action-control'));
+  assert.ok(headerSource.indexOf('data-folder-action-control') < headerSource.indexOf('data-style-role="tasks.content-folder.count"'));
+  assert.match(headerSource, /w-\[20rem\] max-w-\[min\(20rem,calc\(100vw-10rem\)\)\]/);
+  assert.match(headerSource, /className="relative flex w-full flex-col/);
+});
+
 test("Table and List use one shared Folder header with separate icon, title, and collapse paths", () => {
   for (const source of [tableSource, listSource]) {
     assert.match(source, /<TaskContentFolderEditableHeader/);

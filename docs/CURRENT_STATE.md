@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.24`.
+- Current working app version: `7.14.25`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,12 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.25 Keep Folder Actions Beside the Title
+
+Folder headers keep their full-width surface while using content-sized title
+regions and a wrapping left-aligned action group, so Table and List controls
+remain reachable without horizontal scrolling to the table edge.
 
 ## 2026-09-19 7.14.24 Polish Folder Rows and Refresh Missed Streaks
 
