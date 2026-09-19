@@ -3,7 +3,8 @@
 import { Flame, X } from "lucide-react";
 import { motion } from "framer-motion";
 import type { TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
-import type { ButtonHTMLAttributes, CSSProperties, FormEvent, InputHTMLAttributes, ReactNode, Ref, RefObject } from "react";
+import { useCallback, useEffect, useRef } from "react";
+import type { ButtonHTMLAttributes, CSSProperties, FormEvent, InputHTMLAttributes, MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent, ReactNode, Ref, RefObject } from "react";
 import { TASK_TABLE_GRID_ORIGIN_CLASS } from "@/lib/task-table-alignment";
 import { StyleLabIconPreviewSlot } from "@/components/style-lab/style-lab-icon-slot";
 import { StyleLabTextPart } from "@/components/style-lab/style-lab-text-part";
@@ -38,6 +39,10 @@ export const TASK_TABLE_LIST_CHIP_CLASS = "border-[#ece7f5] bg-[#f7f5fb] text-[#
 export const TASK_TABLE_ACTIVE_LIST_CHIP_CLASS = "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white";
 export const TASK_TABLE_TAG_CHIP_CLASS = "border-[#e8defe] bg-[#f3eeff] text-[#7762f3] dark:border-[#3a2e63] dark:bg-[#21183d] dark:text-[#c7bcff]";
 export const TASK_TABLE_INACTIVE_CHIP_CLASS = "border border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60";
+export const TASK_TABLE_SELECTED_TASK_SURFACE_CLASS = "!border-[#9a84ff] !bg-[#f3eeff] ring-2 ring-[#6f57f6]/45 shadow-[0_0_0_1px_rgba(111,87,246,0.12)] dark:!border-[#9c88ff] dark:!bg-[#2a2148] dark:ring-[#cabfff]/45 dark:shadow-[0_0_0_1px_rgba(202,191,255,0.12)]";
+export const TASK_SELECTION_TOOLBAR_CLASS = "flex flex-wrap items-center gap-1.5 rounded-[1rem] border border-[#ddd6fb] bg-[#faf8ff]/95 px-2 py-2 text-left shadow-[0_12px_30px_rgba(81,61,168,0.08)] backdrop-blur-md dark:border-white/10 dark:bg-[#1f1836]/95";
+export const TASK_ROW_LONG_PRESS_MS = 500;
+export const TASK_ROW_LONG_PRESS_MOVE_THRESHOLD_PX = 9;
 export const TASK_TABLE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_TEXT_CLASS} w-full rounded-[0.95rem] border border-[#e5e0f5] bg-[#fbfaff] px-3 py-2 text-[#2f294a] outline-none placeholder:text-[#9b92be] dark:border-white/15 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35`;
 export const TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} shrink-0 text-[#7a7592] dark:text-white/58`;
 export const TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS = `${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_TEXT_CLASS} h-[26px] w-[56px] min-w-[56px] max-w-[56px] shrink-0 rounded-full border border-[#e4deef] bg-[#f4f5f8] px-2 text-center text-[#68738c] outline-none transition placeholder:text-[#9b92be] focus:border-[#c9bcff] focus:bg-white focus:text-[#595378] dark:border-white/10 dark:bg-white/8 dark:text-white/60 dark:placeholder:text-white/35 dark:focus:border-[#6d56d6] dark:focus:bg-[#22193f]`;
@@ -45,6 +50,101 @@ export const TASK_TABLE_CURRENT_STREAK_CHIP_CLASS = `${TASK_TABLE_CHIP_BASE_CLAS
 export const TASK_LIST_QUICK_PANEL_SHELL_CLASS = "mt-2.5 rounded-[1.15rem] border border-[#e7defc] bg-[#fcfbff] px-4 py-3 shadow-[0_14px_34px_rgba(81,61,168,0.08)] dark:border-[#41306c] dark:bg-[#18112d]";
 export const TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS = "h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]";
 export const TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS = "border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
+
+type TaskRowLongPressSession = {
+  longPressTriggered: boolean;
+  pointerId: number;
+  startX: number;
+  startY: number;
+  target: HTMLElement;
+  timer: number | null;
+};
+
+export function useTaskRowLongPress({
+  isInteractiveTarget,
+  onLongPress,
+}: {
+  isInteractiveTarget: (target: EventTarget | null) => boolean;
+  onLongPress: (target: HTMLElement) => void;
+}) {
+  const sessionRef = useRef<TaskRowLongPressSession | null>(null);
+  const suppressClickRef = useRef(false);
+  const suppressContextMenuRef = useRef(false);
+  const cancelLongPress = useCallback((pointerId?: number) => {
+    const session = sessionRef.current;
+    if (!session || (pointerId !== undefined && session.pointerId !== pointerId)) {
+      return;
+    }
+    sessionRef.current = null;
+    if (session.timer !== null) {
+      window.clearTimeout(session.timer);
+    }
+    if (session.target.hasPointerCapture(session.pointerId)) {
+      session.target.releasePointerCapture(session.pointerId);
+    }
+  }, []);
+
+  useEffect(() => () => cancelLongPress(), [cancelLongPress]);
+
+  return {
+    onClickCapture: (event: ReactMouseEvent<HTMLElement>) => {
+      if (!suppressClickRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      suppressClickRef.current = false;
+    },
+    onContextMenuCapture: (event: ReactMouseEvent<HTMLElement>) => {
+      if (!suppressContextMenuRef.current) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      suppressContextMenuRef.current = false;
+    },
+    onLostPointerCapture: (event: ReactPointerEvent<HTMLElement>) => cancelLongPress(event.pointerId),
+    onPointerCancel: (event: ReactPointerEvent<HTMLElement>) => cancelLongPress(event.pointerId),
+    onPointerDown: (event: ReactPointerEvent<HTMLElement>) => {
+      suppressClickRef.current = false;
+      suppressContextMenuRef.current = false;
+      if (event.button !== 0 || !event.isPrimary || isInteractiveTarget(event.target)) {
+        return;
+      }
+      cancelLongPress();
+      const session: TaskRowLongPressSession = {
+        longPressTriggered: false,
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        target: event.currentTarget,
+        timer: null,
+      };
+      sessionRef.current = session;
+      event.currentTarget.setPointerCapture(event.pointerId);
+      session.timer = window.setTimeout(() => {
+        if (sessionRef.current !== session) {
+          return;
+        }
+        session.timer = null;
+        session.longPressTriggered = true;
+        suppressClickRef.current = true;
+        suppressContextMenuRef.current = true;
+        onLongPress(session.target);
+      }, TASK_ROW_LONG_PRESS_MS);
+    },
+    onPointerMove: (event: ReactPointerEvent<HTMLElement>) => {
+      const session = sessionRef.current;
+      if (!session || session.pointerId !== event.pointerId || session.longPressTriggered) {
+        return;
+      }
+      if (Math.hypot(event.clientX - session.startX, event.clientY - session.startY) > TASK_ROW_LONG_PRESS_MOVE_THRESHOLD_PX) {
+        cancelLongPress(event.pointerId);
+      }
+    },
+    onPointerUp: (event: ReactPointerEvent<HTMLElement>) => cancelLongPress(event.pointerId),
+  };
+}
 
 export function formatTaskTableEntryTimestamp(value: string) {
   const date = new Date(value);
@@ -340,6 +440,69 @@ export function TaskTableChipButton({
         ) : children}
       </span>
     </button>
+  );
+}
+
+export function TaskSelectionToolbar({
+  onClearSelection,
+  onDeleteSelected,
+  onEditSelected,
+  onEditTask,
+  onSelectAllVisible,
+  selectedCount,
+  sticky = false,
+}: {
+  onClearSelection?: () => void;
+  onDeleteSelected?: () => void;
+  onEditSelected?: () => void;
+  onEditTask?: () => void;
+  onSelectAllVisible?: () => void;
+  selectedCount: number;
+  sticky?: boolean;
+}) {
+  if (selectedCount <= 0) {
+    return null;
+  }
+
+  return (
+    <div
+      className={`${TASK_SELECTION_TOOLBAR_CLASS} ${sticky ? "sticky top-[3rem] z-30 mb-4" : ""}`}
+      data-style-component="TaskSelectionToolbar"
+      data-style-role="tasks.selection.toolbar"
+    >
+      <span
+        className={`${TASK_TABLE_CONTROL_FONT_CLASS} ${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}`}
+        data-style-role="tasks.selection.count"
+      >
+        {selectedCount} selected
+      </span>
+      <div className="flex flex-wrap items-center gap-1.5">
+        {onSelectAllVisible ? (
+          <TaskTableChipButton onClick={onSelectAllVisible} styleComponent="TaskSelectionToolbar" styleRole="tasks.selection.select-all">
+            Select all visible
+          </TaskTableChipButton>
+        ) : null}
+        {onClearSelection ? (
+          <TaskTableChipButton onClick={onClearSelection} styleComponent="TaskSelectionToolbar" styleRole="tasks.selection.clear">
+            Clear selection
+          </TaskTableChipButton>
+        ) : null}
+        {onEditTask ? (
+          <TaskTableChipButton onClick={onEditTask} styleComponent="TaskSelectionToolbar" styleRole="tasks.selection.edit" toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+            Edit task
+          </TaskTableChipButton>
+        ) : onEditSelected ? (
+          <TaskTableChipButton onClick={onEditSelected} styleComponent="TaskSelectionToolbar" styleRole="tasks.selection.edit-selected" toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
+            Edit selected
+          </TaskTableChipButton>
+        ) : null}
+        {onDeleteSelected ? (
+          <TaskTableChipButton onClick={onDeleteSelected} styleComponent="TaskSelectionToolbar" styleRole="tasks.selection.delete" toneClassName="border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]">
+            Delete selected
+          </TaskTableChipButton>
+        ) : null}
+      </div>
+    </div>
   );
 }
 

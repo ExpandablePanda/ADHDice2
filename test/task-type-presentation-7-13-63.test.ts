@@ -119,7 +119,7 @@ test("Table and List selected, hover, open, and highlighted states preserve surf
   assert.match(tableSource, /rowContextMenu\?\.taskId === task\.id/);
   assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName/);
   assert.match(tableSource, /whileHover=\{shouldAnimateRows \? \{ y: -0\.5 \} : undefined\}/);
-  assert.match(tableSource, /selectedTaskIdSet\.has\(task\.id\)[\s\S]*ring-2 ring-\[#6f57f6\]\/35/);
+  assert.match(tableSource, /selectedTaskIdSet\.has\(task\.id\)[\s\S]*TASK_TABLE_SELECTED_TASK_SURFACE_CLASS/);
   assert.match(tableSource, /focus-visible:ring-2/);
   assert.match(listSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
   assert.match(listSource, /isQuickPanelOpen/);

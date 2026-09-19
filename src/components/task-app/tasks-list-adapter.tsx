@@ -65,7 +65,10 @@ import {
   TaskHierarchySearchChip,
   TaskCurrentStreakChip,
   TaskListQuickPanelShell,
+  TASK_TABLE_SELECTED_TASK_SURFACE_CLASS,
   TaskTableChipButton,
+  TaskSelectionToolbar,
+  useTaskRowLongPress,
 } from "@/components/ui/task-table-primitives";
 import { AdhdIconButton } from "@/components/ui-system/index";
 import { TaskTypeSelect } from "./task-type-identity";
@@ -2644,6 +2647,7 @@ function TasksSimpleList({
   selectedBucket,
   tableProps,
 }: TasksListAdapterProps) {
+  const selectedTaskIds = tableProps.selectedTaskIds ?? [];
   const [rowModelCache] = useState(createStableTaskRowModelCache);
   const canRemoveFromCurrentList = (taskId: string) => canRemoveTaskFromCurrentList(
     taskId,
@@ -2828,7 +2832,24 @@ function TasksSimpleList({
     pendingMeasuredStatusScrollAnchorRef.current = null;
     return candidateTaskIds;
   };
-  const selectedTaskIdSet = useMemo(() => new Set(tableProps.selectedTaskIds), [tableProps.selectedTaskIds]);
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const taskRowLongPressHandlers = useTaskRowLongPress({
+    isInteractiveTarget: shouldIgnoreListOverlayOpen,
+    onLongPress: (target) => {
+      const taskId = target.dataset.taskListRow;
+      if (!taskId) {
+        return;
+      }
+      setRowContextMenu(null);
+      closeQuickPanel();
+      if (!selectedTaskIdSet.has(taskId)) {
+        tableProps.onToggleTaskSelection?.(taskId, {
+          additive: true,
+          visibleTaskIds,
+        });
+      }
+    },
+  });
   const highlightedTaskIdSet = useMemo(() => new Set(tableProps.highlightedTaskIds ?? []), [tableProps.highlightedTaskIds]);
   const searchMatchedStepParentTaskIdSet = useMemo(
     () => new Set(tableProps.searchMatchedStepParentTaskIds ?? []),
@@ -3274,6 +3295,14 @@ function TasksSimpleList({
               visibleColumns={OVERLAY_VISIBLE_COLUMNS}
             />
           ) : null}
+          <TaskSelectionToolbar
+            onClearSelection={tableProps.onClearSelection}
+            onDeleteSelected={selectedTaskIds.length > 1 ? tableProps.onOpenBatchDelete : undefined}
+            onEditSelected={selectedTaskIds.length > 1 ? tableProps.onOpenBatchEdit : undefined}
+            onEditTask={selectedTaskIds.length === 1 && tableProps.onOpenTaskEditor ? () => tableProps.onOpenTaskEditor?.(selectedTaskIds[0]!, visibleTaskIds) : undefined}
+            onSelectAllVisible={tableProps.onSelectAllVisible ? () => tableProps.onSelectAllVisible?.(visibleTaskIds) : undefined}
+            selectedCount={selectedTaskIds.length}
+          />
             {taskContentFolderPresentation
               .flatMap((block) => {
                 if (block.kind === "task") return [{ kind: "task" as const, task: block.task }];
@@ -3382,7 +3411,7 @@ function TasksSimpleList({
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${taskSurface} ${
                 selectedTaskIdSet.has(task.id)
-                  ? "ring-2 ring-[#6f57f6]/35 ring-offset-0 dark:ring-[#cabfff]/35"
+                  ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS
                   : ""
               } ${
                 isQuickPanelOpen
@@ -3390,12 +3419,21 @@ function TasksSimpleList({
                   : ""
               } ${hasVisibleRenderedDescendants ? "sticky top-[4.75rem] z-10" : ""}`}
               data-task-list-row={task.id}
+              {...taskRowLongPressHandlers}
               onClick={(event) => {
                 if (shouldIgnoreListOverlayOpen(event.target)) {
                   return;
                 }
                 setRowContextMenu(null);
                 closeQuickPanel();
+                if (selectedTaskIds.length > 0 && tableProps.onToggleTaskSelection) {
+                  tableProps.onToggleTaskSelection(task.id, {
+                    additive: true,
+                    range: event.shiftKey,
+                    visibleTaskIds,
+                  });
+                  return;
+                }
                 tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
               }}
               onContextMenu={(event) => {
@@ -3418,6 +3456,14 @@ function TasksSimpleList({
                         event.preventDefault();
                         setRowContextMenu(null);
                         closeQuickPanel();
+                        if (selectedTaskIds.length > 0 && tableProps.onToggleTaskSelection) {
+                          tableProps.onToggleTaskSelection(task.id, {
+                            additive: true,
+                            range: event.shiftKey,
+                            visibleTaskIds,
+                          });
+                          return;
+                        }
                         tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
                       }
                     }}
@@ -3891,7 +3937,7 @@ function TasksSimpleList({
             <TaskRowContextMenu
               allowInlineInspector
               enableInspector
-              hasBatchQuickEdit={selectedTaskIdSet.has(rowContextMenuTask.id) && tableProps.selectedTaskIds.length > 1}
+              hasBatchQuickEdit={selectedTaskIdSet.has(rowContextMenuTask.id) && selectedTaskIds.length > 1}
               isTaskSelected={selectedTaskIdSet.has(rowContextMenuTask.id)}
               menu={rowContextMenu}
               onClearSelection={tableProps.onClearSelection ? () => {
@@ -4000,8 +4046,8 @@ function TasksSimpleList({
                 { label: "Link", mode: "link" },
                 { label: "Notes", mode: "notes" },
               ]}
-              quickEditTitle={selectedTaskIdSet.has(rowContextMenuTask.id) && tableProps.selectedTaskIds.length > 1 ? `Quick edit ${tableProps.selectedTaskIds.length} selected tasks` : "Quick edit"}
-              selectedTaskCount={tableProps.selectedTaskIds.length}
+              quickEditTitle={selectedTaskIdSet.has(rowContextMenuTask.id) && selectedTaskIds.length > 1 ? `Quick edit ${selectedTaskIds.length} selected tasks` : "Quick edit"}
+              selectedTaskCount={selectedTaskIds.length}
               task={rowContextMenuTask}
             />
           ) : null}

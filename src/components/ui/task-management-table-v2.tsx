@@ -102,8 +102,11 @@ import {
   TaskInlineChildDraft,
   TaskInlineChildDraftInput,
   TaskHierarchySearchChip,
+  TASK_TABLE_SELECTED_TASK_SURFACE_CLASS,
   TaskTableChipButton,
   TaskTableInlineActionRow,
+  TaskSelectionToolbar,
+  useTaskRowLongPress,
   type TaskTableViewportMetrics,
 } from "@/components/ui/task-table-primitives";
 import { mergeMeasuredColumnWidths, normalizeMeasuredColumnWidth } from "@/lib/task-table-measurements";
@@ -3301,6 +3304,22 @@ export function TaskManagementTableV2({
     () => new Set(visibleTaskIds),
     [visibleTaskIds],
   );
+  const taskRowLongPressHandlers = useTaskRowLongPress({
+    isInteractiveTarget: (target) => isTaskTableChildRowInteractiveTarget(target, {
+      isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId),
+    }),
+    onLongPress: (target) => {
+      const taskId = target.dataset.taskTableRow;
+      if (!taskId) {
+        return;
+      }
+      clearPendingRowClick();
+      setRowContextMenu(null);
+      if (!selectedTaskIdSet.has(taskId)) {
+        startTaskSelection(taskId, { additive: true });
+      }
+    },
+  });
   const queueTableMutationScrollTopHold = useCallback((taskId: string) => {
     if (overlayOnly) {
       return;
@@ -8827,7 +8846,7 @@ export function TaskManagementTableV2({
                 data-same-table-step-row={item.id}
               >
                 <div
-                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? childTaskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35" : ""} ${canOpenStepActions ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS : ""} ${canOpenStepActions ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                   data-task-table-child-grid={item.id}
                   onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                   onDrop={(event) => dropChildTaskOnItem(event, item)}
@@ -9234,59 +9253,15 @@ export function TaskManagementTableV2({
               })}
             </div>
 
-            {selectedTaskIds.length > 0 ? (
-              <div className="sticky top-[3rem] z-30 mb-4 flex flex-wrap items-center gap-3 rounded-[1.25rem] border border-[#ddd6fb] bg-[#faf8ff]/95 px-4 py-3 text-left shadow-[0_16px_40px_rgba(81,61,168,0.10)] backdrop-blur-md dark:border-white/10 dark:bg-[#1f1836]/95">
-                <span className="rounded-full bg-[#ede8ff] px-3 py-1 text-xs font-black uppercase tracking-[0.18em] text-[#6f57f6] dark:bg-[#2a2148] dark:text-[#cabfff]">
-                  {selectedTaskIds.length} selected
-                </span>
-                <div className="flex flex-wrap items-center gap-2">
-                  {onSelectAllVisible ? (
-                    <button
-                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} transition hover:border-[#c9bcff] hover:text-[#6f57f6]`}
-                      onClick={() => onSelectAllVisible(visibleTaskIds)}
-                      type="button"
-                    >
-                      Select all visible
-                    </button>
-                  ) : null}
-                  {onClearSelection ? (
-                    <button
-                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} ${INACTIVE_CHIP_CLASS} transition hover:border-[#c9bcff] hover:text-[#6f57f6]`}
-                      onClick={onClearSelection}
-                      type="button"
-                    >
-                      Clear selection
-                    </button>
-                  ) : null}
-                  {selectedTaskIds.length === 1 && onOpenTaskEditor ? (
-                    <button
-                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] transition hover:bg-[#e9e1ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
-                      onClick={() => onOpenTaskEditor(selectedTaskIds[0], effectiveDisplayedTasks.map((task) => task.id))}
-                      type="button"
-                    >
-                      Edit task
-                    </button>
-                  ) : selectedTaskIds.length > 1 && onOpenBatchEdit ? (
-                    <button
-                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] transition hover:bg-[#e9e1ff] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2a204c]`}
-                      onClick={onOpenBatchEdit}
-                      type="button"
-                    >
-                      Edit selected
-                    </button>
-                  ) : null}
-                  {selectedTaskIds.length > 1 && onOpenBatchDelete ? (
-                    <button
-                      className={`${CHIP_BASE} ${CONTROL_FONT_CLASS} border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] transition hover:bg-[#ffe4e9] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf] dark:hover:bg-[#56303c]`}
-                      onClick={onOpenBatchDelete}
-                      type="button"
-                    >
-                      Delete selected
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
+            <TaskSelectionToolbar
+              onClearSelection={onClearSelection}
+              onDeleteSelected={selectedTaskIds.length > 1 ? onOpenBatchDelete : undefined}
+              onEditSelected={selectedTaskIds.length > 1 ? onOpenBatchEdit : undefined}
+              onEditTask={selectedTaskIds.length === 1 && onOpenTaskEditor ? () => onOpenTaskEditor(selectedTaskIds[0]!, effectiveDisplayedTasks.map((task) => task.id)) : undefined}
+              onSelectAllVisible={onSelectAllVisible ? () => onSelectAllVisible(visibleTaskIds) : undefined}
+              selectedCount={selectedTaskIds.length}
+              sticky
+            />
 
             {effectiveDisplayedTasks.length === 0 ? (
               <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
@@ -9366,6 +9341,7 @@ export function TaskManagementTableV2({
                   <motion.div
                     className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10" : ""}`}
                     data-task-table-row={task.id}
+                    {...taskRowLongPressHandlers}
                     initial={shouldAnimateRows ? undefined : false}
                     onClick={(event) => {
                       if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
@@ -9433,7 +9409,7 @@ export function TaskManagementTableV2({
                   >
                     <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border pl-[3px] pr-0 py-1.5 text-center transition ${taskSurface} ${
                       selectedTaskIdSet.has(task.id)
-                        ? taskTypeOption.accentKey === "neutral" ? "bg-[#f7f2ff] dark:bg-[#201733]" : "ring-2 ring-[#6f57f6]/35 dark:ring-[#cabfff]/35"
+                        ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS
                         : showInlineAccordion || rowContextMenu?.taskId === task.id
                           ? "ring-2 ring-[#6f57f6]/25 dark:ring-[#cabfff]/25"
                           : ""
