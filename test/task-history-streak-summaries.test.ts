@@ -515,9 +515,10 @@ test("superseded bulk streak-summary work does not expose its partial map", asyn
 
 test("parent and child Table/List title paths consume compact summary fields", () => {
   assert.match(appSource, /taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries/);
+  assert.match(appSource, /<TaskHomePage[\s\S]*taskHistoryStreakSummaries=\{taskHistoryStreakSummaries\}/);
   assert.match(tableSource, /task\.currentStreak > 0/);
   assert.match(tableSource, /task\.missedStreak > 0/);
-  assert.match(tableSource, /renderStepHistoryChips\(item\.currentStreak, item\.missedStreak\)/);
+  assert.match(tableSource, /renderStepHistoryChips\(\s*item\.currentStreak,\s*item\.missedStreak/);
   assert.match(listSource, /currentStreak=\{taskRow\.currentStreak\}/);
   assert.match(listSource, /missedStreak=\{taskRow\.missedStreak\}/);
   assert.match(listSource, /taskHistoryStreakSummary: rowContext\.taskHistoryStreakSummaryByTaskId\[task\.id\]/);

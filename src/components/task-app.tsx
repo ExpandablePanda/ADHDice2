@@ -7281,6 +7281,7 @@ export function TaskApp() {
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+            taskHistoryStreakSummaries={taskHistoryStreakSummaries}
             behaviorProfiles={taskTypeBehaviorProfiles}
             behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
             namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}

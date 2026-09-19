@@ -2,6 +2,7 @@ import type { Task } from "@/lib/database.types";
 import { getCalendarDayKey } from "@/lib/logical-day";
 import type { TaskPriorityLevel } from "@/lib/task-priority";
 import type { TaskListMembership } from "@/lib/task-lists";
+import { formatDueTimeLabel } from "@/lib/task-cockpit";
 import { shiftDateKey } from "@/lib/task-grid-layout";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 
@@ -18,10 +19,22 @@ export type HomeTodoStateV4 = {
   taskDayOffsets: Record<string, number>;
   tasksPerDay: HomeTodoTasksPerDay;
   routineTaskIds: string[];
-  routinesPerPhase: HomeTodoRoutinesPerPhase;
+  routinesPerPhase: HomeTodoRoutinesPerSection;
+};
+
+export type HomeTodoStateV5 = {
+  clientUpdatedAt: string;
+  schemaVersion: 5;
+  taskIds: string[];
+  taskDayOffsets: Record<string, number>;
+  tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routinesPerSection: HomeTodoRoutinesPerSection;
+  routineSectionNames: Record<string, string>;
 };
 
 export type HomeTodoStateV2 = HomeTodoStateV4;
+export type HomeTodoState = HomeTodoStateV5;
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
@@ -29,25 +42,28 @@ type HomeTodoStateCandidate = {
   taskDayOffsets?: unknown;
   tasksPerDay?: unknown;
   routineTaskIds?: unknown;
+  routinesPerSection?: unknown;
   routinesPerPhase?: unknown;
+  routineSectionNames?: unknown;
 };
 
 export const HOME_TODO_TASKS_PER_DAY_OPTIONS = [10, 11, 12, 13, 14, 15] as const;
 export type HomeTodoTasksPerDay = typeof HOME_TODO_TASKS_PER_DAY_OPTIONS[number];
 export const DEFAULT_HOME_TODO_TASKS_PER_DAY: HomeTodoTasksPerDay = 10;
-export const HOME_ROUTINES_PER_PHASE_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
-export type HomeTodoRoutinesPerPhase = typeof HOME_ROUTINES_PER_PHASE_OPTIONS[number];
-export const DEFAULT_HOME_TODO_ROUTINES_PER_PHASE: HomeTodoRoutinesPerPhase = 3;
+export const HOME_ROUTINES_PER_SECTION_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
+export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTIONS[number];
+export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
 export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV4 = {
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV5 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 4,
+  schemaVersion: 5,
   taskIds: [],
   taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
   routineTaskIds: [],
-  routinesPerPhase: DEFAULT_HOME_TODO_ROUTINES_PER_PHASE,
+  routinesPerSection: DEFAULT_HOME_TODO_ROUTINES_PER_SECTION,
+  routineSectionNames: {},
 };
 
 export type HomeTodoDaySection<T = string> = {
@@ -61,7 +77,7 @@ export type HomeTodoDaySection<T = string> = {
 export type HomeRoutineSection<T = string> = {
   groupIds: T[];
   label: string;
-  phaseIndex: number;
+  sectionIndex: number;
   startIndex: number;
 };
 
@@ -105,18 +121,35 @@ export function normalizeHomeTodoTasksPerDay(value: unknown): HomeTodoTasksPerDa
     : DEFAULT_HOME_TODO_TASKS_PER_DAY;
 }
 
-export function normalizeHomeTodoRoutinesPerPhase(value: unknown): HomeTodoRoutinesPerPhase {
-  return HOME_ROUTINES_PER_PHASE_OPTIONS.includes(value as HomeTodoRoutinesPerPhase)
-    ? value as HomeTodoRoutinesPerPhase
-    : DEFAULT_HOME_TODO_ROUTINES_PER_PHASE;
+export function normalizeHomeTodoRoutinesPerSection(value: unknown): HomeTodoRoutinesPerSection {
+  return HOME_ROUTINES_PER_SECTION_OPTIONS.includes(value as HomeTodoRoutinesPerSection)
+    ? value as HomeTodoRoutinesPerSection
+    : DEFAULT_HOME_TODO_ROUTINES_PER_SECTION;
 }
 
-export function hasMeaningfulHomeTodoState(state: HomeTodoStateV4) {
+function isHomeTodoRoutinesPerSection(value: unknown): value is HomeTodoRoutinesPerSection {
+  return HOME_ROUTINES_PER_SECTION_OPTIONS.includes(value as HomeTodoRoutinesPerSection);
+}
+
+export function normalizeHomeTodoRoutineSectionNames(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key, name]) => {
+    const sectionIndex = Number(key);
+    return Number.isSafeInteger(sectionIndex)
+      && sectionIndex >= 0
+      && String(sectionIndex) === key
+      && typeof name === "string"
+      && name.trim().length > 0;
+  }).map(([key, name]) => [key, (name as string).trim()]));
+}
+
+export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
   return state.taskIds.length > 0
     || Object.keys(state.taskDayOffsets).length > 0
     || state.tasksPerDay !== DEFAULT_HOME_TODO_TASKS_PER_DAY
     || state.routineTaskIds.length > 0
-    || state.routinesPerPhase !== DEFAULT_HOME_TODO_ROUTINES_PER_PHASE;
+    || state.routinesPerSection !== DEFAULT_HOME_TODO_ROUTINES_PER_SECTION
+    || Object.keys(state.routineSectionNames).length > 0;
 }
 
 export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
@@ -208,20 +241,39 @@ export function buildHomeTodoDaySections<T>(
 
 export function buildHomeRoutineSections<T>(
   routineTaskIds: readonly T[],
-  routinesPerPhase: unknown = DEFAULT_HOME_TODO_ROUTINES_PER_PHASE,
+  routinesPerSection: unknown = DEFAULT_HOME_TODO_ROUTINES_PER_SECTION,
+  routineSectionNames: Readonly<Record<string, string>> = {},
 ): HomeRoutineSection<T>[] {
-  const normalizedRoutinesPerPhase = normalizeHomeTodoRoutinesPerPhase(routinesPerPhase);
+  const normalizedRoutinesPerSection = normalizeHomeTodoRoutinesPerSection(routinesPerSection);
   const sections: HomeRoutineSection<T>[] = [];
-  for (let startIndex = 0; startIndex < routineTaskIds.length; startIndex += normalizedRoutinesPerPhase) {
-    const phaseIndex = sections.length + 1;
+  for (let startIndex = 0; startIndex < routineTaskIds.length; startIndex += normalizedRoutinesPerSection) {
+    const sectionIndex = sections.length;
     sections.push({
-      groupIds: routineTaskIds.slice(startIndex, startIndex + normalizedRoutinesPerPhase),
-      label: `Phase ${phaseIndex}`,
-      phaseIndex,
+      groupIds: routineTaskIds.slice(startIndex, startIndex + normalizedRoutinesPerSection),
+      label: routineSectionNames[String(sectionIndex)]?.trim() || `Section ${sectionIndex + 1}`,
+      sectionIndex,
       startIndex,
     });
   }
   return sections;
+}
+
+export function formatHomeRoutineDueLabel(task: Pick<Task, "due_on" | "due_time">) {
+  if (!task.due_on) return null;
+  const [year, month, day] = task.due_on.split("-").map((part) => Number.parseInt(part ?? "", 10));
+  const dateLabel = Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+    ? `${month}/${day}/${String(year).slice(-2)}`
+    : task.due_on;
+  const dueTimeLabel = formatDueTimeLabel(task.due_time);
+  return dueTimeLabel ? `${dateLabel} · ${dueTimeLabel}` : dateLabel;
+}
+
+export function getHomeRoutineStreakMetadata(summary?: { currentStreak: number; missedStreak: number }) {
+  const missedStreak = summary?.missedStreak ?? 0;
+  const currentStreak = summary?.currentStreak ?? 0;
+  if (missedStreak > 0) return { count: missedStreak, kind: "missed" as const };
+  if (currentStreak > 0) return { count: currentStreak, kind: "current" as const };
+  return null;
 }
 
 export async function createHomeTodoTask(
@@ -241,7 +293,7 @@ export async function createHomeTodoTask(
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV4 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV5 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
@@ -266,16 +318,20 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV4 {
   const routineTaskIds = Array.isArray(candidate.routineTaskIds)
     ? normalizeHomeRoutineTaskIds(candidate.routineTaskIds)
     : [];
+  const routinesPerSection = isHomeTodoRoutinesPerSection(candidate.routinesPerSection)
+    ? candidate.routinesPerSection
+    : normalizeHomeTodoRoutinesPerSection(candidate.routinesPerPhase);
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 4,
+    schemaVersion: 5,
     taskIds,
     taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
     routineTaskIds,
-    routinesPerPhase: normalizeHomeTodoRoutinesPerPhase(candidate.routinesPerPhase),
+    routinesPerSection,
+    routineSectionNames: normalizeHomeTodoRoutineSectionNames(candidate.routineSectionNames),
   };
 }
 

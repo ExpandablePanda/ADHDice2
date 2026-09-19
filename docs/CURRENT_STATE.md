@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.72`.
+- Current working app version: `7.13.73`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.13.73 Named Routine Sections and Quiet Routine Metadata
+
+Home Routine now uses named ordinal Sections backed by Home state V5, migrating
+the persisted V4 `routinesPerPhase` capacity without changing Routine
+membership, hierarchy, or order. Routine rows show their own due metadata and
+canonical History streak summaries, with missed streaks taking precedence over
+active streaks. Home save/sync status remains internal and background
+persistence remains unchanged; no SQL or schema change was made.
 
 ## 2026-09-19 7.13.71 Routine Hierarchy, Ordering, and Phase Sections
 

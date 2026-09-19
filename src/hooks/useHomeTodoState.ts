@@ -6,10 +6,11 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 import {
   EMPTY_HOME_TODO_STATE,
   hasMeaningfulHomeTodoState,
-  normalizeHomeTodoRoutinesPerPhase,
+  normalizeHomeTodoRoutineSectionNames,
+  normalizeHomeTodoRoutinesPerSection,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
-  type HomeTodoStateV4,
+  type HomeTodoState,
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -33,7 +34,7 @@ function isMissingTableError(error: { code?: string; message?: string } | null) 
 }
 
 export function useHomeTodoState(userId: string | null) {
-  const [state, setState] = useState<HomeTodoStateV4>({ ...EMPTY_HOME_TODO_STATE });
+  const [state, setState] = useState<HomeTodoState>({ ...EMPTY_HOME_TODO_STATE });
   const [syncStatus, setSyncStatus] = useState<HomeTodoSyncStatus>(userId ? "loading" : "local");
   const stateRef = useRef(state);
   const dirtyRef = useRef(false);
@@ -45,7 +46,7 @@ export function useHomeTodoState(userId: string | null) {
     stateRef.current = state;
   }, [state]);
 
-  const persistCache = useCallback((next: HomeTodoStateV4, ownerId: string) => {
+  const persistCache = useCallback((next: HomeTodoState, ownerId: string) => {
     try {
       window.localStorage.setItem(cacheKey(ownerId), JSON.stringify(next));
     } catch {
@@ -189,7 +190,7 @@ export function useHomeTodoState(userId: string | null) {
       return;
     }
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 4, taskIds });
+    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 5, taskIds });
     dirtyRef.current = true;
     stateRef.current = next;
     setState(next);
@@ -207,7 +208,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 4,
+      schemaVersion: 5,
       tasksPerDay: nextTasksPerDay,
     });
     dirtyRef.current = true;
@@ -230,7 +231,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 4,
+      schemaVersion: 5,
       taskDayOffsets,
     });
     dirtyRef.current = true;
@@ -255,7 +256,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 4,
+      schemaVersion: 5,
       routineTaskIds,
     });
     dirtyRef.current = true;
@@ -266,17 +267,17 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
-  const updateRoutinesPerPhase = useCallback((routinesPerPhase: unknown) => {
+  const updateRoutinesPerSection = useCallback((routinesPerSection: unknown) => {
     if (!userId) return;
     const current = stateRef.current;
-    const nextRoutinesPerPhase = normalizeHomeTodoRoutinesPerPhase(routinesPerPhase);
-    if (nextRoutinesPerPhase === current.routinesPerPhase) return;
+    const nextRoutinesPerSection = normalizeHomeTodoRoutinesPerSection(routinesPerSection);
+    if (nextRoutinesPerSection === current.routinesPerSection) return;
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 4,
-      routinesPerPhase: nextRoutinesPerPhase,
+      schemaVersion: 5,
+      routinesPerSection: nextRoutinesPerSection,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -286,5 +287,29 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
-  return { state, syncStatus, updateRoutineTaskIds, updateRoutinesPerPhase, updateTaskDayOffset, updateTaskIds, updateTasksPerDay };
+  const updateRoutineSectionName = useCallback((sectionIndex: number, name: string) => {
+    if (!userId || !Number.isSafeInteger(sectionIndex) || sectionIndex < 0) return;
+    const current = stateRef.current;
+    const routineSectionNames = {
+      ...current.routineSectionNames,
+      [String(sectionIndex)]: name,
+    };
+    const normalizedRoutineSectionNames = normalizeHomeTodoRoutineSectionNames(routineSectionNames);
+    if (JSON.stringify(normalizedRoutineSectionNames) === JSON.stringify(current.routineSectionNames)) return;
+    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
+    const next = normalizeHomeTodoState({
+      ...current,
+      clientUpdatedAt: nextTimestamp,
+      schemaVersion: 5,
+      routineSectionNames: normalizedRoutineSectionNames,
+    });
+    dirtyRef.current = true;
+    stateRef.current = next;
+    setState(next);
+    persistCache(next, userId);
+    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
+    scheduleWrite();
+  }, [persistCache, scheduleWrite, userId]);
+
+  return { state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutinesPerSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay };
 }

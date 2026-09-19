@@ -9,7 +9,9 @@ import {
   buildHomeTodoDaySections,
   buildHomeTodoHierarchy,
   createHomeTodoTask,
+  formatHomeRoutineDueLabel,
   formatHomeTodoDateLabel,
+  getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
   hasMeaningfulHomeTodoState,
@@ -19,7 +21,8 @@ import {
   moveHomeTodoTaskIdToEdge,
   moveHomeTodoTaskIdToVisibleEdge,
   normalizeHomeTodoTasksPerDay,
-  normalizeHomeTodoRoutinesPerPhase,
+  normalizeHomeTodoRoutineSectionNames,
+  normalizeHomeTodoRoutinesPerSection,
   normalizeHomeTodoState,
   reconcileHomeRoutineTaskIds,
   reconcileHomeTodoTaskIds,
@@ -55,19 +58,20 @@ const homeTaskMetadata: HomeTodoTaskMetadata = {
   tags: [],
 };
 
-test("Home state V1/V3 payloads normalize to V4 with independent Routine defaults", () => {
+test("Home state V1/V4 payloads normalize to V5 with independent Routine defaults", () => {
   assert.deepEqual(normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
     schemaVersion: 1,
     taskIds: ["a", "a", "", 4, "b"],
   }), {
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
-    schemaVersion: 4,
+    schemaVersion: 5,
     taskIds: ["a", "b"],
     taskDayOffsets: {},
     tasksPerDay: 10,
     routineTaskIds: [],
-    routinesPerPhase: 3,
+    routinesPerSection: 3,
+    routineSectionNames: {},
   });
 });
 
@@ -528,24 +532,78 @@ test("Home Routine persistence reconciliation waits for Home hydration", () => {
   assert.equal(shouldPersistHomeRoutineReconciliation("saving"), true);
 });
 
-test("Home V4 bootstrap recognizes meaningful state outside To-do taskIds", () => {
+test("Home V5 bootstrap recognizes meaningful state outside To-do taskIds", () => {
   const empty = normalizeHomeTodoState(null);
   assert.equal(hasMeaningfulHomeTodoState(empty), false);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, taskIds: ["todo"] }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, taskDayOffsets: { todo: 2 }, taskIds: ["todo"] }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, tasksPerDay: 15 }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineTaskIds: ["routine"] }), true);
-  assert.equal(hasMeaningfulHomeTodoState({ ...empty, routinesPerPhase: 4 }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, routinesPerSection: 4 }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineSectionNames: { "0": "Morning" } }), true);
 });
 
 test("Home Routine sections use capacity without counting descendants", () => {
-  assert.equal(normalizeHomeTodoRoutinesPerPhase(undefined), 3);
-  assert.equal(normalizeHomeTodoRoutinesPerPhase(99), 3);
+  assert.equal(normalizeHomeTodoRoutinesPerSection(undefined), 3);
+  assert.equal(normalizeHomeTodoRoutinesPerSection(99), 3);
   assert.deepEqual(buildHomeRoutineSections(["a", "b", "c", "d"], 3), [
-    { groupIds: ["a", "b", "c"], label: "Phase 1", phaseIndex: 1, startIndex: 0 },
-    { groupIds: ["d"], label: "Phase 2", phaseIndex: 2, startIndex: 3 },
+    { groupIds: ["a", "b", "c"], label: "Section 1", sectionIndex: 0, startIndex: 0 },
+    { groupIds: ["d"], label: "Section 2", sectionIndex: 1, startIndex: 3 },
   ]);
   assert.deepEqual(buildHomeRoutineSections(["a", "b", "c", "d"], 1).map((section) => section.groupIds), [["a"], ["b"], ["c"], ["d"]]);
+});
+
+test("Home V4 Routine capacity migrates to V5 without losing order", () => {
+  const migrated = normalizeHomeTodoState({
+    schemaVersion: 4,
+    taskIds: [],
+    routineTaskIds: ["routine-b", "routine-a"],
+    routinesPerPhase: 4,
+  });
+  assert.equal(migrated.schemaVersion, 5);
+  assert.equal(migrated.routinesPerSection, 4);
+  assert.deepEqual(migrated.routineTaskIds, ["routine-b", "routine-a"]);
+  assert.equal(normalizeHomeTodoState({ routinesPerSection: 2, routinesPerPhase: 6 }).routinesPerSection, 2);
+});
+
+test("Home Routine section names trim valid ordinal keys and discard malformed values", () => {
+  assert.deepEqual(normalizeHomeTodoRoutineSectionNames({
+    "0": "  Morning  ",
+    "1": " ",
+    "01": "Leading zero",
+    "-1": "Negative",
+    invalid: "Malformed",
+    "2": 3,
+  }), { "0": "Morning" });
+});
+
+test("Home Routine custom names override ordinal labels and survive capacity changes", () => {
+  const names = { "0": "Morning", "1": "Work Start" };
+  assert.deepEqual(buildHomeRoutineSections(["a", "b", "c", "d"], 2, names).map((section) => section.label), ["Morning", "Work Start"]);
+  assert.deepEqual(buildHomeRoutineSections(["a", "b", "c", "d"], 1, names).map((section) => section.label), ["Morning", "Work Start", "Section 3", "Section 4"]);
+  assert.deepEqual(buildHomeRoutineSections(["a", "b"], 2, { "0": "   " })[0]?.label, "Section 1");
+});
+
+test("Home Routine renaming is ordinal-only and does not alter Routine order", () => {
+  const state = normalizeHomeTodoState({ routineTaskIds: ["a", "b"], routineSectionNames: { "0": "Morning" } });
+  assert.deepEqual(state.routineTaskIds, ["a", "b"]);
+  assert.deepEqual(buildHomeRoutineSections(state.routineTaskIds, state.routinesPerSection, state.routineSectionNames).map((section) => section.groupIds), [["a", "b"]]);
+});
+
+test("Home Routine due metadata formats each task's own date and omits missing dates", () => {
+  assert.equal(formatHomeRoutineDueLabel({ due_on: "2026-09-19", due_time: null }), "9/19/26");
+  assert.equal(formatHomeRoutineDueLabel({ due_on: "2026-09-19", due_time: "08:30" }), "9/19/26 · 8:30 AM");
+  assert.equal(formatHomeRoutineDueLabel({ due_on: null, due_time: "08:30" }), null);
+  const parent = task("parent", { due_on: "2026-09-19", due_time: null });
+  const child = task("child", { due_on: "2026-09-20", due_time: null, parent_task_id: parent.id });
+  assert.equal(formatHomeRoutineDueLabel(child), "9/20/26");
+});
+
+test("Home Routine streak metadata uses missed precedence and omits zero values", () => {
+  assert.deepEqual(getHomeRoutineStreakMetadata({ currentStreak: 4, missedStreak: 2 }), { count: 2, kind: "missed" });
+  assert.deepEqual(getHomeRoutineStreakMetadata({ currentStreak: 4, missedStreak: 0 }), { count: 4, kind: "current" });
+  assert.equal(getHomeRoutineStreakMetadata({ currentStreak: 0, missedStreak: 0 }), null);
+  assert.equal(getHomeRoutineStreakMetadata(undefined), null);
 });
 
 test("Home Routine drag order moves whole groups and leaves To-do state independent", () => {
@@ -560,7 +618,7 @@ test("Home Routine drag order moves whole groups and leaves To-do state independ
   assert.deepEqual(["todo-a", "todo-b"], ["todo-a", "todo-b"]);
 });
 
-test("Home state rejects malformed Routine order and capacity while preserving To-do fields", () => {
+test("Home state rejects malformed Routine order, capacity, and names while preserving To-do fields", () => {
   assert.deepEqual(normalizeHomeTodoState({
     clientUpdatedAt: "not-a-date",
     schemaVersion: 3,
@@ -568,15 +626,17 @@ test("Home state rejects malformed Routine order and capacity while preserving T
     taskDayOffsets: { "todo-a": 2 },
     tasksPerDay: 15,
     routineTaskIds: ["routine-a", "routine-a", "", 4],
-    routinesPerPhase: 0,
+    routinesPerSection: 0,
+    routineSectionNames: { "0": "  Morning  ", "1": " ", "-1": "Invalid", bad: "Invalid", "2": 3 },
   }), {
     clientUpdatedAt: new Date(0).toISOString(),
-    schemaVersion: 4,
+    schemaVersion: 5,
     taskIds: ["todo-a"],
     taskDayOffsets: { "todo-a": 2 },
     tasksPerDay: 15,
     routineTaskIds: ["routine-a"],
-    routinesPerPhase: 3,
+    routinesPerSection: 3,
+    routineSectionNames: { "0": "Morning" },
   });
 });
 
@@ -727,13 +787,21 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /Later \(\{doLaterTasks\.length\}\)/);
   assert.match(source, /Settings2/);
   assert.match(source, /updateTasksPerDay\(capacity\)/);
-  assert.match(source, /updateRoutinesPerPhase\(capacity\)/);
+  assert.match(source, /updateRoutinesPerSection\(capacity\)/);
   assert.match(source, /buildHomeRoutineSections/);
+  assert.match(source, /state\.routinesPerSection/);
+  assert.match(source, /state\.routineSectionNames/);
   assert.match(source, /items=\{routineGroups\}/);
   assert.match(source, /onReorder=\{\(nextGroups\) => updateRoutineTaskIds/);
   assert.match(source, /shouldPersistHomeRoutineReconciliation\(syncStatus\)/);
   assert.match(source, /updateRoutineTaskIds\(\(currentRoutineTaskIds\) => reconcileHomeRoutineTaskIds\(currentRoutineTaskIds, routineTaskIds\)/);
-  assert.match(source, /Routines per phase/);
+  assert.match(source, /Routines per section/);
+  assert.match(source, /updateRoutineSectionName/);
+  assert.match(source, /TaskCurrentStreakChip/);
+  assert.match(source, /streak\?\.kind === "missed"/);
+  assert.match(source, /formatHomeRoutineDueLabel/);
+  assert.doesNotMatch(source, /Phase/);
+  assert.doesNotMatch(source, /Saving…|Loading…|Synced|Saved locally/);
   assert.match(source, /setIsSettingsOpen\(false\)/);
   assert.match(source, /event\.key === "Escape"/);
   assert.match(sortableSource, /renderBeforeItem\?:/);
@@ -758,9 +826,10 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(logicalDaySource, /export function getLogicalDayKey/);
   assert.match(taskAppSource, /calendarNowMs=\{logicalDayNow\}/);
   assert.match(taskAppSource, /calendarTimeZone=\{userTimeZone\}/);
+  assert.match(taskAppSource, /taskHistoryStreakSummaries=\{taskHistoryStreakSummaries\}/);
   assert.match(taskAppSource, /manualMembershipsByTaskId=\{manualMembershipsByTaskId\}/);
   assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
-  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 3);
+  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 4);
   assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
   assert.match(source, /const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2"/);
   assert.match(source, /max-sm:-ml-3 sm:-ml-2 shrink-0/);
@@ -795,7 +864,7 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /updateTaskDayOffset\(task\.id, 7\)/);
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
-  assert.equal((source.match(/size="sm"/g) ?? []).length, 5);
+  assert.equal((source.match(/size="sm"/g) ?? []).length, 6);
   assert.match(source, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
   assert.match(source, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
   assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 4);
@@ -875,6 +944,7 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   assert.match(homeSource, /allTags=\{allTaskTags\}/);
   assert.match(homeSource, /onSetRoutineMembership=\{\(taskId, included\) => setTaskManualListMembership\(taskId, "routine", included\)\}/);
   assert.match(homeSource, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
+  assert.match(homeSource, /taskHistoryStreakSummaries=\{taskHistoryStreakSummaries\}/);
   assert.doesNotMatch(homeSource, /tasks=\{tasksForActiveStatusRead\}/);
 });
 

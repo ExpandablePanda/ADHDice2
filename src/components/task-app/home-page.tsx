@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Plus, Search, Settings2, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, ListTodo, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -20,6 +20,7 @@ import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engin
 import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
+import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
 import {
   getSelectedTaskPriorityToneClass,
@@ -42,6 +43,8 @@ import {
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
   createHomeTodoTask,
+  formatHomeRoutineDueLabel,
+  getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
   shouldPersistHomeRoutineReconciliation,
@@ -61,8 +64,11 @@ import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TASK_TABLE_INPUT_CLASS,
+  TASK_TABLE_LIST_CHIP_CLASS,
   normalizeTaskTagValue,
   TaskTableChipButton,
+  TASK_TABLE_CHIP_BASE_CLASS,
+  TaskCurrentStreakChip,
 } from "@/components/ui/task-table-primitives";
 
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
@@ -86,6 +92,32 @@ const HOME_REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = 
 ];
 type HomePanelTab = "todo" | "routine";
 
+function RoutineTaskMetadata({
+  task,
+  streakSummary,
+}: {
+  task: Pick<Task, "due_on" | "due_time">;
+  streakSummary?: TaskHistoryStreakSummaryMap[string];
+}) {
+  const dueLabel = formatHomeRoutineDueLabel(task);
+  const streak = getHomeRoutineStreakMetadata(streakSummary);
+  if (!dueLabel && !streak) return null;
+
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-1.5">
+      {dueLabel ? <span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS}`}>{dueLabel}</span> : null}
+      {streak?.kind === "missed" ? (
+        <span className={`${TASK_TABLE_CHIP_BASE_CLASS} gap-1 border-[#ffd6de] bg-[#fff1f3] px-2 text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]`}>
+          <Skull aria-hidden="true" className="h-3 w-3" />
+          {streak.count}
+        </span>
+      ) : (
+        <TaskCurrentStreakChip currentStreak={streak?.count ?? 0} />
+      )}
+    </span>
+  );
+}
+
 export function HomePage({
   listMembershipsByTaskId,
   manualMembershipsByTaskId,
@@ -95,6 +127,7 @@ export function HomePage({
   onOpenTask,
   onSetStatus,
   taskDisplayStatusByTaskId,
+  taskHistoryStreakSummaries,
   calendarNowMs,
   calendarTimeZone,
   tasks,
@@ -115,6 +148,7 @@ export function HomePage({
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
+  taskHistoryStreakSummaries: TaskHistoryStreakSummaryMap;
   calendarNowMs: number;
   calendarTimeZone: string;
   tasks: Task[];
@@ -128,7 +162,7 @@ export function HomePage({
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
-  const { state, syncStatus, updateRoutineTaskIds, updateRoutinesPerPhase, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const { state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutinesPerSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("todo");
@@ -151,10 +185,13 @@ export function HomePage({
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
+  const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
+  const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const searchRef = useRef<HTMLDivElement | null>(null);
   const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
+  const routineSectionRenameCanceledRef = useRef(false);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
   const reconciledTaskIds = useMemo(
     () => reconcileHomeTodoTaskIds(state.taskIds, tasks),
@@ -207,8 +244,8 @@ export function HomePage({
     [calendarNowMs, calendarTimeZone, state.taskDayOffsets, state.tasksPerDay, todoTasks],
   );
   const routineSections = useMemo(
-    () => buildHomeRoutineSections(reconciledRoutineTaskIds, state.routinesPerPhase),
-    [reconciledRoutineTaskIds, state.routinesPerPhase],
+    () => buildHomeRoutineSections(reconciledRoutineTaskIds, state.routinesPerSection, state.routineSectionNames),
+    [reconciledRoutineTaskIds, state.routineSectionNames, state.routinesPerSection],
   );
   const dayTaskIds = daySections.flatMap((section) => section.taskIds);
   const sevenDayCapacity = dayTaskIds.length;
@@ -417,11 +454,63 @@ export function HomePage({
     return daySections.reduce((dayOffset, section) => section.startIndex <= index ? section.dayIndex : dayOffset, 0);
   }
 
+  function beginRoutineSectionRename(section: typeof routineSections[number]) {
+    routineSectionRenameCanceledRef.current = false;
+    setRoutineSectionNameDraft(state.routineSectionNames[String(section.sectionIndex)] ?? section.label);
+    setEditingRoutineSectionIndex(section.sectionIndex);
+  }
+
+  function saveRoutineSectionName(sectionIndex: number) {
+    if (routineSectionRenameCanceledRef.current) {
+      routineSectionRenameCanceledRef.current = false;
+      return;
+    }
+    updateRoutineSectionName(sectionIndex, routineSectionNameDraft);
+    setEditingRoutineSectionIndex(null);
+  }
+
   function renderRoutineSectionHeader(section: typeof routineSections[number]) {
+    const isEditing = editingRoutineSectionIndex === section.sectionIndex;
     return (
-      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 dark:border-white/10" data-sortable-drop-id={`routine-phase-${section.phaseIndex}`} data-sortable-drop-index={section.startIndex} key={`home-routine-phase-${section.phaseIndex}`}>
+      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 dark:border-white/10" data-sortable-drop-id={`routine-section-${section.sectionIndex}`} data-sortable-drop-index={section.startIndex} key={`home-routine-section-${section.sectionIndex}`}>
         <div>
-          <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
+          <div className="flex min-w-0 items-center gap-1">
+            {isEditing ? (
+              <input
+                aria-label={`Rename ${section.label}`}
+                autoFocus
+                className="health-input h-7 min-w-0 w-[min(14rem,60vw)] px-2 py-1 text-sm font-bold"
+                onBlur={() => saveRoutineSectionName(section.sectionIndex)}
+                onChange={(event) => setRoutineSectionNameDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    saveRoutineSectionName(section.sectionIndex);
+                  } else if (event.key === "Escape") {
+                    event.preventDefault();
+                    routineSectionRenameCanceledRef.current = true;
+                    setEditingRoutineSectionIndex(null);
+                  }
+                }}
+                value={routineSectionNameDraft}
+              />
+            ) : (
+              <>
+                <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
+                <AdhdIconButton
+                  aria-label={`Rename ${section.label}`}
+                  className="h-6 w-6"
+                  iconClassName="h-3.5 w-3.5"
+                  onClick={() => beginRoutineSectionRename(section)}
+                  size="sm"
+                  title={`Rename ${section.label}`}
+                  tone="ghost"
+                >
+                  <Pencil aria-hidden="true" />
+                </AdhdIconButton>
+              </>
+            )}
+          </div>
           <p className="mt-0.5 text-xs text-[#9a92b1] dark:text-white/42">
             {section.groupIds.length} routine group{section.groupIds.length === 1 ? "" : "s"}
           </p>
@@ -502,11 +591,22 @@ export function HomePage({
           ) : null}
         </div>
         <div className="ml-2 min-w-0">
-          <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
-            <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
-              {task.title || "Untitled task"}
-            </p>
-          </button>
+          {isRoutine ? (
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+                <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
+                  {task.title || "Untitled task"}
+                </p>
+              </button>
+              <RoutineTaskMetadata task={task} streakSummary={taskHistoryStreakSummaries[task.id]} />
+            </div>
+          ) : (
+            <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+              <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
+                {task.title || "Untitled task"}
+              </p>
+            </button>
+          )}
           {hierarchy.length ? (
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
@@ -643,14 +743,14 @@ export function HomePage({
                 >
                   <div>
                     <h2 className="text-sm font-bold text-[#26324f] dark:text-white">{activeHomeTab === "todo" ? "To-do list settings" : "Routine settings"}</h2>
-                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">{activeHomeTab === "todo" ? "Tasks per day" : "Routines per phase"}</p>
+                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">{activeHomeTab === "todo" ? "Tasks per day" : "Routines per section"}</p>
                   </div>
-                  <div className="flex flex-wrap gap-1.5" role="group" aria-label={activeHomeTab === "todo" ? "Tasks per day" : "Routines per phase"}>
+                  <div className="flex flex-wrap gap-1.5" role="group" aria-label={activeHomeTab === "todo" ? "Tasks per day" : "Routines per section"}>
                     {(activeHomeTab === "todo" ? [10, 11, 12, 13, 14, 15] : [1, 2, 3, 4, 5, 6]).map((capacity) => (
                       <AdhdChip
                         key={capacity}
-                        onClick={() => activeHomeTab === "todo" ? updateTasksPerDay(capacity) : updateRoutinesPerPhase(capacity)}
-                        selected={activeHomeTab === "todo" ? state.tasksPerDay === capacity : state.routinesPerPhase === capacity}
+                        onClick={() => activeHomeTab === "todo" ? updateTasksPerDay(capacity) : updateRoutinesPerSection(capacity)}
+                        selected={activeHomeTab === "todo" ? state.tasksPerDay === capacity : state.routinesPerSection === capacity}
                         type="button"
                       >
                         {capacity}
@@ -659,9 +759,6 @@ export function HomePage({
                   </div>
                 </div>
               ) : null}
-              <span className="text-xs text-[#8a82a3] dark:text-white/40">
-                {syncStatus === "saving" ? "Saving…" : syncStatus === "loading" ? "Loading…" : syncStatus === "synced" ? "Synced" : "Saved locally"}
-              </span>
             </div>
         </div>
         <PageShellBody>
