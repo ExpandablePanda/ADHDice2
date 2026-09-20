@@ -16,8 +16,11 @@ import {
   type RecordsSectionId,
 } from "@/lib/records/ui-preferences";
 import { formatRecordTaskEvidenceEntityKind, formatRecordTaskEvidenceOutcome, getRecordTaskEvidenceCount, isSupportedTaskEvidenceMetric, parseRecordTaskEvidenceSourceRows, recordIdentity, type RecordTaskEvidenceItem, type RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
+import { buildRecordsSessionCacheKey, invalidateRecordsSessionSnapshot } from "@/lib/records/session-cache";
 import { RECORD_METRICS, type PersistedRecordCurrent, type PersistedRecordEvent, type ProvisionalRecordCandidate, type RecordMetricKey, type RecordUnit } from "@/lib/records/types";
 import type { Task } from "@/lib/database.types";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 
 type RecordsTabProps = {
   active: boolean;
@@ -25,6 +28,7 @@ type RecordsTabProps = {
   initialMetricKey?: RecordMetricKey | null;
   logicalDayStart: string;
   onOpenTask: (taskId: string) => void;
+  onSetTaskTrackingExclusion?: (taskId: string, excluded: boolean) => Promise<boolean>;
   onRecordRequestHandled?: () => void;
   tasks: Task[];
   timezone: string;
@@ -249,6 +253,7 @@ export function RecordsTab(props: RecordsTabProps) {
   const openedInitialMetricRef = useRef<RecordMetricKey | null>(null);
   const [taskQuery, setTaskQuery] = useState("");
   const [showInvalidated, setShowInvalidated] = useState(false);
+  const [pendingTrackingExclusionTask, setPendingTrackingExclusionTask] = useState<Task | null>(null);
   const sectionRecords = (section: "tasks" | "streaks" | "focus") => records.currentRecords.filter((record) => RECORD_METRICS[record.metric_key].section === section);
   const sectionProvisional = (section: "tasks" | "focus") => records.provisionalCandidates.filter((record) => RECORD_METRICS[record.metricKey].section === section);
   const perTaskRecords = useMemo(() => {
@@ -267,6 +272,9 @@ export function RecordsTab(props: RecordsTabProps) {
   }, [records.currentRecords, taskQuery]);
   const history = records.events.filter((event) => showInvalidated || event.validity_state === "valid");
   const availableTaskIds = useMemo(() => new Set(props.tasks.filter((task) => task.status !== "archived" && task.status !== "trashed").map((task) => task.id)), [props.tasks]);
+  const taskById = useMemo(() => new Map(props.tasks.map((task) => [task.id, task])), [props.tasks]);
+  const effectivelyExcludedTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(props.tasks), [props.tasks]);
+  const recordsSessionKey = props.userId ? buildRecordsSessionCacheKey({ logicalDayStart: props.logicalDayStart, timezone: props.timezone, userId: props.userId }) : null;
 
   useEffect(() => {
     if (!initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === initialMetricKey) return;
@@ -322,12 +330,34 @@ export function RecordsTab(props: RecordsTabProps) {
         Records use the currently available Task History and Focus data. Past hard deletions cannot be reconstructed. Historical recurrence and parent/Step changes were not previously snapshotted, and older rows may use fallback occurrence identity. Record events captured from 7.2.19 onward preserve their evidence snapshot.
       </aside>
       </>}
-      {detailRecord ? <RecordDetailOverlay availableTaskIds={availableTaskIds} onClose={() => setDetailRecord(null)} onOpenTask={(taskId) => { setDetailRecord(null); props.onOpenTask(taskId); }} record={detailRecord} /> : null}
+      {detailRecord ? <RecordDetailOverlay
+        availableTaskIds={availableTaskIds}
+        effectivelyExcludedTaskIds={effectivelyExcludedTaskIds}
+        onClose={() => setDetailRecord(null)}
+        onOpenTask={(taskId) => { setDetailRecord(null); props.onOpenTask(taskId); }}
+        onRequestTrackingExclusion={props.onSetTaskTrackingExclusion ? setPendingTrackingExclusionTask : undefined}
+        record={detailRecord}
+        taskById={taskById}
+      /> : null}
+      {pendingTrackingExclusionTask ? <RecordTrackingExclusionModal
+        descendantsCount={buildTaskHierarchyAdapter(props.tasks).getDescendants(pendingTrackingExclusionTask.id).length}
+        onCancel={() => setPendingTrackingExclusionTask(null)}
+        onConfirm={async () => {
+          if (!props.onSetTaskTrackingExclusion) return;
+          const didPersist = await props.onSetTaskTrackingExclusion(pendingTrackingExclusionTask.id, true);
+          if (!didPersist) return;
+          if (recordsSessionKey) invalidateRecordsSessionSnapshot(recordsSessionKey);
+          setPendingTrackingExclusionTask(null);
+          setDetailRecord(null);
+          records.refresh();
+        }}
+        task={pendingTrackingExclusionTask}
+      /> : null}
     </div>
   );
 }
 
-function RecordDetailOverlay({ availableTaskIds, onClose, onOpenTask, record }: { availableTaskIds: ReadonlySet<string>; onClose: () => void; onOpenTask: (taskId: string) => void; record: RecordCardModel }) {
+function RecordDetailOverlay({ availableTaskIds, effectivelyExcludedTaskIds, onClose, onOpenTask, onRequestTrackingExclusion, record, taskById }: { availableTaskIds: ReadonlySet<string>; effectivelyExcludedTaskIds: ReadonlySet<string>; onClose: () => void; onOpenTask: (taskId: string) => void; onRequestTrackingExclusion?: (task: Task) => void; record: RecordCardModel; taskById: ReadonlyMap<string, Task> }) {
   const evidenceCount = record.taskEvidence ? getRecordTaskEvidenceCount(record.numericValue, record.taskEvidence) : null;
 
   useEffect(() => {
@@ -360,7 +390,14 @@ function RecordDetailOverlay({ availableTaskIds, onClose, onOpenTask, record }: 
             {record.taskEvidence.length ? <ul className="divide-y divide-[#eee9f5] dark:divide-white/10">{record.taskEvidence.map((item) => {
               const available = availableTaskIds.has(item.taskId);
               return <li className="py-2 first:pt-0 last:pb-0" key={`${item.sourceRowId}:${item.occurrenceIdentity}`}>
-                {available ? <button aria-label={`Open ${item.title}`} className="block max-w-full truncate text-left text-sm font-medium text-[#5b43dc] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c79f6] dark:text-[#cabfff]" onClick={() => onOpenTask(item.taskId)} type="button">{item.title}</button> : <p className="truncate text-sm font-medium text-[#514969] dark:text-white/80">{item.title}</p>}
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  {available ? <button aria-label={`Open ${item.title}`} className="min-w-0 truncate text-left text-sm font-medium text-[#5b43dc] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c79f6] dark:text-[#cabfff]" onClick={() => onOpenTask(item.taskId)} type="button">{item.title}</button> : <p className="min-w-0 truncate text-sm font-medium text-[#514969] dark:text-white/80">{item.title}</p>}
+                  {(() => {
+                    const task = taskById.get(item.taskId);
+                    if (!task || !onRequestTrackingExclusion || effectivelyExcludedTaskIds.has(task.id)) return null;
+                    return <TaskTableChipButton className="shrink-0 !px-2 !py-1 text-[10px]" onClick={() => onRequestTrackingExclusion(task)}>Exclude from tracking</TaskTableChipButton>;
+                  })()}
+                </div>
                 <p className="mt-0.5 text-xs text-[#817990] dark:text-white/50">{formatRecordTaskEvidenceEntityKind(item.entityKind)} · {formatRecordTaskEvidenceOutcome(item.outcome)} · {formatDate(item.logicalDate)}{available ? "" : " · Unavailable"}</p>
               </li>;
             })}</ul> : <p className="text-xs text-[#817990] dark:text-white/50">No valid evidence rows were available for this Record.</p>}
@@ -369,6 +406,17 @@ function RecordDetailOverlay({ availableTaskIds, onClose, onOpenTask, record }: 
       </AdhdPanel>
     </div>
   );
+}
+
+function RecordTrackingExclusionModal({ descendantsCount, onCancel, onConfirm, task }: { descendantsCount: number; onCancel: () => void; onConfirm: () => Promise<void>; task: Task }) {
+  const [pending, setPending] = useState(false);
+  return <div aria-labelledby="record-tracking-exclusion-title" aria-modal="true" className="fixed inset-0 z-[170] flex items-center justify-center bg-[#f7f3ff]/82 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/84" role="dialog">
+    <AdhdPanel className="w-full max-w-md" header={<div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-[#30294d] dark:text-white" id="record-tracking-exclusion-title">Exclude Task from tracking?</h2><AdhdIconButton aria-label="Close" onClick={onCancel} size="sm" tone="ghost"><X /></AdhdIconButton></div>} padding="md" variant="floating">
+      <p className="mt-3 text-sm leading-6 text-[#625b78] dark:text-white/65">“{task.title}” will remain in Task History, but future Records, Reports, streaks, and tracking-based rewards will ignore it.</p>
+      {descendantsCount > 0 ? <p className="mt-2 text-sm leading-6 text-[#625b78] dark:text-white/65">This will also exclude {descendantsCount} descendant Task{descendantsCount === 1 ? "" : "s"} through inherited tracking state. Descendant rows will not be changed.</p> : null}
+      <div className="mt-5 flex justify-end gap-2"><TaskTableChipButton onClick={onCancel}>Cancel</TaskTableChipButton><TaskTableChipButton disabled={pending} onClick={() => { setPending(true); void onConfirm().finally(() => setPending(false)); }} toneClassName="border-[#7d6cf5] bg-[#7d6cf5] text-white">{pending ? "Excluding…" : "Exclude from tracking"}</TaskTableChipButton></div>
+    </AdhdPanel>
+  </div>;
 }
 
 function HistoryItem({ event }: { event: PersistedRecordEvent }) {

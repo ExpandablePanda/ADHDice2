@@ -8,6 +8,7 @@ import type { Task, TaskEnergy, TaskHistory as DbTaskHistory } from "@/lib/datab
 import { getLevelProgress } from "@/lib/economy-levels";
 import type { HistoricalFocusSession } from "@/lib/types";
 import { shiftDateKey } from "@/lib/task-grid-layout";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 
 import { PageShellHeader } from "./page-shell-header";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
@@ -43,9 +44,11 @@ export function StatsPage({
 }: StatsPageProps) {
   const layout = usePageShellLayout(userId, "stats", STATS_PAGE_SHELL_IDS, STATS_PAGE_SHELL_CANONICAL_LAYOUT.sizes, STATS_PAGE_SHELL_CANONICAL_LAYOUT);
   const today = todayDateKey;
-  const todayDone = taskHistory.filter((entry) => entry.entry_date === today && entry.was_completed).length;
+  const excludedTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(tasks), [tasks]);
+  const trackedTaskHistory = useMemo(() => taskHistory.filter((entry) => !excludedTaskIds.has(entry.task_id)), [excludedTaskIds, taskHistory]);
+  const todayDone = trackedTaskHistory.filter((entry) => entry.entry_date === today && entry.was_completed).length;
   const weekDates = Array.from({ length: 7 }, (_, index) => shiftDateKey(today, -index));
-  const weekDone = taskHistory.filter((entry) => weekDates.includes(entry.entry_date) && entry.was_completed).length;
+  const weekDone = trackedTaskHistory.filter((entry) => weekDates.includes(entry.entry_date) && entry.was_completed).length;
   const todayFocusMinutes = Math.floor(
     focusHistory
       .filter((entry) => entry.date === today)
@@ -55,7 +58,7 @@ export function StatsPage({
   const { chartDays, maxScore } = useMemo(() => {
     const days = Array.from({ length: 7 }, (_, index) => {
       const date = shiftDateKey(today, -(6 - index));
-      const done = taskHistory.filter((entry) => entry.entry_date === date && entry.was_completed).length;
+      const done = trackedTaskHistory.filter((entry) => entry.entry_date === date && entry.was_completed).length;
       const focusSeconds = focusHistory
         .filter((entry) => entry.date === date)
         .reduce((sum, entry) => sum + entry.durationSeconds, 0);
@@ -63,17 +66,17 @@ export function StatsPage({
       return { date, score };
     });
     return { chartDays: days, maxScore: Math.max(...days.map((day) => day.score), 1) };
-  }, [focusHistory, taskHistory, today]);
+  }, [focusHistory, trackedTaskHistory, today]);
 
   const { energyCounts, totalEnergy } = useMemo(() => {
     const counts: Record<TaskEnergy, number> = { none: 0, low: 0, medium: 0, high: 0 };
     for (const task of tasks) {
-      if (task.status !== "archived" && task.status !== "trashed" && task.status !== "done") {
+      if (!excludedTaskIds.has(task.id) && task.status !== "archived" && task.status !== "trashed" && task.status !== "done") {
         counts[task.energy]++;
       }
     }
     return { energyCounts: counts, totalEnergy: counts.low + counts.medium + counts.high || 1 };
-  }, [tasks]);
+  }, [excludedTaskIds, tasks]);
   const xpProgress = useMemo(() => getLevelProgress(economy.xp), [economy.xp]);
 
   const statCard = (label: string, value: string, detail: string) => (

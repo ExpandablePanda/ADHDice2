@@ -57,6 +57,10 @@ export function setRecordsSessionSnapshot(key: string, input: RecordsSessionRefr
   return snapshot;
 }
 
+export function invalidateRecordsSessionSnapshot(key: string) {
+  recordsSessionSnapshots.delete(key);
+}
+
 export function clearRecordsSessionCache() {
   recordsSessionSnapshots.clear();
 }

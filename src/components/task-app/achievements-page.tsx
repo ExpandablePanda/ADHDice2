@@ -40,6 +40,7 @@ type AchievementsPageProps = {
   initialRecordMetricKey?: RecordMetricKey | null;
   onRecordRequestHandled?: () => void;
   onOpenTask: (taskId: string) => void;
+  onSetTaskTrackingExclusion?: (taskId: string, excluded: boolean) => Promise<boolean>;
   onTriggerDevelopmentAchievementTest?: (kind?: DevelopmentAchievementTestFixtureKind) => void;
   onOpenMilestoneTask: (taskId: string) => void;
   onOpenMilestones: () => void;
@@ -65,6 +66,7 @@ export function AchievementsPage({
   initialRecordMetricKey = null,
   onRecordRequestHandled,
   onOpenTask,
+  onSetTaskTrackingExclusion,
   onTriggerDevelopmentAchievementTest,
   onOpenMilestoneTask,
   onOpenMilestones,
@@ -132,7 +134,7 @@ export function AchievementsPage({
         </div>
       ) : null}
       <div aria-labelledby="progress-tab-records" hidden={activeTab !== "records"} id="progress-panel-records" role="tabpanel">
-        <RecordsTab active={activeTab === "records"} client={recordsClient} initialMetricKey={requestedRecordMetricKey} logicalDayStart={logicalDayStart} onOpenTask={onOpenTask} onRecordRequestHandled={onRecordRequestHandled} tasks={tasks} timezone={timezone} userId={userId} />
+        <RecordsTab active={activeTab === "records"} client={recordsClient} initialMetricKey={requestedRecordMetricKey} logicalDayStart={logicalDayStart} onOpenTask={onOpenTask} onRecordRequestHandled={onRecordRequestHandled} onSetTaskTrackingExclusion={onSetTaskTrackingExclusion} tasks={tasks} timezone={timezone} userId={userId} />
       </div>
     </section>
   );

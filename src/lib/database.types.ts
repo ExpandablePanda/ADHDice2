@@ -402,6 +402,8 @@ export type Task = {
   id: string;
   user_id: string;
   parent_task_id: string | null;
+  /** Nullable for fixtures and rows read before the additive 7.13.84 migration. */
+  exclude_from_tracking?: boolean;
   revision: number;
   title: string;
   task_type: import("./task-type.ts").TaskType;
@@ -447,6 +449,7 @@ export type TaskInsert = {
   id?: string;
   user_id: string;
   parent_task_id?: string | null;
+  exclude_from_tracking?: boolean;
   revision?: number;
   title: string;
   task_type?: import("./task-type.ts").TaskType;
@@ -511,6 +514,7 @@ export type TaskUpdate = Partial<
     | "one_step_at_a_time"
     | "subtasks_auto_reset"
     | "parent_task_id"
+    | "exclude_from_tracking"
     | "repeat_frequency"
     | "repeat_interval"
     | "repeat_days_of_week"
@@ -3219,6 +3223,14 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_set_task_tracking_exclusion: {
+        Args: { p_excluded: boolean; p_task_id: string };
+        Returns: Task;
+      };
+      adhdice_task_effectively_excluded_from_tracking: {
+        Args: { p_task_id: string; p_user_id: string };
+        Returns: boolean;
+      };
       adhdice_delete_custom_behavior_ruleset: {
         Args: { p_ruleset_id: string };
         Returns: CustomBehaviorRulesetDeleteResult[];

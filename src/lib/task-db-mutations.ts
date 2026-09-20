@@ -52,6 +52,11 @@ export type PermanentTaskDeletionResult = {
   error: { message: string } | null;
 };
 
+export type SetTaskTrackingExclusionResult = {
+  data: Task | null;
+  error: { message: string } | null;
+};
+
 export type CanonicalTaskCreationSource = "task_creation" | "task_import";
 
 export type CanonicalTaskCreationResult = {
@@ -208,6 +213,24 @@ export async function insertTaskRowWithCanonicalCreation(
     usedEnergyFallback: isRecord(response.data) && response.data.used_energy_fallback === true,
     usedActualSecondsFallback: false,
   };
+}
+
+/**
+ * Tracking metadata has its own authenticated RPC so a UI metadata edit can
+ * never accidentally become a lifecycle, schedule, or History mutation.
+ */
+export async function setTaskTrackingExclusion(
+  client: SupabaseClient,
+  taskId: string,
+  excluded: boolean,
+): Promise<SetTaskTrackingExclusionResult> {
+  const result = await client.rpc("adhdice_set_task_tracking_exclusion", {
+    p_excluded: excluded,
+    p_task_id: taskId,
+  });
+  if (result.error) return { data: null, error: result.error };
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return row && typeof row === "object" ? { data: row as Task, error: null } : { data: null, error: { message: "Tracking exclusion RPC returned an unusable Task row." } };
 }
 
 export async function updateTaskRowWithLegacyEnergyFallback(

@@ -21,6 +21,7 @@ import {
   type RecordsReportData,
 } from "@/lib/report-presentation";
 import { formatHealthReportSection, getHealthReportDateKeys, type HealthReportData } from "@/lib/health-report";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
   { id: "today", label: "Today", days: 1 },
@@ -95,7 +96,7 @@ type TaskReportTaskMetadata = {
   isImportant: boolean;
   isPinned: boolean;
   isRoutine: boolean;
-  isTestLike: boolean;
+  isExcludedFromTracking: boolean;
   isTrashed: boolean;
   isUrgent: boolean;
   pathLabel: string;
@@ -414,10 +415,6 @@ function getTaskTypeLabel(task: Task, depth: number | null): TaskTypeLabel {
   return "Substep";
 }
 
-function isTestLikeTaskTitle(title: string) {
-  return title.trim().toLowerCase().includes("test");
-}
-
 function isFocusSessionInRange(session: HistoricalFocusSession, range: ReportRange) {
   if (range.startDateKey && session.date < range.startDateKey) {
     return false;
@@ -561,6 +558,7 @@ function buildTaskMetadata(
   listMembershipsByTaskId: Record<string, TaskListMembership[]>,
 ) {
   const taskHierarchy = buildTaskHierarchyAdapter(tasks);
+  const excludedTaskIds = buildEffectiveTrackingExclusionSet(tasks);
   const listNameById = new Map(availableTaskLists.map((list) => [list.id, list.name] as const));
   const metadataByTaskId = new Map<string, TaskReportTaskMetadata>();
 
@@ -595,7 +593,7 @@ function buildTaskMetadata(
       isImportant: priorityLevel === 4,
       isPinned: Boolean(task.pinned_at),
       isRoutine: hasTaskListMembership(listMembershipsByTaskId[task.id] ?? [], "routine") || hasInheritedManualRoutineMembership,
-      isTestLike: isTestLikeTaskTitle(title),
+      isExcludedFromTracking: excludedTaskIds.has(task.id),
       isTrashed: task.status === "trashed" || parentChain.some((ancestor) => ancestor.status === "trashed"),
       isUrgent: priorityLevel === 5,
       pathLabel,
@@ -614,7 +612,10 @@ function buildTaskSnapshotSections(
   listMembershipsByTaskId: Record<string, TaskListMembership[]>,
 ) {
   const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId);
-  const workloadTasks = tasks.filter((task) => !metadataByTaskId.get(task.id)?.isTrashed);
+  const workloadTasks = tasks.filter((task) => {
+    const metadata = metadataByTaskId.get(task.id);
+    return metadata && !metadata.isTrashed && !metadata.isExcludedFromTracking;
+  });
   const currentStatusSnapshotCounts = workloadTasks.reduce<Record<string, number>>((accumulator, task) => {
     const metadata = metadataByTaskId.get(task.id);
     if (!metadata) {
@@ -627,11 +628,12 @@ function buildTaskSnapshotSections(
   return {
     activeLoadedTaskCount: workloadTasks.length,
     currentStatusSnapshotCounts,
+    excludedLoadedTaskCount: tasks.filter((task) => metadataByTaskId.get(task.id)?.isExcludedFromTracking).length,
     metadataByTaskId,
     pinnedSummary: buildCompactTaskSummary(workloadTasks, metadataByTaskId, (metadata) => metadata.isPinned),
     prioritySummaries: buildPriorityStatusSummaries(workloadTasks, metadataByTaskId),
     snapshotTaskCount: workloadTasks.length,
-    trashedLoadedTaskCount: tasks.length - workloadTasks.length,
+    trashedLoadedTaskCount: tasks.filter((task) => metadataByTaskId.get(task.id)?.isTrashed).length,
   };
 }
 
@@ -758,7 +760,7 @@ function buildHistorySections(
   for (const entry of latestEntries) {
     const task = tasksById.get(entry.task_id);
     const outcomeLabel = getOutcomeLabel(entry.status);
-    if (!task || !outcomeLabel || entry.metadata.isTrashed || entry.metadata.isTestLike) {
+    if (!task || !outcomeLabel || entry.metadata.isTrashed || entry.metadata.isExcludedFromTracking) {
       continue;
     }
 
@@ -854,7 +856,7 @@ function buildRoutinePerformanceSummary(
   for (const entry of taskHistory) {
     const task = tasksById.get(entry.task_id);
     const metadata = metadataByTaskId.get(entry.task_id);
-    if (!task || !metadata?.isRoutine || metadata.isTrashed || metadata.isTestLike || !isEntryInRange(entry, range)) continue;
+    if (!task || !metadata?.isRoutine || metadata.isTrashed || metadata.isExcludedFromTracking || !isEntryInRange(entry, range)) continue;
     const identity = `${entry.task_id}:${getRoutineOccurrenceIdentity(entry, task)}`;
     const existing = latestByOccurrence.get(identity);
     if (!existing || compareHistoryEntries(existing, entry) < 0) latestByOccurrence.set(identity, entry);
@@ -1201,7 +1203,7 @@ function generateTaskReport({
   );
   const reportEligibleHistoryCount = taskHistory.filter((entry) => {
     const metadata = snapshot.metadataByTaskId.get(entry.task_id);
-    return metadata && !metadata.isTrashed;
+    return metadata && !metadata.isTrashed && !metadata.isExcludedFromTracking;
   }).length;
   const healthRecordCount = healthData
     ? healthData.checkIns.length
@@ -1225,7 +1227,7 @@ function generateTaskReport({
     `- History Records Analyzed: ${reportEligibleHistoryCount}`,
     `- History Source: ${historySourceLabel}`,
     ...(healthData ? [`- Health Records Analyzed: ${healthData.isAvailable ? healthData.warnings.length > 0 ? "partial; see Health warnings" : healthRecordCount : "unavailable"}`, "- Health Source: Range-scoped persisted Health reads"] : []),
-    `- Active vs Trashed Loaded: ${snapshot.activeLoadedTaskCount} active, ${snapshot.trashedLoadedTaskCount} trashed excluded`,
+    `- Active vs Trashed Loaded: ${snapshot.activeLoadedTaskCount} active, ${snapshot.trashedLoadedTaskCount} trashed excluded${snapshot.excludedLoadedTaskCount > 0 ? `, ${snapshot.excludedLoadedTaskCount} tracking-excluded` : ""}`,
     ...(historyWarning ? [`- Warning: ${historyWarning}`] : []),
     formatOutcomeTotalLine("Done", history.outcomeTotals.Done),
     formatOutcomeTotalLine("Did My Best", history.outcomeTotals["Did My Best"]),

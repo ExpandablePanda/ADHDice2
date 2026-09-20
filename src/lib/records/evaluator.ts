@@ -18,6 +18,7 @@ import {
   type RecordsEvaluation,
   type RecordsEvaluationInput,
 } from "@/lib/records/types";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 
 type TaskOccurrence = {
   canonicalIdentity: string;
@@ -61,10 +62,11 @@ function isFinalized(row: TaskHistory) {
 
 export function collapseTaskHistory(input: Pick<RecordsEvaluationInput, "taskHistory" | "tasks">): TaskOccurrence[] {
   const taskById = new Map(input.tasks.map((task) => [task.id, task]));
+  const excludedTaskIds = buildEffectiveTrackingExclusionSet(input.tasks);
   const authoritative = new Map<string, { history: TaskHistory; task: Task; canonicalIdentity: string }>();
   for (const history of input.taskHistory) {
     const task = taskById.get(history.task_id);
-    if (!task) continue;
+    if (!task || excludedTaskIds.has(task.id)) continue;
     const canonicalIdentity = getTaskOccurrenceIdentity(history, task);
     const dedupeKey = `${task.id}:${canonicalIdentity}`;
     const current = authoritative.get(dedupeKey);

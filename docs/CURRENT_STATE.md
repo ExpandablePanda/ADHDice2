@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-19
+Last reviewed: 2026-09-20
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.83`.
+- Current working app version: `7.13.84`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.13.84 Exclude Task from Tracking
+
+Tasks now have an additive direct tracking-exclusion flag. Client tracking
+projections inherit exclusion through same-table parent chains without mutating
+descendant rows; the authored Supabase patch adds the authenticated mutation,
+reward guards, and current Achievement qualification rebuild boundary. The SQL
+patch remains source-only until manually applied and verified.
 
 ## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
 

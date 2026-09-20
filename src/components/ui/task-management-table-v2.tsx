@@ -1049,6 +1049,8 @@ export type PrototypeTaskRow = {
   subtasks: PrototypeTaskSubtask[];
   tags: string[];
   title: string;
+  directlyExcludedFromTracking?: boolean;
+  effectivelyExcludedFromTracking?: boolean;
 };
 
 type TaskFollowDestination = {
@@ -1280,6 +1282,7 @@ type TaskManagementTableV2Props = {
   onCustomRulesetBehaviorProfileChange?: (rulesetId: string, field: TaskBehaviorPolicyField, value: TaskBehaviorPolicy[TaskBehaviorPolicyField]) => Promise<boolean> | boolean;
   onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onTaskTitleChange?: (taskId: string, title: string) => void;
+  onTaskTrackingExclusionChange?: (taskId: string, excluded: boolean) => void | Promise<void>;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   primaryBadgeLabel?: string;
@@ -2616,6 +2619,7 @@ export function TaskManagementTableV2({
   onCustomRulesetBehaviorProfileChange,
   onResetTaskBehaviorProfile,
   onTaskTitleChange,
+  onTaskTrackingExclusionChange,
   onToggleTaskSelection,
   onToggleTaskList,
   shellClassName = "",
@@ -9582,24 +9586,60 @@ export function TaskManagementTableV2({
                 let metadataPanelContent: ReactNode = null;
                 if (metadataPanelId === "summary") {
                   metadataPanelContent = (
-                    <div className="grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3">
-                      {metadataSummaryRows.map((row) => row.panelId ? (
-                        <button
-                          aria-label={`Edit ${row.label}`}
-                          className="min-w-0 rounded-[0.8rem] border border-transparent px-2.5 py-1.5 text-left transition hover:border-[#e5dcfb] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:focus-visible:ring-[#3b2f68]/90"
-                          key={row.label}
-                          onClick={() => selectMetadataPanel(metadataTask.id, row.panelId as MetadataPanelId)}
-                          type="button"
-                        >
-                          <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
-                          <span className="mt-0.5 block min-w-0 break-words text-sm text-[#4e476f] dark:text-white/75">{row.value}</span>
-                        </button>
-                      ) : (
-                        <div className="min-w-0 rounded-[0.8rem] px-2.5 py-1.5" key={row.label}>
-                          <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
-                          <span className="mt-0.5 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
+                    <div className="space-y-4">
+                      <div className="grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3">
+                        {metadataSummaryRows.map((row) => row.panelId ? (
+                          <button
+                            aria-label={`Edit ${row.label}`}
+                            className="min-w-0 rounded-[0.8rem] border border-transparent px-2.5 py-1.5 text-left transition hover:border-[#e5dcfb] hover:bg-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:border-white/10 dark:hover:bg-white/[0.04] dark:focus-visible:ring-[#3b2f68]/90"
+                            key={row.label}
+                            onClick={() => selectMetadataPanel(metadataTask.id, row.panelId as MetadataPanelId)}
+                            type="button"
+                          >
+                            <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
+                            <span className="mt-0.5 block min-w-0 break-words text-sm text-[#4e476f] dark:text-white/75">{row.value}</span>
+                          </button>
+                        ) : (
+                          <div className="min-w-0 rounded-[0.8rem] px-2.5 py-1.5" key={row.label}>
+                            <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">{row.label}</span>
+                            <span className="mt-0.5 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
+                          </div>
+                        ))}
+                      </div>
+                      <div className="rounded-[1rem] border border-[#e8e1f6] bg-[#faf8ff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#7e73a7] dark:text-white/45">Tracking</p>
+                            <p className="mt-1 text-sm text-[#51496f] dark:text-white/75">
+                              {metadataTask.effectivelyExcludedFromTracking
+                                ? metadataTask.directlyExcludedFromTracking
+                                  ? "Excluded from tracking for this Task."
+                                  : "Excluded from tracking by a parent Task."
+                                : "This Task contributes to tracking."}
+                            </p>
+                          </div>
+                          {onTaskTrackingExclusionChange ? (
+                            <button
+                              aria-checked={metadataTask.directlyExcludedFromTracking === true}
+                              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 ${metadataTask.directlyExcludedFromTracking ? "border-[#7d6cf5] bg-[#7d6cf5] text-white" : "border-[#d8cff0] bg-white text-[#6f57f6] dark:border-white/15 dark:bg-white/[0.05] dark:text-[#cabfff]"}`}
+                              onClick={() => {
+                                const nextExcluded = metadataTask.directlyExcludedFromTracking !== true;
+                                patchTask(metadataTask.id, (task) => ({
+                                  ...task,
+                                  directlyExcludedFromTracking: nextExcluded,
+                                  effectivelyExcludedFromTracking: nextExcluded
+                                    || (task.effectivelyExcludedFromTracking === true && task.directlyExcludedFromTracking !== true),
+                                }));
+                                void onTaskTrackingExclusionChange(metadataTask.id, nextExcluded);
+                              }}
+                              role="switch"
+                              type="button"
+                            >
+                              {metadataTask.directlyExcludedFromTracking ? "Include" : "Exclude"}
+                            </button>
+                          ) : null}
                         </div>
-                      ))}
+                      </div>
                     </div>
                   );
                 } else if (metadataPanelId === "task_type") {

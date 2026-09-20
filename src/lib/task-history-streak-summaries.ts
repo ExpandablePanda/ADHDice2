@@ -11,6 +11,7 @@ import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engin
 import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
 import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "@/lib/task-history-last-handled";
 import { forEachCooperatively, type CooperativeChunkOptions } from "@/lib/stable-task-projection";
+import { buildEffectiveTrackingExclusionSet, isTaskDirectlyExcludedFromTracking } from "@/lib/task-tracking";
 
 export const TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 
@@ -41,6 +42,7 @@ export type TaskHistoryStreakSummaryContext = TaskBehaviorPolicyResolutionContex
   now?: Date | string;
   timezone?: string;
   manualActionSummaryByTaskId?: TaskHistoryLastHandledSummaryMap;
+  effectiveTrackingExclusion?: boolean;
 };
 
 function resolveCalendarRange(
@@ -89,12 +91,16 @@ export function buildTaskHistoryStreakSummary(
   const lastDone = getTaskHistoryLastDone(normalizedHistory, todayDateKey);
   const lastHandled = context.manualActionSummaryByTaskId?.[task.id];
   return {
-    currentStreak: streaks.currentCompletedStreak,
+    currentStreak: context.effectiveTrackingExclusion ?? isTaskDirectlyExcludedFromTracking(task)
+      ? 0
+      : streaks.currentCompletedStreak,
     lastHandledAt: lastHandled?.timestamp ?? null,
     lastHandledDate: lastHandled?.dateKey ?? null,
     lastDoneAt: lastDone?.timestamp ?? null,
     lastDoneDate: lastDone?.dateKey ?? null,
-    missedStreak: streaks.currentMissedStreak,
+    missedStreak: context.effectiveTrackingExclusion ?? isTaskDirectlyExcludedFromTracking(task)
+      ? 0
+      : streaks.currentMissedStreak,
   };
 }
 
@@ -118,12 +124,14 @@ export function buildTaskHistoryStreakSummaryMap(
     context.manualActionCommandOperations ?? [],
     todayDateKey,
   );
+  const excludedTaskIds = buildEffectiveTrackingExclusionSet(tasks);
 
   return Object.fromEntries(
     tasks.map((task) => [
       task.id,
       buildTaskHistoryStreakSummary(task, historyByTaskId.get(task.id) ?? [], todayDateKey, {
         ...context,
+        effectiveTrackingExclusion: excludedTaskIds.has(task.id),
         calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
         manualActionSummaryByTaskId,
       }),
@@ -153,10 +161,12 @@ export async function buildTaskHistoryStreakSummaryMapCooperatively(
     context.manualActionCommandOperations ?? [],
     todayDateKey,
   );
+  const excludedTaskIds = buildEffectiveTrackingExclusionSet(tasks);
   const summaries: TaskHistoryStreakSummaryMap = {};
   const result = await forEachCooperatively(tasks, (task) => {
     summaries[task.id] = buildTaskHistoryStreakSummary(task, historyByTaskId.get(task.id) ?? [], todayDateKey, {
       ...context,
+      effectiveTrackingExclusion: excludedTaskIds.has(task.id),
       calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
       manualActionSummaryByTaskId,
     });
@@ -182,6 +192,7 @@ export function updateTaskHistoryStreakSummaryMap(
     ...current,
     [task.id]: buildTaskHistoryStreakSummary(task, history, todayDateKey, {
       ...context,
+      effectiveTrackingExclusion: context.effectiveTrackingExclusion ?? isTaskDirectlyExcludedFromTracking(task),
       calendarOverrides: context.calendarOverridesByTaskId?.[task.id] ?? context.calendarOverrides,
       manualActionSummaryByTaskId,
     }),

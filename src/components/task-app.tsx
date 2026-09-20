@@ -108,6 +108,7 @@ import {
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
+import { buildEffectiveTrackingExclusionSet, filterTrackedTaskHistory } from "@/lib/task-tracking";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
@@ -244,6 +245,7 @@ import {
   deleteTaskRow,
   insertTaskRowWithCanonicalCreation,
   markTaskRowsPermanentlyDeleted,
+  setTaskTrackingExclusion as setTaskTrackingExclusionRpc,
   updateTaskRowWithLegacyEnergyFallback,
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
@@ -2659,7 +2661,8 @@ export function TaskApp() {
     },
     [taskSubtasksByTaskId, tasks],
   );
-  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory, todayKey), [taskHistory, todayKey]);
+  const trackedTaskHistoryForStats = useMemo(() => filterTrackedTaskHistory(taskHistory, tasks), [taskHistory, tasks]);
+  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(trackedTaskHistoryForStats, todayKey), [todayKey, trackedTaskHistoryForStats]);
   const { saveFocusSelection } = useFocusSelectionPersistence({
     currentUserId,
     defaultValidTaskIds: tasks,
@@ -2982,6 +2985,21 @@ export function TaskApp() {
     }
   }, [activeStatusRead, isTaskHistoryLoaded]);
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+  const updateTaskTrackingExclusion = useCallback(async (taskId: string, excluded: boolean) => {
+    const result = await setTaskTrackingExclusionRpc(client, taskId, excluded);
+    if (result.error || !result.data) {
+      setMessage({ tone: "warn", text: result.error?.message ?? "Task tracking exclusion could not be saved." });
+      return false;
+    }
+    const nextTasks = sortTasksForUi(tasks.map((task) => task.id === taskId ? { ...task, ...result.data } : task));
+    setTasks(nextTasks);
+    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    setMessage({
+      tone: "good",
+      text: excluded ? "Task excluded from tracking." : "Task included in tracking.",
+    });
+    return true;
+  }, [client, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks]);
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
     values: TaskUpdate,
@@ -3457,6 +3475,7 @@ export function TaskApp() {
     [attentionRuleGroup, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, taskListMembershipsByTaskId, tasksForActiveStatusRead, todayKey],
   );
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
+  const trackingExclusionTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(tasksForActiveStatusRead), [tasksForActiveStatusRead]);
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
       ? tasksForActiveStatusRead.map((task) => sharedEditorRowModelCache.getOrCreate(task, {
@@ -3469,6 +3488,8 @@ export function TaskApp() {
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: taskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
+        directlyExcludedFromTracking: task.exclude_from_tracking === true,
+        effectivelyExcludedFromTracking: trackingExclusionTaskIds.has(task.id),
         todayDateKey: todayKey,
       }))
       : [],
@@ -3481,6 +3502,7 @@ export function TaskApp() {
       taskHistoryStreakSummaries,
       taskDisplayStatusByTaskId,
       taskAttentionReasonByTaskId,
+      trackingExclusionTaskIds,
       taskLinkedNotesByTaskId,
       taskListMembershipsByTaskId,
       taskSubtasksByTaskId,
@@ -3927,6 +3949,7 @@ export function TaskApp() {
   } = useTaskRewardController({
     client,
     currentUserId: session?.user?.id ?? null,
+    tasks,
     setMessage,
     setEconomy,
   });
@@ -7123,6 +7146,7 @@ export function TaskApp() {
           onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
           onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
           onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
+          onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
           onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
           onUnlinkTask={unlinkSameTableTask}
           overlayOnly
@@ -7353,6 +7377,7 @@ export function TaskApp() {
             initialRecordMetricKey={pendingProgressRecordMetricKey}
             onRecordRequestHandled={clearPendingProgressRecordMetricKey}
             onOpenTask={openTaskEditorFromId}
+            onSetTaskTrackingExclusion={updateTaskTrackingExclusion}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
               setActivePage("Tasks");
