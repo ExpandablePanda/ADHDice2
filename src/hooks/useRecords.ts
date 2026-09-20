@@ -3,9 +3,26 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import { getLogicalDayKey } from "@/lib/logical-day";
-import type { PersistedRecordCurrent, PersistedRecordEvent, ProvisionalRecordCandidate } from "@/lib/records/types";
+import { RECORDS_RULES_VERSION, type PersistedRecordCurrent, type PersistedRecordEvent, type ProvisionalRecordCandidate } from "@/lib/records/types";
 import { buildTaskEvidenceByRecordIdentity, type RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
-import { isRecordsBusyError, isRecordsSetupError, RECORDS_BUSY_MESSAGE, runRecordsPipeline, runRecordsPipelineSingleFlight } from "@/lib/record-repository";
+import {
+  isRecordsBusyError,
+  isRecordsSetupError,
+  loadLatestCompletedRecordsRun,
+  loadPersistedRecords,
+  RECORDS_BUSY_MESSAGE,
+  runRecordsPipeline,
+  runRecordsPipelineSingleFlight,
+  type LatestCompletedRecordsRun,
+} from "@/lib/record-repository";
+import { isRecordsFresh, isRecordsInvalidatedAfter, normalizeRecordsLogicalDayStart } from "@/lib/records/freshness";
+import {
+  clearRecordsInvalidation,
+  getRecordsLocalStorage,
+  readRecordsInvalidatedAt,
+  readRecordsLocalDetailCache,
+  writeRecordsLocalDetailCache,
+} from "@/lib/records/persistent-cache";
 import { buildRecordsSessionCacheKey, getRecordsSessionSnapshot, setRecordsSessionSnapshot, type RecordsSessionRefresh, type RecordsSessionSnapshot } from "@/lib/records/session-cache";
 
 type RecordsClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -14,6 +31,7 @@ export type RecordsHookState = {
   currentRecords: PersistedRecordCurrent[];
   error: string | null;
   events: PersistedRecordEvent[];
+  hasDetailedEvidence: boolean;
   hasSuccessfulResult: boolean;
   isLoading: boolean;
   isRecalculating: boolean;
@@ -25,7 +43,7 @@ export type RecordsHookState = {
   warnings: string[];
 };
 
-const INITIAL_STATE: RecordsHookState = { currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false, isRecalculating: false, lastCalculatedAt: null, progress: null, provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [] };
+const INITIAL_STATE: RecordsHookState = { currentRecords: [], error: null, events: [], hasDetailedEvidence: false, hasSuccessfulResult: false, isLoading: false, isRecalculating: false, lastCalculatedAt: null, progress: null, provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [] };
 export type RecordsInternalState = RecordsHookState & { ownerUserId: string | null; sessionKey?: string | null };
 const INITIAL_INTERNAL_STATE: RecordsInternalState = { ...INITIAL_STATE, ownerUserId: null, sessionKey: null };
 
@@ -42,6 +60,7 @@ export function restoreRecordsSessionSnapshot(current: RecordsInternalState, inp
     currentRecords: input.snapshot.currentRecords,
     error: null,
     events: input.snapshot.events,
+    hasDetailedEvidence: true,
     hasSuccessfulResult: true,
     isLoading: false,
     isRecalculating: false,
@@ -56,12 +75,34 @@ export function restoreRecordsSessionSnapshot(current: RecordsInternalState, inp
   };
 }
 
+export function restorePersistedRecords(current: RecordsInternalState, input: { currentRecords: PersistedRecordCurrent[]; evaluatedAt: string; events: PersistedRecordEvent[]; hasDetailedEvidence: boolean; ownerUserId: string; provisionalCandidates: ProvisionalRecordCandidate[]; sessionKey: string; taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity; warnings: string[] }): RecordsInternalState {
+  return {
+    ...current,
+    currentRecords: input.currentRecords,
+    error: null,
+    events: input.events,
+    hasDetailedEvidence: input.hasDetailedEvidence,
+    hasSuccessfulResult: true,
+    isLoading: false,
+    isRecalculating: false,
+    lastCalculatedAt: input.evaluatedAt,
+    ownerUserId: input.ownerUserId,
+    progress: null,
+    provisionalCandidates: input.provisionalCandidates,
+    sessionKey: input.sessionKey,
+    setupRequired: false,
+    taskEvidenceByRecordIdentity: input.taskEvidenceByRecordIdentity,
+    warnings: input.warnings,
+  };
+}
+
 export function completeRecordsRefresh(current: RecordsInternalState, input: RecordsRefreshResult): RecordsInternalState {
   return {
     ...current,
     currentRecords: input.currentRecords,
     error: null,
     events: input.events,
+    hasDetailedEvidence: true,
     hasSuccessfulResult: true,
     isLoading: false,
     isRecalculating: false,
@@ -76,10 +117,41 @@ export function completeRecordsRefresh(current: RecordsInternalState, input: Rec
   };
 }
 
+export function recordsRunMatchesSettings(run: LatestCompletedRecordsRun, settings: { logicalDayStart: string; timezone: string }) {
+  const runLogicalDayStart = normalizeRecordsLogicalDayStart(run.logical_day_start);
+  const settingsLogicalDayStart = normalizeRecordsLogicalDayStart(settings.logicalDayStart);
+  return Boolean(runLogicalDayStart && settingsLogicalDayStart)
+    && run.rules_version === RECORDS_RULES_VERSION
+    && run.timezone === settings.timezone
+    && runLogicalDayStart === settingsLogicalDayStart;
+}
+
+function resolveSavedDetails(sessionKey: string, evaluatedAt: string) {
+  const cached = readRecordsLocalDetailCache(getRecordsLocalStorage(), sessionKey, evaluatedAt);
+  return cached
+    ? {
+      hasDetailedEvidence: true,
+      provisionalCandidates: cached.provisionalCandidates,
+      taskEvidenceByRecordIdentity: cached.taskEvidenceByRecordIdentity,
+      warnings: cached.warnings,
+    }
+    : {
+      hasDetailedEvidence: false,
+      provisionalCandidates: [],
+      taskEvidenceByRecordIdentity: {},
+      warnings: [],
+    };
+}
+
 export function useRecords({ active, client, logicalDayStart, timezone, userId }: { active: boolean; client: RecordsClient; logicalDayStart: string; timezone: string; userId: string | null }) {
   const sessionKey = userId ? buildRecordsSessionCacheKey({ logicalDayStart, timezone, userId }) : null;
   const cachedSessionSnapshot = active && sessionKey ? getRecordsSessionSnapshot(sessionKey) : null;
-  const initialSnapshot = cachedSessionSnapshot;
+  const cachedInvalidatedAt = sessionKey ? readRecordsInvalidatedAt(getRecordsLocalStorage(), sessionKey) : null;
+  const initialSnapshot = cachedSessionSnapshot
+    && isRecordsFresh(cachedSessionSnapshot.lastCalculatedAt)
+    && !isRecordsInvalidatedAfter(cachedSessionSnapshot.lastCalculatedAt, cachedInvalidatedAt)
+    ? cachedSessionSnapshot
+    : null;
   const [state, setState] = useState<RecordsInternalState>(() => initialSnapshot && userId && sessionKey
     ? restoreRecordsSessionSnapshot(INITIAL_INTERNAL_STATE, { ownerUserId: userId, sessionKey, snapshot: initialSnapshot })
     : INITIAL_INTERNAL_STATE);
@@ -120,7 +192,10 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
     refreshRequestedRef.current = false;
     refreshRequestedKeyRef.current = null;
     const cached = sessionKey ? getRecordsSessionSnapshot(sessionKey) : null;
-    if (!explicitRefresh && cached) return;
+    const invalidatedAt = sessionKey ? readRecordsInvalidatedAt(getRecordsLocalStorage(), sessionKey) : null;
+    const cachedIsFresh = Boolean(cached && isRecordsFresh(cached.lastCalculatedAt) && !isRecordsInvalidatedAfter(cached.lastCalculatedAt, invalidatedAt));
+    if (!explicitRefresh && cachedIsFresh) return;
+
     const generation = ++generationRef.current;
     runningRef.current = true;
     setState((current) => {
@@ -129,25 +204,89 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
         : cached
           ? restoreRecordsSessionSnapshot(current, { ownerUserId: userId, sessionKey: sessionKey!, snapshot: cached })
           : current;
-      return { ...prior, error: null, isLoading: prior.sessionKey !== sessionKey || prior.ownerUserId !== userId || prior.lastCalculatedAt === null, isRecalculating: true, ownerUserId: userId, progress: "Preparing Records", sessionKey, setupRequired: false };
+      return { ...prior, error: null, isLoading: !prior.hasSuccessfulResult, isRecalculating: false, ownerUserId: userId, progress: "Loading saved Records…", sessionKey, setupRequired: false };
     });
     const settings = { dayStartTime: logicalDayStart, timezone };
     const openLogicalDate = getLogicalDayKey(new Date(), settings);
     void (async () => {
+      let durableRun: LatestCompletedRecordsRun | null = null;
       try {
+        if (!explicitRefresh && !cachedIsFresh) {
+          try {
+            durableRun = await loadLatestCompletedRecordsRun(client, { logicalDayStart, timezone });
+          } catch {
+            durableRun = null;
+          }
+
+          const durableIsFresh = Boolean(durableRun
+            && recordsRunMatchesSettings(durableRun, { logicalDayStart, timezone })
+            && isRecordsFresh(durableRun.evaluated_at)
+            && !isRecordsInvalidatedAfter(durableRun.evaluated_at, invalidatedAt));
+          if (durableIsFresh) {
+            if (generation === generationRef.current && latestOwnerRef.current === userId) {
+              setState((current) => ({ ...current, error: null, isLoading: true, isRecalculating: false, progress: "Loading saved Records…" }));
+            }
+            const persisted = await loadPersistedRecords(client, userId);
+            const details = resolveSavedDetails(sessionKey!, durableRun!.evaluated_at);
+            if (generation !== generationRef.current || latestOwnerRef.current !== userId || latestSessionKeyRef.current !== sessionKey) return;
+            setState((current) => restorePersistedRecords(current, {
+              ...details,
+              currentRecords: persisted.currentRecords,
+              evaluatedAt: durableRun!.evaluated_at,
+              events: persisted.events,
+              ownerUserId: userId,
+              sessionKey: sessionKey!,
+            }));
+            return;
+          }
+
+          if (durableRun && !cached?.hasSuccessfulResult) {
+            try {
+              const persisted = await loadPersistedRecords(client, userId);
+              const details = resolveSavedDetails(sessionKey!, durableRun.evaluated_at);
+              if (generation === generationRef.current && latestOwnerRef.current === userId && latestSessionKeyRef.current === sessionKey) {
+                setState((current) => ({
+                  ...restorePersistedRecords(current, {
+                    ...details,
+                    currentRecords: persisted.currentRecords,
+                    evaluatedAt: durableRun!.evaluated_at,
+                    events: persisted.events,
+                    ownerUserId: userId,
+                    sessionKey: sessionKey!,
+                  }),
+                  error: null,
+                  isLoading: false,
+                  isRecalculating: true,
+                  progress: "Preparing Records",
+                }));
+              }
+            } catch {
+              // The full pipeline remains the recovery path when the retained saved result cannot be loaded.
+            }
+          }
+        }
+
+        if (generation === generationRef.current && latestOwnerRef.current === userId) {
+          setState((current) => ({ ...current, error: null, isLoading: !current.hasSuccessfulResult, isRecalculating: true, progress: "Preparing Records" }));
+        }
         const evaluatedAt = new Date().toISOString();
         const result = await runRecordsPipelineSingleFlight(sessionKey ?? userId, () => runRecordsPipeline(client, userId, { evaluatedAt, logicalDayStart, openLogicalDate, timezone }, (progress) => {
           if (generation === generationRef.current && latestOwnerRef.current === userId) setState((current) => ({ ...current, progress }));
         }));
         const refreshResult = {
           currentRecords: result.currentRecords,
-          evaluatedAt,
+          evaluatedAt: result.evaluation.evaluatedAt,
           events: result.events,
           provisionalCandidates: result.evaluation.provisionalCandidates,
           taskEvidenceByRecordIdentity: buildTaskEvidenceByRecordIdentity(result.evaluation.currentRecords),
           warnings: result.evaluation.warnings,
         } satisfies RecordsSessionRefresh;
-        if (sessionKey) setRecordsSessionSnapshot(sessionKey, refreshResult);
+        if (sessionKey) {
+          setRecordsSessionSnapshot(sessionKey, refreshResult);
+          const storage = getRecordsLocalStorage();
+          clearRecordsInvalidation(storage, sessionKey);
+          writeRecordsLocalDetailCache(storage, { ...refreshResult, lastCalculatedAt: refreshResult.evaluatedAt, sessionKey });
+        }
         if (generation !== generationRef.current || latestOwnerRef.current !== userId || latestSessionKeyRef.current !== sessionKey) return;
         setState((current) => completeRecordsRefresh(current, { ...refreshResult, ownerUserId: userId, sessionKey }));
         if (refreshRequestRef.current?.key === sessionKey) {
@@ -183,9 +322,10 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
     })();
   }, [active, client, logicalDayStart, refreshToken, sessionKey, timezone, userId]);
 
-  const cachedVisibleState = cachedSessionSnapshot && userId && sessionKey
-    ? restoreRecordsSessionSnapshot(state, { ownerUserId: userId, sessionKey, snapshot: cachedSessionSnapshot })
-    : INITIAL_INTERNAL_STATE;
-  const visibleState = state.ownerUserId === userId && state.sessionKey === sessionKey ? state : cachedVisibleState;
+  const visibleState = state.ownerUserId === userId && state.sessionKey === sessionKey
+    ? state
+    : initialSnapshot && userId && sessionKey
+      ? restoreRecordsSessionSnapshot(state, { ownerUserId: userId, sessionKey, snapshot: initialSnapshot })
+      : INITIAL_INTERNAL_STATE;
   return { ...visibleState, refresh };
 }

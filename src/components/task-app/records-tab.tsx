@@ -78,6 +78,7 @@ type RecordCardModel = {
   id: string;
   numericValue: number;
   taskEvidence: RecordTaskEvidenceItem[] | null;
+  taskEvidenceUnavailable: boolean;
   title: string;
   value: string;
 };
@@ -105,7 +106,7 @@ function getSourceCount(evidence: Record<string, unknown>) {
   return Array.isArray(identities) ? identities.length : 0;
 }
 
-function buildCurrentRecordCard(record: PersistedRecordCurrent, events: PersistedRecordEvent[], taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity): RecordCardModel {
+function buildCurrentRecordCard(record: PersistedRecordCurrent, events: PersistedRecordEvent[], hasDetailedEvidence: boolean, taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity): RecordCardModel {
   const previousValue = events
     .filter((event) => event.validity_state === "valid" && matchesRecord(event, record) && event.value < record.value)
     .reduce<number | null>((highest, event) => highest === null ? event.value : Math.max(highest, event.value), null);
@@ -128,9 +129,10 @@ function buildCurrentRecordCard(record: PersistedRecordCurrent, events: Persiste
     icon: category.icon,
     id: `${record.metric_key}:${record.scope_id ?? "global"}`,
     numericValue: record.value,
-    taskEvidence: isSupportedTaskEvidenceMetric(record.metric_key)
+    taskEvidence: hasDetailedEvidence && isSupportedTaskEvidenceMetric(record.metric_key)
       ? taskEvidenceByRecordIdentity[recordIdentity(record.metric_key, record.scope_kind, record.scope_id)] ?? []
       : null,
+    taskEvidenceUnavailable: !hasDetailedEvidence && isSupportedTaskEvidenceMetric(record.metric_key),
     title: RECORD_METRICS[record.metric_key].label,
     value: formatValue(record.value, record.unit),
   };
@@ -157,6 +159,7 @@ function buildProvisionalRecordCard(record: ProvisionalRecordCandidate, currentR
     id: `provisional:${record.candidateIdentity}`,
     numericValue: record.value,
     taskEvidence: isSupportedTaskEvidenceMetric(record.metricKey) ? parseRecordTaskEvidenceSourceRows(record.metricKey, record.evidence.sourceRows) : null,
+    taskEvidenceUnavailable: false,
     title: RECORD_METRICS[record.metricKey].label,
     value: formatValue(record.value, record.unit),
   };
@@ -165,6 +168,7 @@ function buildProvisionalRecordCard(record: ProvisionalRecordCandidate, currentR
 function RecordGrid({
   currentRecords,
   events,
+  hasDetailedEvidence,
   onOpenDetails,
   taskEvidenceByRecordIdentity,
   provisional = [],
@@ -172,6 +176,7 @@ function RecordGrid({
 }: {
   currentRecords: PersistedRecordCurrent[];
   events: PersistedRecordEvent[];
+  hasDetailedEvidence: boolean;
   onOpenDetails: (record: RecordCardModel) => void;
   provisional?: ProvisionalRecordCandidate[];
   records: PersistedRecordCurrent[];
@@ -179,7 +184,7 @@ function RecordGrid({
 }) {
   if (!records.length && !provisional.length) return <p className="text-sm text-[#817990] dark:text-white/50">No qualifying history is available yet.</p>;
   const cards = [
-    ...records.map((record) => buildCurrentRecordCard(record, events, taskEvidenceByRecordIdentity)),
+    ...records.map((record) => buildCurrentRecordCard(record, events, hasDetailedEvidence, taskEvidenceByRecordIdentity)),
     ...provisional.map((record) => buildProvisionalRecordCard(record, currentRecords)),
   ];
   return (
@@ -310,10 +315,10 @@ export function RecordsTab(props: RecordsTabProps) {
     // Deep-link state must be opened in this effect before the request is consumed; deferring it recreates the cached-path race.
     // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional synchronous Record deep-link handoff
     setSelectedTaskIds([]);
-    setDetailRecord(buildCurrentRecordCard(record, records.events, records.taskEvidenceByRecordIdentity));
+    setDetailRecord(buildCurrentRecordCard(record, records.events, records.hasDetailedEvidence, records.taskEvidenceByRecordIdentity));
     openedInitialMetricRef.current = initialMetricKey;
     onRecordRequestHandled?.();
-  }, [initialMetricKey, onRecordRequestHandled, records.currentRecords, records.events, records.hasSuccessfulResult, records.taskEvidenceByRecordIdentity]);
+  }, [initialMetricKey, onRecordRequestHandled, records.currentRecords, records.events, records.hasDetailedEvidence, records.hasSuccessfulResult, records.taskEvidenceByRecordIdentity]);
 
   function toggleSection(sectionId: RecordsSectionId) {
     const next = { ...expandedSections, [sectionId]: !expandedSections[sectionId] };
@@ -374,17 +379,17 @@ export function RecordsTab(props: RecordsTabProps) {
       </div>
       {!records.hasSuccessfulResult ? null : <>
       <RecordsSection expanded={expandedSections.global_tasks} id="global_tasks" onToggle={() => toggleSection("global_tasks")} title="Global Task records">
-        <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={openRecordDetails} provisional={sectionProvisional("tasks")} records={sectionRecords("tasks")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
+        <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} provisional={sectionProvisional("tasks")} records={sectionRecords("tasks")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
       </RecordsSection>
       <RecordsSection expanded={expandedSections.streaks} id="streaks" onToggle={() => toggleSection("streaks")} title="Streak records">
-        <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={openRecordDetails} records={sectionRecords("streaks")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
+        <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} records={sectionRecords("streaks")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
       </RecordsSection>
       <RecordsSection expanded={expandedSections.focus} id="focus" onToggle={() => toggleSection("focus")} title="Focus records">
-        <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={openRecordDetails} provisional={sectionProvisional("focus")} records={sectionRecords("focus")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
+        <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} provisional={sectionProvisional("focus")} records={sectionRecords("focus")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
       </RecordsSection>
       <RecordsSection expanded={expandedSections.per_task} id="per_task" onToggle={() => toggleSection("per_task")} title="Per-task records">
         <label className="mb-3 block text-xs font-medium text-[#817990] dark:text-white/50">Filter by Task title<input className="mt-1 block min-h-10 w-full max-w-sm rounded-lg border border-[#ded7ea] bg-white px-3 text-sm text-[#30294d] outline-none focus:border-[#8c79f6] dark:border-white/15 dark:bg-white/[0.06] dark:text-white" onChange={(event) => setTaskQuery(event.target.value)} placeholder="Search Tasks and Steps" type="search" value={taskQuery} /></label>
-        {perTaskRecords.length ? <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={openRecordDetails} records={perTaskRecords} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} /> : <p className="text-sm text-[#817990] dark:text-white/50">No matching per-task records.</p>}
+        {perTaskRecords.length ? <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} records={perTaskRecords} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} /> : <p className="text-sm text-[#817990] dark:text-white/50">No matching per-task records.</p>}
       </RecordsSection>
       <RecordsSection expanded={expandedSections.history} id="history" onToggle={() => toggleSection("history")} title="Record history">
         <div className="mb-3"><TaskTableChipButton aria-pressed={showInvalidated} onClick={() => setShowInvalidated((value) => !value)}>{showInvalidated ? "Hide invalidated" : "Show invalidated"}</TaskTableChipButton></div>
@@ -450,7 +455,7 @@ function RecordDetailOverlay({ availableTaskIds, onClearSelection, onClose, onOp
           <dt className="text-[#817990] dark:text-white/50">Evidence items</dt><dd>{record.detail.sourceCount.toLocaleString()}</dd>
           {record.detail.firstAchievedAt ? <><dt className="text-[#817990] dark:text-white/50">First achieved</dt><dd>{new Date(record.detail.firstAchievedAt).toLocaleDateString()}</dd></> : null}
         </dl>
-        {record.taskEvidence && evidenceCount ? <section className="mt-5 min-w-0 border-t border-[#eee9f5] pt-4 dark:border-white/10" data-record-evidence>
+        {record.taskEvidenceUnavailable ? <p className="mt-5 border-t border-[#eee9f5] pt-4 text-xs leading-5 text-[#817990] dark:border-white/10 dark:text-white/50">Detailed Evidence is not cached on this device. Refresh Records to load it.</p> : record.taskEvidence && evidenceCount ? <section className="mt-5 min-w-0 border-t border-[#eee9f5] pt-4 dark:border-white/10" data-record-evidence>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-semibold text-[#514969] dark:text-white/85">Record Evidence</h3>
             <span aria-live="polite" className="text-xs text-[#817990] dark:text-white/50">{selectedTaskIds.size} Tasks selected</span>

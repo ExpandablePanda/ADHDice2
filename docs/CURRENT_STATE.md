@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.87`.
+- Current working app version: `7.13.88`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -54,6 +54,16 @@ Records session cache, and refreshes streak summaries once. Records closes stale
 detail and runs exactly one explicit refresh with the existing pipeline stage
 text while showing blocking progress. The 7.13.87 migration remains source-only
 until manual application and live verification.
+
+## 2026-09-20 7.13.88 Durable Records Freshness + Home Loading UX
+
+Records now uses a narrow authenticated freshness RPC over the owner-protected
+reconciliation metadata, with a 12-hour saved-result bootstrap, user-scoped
+invalidation, and best-effort local rich Evidence details. Home shows explicit
+loading status for Finished Today and saved Record targets, and the bulk Task
+exclusion merge starts from the latest canonical Task state. The
+`supabase/patch_records_freshness_read_7_13_88.sql` migration is source-only
+until manual inspection and application.
 
 ## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
 

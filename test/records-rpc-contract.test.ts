@@ -61,6 +61,7 @@ test("7.2.25 signature mismatch stays stage-specific while genuine absence retai
     currentRecords: [{ id: "record-1" }] as never[],
     error: null,
     events: [{ id: "event-1" }] as never[],
+    hasDetailedEvidence: false,
     hasSuccessfulResult: true,
     isLoading: false,
     isRecalculating: true,

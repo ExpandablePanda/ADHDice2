@@ -3255,6 +3255,10 @@ export type Database = {
         Args: { p_payload: unknown };
         Returns: unknown;
       };
+      adhdice_get_latest_completed_records_run: {
+        Args: { p_logical_day_start: string; p_rules_version: string; p_timezone: string };
+        Returns: Array<Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "timezone">>;
+      };
       adhdice_activate_achievement_profile: {
         Args: {
           p_operation_id: string;

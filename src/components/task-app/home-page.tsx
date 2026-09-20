@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, GripVertical, ListTodo, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -139,6 +139,7 @@ function HomeProgressDashboard({
   onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
+  recordTargetsRecalculatedAt,
   recordTargetsSettingsMismatch,
 }: {
   dailyProgress: HomeDailyProgress;
@@ -147,6 +148,7 @@ function HomeProgressDashboard({
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
+  recordTargetsRecalculatedAt: string | null;
   recordTargetsSettingsMismatch: boolean;
 }) {
   const [isFinishedDetailsOpen, setIsFinishedDetailsOpen] = useState(false);
@@ -156,9 +158,9 @@ function HomeProgressDashboard({
       <AdhdPanel aria-labelledby="home-finished-today" padding="sm">
         <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-finished-today">Finished Today</h2>
         {!isTaskHistoryLoaded ? (
-          <div aria-label="Loading daily task completion" className="mt-3 grid gap-2" role="status">
-            <div className="h-7 w-28 rounded-lg bg-[#eee9fa] dark:bg-white/10" />
-            <div className="h-4 w-48 rounded bg-[#f4f1fb] dark:bg-white/6" />
+          <div aria-live="polite" className="mt-3 flex items-center gap-2 text-sm text-[#817990] dark:text-white/55" role="status">
+            <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin text-[#7d6cf5]" />
+            <span>Loading today&apos;s completions…</span>
           </div>
         ) : (
           <div className="mt-3">
@@ -204,8 +206,9 @@ function HomeProgressDashboard({
       <AdhdPanel aria-labelledby="home-records-to-beat" padding="sm">
         <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-records-to-beat">Records to Beat</h2>
         {recordTargetsLoading ? (
-          <div aria-label="Loading record targets" className="mt-3 grid gap-2" role="status">
-            {[0, 1, 2].map((item) => <div className="h-10 rounded-lg bg-[#f4f1fb] dark:bg-white/6" key={item} />)}
+          <div aria-live="polite" className="mt-3 flex items-center gap-2 text-sm text-[#817990] dark:text-white/55" role="status">
+            <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin text-[#7d6cf5]" />
+            <span>Loading saved Records…</span>
           </div>
         ) : recordTargetsError ? (
           <p className="mt-3 text-xs text-[#8b82a7] dark:text-white/48">Record targets unavailable right now.</p>
@@ -213,6 +216,7 @@ function HomeProgressDashboard({
           <p className="mt-3 text-xs text-[#8b82a7] dark:text-white/48">Record targets need a Records refresh after your day settings changed.</p>
         ) : (
           <div className="mt-2 grid gap-1.5">
+            {recordTargetsRecalculatedAt ? <p className="mb-1 text-[11px] text-[#8b82a7] dark:text-white/48">Records calculated {new Date(recordTargetsRecalculatedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</p> : null}
             {homeRecordChases.map((chase) => (
               <button
                 aria-label={`Open ${chase.label} in Progress Records`}
@@ -255,6 +259,7 @@ export function HomePage({
   onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
+  recordTargetsRecalculatedAt,
   recordTargetsSettingsMismatch,
   taskHistoryStreakSummaries,
   calendarNowMs,
@@ -284,6 +289,7 @@ export function HomePage({
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
+  recordTargetsRecalculatedAt: string | null;
   recordTargetsSettingsMismatch: boolean;
   taskHistoryStreakSummaries: TaskHistoryStreakSummaryMap;
   calendarNowMs: number;
@@ -970,6 +976,7 @@ export function HomePage({
         onOpenRecord={onOpenRecord}
         recordTargetsError={recordTargetsError}
         recordTargetsLoading={recordTargetsLoading}
+        recordTargetsRecalculatedAt={recordTargetsRecalculatedAt}
         recordTargetsSettingsMismatch={recordTargetsSettingsMismatch}
       />
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">

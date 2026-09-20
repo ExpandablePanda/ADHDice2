@@ -22,11 +22,12 @@ test("Records UI exposes required sections, refresh, history, and factual disclo
   assert.match(records, /Show invalidated/);
   assert.match(records, /initialMetricKey/);
   assert.match(records, /candidate\.scope_kind === "global"/);
-  assert.match(records, /buildCurrentRecordCard\(record, records\.events, records\.taskEvidenceByRecordIdentity\)/);
+  assert.match(records, /buildCurrentRecordCard\(record, records\.events, records\.hasDetailedEvidence, records\.taskEvidenceByRecordIdentity\)/);
   assert.match(records, /Record Evidence/);
   assert.match(records, /getRecordTaskEvidenceCount/);
   assert.match(records, /evidenceCount\.warning/);
   assert.match(records, /data-record-evidence-list/);
+  assert.match(records, /Detailed Evidence is not cached on this device\. Refresh Records to load it\./);
   assert.match(records, /Unavailable/);
   assert.match(records, /Select all/);
   assert.match(records, /Clear/);
@@ -44,7 +45,7 @@ test("Home Record deep-links acknowledge only after the requested detail is read
   assert.ok(effectStart >= 0 && effectEnd > effectStart);
   const effect = records.slice(effectStart, effectEnd);
   assert.doesNotMatch(effect, /setTimeout|clearTimeout/);
-  const detailOpen = effect.indexOf("setDetailRecord(buildCurrentRecordCard(record, records.events, records.taskEvidenceByRecordIdentity));");
+  const detailOpen = effect.indexOf("setDetailRecord(buildCurrentRecordCard(record, records.events, records.hasDetailedEvidence, records.taskEvidenceByRecordIdentity));");
   const consumed = effect.indexOf("openedInitialMetricRef.current = initialMetricKey;", detailOpen);
   const acknowledged = effect.indexOf("onRecordRequestHandled?.();", consumed);
   assert.ok(detailOpen >= 0 && consumed > detailOpen && acknowledged > consumed);

@@ -4,7 +4,7 @@ import { completeRecordsRefresh, retainRecordsAfterRefreshFailure, type RecordsI
 import { executeRecordsPipeline, RecordsStageError } from "../src/lib/record-repository.ts";
 
 const baseState: RecordsInternalState = {
-  currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false,
+  currentRecords: [], error: null, events: [], hasDetailedEvidence: false, hasSuccessfulResult: false, isLoading: false,
   isRecalculating: false, lastCalculatedAt: null, ownerUserId: "user-1",
   progress: null, provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [],
 };

@@ -1,7 +1,7 @@
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { FocusSession, Task, TaskHistory } from "@/lib/database.types";
+import type { FocusSession, RecordReconcileRun, Task, TaskHistory } from "@/lib/database.types";
 import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
-import type { RecordsEvaluation, PersistedRecordCurrent, PersistedRecordEvent } from "@/lib/records/types";
+import { RECORDS_RULES_VERSION, type RecordsEvaluation, type PersistedRecordCurrent, type PersistedRecordEvent } from "@/lib/records/types";
 import { evaluateRecords } from "@/lib/records/evaluator";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import {
@@ -16,6 +16,8 @@ export type RecordsClient = NonNullable<ReturnType<typeof createBrowserSupabaseC
 const PAGE_SIZE = 1000;
 const activeRecordsPipelines = new Map<string, Promise<unknown>>();
 export const RECORDS_BUSY_MESSAGE = "Records are already refreshing in another session.";
+
+export type LatestCompletedRecordsRun = Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "timezone">;
 
 type RecordsFinalizeResult =
   | { status: "busy" }
@@ -236,6 +238,30 @@ export async function loadPersistedRecords(client: RecordsClient, userId: string
   const currentRecords = await loadRecordsCurrent(client, userId);
   const events = await loadRecordEvents(client, userId);
   return { currentRecords, events };
+}
+
+export async function loadLatestCompletedRecordsRun(client: Pick<RecordsClient, "rpc">, settings: { logicalDayStart: string; timezone: string }): Promise<LatestCompletedRecordsRun | null> {
+  const result = await client.rpc("adhdice_get_latest_completed_records_run", {
+    p_logical_day_start: settings.logicalDayStart,
+    p_rules_version: RECORDS_RULES_VERSION,
+    p_timezone: settings.timezone,
+  });
+  if (result.error) throw result.error;
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  if (!row || typeof row !== "object") return null;
+  const candidate = row as Partial<LatestCompletedRecordsRun>;
+  if (typeof candidate.evaluated_at !== "string"
+    || (candidate.completed_at !== null && typeof candidate.completed_at !== "string")
+    || candidate.rules_version !== RECORDS_RULES_VERSION
+    || candidate.timezone !== settings.timezone
+    || typeof candidate.logical_day_start !== "string") return null;
+  return {
+    completed_at: candidate.completed_at ?? null,
+    evaluated_at: candidate.evaluated_at,
+    logical_day_start: candidate.logical_day_start,
+    rules_version: candidate.rules_version,
+    timezone: candidate.timezone,
+  };
 }
 
 export async function loadRecordsCurrent(client: RecordsClient, userId: string) {

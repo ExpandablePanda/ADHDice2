@@ -234,7 +234,8 @@ import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
 import { buildHomeDailyProgress, buildHomeRecordChases } from "@/lib/home-progress";
 import type { RecordMetricKey } from "@/lib/records/types";
-import { invalidateRecordsSessionSnapshotsForUser } from "@/lib/records/session-cache";
+import { buildRecordsSessionCacheKey, invalidateRecordsSessionSnapshotsForUser } from "@/lib/records/session-cache";
+import { getRecordsLocalStorage, markRecordsInvalidated } from "@/lib/records/persistent-cache";
 import {
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
@@ -2995,31 +2996,37 @@ export function TaskApp() {
     }
     const nextTasks = sortTasksForUi(tasks.map((task) => task.id === taskId ? { ...task, ...result.data } : task));
     setTasks(nextTasks);
-    if (currentUserId) invalidateRecordsSessionSnapshotsForUser(currentUserId);
+    if (currentUserId) {
+      invalidateRecordsSessionSnapshotsForUser(currentUserId);
+      markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
+    }
     void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
     setMessage({
       tone: "good",
       text: excluded ? "Task excluded from tracking." : "Task included in tracking.",
     });
     return true;
-  }, [client, currentUserId, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks]);
+  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks, userTimeZone]);
   const excludeTasksFromTracking = useCallback(async (taskIds: readonly string[]) => {
     const result = await excludeTasksFromTrackingRpc(client, taskIds);
     if (result.error || !result.data) {
       return { error: result.error?.message ?? "Task tracking exclusion could not be saved.", success: false };
     }
 
-    const nextTaskById = new Map(tasks.map((task) => [task.id, task]));
+    const nextTaskById = new Map(canonicalTasksRef.current.map((task) => [task.id, task]));
     for (const task of result.data) {
       const priorTask = nextTaskById.get(task.id);
       nextTaskById.set(task.id, priorTask ? { ...priorTask, ...task } : task);
     }
     const nextTasks = sortTasksForUi([...nextTaskById.values()]);
     setTasks(nextTasks);
-    if (currentUserId) invalidateRecordsSessionSnapshotsForUser(currentUserId);
+    if (currentUserId) {
+      invalidateRecordsSessionSnapshotsForUser(currentUserId);
+      markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
+    }
     void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
     return { error: null, success: true };
-  }, [client, currentUserId, refreshTaskHistoryStreakSummaries, sortTasksForUi, tasks]);
+  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, sortTasksForUi, userTimeZone]);
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
     values: TaskUpdate,
@@ -7368,6 +7375,7 @@ export function TaskApp() {
             onOpenRecord={openHomeRecord}
             recordTargetsError={homeRecordTargets.error}
             recordTargetsLoading={homeRecordTargets.loading}
+            recordTargetsRecalculatedAt={homeRecordTargets.recalculatedAt}
             recordTargetsSettingsMismatch={homeRecordTargets.settingsMismatch}
             taskHistoryStreakSummaries={taskHistoryStreakSummaries}
             behaviorProfiles={taskTypeBehaviorProfiles}

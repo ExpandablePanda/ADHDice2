@@ -20,7 +20,7 @@ const recordsTab = readFileSync(new URL("../src/components/task-app/records-tab.
 const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 const baseState: RecordsInternalState = {
-  currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false,
+  currentRecords: [], error: null, events: [], hasDetailedEvidence: false, hasSuccessfulResult: false, isLoading: false,
   isRecalculating: false, lastCalculatedAt: null, ownerUserId: null, progress: null,
   provisionalCandidates: [], sessionKey: null, setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [],
 };
@@ -72,7 +72,7 @@ test("the hook checks a matching snapshot before starting the pipeline, while fi
   const lookup = hook.indexOf("getRecordsSessionSnapshot(sessionKey)");
   const pipeline = hook.indexOf("runRecordsPipelineSingleFlight(sessionKey ?? userId");
   assert.ok(lookup >= 0 && lookup < pipeline);
-  assert.match(hook, /if \(!explicitRefresh && cached\)/);
+  assert.match(hook, /if \(!explicitRefresh && cachedIsFresh\)/);
   assert.match(hook, /refreshRequestedRef\.current = true/);
   assert.match(hook, /if \(runningRef\.current\) return/);
   assert.match(hook, /if \(!sessionKey\) return/);
@@ -125,7 +125,7 @@ test("restoration never brings back transient operation state", () => {
 
 test("Home deep-link and Record detail/task click-through remain on the Records projection", () => {
   assert.match(recordsTab, /initialMetricKey/);
-  assert.match(recordsTab, /buildCurrentRecordCard\(record, records\.events, records\.taskEvidenceByRecordIdentity\)/);
+  assert.match(recordsTab, /buildCurrentRecordCard\(record, records\.events, records\.hasDetailedEvidence, records\.taskEvidenceByRecordIdentity\)/);
   assert.match(recordsTab, /onOpenTask\(taskId\)/);
   assert.doesNotMatch(recordsTab, /runRecordsPipeline/);
   assert.match(hook, /latestSessionKeyRef\.current !== sessionKey/);

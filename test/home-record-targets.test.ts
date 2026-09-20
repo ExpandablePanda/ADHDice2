@@ -18,11 +18,12 @@ function fakeClient(rows: unknown[], error: Error | null = null) {
 
 test("Home target read requests only the three daily metrics and never reconciles", async () => {
   const fake = fakeClient([
-    { logical_day_start: "06:00:00", metric_key: "parent_tasks_day", timezone: "America/New_York", value: 12 },
+    { logical_day_start: "06:00:00", metric_key: "parent_tasks_day", recalculated_at: "2026-09-20T10:18:00.000Z", timezone: "America/New_York", value: 12 },
   ]);
   const result = await loadHomeRecordTargets(fake.client, "user-1", { logicalDayStart: "06:00", timezone: "America/New_York" });
   assert.deepEqual(result.targets, { parent_tasks_day: 12 });
-  assert.equal(fake.calls.find((call) => call.method === "select")?.args[0], "metric_key,value,timezone,logical_day_start");
+  assert.equal(result.recalculatedAt, "2026-09-20T10:18:00.000Z");
+  assert.equal(fake.calls.find((call) => call.method === "select")?.args[0], "metric_key,value,timezone,logical_day_start,recalculated_at");
   assert.deepEqual(fake.calls.find((call) => call.method === "in")?.args, ["metric_key", [...HOME_RECORD_METRIC_KEYS]]);
   assert.equal(fake.calls.filter((call) => call.method === "from").length, 1);
 });
