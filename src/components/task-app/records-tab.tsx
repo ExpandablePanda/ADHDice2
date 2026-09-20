@@ -271,16 +271,16 @@ export function RecordsTab(props: RecordsTabProps) {
   useEffect(() => {
     if (!initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === initialMetricKey) return;
     const record = records.currentRecords.find((candidate) => candidate.metric_key === initialMetricKey && candidate.scope_kind === "global" && candidate.scope_id === null);
-    openedInitialMetricRef.current = initialMetricKey;
     if (!record) {
+      openedInitialMetricRef.current = initialMetricKey;
       onRecordRequestHandled?.();
       return;
     }
-    const timeoutId = window.setTimeout(() => {
-      setDetailRecord(buildCurrentRecordCard(record, records.events, records.taskEvidenceByRecordIdentity));
-      onRecordRequestHandled?.();
-    }, 0);
-    return () => window.clearTimeout(timeoutId);
+    // Deep-link state must be opened in this effect before the request is consumed; deferring it recreates the cached-path race.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional synchronous Record deep-link handoff
+    setDetailRecord(buildCurrentRecordCard(record, records.events, records.taskEvidenceByRecordIdentity));
+    openedInitialMetricRef.current = initialMetricKey;
+    onRecordRequestHandled?.();
   }, [initialMetricKey, onRecordRequestHandled, records.currentRecords, records.events, records.hasSuccessfulResult, records.taskEvidenceByRecordIdentity]);
 
   function toggleSection(sectionId: RecordsSectionId) {

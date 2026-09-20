@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.82`.
+- Current working app version: `7.13.83`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
+
+Records now opens a requested successful global Record synchronously inside the
+deep-link effect, then marks the metric consumed and acknowledges the request.
+The effect no longer defers the detail state update with a timer that cleanup
+could cancel on the cached path. Missing Records retain the synchronous
+consume-and-acknowledge fallback.
 
 ## 2026-09-20 7.13.82 Fix Cached Home Record Deep-Link Handoff
 

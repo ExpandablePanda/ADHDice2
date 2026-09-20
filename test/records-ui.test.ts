@@ -33,8 +33,16 @@ test("Records UI exposes required sections, refresh, history, and factual disclo
 test("Home Record deep-links acknowledge only after the requested detail is ready", () => {
   assert.doesNotMatch(page, /useEffect\(\(\) => \{\n    if \(initialRecordMetricKey\) onRecordRequestHandled/);
   assert.match(page, /onRecordRequestHandled=\{onRecordRequestHandled\}/);
-  assert.match(records, /setDetailRecord\(buildCurrentRecordCard\(record, records\.events, records\.taskEvidenceByRecordIdentity\)\);\n      onRecordRequestHandled\?\.\(\);/);
-  assert.match(records, /if \(!record\) \{\n      onRecordRequestHandled\?\.\(\);/);
+  const effectStart = records.indexOf("useEffect(() => {\n    if (!initialMetricKey");
+  const effectEnd = records.indexOf("\n\n  function toggleSection", effectStart);
+  assert.ok(effectStart >= 0 && effectEnd > effectStart);
+  const effect = records.slice(effectStart, effectEnd);
+  assert.doesNotMatch(effect, /setTimeout|clearTimeout/);
+  const detailOpen = effect.indexOf("setDetailRecord(buildCurrentRecordCard(record, records.events, records.taskEvidenceByRecordIdentity));");
+  const consumed = effect.indexOf("openedInitialMetricRef.current = initialMetricKey;", detailOpen);
+  const acknowledged = effect.indexOf("onRecordRequestHandled?.();", consumed);
+  assert.ok(detailOpen >= 0 && consumed > detailOpen && acknowledged > consumed);
+  assert.match(effect, /if \(!record\) \{\n      openedInitialMetricRef\.current = initialMetricKey;\n      onRecordRequestHandled\?\.\(\);/);
 });
 
 test("Records stays lazy, prevents overlap, and contains a migration-missing fallback", () => {
