@@ -2,10 +2,9 @@
 
 import { useCallback } from "react";
 import type { Dispatch, SetStateAction } from "react";
-import type { Task, TaskContentFolder, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskContentFolder } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import {
-  buildTaskContentFolderAssignmentPatch,
   getTaskContentFolderParentForTask,
   normalizeTaskContentFolderName,
   normalizeTaskContentFolderRow,
@@ -23,7 +22,7 @@ type Options = {
   setFolders: Dispatch<SetStateAction<TaskContentFolder[]>>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
-  updateTaskRow: (taskId: string, values: TaskUpdate, expectedTask: Task) => Promise<boolean>;
+  moveTaskHierarchy: (task: Task, newParentTaskId: string | null, newTaskContentFolderId: string | null) => Promise<boolean>;
   userId: string | null | undefined;
 };
 
@@ -33,7 +32,7 @@ export function useTaskContentFolderActions({
   setFolders,
   setMessage,
   setTasks,
-  updateTaskRow,
+  moveTaskHierarchy,
   userId,
 }: Options) {
   const createFolder = useCallback(async (rawName: string, parentFolderId: string | null = null) => {
@@ -106,7 +105,7 @@ export function useTaskContentFolderActions({
 
     let didPersist = false;
     try {
-      didPersist = await updateTaskRow(task.id, buildTaskContentFolderAssignmentPatch(task, folder.id), task);
+      didPersist = await moveTaskHierarchy(task, null, folder.id);
     } catch (moveError) {
       const rollbackError = await rollbackCreatedFolder();
       if (rollbackError) {
@@ -126,7 +125,7 @@ export function useTaskContentFolderActions({
 
     setMessage({ tone: "good", text: `Folder "${folder.name}" created and "${task.title}" moved into it.` });
     return true;
-  }, [client, folders, setFolders, setMessage, updateTaskRow, userId]);
+  }, [client, folders, moveTaskHierarchy, setFolders, setMessage, userId]);
 
   const renameFolder = useCallback(async (folderId: string, rawName: string) => {
     const name = normalizeTaskContentFolderName(rawName);
@@ -240,7 +239,7 @@ export function useTaskContentFolderActions({
       setMessage({ tone: "warn", text: "That Folder is no longer available. Refresh and try again." });
       return false;
     }
-    const didPersist = await updateTaskRow(task.id, buildTaskContentFolderAssignmentPatch(task, folderId), task);
+    const didPersist = await moveTaskHierarchy(task, null, folderId);
     if (didPersist) {
       const folderName = folderId ? folders.find((folder) => folder.id === folderId)?.name : null;
       setMessage({
@@ -253,7 +252,7 @@ export function useTaskContentFolderActions({
       });
     }
     return didPersist;
-  }, [folders, setMessage, updateTaskRow, userId]);
+  }, [folders, moveTaskHierarchy, setMessage, userId]);
 
   return {
     createFolder,

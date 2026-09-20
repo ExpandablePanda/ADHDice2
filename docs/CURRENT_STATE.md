@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-19
+Last reviewed: 2026-09-20
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.32`.
+- Current working app version: `7.14.33`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.14.33 Canonical Task Hierarchy Move Path
+
+Step/Substep detachment, parent moves, and direct Task Content Folder moves now
+use the dedicated atomic `adhdice_move_task_hierarchy` authority. It owns the
+mutually exclusive parent/Folder fields, applies revision fencing, preserves
+root Folder inheritance on detach, and returns the committed Task row for local
+reconciliation. Historical History facts and schedule boundaries are not
+rewritten. The source SQL remains unapplied pending explicit database rollout;
+browser QA remains Andrew's responsibility.
 
 ## 2026-09-20 7.14.32 Keep Empty Folders Visible in All
 

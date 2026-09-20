@@ -248,6 +248,7 @@ import {
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
+import { getRootTaskContentFolderId, moveTaskHierarchy as persistTaskHierarchy } from "@/lib/task-hierarchy-mutation";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
@@ -2755,13 +2756,52 @@ export function TaskApp() {
     refresh: softRefreshWorkspace,
     setMessage,
   });
+  const persistTaskHierarchyRow = useCallback(async (
+    task: Task,
+    newParentTaskId: string | null,
+    newTaskContentFolderId: string | null,
+  ) => {
+    if (!supabase || !session?.user?.id) {
+      setMessage({ tone: "warn", text: "Tasks are unavailable until you sign in." });
+      return false;
+    }
+
+    markPendingTaskMutations([task.id]);
+    try {
+      const result = await persistTaskHierarchy(supabase, {
+        expectedCanonicalRevision: task.canonical_revision ?? null,
+        expectedRevision: task.revision,
+        newParentTaskId,
+        newTaskContentFolderId,
+        taskId: task.id,
+      });
+      if (result.error) {
+        setMessage({ tone: "warn", text: result.error.message });
+        return false;
+      }
+      if (!result.data) {
+        setMessage({ tone: "warn", text: "The committed Task hierarchy row was not returned." });
+        return false;
+      }
+
+      const nextTask = mergeTaskWithCanonicalScheduleProjection(task, result.data);
+      const nextRuntimeTask = nextTask as TaskStateRuntimeLocalTask;
+      canonicalTaskMutationStateRef.current.taskSnapshots.set(task.id, nextRuntimeTask);
+      setTasks((current) => sortTasksForUi(current.map((candidate) => (
+        candidate.id === task.id ? nextTask : candidate
+      ))));
+      return true;
+    } finally {
+      clearPendingTaskMutations([task.id]);
+    }
+  }, [clearPendingTaskMutations, markPendingTaskMutations, session?.user?.id, setMessage, setTasks, supabase]);
   const taskContentFolderActions = useTaskContentFolderActions({
     client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
     folders: taskContentFolders,
     setFolders: setTaskContentFolders,
     setMessage,
     setTasks,
-    updateTaskRow: (taskId, values, expectedTask) => applyTaskMutationWithoutHistory(taskId, values, { expectedTask }),
+    moveTaskHierarchy: persistTaskHierarchyRow,
     userId: session?.user?.id,
   });
   const moveTaskToContentFolder = useCallback(async (taskId: string, folderId: string | null) => {
@@ -5037,10 +5077,15 @@ export function TaskApp() {
       return false;
     }
 
-    const didUnlink = await applyTaskMutationWithoutHistory(
-      taskId,
-      { parent_task_id: null, task_content_folder_id: null },
-      { expectedTask: task },
+    const inheritedFolderId = getRootTaskContentFolderId(tasks, task.id);
+    if (inheritedFolderId === undefined) {
+      setMessage({ tone: "warn", text: "This task cannot be detached until the current hierarchy issues are fixed." });
+      return false;
+    }
+    const didUnlink = await persistTaskHierarchyRow(
+      task,
+      null,
+      inheritedFolderId,
     );
     if (!didUnlink) {
       return false;
@@ -5051,7 +5096,7 @@ export function TaskApp() {
       text: `"${task.title}" is now a top-level task.`,
     });
     return true;
-  }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
+  }, [persistTaskHierarchyRow, setMessage, tasks]);
   const openMilestoneSetup = useCallback((taskId: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !canPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
@@ -5126,11 +5171,7 @@ export function TaskApp() {
       return false;
     }
 
-    const didMove = await applyTaskMutationWithoutHistory(
-      taskId,
-      { parent_task_id: parentTaskId, task_content_folder_id: null },
-      { expectedTask: task },
-    );
+    const didMove = await persistTaskHierarchyRow(task, parentTaskId, null);
     if (!didMove) {
       return false;
     }
@@ -5140,7 +5181,7 @@ export function TaskApp() {
       text: `"${task.title}" now lives under "${parentTask.title}".`,
     });
     return true;
-  }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
+  }, [persistTaskHierarchyRow, setMessage, tasks]);
 
   // Delay is a user action, so it is always anchored to its logical action day
   // rather than a future (or stale) scheduled occurrence.

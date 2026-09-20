@@ -37,8 +37,8 @@ test("Table and List retain the exact Task to Folder callback wiring", () => {
 
 test("Create Folder performs assignment and compensates a failed move", () => {
   assert.match(folderActionsSource, /\.insert\(\{ name, user_id: userId \}\)/);
-  assert.match(folderActionsSource, /buildTaskContentFolderAssignmentPatch\(task, folder\.id\)/);
-  assert.match(folderActionsSource, /const didPersist = await updateTaskRow/);
+  assert.match(folderActionsSource, /didPersist = await moveTaskHierarchy\(task, null, folder\.id\)/);
+  assert.doesNotMatch(folderActionsSource, /updateTaskRow|buildTaskContentFolderAssignmentPatch/);
   assert.match(folderActionsSource, /\.from\("adhdice_task_content_folders"\)\n\s+\.delete\(\)/);
   assert.match(folderActionsSource, /setFolders\(\(current\) => current\.filter\(\(entry\) => entry\.id !== folder\.id\)\)/);
 });
@@ -73,5 +73,5 @@ test("Folder rows are the shared rename/delete management surface in Table and L
 test("canonical metadata reconciliation preserves the projected boundary in both result paths", () => {
   assert.match(appSource, /const latestTask = previousTask\n\s+\? mergeTaskWithCanonicalScheduleProjection\(previousTask, result\.conflict\.latestTask\)/);
   assert.match(appSource, /const reconciledNextData = previousTask\n\s+\? mergeTaskWithCanonicalScheduleProjection\(previousTask, nextData\)/);
-  assert.match(appSource, /task_content_folder_id/);
+  assert.match(appSource, /newTaskContentFolderId/);
 });

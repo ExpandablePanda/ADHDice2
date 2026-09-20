@@ -464,6 +464,27 @@ export type Task = {
   completed_at: string | null;
   trashed_at: string | null;
   permanently_deleted_at?: string | null;
+  /** Canonical Task State columns returned by the live task row when initialized. */
+  canonicalization_status?: CanonicalTaskStateColumns["canonicalization_status"];
+  entity_kind?: CanonicalTaskStateColumns["entity_kind"];
+  terminal_state?: CanonicalTaskStateColumns["terminal_state"];
+  container_state?: CanonicalTaskStateColumns["container_state"];
+  prior_container_state?: CanonicalTaskStateColumns["prior_container_state"];
+  prior_container_state_status?: CanonicalTaskStateColumns["prior_container_state_status"];
+  terminal_completed_at?: CanonicalTaskStateColumns["terminal_completed_at"];
+  container_trashed_at?: CanonicalTaskStateColumns["container_trashed_at"];
+  workflow_state?: CanonicalTaskStateColumns["workflow_state"];
+  workflow_started_at?: CanonicalTaskStateColumns["workflow_started_at"];
+  workflow_logical_date?: CanonicalTaskStateColumns["workflow_logical_date"];
+  workflow_occurrence_id?: CanonicalTaskStateColumns["workflow_occurrence_id"];
+  workflow_command_id?: CanonicalTaskStateColumns["workflow_command_id"];
+  workflow_revision?: CanonicalTaskStateColumns["workflow_revision"];
+  canonical_revision?: CanonicalTaskStateColumns["canonical_revision"];
+  canonical_created_at?: CanonicalTaskStateColumns["canonical_created_at"];
+  canonical_updated_at?: CanonicalTaskStateColumns["canonical_updated_at"];
+  projection_source_canonical_revision?: CanonicalTaskStateColumns["projection_source_canonical_revision"];
+  projection_source_fingerprint?: CanonicalTaskStateColumns["projection_source_fingerprint"];
+  projection_version?: CanonicalTaskStateColumns["projection_version"];
   created_at: string;
   updated_at: string;
 };
@@ -3252,6 +3273,16 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_move_task_hierarchy: {
+        Args: {
+          p_expected_canonical_revision: number | null;
+          p_expected_revision: number;
+          p_new_parent_task_id: string | null;
+          p_new_task_content_folder_id: string | null;
+          p_task_id: string;
+        };
+        Returns: Task[];
+      };
       adhdice_delete_task_content_folder: {
         Args: { p_folder_id: string };
         Returns: boolean;
