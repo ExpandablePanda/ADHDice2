@@ -150,6 +150,7 @@ import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportContro
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
+import { useHomeRecordTargets } from "@/hooks/useHomeRecordTargets";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
@@ -230,6 +231,7 @@ import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
 import { formatDateKeyInTimeZone, getBrowserTimeZone, getLogicalDayKey, saveLogicalDaySettings } from "@/lib/logical-day";
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
+import { buildHomeDailyProgress, buildHomeRecordChases } from "@/lib/home-progress";
 import {
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
@@ -1832,6 +1834,13 @@ export function TaskApp() {
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
     [dayStartTime, logicalDayNow, userTimeZone],
   );
+  const homeRecordTargets = useHomeRecordTargets({
+    active: activePage === "Home",
+    client: supabase,
+    logicalDayStart: dayStartTime,
+    timezone: userTimeZone,
+    userId: currentUserId,
+  });
   const {
     isLoading: isTaskTypeBehaviorProfilesLoading,
     profileRevisions: taskTypeBehaviorProfileRevisions,
@@ -2760,6 +2769,14 @@ export function TaskApp() {
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
   const taskHistoryByTaskId = sharedTaskHistoryByTaskId;
+  const homeDailyProgress = useMemo(
+    () => buildHomeDailyProgress({ taskHistoryByTaskId, tasks, todayKey }),
+    [taskHistoryByTaskId, tasks, todayKey],
+  );
+  const homeRecordChases = useMemo(
+    () => buildHomeRecordChases(homeDailyProgress.recordLiveValues, homeRecordTargets.targets),
+    [homeDailyProgress.recordLiveValues, homeRecordTargets.targets],
+  );
   const taskHistoryFactsByTaskId = useMemo(
     () => Object.fromEntries(
       tasks.map((task) => [
@@ -7292,6 +7309,12 @@ export function TaskApp() {
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+            dailyProgress={homeDailyProgress}
+            homeRecordChases={homeRecordChases}
+            isTaskHistoryLoaded={isTaskHistoryLoaded}
+            recordTargetsError={homeRecordTargets.error}
+            recordTargetsLoading={homeRecordTargets.loading}
+            recordTargetsSettingsMismatch={homeRecordTargets.settingsMismatch}
             taskHistoryStreakSummaries={taskHistoryStreakSummaries}
             behaviorProfiles={taskTypeBehaviorProfiles}
             behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}

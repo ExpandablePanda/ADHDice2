@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.76`.
+- Current working app version: `7.13.77`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.13.77 Add Home Daily Completion and Record Chases
+
+Home now shows compact Daily Tasks Completed and Records to Beat panels above
+the existing To-do/Routine workspace. Daily completion uses the shared loaded
+Task History snapshot and `todayKey`, with unique Task entities in the summary
+and canonical occurrence values for the three daily Records metrics. Home reads
+only the persisted current targets for those metrics, does not run Records
+reconciliation, and treats timezone/day-start mismatches as stale. No SQL or
+schema change was made.
 
 ## 2026-09-19 7.13.73 Named Routine Sections and Quiet Routine Metadata
 

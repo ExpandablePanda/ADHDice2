@@ -6,6 +6,7 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, t
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
+import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { TaskTypeSelect } from "./task-type-identity";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
@@ -38,6 +39,7 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
+import type { HomeDailyProgress, HomeRecordChase } from "@/lib/home-progress";
 import {
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
@@ -130,6 +132,78 @@ function RoutineTaskMetadata({
   );
 }
 
+function HomeProgressDashboard({
+  dailyProgress,
+  homeRecordChases,
+  isTaskHistoryLoaded,
+  recordTargetsError,
+  recordTargetsLoading,
+  recordTargetsSettingsMismatch,
+}: {
+  dailyProgress: HomeDailyProgress;
+  homeRecordChases: HomeRecordChase[];
+  isTaskHistoryLoaded: boolean;
+  recordTargetsError: string | null;
+  recordTargetsLoading: boolean;
+  recordTargetsSettingsMismatch: boolean;
+}) {
+  return (
+    <div className="mb-4 grid min-w-0 gap-3 sm:grid-cols-2" data-home-progress-dashboard>
+      <AdhdPanel aria-labelledby="home-daily-tasks-completed" padding="sm">
+        <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-daily-tasks-completed">Daily Tasks Completed</h2>
+        {!isTaskHistoryLoaded ? (
+          <div aria-label="Loading daily task completion" className="mt-3 grid gap-2" role="status">
+            <div className="h-7 w-28 rounded-lg bg-[#eee9fa] dark:bg-white/10" />
+            <div className="h-4 w-48 rounded bg-[#f4f1fb] dark:bg-white/6" />
+          </div>
+        ) : (
+          <div className="mt-3">
+            <p className="text-2xl font-bold leading-none text-[#30275a] dark:text-white">
+              {dailyProgress.total} <span className="text-sm font-medium text-[#7d7598] dark:text-white/55">completed today</span>
+            </p>
+            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[#746d90] dark:text-white/60">
+              <span>Parent Tasks {dailyProgress.parentTasks}</span>
+              <span>Steps/Substeps {dailyProgress.steps}</span>
+            </div>
+            {dailyProgress.permanentCompletes > 0 ? (
+              <p className="mt-2 text-[11px] text-[#8b82a7] dark:text-white/48">Permanent Completes {dailyProgress.permanentCompletes}</p>
+            ) : null}
+          </div>
+        )}
+      </AdhdPanel>
+
+      <AdhdPanel aria-labelledby="home-records-to-beat" padding="sm">
+        <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-records-to-beat">Records to Beat</h2>
+        {recordTargetsLoading ? (
+          <div aria-label="Loading record targets" className="mt-3 grid gap-2" role="status">
+            {[0, 1, 2].map((item) => <div className="h-10 rounded-lg bg-[#f4f1fb] dark:bg-white/6" key={item} />)}
+          </div>
+        ) : recordTargetsError ? (
+          <p className="mt-3 text-xs text-[#8b82a7] dark:text-white/48">Record targets unavailable right now.</p>
+        ) : recordTargetsSettingsMismatch ? (
+          <p className="mt-3 text-xs text-[#8b82a7] dark:text-white/48">Record targets need a Records refresh after your day settings changed.</p>
+        ) : (
+          <div className="mt-2 grid gap-1.5">
+            {homeRecordChases.map((chase) => (
+              <div className="rounded-lg border border-[#f0ecf8] px-2.5 py-2 dark:border-white/8" key={chase.metricKey}>
+                <div className="flex items-center justify-between gap-3">
+                  <span className="min-w-0 truncate text-xs font-medium text-[#625b7b] dark:text-white/70">{chase.label}</span>
+                  <span className="shrink-0 text-xs font-semibold text-[#30275a] dark:text-white">
+                    {chase.liveValue}{chase.recordValue === null ? " today" : ` / Record ${chase.recordValue}`}
+                  </span>
+                </div>
+                <p className={`mt-0.5 text-[11px] ${chase.state === "new_record" ? "text-[#23815b] dark:text-[#70d6a7]" : chase.state === "tied_record" ? "text-[#6f57f6] dark:text-[#b8aaff]" : "text-[#8b82a7] dark:text-white/48"}`}>
+                  {chase.message}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </AdhdPanel>
+    </div>
+  );
+}
+
 export function HomePage({
   listMembershipsByTaskId,
   manualMembershipsByTaskId,
@@ -140,6 +214,12 @@ export function HomePage({
   onOpenTask,
   onSetStatus,
   taskDisplayStatusByTaskId,
+  dailyProgress,
+  homeRecordChases,
+  isTaskHistoryLoaded,
+  recordTargetsError,
+  recordTargetsLoading,
+  recordTargetsSettingsMismatch,
   taskHistoryStreakSummaries,
   calendarNowMs,
   calendarTimeZone,
@@ -162,6 +242,12 @@ export function HomePage({
   onOpenTask: (taskId: string) => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
+  dailyProgress: HomeDailyProgress;
+  homeRecordChases: HomeRecordChase[];
+  isTaskHistoryLoaded: boolean;
+  recordTargetsError: string | null;
+  recordTargetsLoading: boolean;
+  recordTargetsSettingsMismatch: boolean;
   taskHistoryStreakSummaries: TaskHistoryStreakSummaryMap;
   calendarNowMs: number;
   calendarTimeZone: string;
@@ -840,6 +926,14 @@ export function HomePage({
   return (
     <section className={`-mx-[15px] w-auto px-3 pb-32 pt-6 sm:mx-auto sm:px-4 ${layout.isCanonical ? "max-w-4xl" : "max-w-none"}`}>
       <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} subtitle="Daily workspace" title="Home" />
+      <HomeProgressDashboard
+        dailyProgress={dailyProgress}
+        homeRecordChases={homeRecordChases}
+        isTaskHistoryLoaded={isTaskHistoryLoaded}
+        recordTargetsError={recordTargetsError}
+        recordTargetsLoading={recordTargetsLoading}
+        recordTargetsSettingsMismatch={recordTargetsSettingsMismatch}
+      />
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
       <PageShell id="home-todo" label="Home To-do List">
       <PageShellSurface className="rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 text-[#5f5876] shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530] dark:text-white/78">
