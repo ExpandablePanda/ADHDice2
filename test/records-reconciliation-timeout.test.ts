@@ -365,10 +365,10 @@ test("7.2.24 busy and refresh failure preserve the previous UI snapshot", async 
   const prior: RecordsInternalState = completeRecordsRefresh({
     currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false,
     isRecalculating: false, lastCalculatedAt: null, ownerUserId: "user-1", progress: null,
-    provisionalCandidates: [], setupRequired: false, warnings: [],
+    provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [],
   }, {
     currentRecords: [{ id: "record-1" }] as never[], evaluatedAt: "2026-07-20T12:00:00Z",
-    events: [{ id: "event-1" }] as never[], ownerUserId: "user-1", provisionalCandidates: [], warnings: [],
+    events: [{ id: "event-1" }] as never[], ownerUserId: "user-1", provisionalCandidates: [], taskEvidenceByRecordIdentity: {}, warnings: [],
   });
   const failed = retainRecordsAfterRefreshFailure(prior, { error: "upload failed", ownerUserId: "user-1", setupRequired: false });
   assert.equal(failed.currentRecords[0]?.id, "record-1");

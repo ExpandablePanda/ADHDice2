@@ -39,6 +39,7 @@ type AchievementsPageProps = {
   notificationError: string | null;
   initialRecordMetricKey?: RecordMetricKey | null;
   onRecordRequestHandled?: () => void;
+  onOpenTask: (taskId: string) => void;
   onTriggerDevelopmentAchievementTest?: (kind?: DevelopmentAchievementTestFixtureKind) => void;
   onOpenMilestoneTask: (taskId: string) => void;
   onOpenMilestones: () => void;
@@ -63,6 +64,7 @@ export function AchievementsPage({
   notificationError,
   initialRecordMetricKey = null,
   onRecordRequestHandled,
+  onOpenTask,
   onTriggerDevelopmentAchievementTest,
   onOpenMilestoneTask,
   onOpenMilestones,
@@ -134,7 +136,7 @@ export function AchievementsPage({
         </div>
       ) : null}
       <div aria-labelledby="progress-tab-records" hidden={activeTab !== "records"} id="progress-panel-records" role="tabpanel">
-        <RecordsTab active={activeTab === "records"} client={recordsClient} initialMetricKey={requestedRecordMetricKey} logicalDayStart={logicalDayStart} timezone={timezone} userId={userId} />
+        <RecordsTab active={activeTab === "records"} client={recordsClient} initialMetricKey={requestedRecordMetricKey} logicalDayStart={logicalDayStart} onOpenTask={onOpenTask} tasks={tasks} timezone={timezone} userId={userId} />
       </div>
     </section>
   );

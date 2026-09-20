@@ -6,7 +6,7 @@ import { executeRecordsPipeline, RecordsStageError } from "../src/lib/record-rep
 const baseState: RecordsInternalState = {
   currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false,
   isRecalculating: false, lastCalculatedAt: null, ownerUserId: "user-1",
-  progress: null, provisionalCandidates: [], setupRequired: false, warnings: [],
+  progress: null, provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [],
 };
 
 function stages(overrides: Partial<Parameters<typeof executeRecordsPipeline>[0]> = {}) {
@@ -39,7 +39,7 @@ test("a failed reconciliation reports the reconciliation stage", async () => {
 test("failed refresh retains the last successful Records snapshot", () => {
   const successful = completeRecordsRefresh(baseState, {
     currentRecords: [{ id: "record-1" }] as never[], evaluatedAt: "2026-07-20T12:00:00Z",
-    events: [{ id: "event-1" }] as never[], ownerUserId: "user-1", provisionalCandidates: [], warnings: [],
+    events: [{ id: "event-1" }] as never[], ownerUserId: "user-1", provisionalCandidates: [], taskEvidenceByRecordIdentity: {}, warnings: [],
   });
   const failed = retainRecordsAfterRefreshFailure(successful, { error: "Focus Session load failed: Load failed", ownerUserId: "user-1", setupRequired: false });
   assert.equal(failed.currentRecords[0]?.id, "record-1");
@@ -49,10 +49,24 @@ test("failed refresh retains the last successful Records snapshot", () => {
 });
 
 test("successful empty data is distinguishable from a load failure", () => {
-  const emptySuccess = completeRecordsRefresh(baseState, { currentRecords: [], evaluatedAt: "2026-07-20T12:00:00Z", events: [], ownerUserId: "user-1", provisionalCandidates: [], warnings: [] });
+  const emptySuccess = completeRecordsRefresh(baseState, { currentRecords: [], evaluatedAt: "2026-07-20T12:00:00Z", events: [], ownerUserId: "user-1", provisionalCandidates: [], taskEvidenceByRecordIdentity: {}, warnings: [] });
   const initialFailure = retainRecordsAfterRefreshFailure(baseState, { error: "Task load failed: Load failed", ownerUserId: "user-1", setupRequired: false });
   assert.equal(emptySuccess.hasSuccessfulResult, true);
   assert.equal(initialFailure.hasSuccessfulResult, false);
+});
+
+test("successful refresh retains the narrow current Task evidence projection", () => {
+  const projection = { "parent_tasks_day:global:global": [{ taskId: "task-1" }] } as never;
+  const refreshed = completeRecordsRefresh(baseState, {
+    currentRecords: [],
+    evaluatedAt: "2026-07-20T12:00:00Z",
+    events: [],
+    ownerUserId: "user-1",
+    provisionalCandidates: [],
+    taskEvidenceByRecordIdentity: projection,
+    warnings: [],
+  });
+  assert.strictEqual(refreshed.taskEvidenceByRecordIdentity, projection);
 });
 
 test("successful pipeline returns loaded current Records and events", async () => {

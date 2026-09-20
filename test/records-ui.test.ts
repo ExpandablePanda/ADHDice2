@@ -22,7 +22,12 @@ test("Records UI exposes required sections, refresh, history, and factual disclo
   assert.match(records, /Show invalidated/);
   assert.match(records, /initialMetricKey/);
   assert.match(records, /candidate\.scope_kind === "global"/);
-  assert.match(records, /buildCurrentRecordCard\(record, records\.events\)/);
+  assert.match(records, /buildCurrentRecordCard\(record, records\.events, records\.taskEvidenceByRecordIdentity\)/);
+  assert.match(records, /Record Evidence/);
+  assert.match(records, /getRecordTaskEvidenceCount/);
+  assert.match(records, /evidenceCount\.warning/);
+  assert.match(records, /data-record-evidence-list/);
+  assert.match(records, /Unavailable/);
 });
 
 test("Records stays lazy, prevents overlap, and contains a migration-missing fallback", () => {
@@ -30,4 +35,13 @@ test("Records stays lazy, prevents overlap, and contains a migration-missing fal
   assert.match(hook, /runningRef\.current = true/);
   assert.match(hook, /Records storage is not installed/);
   assert.match(records, /Records setup required/);
+});
+
+test("Records evidence reuses the successful evaluation projection and opens through TaskApp", () => {
+  assert.match(hook, /buildTaskEvidenceByRecordIdentity\(result\.evaluation\.currentRecords\)/);
+  assert.match(page, /onOpenTask: \(taskId: string\) => void/);
+  assert.match(page, /onOpenTask=\{onOpenTask\}/);
+  assert.match(records, /props\.onOpenTask\(taskId\)/);
+  assert.match(records, /setDetailRecord\(null\)/);
+  assert.doesNotMatch(records, /runRecordsPipeline/);
 });

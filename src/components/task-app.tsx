@@ -7352,6 +7352,7 @@ export function TaskApp() {
             notificationError={achievementNotifications.claimError ?? achievementNotifications.seenError}
             initialRecordMetricKey={pendingProgressRecordMetricKey}
             onRecordRequestHandled={clearPendingProgressRecordMetricKey}
+            onOpenTask={openTaskEditorFromId}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
               setActivePage("Tasks");

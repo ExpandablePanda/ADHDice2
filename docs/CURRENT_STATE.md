@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.79`.
+- Current working app version: `7.13.80`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.13.80 Record Evidence Verification
+
+Current Task-based aggregate Record details retain the exact Task/Step
+occurrences from the successful in-memory Records evaluation for
+`parent_tasks_day`, `parent_tasks_week`, `parent_tasks_month`, `steps_day`,
+`steps_week`, `steps_month`, and `permanent_completes_day`. The detail overlay
+shows chronological evidence rows, verifies the reconstructed count against
+the Record value, and opens available Tasks through the existing shared editor.
+Persisted Records continue using compact evidence schema v2; detail opening does
+not run another Records query or pipeline.
 
 ## 2026-09-19 7.13.79 Deep-link Home Record Chases to Progress Records
 

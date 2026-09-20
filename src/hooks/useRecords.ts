@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import { getLogicalDayKey } from "@/lib/logical-day";
 import type { PersistedRecordCurrent, PersistedRecordEvent, ProvisionalRecordCandidate } from "@/lib/records/types";
+import { buildTaskEvidenceByRecordIdentity, type RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
 import { isRecordsBusyError, isRecordsSetupError, RECORDS_BUSY_MESSAGE, runRecordsPipeline, runRecordsPipelineSingleFlight } from "@/lib/record-repository";
 
 type RecordsClient = ReturnType<typeof createBrowserSupabaseClient>;
@@ -19,10 +20,11 @@ export type RecordsHookState = {
   progress: string | null;
   provisionalCandidates: ProvisionalRecordCandidate[];
   setupRequired: boolean;
+  taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity;
   warnings: string[];
 };
 
-const INITIAL_STATE: RecordsHookState = { currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false, isRecalculating: false, lastCalculatedAt: null, progress: null, provisionalCandidates: [], setupRequired: false, warnings: [] };
+const INITIAL_STATE: RecordsHookState = { currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false, isRecalculating: false, lastCalculatedAt: null, progress: null, provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [] };
 export type RecordsInternalState = RecordsHookState & { ownerUserId: string | null };
 const INITIAL_INTERNAL_STATE: RecordsInternalState = { ...INITIAL_STATE, ownerUserId: null };
 
@@ -36,6 +38,7 @@ export function completeRecordsRefresh(current: RecordsInternalState, input: {
   events: PersistedRecordEvent[];
   ownerUserId: string;
   provisionalCandidates: ProvisionalRecordCandidate[];
+  taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity;
   warnings: string[];
 }): RecordsInternalState {
   return { ...current, ...input, error: null, hasSuccessfulResult: true, isLoading: false, isRecalculating: false, lastCalculatedAt: input.evaluatedAt, progress: null, setupRequired: false };
@@ -76,6 +79,7 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
           events: result.events,
           ownerUserId: userId,
           provisionalCandidates: result.evaluation.provisionalCandidates,
+          taskEvidenceByRecordIdentity: buildTaskEvidenceByRecordIdentity(result.evaluation.currentRecords),
           warnings: result.evaluation.warnings,
         }));
       } catch (error) {
