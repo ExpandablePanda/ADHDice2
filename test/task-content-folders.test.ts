@@ -8,6 +8,7 @@ import {
   countVisibleTaskContentFolderMembers,
   getTaskContentFolderRoutineToggleTaskIds,
   normalizeTaskContentFolderRow,
+  shouldIncludeEmptyTaskContentFolders,
   validateTaskContentFolderMembership,
 } from "../src/lib/task-content-folders.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
@@ -159,6 +160,16 @@ test("A hidden Folder member is not pulled into a filtered result and collapse d
   assert.deepEqual([...collapsedIds], ["folder-a"]);
 });
 
+test("empty Folder visibility is broad-All-only and shared by Table/List", () => {
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all" }), true);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "routine" }), false);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "today" }), false);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "list:custom" }), false);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all", hasSearchActive: true }), false);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all", hasHierarchyFiltersActive: true }), false);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all", hasStructuredFiltersActive: true }), false);
+});
+
 test("Folder member summaries use all direct members and keep Steps out of bulk state", () => {
   const summary = buildTaskContentFolderMemberSummary([
     { id: "visible", task_content_folder_id: "folder-a", isPinned: true, isRoutine: true, hasAttention: false },
@@ -218,6 +229,8 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   assert.match(list, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(table, /block\.members\.map\(\(task\) =>/);
   assert.match(list, /block\.members\.map\(\(task\) =>/);
+  assert.match(table, /shouldIncludeEmptyTaskContentFolders/);
+  assert.match(list, /shouldIncludeEmptyTaskContentFolders/);
   assert.match(tableRow, /task_content_folder_id: task\.task_content_folder_id/);
   assert.match(table, /task: Pick<PrototypeTaskRow, "id" \| "status" \| "title" \| "task_content_folder_id">/);
   assert.match(table, /option\.id === task\.task_content_folder_id/);

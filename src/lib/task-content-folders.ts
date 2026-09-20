@@ -80,6 +80,25 @@ export type TaskContentFolderProjectionOptions = {
   includeEmptyFolders?: boolean;
 };
 
+export type TaskContentFolderVisibilityInput = {
+  currentListId?: string | null;
+  hasHierarchyFiltersActive?: boolean;
+  hasSearchActive?: boolean;
+  hasStructuredFiltersActive?: boolean;
+};
+
+export function shouldIncludeEmptyTaskContentFolders({
+  currentListId,
+  hasHierarchyFiltersActive = false,
+  hasSearchActive = false,
+  hasStructuredFiltersActive = false,
+}: TaskContentFolderVisibilityInput) {
+  return currentListId === "all"
+    && !hasHierarchyFiltersActive
+    && !hasSearchActive
+    && !hasStructuredFiltersActive;
+}
+
 function normalizeParentId(folder: Pick<TaskContentFolderRow, "parent_folder_id">) {
   return folder.parent_folder_id ?? null;
 }

@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-18
+Last reviewed: 2026-09-19
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.27`.
+- Current working app version: `7.14.28`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.28 Finish Nested Folder Runtime Wiring and Filtered Visibility
+
+Table Task-to-Folder movement now uses the exact shared callback prop, and Table
+and List use one `shouldIncludeEmptyTaskContentFolders` decision: empty Folder
+containers appear only in the broad, unfiltered All workspace while filtered
+results retain only the ancestor context required by matching Tasks. The
+checked-in nested migration was applied to live ADHDice project
+`mnwcuinnshsncqrhvsks` as migration
+`20260920020454 add_nested_task_content_folders_7_14_27`. Live schema,
+constraint, trigger, function, and disposable authenticated promotion/cycle
+checks passed with QA rows cleaned up. Security Advisor showed no new
+nested-Folder finding; browser QA remains Andrew's responsibility.
 
 ## 2026-09-19 7.14.27 Add Nested Task Content Folders
 

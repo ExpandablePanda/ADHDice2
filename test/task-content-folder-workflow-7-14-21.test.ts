@@ -21,7 +21,18 @@ test("Task context actions expose Create Folder and preserve Move to Folder", ()
   assert.match(taskMenuSource, /<span>Create Folder<\/span>/);
   assert.match(taskMenuSource, /<span>Move to Folder<\/span>/);
   assert.match(taskMenuSource, /onCreateTaskContentFolder/);
+  assert.match(taskMenuSource, /onMoveToTaskContentFolder=\{onMoveTaskToContentFolder/);
+  assert.match(taskMenuSource, /getTaskContentFolderMoveOptions/);
   assert.match(taskMenuSource, /type="submit"/);
+});
+
+test("Table and List retain the exact Task to Folder callback wiring", () => {
+  assert.match(appSource, /onMoveTaskToContentFolder: moveTaskToContentFolder/);
+  assert.doesNotMatch(appSource, new RegExp(["onMoveTask", "ContentFolder"].join("")));
+  assert.match(tableSource, /onMoveTaskToContentFolder\?:/);
+  assert.match(tableSource, /onMoveToTaskContentFolder=\{onMoveTaskToContentFolder/);
+  assert.match(listSource, /onMoveTaskToContentFolder\?:/);
+  assert.match(listSource, /onMoveToTaskContentFolder=\{tableProps\.onMoveTaskToContentFolder/);
 });
 
 test("Create Folder performs assignment and compensates a failed move", () => {

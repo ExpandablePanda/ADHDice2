@@ -43,6 +43,7 @@ import {
   flattenTaskContentFolderPresentation,
   getTaskContentFolderMenuOptions,
   getTaskContentFolderMoveOptions,
+  shouldIncludeEmptyTaskContentFolders,
   type TaskContentFolderMemberSummary,
   type TaskContentFolderMenuOption,
 } from "@/lib/task-content-folders";
@@ -1313,6 +1314,7 @@ type TaskManagementTableV2Props = {
   statusMatchedChildTaskIds?: string[];
   statusMatchedStepParentTaskIds?: string[];
   statusFilterActive?: boolean;
+  searchActive?: boolean;
   hierarchyScopeKey?: string;
   columnFilters?: TaskTableColumnFilters;
   energyColumnFilters?: TaskEnergy[];
@@ -1322,6 +1324,7 @@ type TaskManagementTableV2Props = {
   onStatusColumnFiltersChange?: (filters: TaskDisplayStatus[]) => void;
   className?: string;
   currentListLabel?: string | null;
+  currentListId?: string | null;
   canRemoveFromCurrentList?: (taskId: string) => boolean;
   onRemoveFromCurrentList?: (taskId: string) => void;
   enableInspector?: boolean;
@@ -2704,6 +2707,7 @@ export function TaskManagementTableV2({
   statusMatchedChildTaskIds = [],
   statusMatchedStepParentTaskIds = [],
   statusFilterActive = false,
+  searchActive = false,
   hierarchyScopeKey = "",
   columnFilters,
   energyColumnFilters,
@@ -2713,6 +2717,7 @@ export function TaskManagementTableV2({
   onStatusColumnFiltersChange,
   className = "",
   currentListLabel = null,
+  currentListId = null,
   canRemoveFromCurrentList,
   onRemoveFromCurrentList,
   enableInspector = true,
@@ -3516,16 +3521,22 @@ export function TaskManagementTableV2({
   );
   const taskContentFolderPresentation = useMemo(
     () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders, {
-      includeEmptyFolders: !(
-        Object.values(textFilters).some((value) => Boolean(value?.trim()))
-        || structuredFilters.status.length > 0
-        || structuredFilters.priority.length > 0
-        || structuredFilters.energy.length > 0
-        || structuredFilters.repeat.length > 0
-        || structuredFilters.task_type.length > 0
-      ),
+      includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({
+        currentListId,
+        hasHierarchyFiltersActive: statusFilterActive,
+        hasSearchActive: searchActive
+          || highlightedTaskIds.length > 0
+          || searchMatchedStepParentTaskIds.length > 0
+          || searchMatchedChildTaskIds.length > 0,
+        hasStructuredFiltersActive: Object.values(textFilters).some((value) => Boolean(value?.trim()))
+          || structuredFilters.status.length > 0
+          || structuredFilters.priority.length > 0
+          || structuredFilters.energy.length > 0
+          || structuredFilters.repeat.length > 0
+          || structuredFilters.task_type.length > 0,
+      }),
     }),
-    [renderedTasks, structuredFilters, taskContentFolders, textFilters],
+    [currentListId, highlightedTaskIds.length, renderedTasks, searchActive, searchMatchedChildTaskIds.length, searchMatchedStepParentTaskIds.length, statusFilterActive, structuredFilters, taskContentFolders, textFilters],
   );
   const allFolderMemberRows = useMemo(
     () => getAllRows?.() ?? (allRows && allRows.length > 0 ? allRows : tasks),

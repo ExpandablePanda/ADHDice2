@@ -96,6 +96,7 @@ import {
   flattenTaskContentFolderPresentation,
   getTaskContentFolderMenuOptions,
   getTaskContentFolderMoveOptions,
+  shouldIncludeEmptyTaskContentFolders,
   type TaskContentFolderMemberSummary,
   type TaskContentFolderMenuOption,
 } from "@/lib/task-content-folders";
@@ -315,6 +316,7 @@ type TasksTableSourceProps = {
   statusMatchedChildTaskIds?: string[];
   statusMatchedStepParentTaskIds?: string[];
   statusFilterActive?: boolean;
+  searchActive?: boolean;
   hierarchyScopeKey?: string;
   columnFilters?: TaskTableColumnFilters;
   energyColumnFilters?: Task["energy"][];
@@ -678,6 +680,7 @@ export function TasksTableAdapter({
           statusMatchedChildTaskIds={tableProps.statusMatchedChildTaskIds}
           statusMatchedStepParentTaskIds={tableProps.statusMatchedStepParentTaskIds}
           statusFilterActive={tableProps.statusFilterActive}
+          searchActive={tableProps.searchActive}
           hierarchyScopeKey={tableProps.hierarchyScopeKey}
           columnFilters={tableProps.columnFilters}
           energyColumnFilters={tableProps.energyColumnFilters}
@@ -687,6 +690,7 @@ export function TasksTableAdapter({
           onStatusColumnFiltersChange={tableProps.onStatusColumnFiltersChange}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
+          currentListId={tableProps.currentListId}
           canRemoveFromCurrentList={canRemoveFromCurrentList}
           onRemoveFromCurrentList={(taskId) => {
             if (tableProps.currentListId) {
@@ -2723,14 +2727,18 @@ function TasksSimpleList({
   const windowedTasks = useMemo(() => tasks.slice(0, rowWindowCount), [rowWindowCount, tasks]);
   const taskContentFolderPresentation = useMemo(
     () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? [], {
-      includeEmptyFolders: !Boolean(
-        tableProps.statusFilterActive
-        || tableProps.highlightedTaskIds?.length
-        || tableProps.searchMatchedStepParentTaskIds?.length
-        || tableProps.searchMatchedChildTaskIds?.length
-      ),
+      includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({
+        currentListId: tableProps.currentListId ?? selectedBucket,
+        hasHierarchyFiltersActive: Boolean(
+          tableProps.statusFilterActive
+          || tableProps.highlightedTaskIds?.length
+          || tableProps.searchMatchedStepParentTaskIds?.length
+          || tableProps.searchMatchedChildTaskIds?.length
+        ),
+        hasSearchActive: tableProps.searchActive,
+      }),
     }),
-    [tableProps.highlightedTaskIds, tableProps.searchMatchedChildTaskIds, tableProps.searchMatchedStepParentTaskIds, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
+    [selectedBucket, tableProps.currentListId, tableProps.highlightedTaskIds, tableProps.searchActive, tableProps.searchMatchedChildTaskIds, tableProps.searchMatchedStepParentTaskIds, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
   );
   const allFolderMemberTasks = tableProps.allTasks ?? tableProps.tasks;
   const folderMemberSummaryById = useMemo(() => {
@@ -3232,8 +3240,10 @@ function TasksSimpleList({
               highlightedRevealShouldFocus={tableProps.highlightedRevealShouldFocus}
               highlightedScrollToken={tableProps.highlightedScrollToken}
               highlightedTaskIds={tableProps.highlightedTaskIds}
+              searchActive={tableProps.searchActive}
               className="m-0 max-w-none p-0"
               currentListLabel={tableProps.currentListLabel}
+              currentListId={tableProps.currentListId}
               canRemoveFromCurrentList={canRemoveFromCurrentList}
               onRemoveFromCurrentList={(taskId) => {
                 const currentListId = tableProps.currentListId ?? selectedBucket;
