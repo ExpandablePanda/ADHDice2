@@ -170,6 +170,37 @@ test("normal browsing keeps truly empty Folders visible across buckets while exp
   assert.equal(shouldIncludeEmptyTaskContentFolders({ hasStructuredFiltersActive: true }), false);
 });
 
+test("search-selection result IDs do not falsely gate empty Folder visibility", () => {
+  const searchMatchedStepParentTaskIds = ["today-task-a", "today-task-b"];
+  const searchMatchedChildTaskIds = ["today-step-a"];
+  const persistentEmptyFolderIds = getActuallyEmptyTaskContentFolderIds([], folders);
+  assert.ok(searchMatchedStepParentTaskIds.length > 0 && searchMatchedChildTaskIds.length > 0);
+  const normalBrowseIncludesEmptyFolders = shouldIncludeEmptyTaskContentFolders({
+    hasHierarchyFiltersActive: false,
+    hasSearchActive: false,
+  });
+  const searchIncludesEmptyFolders = shouldIncludeEmptyTaskContentFolders({
+    hasHierarchyFiltersActive: false,
+    hasSearchActive: true,
+  });
+  assert.equal(normalBrowseIncludesEmptyFolders, true);
+  assert.equal(searchIncludesEmptyFolders, false);
+  assert.equal(
+    buildTaskContentFolderPresentation([], folders, {
+      includeEmptyFolders: normalBrowseIncludesEmptyFolders,
+      persistentEmptyFolderIds,
+    }).some((block) => block.kind === "folder" && block.folder.id === "folder-b"),
+    true,
+  );
+  assert.equal(
+    buildTaskContentFolderPresentation([], folders, {
+      includeEmptyFolders: searchIncludesEmptyFolders,
+      persistentEmptyFolderIds,
+    }).some((block) => block.kind === "folder" && block.folder.id === "folder-b"),
+    false,
+  );
+});
+
 test("actual Folder emptiness uses the broad top-level Task universe and ignores Steps", () => {
   assert.deepEqual(
     getActuallyEmptyTaskContentFolderIds([
@@ -249,6 +280,9 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   assert.match(list, /getActuallyEmptyTaskContentFolderIds/);
   assert.match(table, /persistentEmptyFolderIds/);
   assert.match(list, /persistentEmptyFolderIds/);
+  assert.match(table, /hasSearchActive: searchActive,/);
+  assert.match(list, /hasHierarchyFiltersActive: Boolean\(tableProps\.statusFilterActive\)/);
+  assert.match(list, /hasSearchActive: Boolean\(tableProps\.searchActive\)/);
   assert.match(tableRow, /task_content_folder_id: task\.task_content_folder_id/);
   assert.match(table, /task: Pick<PrototypeTaskRow, "id" \| "status" \| "title" \| "task_content_folder_id">/);
   assert.match(table, /option\.id === task\.task_content_folder_id/);

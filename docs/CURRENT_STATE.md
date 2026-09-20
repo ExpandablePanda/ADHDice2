@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.29`.
+- Current working app version: `7.14.30`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.30 Fix False Search Gate Hiding Empty Folders
+
+Task Content Folder empty visibility now uses only real search, hierarchy/status,
+and structured-filter state. Search-selection result IDs no longer hide truly
+empty Folders during ordinary Today/List browsing. Browser QA remains Andrew's
+responsibility.
 
 ## 2026-09-19 7.14.29 Keep Truly Empty Task Content Folders Visible
 
