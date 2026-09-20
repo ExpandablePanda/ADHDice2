@@ -3223,6 +3223,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_exclude_tasks_from_tracking: {
+        Args: { p_task_ids: string[] };
+        Returns: Task[];
+      };
       adhdice_set_task_tracking_exclusion: {
         Args: { p_excluded: boolean; p_task_id: string };
         Returns: Task;

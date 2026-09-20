@@ -74,7 +74,8 @@ test("the hook checks a matching snapshot before starting the pipeline, while fi
   assert.ok(lookup >= 0 && lookup < pipeline);
   assert.match(hook, /if \(!explicitRefresh && cached\)/);
   assert.match(hook, /refreshRequestedRef\.current = true/);
-  assert.match(hook, /if \(runningRef\.current \|\| !sessionKey\) return/);
+  assert.match(hook, /if \(runningRef\.current\) return/);
+  assert.match(hook, /if \(!sessionKey\) return/);
 });
 
 test("successful refresh replaces the cache, while a failed refresh retains the last successful state and cache", () => {
@@ -141,7 +142,10 @@ test("TaskApp owns successful tracking invalidation and Record Evidence only ref
   assert.match(mutation, /currentUserId/);
   assert.doesNotMatch(mutation, /records\.refresh/);
   assert.doesNotMatch(recordsTab, /invalidateRecordsSessionSnapshot/);
-  assert.match(recordsTab, /setDetailRecord\(null\);[\s\S]*records\.refresh\(\);/);
+  assert.match(taskApp, /excludeTasksFromTrackingRpc\(client, taskIds\)/);
+  assert.match(taskApp, /refreshTaskHistoryStreakSummaries\(nextTasks, \{ supersede: true \}\)/);
+  assert.match(recordsTab, /setBulkProgress\(\{ count: taskIds\.length, phase: "excluding"/);
+  assert.match(recordsTab, /closeRecordDetails\(\);[\s\S]*await records\.refresh\(\)/);
 });
 
 test("session cache is memory-only and does not alter persisted evidence or SQL", () => {

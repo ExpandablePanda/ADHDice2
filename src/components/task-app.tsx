@@ -244,6 +244,7 @@ import {
 import {
   buildTaskUpdateConflictMessage,
   deleteTaskRow,
+  excludeTasksFromTracking as excludeTasksFromTrackingRpc,
   insertTaskRowWithCanonicalCreation,
   markTaskRowsPermanentlyDeleted,
   setTaskTrackingExclusion as setTaskTrackingExclusionRpc,
@@ -3002,6 +3003,23 @@ export function TaskApp() {
     });
     return true;
   }, [client, currentUserId, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks]);
+  const excludeTasksFromTracking = useCallback(async (taskIds: readonly string[]) => {
+    const result = await excludeTasksFromTrackingRpc(client, taskIds);
+    if (result.error || !result.data) {
+      return { error: result.error?.message ?? "Task tracking exclusion could not be saved.", success: false };
+    }
+
+    const nextTaskById = new Map(tasks.map((task) => [task.id, task]));
+    for (const task of result.data) {
+      const priorTask = nextTaskById.get(task.id);
+      nextTaskById.set(task.id, priorTask ? { ...priorTask, ...task } : task);
+    }
+    const nextTasks = sortTasksForUi([...nextTaskById.values()]);
+    setTasks(nextTasks);
+    if (currentUserId) invalidateRecordsSessionSnapshotsForUser(currentUserId);
+    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    return { error: null, success: true };
+  }, [client, currentUserId, refreshTaskHistoryStreakSummaries, sortTasksForUi, tasks]);
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
     values: TaskUpdate,
@@ -7378,8 +7396,8 @@ export function TaskApp() {
             notificationError={achievementNotifications.claimError ?? achievementNotifications.seenError}
             initialRecordMetricKey={pendingProgressRecordMetricKey}
             onRecordRequestHandled={clearPendingProgressRecordMetricKey}
+            onExcludeTasksFromTracking={excludeTasksFromTracking}
             onOpenTask={openTaskEditorFromId}
-            onSetTaskTrackingExclusion={updateTaskTrackingExclusion}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
               setActivePage("Tasks");

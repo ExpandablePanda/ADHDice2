@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.86`.
+- Current working app version: `7.13.87`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -41,6 +41,19 @@ completed operation. Successful Task editor tracking mutations invalidate every
 in-memory Records session snapshot for the current user; Record Evidence keeps
 its explicit refresh after closing stale detail. The 7.13.86 migration remains
 source-only until manual application and live verification.
+
+## 2026-09-20 7.13.87 Bulk Record Evidence Tracking Exclusion
+
+Record Evidence now deduplicates Task-level selections across repeated evidence
+occurrences and submits one authenticated bulk exclusion RPC. The RPC validates
+the complete request atomically, increments revisions only for direct flag
+changes, blocks applicable pending rewards once, dequalifies affected
+Task/Step-set Achievement evidence, and evaluates current Achievement progress
+once. TaskApp reconciles returned Task rows, invalidates the current user's
+Records session cache, and refreshes streak summaries once. Records closes stale
+detail and runs exactly one explicit refresh with the existing pipeline stage
+text while showing blocking progress. The 7.13.87 migration remains source-only
+until manual application and live verification.
 
 ## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
 

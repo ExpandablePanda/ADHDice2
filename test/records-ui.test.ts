@@ -28,6 +28,12 @@ test("Records UI exposes required sections, refresh, history, and factual disclo
   assert.match(records, /evidenceCount\.warning/);
   assert.match(records, /data-record-evidence-list/);
   assert.match(records, /Unavailable/);
+  assert.match(records, /Select all/);
+  assert.match(records, /Clear/);
+  assert.match(records, /Tasks selected/);
+  assert.match(records, /Exclude selected/);
+  assert.match(records, /getSelectableRecordEvidenceTaskIds/);
+  assert.match(records, /onChange=\{\(\) => onToggleTaskSelection\(item\.taskId\)\}/);
 });
 
 test("Home Record deep-links acknowledge only after the requested detail is ready", () => {
@@ -59,4 +65,15 @@ test("Records evidence reuses the successful evaluation projection and opens thr
   assert.match(records, /props\.onOpenTask\(taskId\)/);
   assert.match(records, /setDetailRecord\(null\)/);
   assert.doesNotMatch(records, /runRecordsPipeline/);
+});
+
+test("Record Evidence bulk flow blocks during exclusion and exposes the real Records stage", () => {
+  assert.match(records, /aria-busy=\{running\}/);
+  assert.match(records, /setBulkProgress\(\{ count: taskIds\.length, phase: "excluding"/);
+  assert.match(records, /closeRecordDetails\(\);[\s\S]*await records\.refresh\(\)/);
+  assert.match(records, /Recalculating Records/);
+  assert.match(records, /progress=\{records\.progress\}/);
+  assert.match(records, /Use Refresh Records to try again/);
+  assert.match(records, /Nothing was excluded; your selections remain/);
+  assert.equal((records.match(/await records\.refresh\(\)/g) ?? []).length, 1);
 });

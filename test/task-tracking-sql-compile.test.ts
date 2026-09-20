@@ -38,7 +38,7 @@ function utilityConnectionArgs(): string[] {
   return ["-h", host!, "-p", port];
 }
 
-test("7.13.86 SQL compiles and enforces the occurrence boundary", (t) => {
+test("7.13.86 and 7.13.87 SQL compile and enforce the occurrence boundary", (t) => {
   if (!host) {
     t.skip("set ADHDICE_SQL_COMPILE_PGHOST to run the disposable local PostgreSQL tracking regression");
     return;
@@ -246,6 +246,7 @@ select
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/add_pending_reward_dice.sql")]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/add_canonical_reward_entitlement_bridge.sql")]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_tracking_exclusion_7_13_86.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_bulk_task_tracking_exclusion_7_13_87.sql")]);
     writeFileSync(fixturePath, fixture);
     writeFileSync(verificationPath, verification);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixturePath]);

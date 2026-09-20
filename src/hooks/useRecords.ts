@@ -30,6 +30,7 @@ export type RecordsInternalState = RecordsHookState & { ownerUserId: string | nu
 const INITIAL_INTERNAL_STATE: RecordsInternalState = { ...INITIAL_STATE, ownerUserId: null, sessionKey: null };
 
 export type RecordsRefreshResult = RecordsSessionRefresh & { ownerUserId: string; sessionKey?: string | null };
+export type RecordsRefreshOutcome = { error: string | null; success: boolean };
 
 export function retainRecordsAfterRefreshFailure(current: RecordsInternalState, input: { error: string; ownerUserId: string; setupRequired: boolean }): RecordsInternalState {
   return { ...current, ...input, isLoading: false, isRecalculating: false, progress: null };
@@ -89,12 +90,23 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
   const latestSessionKeyRef = useRef(sessionKey);
   const refreshRequestedRef = useRef(false);
   const refreshRequestedKeyRef = useRef<string | null>(null);
+  const refreshRequestRef = useRef<{
+    key: string;
+    promise: Promise<RecordsRefreshOutcome>;
+    resolve: (outcome: RecordsRefreshOutcome) => void;
+  } | null>(null);
 
-  const refresh = useCallback(() => {
-    if (runningRef.current || !sessionKey) return;
+  const refresh = useCallback((): Promise<RecordsRefreshOutcome> => {
+    if (!sessionKey) return Promise.resolve({ error: "Records cannot refresh without an authenticated user.", success: false });
+    if (runningRef.current) return Promise.resolve({ error: RECORDS_BUSY_MESSAGE, success: false });
+    if (refreshRequestRef.current?.key === sessionKey) return refreshRequestRef.current.promise;
     refreshRequestedRef.current = true;
     refreshRequestedKeyRef.current = sessionKey;
+    let resolveRequest!: (outcome: RecordsRefreshOutcome) => void;
+    const promise = new Promise<RecordsRefreshOutcome>((resolve) => { resolveRequest = resolve; });
+    refreshRequestRef.current = { key: sessionKey, promise, resolve: resolveRequest };
     setRefreshToken((value) => value + 1);
+    return promise;
   }, [sessionKey]);
 
   useEffect(() => {
@@ -138,21 +150,34 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
         if (sessionKey) setRecordsSessionSnapshot(sessionKey, refreshResult);
         if (generation !== generationRef.current || latestOwnerRef.current !== userId || latestSessionKeyRef.current !== sessionKey) return;
         setState((current) => completeRecordsRefresh(current, { ...refreshResult, ownerUserId: userId, sessionKey }));
+        if (refreshRequestRef.current?.key === sessionKey) {
+          refreshRequestRef.current.resolve({ error: null, success: true });
+          refreshRequestRef.current = null;
+        }
       } catch (error) {
         if (generation !== generationRef.current || latestOwnerRef.current !== userId || latestSessionKeyRef.current !== sessionKey) return;
         const detail = error as { code?: string; message?: string };
         const setupRequired = isRecordsSetupError(detail);
+        const errorMessage = isRecordsBusyError(detail)
+          ? RECORDS_BUSY_MESSAGE
+          : setupRequired
+            ? "Records storage is not installed for this environment yet."
+            : (detail.message ?? "Records could not be recalculated.");
         setState((current) => retainRecordsAfterRefreshFailure(current, {
-          error: isRecordsBusyError(detail)
-            ? RECORDS_BUSY_MESSAGE
-            : setupRequired
-              ? "Records storage is not installed for this environment yet."
-              : (detail.message ?? "Records could not be recalculated."),
+          error: errorMessage,
           ownerUserId: userId,
           setupRequired,
         }));
+        if (refreshRequestRef.current?.key === sessionKey) {
+          refreshRequestRef.current.resolve({ error: errorMessage, success: false });
+          refreshRequestRef.current = null;
+        }
       } finally {
         runningRef.current = false;
+        if (refreshRequestRef.current?.key === sessionKey && (generation !== generationRef.current || latestOwnerRef.current !== userId || latestSessionKeyRef.current !== sessionKey)) {
+          refreshRequestRef.current.resolve({ error: "Records refresh was interrupted.", success: false });
+          refreshRequestRef.current = null;
+        }
         if (latestOwnerRef.current !== userId || latestSessionKeyRef.current !== sessionKey) setRefreshToken((value) => value + 1);
       }
     })();
