@@ -76,11 +76,14 @@ export type TaskContentFolderMemberSummary = {
 };
 
 export type TaskContentFolderProjectionOptions = {
-  /** Include zero-task folders. Pass false for task-filtered views. */
+  /** Allow persistent empty folders to remain visible in normal browsing. */
   includeEmptyFolders?: boolean;
+  /** Folder IDs that are empty across the broad Task universe, not just the visible result. */
+  persistentEmptyFolderIds?: ReadonlySet<string>;
 };
 
 export type TaskContentFolderVisibilityInput = {
+  /** Retained for callers that track the selected bucket; bucket identity does not decide visibility. */
   currentListId?: string | null;
   hasHierarchyFiltersActive?: boolean;
   hasSearchActive?: boolean;
@@ -88,13 +91,11 @@ export type TaskContentFolderVisibilityInput = {
 };
 
 export function shouldIncludeEmptyTaskContentFolders({
-  currentListId,
   hasHierarchyFiltersActive = false,
   hasSearchActive = false,
   hasStructuredFiltersActive = false,
 }: TaskContentFolderVisibilityInput) {
-  return currentListId === "all"
-    && !hasHierarchyFiltersActive
+  return !hasHierarchyFiltersActive
     && !hasSearchActive
     && !hasStructuredFiltersActive;
 }
@@ -305,6 +306,34 @@ export function validateTaskContentFolderMembership(
 
 type FolderProjectionTask = { id: string; parent_task_id?: string | null; task_content_folder_id?: string | null };
 
+export function getActuallyEmptyTaskContentFolderIds<TTask extends FolderProjectionTask>(
+  allTasks: readonly TTask[],
+  folders: readonly TaskContentFolderRow[],
+) {
+  const folderById = new Map(folders.map((folder) => [folder.id, folder]));
+  const occupiedFolderIds = new Set<string>();
+
+  const markFolderAndAncestors = (folderId: string) => {
+    const visited = new Set<string>();
+    let current = folderById.get(folderId);
+    while (current && !visited.has(current.id)) {
+      visited.add(current.id);
+      occupiedFolderIds.add(current.id);
+      const parentId = normalizeParentId(current);
+      current = parentId ? folderById.get(parentId) : undefined;
+    }
+  };
+
+  for (const task of allTasks) {
+    if ((task.parent_task_id ?? null) !== null || !task.task_content_folder_id) continue;
+    if (folderById.has(task.task_content_folder_id)) {
+      markFolderAndAncestors(task.task_content_folder_id);
+    }
+  }
+
+  return new Set(folders.filter((folder) => !occupiedFolderIds.has(folder.id)).map((folder) => folder.id));
+}
+
 function sortProjectionChildren<TTask extends FolderProjectionTask>(
   children: TaskContentFolderPresentationNode<TTask>[],
   folders: readonly TaskContentFolderRow[],
@@ -330,6 +359,7 @@ export function buildTaskContentFolderPresentation<TTask extends FolderProjectio
   options: TaskContentFolderProjectionOptions = {},
 ): TaskContentFolderPresentationBlock<TTask>[] {
   const includeEmptyFolders = options.includeEmptyFolders ?? false;
+  const persistentEmptyFolderIds = options.persistentEmptyFolderIds;
   const folderById = new Map(folders.map((folder) => [folder.id, folder]));
   const visibleTaskIndex = new Map(visibleTasks.map((task, index) => [task.id, index]));
   const directTasksByFolder = new Map<string, TTask[]>();
@@ -377,7 +407,10 @@ export function buildTaskContentFolderPresentation<TTask extends FolderProjectio
     const descendantIndexes = descendantTaskIds
       .map((taskId) => visibleTaskIndex.get(taskId))
       .filter((index): index is number => typeof index === "number");
-    if (!includeEmptyFolders && descendantTaskIds.length === 0) return null;
+    const keepFolder = descendantTaskIds.length > 0
+      || childNodes.length > 0
+      || (includeEmptyFolders && (!persistentEmptyFolderIds || persistentEmptyFolderIds.has(folder.id)));
+    if (!keepFolder) return null;
     const firstVisibleDescendantIndex = descendantIndexes.length > 0 ? Math.min(...descendantIndexes) : null;
     return {
       children,

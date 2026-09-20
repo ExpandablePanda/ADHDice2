@@ -94,6 +94,7 @@ import {
   buildTaskContentFolderMemberSummary,
   buildTaskContentFolderPresentation,
   flattenTaskContentFolderPresentation,
+  getActuallyEmptyTaskContentFolderIds,
   getTaskContentFolderMenuOptions,
   getTaskContentFolderMoveOptions,
   shouldIncludeEmptyTaskContentFolders,
@@ -2725,10 +2726,14 @@ function TasksSimpleList({
     ? rowWindow.count
     : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
   const windowedTasks = useMemo(() => tasks.slice(0, rowWindowCount), [rowWindowCount, tasks]);
+  const allFolderMemberTasks = tableProps.allTasks ?? tableProps.tasks;
+  const actuallyEmptyTaskContentFolderIds = useMemo(
+    () => getActuallyEmptyTaskContentFolderIds(allFolderMemberTasks, tableProps.taskContentFolders ?? []),
+    [allFolderMemberTasks, tableProps.taskContentFolders],
+  );
   const taskContentFolderPresentation = useMemo(
     () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? [], {
       includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({
-        currentListId: tableProps.currentListId ?? selectedBucket,
         hasHierarchyFiltersActive: Boolean(
           tableProps.statusFilterActive
           || tableProps.highlightedTaskIds?.length
@@ -2737,10 +2742,10 @@ function TasksSimpleList({
         ),
         hasSearchActive: tableProps.searchActive,
       }),
+      persistentEmptyFolderIds: actuallyEmptyTaskContentFolderIds,
     }),
-    [selectedBucket, tableProps.currentListId, tableProps.highlightedTaskIds, tableProps.searchActive, tableProps.searchMatchedChildTaskIds, tableProps.searchMatchedStepParentTaskIds, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
+    [actuallyEmptyTaskContentFolderIds, tableProps.highlightedTaskIds, tableProps.searchActive, tableProps.searchMatchedChildTaskIds, tableProps.searchMatchedStepParentTaskIds, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
   );
-  const allFolderMemberTasks = tableProps.allTasks ?? tableProps.tasks;
   const folderMemberSummaryById = useMemo(() => {
     const memberFacts = allFolderMemberTasks.map((task) => ({
       id: task.id,

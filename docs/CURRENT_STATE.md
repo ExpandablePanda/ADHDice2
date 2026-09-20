@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.28`.
+- Current working app version: `7.14.29`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.29 Keep Truly Empty Task Content Folders Visible
+
+Normal Task browsing now keeps Folders that are empty across the broad Task
+universe visible in All, Today, Routine, Attention, and custom Lists. Folders
+whose Tasks are filtered out remain hidden unless retained as ancestry for a
+genuinely empty descendant. Table and List use the same actual-empty Folder
+calculation and recursive projection. Browser QA remains Andrew's
+responsibility.
 
 ## 2026-09-19 7.14.28 Finish Nested Folder Runtime Wiring and Filtered Visibility
 

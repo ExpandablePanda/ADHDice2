@@ -41,6 +41,7 @@ import {
   buildTaskContentFolderMemberSummary,
   buildTaskContentFolderPresentation,
   flattenTaskContentFolderPresentation,
+  getActuallyEmptyTaskContentFolderIds,
   getTaskContentFolderMenuOptions,
   getTaskContentFolderMoveOptions,
   shouldIncludeEmptyTaskContentFolders,
@@ -3519,10 +3520,17 @@ export function TaskManagementTableV2({
     () => effectiveDisplayedTasks.slice(0, renderedTaskCount),
     [effectiveDisplayedTasks, renderedTaskCount],
   );
+  const allFolderMemberRows = useMemo(
+    () => getAllRows?.() ?? (allRows && allRows.length > 0 ? allRows : tasks),
+    [allRows, getAllRows, tasks],
+  );
+  const actuallyEmptyTaskContentFolderIds = useMemo(
+    () => getActuallyEmptyTaskContentFolderIds(allFolderMemberRows, taskContentFolders),
+    [allFolderMemberRows, taskContentFolders],
+  );
   const taskContentFolderPresentation = useMemo(
     () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders, {
       includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({
-        currentListId,
         hasHierarchyFiltersActive: statusFilterActive,
         hasSearchActive: searchActive
           || highlightedTaskIds.length > 0
@@ -3535,12 +3543,9 @@ export function TaskManagementTableV2({
           || structuredFilters.repeat.length > 0
           || structuredFilters.task_type.length > 0,
       }),
+      persistentEmptyFolderIds: actuallyEmptyTaskContentFolderIds,
     }),
-    [currentListId, highlightedTaskIds.length, renderedTasks, searchActive, searchMatchedChildTaskIds.length, searchMatchedStepParentTaskIds.length, statusFilterActive, structuredFilters, taskContentFolders, textFilters],
-  );
-  const allFolderMemberRows = useMemo(
-    () => getAllRows?.() ?? (allRows && allRows.length > 0 ? allRows : tasks),
-    [allRows, getAllRows, tasks],
+    [actuallyEmptyTaskContentFolderIds, highlightedTaskIds.length, renderedTasks, searchActive, searchMatchedChildTaskIds.length, searchMatchedStepParentTaskIds.length, statusFilterActive, structuredFilters, taskContentFolders, textFilters],
   );
   const folderMemberSummaryById = useMemo(() => {
     const memberFacts = allFolderMemberRows.map((task) => ({

@@ -5,6 +5,7 @@ import {
   buildTaskContentFolderMemberSummary,
   buildTaskContentFolderPresentation,
   flattenTaskContentFolderPresentation,
+  getActuallyEmptyTaskContentFolderIds,
   getTaskContentFolderDescendantIds,
   getTaskContentFolderMenuOptions,
   getTaskContentFolderMoveOptions,
@@ -44,7 +45,16 @@ test("recursive presentation keeps parent placement, direct order, and contiguou
     task("d", "client"),
     task("c", "work"),
     task("e"),
-  ], folders, { includeEmptyFolders: true });
+  ], folders, {
+    includeEmptyFolders: true,
+    persistentEmptyFolderIds: getActuallyEmptyTaskContentFolderIds([
+      task("a"),
+      task("b", "website"),
+      task("d", "client"),
+      task("c", "work"),
+      task("e"),
+    ], folders),
+  });
 
   assert.deepEqual(presentation.map((node) => node.kind === "task" ? node.task.id : node.folder.id), ["a", "work", "e", "personal"]);
   const work = presentation.find((node) => node.kind === "folder" && node.folder.id === "work");
@@ -64,6 +74,58 @@ test("recursive presentation keeps parent placement, direct order, and contiguou
     "e",
     "personal:0",
   ]);
+});
+
+test("normal bucket projection keeps truly empty Folder trees without exposing filtered Tasks", () => {
+  const allTasks = [task("filtered-out", "website")];
+  const actuallyEmptyFolderIds = getActuallyEmptyTaskContentFolderIds(allTasks, folders);
+  const presentation = buildTaskContentFolderPresentation([], folders, {
+    includeEmptyFolders: true,
+    persistentEmptyFolderIds: actuallyEmptyFolderIds,
+  });
+  const entries = flattenTaskContentFolderPresentation(presentation);
+
+  assert.deepEqual(entries.map((entry) => entry.kind === "task" ? entry.task.id : `${entry.folder.id}:${entry.visibleTaskCount}`), [
+    "work:0",
+    "website:0",
+    "client:0",
+    "music:0",
+    "personal:0",
+  ]);
+  assert.equal(entries.some((entry) => entry.kind === "task" && entry.task.id === "filtered-out"), false);
+});
+
+test("a populated ancestor remains only as structural ancestry for a retained empty child", () => {
+  const allTasks = [task("filtered-out", "website")];
+  const actuallyEmptyFolderIds = getActuallyEmptyTaskContentFolderIds(allTasks, folders);
+  const presentation = buildTaskContentFolderPresentation([], folders, {
+    includeEmptyFolders: true,
+    persistentEmptyFolderIds: actuallyEmptyFolderIds,
+  });
+  const work = presentation.find((node) => node.kind === "folder" && node.folder.id === "work");
+  assert.equal(work?.kind, "folder");
+  if (work?.kind !== "folder") return;
+  assert.equal(work.visibleTaskCount, 0);
+  assert.deepEqual(work.children.map((node) => node.kind === "folder" ? node.folder.id : node.task.id), ["website", "music"]);
+  assert.equal(work.children.some((node) => node.kind === "task" && node.task.id === "filtered-out"), false);
+});
+
+test("explicit search or metadata filtering may hide persistent empties, and clearing it restores them", () => {
+  const actuallyEmptyFolderIds = getActuallyEmptyTaskContentFolderIds([], folders);
+  const filteredPresentation = buildTaskContentFolderPresentation([], folders, {
+    includeEmptyFolders: false,
+    persistentEmptyFolderIds: actuallyEmptyFolderIds,
+  });
+  assert.deepEqual(flattenTaskContentFolderPresentation(filteredPresentation), []);
+
+  const restoredPresentation = buildTaskContentFolderPresentation([], folders, {
+    includeEmptyFolders: true,
+    persistentEmptyFolderIds: actuallyEmptyFolderIds,
+  });
+  assert.deepEqual(
+    flattenTaskContentFolderPresentation(restoredPresentation).map((entry) => entry.kind === "folder" ? entry.folder.id : entry.task.id),
+    ["work", "website", "client", "music", "personal"],
+  );
 });
 
 test("filtered recursive projection shows ancestors without unrelated siblings", () => {

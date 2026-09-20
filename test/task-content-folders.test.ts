@@ -6,6 +6,7 @@ import {
   buildTaskContentFolderAssignmentPatch,
   buildTaskContentFolderPresentation,
   countVisibleTaskContentFolderMembers,
+  getActuallyEmptyTaskContentFolderIds,
   getTaskContentFolderRoutineToggleTaskIds,
   normalizeTaskContentFolderRow,
   shouldIncludeEmptyTaskContentFolders,
@@ -160,14 +161,27 @@ test("A hidden Folder member is not pulled into a filtered result and collapse d
   assert.deepEqual([...collapsedIds], ["folder-a"]);
 });
 
-test("empty Folder visibility is broad-All-only and shared by Table/List", () => {
-  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all" }), true);
-  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "routine" }), false);
-  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "today" }), false);
-  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "list:custom" }), false);
-  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all", hasSearchActive: true }), false);
-  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all", hasHierarchyFiltersActive: true }), false);
-  assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId: "all", hasStructuredFiltersActive: true }), false);
+test("normal browsing keeps truly empty Folders visible across buckets while explicit filters may hide them", () => {
+  for (const currentListId of ["all", "today", "routine", "list:custom"]) {
+    assert.equal(shouldIncludeEmptyTaskContentFolders({ currentListId }), true);
+  }
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ hasSearchActive: true }), false);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ hasHierarchyFiltersActive: true }), false);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({ hasStructuredFiltersActive: true }), false);
+});
+
+test("actual Folder emptiness uses the broad top-level Task universe and ignores Steps", () => {
+  assert.deepEqual(
+    getActuallyEmptyTaskContentFolderIds([
+      task("visible", "folder-a"),
+      task("step", "folder-b", "visible"),
+    ], folders),
+    new Set(["folder-b"]),
+  );
+  assert.deepEqual(
+    getActuallyEmptyTaskContentFolderIds([task("filtered-out", "folder-a")], folders),
+    new Set(["folder-b"]),
+  );
 });
 
 test("Folder member summaries use all direct members and keep Steps out of bulk state", () => {
@@ -231,6 +245,10 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   assert.match(list, /block\.members\.map\(\(task\) =>/);
   assert.match(table, /shouldIncludeEmptyTaskContentFolders/);
   assert.match(list, /shouldIncludeEmptyTaskContentFolders/);
+  assert.match(table, /getActuallyEmptyTaskContentFolderIds/);
+  assert.match(list, /getActuallyEmptyTaskContentFolderIds/);
+  assert.match(table, /persistentEmptyFolderIds/);
+  assert.match(list, /persistentEmptyFolderIds/);
   assert.match(tableRow, /task_content_folder_id: task\.task_content_folder_id/);
   assert.match(table, /task: Pick<PrototypeTaskRow, "id" \| "status" \| "title" \| "task_content_folder_id">/);
   assert.match(table, /option\.id === task\.task_content_folder_id/);
