@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.85`.
+- Current working app version: `7.13.86`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,13 +23,24 @@ the 7.13.85 correction below.
 
 ## 2026-09-20 7.13.85 Correct Tracking Exclusion Achievement Authority
 
-The unpublished tracking-exclusion migration now guards
+The 7.13.85 version of the unpublished tracking-exclusion migration guarded
 `adhdice_achievement_occurrences` before Task-derived qualification can reach
 the evaluator. Exclusion dequalifies existing Task and Step-set evidence before
 rebuilding progress, while re-inclusion drains the canonical resumable
-Achievement recalculation cursor to completion. The corrected migration remains
-source-only until manually applied and verified; the unsafe 7.13.84 migration
-file is no longer present.
+Achievement recalculation cursor to completion. It was superseded before
+deployment by 7.13.86, which remains source-only until manually applied and
+verified; the unsafe 7.13.84 and superseded 7.13.85 migration files are no
+longer present.
+
+## 2026-09-20 7.13.86 Final Tracking Exclusion Authority + Cache Correction
+
+The unpublished tracking-exclusion migration now scopes every Task-derived
+Achievement evaluation and re-inclusion recalculation identity to the updated
+Task revision, so repeated exclude/include toggles cannot replay an earlier
+completed operation. Successful Task editor tracking mutations invalidate every
+in-memory Records session snapshot for the current user; Record Evidence keeps
+its explicit refresh after closing stale detail. The 7.13.86 migration remains
+source-only until manual application and live verification.
 
 ## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
 

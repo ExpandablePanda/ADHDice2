@@ -38,15 +38,15 @@ function utilityConnectionArgs(): string[] {
   return ["-h", host!, "-p", port];
 }
 
-test("7.13.85 SQL compiles and enforces the occurrence boundary", (t) => {
+test("7.13.86 SQL compiles and enforces the occurrence boundary", (t) => {
   if (!host) {
     t.skip("set ADHDICE_SQL_COMPILE_PGHOST to run the disposable local PostgreSQL tracking regression");
     return;
   }
   assert.ok(host.startsWith("/") || ["localhost", "127.0.0.1", "::1"].includes(host));
 
-  const scratch = mkdtempSync(join(tmpdir(), "adhdice-tracking-71385-"));
-  const database = `adhdice_tracking_71385_${process.pid}_${Date.now()}`;
+  const scratch = mkdtempSync(join(tmpdir(), "adhdice-tracking-71386-"));
+  const database = `adhdice_tracking_71386_${process.pid}_${Date.now()}`;
   const fixturePath = join(scratch, "fixture.sql");
   const verificationPath = join(scratch, "verification.sql");
   const fixtureSetup = `
@@ -117,6 +117,14 @@ insert into public.tracking_test_assertions(sequence_no, label, ok)
 select 5, 'progress excludes dequalified child evidence', current_value = 0
 from public.adhdice_achievement_progress
 where user_id = '${userId}' and track_id = 'first_step';
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 12, 'first exclusion uses the updated Task revision identity', exists (
+  select 1
+  from public.adhdice_achievement_evaluation_runs
+  where user_id = '${userId}'
+    and operation_id = md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:2:true')::uuid
+    and status = 'completed'
+);
 
 insert into public.adhdice_task_history_facts(
   id, user_id, entity_id, entity_kind, logical_date, outcome, event_kind,
@@ -149,6 +157,24 @@ insert into public.tracking_test_assertions(sequence_no, label, ok)
 select 9, 're-inclusion restores Step-set qualification', bool_and(is_currently_qualifying)
 from public.adhdice_achievement_occurrences
 where source_kind = 'step_set' and root_parent_id = '${parentId}';
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 13, 'first re-inclusion uses one revision-scoped recalculation identity', exists (
+  select 1
+  from public.adhdice_achievement_evaluation_runs
+  where user_id = '${userId}'
+    and operation_id = md5('task-tracking-exclusion:recalculation:${userId}:${parentId}:3')::uuid
+    and mode = 'recalculation'
+    and status = 'completed'
+);
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 14, 'first re-inclusion evaluation uses the same mutation revision', exists (
+  select 1
+  from public.adhdice_achievement_evaluation_runs
+  where user_id = '${userId}'
+    and operation_id = md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:3:false')::uuid
+    and mode = 'recalculation'
+    and status = 'completed'
+);
 select public.adhdice_set_task_tracking_exclusion('${parentId}', true);
 select public.adhdice_set_task_tracking_exclusion('${childId}', false);
 insert into public.tracking_test_assertions(sequence_no, label, ok)
@@ -159,6 +185,49 @@ insert into public.tracking_test_assertions(sequence_no, label, ok)
 select 11, 'excluded ancestor prevents Step-set requalification', bool_and(not is_currently_qualifying)
 from public.adhdice_achievement_occurrences
 where source_kind = 'step_set' and root_parent_id = '${parentId}';
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 15, 'second exclusion uses a new revision-scoped evaluation identity', exists (
+  select 1
+  from public.adhdice_achievement_evaluation_runs
+  where user_id = '${userId}'
+    and operation_id = md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:4:true')::uuid
+    and status = 'completed'
+)
+and md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:2:true')::uuid
+  <> md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:4:true')::uuid;
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 16, 'second exclusion rebuilds progress from dequalified evidence', current_value = 0
+from public.adhdice_achievement_progress
+where user_id = '${userId}' and track_id = 'first_step';
+select public.adhdice_set_task_tracking_exclusion('${parentId}', false);
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 17, 'second re-inclusion uses a new recalculation identity', exists (
+  select 1
+  from public.adhdice_achievement_evaluation_runs
+  where user_id = '${userId}'
+    and operation_id = md5('task-tracking-exclusion:recalculation:${userId}:${parentId}:5')::uuid
+    and mode = 'recalculation'
+    and status = 'completed'
+);
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 18, 'second re-inclusion evaluation cannot replay the first include', exists (
+  select 1
+  from public.adhdice_achievement_evaluation_runs
+  where user_id = '${userId}'
+    and operation_id = md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:5:false')::uuid
+    and mode = 'recalculation'
+    and status = 'completed'
+)
+and md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:3:false')::uuid
+  <> md5('task-tracking-exclusion:evaluation:${userId}:${parentId}:5:false')::uuid;
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 19, 'second re-inclusion rebuilds current Achievement progress', current_value = 1
+from public.adhdice_achievement_progress
+where user_id = '${userId}' and track_id = 'first_step';
+insert into public.tracking_test_assertions(sequence_no, label, ok)
+select 20, 'second re-inclusion restores canonical child history', is_currently_qualifying
+from public.adhdice_achievement_occurrences
+where source_kind = 'task_history' and source_id = '${childHistoryId}';
 `;
   const verification = `
 select label || ':' || ok from public.tracking_test_assertions order by sequence_no;
@@ -176,7 +245,7 @@ select
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/add_task_state_canonical_schema.sql")]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/add_pending_reward_dice.sql")]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/add_canonical_reward_entitlement_bridge.sql")]);
-    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_tracking_exclusion_7_13_85.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_tracking_exclusion_7_13_86.sql")]);
     writeFileSync(fixturePath, fixture);
     writeFileSync(verificationPath, verification);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixturePath]);
@@ -195,6 +264,15 @@ select
       "re-inclusion restores Step-set qualification:t",
       "excluded ancestor prevents child requalification:t",
       "excluded ancestor prevents Step-set requalification:t",
+      "first exclusion uses the updated Task revision identity:t",
+      "first re-inclusion uses one revision-scoped recalculation identity:t",
+      "first re-inclusion evaluation uses the same mutation revision:t",
+      "second exclusion uses a new revision-scoped evaluation identity:t",
+      "second exclusion rebuilds progress from dequalified evidence:t",
+      "second re-inclusion uses a new recalculation identity:t",
+      "second re-inclusion evaluation cannot replay the first include:t",
+      "second re-inclusion rebuilds current Achievement progress:t",
+      "second re-inclusion restores canonical child history:t",
       "t|t|t",
     ]);
   } finally {

@@ -402,7 +402,7 @@ export type Task = {
   id: string;
   user_id: string;
   parent_task_id: string | null;
-  /** Nullable for fixtures and rows read before the additive 7.13.85 migration. */
+  /** Nullable for fixtures and rows read before the additive 7.13.86 migration. */
   exclude_from_tracking?: boolean;
   revision: number;
   title: string;

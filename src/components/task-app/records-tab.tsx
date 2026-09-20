@@ -16,7 +16,6 @@ import {
   type RecordsSectionId,
 } from "@/lib/records/ui-preferences";
 import { formatRecordTaskEvidenceEntityKind, formatRecordTaskEvidenceOutcome, getRecordTaskEvidenceCount, isSupportedTaskEvidenceMetric, parseRecordTaskEvidenceSourceRows, recordIdentity, type RecordTaskEvidenceItem, type RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
-import { buildRecordsSessionCacheKey, invalidateRecordsSessionSnapshot } from "@/lib/records/session-cache";
 import { RECORD_METRICS, type PersistedRecordCurrent, type PersistedRecordEvent, type ProvisionalRecordCandidate, type RecordMetricKey, type RecordUnit } from "@/lib/records/types";
 import type { Task } from "@/lib/database.types";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
@@ -274,7 +273,6 @@ export function RecordsTab(props: RecordsTabProps) {
   const availableTaskIds = useMemo(() => new Set(props.tasks.filter((task) => task.status !== "archived" && task.status !== "trashed").map((task) => task.id)), [props.tasks]);
   const taskById = useMemo(() => new Map(props.tasks.map((task) => [task.id, task])), [props.tasks]);
   const effectivelyExcludedTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(props.tasks), [props.tasks]);
-  const recordsSessionKey = props.userId ? buildRecordsSessionCacheKey({ logicalDayStart: props.logicalDayStart, timezone: props.timezone, userId: props.userId }) : null;
 
   useEffect(() => {
     if (!initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === initialMetricKey) return;
@@ -346,7 +344,6 @@ export function RecordsTab(props: RecordsTabProps) {
           if (!props.onSetTaskTrackingExclusion) return;
           const didPersist = await props.onSetTaskTrackingExclusion(pendingTrackingExclusionTask.id, true);
           if (!didPersist) return;
-          if (recordsSessionKey) invalidateRecordsSessionSnapshot(recordsSessionKey);
           setPendingTrackingExclusionTask(null);
           setDetailRecord(null);
           records.refresh();

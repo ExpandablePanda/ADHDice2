@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
 
-const migrationPath = new URL("../supabase/patch_task_tracking_exclusion_7_13_85.sql", import.meta.url);
+const migrationPath = new URL("../supabase/patch_task_tracking_exclusion_7_13_86.sql", import.meta.url);
 const sql = readFileSync(migrationPath, "utf8");
 const oldMigrationPath = new URL("../supabase/patch_task_tracking_exclusion_7_13_84.sql", import.meta.url);
 
@@ -17,10 +17,10 @@ function extractFunction(source: string, name: string): string {
 const guard = extractFunction(sql, "adhdice_guard_tracking_excluded_achievement_occurrence");
 const exclusionRpc = extractFunction(sql, "adhdice_set_task_tracking_exclusion");
 
-test("7.13.85 replaces the unpublished unsafe migration", () => {
+test("7.13.86 replaces the unpublished unsafe migration", () => {
   assert.equal(existsSync(migrationPath), true);
   assert.equal(existsSync(oldMigrationPath), false);
-  assert.match(sql, /^-- ADHDice 7\.13\.85/m);
+  assert.match(sql, /^-- ADHDice 7\.13\.86/m);
 });
 
 test("tracking SQL remains additive, inherited, cycle-safe, and authenticated", () => {
@@ -79,6 +79,19 @@ test("re-inclusion drains canonical recalculation cursors and handles failure", 
   assert.match(exclusionRpc, /v_next_cursor = v_cursor/);
   assert.match(exclusionRpc, /v_cursor := v_next_cursor/);
   assert.match(exclusionRpc, /adhdice_evaluate_achievements\([\s\S]*'recalculation'/);
+});
+
+test("tracking Achievement operation identities include the updated Task revision", () => {
+  assert.match(exclusionRpc, /'task-tracking-exclusion:evaluation:' \|\| v_user_id::text \|\| ':' \|\| p_task_id::text \|\| ':' \|\| v_task\.revision::text \|\| ':true'/);
+  assert.match(exclusionRpc, /'task-tracking-exclusion:recalculation:' \|\| v_user_id::text \|\| ':' \|\| p_task_id::text \|\| ':' \|\| v_task\.revision::text/);
+  assert.match(exclusionRpc, /'task-tracking-exclusion:evaluation:' \|\| v_user_id::text \|\| ':' \|\| p_task_id::text \|\| ':' \|\| v_task\.revision::text \|\| ':false'/);
+  assert.doesNotMatch(exclusionRpc, /p_task_id::text \|\| ':true'/);
+  assert.doesNotMatch(exclusionRpc, /p_task_id::text \|\| ':false'/);
+
+  const recalculateIdentityIndex = exclusionRpc.indexOf("v_recalculation_operation_id :=");
+  const recalculateLoopIndex = exclusionRpc.indexOf("loop\n        v_recalculation :=");
+  assert.ok(recalculateIdentityIndex >= 0 && recalculateIdentityIndex < recalculateLoopIndex);
+  assert.equal((exclusionRpc.match(/task-tracking-exclusion:recalculation:/g) ?? []).length, 1);
 });
 
 test("reward protection remains server-authoritative and fail-closed", () => {

@@ -5,6 +5,7 @@ import {
   buildRecordsSessionCacheKey,
   clearRecordsSessionCache,
   getRecordsSessionSnapshot,
+  invalidateRecordsSessionSnapshotsForUser,
   setRecordsSessionSnapshot,
 } from "../src/lib/records/session-cache.ts";
 import {
@@ -16,6 +17,7 @@ import {
 
 const hook = readFileSync(new URL("../src/hooks/useRecords.ts", import.meta.url), "utf8");
 const recordsTab = readFileSync(new URL("../src/components/task-app/records-tab.tsx", import.meta.url), "utf8");
+const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 const baseState: RecordsInternalState = {
   currentRecords: [], error: null, events: [], hasSuccessfulResult: false, isLoading: false,
@@ -89,6 +91,21 @@ test("successful refresh replaces the cache, while a failed refresh retains the 
   assert.equal(getRecordsSessionSnapshot(key)?.currentRecords[0]?.id, "replacement");
 });
 
+test("tracking invalidation removes every current-user snapshot without touching another user", () => {
+  const currentUserKey = buildRecordsSessionCacheKey({ logicalDayStart: "06:00", timezone: "America/New_York", userId: "user-1" });
+  const currentUserOtherDayKey = buildRecordsSessionCacheKey({ logicalDayStart: "04:00", timezone: "America/New_York", userId: "user-1" });
+  const otherUserKey = buildRecordsSessionCacheKey({ logicalDayStart: "06:00", timezone: "America/New_York", userId: "user-2" });
+  setRecordsSessionSnapshot(currentUserKey, refresh);
+  setRecordsSessionSnapshot(currentUserOtherDayKey, refresh);
+  setRecordsSessionSnapshot(otherUserKey, refresh);
+
+  invalidateRecordsSessionSnapshotsForUser("user-1");
+
+  assert.equal(getRecordsSessionSnapshot(currentUserKey), null);
+  assert.equal(getRecordsSessionSnapshot(currentUserOtherDayKey), null);
+  assert.ok(getRecordsSessionSnapshot(otherUserKey));
+});
+
 test("restoration never brings back transient operation state", () => {
   const key = buildRecordsSessionCacheKey({ logicalDayStart: "06:00", timezone: "America/New_York", userId: "user-1" });
   setRecordsSessionSnapshot(key, refresh);
@@ -111,6 +128,20 @@ test("Home deep-link and Record detail/task click-through remain on the Records 
   assert.match(recordsTab, /onOpenTask\(taskId\)/);
   assert.doesNotMatch(recordsTab, /runRecordsPipeline/);
   assert.match(hook, /latestSessionKeyRef\.current !== sessionKey/);
+});
+
+test("TaskApp owns successful tracking invalidation and Record Evidence only refreshes", () => {
+  const mutationStart = taskApp.indexOf("const updateTaskTrackingExclusion");
+  const mutationEnd = taskApp.indexOf("const runGuardedTaskRowUpdate", mutationStart);
+  assert.ok(mutationStart >= 0 && mutationEnd > mutationStart);
+  const mutation = taskApp.slice(mutationStart, mutationEnd);
+  assert.match(mutation, /setTaskTrackingExclusionRpc\(client, taskId, excluded\)/);
+  assert.match(mutation, /invalidateRecordsSessionSnapshotsForUser\(currentUserId\)/);
+  assert.match(mutation, /setTasks\(nextTasks\)/);
+  assert.match(mutation, /currentUserId/);
+  assert.doesNotMatch(mutation, /records\.refresh/);
+  assert.doesNotMatch(recordsTab, /invalidateRecordsSessionSnapshot/);
+  assert.match(recordsTab, /setDetailRecord\(null\);[\s\S]*records\.refresh\(\);/);
 });
 
 test("session cache is memory-only and does not alter persisted evidence or SQL", () => {

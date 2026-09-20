@@ -234,6 +234,7 @@ import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
 import { buildHomeDailyProgress, buildHomeRecordChases } from "@/lib/home-progress";
 import type { RecordMetricKey } from "@/lib/records/types";
+import { invalidateRecordsSessionSnapshotsForUser } from "@/lib/records/session-cache";
 import {
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
@@ -2993,13 +2994,14 @@ export function TaskApp() {
     }
     const nextTasks = sortTasksForUi(tasks.map((task) => task.id === taskId ? { ...task, ...result.data } : task));
     setTasks(nextTasks);
+    if (currentUserId) invalidateRecordsSessionSnapshotsForUser(currentUserId);
     void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
     setMessage({
       tone: "good",
       text: excluded ? "Task excluded from tracking." : "Task included in tracking.",
     });
     return true;
-  }, [client, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks]);
+  }, [client, currentUserId, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks]);
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
     values: TaskUpdate,

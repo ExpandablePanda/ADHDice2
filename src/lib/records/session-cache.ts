@@ -61,6 +61,13 @@ export function invalidateRecordsSessionSnapshot(key: string) {
   recordsSessionSnapshots.delete(key);
 }
 
+export function invalidateRecordsSessionSnapshotsForUser(userId: string) {
+  const prefix = `${userId}:`;
+  for (const key of recordsSessionSnapshots.keys()) {
+    if (key.startsWith(prefix)) recordsSessionSnapshots.delete(key);
+  }
+}
+
 export function clearRecordsSessionCache() {
   recordsSessionSnapshots.clear();
 }

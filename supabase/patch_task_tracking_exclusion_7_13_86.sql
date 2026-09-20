@@ -1,4 +1,4 @@
--- ADHDice 7.13.85: correct Task tracking exclusion Achievement authority.
+-- ADHDice 7.13.86: finalize Task tracking exclusion Achievement identities and Records cache correction.
 -- Authored source only. Do not apply or deploy from this change; manual Supabase
 -- migration is required before browser QA.
 begin;
@@ -257,7 +257,7 @@ begin
         );
 
       v_evaluation_operation_id := pg_catalog.md5(
-        'task-tracking-exclusion:evaluation:' || v_user_id::text || ':' || p_task_id::text || ':true'
+        'task-tracking-exclusion:evaluation:' || v_user_id::text || ':' || p_task_id::text || ':' || v_task.revision::text || ':true'
       )::uuid;
       v_evaluation := public.adhdice_evaluate_achievements(
         v_user_id,
@@ -275,7 +275,7 @@ begin
       -- across all bounded batches; an incomplete or failed replay cannot be
       -- mistaken for a completed recalculation.
       v_recalculation_operation_id := pg_catalog.md5(
-        'task-tracking-exclusion:recalculation:' || v_user_id::text || ':' || p_task_id::text
+        'task-tracking-exclusion:recalculation:' || v_user_id::text || ':' || p_task_id::text || ':' || v_task.revision::text
       )::uuid;
       loop
         v_recalculation := public.adhdice_recalculate_achievements(
@@ -306,7 +306,7 @@ begin
       end loop;
 
       v_evaluation_operation_id := pg_catalog.md5(
-        'task-tracking-exclusion:evaluation:' || v_user_id::text || ':' || p_task_id::text || ':false'
+        'task-tracking-exclusion:evaluation:' || v_user_id::text || ':' || p_task_id::text || ':' || v_task.revision::text || ':false'
       )::uuid;
       v_evaluation := public.adhdice_evaluate_achievements(
         v_user_id,

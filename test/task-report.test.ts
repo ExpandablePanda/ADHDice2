@@ -430,7 +430,7 @@ test("Reports keep real Test-titled Tasks and exclude only the explicit tracking
   const trackedBloodTest = createTask({ created_at: "2026-09-01T12:00:00.000Z", id: "blood-test", sort_order: 1, title: "Blood Test", status: "pending" });
   const excludedTask = createTask({ created_at: "2026-09-01T12:00:00.000Z", exclude_from_tracking: true, id: "excluded", sort_order: 2, title: "Routine admin", status: "pending" });
   const report = generateTaskReport({
-    appVersion: "7.13.85",
+    appVersion: "7.13.86",
     availableTaskLists: getBuiltInTaskLists(),
     detailLevel: "detailed",
     focusCategories: [],
