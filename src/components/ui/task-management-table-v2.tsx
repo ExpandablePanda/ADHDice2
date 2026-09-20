@@ -3531,6 +3531,7 @@ export function TaskManagementTableV2({
   const taskContentFolderPresentation = useMemo(
     () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders, {
       includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({
+        currentListId,
         hasHierarchyFiltersActive: statusFilterActive,
         hasSearchActive: searchActive,
         hasStructuredFiltersActive: Object.values(textFilters).some((value) => Boolean(value?.trim()))
@@ -3542,7 +3543,7 @@ export function TaskManagementTableV2({
       }),
       persistentEmptyFolderIds: actuallyEmptyTaskContentFolderIds,
     }),
-    [actuallyEmptyTaskContentFolderIds, renderedTasks, searchActive, statusFilterActive, structuredFilters, taskContentFolders, textFilters],
+    [actuallyEmptyTaskContentFolderIds, currentListId, renderedTasks, searchActive, statusFilterActive, structuredFilters, taskContentFolders, textFilters],
   );
   const folderMemberSummaryById = useMemo(() => {
     const memberFacts = allFolderMemberRows.map((task) => ({

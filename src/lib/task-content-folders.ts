@@ -83,7 +83,7 @@ export type TaskContentFolderProjectionOptions = {
 };
 
 export type TaskContentFolderVisibilityInput = {
-  /** Retained for callers that track the selected bucket; bucket identity does not decide visibility. */
+  /** The All list keeps Folder structure visible even when stale filter state is present. */
   currentListId?: string | null;
   hasHierarchyFiltersActive?: boolean;
   hasSearchActive?: boolean;
@@ -91,10 +91,13 @@ export type TaskContentFolderVisibilityInput = {
 };
 
 export function shouldIncludeEmptyTaskContentFolders({
+  currentListId,
   hasHierarchyFiltersActive = false,
   hasSearchActive = false,
   hasStructuredFiltersActive = false,
 }: TaskContentFolderVisibilityInput) {
+  if (currentListId === "all") return true;
+
   return !hasHierarchyFiltersActive
     && !hasSearchActive
     && !hasStructuredFiltersActive;

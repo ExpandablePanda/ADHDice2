@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.31`.
+- Current working app version: `7.14.32`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.14.32 Keep Empty Folders Visible in All
+
+The All Task list now authoritatively retains empty Task Content Folder rows
+even when stale hierarchy, search, or structured filter state is present. Table
+and List pass their actual current list ID through the shared visibility helper;
+projection, nesting, ordering, collapse, and persistence remain unchanged.
+Browser QA remains Andrew's responsibility.
 
 ## 2026-09-19 7.14.31 Reveal Newly Created Empty Folders
 

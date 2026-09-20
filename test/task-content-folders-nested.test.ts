@@ -11,6 +11,7 @@ import {
   getTaskContentFolderMoveOptions,
   getTaskContentFolderParentForTask,
   normalizeTaskContentFolderRow,
+  shouldIncludeEmptyTaskContentFolders,
   validateTaskContentFolderParent,
 } from "../src/lib/task-content-folders.ts";
 
@@ -123,6 +124,34 @@ test("structural ancestor chains stay contiguous and empty root Folders precede 
     "empty-root-newer",
     "standalone",
   ]);
+});
+
+test("the All-list projection keeps populated and empty child Folder rows together", () => {
+  const allFolders = [
+    { id: "parent", user_id: "user-1", name: "Parent", icon_key: "folder", parent_folder_id: null, created_at: "2026-01-01", updated_at: "2026-01-01" },
+    { id: "populated", user_id: "user-1", name: "Populated", icon_key: "folder", parent_folder_id: "parent", created_at: "2026-01-02", updated_at: "2026-01-02" },
+    { id: "empty-a", user_id: "user-1", name: "Empty A", icon_key: "folder", parent_folder_id: "parent", created_at: "2026-01-03", updated_at: "2026-01-03" },
+    { id: "empty-b", user_id: "user-1", name: "Empty B", icon_key: "folder", parent_folder_id: "parent", created_at: "2026-01-04", updated_at: "2026-01-04" },
+  ];
+  const allTasks = [
+    task("populated-task", "populated"),
+    task("parent-task-a", "parent"),
+    task("parent-task-b", "parent"),
+  ];
+  const includeEmptyFolders = shouldIncludeEmptyTaskContentFolders({
+    currentListId: "all",
+    hasHierarchyFiltersActive: true,
+  });
+  const presentation = buildTaskContentFolderPresentation(allTasks, allFolders, {
+    includeEmptyFolders,
+    persistentEmptyFolderIds: getActuallyEmptyTaskContentFolderIds(allTasks, allFolders),
+  });
+
+  assert.equal(includeEmptyFolders, true);
+  assert.deepEqual(
+    flattenTaskContentFolderPresentation(presentation).map((entry) => entry.kind === "folder" ? entry.folder.id : entry.task.id),
+    ["parent", "empty-a", "empty-b", "populated", "populated-task", "parent-task-a", "parent-task-b"],
+  );
 });
 
 test("normal bucket projection keeps truly empty Folder trees without exposing filtered Tasks", () => {

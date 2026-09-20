@@ -2734,12 +2734,13 @@ function TasksSimpleList({
   const taskContentFolderPresentation = useMemo(
     () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? [], {
       includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({
+        currentListId: tableProps.currentListId ?? selectedBucket,
         hasHierarchyFiltersActive: Boolean(tableProps.statusFilterActive),
         hasSearchActive: Boolean(tableProps.searchActive),
       }),
       persistentEmptyFolderIds: actuallyEmptyTaskContentFolderIds,
     }),
-    [actuallyEmptyTaskContentFolderIds, tableProps.searchActive, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
+    [actuallyEmptyTaskContentFolderIds, selectedBucket, tableProps.currentListId, tableProps.searchActive, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
   );
   const folderMemberSummaryById = useMemo(() => {
     const memberFacts = allFolderMemberTasks.map((task) => ({

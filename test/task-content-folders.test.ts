@@ -170,6 +170,15 @@ test("normal browsing keeps truly empty Folders visible across buckets while exp
   assert.equal(shouldIncludeEmptyTaskContentFolders({ hasStructuredFiltersActive: true }), false);
 });
 
+test("the All list keeps empty Folder structure visible despite stale hierarchy filters", () => {
+  assert.equal(shouldIncludeEmptyTaskContentFolders({
+    currentListId: "all",
+    hasHierarchyFiltersActive: true,
+    hasSearchActive: true,
+    hasStructuredFiltersActive: true,
+  }), true);
+});
+
 test("search-selection result IDs do not falsely gate empty Folder visibility", () => {
   const searchMatchedStepParentTaskIds = ["today-task-a", "today-task-b"];
   const searchMatchedChildTaskIds = ["today-step-a"];
@@ -280,6 +289,8 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   assert.match(list, /getActuallyEmptyTaskContentFolderIds/);
   assert.match(table, /persistentEmptyFolderIds/);
   assert.match(list, /persistentEmptyFolderIds/);
+  assert.match(table, /currentListId,\s*hasHierarchyFiltersActive: statusFilterActive,/);
+  assert.match(list, /currentListId: tableProps\.currentListId \?\? selectedBucket,/);
   assert.match(table, /hasSearchActive: searchActive,/);
   assert.match(list, /hasHierarchyFiltersActive: Boolean\(tableProps\.statusFilterActive\)/);
   assert.match(list, /hasSearchActive: Boolean\(tableProps\.searchActive\)/);
