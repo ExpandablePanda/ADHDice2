@@ -43,6 +43,20 @@ test("Create Folder performs assignment and compensates a failed move", () => {
   assert.match(folderActionsSource, /setFolders\(\(current\) => current\.filter\(\(entry\) => entry\.id !== folder\.id\)\)/);
 });
 
+test("successful child Folder creation explicitly expands a collapsed parent and preserves expanded parents", () => {
+  assert.match(appSource, /const addFolderToTaskContentFolder = useCallback\(\s*async \(parentFolderId: string, name: string\) => \{/);
+  assert.match(appSource, /const didCreate = await taskContentFolderActions\.createFolder\(name, parentFolderId\);/);
+  assert.match(appSource, /if \(didCreate\) \{\s*setCollapsedTaskContentFolderIds\(\(current\) => \{\s*if \(!current\.has\(parentFolderId\)\) return current;/);
+  assert.match(appSource, /const next = new Set\(current\);\s*next\.delete\(parentFolderId\);/);
+  assert.match(appSource, /return didCreate;\s*\},\s*\[taskContentFolderActions\.createFolder\],\s*\);/);
+});
+
+test("Folder collapse persistence remains owned by the existing localStorage effect", () => {
+  assert.match(appSource, /adhdice:task-content-folder-collapse:\$\{userId\}/);
+  assert.match(appSource, /JSON\.stringify\(\[\.\.\.collapsedTaskContentFolderIds\]\)/);
+  assert.match(appSource, /\[collapsedTaskContentFolderIds, isTaskContentFolderCollapseHydrated, session\?\.user\?\.id\]/);
+});
+
 test("Folder rows are the shared rename/delete management surface in Table and List", () => {
   for (const source of [tableSource, listSource]) {
     assert.match(source, /openContentFolderContextMenu\(entry\.folder\.id/);

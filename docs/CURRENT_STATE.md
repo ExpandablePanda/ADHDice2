@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.30`.
+- Current working app version: `7.14.31`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.31 Reveal Newly Created Empty Folders
+
+Structural empty Task Content Folders now sort before Task-anchored content
+within their container, with deterministic `created_at`/`id` ordering. Creating
+a child Folder under a collapsed parent explicitly expands that parent after a
+successful create; existing collapse-state persistence remains unchanged.
+Browser QA remains Andrew's responsibility.
 
 ## 2026-09-19 7.14.30 Fix False Search Gate Hiding Empty Folders
 

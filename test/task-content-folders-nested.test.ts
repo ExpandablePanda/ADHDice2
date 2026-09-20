@@ -56,23 +56,72 @@ test("recursive presentation keeps parent placement, direct order, and contiguou
     ], folders),
   });
 
-  assert.deepEqual(presentation.map((node) => node.kind === "task" ? node.task.id : node.folder.id), ["a", "work", "e", "personal"]);
+  assert.deepEqual(presentation.map((node) => node.kind === "task" ? node.task.id : node.folder.id), ["personal", "a", "work", "e"]);
   const work = presentation.find((node) => node.kind === "folder" && node.folder.id === "work");
   assert.equal(work?.kind, "folder");
   if (work?.kind !== "folder") return;
-  assert.deepEqual(work.children.map((node) => node.kind === "task" ? node.task.id : node.folder.id), ["website", "c", "music"]);
+  assert.deepEqual(work.children.map((node) => node.kind === "task" ? node.task.id : node.folder.id), ["music", "website", "c"]);
   const website = work.children.find((node) => node.kind === "folder" && node.folder.id === "website");
   assert.equal(website?.kind, "folder");
   if (website?.kind !== "folder") return;
   assert.deepEqual(website.children.map((node) => node.kind === "task" ? node.task.id : node.folder.id), ["b", "client"]);
   assert.deepEqual(flattenTaskContentFolderPresentation(presentation, new Set(["website"])).map((entry) => entry.kind === "task" ? entry.task.id : `${entry.folder.id}:${entry.visibleTaskCount}`), [
+    "personal:0",
     "a",
     "work:3",
+    "music:0",
     "website:2",
     "c",
-    "music:0",
     "e",
-    "personal:0",
+  ]);
+});
+
+test("structural empty child Folders sort before Tasks and use deterministic creation order", () => {
+  const siblingFolders = [
+    { id: "work", user_id: "user-1", name: "Work", icon_key: "folder", parent_folder_id: null, created_at: "2026-01-01", updated_at: "2026-01-01" },
+    { id: "newer", user_id: "user-1", name: "Newer", icon_key: "folder", parent_folder_id: "work", created_at: "2026-01-03", updated_at: "2026-01-03" },
+    { id: "older", user_id: "user-1", name: "Older", icon_key: "folder", parent_folder_id: "work", created_at: "2026-01-02", updated_at: "2026-01-02" },
+    { id: "same-time-b", user_id: "user-1", name: "Same Time B", icon_key: "folder", parent_folder_id: "work", created_at: "2026-01-04", updated_at: "2026-01-04" },
+    { id: "same-time-a", user_id: "user-1", name: "Same Time A", icon_key: "folder", parent_folder_id: "work", created_at: "2026-01-04", updated_at: "2026-01-04" },
+  ];
+  const allTasks = [task("task-a", "work")];
+  const presentation = buildTaskContentFolderPresentation(allTasks, siblingFolders, {
+    includeEmptyFolders: true,
+    persistentEmptyFolderIds: getActuallyEmptyTaskContentFolderIds(allTasks, siblingFolders),
+  });
+  const work = presentation.find((node) => node.kind === "folder" && node.folder.id === "work");
+
+  assert.deepEqual(presentation.map((node) => node.kind === "folder" ? node.folder.id : node.task.id), ["work"]);
+  assert.equal(work?.kind, "folder");
+  if (work?.kind !== "folder") return;
+  assert.deepEqual(work.children.map((node) => node.kind === "folder" ? node.folder.id : node.task.id), [
+    "older",
+    "newer",
+    "same-time-a",
+    "same-time-b",
+    "task-a",
+  ]);
+});
+
+test("structural ancestor chains stay contiguous and empty root Folders precede standalone Tasks", () => {
+  const rootFolders = [
+    { id: "empty-root-newer", user_id: "user-1", name: "Newer Root", icon_key: "folder", parent_folder_id: null, created_at: "2026-01-03", updated_at: "2026-01-03" },
+    { id: "empty-root-older", user_id: "user-1", name: "Older Root", icon_key: "folder", parent_folder_id: null, created_at: "2026-01-02", updated_at: "2026-01-02" },
+    { id: "ancestor", user_id: "user-1", name: "Ancestor", icon_key: "folder", parent_folder_id: null, created_at: "2026-01-01", updated_at: "2026-01-01" },
+    { id: "empty-descendant", user_id: "user-1", name: "Empty Descendant", icon_key: "folder", parent_folder_id: "ancestor", created_at: "2026-01-04", updated_at: "2026-01-04" },
+  ];
+  const allTasks = [task("standalone")];
+  const presentation = buildTaskContentFolderPresentation(allTasks, rootFolders, {
+    includeEmptyFolders: true,
+    persistentEmptyFolderIds: getActuallyEmptyTaskContentFolderIds(allTasks, rootFolders),
+  });
+
+  assert.deepEqual(flattenTaskContentFolderPresentation(presentation).map((entry) => entry.kind === "folder" ? entry.folder.id : entry.task.id), [
+    "ancestor",
+    "empty-descendant",
+    "empty-root-older",
+    "empty-root-newer",
+    "standalone",
   ]);
 });
 

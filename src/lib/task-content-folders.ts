@@ -341,9 +341,13 @@ function sortProjectionChildren<TTask extends FolderProjectionTask>(
 ) {
   const folderById = new Map(folders.map((folder) => [folder.id, folder]));
   return children.sort((left, right) => {
+    const leftIsStructural = left.kind === "folder" && left.firstVisibleDescendantIndex === null;
+    const rightIsStructural = right.kind === "folder" && right.firstVisibleDescendantIndex === null;
+    if (leftIsStructural !== rightIsStructural) return leftIsStructural ? -1 : 1;
+
     const leftIndex = left.kind === "task" ? visibleTaskIndex.get(left.task.id) ?? Number.MAX_SAFE_INTEGER : left.firstVisibleDescendantIndex ?? Number.MAX_SAFE_INTEGER;
     const rightIndex = right.kind === "task" ? visibleTaskIndex.get(right.task.id) ?? Number.MAX_SAFE_INTEGER : right.firstVisibleDescendantIndex ?? Number.MAX_SAFE_INTEGER;
-    if (leftIndex !== rightIndex) return leftIndex - rightIndex;
+    if (!leftIsStructural && !rightIsStructural && leftIndex !== rightIndex) return leftIndex - rightIndex;
     if (left.kind === "task" && right.kind === "task") return 0;
     if (left.kind === "task") return -1;
     if (right.kind === "task") return 1;

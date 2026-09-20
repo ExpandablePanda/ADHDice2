@@ -2773,7 +2773,19 @@ export function TaskApp() {
     return task ? taskContentFolderActions.createFolderAndMoveTask(task, name) : false;
   }, [taskContentFolderActions.createFolderAndMoveTask, tasks]);
   const addFolderToTaskContentFolder = useCallback(
-    (parentFolderId: string, name: string) => taskContentFolderActions.createFolder(name, parentFolderId),
+    async (parentFolderId: string, name: string) => {
+      const didCreate = await taskContentFolderActions.createFolder(name, parentFolderId);
+      if (didCreate) {
+        setCollapsedTaskContentFolderIds((current) => {
+          if (!current.has(parentFolderId)) return current;
+
+          const next = new Set(current);
+          next.delete(parentFolderId);
+          return next;
+        });
+      }
+      return didCreate;
+    },
     [taskContentFolderActions.createFolder],
   );
   const compatibilityRoutingMemberships = useMemo(
