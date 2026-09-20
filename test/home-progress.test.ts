@@ -137,9 +137,12 @@ test("Home production wiring keeps History readiness separate from the record ta
   assert.match(homeSource, /isFinishedDetailsOpen/);
   assert.match(homeSource, /finishedItems/);
   assert.match(homeSource, /Records to Beat/);
+  assert.match(homeSource, /onOpenRecord\(chase\.metricKey\)/);
   assert.match(homeSource, /!isTaskHistoryLoaded/);
   assert.match(taskAppSource, /taskHistoryByTaskId, tasks, todayKey/);
   assert.match(taskAppSource, /isTaskHistoryLoaded=\{isTaskHistoryLoaded\}/);
+  assert.match(taskAppSource, /setActivePage\("Achievements"\)/);
+  assert.match(taskAppSource, /initialRecordMetricKey=\{pendingProgressRecordMetricKey\}/);
   assert.match(targetSource, /select\("metric_key,value,timezone,logical_day_start"\)/);
   assert.match(targetSource, /\.in\("metric_key", \[\.\.\.HOME_RECORD_METRIC_KEYS\]\)/);
   assert.match(targetSource, /void loadForCurrentOwner\(\);/);

@@ -232,6 +232,7 @@ import { formatDateKeyInTimeZone, getBrowserTimeZone, getLogicalDayKey, saveLogi
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
 import { buildHomeDailyProgress, buildHomeRecordChases } from "@/lib/home-progress";
+import type { RecordMetricKey } from "@/lib/records/types";
 import {
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
@@ -1177,6 +1178,7 @@ export function TaskApp() {
   }, [tasks]);
   const [message, setMessage] = useState<Message | null>(null);
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
+  const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
@@ -2773,6 +2775,13 @@ export function TaskApp() {
     () => buildHomeDailyProgress({ taskHistoryByTaskId, tasks, todayKey }),
     [taskHistoryByTaskId, tasks, todayKey],
   );
+  const openHomeRecord = useCallback((metricKey: RecordMetricKey) => {
+    setPendingProgressRecordMetricKey(metricKey);
+    setActivePage("Achievements");
+  }, [setActivePage]);
+  const clearPendingProgressRecordMetricKey = useCallback(() => {
+    setPendingProgressRecordMetricKey(null);
+  }, []);
   const homeRecordChases = useMemo(
     () => buildHomeRecordChases(homeDailyProgress.recordLiveValues, homeRecordTargets.targets),
     [homeDailyProgress.recordLiveValues, homeRecordTargets.targets],
@@ -7312,6 +7321,7 @@ export function TaskApp() {
             dailyProgress={homeDailyProgress}
             homeRecordChases={homeRecordChases}
             isTaskHistoryLoaded={isTaskHistoryLoaded}
+            onOpenRecord={openHomeRecord}
             recordTargetsError={homeRecordTargets.error}
             recordTargetsLoading={homeRecordTargets.loading}
             recordTargetsSettingsMismatch={homeRecordTargets.settingsMismatch}
@@ -7340,6 +7350,8 @@ export function TaskApp() {
             milestoneLoading={milestoneData.isLoading}
             model={achievementProgress.model}
             notificationError={achievementNotifications.claimError ?? achievementNotifications.seenError}
+            initialRecordMetricKey={pendingProgressRecordMetricKey}
+            onRecordRequestHandled={clearPendingProgressRecordMetricKey}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
               setActivePage("Tasks");

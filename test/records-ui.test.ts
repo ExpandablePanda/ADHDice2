@@ -11,6 +11,8 @@ test("Records is the third accessible Progress tab and preserves tabpanel wiring
   assert.match(page, /role="tablist"/);
   assert.match(page, /progress-panel-records/);
   assert.match(page, /<RecordsTab/);
+  assert.match(page, /initialRecordMetricKey/);
+  assert.match(page, /initialRecordMetricKey \? "records" : "achievements"/);
 });
 
 test("Records UI exposes required sections, refresh, history, and factual disclosure", () => {
@@ -18,6 +20,9 @@ test("Records UI exposes required sections, refresh, history, and factual disclo
   assert.match(records, /Past hard deletions cannot be reconstructed/);
   assert.match(records, /fallback occurrence identity/);
   assert.match(records, /Show invalidated/);
+  assert.match(records, /initialMetricKey/);
+  assert.match(records, /candidate\.scope_kind === "global"/);
+  assert.match(records, /buildCurrentRecordCard\(record, records\.events\)/);
 });
 
 test("Records stays lazy, prevents overlap, and contains a migration-missing fallback", () => {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.78`.
+- Current working app version: `7.13.79`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.13.79 Deep-link Home Record Chases to Progress Records
+
+Home Records to Beat rows now navigate to the existing Progress page, select
+the Records tab, and open the matching global durable Record detail overlay by
+metric key. No new AppPage, Records persistence, or Records pipeline was
+introduced; the existing Records tab remains the source of the detail view.
 
 ## 2026-09-19 7.13.78 Add Finished Today Details and Correct Record Loading
 

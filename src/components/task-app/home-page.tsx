@@ -39,7 +39,7 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
-import type { HomeDailyProgress, HomeRecordChase } from "@/lib/home-progress";
+import type { HomeDailyProgress, HomeRecordChase, HomeRecordMetricKey } from "@/lib/home-progress";
 import {
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
@@ -136,6 +136,7 @@ function HomeProgressDashboard({
   dailyProgress,
   homeRecordChases,
   isTaskHistoryLoaded,
+  onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
   recordTargetsSettingsMismatch,
@@ -143,6 +144,7 @@ function HomeProgressDashboard({
   dailyProgress: HomeDailyProgress;
   homeRecordChases: HomeRecordChase[];
   isTaskHistoryLoaded: boolean;
+  onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
   recordTargetsSettingsMismatch: boolean;
@@ -212,17 +214,23 @@ function HomeProgressDashboard({
         ) : (
           <div className="mt-2 grid gap-1.5">
             {homeRecordChases.map((chase) => (
-              <div className="rounded-lg border border-[#f0ecf8] px-2.5 py-2 dark:border-white/8" key={chase.metricKey}>
-                <div className="flex items-center justify-between gap-3">
+              <button
+                aria-label={`Open ${chase.label} in Progress Records`}
+                className="w-full rounded-lg border border-[#f0ecf8] px-2.5 py-2 text-left outline-none transition-colors hover:bg-[#faf8fe] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:border-white/8 dark:hover:bg-white/5"
+                key={chase.metricKey}
+                onClick={() => onOpenRecord(chase.metricKey)}
+                type="button"
+              >
+                <span className="flex items-center justify-between gap-3">
                   <span className="min-w-0 truncate text-xs font-medium text-[#625b7b] dark:text-white/70">{chase.label}</span>
                   <span className="shrink-0 text-xs font-semibold text-[#30275a] dark:text-white">
                     {chase.liveValue}{chase.recordValue === null ? " today" : ` / Record ${chase.recordValue}`}
                   </span>
-                </div>
-                <p className={`mt-0.5 text-[11px] ${chase.state === "new_record" ? "text-[#23815b] dark:text-[#70d6a7]" : chase.state === "tied_record" ? "text-[#6f57f6] dark:text-[#b8aaff]" : "text-[#8b82a7] dark:text-white/48"}`}>
+                </span>
+                <span className={`mt-0.5 block text-[11px] ${chase.state === "new_record" ? "text-[#23815b] dark:text-[#70d6a7]" : chase.state === "tied_record" ? "text-[#6f57f6] dark:text-[#b8aaff]" : "text-[#8b82a7] dark:text-white/48"}`}>
                   {chase.message}
-                </p>
-              </div>
+                </span>
+              </button>
             ))}
           </div>
         )}
@@ -244,6 +252,7 @@ export function HomePage({
   dailyProgress,
   homeRecordChases,
   isTaskHistoryLoaded,
+  onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
   recordTargetsSettingsMismatch,
@@ -272,6 +281,7 @@ export function HomePage({
   dailyProgress: HomeDailyProgress;
   homeRecordChases: HomeRecordChase[];
   isTaskHistoryLoaded: boolean;
+  onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
   recordTargetsSettingsMismatch: boolean;
@@ -957,6 +967,7 @@ export function HomePage({
         dailyProgress={dailyProgress}
         homeRecordChases={homeRecordChases}
         isTaskHistoryLoaded={isTaskHistoryLoaded}
+        onOpenRecord={onOpenRecord}
         recordTargetsError={recordTargetsError}
         recordTargetsLoading={recordTargetsLoading}
         recordTargetsSettingsMismatch={recordTargetsSettingsMismatch}

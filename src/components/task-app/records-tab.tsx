@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown, ClipboardCheck, Flame, Timer, Trophy, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
@@ -20,6 +20,7 @@ import { RECORD_METRICS, type PersistedRecordCurrent, type PersistedRecordEvent,
 type RecordsTabProps = {
   active: boolean;
   client: ReturnType<typeof createBrowserSupabaseClient>;
+  initialMetricKey?: RecordMetricKey | null;
   logicalDayStart: string;
   timezone: string;
   userId: string | null;
@@ -228,6 +229,7 @@ export function RecordsTab(props: RecordsTabProps) {
       ? readRecordsSectionExpandedState(window.localStorage, props.userId)
       : DEFAULT_RECORDS_SECTION_EXPANDED_STATE;
   const [detailRecord, setDetailRecord] = useState<RecordCardModel | null>(null);
+  const openedInitialMetricRef = useRef<RecordMetricKey | null>(null);
   const [taskQuery, setTaskQuery] = useState("");
   const [showInvalidated, setShowInvalidated] = useState(false);
   const sectionRecords = (section: "tasks" | "streaks" | "focus") => records.currentRecords.filter((record) => RECORD_METRICS[record.metric_key].section === section);
@@ -247,6 +249,15 @@ export function RecordsTab(props: RecordsTabProps) {
       .flatMap(([, item]) => [item.streak, item.comeback].filter((record): record is PersistedRecordCurrent => Boolean(record)));
   }, [records.currentRecords, taskQuery]);
   const history = records.events.filter((event) => showInvalidated || event.validity_state === "valid");
+
+  useEffect(() => {
+    if (!props.initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === props.initialMetricKey) return;
+    const record = records.currentRecords.find((candidate) => candidate.metric_key === props.initialMetricKey && candidate.scope_kind === "global" && candidate.scope_id === null);
+    openedInitialMetricRef.current = props.initialMetricKey;
+    if (!record) return;
+    const timeoutId = window.setTimeout(() => setDetailRecord(buildCurrentRecordCard(record, records.events)), 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [props.initialMetricKey, records.currentRecords, records.events, records.hasSuccessfulResult]);
 
   function toggleSection(sectionId: RecordsSectionId) {
     const next = { ...expandedSections, [sectionId]: !expandedSections[sectionId] };
