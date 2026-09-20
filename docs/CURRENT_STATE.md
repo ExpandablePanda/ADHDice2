@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.81`.
+- Current working app version: `7.13.82`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.13.82 Fix Cached Home Record Deep-Link Handoff
+
+Home Record deep-links now keep the pending metric request until the Records
+tab has a successful cached or freshly loaded projection and schedules the
+matching global Record detail overlay. The Progress page no longer acknowledges
+the request merely because it mounted; the Records consumer owns that handoff.
 
 ## 2026-09-19 7.13.81 Records Session Snapshot Across Navigation
 

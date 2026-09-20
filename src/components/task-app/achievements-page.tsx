@@ -1,7 +1,7 @@
 "use client";
 
 import { Award, Check, LockKeyhole, Trophy } from "lucide-react";
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
@@ -77,10 +77,6 @@ export function AchievementsPage({
   const [requestedRecordMetricKey] = useState<RecordMetricKey | null>(() => initialRecordMetricKey);
   const tabRefs = useRef<Record<ProgressTab, HTMLButtonElement | null>>({ achievements: null, milestones: null, records: null });
 
-  useEffect(() => {
-    if (initialRecordMetricKey) onRecordRequestHandled?.();
-  }, [initialRecordMetricKey, onRecordRequestHandled]);
-
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
     const next = getNextProgressTab(activeTab, event.key);
     if (next === activeTab) return;
@@ -136,7 +132,7 @@ export function AchievementsPage({
         </div>
       ) : null}
       <div aria-labelledby="progress-tab-records" hidden={activeTab !== "records"} id="progress-panel-records" role="tabpanel">
-        <RecordsTab active={activeTab === "records"} client={recordsClient} initialMetricKey={requestedRecordMetricKey} logicalDayStart={logicalDayStart} onOpenTask={onOpenTask} tasks={tasks} timezone={timezone} userId={userId} />
+        <RecordsTab active={activeTab === "records"} client={recordsClient} initialMetricKey={requestedRecordMetricKey} logicalDayStart={logicalDayStart} onOpenTask={onOpenTask} onRecordRequestHandled={onRecordRequestHandled} tasks={tasks} timezone={timezone} userId={userId} />
       </div>
     </section>
   );

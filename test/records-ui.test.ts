@@ -30,6 +30,13 @@ test("Records UI exposes required sections, refresh, history, and factual disclo
   assert.match(records, /Unavailable/);
 });
 
+test("Home Record deep-links acknowledge only after the requested detail is ready", () => {
+  assert.doesNotMatch(page, /useEffect\(\(\) => \{\n    if \(initialRecordMetricKey\) onRecordRequestHandled/);
+  assert.match(page, /onRecordRequestHandled=\{onRecordRequestHandled\}/);
+  assert.match(records, /setDetailRecord\(buildCurrentRecordCard\(record, records\.events, records\.taskEvidenceByRecordIdentity\)\);\n      onRecordRequestHandled\?\.\(\);/);
+  assert.match(records, /if \(!record\) \{\n      onRecordRequestHandled\?\.\(\);/);
+});
+
 test("Records stays lazy, prevents overlap, and contains a migration-missing fallback", () => {
   assert.match(hook, /if \(!active \|\| !client \|\| !userId \|\| runningRef\.current\) return/);
   assert.match(hook, /runningRef\.current = true/);

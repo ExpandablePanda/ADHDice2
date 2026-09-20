@@ -25,6 +25,7 @@ type RecordsTabProps = {
   initialMetricKey?: RecordMetricKey | null;
   logicalDayStart: string;
   onOpenTask: (taskId: string) => void;
+  onRecordRequestHandled?: () => void;
   tasks: Task[];
   timezone: string;
   userId: string | null;
@@ -231,6 +232,7 @@ function RecordsSection({
 }
 
 export function RecordsTab(props: RecordsTabProps) {
+  const { initialMetricKey, onRecordRequestHandled } = props;
   const records = useRecords(props);
   const [sectionPreferences, setSectionPreferences] = useState<{ ownerUserId: string | null; state: RecordsSectionExpandedState }>(() => {
     const state = props.userId && typeof window !== "undefined"
@@ -267,13 +269,19 @@ export function RecordsTab(props: RecordsTabProps) {
   const availableTaskIds = useMemo(() => new Set(props.tasks.filter((task) => task.status !== "archived" && task.status !== "trashed").map((task) => task.id)), [props.tasks]);
 
   useEffect(() => {
-    if (!props.initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === props.initialMetricKey) return;
-    const record = records.currentRecords.find((candidate) => candidate.metric_key === props.initialMetricKey && candidate.scope_kind === "global" && candidate.scope_id === null);
-    openedInitialMetricRef.current = props.initialMetricKey;
-    if (!record) return;
-    const timeoutId = window.setTimeout(() => setDetailRecord(buildCurrentRecordCard(record, records.events, records.taskEvidenceByRecordIdentity)), 0);
+    if (!initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === initialMetricKey) return;
+    const record = records.currentRecords.find((candidate) => candidate.metric_key === initialMetricKey && candidate.scope_kind === "global" && candidate.scope_id === null);
+    openedInitialMetricRef.current = initialMetricKey;
+    if (!record) {
+      onRecordRequestHandled?.();
+      return;
+    }
+    const timeoutId = window.setTimeout(() => {
+      setDetailRecord(buildCurrentRecordCard(record, records.events, records.taskEvidenceByRecordIdentity));
+      onRecordRequestHandled?.();
+    }, 0);
     return () => window.clearTimeout(timeoutId);
-  }, [props.initialMetricKey, records.currentRecords, records.events, records.hasSuccessfulResult, records.taskEvidenceByRecordIdentity]);
+  }, [initialMetricKey, onRecordRequestHandled, records.currentRecords, records.events, records.hasSuccessfulResult, records.taskEvidenceByRecordIdentity]);
 
   function toggleSection(sectionId: RecordsSectionId) {
     const next = { ...expandedSections, [sectionId]: !expandedSections[sectionId] };
