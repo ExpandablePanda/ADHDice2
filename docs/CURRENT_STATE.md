@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.80`.
+- Current working app version: `7.13.81`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.13.81 Records Session Snapshot Across Navigation
+
+Records now retains the complete successful in-memory UI projection in a
+module-level session cache keyed by user, rules version, timezone, and logical
+day start. Returning to Records restores current cards, events, provisional
+candidates, Task evidence, warnings, and calculation time without rerunning
+the pipeline. Explicit Refresh Records bypasses the cache and replaces it only
+after a successful calculation; failed refreshes retain the prior snapshot.
+Persisted Records rows and compact evidence schema v2 remain unchanged.
 
 ## 2026-09-19 7.13.80 Record Evidence Verification
 
