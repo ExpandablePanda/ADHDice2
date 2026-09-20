@@ -147,10 +147,12 @@ function HomeProgressDashboard({
   recordTargetsLoading: boolean;
   recordTargetsSettingsMismatch: boolean;
 }) {
+  const [isFinishedDetailsOpen, setIsFinishedDetailsOpen] = useState(false);
+
   return (
     <div className="mb-4 grid min-w-0 gap-3 sm:grid-cols-2" data-home-progress-dashboard>
-      <AdhdPanel aria-labelledby="home-daily-tasks-completed" padding="sm">
-        <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-daily-tasks-completed">Daily Tasks Completed</h2>
+      <AdhdPanel aria-labelledby="home-finished-today" padding="sm">
+        <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-finished-today">Finished Today</h2>
         {!isTaskHistoryLoaded ? (
           <div aria-label="Loading daily task completion" className="mt-3 grid gap-2" role="status">
             <div className="h-7 w-28 rounded-lg bg-[#eee9fa] dark:bg-white/10" />
@@ -158,15 +160,40 @@ function HomeProgressDashboard({
           </div>
         ) : (
           <div className="mt-3">
-            <p className="text-2xl font-bold leading-none text-[#30275a] dark:text-white">
-              {dailyProgress.total} <span className="text-sm font-medium text-[#7d7598] dark:text-white/55">completed today</span>
-            </p>
-            <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[#746d90] dark:text-white/60">
-              <span>Parent Tasks {dailyProgress.parentTasks}</span>
-              <span>Steps/Substeps {dailyProgress.steps}</span>
-            </div>
-            {dailyProgress.permanentCompletes > 0 ? (
-              <p className="mt-2 text-[11px] text-[#8b82a7] dark:text-white/48">Permanent Completes {dailyProgress.permanentCompletes}</p>
+            <button
+              aria-controls="home-finished-today-details"
+              aria-expanded={isFinishedDetailsOpen}
+              className="block w-full rounded-lg text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#8b78ed]"
+              onClick={() => setIsFinishedDetailsOpen((open) => !open)}
+              type="button"
+            >
+              <p className="text-2xl font-bold leading-none text-[#30275a] dark:text-white">
+                {dailyProgress.total} <span className="text-sm font-medium text-[#7d7598] dark:text-white/55">finished today</span>
+              </p>
+              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[#746d90] dark:text-white/60">
+                <span>Done {dailyProgress.done}</span>
+                <span>Did My Best {dailyProgress.didMyBest}</span>
+                <span>Completed {dailyProgress.completed}</span>
+              </div>
+            </button>
+            {isFinishedDetailsOpen ? (
+              <div className="mt-3 border-t border-[#f0ecf8] pt-2.5 dark:border-white/8" id="home-finished-today-details">
+                <p className="text-[11px] font-medium text-[#8b82a7] dark:text-white/48">Finished Tasks and Steps</p>
+                {dailyProgress.finishedItems.length > 0 ? (
+                  <ul className="mt-1.5 grid max-h-48 gap-1 overflow-y-auto">
+                    {dailyProgress.finishedItems.map((item) => (
+                      <li className="flex items-center justify-between gap-3 rounded-md bg-[#faf8fe] px-2 py-1.5 text-xs dark:bg-white/5" key={item.taskId}>
+                        <span className="min-w-0 truncate text-[#625b7b] dark:text-white/75">{item.title}</span>
+                        <span className="shrink-0 text-[10px] text-[#8b82a7] dark:text-white/48">
+                          {item.entityKind === "step" ? "Step" : "Task"} · {item.outcome === "did_my_best" ? "Did My Best" : item.outcome === "complete" ? "Completed" : "Done"}
+                        </span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-1.5 text-xs text-[#8b82a7] dark:text-white/48">No Tasks or Steps finished today.</p>
+                )}
+              </div>
             ) : null}
           </div>
         )}

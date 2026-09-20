@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.77`.
+- Current working app version: `7.13.78`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.13.78 Add Finished Today Details and Correct Record Loading
+
+Home now presents a unique-entity Finished Today summary grouped by canonical
+Done, Did My Best, and Completed outcomes, with an expandable list of the
+finished Tasks and Steps. The Home record-target loader now invokes its async
+read lifecycle, so the Records to Beat panel can resolve its narrow persisted
+target query instead of remaining in its initial loading state. Records remain
+occurrence-based and Home does not run reconciliation or the Records pipeline.
+No SQL or schema change was made.
 
 ## 2026-09-19 7.13.77 Add Home Daily Completion and Record Chases
 

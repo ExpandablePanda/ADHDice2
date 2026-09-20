@@ -84,7 +84,7 @@ export function useHomeRecordTargets({
 
     const loadClient = client;
     const loadUserId = userId;
-    void (async () => {
+    async function loadForCurrentOwner() {
       await Promise.resolve();
       if (generation !== generationRef.current) return;
       setState({ ownerKey: `${loadUserId}:${timezone}:${logicalDayStart}`, snapshot: { error: null, loading: true, settingsMismatch: false, targets: {} } });
@@ -96,7 +96,8 @@ export function useHomeRecordTargets({
         if (generation !== generationRef.current) return;
         setState({ ownerKey: `${loadUserId}:${timezone}:${logicalDayStart}`, snapshot: { error: error instanceof Error ? error.message : "Record targets could not be loaded.", loading: false, settingsMismatch: false, targets: {} } });
       }
-    });
+    }
+    void loadForCurrentOwner();
   }, [active, client, logicalDayStart, timezone, userId]);
 
   if (!ownerKey) return EMPTY_STATE;

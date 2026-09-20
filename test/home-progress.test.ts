@@ -36,32 +36,40 @@ function progress(tasks: Task[], rows: TaskHistory[], todayKey = "2026-09-19") {
 
 test("no completed History today produces a zero summary", () => {
   assert.deepEqual(progress([task("a")], [history("old", "a", "done", { entry_date: "2026-09-18" })]), {
-    parentTasks: 0,
-    permanentCompletes: 0,
+    completed: 0,
+    done: 0,
+    didMyBest: 0,
+    finishedItems: [],
     recordLiveValues: { parent_tasks_day: 0, permanent_completes_day: 0, steps_day: 0 },
-    steps: 0,
     total: 0,
   });
 });
 
-test("parent and Step successes are mutually exclusive categories", () => {
+test("outcome counts sum to the unique finished entity total", () => {
   const result = progress([task("parent"), task("step", "parent")], [
     history("parent-row", "parent", "done"),
     history("step-row", "step", "did_my_best"),
   ]);
   assert.equal(result.total, 2);
-  assert.equal(result.parentTasks, 1);
-  assert.equal(result.steps, 1);
+  assert.equal(result.done, 1);
+  assert.equal(result.didMyBest, 1);
+  assert.equal(result.completed, 0);
+  assert.deepEqual(result.finishedItems, [
+    { taskId: "parent", title: "parent", outcome: "done", entityKind: "parent" },
+    { taskId: "step", title: "step", outcome: "did_my_best", entityKind: "step" },
+  ]);
   assert.deepEqual(result.recordLiveValues, { parent_tasks_day: 1, permanent_completes_day: 0, steps_day: 1 });
 });
 
-test("permanent Complete counts as one completed entity and as a secondary detail", () => {
+test("permanent Complete counts as one finished entity with the Completed outcome", () => {
   const result = progress([task("parent")], [
     history("permanent", "parent", "complete", { event_type: "completed_permanently" }),
   ]);
   assert.equal(result.total, 1);
-  assert.equal(result.parentTasks, 1);
-  assert.equal(result.permanentCompletes, 1);
+  assert.equal(result.done, 0);
+  assert.equal(result.didMyBest, 0);
+  assert.equal(result.completed, 1);
+  assert.deepEqual(result.finishedItems, [{ taskId: "parent", title: "parent", outcome: "complete", entityKind: "parent" }]);
   assert.equal(result.recordLiveValues.permanent_completes_day, 1);
   assert.equal(result.recordLiveValues.parent_tasks_day, 0);
 });
@@ -72,10 +80,23 @@ test("ordinary success plus permanent Complete counts once in the unique summary
     history("permanent", "parent", "complete", { event_type: "completed_permanently" }),
   ]);
   assert.equal(result.total, 1);
-  assert.equal(result.parentTasks, 1);
-  assert.equal(result.permanentCompletes, 1);
+  assert.equal(result.done, 0);
+  assert.equal(result.didMyBest, 0);
+  assert.equal(result.completed, 1);
+  assert.deepEqual(result.finishedItems, [{ taskId: "parent", title: "parent", outcome: "complete", entityKind: "parent" }]);
   assert.equal(result.recordLiveValues.parent_tasks_day, 1);
   assert.equal(result.recordLiveValues.permanent_completes_day, 1);
+});
+
+test("multiple outcomes for one entity use complete, then Did My Best, then Done precedence", () => {
+  const result = progress([task("parent")], [
+    history("done", "parent", "done"),
+    history("best", "parent", "did_my_best"),
+    history("complete", "parent", "complete", { event_type: "completed_permanently" }),
+  ]);
+  assert.equal(result.total, 1);
+  assert.deepEqual(result.finishedItems, [{ taskId: "parent", title: "parent", outcome: "complete", entityKind: "parent" }]);
+  assert.deepEqual({ done: result.done, didMyBest: result.didMyBest, completed: result.completed }, { done: 0, didMyBest: 0, completed: 1 });
 });
 
 test("record live values remain occurrence-based even when the Home summary is unique-entity based", () => {
@@ -111,12 +132,16 @@ test("Home production wiring keeps History readiness separate from the record ta
   const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
   const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const targetSource = readFileSync(new URL("../src/hooks/useHomeRecordTargets.ts", import.meta.url), "utf8");
-  assert.match(homeSource, /Daily Tasks Completed/);
+  assert.match(homeSource, /Finished Today/);
+  assert.match(homeSource, /finished today/);
+  assert.match(homeSource, /isFinishedDetailsOpen/);
+  assert.match(homeSource, /finishedItems/);
   assert.match(homeSource, /Records to Beat/);
   assert.match(homeSource, /!isTaskHistoryLoaded/);
   assert.match(taskAppSource, /taskHistoryByTaskId, tasks, todayKey/);
   assert.match(taskAppSource, /isTaskHistoryLoaded=\{isTaskHistoryLoaded\}/);
   assert.match(targetSource, /select\("metric_key,value,timezone,logical_day_start"\)/);
   assert.match(targetSource, /\.in\("metric_key", \[\.\.\.HOME_RECORD_METRIC_KEYS\]\)/);
+  assert.match(targetSource, /void loadForCurrentOwner\(\);/);
   assert.doesNotMatch(targetSource, /runRecordsPipeline/);
 });

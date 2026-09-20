@@ -9,11 +9,21 @@ export const HOME_RECORD_METRIC_KEYS = [
 
 export type HomeRecordMetricKey = typeof HOME_RECORD_METRIC_KEYS[number];
 
+export type HomeFinishedOutcome = "done" | "did_my_best" | "complete";
+
+export type HomeFinishedItem = Readonly<{
+  taskId: string;
+  title: string;
+  outcome: HomeFinishedOutcome;
+  entityKind: "parent" | "step";
+}>;
+
 export type HomeDailyProgress = Readonly<{
-  parentTasks: number;
-  permanentCompletes: number;
+  completed: number;
+  done: number;
+  didMyBest: number;
+  finishedItems: readonly HomeFinishedItem[];
   recordLiveValues: Readonly<Record<HomeRecordMetricKey, number>>;
-  steps: number;
   total: number;
 }>;
 
@@ -48,6 +58,18 @@ function emptyRecordLiveValues(): Record<HomeRecordMetricKey, number> {
   };
 }
 
+const HOME_FINISHED_OUTCOME_RANK: Readonly<Record<HomeFinishedOutcome, number>> = {
+  done: 0,
+  did_my_best: 1,
+  complete: 2,
+};
+
+function homeFinishedOutcome(status: TaskHistory["status"]): HomeFinishedOutcome {
+  if (status === "complete") return "complete";
+  if (status === "did_my_best") return "did_my_best";
+  return "done";
+}
+
 export function buildHomeDailyProgress(input: {
   taskHistoryByTaskId: Readonly<Record<string, readonly TaskHistory[]>>;
   tasks: readonly Task[];
@@ -57,10 +79,23 @@ export function buildHomeDailyProgress(input: {
   const todayOccurrences = collapseTaskHistory({ taskHistory, tasks: [...input.tasks] })
     .filter((occurrence) => occurrence.creditedDate === input.todayKey);
   const completedOccurrences = todayOccurrences.filter((occurrence) => occurrence.isOrdinarySuccess || occurrence.isPermanentComplete);
-  const completedTaskIds = new Set(completedOccurrences.map((occurrence) => occurrence.task.id));
-  const parentTaskIds = new Set(completedOccurrences.filter((occurrence) => occurrence.entityKind === "parent").map((occurrence) => occurrence.task.id));
-  const stepTaskIds = new Set(completedOccurrences.filter((occurrence) => occurrence.entityKind === "step").map((occurrence) => occurrence.task.id));
-  const permanentCompleteTaskIds = new Set(completedOccurrences.filter((occurrence) => occurrence.isPermanentComplete).map((occurrence) => occurrence.task.id));
+  const finishedByTaskId = new Map<string, HomeFinishedItem>();
+  for (const occurrence of completedOccurrences) {
+    const outcome = homeFinishedOutcome(occurrence.history.status);
+    const existing = finishedByTaskId.get(occurrence.task.id);
+    if (!existing || HOME_FINISHED_OUTCOME_RANK[outcome] > HOME_FINISHED_OUTCOME_RANK[existing.outcome]) {
+      finishedByTaskId.set(occurrence.task.id, {
+        taskId: occurrence.task.id,
+        title: occurrence.task.title || "Untitled task",
+        outcome,
+        entityKind: occurrence.entityKind,
+      });
+    }
+  }
+  const finishedItems = [...finishedByTaskId.values()];
+  const done = finishedItems.filter((item) => item.outcome === "done").length;
+  const didMyBest = finishedItems.filter((item) => item.outcome === "did_my_best").length;
+  const completed = finishedItems.filter((item) => item.outcome === "complete").length;
   const ordinaryOccurrences = todayOccurrences.filter((occurrence) => occurrence.isOrdinarySuccess);
   const recordLiveValues = emptyRecordLiveValues();
   recordLiveValues.parent_tasks_day = ordinaryOccurrences.filter((occurrence) => occurrence.entityKind === "parent").length;
@@ -68,11 +103,12 @@ export function buildHomeDailyProgress(input: {
   recordLiveValues.permanent_completes_day = todayOccurrences.filter((occurrence) => occurrence.isPermanentComplete).length;
 
   return {
-    parentTasks: parentTaskIds.size,
-    permanentCompletes: permanentCompleteTaskIds.size,
+    completed,
+    done,
+    didMyBest,
+    finishedItems,
     recordLiveValues,
-    steps: stepTaskIds.size,
-    total: completedTaskIds.size,
+    total: finishedItems.length,
   };
 }
 
