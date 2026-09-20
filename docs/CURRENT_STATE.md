@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.84`.
+- Current working app version: `7.13.85`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -18,9 +18,18 @@ Role: active working
 
 Tasks now have an additive direct tracking-exclusion flag. Client tracking
 projections inherit exclusion through same-table parent chains without mutating
-descendant rows; the authored Supabase patch adds the authenticated mutation,
-reward guards, and current Achievement qualification rebuild boundary. The SQL
-patch remains source-only until manually applied and verified.
+descendant rows. The unpublished SQL patch was replaced before deployment by
+the 7.13.85 correction below.
+
+## 2026-09-20 7.13.85 Correct Tracking Exclusion Achievement Authority
+
+The unpublished tracking-exclusion migration now guards
+`adhdice_achievement_occurrences` before Task-derived qualification can reach
+the evaluator. Exclusion dequalifies existing Task and Step-set evidence before
+rebuilding progress, while re-inclusion drains the canonical resumable
+Achievement recalculation cursor to completion. The corrected migration remains
+source-only until manually applied and verified; the unsafe 7.13.84 migration
+file is no longer present.
 
 ## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
 
