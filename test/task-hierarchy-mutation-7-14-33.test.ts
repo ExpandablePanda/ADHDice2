@@ -63,7 +63,7 @@ test("The hierarchy client sends Step to Folder as parent=null and returns the a
     newTaskContentFolderId: "folder-b",
     taskId: "step",
   });
-  assert.equal(result.data?.id, "step");
+  assert.equal(result.data[0]?.id, "step");
   assert.deepEqual(received, {
     name: "adhdice_move_task_hierarchy",
     args: {
@@ -161,9 +161,9 @@ test("Milestone detach still calls the shared unlink path before setup", () => {
 });
 
 test("The same Task ID is reconciled locally from the returned row", () => {
-  assert.match(appSource, /mergeTaskWithCanonicalScheduleProjection\(task, result\.data\)/);
-  assert.match(appSource, /candidate\.id === task\.id \? nextTask : candidate/);
-  assert.match(appSource, /taskSnapshots\.set\(task\.id, nextRuntimeTask\)/);
+  assert.match(appSource, /const authoritativeRowsById = new Map\(result\.data\.map/);
+  assert.match(appSource, /mergeTaskWithCanonicalScheduleProjection\(candidate, authoritativeRow\)/);
+  assert.match(appSource, /taskSnapshots\.set\(\s*candidate\.id,/);
 });
 
 test("Hierarchy moves do not route or mutate status, schedule, recurrence, or reward state", () => {

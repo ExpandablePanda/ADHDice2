@@ -26,8 +26,9 @@ export function getRootTaskContentFolderId(tasks: readonly Task[], taskId: strin
 
 /**
  * The only browser client door for changing Task hierarchy membership. The
- * database function owns the parent/Folder invariant and returns the committed
- * row so callers never have to manufacture a local hierarchy projection.
+ * database function owns the parent/Folder invariant and returns every
+ * committed row changed by the hierarchy move so callers never have to
+ * manufacture a local hierarchy projection.
  */
 export async function moveTaskHierarchy(
   client: Client,
@@ -42,7 +43,7 @@ export async function moveTaskHierarchy(
   });
 
   return {
-    data: (result.data?.[0] ?? null) as TaskHierarchyRow | null,
+    data: (result.data ?? []) as TaskHierarchyRow[],
     error: result.error,
   };
 }

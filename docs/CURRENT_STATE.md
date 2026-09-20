@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.33`.
+- Current working app version: `7.14.34`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,17 @@ root Folder inheritance on detach, and returns the committed Task row for local
 reconciliation. Historical History facts and schedule boundaries are not
 rewritten. The source SQL remains unapplied pending explicit database rollout;
 browser QA remains Andrew's responsibility.
+
+## 2026-09-20 7.14.34 Reconcile Descendant Roles During Hierarchy Moves
+
+The canonical hierarchy move authority now returns the moved Task plus each
+direct canonical child whose current `entity_kind` changes because of the move.
+Those rows receive coordinated canonical projection revisions in the same
+transaction; grandchildren and unchanged child roles are not rewritten. The
+browser keeps the moved Task and direct children pending until every returned
+row is reconciled locally. The 7.14.34 replacement SQL is authored but remains
+unapplied pending review; do not apply the earlier 7.14.33 patch separately.
+Browser QA remains Andrew's responsibility.
 
 ## 2026-09-20 7.14.32 Keep Empty Folders Visible in All
 

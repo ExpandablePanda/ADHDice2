@@ -2766,7 +2766,12 @@ export function TaskApp() {
       return false;
     }
 
-    markPendingTaskMutations([task.id]);
+    const hierarchy = buildTaskHierarchyAdapter(tasks);
+    const pendingTaskIds = [
+      task.id,
+      ...hierarchy.getChildren(task.id).map((child) => child.id),
+    ];
+    markPendingTaskMutations(pendingTaskIds);
     try {
       const result = await persistTaskHierarchy(supabase, {
         expectedCanonicalRevision: task.canonical_revision ?? null,
@@ -2779,22 +2784,28 @@ export function TaskApp() {
         setMessage({ tone: "warn", text: result.error.message });
         return false;
       }
-      if (!result.data) {
-        setMessage({ tone: "warn", text: "The committed Task hierarchy row was not returned." });
+      if (result.data.length === 0) {
+        setMessage({ tone: "warn", text: "The committed Task hierarchy rows were not returned." });
         return false;
       }
 
-      const nextTask = mergeTaskWithCanonicalScheduleProjection(task, result.data);
-      const nextRuntimeTask = nextTask as TaskStateRuntimeLocalTask;
-      canonicalTaskMutationStateRef.current.taskSnapshots.set(task.id, nextRuntimeTask);
-      setTasks((current) => sortTasksForUi(current.map((candidate) => (
-        candidate.id === task.id ? nextTask : candidate
-      ))));
+      const authoritativeRowsById = new Map(result.data.map((row) => [row.id, row]));
+      setTasks((current) => sortTasksForUi(current.map((candidate) => {
+        const authoritativeRow = authoritativeRowsById.get(candidate.id);
+        if (!authoritativeRow) return candidate;
+
+        const nextTask = mergeTaskWithCanonicalScheduleProjection(candidate, authoritativeRow);
+        canonicalTaskMutationStateRef.current.taskSnapshots.set(
+          candidate.id,
+          nextTask as TaskStateRuntimeLocalTask,
+        );
+        return nextTask;
+      })));
       return true;
     } finally {
-      clearPendingTaskMutations([task.id]);
+      clearPendingTaskMutations(pendingTaskIds);
     }
-  }, [clearPendingTaskMutations, markPendingTaskMutations, session?.user?.id, setMessage, setTasks, supabase]);
+  }, [clearPendingTaskMutations, markPendingTaskMutations, session?.user?.id, setMessage, setTasks, supabase, tasks]);
   const taskContentFolderActions = useTaskContentFolderActions({
     client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
     folders: taskContentFolders,
