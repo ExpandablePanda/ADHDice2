@@ -93,6 +93,9 @@ import type { TaskTypePresentation } from "@/lib/task-type-presentation";
 import {
   buildTaskContentFolderMemberSummary,
   buildTaskContentFolderPresentation,
+  flattenTaskContentFolderPresentation,
+  getTaskContentFolderMenuOptions,
+  getTaskContentFolderMoveOptions,
   type TaskContentFolderMemberSummary,
   type TaskContentFolderMenuOption,
 } from "@/lib/task-content-folders";
@@ -289,10 +292,12 @@ type TasksTableSourceProps = {
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
+  onAddFolderToContentFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
   onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
+  onMoveFolder?: (folderId: string, destinationFolderId: string | null) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: TaskEditorLinkedNote[];
@@ -623,7 +628,7 @@ export function TasksTableAdapter({
       : null,
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
-  if (presentationTasks.length === 0 && !tableProps.requestedOpenTask) {
+  if (presentationTasks.length === 0 && !tableProps.taskContentFolders?.length && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -715,10 +720,12 @@ export function TasksTableAdapter({
           collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
           onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
           onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+          onAddFolderToContentFolder={tableProps.onAddFolderToContentFolder}
           onAddTaskToContentFolder={tableProps.onAddTaskToContentFolder}
           onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
           onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
           onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
+          onMoveFolder={tableProps.onMoveFolder}
           onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
           onUnlinkTask={tableProps.onUnlinkTask}
           onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
@@ -2715,8 +2722,15 @@ function TasksSimpleList({
     : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
   const windowedTasks = useMemo(() => tasks.slice(0, rowWindowCount), [rowWindowCount, tasks]);
   const taskContentFolderPresentation = useMemo(
-    () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? []),
-    [tableProps.taskContentFolders, windowedTasks],
+    () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? [], {
+      includeEmptyFolders: !Boolean(
+        tableProps.statusFilterActive
+        || tableProps.highlightedTaskIds?.length
+        || tableProps.searchMatchedStepParentTaskIds?.length
+        || tableProps.searchMatchedChildTaskIds?.length
+      ),
+    }),
+    [tableProps.highlightedTaskIds, tableProps.searchMatchedChildTaskIds, tableProps.searchMatchedStepParentTaskIds, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
   );
   const allFolderMemberTasks = tableProps.allTasks ?? tableProps.tasks;
   const folderMemberSummaryById = useMemo(() => {
@@ -2729,7 +2743,7 @@ function TasksSimpleList({
       hasAttention: Boolean(tableProps.rowContext.taskAttentionReasonByTaskId[task.id]),
     }));
     return new Map<string, TaskContentFolderMemberSummary>(
-      (tableProps.taskContentFolders ?? []).map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id)]),
+      (tableProps.taskContentFolders ?? []).map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id, tableProps.taskContentFolders ?? [])]),
     );
   }, [allFolderMemberTasks, tableProps.rowContext.listMembershipsByTaskId, tableProps.rowContext.taskAttentionReasonByTaskId, tableProps.taskContentFolders]);
   useEffect(() => {
@@ -2984,16 +2998,14 @@ function TasksSimpleList({
     [allRows, rowContextMenuTask, rowModelCache, tableProps.childTaskPreviewByParentTaskId, tableProps.rowContext, tasks],
   );
   const rowContextMenuTaskContentFolderOptions = useMemo<TaskContentFolderMenuOption[]>(() => {
-    if (!rowContextMenuTask) return [];
-    const isChild = Object.values(tableProps.childTaskPreviewByParentTaskId ?? {})
-      .some((group) => group.items.some((item) => item.id === rowContextMenuTask.id));
-    const options: TaskContentFolderMenuOption[] = (tableProps.taskContentFolders ?? [])
-      .slice()
-      .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
-      .map((folder) => ({ id: folder.id, label: folder.name }));
-    if (!isChild) options.unshift({ id: null, label: "No Folder" });
-    return options;
-  }, [rowContextMenuTask, tableProps.childTaskPreviewByParentTaskId, tableProps.taskContentFolders]);
+    return rowContextMenuTask ? getTaskContentFolderMenuOptions(tableProps.taskContentFolders ?? [], rowContextMenuTask) : [];
+  }, [rowContextMenuTask, tableProps.taskContentFolders]);
+  const contentFolderMoveOptions = useMemo(
+    () => contentFolderContextMenu
+      ? getTaskContentFolderMoveOptions(tableProps.taskContentFolders ?? [], contentFolderContextMenu.folderId)
+      : [],
+    [contentFolderContextMenu, tableProps.taskContentFolders],
+  );
   useEffect(() => {
     if (parentStepDraftTaskId) {
       parentStepDraftInputRef.current?.focus();
@@ -3187,7 +3199,7 @@ function TasksSimpleList({
     });
   }
 
-  if (tasks.length === 0 && !tableProps.requestedOpenTask) {
+  if (tasks.length === 0 && taskContentFolderPresentation.length === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -3255,10 +3267,12 @@ function TasksSimpleList({
               collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
               onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
               onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+              onAddFolderToContentFolder={tableProps.onAddFolderToContentFolder}
               onAddTaskToContentFolder={tableProps.onAddTaskToContentFolder}
               onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
               onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
               onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
+              onMoveFolder={tableProps.onMoveFolder}
               onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
               onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
               onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
@@ -3356,11 +3370,14 @@ function TasksSimpleList({
           />
             {taskContentFolderPresentation
               .flatMap((block) => {
-                if (block.kind === "task") return [{ kind: "task" as const, task: block.task }];
+                if (block.kind === "task") return [{ depth: block.depth, kind: "task" as const, task: block.task }];
                 const collapsed = tableProps.collapsedTaskContentFolderIds?.has(block.folder.id) ?? false;
+                const nestedEntries = block.children.some((child) => child.kind === "folder")
+                  ? block.children.flatMap((child) => flattenTaskContentFolderPresentation([child], tableProps.collapsedTaskContentFolderIds))
+                  : block.members.map((task) => ({ depth: block.depth + 1, kind: "task" as const, task }));
                 return [
-                  { kind: "folder" as const, folder: block.folder, members: block.members, collapsed },
-                  ...(collapsed ? [] : block.members.map((task) => ({ kind: "task" as const, task }))),
+                  { depth: block.depth, kind: "folder" as const, folder: block.folder, members: block.members, visibleTaskCount: block.visibleTaskCount, collapsed },
+                  ...(collapsed ? [] : nestedEntries),
                 ];
               })
               .map((entry) => {
@@ -3370,11 +3387,13 @@ function TasksSimpleList({
                       <TaskContentFolderEditableHeader
                         activeSurface={activeTaskContentFolderEdit}
                         collapsed={entry.collapsed}
+                        depth={entry.depth}
                         folder={entry.folder}
                         memberSummary={folderMemberSummaryById.get(entry.folder.id)}
-                        memberCount={entry.members.length}
+                        memberCount={entry.visibleTaskCount}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
                         onAddTaskToFolder={tableProps.onAddTaskToContentFolder}
+                        onAddFolderToFolder={tableProps.onAddFolderToContentFolder}
                         customBehaviorRulesets={tableProps.customBehaviorRulesets}
                         onRename={tableProps.onRenameTaskContentFolder}
                         onSurfaceChange={(surface) => {
@@ -3465,7 +3484,7 @@ function TasksSimpleList({
         );
         return (
           <Fragment key={task.id}>
-            <div className="space-y-3" data-task-list-hierarchy-group={task.id}>
+            <div className="space-y-3" data-task-list-hierarchy-group={task.id} style={{ marginLeft: entry.depth ? `${entry.depth * 1}rem` : undefined }}>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${taskSurface} ${
                 selectedTaskIdSet.has(task.id)
@@ -4116,8 +4135,11 @@ function TasksSimpleList({
               <TaskContentFolderContextMenu
                 folder={folder}
                 menu={contentFolderContextMenu}
+                moveOptions={contentFolderMoveOptions}
+                onAddChildFolder={() => setActiveTaskContentFolderEdit({ folderId: folder.id, kind: "folder" })}
                 onDelete={tableProps.onDeleteTaskContentFolder}
                 onDismiss={() => setContentFolderContextMenu(null)}
+                onMoveFolder={tableProps.onMoveFolder}
                 onRename={tableProps.onRenameTaskContentFolder}
               />
             ) : null;

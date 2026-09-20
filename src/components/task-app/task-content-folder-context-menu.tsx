@@ -1,6 +1,6 @@
 "use client";
 
-import { Check, Pencil, Trash2, X } from "lucide-react";
+import { Check, FolderPlus, MoveRight, Pencil, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import type { TaskContentFolder } from "@/lib/database.types";
 import {
@@ -48,11 +48,15 @@ type Props = {
   menu: TaskContentFolderContextMenuState;
   onDelete: (folderId: string) => Promise<boolean>;
   onDismiss: () => void;
+  onAddChildFolder?: () => void;
+  onMoveFolder?: (folderId: string, destinationFolderId: string | null) => Promise<boolean>;
   onRename: (folderId: string, name: string) => Promise<boolean>;
+  moveOptions?: Array<{ id: string | null; label: string }>;
 };
 
-export function TaskContentFolderContextMenu({ folder, menu, onDelete, onDismiss, onRename }: Props) {
+export function TaskContentFolderContextMenu({ folder, menu, onAddChildFolder, onDelete, onDismiss, onMoveFolder, onRename, moveOptions = [] }: Props) {
   const [isRenaming, setIsRenaming] = useState(false);
+  const [isMoving, setIsMoving] = useState(false);
   const [draftName, setDraftName] = useState(folder.name);
 
   const submitRename = async () => {
@@ -75,7 +79,7 @@ export function TaskContentFolderContextMenu({ folder, menu, onDelete, onDismiss
       >
         <div className="border-b border-[#f0ebfb] px-2 pb-2 dark:border-white/10">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">
-            Folder actions
+            {isMoving ? "Move Folder" : "Folder actions"}
           </p>
           <p className="mt-1 flex min-w-0 items-center gap-1.5 text-sm font-medium text-[#2f294a] dark:text-white">
             <TaskTypeIcon aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" iconKey={isTaskTypeIconKey(folder.icon_key) ? folder.icon_key : "folder"} />
@@ -83,7 +87,36 @@ export function TaskContentFolderContextMenu({ folder, menu, onDelete, onDismiss
           </p>
         </div>
 
-        {isRenaming ? (
+        {isMoving ? (
+          <div className="space-y-2 px-1 py-2">
+            <div className="adhdice-scrollbar max-h-60 space-y-1 overflow-y-auto pb-1 pr-1 overscroll-contain">
+              {moveOptions.map((option) => (
+                <TaskTableChipButton
+                  className="w-full justify-between gap-2"
+                  key={option.id ?? "no-parent"}
+                  onClick={() => {
+                    const moveResult = onMoveFolder?.(folder.id, option.id);
+                    if (moveResult) {
+                      void moveResult.then((didMove) => {
+                        if (didMove) onDismiss();
+                      });
+                    }
+                  }}
+                >
+                  <span className="truncate">{option.label}</span>
+                  {option.id === folder.id ? <span className="text-xs opacity-60">Current</span> : null}
+                </TaskTableChipButton>
+              ))}
+              {moveOptions.length === 0 ? <p className="px-2 py-3 text-sm text-[#8d87a7] dark:text-white/45">No valid destinations.</p> : null}
+            </div>
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => setIsMoving(false)}
+            >
+              <span>Back to actions</span>
+            </TaskTableChipButton>
+          </div>
+        ) : isRenaming ? (
           <form
             className="space-y-2 px-1 py-2"
             onSubmit={(event) => {
@@ -125,6 +158,27 @@ export function TaskContentFolderContextMenu({ folder, menu, onDelete, onDismiss
           </form>
         ) : (
           <div className="space-y-1 px-1 py-2">
+            {onAddChildFolder ? (
+              <TaskTableChipButton
+                className="w-full justify-start gap-2"
+                onClick={() => {
+                  onAddChildFolder();
+                  onDismiss();
+                }}
+              >
+                <FolderPlus className="h-3.5 w-3.5" />
+                Add Folder
+              </TaskTableChipButton>
+            ) : null}
+            {onMoveFolder ? (
+              <TaskTableChipButton
+                className="w-full justify-start gap-2"
+                onClick={() => setIsMoving(true)}
+              >
+                <MoveRight className="h-3.5 w-3.5" />
+                Move Folder
+              </TaskTableChipButton>
+            ) : null}
             <TaskTableChipButton
               className="w-full justify-start gap-2"
               onClick={() => setIsRenaming(true)}
@@ -135,7 +189,7 @@ export function TaskContentFolderContextMenu({ folder, menu, onDelete, onDismiss
             <TaskTableChipButton
               className="w-full justify-start gap-2"
               onClick={() => {
-                if (window.confirm(`Delete "${folder.name}"?\nIts Tasks will stay and become ungrouped.`)) {
+                if (window.confirm(`Delete "${folder.name}"?\nDirect Tasks will move to this Folder's parent (or become ungrouped if it is a root). Child Folders will be promoted.`)) {
                   void onDelete(folder.id).then((didDelete) => {
                     if (didDelete) onDismiss();
                   });

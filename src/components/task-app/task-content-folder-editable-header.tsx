@@ -1,6 +1,6 @@
 "use client";
 
-import { Bell, ChevronRight, Footprints, ListTodo, Pin, Search } from "lucide-react";
+import { Bell, ChevronRight, Footprints, FolderPlus, ListTodo, Pin, Search } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { CustomBehaviorRuleset, TaskContentFolder } from "@/lib/database.types";
 import { getTaskContentFolderRoutineToggleTaskIds, type TaskContentFolderMemberSummary } from "@/lib/task-content-folders";
@@ -21,17 +21,19 @@ import { TaskTypeSelect } from "./task-type-identity";
 
 export type TaskContentFolderEditSurface = {
   folderId: string;
-  kind: "add" | "icon" | "rename";
+  kind: "add" | "folder" | "icon" | "rename";
 } | null;
 
 type Props = {
   activeSurface: TaskContentFolderEditSurface;
   collapsed: boolean;
+  depth?: number;
   folder: Pick<TaskContentFolder, "icon_key" | "id" | "name">;
   memberSummary?: TaskContentFolderMemberSummary;
   memberCount: number;
   onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
   onAddTaskToFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
+  onAddFolderToFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   onRename?: (folderId: string, name: string) => Promise<boolean>;
   onSurfaceChange: (surface: TaskContentFolderEditSurface) => void;
@@ -44,11 +46,13 @@ type Props = {
 export function TaskContentFolderEditableHeader({
   activeSurface,
   collapsed,
+  depth = 0,
   folder,
   memberSummary,
   memberCount,
   onContextMenu,
   onAddTaskToFolder,
+  onAddFolderToFolder,
   customBehaviorRulesets = [],
   onRename,
   onSurfaceChange,
@@ -62,12 +66,16 @@ export function TaskContentFolderEditableHeader({
   const [taskTypeSelectionValue, setTaskTypeSelectionValue] = useState("task");
   const [taskCreationPending, setTaskCreationPending] = useState(false);
   const [taskCreationError, setTaskCreationError] = useState<string | null>(null);
+  const [folderNameDraft, setFolderNameDraft] = useState("");
+  const [folderCreationPending, setFolderCreationPending] = useState(false);
+  const [folderCreationError, setFolderCreationError] = useState<string | null>(null);
   const [iconQuery, setIconQuery] = useState("");
   const submittingRenameRef = useRef(false);
   const submittingTaskRef = useRef(false);
   const switchingSurfaceRef = useRef(false);
   const chooserRef = useRef<HTMLDivElement | null>(null);
   const taskDraftInputRef = useRef<HTMLInputElement | null>(null);
+  const folderDraftInputRef = useRef<HTMLInputElement | null>(null);
   const currentIconKey = isTaskTypeIconKey(folder.icon_key) ? folder.icon_key : "folder";
   const filteredIcons = searchTaskTypeIcons(iconQuery);
   const taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption> = useMemo(
@@ -78,6 +86,7 @@ export function TaskContentFolderEditableHeader({
   const isRenaming = isActiveFolder && activeSurface?.kind === "rename";
   const isChoosingIcon = isActiveFolder && activeSurface?.kind === "icon";
   const isAddingTask = isActiveFolder && activeSurface?.kind === "add";
+  const isAddingFolder = isActiveFolder && activeSurface?.kind === "folder";
   const summary = memberSummary ?? {
     allPinned: false,
     allRoutine: false,
@@ -109,8 +118,21 @@ export function TaskContentFolderEditableHeader({
   }, [isAddingTask]);
 
   useEffect(() => {
+    if (!isAddingFolder) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the local Folder draft after the action surface closes.
+      setFolderNameDraft("");
+      setFolderCreationError(null);
+      setFolderCreationPending(false);
+    }
+  }, [isAddingFolder]);
+
+  useEffect(() => {
     if (isAddingTask) taskDraftInputRef.current?.focus();
   }, [isAddingTask]);
+
+  useEffect(() => {
+    if (isAddingFolder) folderDraftInputRef.current?.focus();
+  }, [isAddingFolder]);
 
   useEffect(() => {
     if (!isChoosingIcon) return;
@@ -187,6 +209,25 @@ export function TaskContentFolderEditableHeader({
     }
   }
 
+  async function submitFolderCreation() {
+    if (folderCreationPending || !onAddFolderToFolder) return;
+    const name = folderNameDraft.trim();
+    if (!name) {
+      setFolderCreationError("Enter a Folder name.");
+      return;
+    }
+    setFolderCreationPending(true);
+    setFolderCreationError(null);
+    const didPersist = await onAddFolderToFolder(folder.id, name);
+    setFolderCreationPending(false);
+    if (didPersist) {
+      setFolderNameDraft("");
+      onSurfaceChange(null);
+    } else {
+      setFolderCreationError("Folder could not be created.");
+    }
+  }
+
   function cancelTaskCreation() {
     setTaskTitleDraft("");
     setTaskTypeSelectionValue("task");
@@ -196,9 +237,16 @@ export function TaskContentFolderEditableHeader({
     onSurfaceChange(null);
   }
 
+  function cancelFolderCreation() {
+    setFolderNameDraft("");
+    setFolderCreationError(null);
+    setFolderCreationPending(false);
+    onSurfaceChange(null);
+  }
+
   function stopActionPointer(event: React.PointerEvent<HTMLElement>) {
     event.stopPropagation();
-    if (isRenaming) {
+    if (isRenaming || isAddingFolder) {
       event.preventDefault();
       switchingSurfaceRef.current = true;
     }
@@ -220,6 +268,7 @@ export function TaskContentFolderEditableHeader({
     <div
       className="relative flex w-full flex-col gap-1 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
       data-style-role="tasks.content-folder.header"
+      style={{ marginLeft: depth ? `${depth * 1}rem` : undefined }}
       onClick={(event) => {
         if (event.target instanceof HTMLElement && event.target.closest("button, input")) return;
         onToggle();
@@ -436,6 +485,24 @@ export function TaskContentFolderEditableHeader({
               <Footprints className="h-3.5 w-3.5" />
             </AdhdIconButton>
           ) : null}
+          {onAddFolderToFolder ? (
+            <AdhdIconButton
+              aria-label={`Add Folder to ${folder.name}`}
+              onClick={(event) => {
+                event.stopPropagation();
+                setFolderNameDraft("");
+                setFolderCreationError(null);
+                onSurfaceChange({ folderId: folder.id, kind: "folder" });
+              }}
+              onPointerDown={stopActionPointer}
+              selected={isAddingFolder}
+              size="sm"
+              tone="purple"
+              variant="rowToolbar"
+            >
+              <FolderPlus className="h-3.5 w-3.5" />
+            </AdhdIconButton>
+          ) : null}
           {summary.attentionCount > 0 ? (
             <AdhdIconButton
               aria-label={`${summary.attentionCount} Tasks in ${folder.name} need attention`}
@@ -503,6 +570,44 @@ export function TaskContentFolderEditableHeader({
               </div>
             </div>
             {taskCreationError ? <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{taskCreationError}</p> : null}
+          </form>
+        </div>
+      ) : null}
+      {isAddingFolder ? (
+        <div className="ml-8 w-[24rem] max-w-[min(24rem,calc(100vw-5rem))]">
+          <form
+            aria-label={`Add Folder to ${folder.name}`}
+            className="mt-2 flex w-full flex-col gap-2 rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2.5 dark:border-white/10 dark:bg-[#1b1530]/80"
+            data-inline-folder-draft={folder.id}
+            onClick={(event) => event.stopPropagation()}
+            onKeyDown={(event) => {
+              if (event.key === "Escape") {
+                event.preventDefault();
+                cancelFolderCreation();
+              }
+            }}
+            onPointerDown={(event) => event.stopPropagation()}
+            onSubmit={(event) => {
+              event.preventDefault();
+              void submitFolderCreation();
+            }}
+          >
+            <TaskInlineChildDraftInput
+              ariaLabel={`Add Folder to ${folder.name}`}
+              childLabel="Folder"
+              disabled={folderCreationPending}
+              inputRef={folderDraftInputRef}
+              onCancel={cancelFolderCreation}
+              onChange={setFolderNameDraft}
+              onCommit={() => { void submitFolderCreation(); }}
+              placeholder="Folder name..."
+              value={folderNameDraft}
+            />
+            <div className="flex justify-end gap-1.5">
+              <TaskTableChipButton disabled={folderCreationPending} onClick={cancelFolderCreation} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS} type="button">Cancel</TaskTableChipButton>
+              <TaskTableChipButton disabled={folderCreationPending} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">{folderCreationPending ? "Creating..." : "Create"}</TaskTableChipButton>
+            </div>
+            {folderCreationError ? <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{folderCreationError}</p> : null}
           </form>
         </div>
       ) : null}

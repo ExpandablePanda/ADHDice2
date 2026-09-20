@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.26`.
+- Current working app version: `7.14.27`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-19 7.14.27 Add Nested Task Content Folders
+
+Task Content Folders now use an owner-scoped `parent_folder_id` hierarchy with
+application and database cycle protection. Table and List consume one shared
+recursive projection that preserves Task order, filtered ancestor context,
+independent collapse state, empty child Folders, and subtree Pin/Routine/
+Attention/count semantics. Add Folder, Move Folder, nesting-aware Create
+Folder, and transactional delete promotion preserve Folder identity and keep
+Tasks outside Folder hierarchy. The additive migration and schema source are
+authored but have not been applied to a live Supabase project in this worktree;
+browser QA remains Andrew's responsibility.
 
 ## 2026-09-19 7.14.26 Restore Routine Assignment and Typed Folder Task Creation
 

@@ -42,7 +42,7 @@ test("Folder rows are the shared rename/delete management surface in Table and L
   assert.match(folderHeaderSource, /data-style-role="tasks\.content-folder\.header"/);
   assert.match(folderMenuSource, /Rename Folder/);
   assert.match(folderMenuSource, /Delete Folder/);
-  assert.match(folderMenuSource, /Its Tasks will stay and become ungrouped\./);
+  assert.match(folderMenuSource, /Direct Tasks will move to this Folder's parent/);
 });
 
 test("canonical metadata reconciliation preserves the projected boundary in both result paths", () => {

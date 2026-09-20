@@ -40,6 +40,9 @@ import type { CustomBehaviorRuleset, TaskContentFolder, TaskRepeatMonthlyMode, T
 import {
   buildTaskContentFolderMemberSummary,
   buildTaskContentFolderPresentation,
+  flattenTaskContentFolderPresentation,
+  getTaskContentFolderMenuOptions,
+  getTaskContentFolderMoveOptions,
   type TaskContentFolderMemberSummary,
   type TaskContentFolderMenuOption,
 } from "@/lib/task-content-folders";
@@ -1348,10 +1351,12 @@ type TaskManagementTableV2Props = {
   collapsedTaskContentFolderIds?: ReadonlySet<string>;
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
+  onAddFolderToContentFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
   onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
+  onMoveFolder?: (folderId: string, destinationFolderId: string | null) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onPromoteTaskToMilestone?: (taskId: string) => void;
@@ -2734,10 +2739,12 @@ export function TaskManagementTableV2({
   collapsedTaskContentFolderIds = new Set<string>(),
   onToggleTaskContentFolderCollapsed,
   onCreateTaskContentFolder,
+  onAddFolderToContentFolder,
   onAddTaskToContentFolder,
   onRenameTaskContentFolder,
   onUpdateTaskContentFolderIcon,
   onDeleteTaskContentFolder,
+  onMoveFolder,
   onMoveTaskToContentFolder,
   onUnlinkTask,
   onPromoteTaskToMilestone,
@@ -3508,8 +3515,17 @@ export function TaskManagementTableV2({
     [effectiveDisplayedTasks, renderedTaskCount],
   );
   const taskContentFolderPresentation = useMemo(
-    () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders),
-    [renderedTasks, taskContentFolders],
+    () => buildTaskContentFolderPresentation(renderedTasks, taskContentFolders, {
+      includeEmptyFolders: !(
+        Object.values(textFilters).some((value) => Boolean(value?.trim()))
+        || structuredFilters.status.length > 0
+        || structuredFilters.priority.length > 0
+        || structuredFilters.energy.length > 0
+        || structuredFilters.repeat.length > 0
+        || structuredFilters.task_type.length > 0
+      ),
+    }),
+    [renderedTasks, structuredFilters, taskContentFolders, textFilters],
   );
   const allFolderMemberRows = useMemo(
     () => getAllRows?.() ?? (allRows && allRows.length > 0 ? allRows : tasks),
@@ -3525,7 +3541,7 @@ export function TaskManagementTableV2({
       hasAttention: Boolean(attentionReasonByTaskId[task.id] ?? task.attentionReason),
     }));
     return new Map<string, TaskContentFolderMemberSummary>(
-      taskContentFolders.map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id)]),
+      taskContentFolders.map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id, taskContentFolders)]),
     );
   }, [allFolderMemberRows, attentionReasonByTaskId, taskContentFolders]);
   useLayoutEffect(() => {
@@ -3562,16 +3578,14 @@ export function TaskManagementTableV2({
     [allRows, childTaskPreviewByParentTaskId, getAllRows, rowContextMenuTask, tasks],
   );
   const rowContextMenuTaskContentFolderOptions = useMemo<TaskContentFolderMenuOption[]>(
-    () => {
-      if (!rowContextMenuTask) return [];
-      const options: TaskContentFolderMenuOption[] = taskContentFolders
-        .slice()
-        .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
-        .map((folder) => ({ id: folder.id, label: folder.name }));
-      if (!childTaskParentInfoByTaskId.has(rowContextMenuTask.id)) options.unshift({ id: null, label: "No Folder" });
-      return options;
-    },
-    [childTaskParentInfoByTaskId, rowContextMenuTask, taskContentFolders],
+    () => rowContextMenuTask ? getTaskContentFolderMenuOptions(taskContentFolders, rowContextMenuTask) : [],
+    [rowContextMenuTask, taskContentFolders],
+  );
+  const contentFolderMoveOptions = useMemo(
+    () => contentFolderContextMenu
+      ? getTaskContentFolderMoveOptions(taskContentFolders, contentFolderContextMenu.folderId)
+      : [],
+    [contentFolderContextMenu, taskContentFolders],
   );
   const shouldAnimateRows = !shouldReduceMotion && effectiveDisplayedTasks.length <= 80;
   const tableRowVariants: Variants | undefined = shouldAnimateRows
@@ -9379,17 +9393,20 @@ export function TaskManagementTableV2({
               sticky
             />
 
-            {effectiveDisplayedTasks.length === 0 ? (
+            {effectiveDisplayedTasks.length === 0 && taskContentFolderPresentation.length === 0 ? (
               <div className={`${TASK_TABLE_GRID_ORIGIN_CLASS} rounded-[1.25rem] border border-dashed border-[#ddd6fb] bg-[#fbfaff] px-6 py-10 text-center ${BODY_MUTED_VALUE_CLASS}`}>
                 No rows match the current table filters.
               </div>
             ) : taskContentFolderPresentation
               .flatMap((block) => {
-                if (block.kind === "task") return [{ kind: "task" as const, task: block.task }];
+                if (block.kind === "task") return [{ depth: block.depth, kind: "task" as const, task: block.task }];
                 const collapsed = collapsedTaskContentFolderIds.has(block.folder.id);
+                const nestedEntries = block.children.some((child) => child.kind === "folder")
+                  ? block.children.flatMap((child) => flattenTaskContentFolderPresentation([child], collapsedTaskContentFolderIds))
+                  : block.members.map((task) => ({ depth: block.depth + 1, kind: "task" as const, task }));
                 return [
-                  { kind: "folder" as const, folder: block.folder, members: block.members, collapsed },
-                  ...(collapsed ? [] : block.members.map((task) => ({ kind: "task" as const, task }))),
+                  { depth: block.depth, kind: "folder" as const, folder: block.folder, members: block.members, visibleTaskCount: block.visibleTaskCount, collapsed },
+                  ...(collapsed ? [] : nestedEntries),
                 ];
               })
               .map((entry) => {
@@ -9399,11 +9416,13 @@ export function TaskManagementTableV2({
                       <TaskContentFolderEditableHeader
                         activeSurface={activeTaskContentFolderEdit}
                         collapsed={entry.collapsed}
+                        depth={entry.depth}
                         folder={entry.folder}
                         memberSummary={folderMemberSummaryById.get(entry.folder.id)}
-                        memberCount={entry.members.length}
+                        memberCount={entry.visibleTaskCount}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
                         onAddTaskToFolder={onAddTaskToContentFolder}
+                        onAddFolderToFolder={onAddFolderToContentFolder}
                         customBehaviorRulesets={customBehaviorRulesets}
                         onRename={onRenameTaskContentFolder}
                         onSurfaceChange={(surface) => {
@@ -9460,6 +9479,7 @@ export function TaskManagementTableV2({
                   <div
                   className={`w-max min-w-full space-y-1.5 ${hasRenderedDescendants ? "bg-white dark:bg-[#181226]" : ""}`}
                   data-task-table-hierarchy-group={task.id}
+                  style={{ marginLeft: entry.depth ? `${entry.depth * 1}rem` : undefined }}
                 >
                   <motion.div
                     className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center focus:outline-none ${hasRenderedDescendants ? "sticky top-8 z-10" : ""}`}
@@ -9716,8 +9736,11 @@ export function TaskManagementTableV2({
             <TaskContentFolderContextMenu
               folder={folder}
               menu={contentFolderContextMenu}
+              moveOptions={contentFolderMoveOptions}
+              onAddChildFolder={() => setActiveTaskContentFolderEdit({ folderId: folder.id, kind: "folder" })}
               onDelete={onDeleteTaskContentFolder}
               onDismiss={() => setContentFolderContextMenu(null)}
+              onMoveFolder={onMoveFolder}
               onRename={onRenameTaskContentFolder}
             />
           ) : null;

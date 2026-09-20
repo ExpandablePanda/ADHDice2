@@ -6,9 +6,11 @@ import type { Task, TaskContentFolder, TaskUpdate } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import {
   buildTaskContentFolderAssignmentPatch,
+  getTaskContentFolderParentForTask,
   normalizeTaskContentFolderName,
   normalizeTaskContentFolderRow,
   validateTaskContentFolderName,
+  validateTaskContentFolderParent,
 } from "@/lib/task-content-folders";
 import { isTaskTypeIconKey } from "@/lib/task-type-presentation";
 
@@ -34,22 +36,60 @@ export function useTaskContentFolderActions({
   updateTaskRow,
   userId,
 }: Options) {
-  const createFolderAndMoveTask = useCallback(async (task: Task, rawName: string) => {
+  const createFolder = useCallback(async (rawName: string, parentFolderId: string | null = null) => {
     const name = normalizeTaskContentFolderName(rawName);
     const validationError = validateTaskContentFolderName(name);
-    if (validationError || !client || !userId) {
-      setMessage({ tone: "warn", text: validationError ?? "Folders are unavailable until you sign in." });
+    const parentError = validateTaskContentFolderParent(folders, null, parentFolderId, userId);
+    if (validationError || parentError || !client || !userId) {
+      setMessage({ tone: "warn", text: validationError ?? parentError ?? "Folders are unavailable until you sign in." });
       return false;
     }
 
-    const { data, error } = await client
-      .from("adhdice_task_content_folders")
-      .insert({ name, user_id: userId })
-      .select("*")
-      .single();
-    const folder = normalizeTaskContentFolderRow(data);
-    if (error || !folder) {
-      setMessage({ tone: "warn", text: error?.message ?? "Folder could not be created." });
+    const result = parentFolderId
+      ? await client
+        .from("adhdice_task_content_folders")
+        .insert({ icon_key: "folder", name, parent_folder_id: parentFolderId, user_id: userId })
+        .select("*")
+        .single()
+      : await client
+        .from("adhdice_task_content_folders")
+        .insert({ name, user_id: userId })
+        .select("*")
+        .single();
+    const folder = normalizeTaskContentFolderRow(result.data);
+    if (result.error || !folder) {
+      setMessage({ tone: "warn", text: result.error?.message ?? "Folder could not be created." });
+      return false;
+    }
+    setFolders((current) => [...current, folder]);
+    setMessage({ tone: "good", text: `Folder "${folder.name}" created.` });
+    return true;
+  }, [client, folders, setFolders, setMessage, userId]);
+
+  const createFolderAndMoveTask = useCallback(async (task: Task, rawName: string) => {
+    const name = normalizeTaskContentFolderName(rawName);
+    const validationError = validateTaskContentFolderName(name);
+    const parentFolderId = getTaskContentFolderParentForTask(task);
+    const parentError = validateTaskContentFolderParent(folders, null, parentFolderId, userId);
+    if (validationError || parentError || !client || !userId) {
+      setMessage({ tone: "warn", text: validationError ?? parentError ?? "Folders are unavailable until you sign in." });
+      return false;
+    }
+
+    const result = parentFolderId
+      ? await client
+        .from("adhdice_task_content_folders")
+        .insert({ icon_key: "folder", name, parent_folder_id: parentFolderId, user_id: userId })
+        .select("*")
+        .single()
+      : await client
+        .from("adhdice_task_content_folders")
+        .insert({ name, user_id: userId })
+        .select("*")
+        .single();
+    const folder = normalizeTaskContentFolderRow(result.data);
+    if (result.error || !folder) {
+      setMessage({ tone: "warn", text: result.error?.message ?? "Folder could not be created." });
       return false;
     }
     setFolders((current) => [...current, folder]);
@@ -86,7 +126,7 @@ export function useTaskContentFolderActions({
 
     setMessage({ tone: "good", text: `Folder "${folder.name}" created and "${task.title}" moved into it.` });
     return true;
-  }, [client, setFolders, setMessage, updateTaskRow, userId]);
+  }, [client, folders, setFolders, setMessage, updateTaskRow, userId]);
 
   const renameFolder = useCallback(async (folderId: string, rawName: string) => {
     const name = normalizeTaskContentFolderName(rawName);
@@ -140,31 +180,63 @@ export function useTaskContentFolderActions({
     return true;
   }, [client, folders, setFolders, setMessage, userId]);
 
+  const moveFolder = useCallback(async (folderId: string, destinationFolderId: string | null) => {
+    const folder = folders.find((entry) => entry.id === folderId);
+    if (!folder || !client || !userId || folder.user_id !== userId) {
+      setMessage({ tone: "warn", text: "Folder could not be found." });
+      return false;
+    }
+    const validationError = validateTaskContentFolderParent(folders, folderId, destinationFolderId, userId);
+    if (validationError) {
+      setMessage({ tone: "warn", text: validationError });
+      return false;
+    }
+    const { data, error } = await client
+      .from("adhdice_task_content_folders")
+      .update({ parent_folder_id: destinationFolderId })
+      .eq("user_id", userId)
+      .eq("id", folderId)
+      .select("*")
+      .single();
+    const nextFolder = normalizeTaskContentFolderRow(data);
+    if (error || !nextFolder) {
+      setMessage({ tone: "warn", text: error?.message ?? "Folder could not be moved." });
+      return false;
+    }
+    setFolders((current) => current.map((entry) => entry.id === folderId ? nextFolder : entry));
+    setMessage({ tone: "good", text: `Folder "${nextFolder.name}" moved.` });
+    return true;
+  }, [client, folders, setFolders, setMessage, userId]);
+
   const deleteFolder = useCallback(async (folderId: string) => {
     const folder = folders.find((entry) => entry.id === folderId);
     if (!client || !userId || !folder) {
       setMessage({ tone: "warn", text: "Folder could not be found." });
       return false;
     }
-    const { error } = await client
-      .from("adhdice_task_content_folders")
-      .delete()
-      .eq("user_id", userId)
-      .eq("id", folderId);
+    const { error } = await client.rpc("adhdice_delete_task_content_folder", { p_folder_id: folderId });
     if (error) {
       setMessage({ tone: "warn", text: error.message });
       return false;
     }
-    setFolders((current) => current.filter((entry) => entry.id !== folderId));
+    const promotedParentId = folder.parent_folder_id ?? null;
+    setFolders((current) => current
+      .filter((entry) => entry.id !== folderId)
+      .map((entry) => entry.parent_folder_id === folderId ? { ...entry, parent_folder_id: promotedParentId } : entry));
     setTasks((current) => current.map((task) => task.task_content_folder_id === folderId
-      ? { ...task, task_content_folder_id: null }
+      ? { ...task, task_content_folder_id: promotedParentId }
       : task));
-    setMessage({ tone: "good", text: `Folder "${folder.name}" deleted. Its Tasks are now ungrouped.` });
+    setMessage({
+      tone: "good",
+      text: promotedParentId
+        ? `Folder "${folder.name}" deleted and its contents promoted.`
+        : `Folder "${folder.name}" deleted. Its direct Tasks are now ungrouped.`,
+    });
     return true;
   }, [client, folders, setFolders, setMessage, setTasks, userId]);
 
   const moveTaskToFolder = useCallback(async (task: Task, folderId: string | null) => {
-    if (folderId !== null && !folders.some((folder) => folder.id === folderId)) {
+    if (folderId !== null && !folders.some((folder) => folder.id === folderId && folder.user_id === userId)) {
       setMessage({ tone: "warn", text: "That Folder is no longer available. Refresh and try again." });
       return false;
     }
@@ -181,7 +253,15 @@ export function useTaskContentFolderActions({
       });
     }
     return didPersist;
-  }, [folders, setMessage, updateTaskRow]);
+  }, [folders, setMessage, updateTaskRow, userId]);
 
-  return { createFolderAndMoveTask, deleteFolder, moveTaskToFolder, renameFolder, updateFolderIcon };
+  return {
+    createFolder,
+    createFolderAndMoveTask,
+    deleteFolder,
+    moveFolder,
+    moveTaskToFolder,
+    renameFolder,
+    updateFolderIcon,
+  };
 }

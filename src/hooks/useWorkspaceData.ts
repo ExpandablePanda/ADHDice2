@@ -34,6 +34,7 @@ import {
 } from "@/lib/task-history";
 import { reconcileTaskListRows } from "@/lib/task-list-mappers";
 import { loadTaskListFolders } from "@/lib/task-list-folders";
+import { normalizeTaskContentFolderRow } from "@/lib/task-content-folders";
 import type { TaskListDefinition, TaskListManualMembership } from "@/lib/task-lists";
 import type { AppPage } from "@/lib/task-ui-state";
 import {
@@ -1318,7 +1319,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const nextTaskListFolders = folderStructureResult.data?.folders ?? [];
       const nextTaskListContainers = folderStructureResult.data?.containers ?? [];
       const nextTaskListRailItems = folderStructureResult.data?.railItems ?? [];
-      const nextTaskContentFolders = taskContentFolderResult.data ?? [];
+      const nextTaskContentFolders = (taskContentFolderResult.data ?? [])
+        .map((row) => normalizeTaskContentFolderRow(row))
+        .filter((row): row is TaskContentFolder => row !== null);
 
       if (
         nextCategories.length === 0 &&

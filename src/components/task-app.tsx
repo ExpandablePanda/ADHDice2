@@ -2772,6 +2772,10 @@ export function TaskApp() {
     const task = tasks.find((entry) => entry.id === taskId);
     return task ? taskContentFolderActions.createFolderAndMoveTask(task, name) : false;
   }, [taskContentFolderActions.createFolderAndMoveTask, tasks]);
+  const addFolderToTaskContentFolder = useCallback(
+    (parentFolderId: string, name: string) => taskContentFolderActions.createFolder(name, parentFolderId),
+    [taskContentFolderActions.createFolder],
+  );
   const compatibilityRoutingMemberships = useMemo(
     () =>
       Object.fromEntries(
@@ -7680,11 +7684,13 @@ export function TaskApp() {
                   collapsedTaskContentFolderIds,
                   onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
                   onCreateTaskContentFolder: createTaskContentFolder,
+                  onAddFolderToContentFolder: addFolderToTaskContentFolder,
                   onAddTaskToContentFolder: addTaskToContentFolder,
                   onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
                   onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
-                  onMoveTaskToContentFolder: moveTaskToContentFolder,
+                  onMoveTaskContentFolder: moveTaskToContentFolder,
+                  onMoveFolder: taskContentFolderActions.moveFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
@@ -7872,10 +7878,12 @@ export function TaskApp() {
                   collapsedTaskContentFolderIds,
                   onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
                   onCreateTaskContentFolder: createTaskContentFolder,
+                  onAddFolderToContentFolder: addFolderToTaskContentFolder,
                   onAddTaskToContentFolder: addTaskToContentFolder,
                   onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
                   onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
+                  onMoveFolder: taskContentFolderActions.moveFolder,
                   onMoveTaskToContentFolder: moveTaskToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,

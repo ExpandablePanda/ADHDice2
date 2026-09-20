@@ -355,6 +355,7 @@ export type TaskContentFolder = {
   icon_key: string;
   id: string;
   name: string;
+  parent_folder_id: string | null;
   updated_at: string;
   user_id: string;
 };
@@ -363,10 +364,12 @@ export type TaskContentFolderInsert = {
   icon_key?: string;
   id?: string;
   name: string;
+  parent_folder_id?: string | null;
   user_id: string;
 };
 
-export type TaskContentFolderUpdate = Partial<Pick<TaskContentFolder, "icon_key" | "name">>;
+export type TaskContentFolderUpdate = Partial<Pick<TaskContentFolder, "icon_key" | "name">>
+  & Partial<Pick<TaskContentFolder, "parent_folder_id">>;
 
 export type TaskListContainer = {
   created_at: string;
@@ -3249,6 +3252,10 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_delete_task_content_folder: {
+        Args: { p_folder_id: string };
+        Returns: boolean;
+      };
       adhdice_delete_custom_behavior_ruleset: {
         Args: { p_ruleset_id: string };
         Returns: CustomBehaviorRulesetDeleteResult[];
