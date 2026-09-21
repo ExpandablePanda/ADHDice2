@@ -522,6 +522,8 @@ type TaskRowContextMenuProps = {
   onSelectAllVisible?: () => void;
   onToggleTaskSelection?: () => void;
   onUnlinkTask?: () => void;
+  onUnlinkTasks?: (taskIds: string[]) => void | Promise<void>;
+  batchUnlinkTaskIds?: string[];
   moveIntoParentOptions?: MoveIntoParentOption[];
   taskContentFolderOptions?: TaskContentFolderMenuOption[];
   quickEditItems?: TaskRowContextMenuQuickEditItem[];
@@ -557,6 +559,8 @@ export function TaskRowContextMenu({
   onSelectAllVisible,
   onToggleTaskSelection,
   onUnlinkTask,
+  onUnlinkTasks,
+  batchUnlinkTaskIds = [],
   moveIntoParentOptions = [],
   taskContentFolderOptions = [],
   quickEditItems = [],
@@ -801,7 +805,17 @@ export function TaskRowContextMenu({
               <span>Detach and promote to Milestone</span>
             </TaskTableChipButton>
           ) : null}
-          {onUnlinkTask ? (
+          {onUnlinkTasks && batchUnlinkTaskIds.length > 1 ? (
+            <TaskTableChipButton
+              className="w-full justify-between gap-2"
+              onClick={() => {
+                void onUnlinkTasks(batchUnlinkTaskIds);
+              }}
+            >
+              <span>Unlink {batchUnlinkTaskIds.length} selected</span>
+              <MoveLeft className="h-3.5 w-3.5" />
+            </TaskTableChipButton>
+          ) : onUnlinkTask ? (
             <TaskTableChipButton
               className="w-full justify-between gap-2"
               onClick={() => onUnlinkTask()}
@@ -1364,6 +1378,7 @@ type TaskManagementTableV2Props = {
   onMoveFolder?: (folderId: string, destinationFolderId: string | null) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
+  onUnlinkTasks?: (taskIds: string[]) => Promise<boolean> | boolean;
   onPromoteTaskToMilestone?: (taskId: string) => void;
   onDetachAndPromoteTaskToMilestone?: (taskId: string) => void;
   milestonePromotionTaskIds?: ReadonlySet<string>;
@@ -2755,6 +2770,7 @@ export function TaskManagementTableV2({
   onMoveFolder,
   onMoveTaskToContentFolder,
   onUnlinkTask,
+  onUnlinkTasks,
   onPromoteTaskToMilestone,
   onDetachAndPromoteTaskToMilestone,
   milestonePromotionTaskIds = new Set<string>(),
@@ -3584,6 +3600,21 @@ export function TaskManagementTableV2({
     [rowContextMenu, selectedTaskIdSet, selectedTaskIds],
   );
   const rowContextMenuHasBatchQuickEdit = rowContextMenuQuickEditTargetIds.length > 1;
+  const rowContextMenuBatchUnlinkTaskIds = useMemo(() => {
+    if (rowContextMenuQuickEditTargetIds.length <= 1) {
+      return [];
+    }
+
+    const availableRows = getAllRows?.() ?? (allRows && allRows.length > 0 ? allRows : tasks);
+    const rowsById = new Map(availableRows.map((row) => [row.id, row]));
+    return rowContextMenuQuickEditTargetIds.filter((taskId) => {
+      const row = rowsById.get(taskId);
+      if (row && row.parent_task_id !== undefined) {
+        return row.parent_task_id !== null;
+      }
+      return childTaskParentInfoByTaskId.has(taskId);
+    });
+  }, [allRows, childTaskParentInfoByTaskId, getAllRows, rowContextMenuQuickEditTargetIds, tasks]);
   const rowContextMenuMoveIntoParentOptions = useMemo(
     () => rowContextMenuTask
       ? buildMoveIntoParentOptions({
@@ -9715,6 +9746,11 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 void onUnlinkTask(rowContextMenuTask.id);
               } : undefined}
+              onUnlinkTasks={onUnlinkTasks ? async (taskIds) => {
+                setRowContextMenu(null);
+                await onUnlinkTasks(taskIds);
+              } : undefined}
+              batchUnlinkTaskIds={rowContextMenuBatchUnlinkTaskIds}
               moveIntoParentOptions={rowContextMenuMoveIntoParentOptions}
               taskContentFolderOptions={rowContextMenuTaskContentFolderOptions}
               onSelectAllVisible={onSelectAllVisible ? () => {

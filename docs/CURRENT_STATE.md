@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.35`.
+- Current working app version: `7.14.36`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.14.36 Batch Unlink Selected Task Hierarchy Rows
+
+The shared Task context menu can now unlink selected child Tasks in one
+canonical hierarchy batch. The browser snapshots the hierarchy, processes
+selected descendants deepest-first, preserves each root Task's Folder, and
+reconciles each committed row without changing the hierarchy RPC contract or
+SQL. Browser QA remains Andrew's responsibility.
 
 ## 2026-09-20 7.14.33 Canonical Task Hierarchy Move Path
 

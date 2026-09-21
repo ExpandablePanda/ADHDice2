@@ -248,7 +248,7 @@ import {
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
-import { getRootTaskContentFolderId, moveTaskHierarchy as persistTaskHierarchy } from "@/lib/task-hierarchy-mutation";
+import { buildTaskHierarchyUnlinkPlan, getRootTaskContentFolderId, moveTaskHierarchy as persistTaskHierarchy } from "@/lib/task-hierarchy-mutation";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
@@ -2761,9 +2761,12 @@ export function TaskApp() {
     task: Task,
     newParentTaskId: string | null,
     newTaskContentFolderId: string | null,
+    options?: { quiet?: boolean },
   ) => {
     if (!supabase || !session?.user?.id) {
-      setMessage({ tone: "warn", text: "Tasks are unavailable until you sign in." });
+      if (!options?.quiet) {
+        setMessage({ tone: "warn", text: "Tasks are unavailable until you sign in." });
+      }
       return false;
     }
 
@@ -2782,11 +2785,15 @@ export function TaskApp() {
         taskId: task.id,
       });
       if (result.error) {
-        setMessage({ tone: "warn", text: result.error.message });
+        if (!options?.quiet) {
+          setMessage({ tone: "warn", text: result.error.message });
+        }
         return false;
       }
       if (result.data.length === 0) {
-        setMessage({ tone: "warn", text: "The committed Task hierarchy rows were not returned." });
+        if (!options?.quiet) {
+          setMessage({ tone: "warn", text: "The committed Task hierarchy rows were not returned." });
+        }
         return false;
       }
 
@@ -2807,6 +2814,40 @@ export function TaskApp() {
       clearPendingTaskMutations(pendingTaskIds);
     }
   }, [clearPendingTaskMutations, markPendingTaskMutations, session?.user?.id, setMessage, setTasks, supabase, tasks]);
+  const unlinkSameTableTasks = useCallback(async (taskIds: string[]) => {
+    const unlinkPlan = buildTaskHierarchyUnlinkPlan(tasks, taskIds);
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const plan of unlinkPlan) {
+      if (plan.inheritedFolderId === undefined) {
+        failedCount += 1;
+        continue;
+      }
+
+      const didUnlink = await persistTaskHierarchyRow(
+        plan.task,
+        null,
+        plan.inheritedFolderId,
+        { quiet: true },
+      );
+      if (didUnlink) {
+        successCount += 1;
+      } else {
+        failedCount += 1;
+      }
+    }
+
+    if (successCount > 0 && failedCount === 0) {
+      setMessage({ tone: "good", text: `Unlinked ${successCount} selected tasks.` });
+    } else if (successCount > 0) {
+      setMessage({ tone: "warn", text: `Unlinked ${successCount} selected tasks; ${failedCount} failed.` });
+    } else if (failedCount > 0) {
+      setMessage({ tone: "warn", text: `Unable to unlink selected tasks; ${failedCount} failed.` });
+    }
+
+    return successCount > 0 && failedCount === 0;
+  }, [persistTaskHierarchyRow, setMessage, tasks]);
   const taskContentFolderActions = useTaskContentFolderActions({
     client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
     folders: taskContentFolders,
@@ -7655,6 +7696,8 @@ export function TaskApp() {
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
                   onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
+                  onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onUnlinkTasks: unlinkSameTableTasks,
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {
@@ -7742,6 +7785,7 @@ export function TaskApp() {
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onUnlinkTasks: unlinkSameTableTasks,
                   onPromoteTaskToMilestone: openMilestoneSetup,
                   onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,
@@ -7938,6 +7982,7 @@ export function TaskApp() {
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onUnlinkTasks: unlinkSameTableTasks,
                   onPromoteTaskToMilestone: openMilestoneSetup,
                   onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,

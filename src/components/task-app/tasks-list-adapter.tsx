@@ -349,6 +349,7 @@ type TasksTableSourceProps = {
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
+  onUnlinkTasks?: (taskIds: string[]) => Promise<boolean> | boolean;
   onPromoteTaskToMilestone?: (taskId: string) => void;
   onDetachAndPromoteTaskToMilestone?: (taskId: string) => void;
   milestonePromotionTaskIds?: ReadonlySet<string>;
@@ -723,6 +724,7 @@ export function TasksTableAdapter({
           onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
           onOpenChildTask={tableProps.onOpenChildTask}
           onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
+          onUnlinkTasks={tableProps.onUnlinkTasks}
           taskContentFolders={tableProps.taskContentFolders}
           collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
           onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
@@ -3277,6 +3279,7 @@ function TasksSimpleList({
               onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
               onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
+              onUnlinkTasks={tableProps.onUnlinkTasks}
               taskContentFolders={tableProps.taskContentFolders}
               collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
               onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
@@ -3288,6 +3291,7 @@ function TasksSimpleList({
               onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
               onMoveFolder={tableProps.onMoveFolder}
               onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
+              onUnlinkTask={tableProps.onUnlinkTask}
               onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
               onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
               milestonePromotionTaskIds={tableProps.milestonePromotionTaskIds}
