@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.91`.
+- Current working app version: `7.13.92`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-21 7.13.92 Home To-do Task Signals
+
+Home To-do rows now consume the canonical Task History streak summary and
+TaskApp Attention reason map beside the title. Missed streaks take precedence
+with the existing Skull badge; otherwise the shared current-streak chip is
+shown. Attention uses the existing TaskAttentionChip without Home-side rules.
 
 ## 2026-09-20 7.13.91 Home To-do Move to Day
 

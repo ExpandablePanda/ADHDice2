@@ -1037,6 +1037,32 @@ test("Home To-do move-to-day control uses Home offsets and leaves Task schedulin
   assert.match(source, /!isRoutineChild \? <div className="flex shrink-0 items-center gap-1">/);
 });
 
+test("Home To-do consumes canonical streak and Attention projections without changing Routine metadata", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const renderStart = source.indexOf("function renderHomeTask");
+  const renderEnd = source.indexOf("\n  useEffect", renderStart);
+  const renderSource = source.slice(renderStart, renderEnd);
+  const routineTitleStart = renderSource.indexOf("{isRoutine ? (");
+  const normalTitleStart = renderSource.indexOf("          ) : (", routineTitleStart);
+  const normalTitleEnd = renderSource.indexOf("          )}", normalTitleStart);
+  const routineTitleSource = renderSource.slice(routineTitleStart, normalTitleStart);
+  const normalTitleSource = renderSource.slice(normalTitleStart, normalTitleEnd);
+
+  assert.match(source, /function HomeTodoTaskSignals/);
+  assert.match(source, /taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>/);
+  assert.match(source, /attentionReason=\{taskAttentionReasonByTaskId\[task\.id\]\}/);
+  assert.match(source, /streakSummary=\{taskHistoryStreakSummaries\[task\.id\]\}/);
+  assert.match(source, /missedStreak > 0/);
+  assert.match(source, /<Skull aria-hidden="true" className="h-3 w-3" \/>[\s\S]*\{missedStreak\}/);
+  assert.match(source, /<TaskCurrentStreakChip className="px-1\.5 py-0 text-\[11px\]" currentStreak=\{currentStreak\} \/>/);
+  assert.match(source, /<TaskAttentionChip dueOn=\{task\.due_on\} reason=\{attentionReason\} taskId=\{task\.id\} \/>/);
+  assert.match(taskAppSource, /<TaskHomePage[\s\S]*taskAttentionReasonByTaskId=\{taskAttentionReasonByTaskId\}/);
+  assert.match(normalTitleSource, /HomeTodoTaskSignals/);
+  assert.doesNotMatch(routineTitleSource, /HomeTodoTaskSignals|TaskAttentionChip|taskAttentionReasonByTaskId/);
+  assert.doesNotMatch(source, /buildTaskAttentionReasonMap|evaluateTaskListMemberships|matchesTaskListRules|resolveEffectiveTaskListRules/);
+});
+
 test("Home todo migration and schema provide owner-scoped realtime state", () => {
   const migration = readFileSync(new URL("../supabase/add_home_todo_state_7_5_39.sql", import.meta.url), "utf8");
   const schema = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");

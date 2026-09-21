@@ -7377,6 +7377,7 @@ export function TaskApp() {
             recordTargetsLoading={homeRecordTargets.loading}
             recordTargetsRecalculatedAt={homeRecordTargets.recalculatedAt}
             recordTargetsSettingsMismatch={homeRecordTargets.settingsMismatch}
+            taskAttentionReasonByTaskId={taskAttentionReasonByTaskId}
             taskHistoryStreakSummaries={taskHistoryStreakSummaries}
             behaviorProfiles={taskTypeBehaviorProfiles}
             behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}

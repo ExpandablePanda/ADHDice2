@@ -15,6 +15,7 @@ import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/pag
 import { SortableList } from "@/components/ui/sortable-list";
 import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
+import { TaskAttentionChip } from "./task-attention-chip";
 import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
@@ -22,6 +23,7 @@ import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engin
 import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
+import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
@@ -129,6 +131,34 @@ function RoutineTaskMetadata({
       ) : (
         <TaskCurrentStreakChip currentStreak={streak?.count ?? 0} />
       )}
+    </span>
+  );
+}
+
+function HomeTodoTaskSignals({
+  attentionReason,
+  task,
+  streakSummary,
+}: {
+  attentionReason?: TaskAttentionReason | null;
+  task: Pick<Task, "due_on" | "id">;
+  streakSummary?: TaskHistoryStreakSummaryMap[string];
+}) {
+  const missedStreak = streakSummary?.missedStreak ?? 0;
+  const currentStreak = streakSummary?.currentStreak ?? 0;
+  if (missedStreak <= 0 && currentStreak <= 0 && !attentionReason) return null;
+
+  return (
+    <span className="inline-flex min-w-0 flex-wrap items-center gap-1">
+      {missedStreak > 0 ? (
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[#ffd6de] bg-[#fff1f3] px-1.5 py-0 text-[11px] font-medium leading-5 text-[#d65775] dark:border-[#5f2a36] dark:bg-[#32161d] dark:text-[#ffb0c1]">
+          <Skull aria-hidden="true" className="h-3 w-3" />
+          {missedStreak}
+        </span>
+      ) : (
+        <TaskCurrentStreakChip className="px-1.5 py-0 text-[11px]" currentStreak={currentStreak} />
+      )}
+      {attentionReason ? <TaskAttentionChip dueOn={task.due_on} reason={attentionReason} taskId={task.id} /> : null}
     </span>
   );
 }
@@ -262,6 +292,7 @@ export function HomePage({
   recordTargetsLoading,
   recordTargetsRecalculatedAt,
   recordTargetsSettingsMismatch,
+  taskAttentionReasonByTaskId,
   taskHistoryStreakSummaries,
   calendarNowMs,
   calendarTimeZone,
@@ -292,6 +323,7 @@ export function HomePage({
   recordTargetsLoading: boolean;
   recordTargetsRecalculatedAt: string | null;
   recordTargetsSettingsMismatch: boolean;
+  taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>;
   taskHistoryStreakSummaries: TaskHistoryStreakSummaryMap;
   calendarNowMs: number;
   calendarTimeZone: string;
@@ -883,11 +915,18 @@ export function HomePage({
               <RoutineTaskMetadata task={task} streakSummary={taskHistoryStreakSummaries[task.id]} />
             </div>
           ) : (
-            <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
-              <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
-                {task.title || "Untitled task"}
-              </p>
-            </button>
+            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+              <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+                <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
+                  {task.title || "Untitled task"}
+                </p>
+              </button>
+              <HomeTodoTaskSignals
+                attentionReason={taskAttentionReasonByTaskId[task.id]}
+                task={task}
+                streakSummary={taskHistoryStreakSummaries[task.id]}
+              />
+            </div>
           )}
           {hierarchy.length ? (
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
