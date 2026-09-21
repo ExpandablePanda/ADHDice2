@@ -83,8 +83,8 @@ import {
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
-import { getTaskTypeTableRowSurfaceClassName, type TaskTypePresentation } from "@/lib/task-type-presentation";
-import { TaskTypeIdentity, TaskTypeSelect } from "@/components/task-app/task-type-identity";
+import { resolveTaskTypeRowPresentation, type TaskTypePresentation } from "@/lib/task-type-presentation";
+import { TaskTypeIdentity, TaskTypeSelect, TaskTypeTitleIcon } from "@/components/task-app/task-type-identity";
 import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
 import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
 import type { TaskBehaviorPolicyResolutionContext, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
@@ -7205,6 +7205,8 @@ export function TaskManagementTableV2({
   }
 
   function renderRowCell(task: PrototypeTaskRow, columnId: TaskManagementTableColumnId) {
+    const taskTypeOption = resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets);
+    const taskTypeRowPresentation = resolveTaskTypeRowPresentation(taskTypeOption);
     const summarizedLists = summarizeInlineItems(task.lists);
     const summarizedTags = summarizeInlineItems(task.tags);
     const summarizedLinkedNotes = summarizeInlineItems(task.linkedNotes);
@@ -7456,14 +7458,15 @@ export function TaskManagementTableV2({
             data-column-content-measure={columnId}
           >
             <span className={`flex min-w-0 items-start ${hasSecondaryContent ? "flex-col" : "min-h-[2rem] justify-center"}`}>
-              <span className="inline-flex min-w-0 items-center gap-2">
-                <span className={`${VISIBLE_TITLE_TEXT_CLASS} whitespace-normal break-normal`}>{task.title}</span>
-                {task.status === "trashed" ? (
-                  <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
-                    {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
-                  </span>
-                ) : null}
-              </span>
+                <span className="inline-flex min-w-0 items-center gap-2">
+                  <span className={`${VISIBLE_TITLE_TEXT_CLASS} whitespace-normal break-normal`}>{task.title}</span>
+                  {taskTypeRowPresentation.titleIcon ? <TaskTypeTitleIcon label={taskTypeRowPresentation.titleIcon.label} option={taskTypeRowPresentation.titleIcon} /> : null}
+                  {task.status === "trashed" ? (
+                    <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
+                      {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
+                    </span>
+                  ) : null}
+                </span>
               {hasDescription ? (
                 <span className="mt-1 max-w-full truncate text-[12px] font-medium text-[#8d87a7] dark:text-white/40">
                   {task.notes.trim()}
@@ -7500,6 +7503,7 @@ export function TaskManagementTableV2({
                     </p>
                   </button>
                 )}
+                {taskTypeRowPresentation.titleIcon ? <TaskTypeTitleIcon label={taskTypeRowPresentation.titleIcon.label} option={taskTypeRowPresentation.titleIcon} /> : null}
                 {task.status === "trashed" ? (
                   <span className="inline-flex items-center rounded-full border border-[#ddd2ff] bg-[#f6f2ff] px-2 py-1 text-[11px] font-medium leading-none text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]">
                     {`${getTrashDaysRemaining(task.trashedAt) ?? 30}d until auto delete`}
@@ -8448,6 +8452,8 @@ export function TaskManagementTableV2({
     }
 
     if (columnId === "title") {
+      const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
+      const childTaskRowPresentation = resolveTaskTypeRowPresentation(childTaskTypeOption);
       const isRenamingStepTitle = editingTaskTitleId === item.id;
       const canCollapse = childTaskPreviewVisibility?.collapsibleTaskIds.has(item.id) ?? false;
       const isCollapsed = canCollapse && collapsedChildTaskIds[item.id] === true;
@@ -8490,6 +8496,7 @@ export function TaskManagementTableV2({
                       {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                     </p>
                   </button>
+                  {childTaskRowPresentation.titleIcon ? <TaskTypeTitleIcon label={childTaskRowPresentation.titleIcon.label} option={childTaskRowPresentation.titleIcon} /> : null}
                   {renderStepLayerChip(item.depth)}
                   {renderStepHistoryChips(
                     item.currentStreak,
@@ -9011,7 +9018,8 @@ export function TaskManagementTableV2({
         {displayedItems.map((item, itemIndex) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
           const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
-          const childTaskSurface = getTaskTypeTableRowSurfaceClassName(childTaskTypeOption.accentKey);
+          const childTaskRowPresentation = resolveTaskTypeRowPresentation(childTaskTypeOption);
+          const childTaskSurface = childTaskRowPresentation.tableRowSurfaceClassName;
           const titleGeometry = getTableHierarchyTitleGeometry(item.depth);
           return (
             <Fragment key={item.id}>
@@ -9117,6 +9125,8 @@ export function TaskManagementTableV2({
     }
 
     if (columnId === "title") {
+      const sourceTaskTypeOption = resolveTaskTypeSelectionOption(subtask.taskType, subtask.customRulesetId, customBehaviorRulesets);
+      const sourceTaskRowPresentation = resolveTaskTypeRowPresentation(sourceTaskTypeOption);
       return (
         <div className="flex w-full min-w-0 items-center gap-1.5 text-left">
           <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
@@ -9124,6 +9134,7 @@ export function TaskManagementTableV2({
             <p className="min-w-0 whitespace-normal break-normal text-[13px] font-medium text-[#27304c] dark:text-white">
               {subtask.title || (depth > 1 ? "Untitled substep" : "Untitled step")}
             </p>
+            {sourceTaskRowPresentation.titleIcon ? <TaskTypeTitleIcon label={sourceTaskRowPresentation.titleIcon.label} option={sourceTaskRowPresentation.titleIcon} /> : null}
             {renderStepLayerChip(depth)}
           </div>
         </div>
@@ -9157,7 +9168,8 @@ export function TaskManagementTableV2({
       {rows.map((row) => (
         (() => {
           const sourceTaskTypeOption = resolveTaskTypeSelectionOption(row.subtask.taskType, row.subtask.customRulesetId, customBehaviorRulesets);
-          const sourceTaskSurface = getTaskTypeTableRowSurfaceClassName(sourceTaskTypeOption.accentKey);
+          const sourceTaskRowPresentation = resolveTaskTypeRowPresentation(sourceTaskTypeOption);
+          const sourceTaskSurface = sourceTaskRowPresentation.tableRowSurfaceClassName;
           return (
           <div
             className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
@@ -9488,7 +9500,8 @@ export function TaskManagementTableV2({
 
                 const task = entry.task;
               const taskTypeOption = resolveTaskTypeSelectionOption(task.taskType, task.customRulesetId, customBehaviorRulesets);
-              const taskSurface = getTaskTypeTableRowSurfaceClassName(taskTypeOption.accentKey);
+              const taskTypeRowPresentation = resolveTaskTypeRowPresentation(taskTypeOption);
+              const taskSurface = taskTypeRowPresentation.tableRowSurfaceClassName;
               const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
               const hasSourceStepRows = visibleSubtasks.length > 0;
               const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];

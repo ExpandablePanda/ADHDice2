@@ -75,6 +75,7 @@ export type TaskTypePresentation = {
   iconKey: TaskTypeIconKey;
   accentKey: TaskTypeAccentKey;
   description: string;
+  highlightTaskRows: boolean;
 };
 
 export type TaskTypeAccentPresentation = {
@@ -93,12 +94,14 @@ export const DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION: TaskTypePresentation = {
   iconKey: "list-todo",
   accentKey: "purple",
   description: "",
+  highlightTaskRows: true,
 };
 
 export const STANDARD_TASK_TYPE_PRESENTATION: TaskTypePresentation = {
   iconKey: "list-todo",
   accentKey: "neutral",
   description: "",
+  highlightTaskRows: true,
 };
 
 export type TaskTypeIconOption = { key: TaskTypeIconKey; label: string; keywords: ReadonlyArray<string>; icon?: LucideIcon };
@@ -302,11 +305,12 @@ export function isTaskTypeIconKey(value: unknown): value is TaskTypeIconKey {
   return typeof value === "string" && (iconByKey.has(value) || LUCIDE_ICON_NAME_SET.has(value));
 }
 
-export function normalizeTaskTypePresentation(value: Partial<Record<"iconKey" | "accentKey" | "description", unknown>> | null | undefined): TaskTypePresentation {
+export function normalizeTaskTypePresentation(value: Partial<Record<"iconKey" | "accentKey" | "description" | "highlightTaskRows", unknown>> | null | undefined): TaskTypePresentation {
   const iconKey = isTaskTypeIconKey(value?.iconKey) ? value.iconKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.iconKey;
   const accentKey = accentByKey.has(value?.accentKey as TaskTypeAccentKey) ? value?.accentKey as TaskTypeAccentKey : DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION.accentKey;
   const description = typeof value?.description === "string" ? value.description.trim().slice(0, 240) : "";
-  return { iconKey, accentKey, description };
+  const highlightTaskRows = value?.highlightTaskRows !== false;
+  return { iconKey, accentKey, description, highlightTaskRows };
 }
 
 export function resolveTaskTypeIcon(iconKey: unknown): LucideIcon {
@@ -325,6 +329,31 @@ export function getTaskTypeSurfaceClassName(accentKey: unknown) {
 export function getTaskTypeTableRowSurfaceClassName(accentKey: unknown) {
   const accent = resolveTaskTypeAccent(accentKey);
   return `border-transparent ${accent.tableRowSurfaceClassName} ${accent.tableRowHoverBorderClassName}`;
+}
+
+export type TaskTypeRowPresentation = {
+  shouldHighlightRow: boolean;
+  surfaceClassName: string;
+  tableRowSurfaceClassName: string;
+  titleIcon: {
+    accentKey: TaskTypeAccentKey;
+    iconKey: TaskTypeIconKey;
+    label: string;
+  } | null;
+};
+
+export function resolveTaskTypeRowPresentation(option: Pick<TaskTypePresentation, "accentKey" | "highlightTaskRows" | "iconKey"> & { label: string; value: string }): TaskTypeRowPresentation {
+  const shouldHighlightRow = option.highlightTaskRows;
+  const rowAccentKey = shouldHighlightRow ? option.accentKey : "neutral";
+  const isNamedCustomTaskType = option.value !== "task" && option.value !== "custom";
+  return {
+    shouldHighlightRow,
+    surfaceClassName: getTaskTypeSurfaceClassName(rowAccentKey),
+    tableRowSurfaceClassName: getTaskTypeTableRowSurfaceClassName(rowAccentKey),
+    titleIcon: !shouldHighlightRow && isNamedCustomTaskType
+      ? { accentKey: option.accentKey, iconKey: option.iconKey, label: option.label }
+      : null,
+  };
 }
 
 export function validateTaskTypeDescription(value: unknown) {

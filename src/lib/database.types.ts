@@ -102,6 +102,7 @@ export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile
 export type CustomBehaviorRuleset = {
   accent_key: string;
   description: string;
+  highlight_task_rows: boolean;
   id: string;
   icon_key: string;
   user_id: string;
@@ -119,7 +120,7 @@ export type CustomBehaviorRulesetInsert = Omit<CustomBehaviorRuleset, "created_a
   updated_at?: string;
 };
 
-export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "accent_key" | "deleted_at" | "description" | "icon_key" | "name" | "updated_at">>;
+export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "accent_key" | "deleted_at" | "description" | "highlight_task_rows" | "icon_key" | "name" | "updated_at">>;
 
 export type CustomBehaviorRulesetDeleteResult = {
   ruleset_id: string;

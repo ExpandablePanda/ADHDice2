@@ -87,9 +87,10 @@ import {
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyResolutionContext, TaskBehaviorProfiles, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
-import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
+import { resolveTaskTypeRowPresentation } from "@/lib/task-type-presentation";
 import { buildTaskTypeSelectionOptions, resolveTaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskTypePresentation } from "@/lib/task-type-presentation";
+import { TaskTypeTitleIcon } from "./task-type-identity";
 import {
   buildTaskContentFolderMemberSummary,
   buildTaskContentFolderPresentation,
@@ -1456,7 +1457,8 @@ function StepsCardPreview({
             const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
             const childTask = childTasksById.get(item.id) ?? null;
             const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
-            const childTaskSurface = getTaskTypeSurfaceClassName(childTaskTypeOption.accentKey);
+            const childTaskRowPresentation = resolveTaskTypeRowPresentation(childTaskTypeOption);
+            const childTaskSurface = childTaskRowPresentation.surfaceClassName;
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
@@ -1561,6 +1563,7 @@ function StepsCardPreview({
                                   {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                                 </p>
                               </button>
+                              {childTaskRowPresentation.titleIcon ? <TaskTypeTitleIcon label={childTaskRowPresentation.titleIcon.label} option={childTaskRowPresentation.titleIcon} /> : null}
                               <StepLayerChip depth={item.depth} />
                               <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
                               <MetadataDisclosureButton
@@ -3429,7 +3432,8 @@ function TasksSimpleList({
 
         const task = entry.task;
         const taskTypeOption = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, tableProps.customBehaviorRulesets);
-        const taskSurface = getTaskTypeSurfaceClassName(taskTypeOption.accentKey);
+        const taskTypeRowPresentation = resolveTaskTypeRowPresentation(taskTypeOption);
+        const taskSurface = taskTypeRowPresentation.surfaceClassName;
         const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
@@ -3602,6 +3606,7 @@ function TasksSimpleList({
                           </p>
                         </button>
                       )}
+                      {taskTypeRowPresentation.titleIcon ? <TaskTypeTitleIcon label={taskTypeRowPresentation.titleIcon.label} option={taskTypeRowPresentation.titleIcon} /> : null}
                       <TaskHistoryChips
                         currentStreak={taskRow.currentStreak}
                         missedStreak={taskRow.missedStreak}

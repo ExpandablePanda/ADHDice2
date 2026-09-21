@@ -44,7 +44,7 @@ test("named Custom Task Types extend the shared selection model without becoming
     { id: "practice", name: "Practice", task_type: "custom" as const, icon_key: "music", accent_key: "teal", description: "Practice time" },
   ];
   assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Practice", "Routine"]);
-  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).find((option) => option.value === "practice"), { accentKey: "teal", description: "Practice time", iconKey: "music", label: "Practice", value: "practice" });
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).find((option) => option.value === "practice"), { accentKey: "teal", description: "Practice time", highlightTaskRows: true, iconKey: "music", label: "Practice", value: "practice" });
   assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
   assert.equal(resolveTaskTypeSelection("custom", rulesets), null);
   assert.deepEqual(resolveTaskTypeSelection("task", rulesets), { taskType: "task", customRulesetId: null });

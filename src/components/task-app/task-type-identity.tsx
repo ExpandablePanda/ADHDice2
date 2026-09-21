@@ -36,6 +36,21 @@ export function TaskTypeIdentity({
   );
 }
 
+export function TaskTypeTitleIcon({
+  label,
+  option,
+}: {
+  label: string;
+  option: Pick<TaskTypeSelectionOption, "iconKey" | "accentKey">;
+}) {
+  const accent = resolveTaskTypeAccent(option.accentKey);
+  return (
+    <span aria-label={label} className={`inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-md ${accent.iconClassName}`} role="img" title={label}>
+      <TaskTypeIcon aria-hidden="true" className="h-3.5 w-3.5" iconKey={option.iconKey} />
+    </span>
+  );
+}
+
 export type TaskTypeSelectSize = "default" | "compact";
 
 type TaskTypeSelectMenuPosition = {

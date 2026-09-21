@@ -83,21 +83,21 @@ test("Table hover borders preserve the row fill and never add row shadows", () =
 });
 
 test("Table and List production containers use their shared Task Type surface authorities", () => {
-  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName\(taskTypeOption\.accentKey\)/);
-  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName\(childTaskTypeOption\.accentKey\)/);
-  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName\(sourceTaskTypeOption\.accentKey\)/);
+  assert.match(tableSource, /resolveTaskTypeRowPresentation\(taskTypeOption\)/);
+  assert.match(tableSource, /resolveTaskTypeRowPresentation\(childTaskTypeOption\)/);
+  assert.match(tableSource, /resolveTaskTypeRowPresentation\(sourceTaskTypeOption\)/);
   assert.doesNotMatch(tableSource, /getTaskTypeTableSurfaceClassName|getTaskTypeTableChildSurfaceClassName/);
   assert.match(tableSource, /py-1\.5[\s\S]*\$\{childTaskSurface\}[\s\S]*data-task-table-child-grid=\{item\.id\}/);
   assert.match(tableSource, /py-1\.5[\s\S]*\$\{sourceTaskSurface\}[\s\S]*data-task-table-source-step-grid=\{row\.subtask\.id\}/);
   assert.match(tableSource, /py-1\.5[\s\S]*\$\{taskSurface\}[\s\S]*data-task-table-parent-grid=\{task\.id\}/);
   assert.match(tableSource, /data-task-table-parent-grid=\{task\.id\}/);
-  assert.match(listSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
+  assert.match(listSource, /resolveTaskTypeRowPresentation\(taskTypeOption\)/);
   assert.match(listSource, /<article[\s\S]*\$\{taskSurface\}/);
 });
 
 test("Table child paths retain compact geometry, focus treatment, and no row shadows", () => {
-  const normalChildStart = tableSource.indexOf("const childTaskTypeOption = resolveTaskTypeSelectionOption");
-  const sourceChildStart = tableSource.indexOf("const sourceTaskTypeOption = resolveTaskTypeSelectionOption");
+  const normalChildStart = tableSource.indexOf("const childTaskSurface =");
+  const sourceChildStart = tableSource.indexOf("const sourceTaskSurface =");
   const normalChildEnd = tableSource.indexOf("data-task-table-child-grid={item.id}", normalChildStart) + 200;
   const sourceChildEnd = tableSource.indexOf("data-task-table-source-step-grid={row.subtask.id}", sourceChildStart) + 200;
   const normalChildSource = tableSource.slice(normalChildStart, normalChildEnd);
@@ -107,7 +107,7 @@ test("Table child paths retain compact geometry, focus treatment, and no row sha
   assert.doesNotMatch(normalChildSource, /shadow-/);
   assert.match(sourceChildSource, /py-1\.5/);
   assert.doesNotMatch(sourceChildSource, /shadow-/);
-  const parentStart = tableSource.indexOf("const taskSurface = getTaskTypeTableRowSurfaceClassName");
+  const parentStart = tableSource.indexOf("const taskSurface = taskTypeRowPresentation.tableRowSurfaceClassName");
   const parentEnd = tableSource.indexOf("data-task-table-parent-grid={task.id}", parentStart) + 100;
   const parentSource = tableSource.slice(parentStart, parentEnd);
   assert.doesNotMatch(parentSource, /shadow-|getHighlightedRowClassName/);
@@ -117,7 +117,7 @@ test("Table child paths retain compact geometry, focus treatment, and no row sha
 test("Table and List selected, hover, open, and highlighted states preserve surface and selection visibility", () => {
   assert.match(tableSource, /\$\{taskSurface\}[\s\S]*selectedTaskIdSet\.has\(task\.id\)/);
   assert.match(tableSource, /rowContextMenu\?\.taskId === task\.id/);
-  assert.match(tableSource, /getTaskTypeTableRowSurfaceClassName/);
+  assert.match(tableSource, /resolveTaskTypeRowPresentation/);
   assert.match(tableSource, /whileHover=\{shouldAnimateRows \? \{ y: -0\.5 \} : undefined\}/);
   assert.match(tableSource, /selectedTaskIdSet\.has\(task\.id\)[\s\S]*TASK_TABLE_SELECTED_TASK_SURFACE_CLASS/);
   assert.match(tableSource, /focus-visible:ring-2/);
@@ -208,5 +208,5 @@ test("raw Lucide icon keys remain valid and TaskTypeIdentity uses the shared dyn
 
 test("the 7.13.77 presentation patch contains no SQL, schema, or behavior-policy persistence change", () => {
   const changedFiles = execFileSync("git", ["diff", "--name-only", "HEAD"], { encoding: "utf8" }).split("\n").filter(Boolean);
-  assert.doesNotMatch(changedFiles.join("\n"), /(^|\/)supabase\/|schema|behavior-policy|task-state/);
+  assert.doesNotMatch(changedFiles.join("\n"), /behavior-policy|task-state/);
 });

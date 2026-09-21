@@ -91,6 +91,16 @@ function PresentationControls({
           ))}
         </div>
       </div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold text-[#655d7d] dark:text-white/65">Highlight task rows</p>
+          <p className="mt-1 text-xs text-[#7d7598] dark:text-white/45">Color the task row using this Task Type&apos;s accent.</p>
+        </div>
+        <div aria-label="Highlight task rows" className="flex shrink-0 gap-1.5" role="group">
+          <AdhdChip aria-pressed={presentation.highlightTaskRows} disabled={disabled} onClick={() => onChange({ highlightTaskRows: true })} selected={presentation.highlightTaskRows}>On</AdhdChip>
+          <AdhdChip aria-pressed={!presentation.highlightTaskRows} disabled={disabled} onClick={() => onChange({ highlightTaskRows: false })} selected={!presentation.highlightTaskRows}>Off</AdhdChip>
+        </div>
+      </div>
     </div>
   );
 }
@@ -381,11 +391,13 @@ export function TaskTypeBehaviorSettings({
       const currentPresentation = normalizeTaskTypePresentation({
         accentKey: selectedRuleset.accent_key,
         description: rulesetDescriptionDraft,
+        highlightTaskRows: selectedRuleset.highlight_task_rows,
         iconKey: selectedRuleset.icon_key,
       });
       await onUpdateCustomRulesetPresentation(selectedRuleset.id, {
         accentKey: currentPresentation.accentKey,
         description: descriptionValidation.description,
+        highlightTaskRows: currentPresentation.highlightTaskRows,
         iconKey: currentPresentation.iconKey,
       });
     } finally {
@@ -401,6 +413,7 @@ export function TaskTypeBehaviorSettings({
         const currentPresentation = normalizeTaskTypePresentation({
           accentKey: selectedRuleset.accent_key,
           description: rulesetDescriptionDraft,
+          highlightTaskRows: selectedRuleset.highlight_task_rows,
           iconKey: selectedRuleset.icon_key,
         });
         await onUpdateCustomRulesetPresentation(selectedRuleset.id, {
@@ -637,7 +650,7 @@ export function TaskTypeBehaviorSettings({
             </div>
           </label>
           <div className="mt-4 border-t border-[#eee9f8] pt-3 dark:border-white/10">
-              <PresentationControls disabled={isSavingPresentation || isDeleting} onChange={updateSelectedPresentation} presentation={normalizeTaskTypePresentation({ accentKey: selectedRuleset.accent_key, description: rulesetDescriptionDraft, iconKey: selectedRuleset.icon_key })} />
+              <PresentationControls disabled={isSavingPresentation || isDeleting} onChange={updateSelectedPresentation} presentation={normalizeTaskTypePresentation({ accentKey: selectedRuleset.accent_key, description: rulesetDescriptionDraft, highlightTaskRows: selectedRuleset.highlight_task_rows, iconKey: selectedRuleset.icon_key })} />
               <label className="mt-3 grid gap-1.5 text-xs font-semibold text-[#655d7d] dark:text-white/65" htmlFor="selected-custom-ruleset-description">
                 Short description
                 <textarea aria-label={`Description for ${selectedRuleset.name}`} className={`${TASK_TABLE_INPUT_CLASS} min-h-16 resize-y`} disabled={isSavingPresentation || isDeleting} id="selected-custom-ruleset-description" maxLength={240} onChange={(event) => setRulesetDescriptionDraft(event.target.value)} value={rulesetDescriptionDraft} />

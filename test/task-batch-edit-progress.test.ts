@@ -36,6 +36,7 @@ function ruleset(id: string, name = id): CustomBehaviorRuleset {
     created_at: "2026-08-16T09:00:00.000Z",
     deleted_at: null,
     description: `${name} ruleset`,
+    highlight_task_rows: true,
     icon_key: "list-todo",
     id,
     name,

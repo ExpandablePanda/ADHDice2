@@ -118,6 +118,7 @@ create table public.adhdice_custom_behavior_rulesets (
   icon_key text not null default 'list-todo' check (length(btrim(icon_key)) between 1 and 80),
   accent_key text not null default 'purple' check (length(btrim(accent_key)) between 1 and 40),
   description text not null default '' check (char_length(description) <= 240),
+  highlight_task_rows boolean not null default true,
   deleted_at timestamptz null,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
