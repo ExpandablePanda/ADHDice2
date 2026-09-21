@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.90`.
+- Current working app version: `7.13.91`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.13.91 Home To-do Move to Day
+
+Home To-do rows now expose a compact Move to day menu backed only by the
+existing `taskDayOffsets` Home organization state. The menu uses the existing
+seven day-section labels plus Later, disables full/current destinations, and
+does not mutate Task scheduling or recurrence fields.
 
 ## 2026-09-20 7.13.90 Correct Rich Evidence Cache Payload + Safari Fallback
 

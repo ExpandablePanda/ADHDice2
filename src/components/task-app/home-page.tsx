@@ -1,10 +1,11 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
+import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { TaskTypeSelect } from "./task-type-identity";
@@ -328,6 +329,7 @@ export function HomePage({
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
+  const [moveDayMenuTaskId, setMoveDayMenuTaskId] = useState<string | null>(null);
   const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
@@ -335,6 +337,7 @@ export function HomePage({
   const searchRef = useRef<HTMLDivElement | null>(null);
   const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
+  const moveDayMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const routineSectionRenameCanceledRef = useRef(false);
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
@@ -412,6 +415,7 @@ export function HomePage({
   function selectHomeTab(nextTab: HomePanelTab) {
     setActiveHomeTab(nextTab);
     setIsSearchOpen(false);
+    setMoveDayMenuTaskId(null);
     setIsSettingsOpen(false);
   }
 
@@ -551,6 +555,25 @@ export function HomePage({
       document.removeEventListener("keydown", handleKeyDown);
     };
   }, [statusMenuTaskId]);
+
+  useEffect(() => {
+    if (!moveDayMenuTaskId) return;
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!moveDayMenuRef.current?.contains(event.target as Node)) setMoveDayMenuTaskId(null);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setMoveDayMenuTaskId(null);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [moveDayMenuTaskId]);
 
   useEffect(() => {
     if (!isSettingsOpen) return;
@@ -762,9 +785,18 @@ export function HomePage({
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
+    const moveDayMenuOpen = moveDayMenuTaskId === task.id;
     const durableTaskIndex = state.taskIds.indexOf(task.id);
     const renderedDayOffset = daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
+    const moveDayDestinations = [
+      ...daySections.map((section) => ({
+        dayOffset: section.dayIndex,
+        isFull: section.taskIds.length >= state.tasksPerDay,
+        label: section.label,
+      })),
+      { dayOffset: 7, isFull: false, label: "Later" },
+    ];
     const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0;
     const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state.taskIds.length - 1 && renderedDayOffset === 7;
     const isAtRoutineTop = isRoutine && index === 0;
@@ -902,6 +934,55 @@ export function HomePage({
             </>
           ) : (
             <>
+              <div className="relative" ref={moveDayMenuOpen ? moveDayMenuRef : undefined}>
+                <AdhdIconButton
+                  aria-expanded={moveDayMenuOpen}
+                  aria-haspopup="menu"
+                  aria-label={`Move ${task.title || "Untitled task"} to day`}
+                  className={HOME_TODO_ACTION_CLASS}
+                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                  onClick={() => setMoveDayMenuTaskId((current) => current === task.id ? null : task.id)}
+                  selected={moveDayMenuOpen}
+                  size="sm"
+                  title="Move to day"
+                >
+                  <CalendarDays aria-hidden="true" />
+                </AdhdIconButton>
+                {moveDayMenuOpen ? (
+                  <AdhdDropdownPanel
+                    aria-label={`Move ${task.title || "Untitled task"} to day`}
+                    className="left-auto right-0 top-[calc(100%+0.35rem)] max-h-80 overflow-y-auto p-1.5"
+                    role="menu"
+                    widthClassName="min-w-56"
+                  >
+                    <div className="grid gap-1">
+                      {moveDayDestinations.map((destination) => {
+                        const isCurrentDestination = renderedDayOffset === destination.dayOffset;
+                        const disabled = isCurrentDestination || destination.isFull;
+                        return (
+                          <button
+                            aria-checked={isCurrentDestination}
+                            aria-label={`${destination.label}${isCurrentDestination ? ", current destination" : destination.isFull ? ", full" : ""}`}
+                            className="flex min-h-9 items-center justify-between gap-3 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] disabled:cursor-not-allowed disabled:opacity-45 dark:text-white/75 dark:hover:bg-white/[0.08]"
+                            disabled={disabled}
+                            key={destination.dayOffset}
+                            onClick={() => {
+                              if (disabled) return;
+                              updateTaskDayOffset(task.id, destination.dayOffset);
+                              setMoveDayMenuTaskId(null);
+                            }}
+                            role="menuitemradio"
+                            type="button"
+                          >
+                            <span>{destination.label}</span>
+                            {isCurrentDestination ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#6f57f6]">Current</span> : destination.isFull ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#9a92b1]">Full</span> : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </AdhdDropdownPanel>
+                ) : null}
+              </div>
               {!isAtAbsoluteTop ? (
                 <AdhdIconButton
                   aria-label={`Move ${task.title || "Untitled task"} to Top`}

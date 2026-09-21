@@ -896,11 +896,11 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /updateTaskDayOffset\(task\.id, 7\)/);
   assert.match(source, /from Home To-do/);
   assert.match(source, /<Minus aria-hidden="true" \/>/);
-  assert.equal((source.match(/size="sm"/g) ?? []).length, 8);
+  assert.equal((source.match(/size="sm"/g) ?? []).length, 9);
   assert.match(source, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
   assert.match(source, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
-  assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 6);
-  assert.equal((source.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 6);
+  assert.equal((source.match(/className=\{HOME_TODO_ACTION_CLASS\}/g) ?? []).length, 7);
+  assert.equal((source.match(/iconClassName=\{HOME_TODO_ACTION_ICON_CLASS\}/g) ?? []).length, 7);
   assert.match(sharedIconButton, /sm: "h-8 w-8"/);
   assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /tone="danger"/);
@@ -1006,6 +1006,35 @@ test("Home Routine child drag reuses TaskApp sibling reorder without changing Ho
   assert.match(homeSource, /items=\{routineGroups\}/);
   assert.match(homeSource, /onReorder=\{\(nextGroups\) => updateRoutineTaskIds/);
   assert.match(homeSource, /!isRoutineChild \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+});
+
+test("Home To-do move-to-day control uses Home offsets and leaves Task scheduling untouched", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const renderStart = source.indexOf("function renderHomeTask");
+  const renderEnd = source.indexOf("\n  useEffect", renderStart);
+  const renderSource = source.slice(renderStart, renderEnd);
+  const moveDayStart = renderSource.indexOf("const moveDayDestinations");
+  const moveDayEnd = renderSource.indexOf("const isAtAbsoluteTop", moveDayStart);
+  const moveDaySource = renderSource.slice(moveDayStart, moveDayEnd);
+  const todoActionStart = renderSource.indexOf(") : (\n            <>", renderSource.indexOf("{isRoutine ? ("));
+  const todoActionEnd = renderSource.indexOf("</>", todoActionStart);
+  const todoActionSource = renderSource.slice(todoActionStart, todoActionEnd);
+
+  assert.match(source, /const \[moveDayMenuTaskId, setMoveDayMenuTaskId\] = useState<string \| null>\(null\)/);
+  assert.match(source, /CalendarDays/);
+  assert.match(source, /aria-label=\{`Move \$\{task\.title \|\| "Untitled task"\} to day`\}/);
+  assert.match(moveDaySource, /dayOffset: section\.dayIndex/);
+  assert.match(moveDaySource, /label: section\.label/);
+  assert.match(moveDaySource, /\{ dayOffset: 7, isFull: false, label: "Later" \}/);
+  assert.match(todoActionSource, /updateTaskDayOffset\(task\.id, destination\.dayOffset\)/);
+  assert.match(todoActionSource, /disabled=\{disabled\}/);
+  assert.match(todoActionSource, /const disabled = isCurrentDestination \|\| destination\.isFull/);
+  assert.match(todoActionSource, /setMoveDayMenuTaskId\(null\)/);
+  assert.doesNotMatch(todoActionSource, /updateTask\(|due_on\s*[:=]|due_time\s*[:=]|repeat_frequency\s*[:=]|TaskHistory|rewards|Records|Achievements/);
+  assert.match(source, /if \(!moveDayMenuTaskId\) return/);
+  assert.match(source, /if \(event\.key === "Escape"\)/);
+  assert.match(source, /if \(!moveDayMenuRef\.current\?\.contains\(event\.target as Node\)\) setMoveDayMenuTaskId\(null\)/);
+  assert.match(source, /!isRoutineChild \? <div className="flex shrink-0 items-center gap-1">/);
 });
 
 test("Home todo migration and schema provide owner-scoped realtime state", () => {
