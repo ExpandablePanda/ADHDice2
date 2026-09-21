@@ -285,7 +285,13 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
           setRecordsSessionSnapshot(sessionKey, refreshResult);
           const storage = getRecordsLocalStorage();
           clearRecordsInvalidation(storage, sessionKey);
-          writeRecordsLocalDetailCache(storage, { ...refreshResult, lastCalculatedAt: refreshResult.evaluatedAt, sessionKey });
+          writeRecordsLocalDetailCache(storage, {
+            lastCalculatedAt: refreshResult.evaluatedAt,
+            provisionalCandidates: refreshResult.provisionalCandidates,
+            sessionKey,
+            taskEvidenceByRecordIdentity: refreshResult.taskEvidenceByRecordIdentity,
+            warnings: refreshResult.warnings,
+          });
         }
         if (generation !== generationRef.current || latestOwnerRef.current !== userId || latestSessionKeyRef.current !== sessionKey) return;
         setState((current) => completeRecordsRefresh(current, { ...refreshResult, ownerUserId: userId, sessionKey }));

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.89`.
+- Current working app version: `7.13.90`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.13.90 Correct Rich Evidence Cache Payload + Safari Fallback
+
+The client-only rich Records detail cache now writes an explicit schema-v2
+payload containing only calculation time, session key, Task Evidence,
+provisional candidates, and warnings. If the full localStorage write is
+rejected, it retries with provisional candidates removed so current Record
+Evidence can still restore. No SQL or database migration changed.
 
 ## 2026-09-20 7.13.84 Exclude Task from Tracking
 

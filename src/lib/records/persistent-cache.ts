@@ -2,7 +2,7 @@ import { RECORD_METRICS, type ProvisionalRecordCandidate } from "@/lib/records/t
 import type { RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
 import { recordsTimestampsMatch } from "@/lib/records/freshness";
 
-export const RECORDS_LOCAL_DETAIL_CACHE_SCHEMA_VERSION = 1;
+export const RECORDS_LOCAL_DETAIL_CACHE_SCHEMA_VERSION = 2;
 
 export type RecordsLocalDetailCache = Readonly<{
   lastCalculatedAt: string;
@@ -18,7 +18,7 @@ function invalidationKey(sessionKey: string) {
 }
 
 function detailKey(sessionKey: string) {
-  return `adhdice:records:details:v1:${sessionKey}`;
+  return `adhdice:records:details:v2:${sessionKey}`;
 }
 
 function isRecordObject(value: unknown): value is Record<string, unknown> {
@@ -117,10 +117,43 @@ export function readRecordsLocalDetailCache(storage: Storage | null, sessionKey:
 
 export function writeRecordsLocalDetailCache(storage: Storage | null, input: Omit<RecordsLocalDetailCache, "schemaVersion">) {
   if (!storage) return false;
+
+  const serialize = (provisionalCandidates: ProvisionalRecordCandidate[]) => JSON.stringify({
+    lastCalculatedAt: input.lastCalculatedAt,
+    provisionalCandidates,
+    schemaVersion: RECORDS_LOCAL_DETAIL_CACHE_SCHEMA_VERSION,
+    sessionKey: input.sessionKey,
+    taskEvidenceByRecordIdentity: input.taskEvidenceByRecordIdentity,
+    warnings: input.warnings,
+  });
+
+  let fullSerialized: string | null = null;
+  let fullError: unknown = null;
   try {
-    storage.setItem(detailKey(input.sessionKey), JSON.stringify({ ...input, schemaVersion: RECORDS_LOCAL_DETAIL_CACHE_SCHEMA_VERSION }));
+    fullSerialized = serialize(input.provisionalCandidates);
+    storage.setItem(detailKey(input.sessionKey), fullSerialized);
     return true;
-  } catch {
-    return false;
+  } catch (error) {
+    fullError = error;
   }
+
+  let reducedSerialized: string | null = null;
+  let reducedError: unknown = null;
+  try {
+    reducedSerialized = serialize([]);
+    storage.setItem(detailKey(input.sessionKey), reducedSerialized);
+    return true;
+  } catch (error) {
+    reducedError = error;
+  }
+
+  if (process.env.NODE_ENV !== "production") {
+    const describeError = (error: unknown) => error instanceof Error
+      ? `${error.name}: ${error.message}`
+      : typeof error === "string" ? error : "unknown error";
+    const describeSize = (label: string, serialized: string | null) => `${label}=${serialized === null ? "unavailable" : `${serialized.length} chars`}`;
+    console.warn(`[records cache] rich detail write failed (${describeSize("full", fullSerialized)}, ${describeSize("reduced", reducedSerialized)}; full=${describeError(fullError)}; reduced=${describeError(reducedError)})`);
+  }
+
+  return false;
 }

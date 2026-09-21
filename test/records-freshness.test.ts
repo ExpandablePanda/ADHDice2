@@ -17,15 +17,22 @@ const home = readFileSync(new URL("../src/components/task-app/home-page.tsx", im
 const homeTargets = readFileSync(new URL("../src/hooks/useHomeRecordTargets.ts", import.meta.url), "utf8");
 const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
-function storage(initial: Record<string, string> = {}, options: { failRead?: boolean; failWrite?: boolean } = {}): Storage {
+function storage(initial: Record<string, string> = {}, options: { failRead?: boolean; failWrite?: boolean; failWriteCount?: number } = {}): Storage {
   const values = new Map(Object.entries(initial));
+  let failuresRemaining = options.failWrite ? Number.POSITIVE_INFINITY : options.failWriteCount ?? 0;
   return {
     clear: () => values.clear(),
     getItem: (key) => options.failRead ? (() => { throw new Error("storage unavailable"); })() : values.get(key) ?? null,
     key: (index) => [...values.keys()][index] ?? null,
     get length() { return values.size; },
     removeItem: (key) => values.delete(key),
-    setItem: (key, value) => { if (options.failWrite) throw new Error("quota exceeded"); values.set(key, value); },
+    setItem: (key, value) => {
+      if (failuresRemaining > 0) {
+        if (Number.isFinite(failuresRemaining)) failuresRemaining -= 1;
+        throw new Error("quota exceeded");
+      }
+      values.set(key, value);
+    },
   };
 }
 
@@ -88,7 +95,7 @@ test("freshness migration is a narrow authenticated function, not table SELECT",
   assert.doesNotMatch(sql, /run_id|manifest_digest|expected_chunk_count/);
 });
 
-test("rich detail cache restores only exact calculation identity and fails safely", () => {
+test("rich detail cache writes the intended v2 payload and restores exact calculation identity", () => {
   const cache = storage();
   const input = {
     lastCalculatedAt: "2026-09-20T10:00:00.000Z",
@@ -98,16 +105,78 @@ test("rich detail cache restores only exact calculation identity and fails safel
     warnings: ["warning"],
   } as never;
   assert.equal(writeRecordsLocalDetailCache(cache, input), true);
+  const raw = cache.getItem(`adhdice:records:details:v2:${input.sessionKey}`);
+  assert.ok(raw);
+  const persisted = JSON.parse(raw);
+  assert.equal(persisted.schemaVersion, 2);
+  assert.deepEqual(persisted.taskEvidenceByRecordIdentity, input.taskEvidenceByRecordIdentity);
+  assert.deepEqual(persisted.provisionalCandidates, input.provisionalCandidates);
   assert.ok(readRecordsLocalDetailCache(cache, input.sessionKey, input.lastCalculatedAt));
   assert.ok(readRecordsLocalDetailCache(cache, input.sessionKey, "2026-09-20T10:00:00.000+00:00"));
   assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, "2026-09-20T10:00:01.000Z"), null);
   assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, "2026-09-20T10:00:00.001Z"), null);
   assert.equal(readRecordsLocalDetailCache(cache, "user-2:records-v1:America/New_York:06:00", input.lastCalculatedAt), null);
-  cache.setItem(`adhdice:records:details:v1:${input.sessionKey}`, JSON.stringify({ ...input, schemaVersion: 1, taskEvidenceByRecordIdentity: { malformed: 1 } }));
+  const legacyCache = storage({ [`adhdice:records:details:v1:${input.sessionKey}`]: JSON.stringify({ ...input, schemaVersion: 1, taskEvidenceByRecordIdentity: input.taskEvidenceByRecordIdentity }) });
+  assert.equal(readRecordsLocalDetailCache(legacyCache, input.sessionKey, input.lastCalculatedAt), null);
+  cache.setItem(`adhdice:records:details:v2:${input.sessionKey}`, JSON.stringify({ ...input, schemaVersion: 2, taskEvidenceByRecordIdentity: { malformed: 1 } }));
   assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, input.lastCalculatedAt), null);
-  cache.setItem(`adhdice:records:details:v1:${input.sessionKey}`, "not-json");
-  assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, input.lastCalculatedAt), null);
-  assert.equal(writeRecordsLocalDetailCache(storage({}, { failWrite: true }), input), false);
+});
+
+test("rich detail cache never persists current Records or events", () => {
+  const cache = storage();
+  const input = {
+    lastCalculatedAt: "2026-09-20T10:00:00.000Z",
+    provisionalCandidates: [],
+    sessionKey: "user-1:records-v1:America/New_York:06:00",
+    taskEvidenceByRecordIdentity: {},
+    warnings: [],
+    currentRecords: [{ metric_key: "parent_tasks_day" }],
+    events: [{ id: "event-1" }],
+  } as never;
+  assert.equal(writeRecordsLocalDetailCache(cache, input), true);
+  const persisted = JSON.parse(cache.getItem(`adhdice:records:details:v2:${input.sessionKey}`)!);
+  assert.equal(Object.hasOwn(persisted, "currentRecords"), false);
+  assert.equal(Object.hasOwn(persisted, "events"), false);
+});
+
+test("rich detail cache retries an Evidence-only payload after the first write fails", () => {
+  const cache = storage({}, { failWriteCount: 1 });
+  const input = {
+    lastCalculatedAt: "2026-09-20T10:00:00.000Z",
+    provisionalCandidates: [{ candidateIdentity: "candidate" }],
+    sessionKey: "user-1:records-v1:America/New_York:06:00",
+    taskEvidenceByRecordIdentity: { "parent_tasks_day:global:global": [{ entityKind: "parent", logicalDate: "2026-09-20", occurrenceDueOn: null, outcome: "done", occurrenceIdentity: "occurrence-1", sourceRowId: "history-1", taskId: "task-1", title: "Task 1" }] },
+    warnings: ["warning"],
+  } as never;
+  assert.equal(writeRecordsLocalDetailCache(cache, input), true);
+  const persisted = JSON.parse(cache.getItem(`adhdice:records:details:v2:${input.sessionKey}`)!);
+  assert.deepEqual(persisted.provisionalCandidates, []);
+  const restored = readRecordsLocalDetailCache(cache, input.sessionKey, input.lastCalculatedAt);
+  assert.deepEqual(restored?.taskEvidenceByRecordIdentity, input.taskEvidenceByRecordIdentity);
+  assert.deepEqual(restored?.warnings, input.warnings);
+});
+
+test("failure of both rich detail cache writes remains non-fatal", () => {
+  const cache = storage({}, { failWrite: true });
+  const input = {
+    lastCalculatedAt: "2026-09-20T10:00:00.000Z",
+    provisionalCandidates: [],
+    sessionKey: "user-1:records-v1:America/New_York:06:00",
+    taskEvidenceByRecordIdentity: {},
+    warnings: [],
+  } as never;
+  const originalWarn = console.warn;
+  const warnings: unknown[][] = [];
+  console.warn = (...args) => warnings.push(args);
+  try {
+    assert.equal(writeRecordsLocalDetailCache(cache, input), false);
+  } finally {
+    console.warn = originalWarn;
+  }
+  if (process.env.NODE_ENV !== "production") {
+    assert.equal(warnings.length, 1);
+    assert.match(String(warnings[0]?.[0]), /full=.*reduced=.*quota exceeded/);
+  }
 });
 
 test("missing or invalid rich detail cache keeps the missing-Evidence fallback", () => {
@@ -117,6 +186,8 @@ test("missing or invalid rich detail cache keeps the missing-Evidence fallback",
   assert.match(hook, /hasDetailedEvidence: false/);
   assert.match(hook, /taskEvidenceByRecordIdentity: \{\}/);
   assert.match(hook, /readRecordsLocalDetailCache\(getRecordsLocalStorage\(\), sessionKey, evaluatedAt\)/);
+  assert.match(hook, /writeRecordsLocalDetailCache\(storage, \{[\s\S]*lastCalculatedAt: refreshResult\.evaluatedAt,[\s\S]*taskEvidenceByRecordIdentity: refreshResult\.taskEvidenceByRecordIdentity,[\s\S]*warnings: refreshResult\.warnings,[\s\S]*\}\)/);
+  assert.doesNotMatch(hook, /writeRecordsLocalDetailCache\(storage, \{ \.\.\.refreshResult/);
 });
 
 test("invalidation markers are user/settings scoped and storage failures are harmless", () => {
