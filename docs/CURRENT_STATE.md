@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.38`.
+- Current working app version: `7.14.39`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.14.39 Preserve Canonical Recurrence Across Metadata Updates and Enable Multi-Select Clear
+
+Metadata-only Task Type, named Custom ruleset, and other Task-row responses now
+reapply the existing canonical schedule projection without creating or mutating
+a schedule boundary. Calendar History Clear is available for a multi-selection
+only when every selected persisted entry is individually clearable, then uses
+the existing sequential canonical clear path and one refresh. Browser QA remains
+Andrew's responsibility.
 
 ## 2026-09-20 7.14.38 Use the Effective Behavior Policy Boundary for Current Missed Streaks
 

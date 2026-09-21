@@ -84,6 +84,14 @@ test("History Calendar applies multi-select Not Due sequentially and excludes fu
   assert.match(taskHistoryModalSource, /if \(completed === false\) break/);
 });
 
+test("History Calendar exposes Clear only when every selected persisted entry is individually clearable", () => {
+  assert.match(taskHistoryModalSource, /const canClearSelectedDate = selectedDates\.length > 0/);
+  assert.match(taskHistoryModalSource, /selectedDates\.every\(\(dateKey\) => isTaskHistoryEntryClearable/);
+  assert.match(taskHistoryModalSource, /status === "clear" && !canClearSelectedDate/);
+  assert.match(taskHistoryModalSource, /const editableDates = status === "clear"\s*\?\s*selectedDates/);
+  assert.doesNotMatch(taskHistoryModalSource, /const canClearSelectedDate = !isMultiSelect/);
+});
+
 test("TaskHistoryModal keeps the canonical projection range for month rendering", () => {
   assert.match(taskHistoryModalSource, /const days = buildTaskHistoryCalendarDateKeys\(today\);/);
   assert.match(taskHistoryModalSource, /const calendarEnd = days\.at\(-1\) \?\? today/);

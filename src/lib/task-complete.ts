@@ -1,4 +1,4 @@
-import type { Task, TaskHistoryActionInput, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryActionInput, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import { getTaskDescendants } from "@/lib/task-hierarchy";
 
@@ -106,6 +106,27 @@ export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_fr
   return task.repeat_frequency === "none"
     ? (["delayed", "missed", "complete"] as const)
     : (["done", "did_my_best", "delayed", "missed", "complete"] as const);
+}
+
+export function isTaskHistoryEntryClearable({
+  entry,
+  entryDate,
+  task,
+  todayDateKey,
+}: {
+  entry: Pick<TaskHistory, "status"> | null | undefined;
+  entryDate: string;
+  task: Pick<Task, "status">;
+  todayDateKey: string;
+}) {
+  return entryDate <= todayDateKey
+    && Boolean(entry)
+    && task.status !== "complete"
+    && task.status !== "archived"
+    && task.status !== "trashed"
+    && entry?.status !== "complete"
+    && entry?.status !== "delayed"
+    && (entry?.status === "done" || entry?.status === "did_my_best" || entry?.status === "missed");
 }
 
 export function getTaskHistoryCalendarVisibleActionStatuses({

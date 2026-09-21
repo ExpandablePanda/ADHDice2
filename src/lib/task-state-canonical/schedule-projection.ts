@@ -42,6 +42,12 @@ export function mergeTaskWithCanonicalScheduleProjection(
   taskRow: Task,
 ): CanonicalProjectedTask {
   const projection = projectedTask as Partial<CanonicalProjectedTask>;
+  if (projection.canonical_schedule_boundary) {
+    const scheduleSeed = projection.due_on === undefined
+      ? taskRow
+      : { ...taskRow, due_on: projection.due_on };
+    return projectTaskWithCanonicalScheduleBoundary(scheduleSeed, projection.canonical_schedule_boundary);
+  }
   return {
     ...taskRow,
     ...(Object.hasOwn(projection, "canonical_schedule_boundary")

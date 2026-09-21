@@ -28,18 +28,18 @@ function canonicalTask(revision = 25, status: Task["status"] = "pending"): TaskS
   };
 }
 
-function historyEntry(taskId: string, status: TaskHistory["status"]): TaskHistory {
+function historyEntry(taskId: string, status: TaskHistory["status"], entryDate = logicalDate): TaskHistory {
   return {
     counted_as_due_occurrence: true,
-    created_at: "2026-08-19T09:00:00.000Z",
-    entry_date: logicalDate,
+    created_at: `${entryDate}T09:00:00.000Z`,
+    entry_date: entryDate,
     event_type: "status",
-    id: `${taskId}-${logicalDate}`,
-    occurrence_due_on: logicalDate,
-    occurrence_key: `occurrence:${logicalDate}`,
+    id: `${taskId}-${entryDate}`,
+    occurrence_due_on: entryDate,
+    occurrence_key: `occurrence:${entryDate}`,
     status,
     task_id: taskId,
-    updated_at: "2026-08-19T09:00:00.000Z",
+    updated_at: `${entryDate}T09:00:00.000Z`,
     user_id: "user-1",
     was_completed: status === "done" || status === "did_my_best" || status === "complete",
   };
@@ -85,20 +85,22 @@ function failed(message = "Canonical command failed."): TaskStateRuntimeExecutio
   };
 }
 
-function buildHistoryActions(
+function useHistoryActionsForTest(
   initialTask: TaskStateRuntimeLocalTask,
   execute: NonNullable<Parameters<typeof useTaskHistoryActions>[0]["canonicalCommandExecutor"]>,
   messages: Array<{ tone: string; text: string }>,
   initialHistory: TaskHistory[] = [historyEntry(initialTask.id, "done")],
   onHistorySet?: (history: TaskHistory[]) => void,
 ) {
-  let localTasks: Task[] = [initialTask];
+  const localTasksBox = { value: [initialTask] as Task[] };
   return useTaskHistoryActions({
     canonicalCommandExecutor: execute,
     client: {} as never,
     currentUserId: "user-1",
     currentDayKey: logicalDate,
-    loadTaskHistoryForTasks: async (taskIds) => Object.fromEntries(taskIds.map((taskId) => [taskId, { status: "ready", history: [] }])),
+    loadTaskHistoryForTasks: async (taskIds) => {
+      return Object.fromEntries(taskIds.map((taskId) => [taskId, { status: "ready", history: [] }]));
+    },
     setMessage: (message) => {
       const next = typeof message === "function" ? message(messages.at(-1) ?? null) : message;
       if (next) messages.push(next);
@@ -108,11 +110,11 @@ function buildHistoryActions(
       onHistorySet?.(nextHistory);
     },
     setTasks: (updater) => {
-      localTasks = typeof updater === "function" ? updater(localTasks) : updater;
+      localTasksBox.value = typeof updater === "function" ? updater(localTasksBox.value) : updater;
     },
     sortTasksForUi: (tasks) => tasks,
     taskHistory: initialHistory,
-    tasks: localTasks,
+    tasks: localTasksBox.value,
     timezone: "UTC",
   });
 }
@@ -121,7 +123,7 @@ test("clear revision 25 is carried into the following Done command", async () =>
   const initialTask = canonicalTask();
   const calls: Array<{ actionType: string; expectedRevision: number }> = [];
   const messages: Array<{ tone: string; text: string }> = [];
-  const actions = buildHistoryActions(initialTask, async (action, task) => {
+  const actions = useHistoryActionsForTest(initialTask, async (action, task) => {
     calls.push({ actionType: action.actionType, expectedRevision: action.expectedRevision });
     return committed(task, action.actionType === "set_outcome" ? "done" : "pending", "entitlement-1");
   }, messages);
@@ -147,7 +149,7 @@ test("clear revision 25 is carried into the following Done command", async () =>
 test("Not Due to Done and Done to Missed replacements use the newest Task revision", async () => {
   const initialTask = canonicalTask();
   const expectedRevisions: number[] = [];
-  const actions = buildHistoryActions(initialTask, async (action, task) => {
+  const actions = useHistoryActionsForTest(initialTask, async (action, task) => {
     expectedRevisions.push(action.expectedRevision);
     return committed(task, action.actionType === "set_outcome" ? "missed" : "pending");
   }, []);
@@ -170,7 +172,7 @@ test("Not Due to Done and Done to Missed replacements use the newest Task revisi
 test("multi-select sequential replacement carries the newest revision across every clear and outcome", async () => {
   const initialTask = canonicalTask();
   const expectedRevisions: number[] = [];
-  const actions = buildHistoryActions(initialTask, async (action, task) => {
+  const actions = useHistoryActionsForTest(initialTask, async (action, task) => {
     expectedRevisions.push(action.expectedRevision);
     return committed(task, action.actionType === "set_outcome" ? "done" : "pending");
   }, []);
@@ -190,11 +192,51 @@ test("multi-select sequential replacement carries the newest revision across eve
   assert.deepEqual(expectedRevisions, [25, 26, 27, 28, 29, 30]);
 });
 
+test("multi-select Clear emits one sequential canonical clear_outcome per selected date and refreshes once", async () => {
+  const initialTask = canonicalTask();
+  const calls: Array<{ actionType: string; expectedRevision: number; logicalDate: string }> = [];
+  let historyLoadCount = 0;
+  let currentTask: TaskStateRuntimeLocalTask | null = initialTask;
+  const selectedDates = ["2026-08-17", "2026-08-18", logicalDate];
+  const selectedHistory = selectedDates.map((entryDate) => historyEntry(initialTask.id, "done", entryDate));
+  const actions = useTaskHistoryActions({
+    canonicalCommandExecutor: async (action, task) => {
+      calls.push({ actionType: action.actionType, expectedRevision: action.expectedRevision, logicalDate: action.intent?.logical_date ?? "" });
+      return committed(task, "pending");
+    },
+    client: {} as never,
+    currentUserId: "user-1",
+    currentDayKey: logicalDate,
+    loadTaskHistoryForTasks: async (taskIds) => {
+      historyLoadCount += 1;
+      return Object.fromEntries(taskIds.map((taskId) => [taskId, { status: "ready", history: [] }]));
+    },
+    setMessage: () => {},
+    setTaskHistory: () => {},
+    setTasks: () => {},
+    sortTasksForUi: (tasks) => tasks,
+    taskHistory: selectedHistory,
+    tasks: [initialTask],
+    timezone: "UTC",
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(initialTask.id, "pending", selectedDates, {
+    currentTask,
+    onTaskCommitted: (task) => { currentTask = task; },
+  }), true);
+  assert.deepEqual(calls, [
+    { actionType: "clear_outcome", expectedRevision: 25, logicalDate: "2026-08-17" },
+    { actionType: "clear_outcome", expectedRevision: 26, logicalDate: "2026-08-18" },
+    { actionType: "clear_outcome", expectedRevision: 27, logicalDate: logicalDate },
+  ]);
+  assert.equal(historyLoadCount, 1);
+});
+
 test("a failed clear prevents replacement, and a failed replacement stops the batch", async () => {
   const initialTask = canonicalTask();
   const clearCalls: string[] = [];
   const clearMessages: Array<{ tone: string; text: string }> = [];
-  const clearActions = buildHistoryActions(initialTask, async (action) => {
+  const clearActions = useHistoryActionsForTest(initialTask, async (action) => {
     clearCalls.push(action.actionType);
     return failed("The clear command was rejected.");
   }, clearMessages);
@@ -213,7 +255,7 @@ test("a failed clear prevents replacement, and a failed replacement stops the ba
 
   const replacementCalls: string[] = [];
   const replacementMessages: Array<{ tone: string; text: string }> = [];
-  const replacementActions = buildHistoryActions(initialTask, async (action) => {
+  const replacementActions = useHistoryActionsForTest(initialTask, async (action) => {
     replacementCalls.push(action.actionType);
     return failed("The replacement command was rejected.");
   }, replacementMessages);
@@ -228,7 +270,7 @@ test("a failed History outcome replacement leaves the original outcome untouched
   let visibleHistory = [original];
   const calls: string[] = [];
   const messages: Array<{ tone: string; text: string }> = [];
-  const actions = buildHistoryActions(initialTask, async (action) => {
+  const actions = useHistoryActionsForTest(initialTask, async (action) => {
     calls.push(action.actionType);
     return failed("The outcome replacement was rejected.");
   }, messages, visibleHistory, (history) => {

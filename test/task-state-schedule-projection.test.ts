@@ -55,15 +55,146 @@ test("canonical projection preserves the schedule anchor for read-only timeline 
 });
 
 test("metadata and sort-order Task rows merge into projected Tasks without dropping authority", () => {
-  const boundary = { id: "boundary-1", schedule_model: "unscheduled" } as unknown as CanonicalTaskScheduleBoundary;
-  const projected = { id: "task-1", title: "Before", sort_order: 1, canonical_schedule_boundary: boundary, canonical_schedule_anchor_date: null } as unknown as Task;
-  const persisted = { id: "task-1", title: "After", sort_order: 0 } as unknown as Task;
+  const boundary = {
+    id: "boundary-1",
+    schedule_model: "unscheduled",
+    due_time: null,
+    repeat_frequency: "none",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  } as unknown as CanonicalTaskScheduleBoundary;
+  const projected = projectTaskWithCanonicalScheduleBoundary({
+    id: "task-1",
+    due_on: "2026-08-14",
+    repeat_frequency: "daily",
+    repeat_interval: 5,
+  } as unknown as Task, boundary);
+  const persisted = {
+    id: "task-1",
+    title: "After",
+    sort_order: 0,
+    due_on: "2026-09-01",
+    due_time: "09:30",
+    repeat_frequency: "daily",
+    repeat_interval: 7,
+  } as unknown as Task;
 
   const merged = mergeTaskWithCanonicalScheduleProjection(projected, persisted);
 
   assert.equal(merged.title, "After");
   assert.equal(merged.sort_order, 0);
   assert.equal(merged.canonical_schedule_boundary?.id, boundary.id);
+  assert.equal(merged.due_on, null);
+  assert.equal(merged.due_time, null);
+  assert.equal(merged.repeat_frequency, "none");
+  assert.equal(merged.repeat_interval, 1);
+});
+
+test("metadata-only and Task Type responses retain a projected canonical rolling schedule", () => {
+  const boundary = {
+    id: "boundary-every-five-days",
+    schedule_model: "rolling",
+    anchor_date: "2026-09-05",
+    due_time: "08:15",
+    repeat_frequency: "daily",
+    repeat_interval: 5,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  } as unknown as CanonicalTaskScheduleBoundary;
+  const projected = projectTaskWithCanonicalScheduleBoundary({
+    id: "task-1",
+    due_on: "2026-09-30",
+    due_time: null,
+    repeat_frequency: "none",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  } as unknown as Task, boundary);
+
+  for (const response of [
+    { title: "Task Type changed", task_type: "hobbies" },
+    { title: "Notes changed", notes: "Updated notes" },
+  ]) {
+    const merged = mergeTaskWithCanonicalScheduleProjection(projected, {
+      ...response,
+      due_on: "2026-09-05",
+      due_time: null,
+      repeat_frequency: "none",
+      repeat_interval: 1,
+      repeat_days_of_week: [],
+      repeat_day_of_month: null,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+    } as unknown as Task);
+    assert.equal(merged.due_on, "2026-09-30");
+    assert.equal(merged.due_time, "08:15");
+    assert.equal(merged.repeat_frequency, "daily");
+    assert.equal(merged.repeat_interval, 5);
+    assert.deepEqual(merged.repeat_days_of_week, []);
+    assert.equal(merged.canonical_schedule_anchor_date, "2026-09-05");
+  }
+});
+
+test("metadata reconciliation preserves canonical one-time and unscheduled boundaries", () => {
+  const oneTime = projectTaskWithCanonicalScheduleBoundary({
+    id: "task-one-time",
+    due_on: "2026-09-01",
+  } as unknown as Task, {
+    schedule_model: "one_time",
+    one_time_due_on: "2026-10-04",
+    due_time: "12:30",
+    repeat_frequency: "none",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  } as unknown as CanonicalTaskScheduleBoundary);
+  const mergedOneTime = mergeTaskWithCanonicalScheduleProjection(oneTime, {
+    id: "task-one-time",
+    due_on: "2026-09-01",
+    repeat_frequency: "daily",
+    repeat_interval: 7,
+  } as unknown as Task);
+  assert.equal(mergedOneTime.due_on, "2026-10-04");
+  assert.equal(mergedOneTime.due_time, "12:30");
+  assert.equal(mergedOneTime.repeat_frequency, "none");
+
+  const unscheduled = projectTaskWithCanonicalScheduleBoundary({
+    id: "task-unscheduled",
+    due_on: "2026-09-01",
+  } as unknown as Task, {
+    schedule_model: "unscheduled",
+    due_time: null,
+    repeat_frequency: "none",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  } as unknown as CanonicalTaskScheduleBoundary);
+  const mergedUnscheduled = mergeTaskWithCanonicalScheduleProjection(unscheduled, {
+    id: "task-unscheduled",
+    due_on: "2026-09-01",
+    repeat_frequency: "daily",
+    repeat_interval: 7,
+  } as unknown as Task);
+  assert.equal(mergedUnscheduled.due_on, null);
+  assert.equal(mergedUnscheduled.repeat_frequency, "none");
+  assert.equal(mergedUnscheduled.repeat_interval, 1);
 });
 
 test("multiple sibling and conflict/latest rows retain each current canonical projection", () => {
