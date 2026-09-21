@@ -263,6 +263,8 @@ function logWorkspaceTiming(step: string, startedAt: number, details: Record<str
 
 export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   activePage,
+  behaviorAuthorityReady,
+  behaviorAuthorityLoading,
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,

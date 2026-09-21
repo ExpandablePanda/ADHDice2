@@ -176,6 +176,15 @@ test("workspace ownership effect does not depend on active page navigation", asy
   assert.doesNotMatch(source, /\}, \[activePage, currentUser\?\.id/);
 });
 
+test("useWorkspaceData binds both behavior authority readiness options", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const signatureStart = source.indexOf("export function useWorkspaceData");
+  const signatureEnd = source.indexOf("}: UseWorkspaceDataOptions", signatureStart);
+  const parameterBinding = source.slice(signatureStart, signatureEnd);
+
+  assert.match(parameterBinding, /activePage,\s+behaviorAuthorityReady,\s+behaviorAuthorityLoading,\s+behaviorProfiles,/);
+});
+
 test("behavior authority readiness gates streak publication without replacing a committed summary", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summaryStart = source.indexOf("async function loadTaskHistoryStreakSummaries");
