@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.92`.
+- Current working app version: `7.13.93`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-21 7.13.93 Home Row Action Menus
+
+Home To-do and Routine anchor rows now consolidate their existing row actions
+behind one compact gear menu. To-do Move to day uses the same anchored panel's
+destination view, preserving Home day capacity/current disabling and the
+existing Home-only mutation paths. Routine child rows remain unchanged.
 
 ## 2026-09-21 7.13.92 Home To-do Task Signals
 

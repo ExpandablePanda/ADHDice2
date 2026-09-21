@@ -97,6 +97,12 @@ const HOME_REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = 
   { label: "Months", value: "monthly" },
 ];
 type HomePanelTab = "todo" | "routine";
+type HomeRowActionMenuView = "actions" | "move-day";
+
+type HomeRowActionMenuState = {
+  taskId: string;
+  view: HomeRowActionMenuView;
+};
 
 type HomeRoutineChildDragState = {
   depth: number;
@@ -361,7 +367,7 @@ export function HomePage({
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
-  const [moveDayMenuTaskId, setMoveDayMenuTaskId] = useState<string | null>(null);
+  const [rowActionMenu, setRowActionMenu] = useState<HomeRowActionMenuState | null>(null);
   const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
@@ -369,7 +375,7 @@ export function HomePage({
   const searchRef = useRef<HTMLDivElement | null>(null);
   const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
-  const moveDayMenuRef = useRef<HTMLDivElement | null>(null);
+  const rowActionMenuRef = useRef<HTMLDivElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const routineSectionRenameCanceledRef = useRef(false);
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
@@ -447,7 +453,7 @@ export function HomePage({
   function selectHomeTab(nextTab: HomePanelTab) {
     setActiveHomeTab(nextTab);
     setIsSearchOpen(false);
-    setMoveDayMenuTaskId(null);
+    setRowActionMenu(null);
     setIsSettingsOpen(false);
   }
 
@@ -589,14 +595,14 @@ export function HomePage({
   }, [statusMenuTaskId]);
 
   useEffect(() => {
-    if (!moveDayMenuTaskId) return;
+    if (!rowActionMenu) return;
     const handlePointerDown = (event: PointerEvent) => {
-      if (!moveDayMenuRef.current?.contains(event.target as Node)) setMoveDayMenuTaskId(null);
+      if (!rowActionMenuRef.current?.contains(event.target as Node)) setRowActionMenu(null);
     };
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        setMoveDayMenuTaskId(null);
+        setRowActionMenu(null);
       }
     };
     document.addEventListener("pointerdown", handlePointerDown);
@@ -605,7 +611,7 @@ export function HomePage({
       document.removeEventListener("pointerdown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
     };
-  }, [moveDayMenuTaskId]);
+  }, [rowActionMenu]);
 
   useEffect(() => {
     if (!isSettingsOpen) return;
@@ -817,7 +823,8 @@ export function HomePage({
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
-    const moveDayMenuOpen = moveDayMenuTaskId === task.id;
+    const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
+    const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
     const durableTaskIndex = state.taskIds.indexOf(task.id);
     const renderedDayOffset = daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
@@ -932,140 +939,162 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        {!isRoutineChild ? <div className="flex shrink-0 items-center gap-1">
-          {isRoutine ? (
-            <>
-              {!isAtRoutineTop ? (
-                <AdhdIconButton
-                  aria-label={`Move ${task.title || "Untitled task"} to Top`}
-                  className={HOME_TODO_ACTION_CLASS}
-                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-                  onClick={() => updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"))}
-                  size="sm"
-                  title="Move task to Top"
-                >
-                  <ArrowUpToLine aria-hidden="true" />
-                </AdhdIconButton>
-              ) : null}
-              {!isAtRoutineBottom ? (
-                <AdhdIconButton
-                  aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
-                  className={HOME_TODO_ACTION_CLASS}
-                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-                  onClick={() => updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"))}
-                  size="sm"
-                  title="Move task to Bottom"
-                >
-                  <ArrowDownToLine aria-hidden="true" />
-                </AdhdIconButton>
-              ) : null}
-              <AdhdIconButton
-                aria-label={`Remove ${task.title || "Untitled task"} from Routine`}
-                className={HOME_TODO_ACTION_CLASS}
-                iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-                onClick={() => { void onSetRoutineMembership(task.id, false); }}
-                size="sm"
-                title="Remove from Routine"
-                tone="danger"
+        {!isRoutineChild ? (
+          <div className="relative flex shrink-0 items-center gap-1" ref={rowActionMenuOpen ? rowActionMenuRef : undefined}>
+            <AdhdIconButton
+              aria-expanded={rowActionMenuOpen}
+              aria-haspopup="menu"
+              aria-label={`${rowActionMenuOpen ? "Close" : "Open"} actions for ${task.title || "Untitled task"}`}
+              className={HOME_TODO_ACTION_CLASS}
+              iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+              onClick={() => setRowActionMenu((current) => current?.taskId === task.id ? null : { taskId: task.id, view: "actions" })}
+              selected={rowActionMenuOpen}
+              size="sm"
+              title="Task actions"
+            >
+              <Settings2 aria-hidden="true" />
+            </AdhdIconButton>
+            {rowActionMenuOpen ? (
+              <AdhdDropdownPanel
+                aria-label={rowActionMenuView === "move-day" ? `Move ${task.title || "Untitled task"} to day` : `${task.title || "Untitled task"} actions`}
+                className="left-auto right-0 top-[calc(100%+0.35rem)] max-h-80 overflow-y-auto p-1.5"
+                role="menu"
+                widthClassName="min-w-56"
               >
-                <Minus aria-hidden="true" />
-              </AdhdIconButton>
-            </>
-          ) : (
-            <>
-              <div className="relative" ref={moveDayMenuOpen ? moveDayMenuRef : undefined}>
-                <AdhdIconButton
-                  aria-expanded={moveDayMenuOpen}
-                  aria-haspopup="menu"
-                  aria-label={`Move ${task.title || "Untitled task"} to day`}
-                  className={HOME_TODO_ACTION_CLASS}
-                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-                  onClick={() => setMoveDayMenuTaskId((current) => current === task.id ? null : task.id)}
-                  selected={moveDayMenuOpen}
-                  size="sm"
-                  title="Move to day"
-                >
-                  <CalendarDays aria-hidden="true" />
-                </AdhdIconButton>
-                {moveDayMenuOpen ? (
-                  <AdhdDropdownPanel
-                    aria-label={`Move ${task.title || "Untitled task"} to day`}
-                    className="left-auto right-0 top-[calc(100%+0.35rem)] max-h-80 overflow-y-auto p-1.5"
-                    role="menu"
-                    widthClassName="min-w-56"
-                  >
-                    <div className="grid gap-1">
-                      {moveDayDestinations.map((destination) => {
-                        const isCurrentDestination = renderedDayOffset === destination.dayOffset;
-                        const disabled = isCurrentDestination || destination.isFull;
-                        return (
-                          <button
-                            aria-checked={isCurrentDestination}
-                            aria-label={`${destination.label}${isCurrentDestination ? ", current destination" : destination.isFull ? ", full" : ""}`}
-                            className="flex min-h-9 items-center justify-between gap-3 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] disabled:cursor-not-allowed disabled:opacity-45 dark:text-white/75 dark:hover:bg-white/[0.08]"
-                            disabled={disabled}
-                            key={destination.dayOffset}
-                            onClick={() => {
-                              if (disabled) return;
-                              updateTaskDayOffset(task.id, destination.dayOffset);
-                              setMoveDayMenuTaskId(null);
-                            }}
-                            role="menuitemradio"
-                            type="button"
-                          >
-                            <span>{destination.label}</span>
-                            {isCurrentDestination ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#6f57f6]">Current</span> : destination.isFull ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#9a92b1]">Full</span> : null}
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </AdhdDropdownPanel>
-                ) : null}
-              </div>
-              {!isAtAbsoluteTop ? (
-                <AdhdIconButton
-                  aria-label={`Move ${task.title || "Untitled task"} to Top`}
-                  className={HOME_TODO_ACTION_CLASS}
-                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-                  onClick={() => {
-                    updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
-                    updateTaskDayOffset(task.id, 0);
-                  }}
-                  size="sm"
-                  title="Move task to Top"
-                >
-                  <ArrowUpToLine aria-hidden="true" />
-                </AdhdIconButton>
-              ) : null}
-              {!isAtAbsoluteBottom ? (
-                <AdhdIconButton
-                  aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
-                  className={HOME_TODO_ACTION_CLASS}
-                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-                  onClick={() => {
-                    updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
-                    updateTaskDayOffset(task.id, 7);
-                  }}
-                  size="sm"
-                  title="Move task to Bottom"
-                >
-                  <ArrowDownToLine aria-hidden="true" />
-                </AdhdIconButton>
-              ) : null}
-              <AdhdIconButton
-                aria-label={`Remove ${task.title || "Untitled task"} from Home To-do`}
-                className={HOME_TODO_ACTION_CLASS}
-                iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-                onClick={() => updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id))}
-                size="sm"
-                title="Remove from Home To-do"
-                tone="danger"
-              >
-                <Minus aria-hidden="true" />
-              </AdhdIconButton>
-            </>
-          )}
-        </div> : null}
+                {rowActionMenuView === "move-day" ? (
+                  <div className="grid gap-1">
+                    {moveDayDestinations.map((destination) => {
+                      const isCurrentDestination = renderedDayOffset === destination.dayOffset;
+                      const disabled = isCurrentDestination || destination.isFull;
+                      return (
+                        <button
+                          aria-checked={isCurrentDestination}
+                          aria-label={`${destination.label}${isCurrentDestination ? ", current destination" : destination.isFull ? ", full" : ""}`}
+                          className="flex min-h-9 items-center justify-between gap-3 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] disabled:cursor-not-allowed disabled:opacity-45 dark:text-white/75 dark:hover:bg-white/[0.08]"
+                          disabled={disabled}
+                          key={destination.dayOffset}
+                          onClick={() => {
+                            if (disabled) return;
+                            updateTaskDayOffset(task.id, destination.dayOffset);
+                            setRowActionMenu(null);
+                          }}
+                          role="menuitemradio"
+                          type="button"
+                        >
+                          <span>{destination.label}</span>
+                          {isCurrentDestination ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#6f57f6]">Current</span> : destination.isFull ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#9a92b1]">Full</span> : null}
+                        </button>
+                      );
+                    })}
+                    <button
+                      aria-label="Back to task actions"
+                      className="flex min-h-9 items-center rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#6f57f6] hover:bg-[#f7f3ff] dark:text-[#cabfff] dark:hover:bg-white/[0.08]"
+                      onClick={() => setRowActionMenu({ taskId: task.id, view: "actions" })}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Back
+                    </button>
+                  </div>
+                ) : (
+                  <div className="grid gap-1">
+                    {!isRoutine ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to day`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={() => setRowActionMenu({ taskId: task.id, view: "move-day" })}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        Move to day
+                      </button>
+                    ) : null}
+                    {!isRoutine && !isAtAbsoluteTop ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to Top`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={() => {
+                          updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                          updateTaskDayOffset(task.id, 0);
+                          setRowActionMenu(null);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <ArrowUpToLine aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        Move to Top
+                      </button>
+                    ) : null}
+                    {!isRoutine && !isAtAbsoluteBottom ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={() => {
+                          updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                          updateTaskDayOffset(task.id, 7);
+                          setRowActionMenu(null);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <ArrowDownToLine aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        Move to Bottom
+                      </button>
+                    ) : null}
+                    {isRoutine && !isAtRoutineTop ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to Top`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={() => {
+                          updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                          setRowActionMenu(null);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <ArrowUpToLine aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        Move to Top
+                      </button>
+                    ) : null}
+                    {isRoutine && !isAtRoutineBottom ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={() => {
+                          updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                          setRowActionMenu(null);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        <ArrowDownToLine aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                        Move to Bottom
+                      </button>
+                    ) : null}
+                    <button
+                      aria-label={`Remove ${task.title || "Untitled task"} from ${isRoutine ? "Routine" : "Home To-do"}`}
+                      className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#d65775] hover:bg-[#fff1f3] dark:text-[#ffb0c1] dark:hover:bg-[#32161d]"
+                      onClick={() => {
+                        setRowActionMenu(null);
+                        if (isRoutine) {
+                          void onSetRoutineMembership(task.id, false);
+                        } else {
+                          updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
+                        }
+                      }}
+                      role="menuitem"
+                      type="button"
+                    >
+                      <Minus aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                      {isRoutine ? "Remove from Routine" : "Remove from Home To-do"}
+                    </button>
+                  </div>
+                )}
+              </AdhdDropdownPanel>
+            ) : null}
+          </div>
+        ) : null}
       </AdhdCard>
     );
   }
