@@ -44,11 +44,11 @@ import type { AppPage } from "@/lib/task-ui-state";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import type { ImportTasksResult, TaskImportOptions, TaskImportProgress } from "@/hooks/useTaskCrudActions";
-import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses } from "@/lib/task-complete";
+import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses, isTaskHistoryEntryClearable } from "@/lib/task-complete";
 import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
+import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import type {
   CustomBehaviorRuleset,
@@ -766,8 +766,24 @@ export function TaskHistoryModal({
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
   const resolvedTimelineDays = calendarRead?.timeline?.days
     ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
+  const behaviorResolution = resolveTaskBehaviorPolicyForTask({
+    behaviorPolicyRevisions,
+    behaviorProfiles,
+    behaviorSelectionsByTaskId,
+    customRulesetId: task.custom_ruleset_id,
+    logicalDate: today,
+    namedCustomRulesetBehaviorPolicyRevisions,
+    taskId: task.id,
+    taskType: task.task_type ?? "task",
+  });
   const resolvedStreaks = resolvedTimelineDays
-    ? computeTaskEffectiveTimelineStreaks(resolvedTimelineDays, today)
+    ? computeTaskEffectiveTimelineStreaks(
+      resolvedTimelineDays,
+      today,
+      behaviorResolution.policy.unresolvedOccurrence === "blank"
+        ? { currentMissedStreakStartLogicalDate: behaviorResolution.currentBehaviorPolicyEffectiveFromLogicalDate ?? undefined }
+        : {},
+    )
     : null;
   const stats = resolvedStreaks
     ? {
@@ -835,15 +851,13 @@ export function TaskHistoryModal({
     && task.status !== "archived"
     && task.status !== "trashed"
     && calendarActionStatuses.includes("delayed");
-  const canClearSelectedDate = !isMultiSelect
-    && !selectedIsFuture
-    && Boolean(selectedEntry)
-    && task.status !== "complete"
-    && task.status !== "archived"
-    && task.status !== "trashed"
-    && selectedEntry?.status !== "complete"
-    && selectedEntry?.status !== "delayed"
-    && (selectedEntry?.status === "done" || selectedEntry?.status === "did_my_best" || selectedEntry?.status === "missed");
+  const canClearSelectedDate = selectedDates.length > 0
+    && selectedDates.every((dateKey) => isTaskHistoryEntryClearable({
+      entry: historyByDate.get(dateKey),
+      entryDate: dateKey,
+      task,
+      todayDateKey: today,
+    }));
   type CalendarActionStatus = "clear" | "complete" | "delayed" | "did_my_best" | "done" | "missed";
   const visibleCalendarActionStatuses: CalendarActionStatus[] = canClearSelectedDate
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
@@ -923,10 +937,13 @@ export function TaskHistoryModal({
   }
 
   async function handleSetStatus(status: "clear" | "complete" | "did_my_best" | "done" | "missed") {
-    const editableDates = selectedDates.filter((dateKey) => dateKey <= today);
-    if (isSavingRef.current || editableDates.length === 0 || (status === "complete" && editableDates.length > 1)) {
+    if (isSavingRef.current || selectedDates.length === 0 || (status === "clear" && !canClearSelectedDate) || (status === "complete" && selectedDates.length > 1)) {
       return;
     }
+    const editableDates = status === "clear"
+      ? selectedDates
+      : selectedDates.filter((dateKey) => dateKey <= today);
+    if (editableDates.length === 0) return;
     isSavingRef.current = true;
     setIsSaving(true);
     try {

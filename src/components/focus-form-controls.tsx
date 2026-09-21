@@ -10,7 +10,7 @@ export type FocusSelectOption = {
 const focusFieldInputClassName = "h-12 rounded-full border border-[#ddd6fb] bg-white px-4 text-sm font-semibold text-[#1f2642] shadow-[0_10px_24px_rgba(111,87,246,0.08)] outline-none transition placeholder:text-[#a59cc7] focus:border-[#c8bcff] dark:border-white/10 dark:bg-white/8 dark:text-white dark:placeholder:text-white/35 dark:focus:border-white/20";
 
 function FocusFieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="ui-field-label dark:text-white/40">{children}</span>;
+  return <span className="ui-field-label dark:text-white/40" data-style-component="FocusFieldLabel" data-style-role="typography.field-label">{children}</span>;
 }
 
 export function FocusSuggestionInput({
@@ -155,6 +155,7 @@ export function FocusSuggestionInput({
           value={value}
         />
         <button
+          aria-label={isOpen ? `Close ${label} options` : `Open ${label} options`}
           aria-expanded={isOpen}
           className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]"
           onClick={() => {
@@ -168,7 +169,7 @@ export function FocusSuggestionInput({
           }}
           type="button"
         >
-          <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+          <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
         </button>
         {isOpen && filteredOptions.length > 0 ? (
           <div
@@ -328,7 +329,7 @@ export function FocusPillSelect({
           type="button"
         >
           <span className="truncate pr-3 text-left">{selectedLabel}</span>
-          <ChevronDown className={`h-4 w-4 shrink-0 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
+          <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
         </button>
         {isOpen ? (
           <div

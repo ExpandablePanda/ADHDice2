@@ -14,10 +14,10 @@ export function PageShellHeader({
   return (
     <div className="flex items-start justify-between gap-3 pb-6 pt-[5px]">
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[#8e88a9] dark:text-white/40" data-style-component="PageShellHeader" data-style-role="page.shell.subtitle">
           {subtitle}
         </p>
-        <h1 className="mt-1 text-3xl font-black tracking-tight text-[#17203a] dark:text-white">
+        <h1 className="mt-1 text-3xl font-black tracking-tight text-[#17203a] dark:text-white" data-style-component="PageShellHeader" data-style-role="page.shell.title">
           {title}
         </h1>
       </div>

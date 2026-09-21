@@ -1146,6 +1146,29 @@ test("same-parent sibling reorder supports drag-style before and after placement
   });
 });
 
+test("reordering a Step changes only its canonical sibling order and keeps its Substeps attached", () => {
+  const tasks = [
+    createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" }),
+    createTask({ id: "step-a", parent_task_id: "parent", sort_order: 1, status: "pending", title: "A" }),
+    createTask({ id: "sub-a1", parent_task_id: "step-a", sort_order: 1, status: "pending", title: "A1" }),
+    createTask({ id: "sub-a2", parent_task_id: "step-a", sort_order: 2, status: "pending", title: "A2" }),
+    createTask({ id: "step-b", parent_task_id: "parent", sort_order: 2, status: "pending", title: "B" }),
+  ];
+
+  const plan = buildTaskSiblingReorderPlan(tasks, "step-b", { placement: "before", targetTaskId: "step-a" });
+
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  assert.deepEqual(plan.orderedTaskIds, ["step-b", "step-a"]);
+  assert.equal(plan.parentTaskId, "parent");
+  assert.deepEqual(plan.updates, [
+    { id: "step-b", sortOrder: 1 },
+    { id: "step-a", sortOrder: 2 },
+  ]);
+  assert.equal(tasks.find((task) => task.id === "step-a")?.parent_task_id, "parent");
+  assert.deepEqual(buildTaskHierarchyAdapter(tasks).getDescendants("step-a").map((task) => task.id), ["sub-a1", "sub-a2"]);
+});
+
 test("same-parent sibling reorder drag placement rejects cross-parent and no-op drops", () => {
   const tasks = [
     createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" }),
@@ -1916,7 +1939,7 @@ test("child task preview lookup exposes direct same-table children", () => {
   }]);
 });
 
-test("child task preview lookup computes child task streak stats from child history", () => {
+test("child task preview lookup uses the authoritative child task streak summary", () => {
   const parent = createTask({
     created_at: "2026-06-18T08:00:00.000Z",
     id: "parent",
@@ -1956,12 +1979,81 @@ test("child task preview lookup computes child task streak stats from child hist
     },
   ];
 
-  const preview = buildChildTaskPreviewLookup([parent, child], [], { child: history }, "2026-06-18");
+  const preview = buildChildTaskPreviewLookup(
+    [parent, child],
+    [],
+    { child: history },
+    "2026-06-18",
+    undefined,
+    {
+      child: {
+        currentStreak: 2,
+        lastDoneAt: "2026-06-17T12:00:00.000Z",
+        lastDoneDate: "2026-06-17",
+        lastHandledAt: null,
+        lastHandledDate: null,
+        missedStreak: 0,
+      },
+    },
+  );
 
   assert.equal(preview.parent.items[0].currentStreak, 2);
   assert.equal(preview.parent.items[0].lastDoneAt, "2026-06-17T12:00:00.000Z");
   assert.equal(preview.parent.items[0].lastDoneDate, "2026-06-17");
   assert.equal(preview.parent.items[0].missedStreak, 0);
+});
+
+test("child task preview streaks wait for an authoritative summary", () => {
+  const parent = createTask({ id: "preview-parent", status: "pending", title: "Parent" });
+  const child = createTask({
+    id: "preview-child",
+    parent_task_id: parent.id,
+    repeat_frequency: "daily",
+    status: "missed",
+    title: "Hobbies child",
+  });
+  const historicalMiss: TaskHistory = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-06-17T12:00:00.000Z",
+    entry_date: "2026-06-17",
+    event_type: "status",
+    id: "preview-child-missed",
+    occurrence_due_on: "2026-06-17",
+    occurrence_key: "occurrence:2026-06-17",
+    status: "missed",
+    task_id: child.id,
+    updated_at: "2026-06-17T12:00:00.000Z",
+    user_id: "test-user",
+    was_completed: false,
+  };
+  const historyByTaskId = { [child.id]: [historicalMiss] };
+
+  let previewWithoutSummary: ReturnType<typeof buildChildTaskPreviewLookup> | undefined;
+  assert.doesNotThrow(() => {
+    previewWithoutSummary = buildChildTaskPreviewLookup([parent, child], [], historyByTaskId, "2026-06-18");
+  });
+  assert.equal(previewWithoutSummary?.[parent.id]?.items[0]?.currentStreak, 0);
+  assert.equal(previewWithoutSummary?.[parent.id]?.items[0]?.missedStreak, 0);
+
+  const previewWithSummary = buildChildTaskPreviewLookup(
+    [parent, child],
+    [],
+    historyByTaskId,
+    "2026-06-18",
+    undefined,
+    {
+      [child.id]: {
+        currentStreak: 0,
+        lastDoneAt: null,
+        lastDoneDate: null,
+        lastHandledAt: null,
+        lastHandledDate: null,
+        missedStreak: 3,
+      },
+    },
+  );
+  assert.equal(previewWithSummary[parent.id]?.items[0]?.currentStreak, 0);
+  assert.equal(previewWithSummary[parent.id]?.items[0]?.missedStreak, 3);
 });
 
 test("child task preview lookup is depth-aware for grandchildren", () => {

@@ -53,6 +53,7 @@ function draft(status: "done" | "missed" = "done") {
     route: "unchanged" as const,
     status,
     subtasksAutoReset: "unchanged" as const,
+    taskType: "unchanged" as const,
     tags: [],
     tagsMode: "unchanged" as const,
   };

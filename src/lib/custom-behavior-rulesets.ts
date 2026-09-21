@@ -28,6 +28,7 @@ type CustomBehaviorRulesetNameCandidate = Pick<CustomBehaviorRuleset, "id" | "na
   accent_key?: string;
   description?: string;
   deleted_at?: string | null;
+  highlight_task_rows?: boolean | null;
   icon_key?: string;
 };
 
@@ -181,6 +182,7 @@ export function customBehaviorRulesetUpsertPayload(userId: string, name: string,
   return {
     accent_key: normalized.accentKey,
     description: normalized.description,
+    highlight_task_rows: normalized.highlightTaskRows,
     icon_key: normalized.iconKey,
     name: name.trim(),
     task_type: "custom" as const,
@@ -240,19 +242,21 @@ function isValidCustomBehaviorRulesetIdentity(row: CustomBehaviorRuleset | null 
     && (row.deleted_at === undefined || row.deleted_at === null || typeof row.deleted_at === "string");
 }
 
-const RULESET_IDENTITY_SELECT = "id,user_id,name,task_type,icon_key,accent_key,description,deleted_at,created_at,updated_at";
+const RULESET_IDENTITY_SELECT = "id,user_id,name,task_type,icon_key,accent_key,description,highlight_task_rows,deleted_at,created_at,updated_at";
 
 function normalizeCustomBehaviorRulesetIdentity(row: CustomBehaviorRuleset | null | undefined): CustomBehaviorRuleset | null {
   if (!isValidCustomBehaviorRulesetIdentity(row)) return null;
   const presentation = normalizeTaskTypePresentation({
     accentKey: row.accent_key,
     description: row.description,
+    highlightTaskRows: row.highlight_task_rows,
     iconKey: row.icon_key,
   });
   return {
     ...row,
     accent_key: typeof row.accent_key === "string" && row.accent_key.trim() ? row.accent_key.trim() : presentation.accentKey,
     description: validateTaskTypeDescription(row.description).description,
+    highlight_task_rows: presentation.highlightTaskRows,
     icon_key: typeof row.icon_key === "string" && row.icon_key.trim() ? row.icon_key.trim() : presentation.iconKey,
   };
 }
@@ -398,6 +402,7 @@ export async function updateCustomBehaviorRulesetPresentation(
   const currentPresentation = normalizeTaskTypePresentation({
     accentKey: current?.accent_key,
     description: current?.description,
+    highlightTaskRows: current?.highlight_task_rows,
     iconKey: current?.icon_key,
   });
   const descriptionValidation = validateTaskTypeDescription(presentation.description ?? currentPresentation.description);
@@ -407,7 +412,7 @@ export async function updateCustomBehaviorRulesetPresentation(
   try {
     result = await client
       .from("adhdice_custom_behavior_rulesets")
-      .update({ accent_key: normalized.accentKey, description: normalized.description, icon_key: normalized.iconKey, updated_at: new Date().toISOString() })
+      .update({ accent_key: normalized.accentKey, description: normalized.description, highlight_task_rows: normalized.highlightTaskRows, icon_key: normalized.iconKey, updated_at: new Date().toISOString() })
       .eq("id", rulesetId)
       .eq("user_id", userId)
       .select(RULESET_IDENTITY_SELECT);
@@ -425,7 +430,7 @@ export async function updateCustomBehaviorRulesetPresentation(
 export function isMissingCustomBehaviorRulesetsTableError(error: RulesetError | null | undefined) {
   const message = error?.message ?? "";
   return error?.code === "42P01"
-    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*(?:available_actions|needs_action_triggers|success_outcomes|icon_key|accent_key|description).* does not exist/i.test(message);
+    || /adhdice_(?:custom_behavior_ruleset|task_behavior_selection)|relation .* does not exist|column .*(?:available_actions|needs_action_triggers|success_outcomes|icon_key|accent_key|description|highlight_task_rows).* does not exist/i.test(message);
 }
 
 /**
@@ -441,10 +446,12 @@ export function isMissingCustomBehaviorRulesetsAdditiveSchemaError(error: unknow
   const missingAvailableActionsColumn = /available_actions.*(?:does not exist|not found)|could not find the ['"]available_actions['"] column/i.test(message);
   const missingNeedsActionTriggersColumn = /needs_action_triggers.*(?:does not exist|not found)|could not find the ['"]needs_action_triggers['"] column/i.test(message);
   const missingSuccessOutcomesColumn = /success_outcomes.*(?:does not exist|not found)|could not find the ['"]success_outcomes['"] column/i.test(message);
+  const missingHighlightTaskRowsColumn = /highlight_task_rows.*(?:does not exist|not found)|could not find the ['"]highlight_task_rows['"] column/i.test(message);
   return (code === "42P01" && (!message || missingRelation))
     || missingAvailableActionsColumn
     || missingNeedsActionTriggersColumn
     || missingSuccessOutcomesColumn
+    || missingHighlightTaskRowsColumn
     || missingRelation;
 }
 
@@ -460,7 +467,12 @@ export async function loadCustomBehaviorRulesets(
     .eq("user_id", userId);
   const [rulesetsResult, revisionsResult, behaviorSelectionsResult] = await Promise.all([
     rulesetsPromise.then(async (result) => {
-      if (!result.error || !/column .*(?:icon_key|accent_key|description).* does not exist/i.test(result.error.message ?? "")) return result;
+      if (!result.error || !/column .*(?:icon_key|accent_key|description|highlight_task_rows).* does not exist/i.test(result.error.message ?? "")) return result;
+      const presentationFallback = await client
+        .from("adhdice_custom_behavior_rulesets")
+        .select("id,user_id,name,task_type,icon_key,accent_key,description,deleted_at,created_at,updated_at")
+        .eq("user_id", userId);
+      if (!presentationFallback.error || !/column .*(?:icon_key|accent_key|description).* does not exist/i.test(presentationFallback.error.message ?? "")) return presentationFallback;
       return client
         .from("adhdice_custom_behavior_rulesets")
         .select("id,user_id,name,task_type,deleted_at,created_at,updated_at")

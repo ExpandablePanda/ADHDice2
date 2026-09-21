@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "../src/lib/task-search-selector.ts";
+import { selectCalendarTasks } from "../src/lib/task-calendar-selection.ts";
 import type { Task } from "../src/lib/database.types.ts";
+import { createTask } from "../src/lib/task-buckets.ts";
 
 function entity(id: string, title: string, overrides: Partial<Task> = {}, listIds: readonly string[] = ["inbox"]) {
   const task = { id, title, status: "pending", energy: "medium", is_urgent: false, due_on: null, pinned_at: null, parent_task_id: null, priority: "normal", repeat_frequency: "none", tags: [], notes: null, external_link_label: null, external_link_url: null, ...overrides } as Task;
@@ -259,6 +262,74 @@ test("the adapter child ID projection is equivalent for Table and List", () => {
 
   assert.deepEqual(adapterChildIds, [...result.matchingStepIds]);
   assert.deepEqual([...result.visibleRootTaskIds], ["root"]);
+});
+
+test("Calendar Include Steps scopes child previews to the authoritative search hierarchy", () => {
+  const alpha = createTask({ id: "alpha", title: "Alpha", status: "pending", created_at: "2026-09-01T00:00:00.000Z", sort_order: 1 });
+  const alphaStep = createTask({ id: "alpha-step", title: "Alpha step", parent_task_id: alpha.id, status: "pending", created_at: "2026-09-01T00:00:00.000Z", sort_order: 1 });
+  const alphaSibling = createTask({ id: "alpha-sibling", title: "Alpha sibling", parent_task_id: alpha.id, status: "pending", created_at: "2026-09-01T00:00:00.000Z", sort_order: 2 });
+  const beta = createTask({ id: "beta", title: "Beta", status: "pending", created_at: "2026-09-01T00:00:00.000Z", sort_order: 2 });
+  const betaStep = createTask({ id: "beta-step", title: "Beta step", parent_task_id: beta.id, status: "pending", created_at: "2026-09-01T00:00:00.000Z", sort_order: 1 });
+  const tasks = [alpha, alphaStep, alphaSibling, beta, betaStep];
+  const childTaskIds = [alphaStep.id, alphaSibling.id, betaStep.id];
+
+  const parentMatch = selectCalendarTasks({
+    childTaskIds,
+    includeSteps: true,
+    matchingSearchEntityIds: new Set([alpha.id, alphaStep.id, alphaSibling.id]),
+    searchIsActive: true,
+    selectedTasks: [alpha],
+    tasks,
+  });
+  assert.deepEqual(parentMatch.map((task) => task.id), [alpha.id, alphaStep.id, alphaSibling.id]);
+
+  const childMatch = selectCalendarTasks({
+    childTaskIds,
+    includeSteps: true,
+    matchingSearchEntityIds: new Set([alpha.id, alphaStep.id]),
+    searchIsActive: true,
+    selectedTasks: [alpha],
+    tasks,
+  });
+  assert.deepEqual(childMatch.map((task) => task.id), [alpha.id, alphaStep.id]);
+
+  const withoutSteps = selectCalendarTasks({
+    childTaskIds,
+    includeSteps: false,
+    matchingSearchEntityIds: new Set([alpha.id, alphaStep.id]),
+    searchIsActive: true,
+    selectedTasks: [alpha],
+    tasks,
+  });
+  assert.deepEqual(withoutSteps.map((task) => task.id), [alpha.id]);
+
+  const withoutSearch = selectCalendarTasks({
+    childTaskIds,
+    includeSteps: true,
+    matchingSearchEntityIds: null,
+    searchIsActive: false,
+    selectedTasks: [alpha, beta],
+    tasks,
+  });
+  assert.deepEqual(withoutSearch.map((task) => task.id), [alpha.id, beta.id, alphaStep.id, alphaSibling.id, betaStep.id]);
+
+  const selectedBucket = selectCalendarTasks({
+    childTaskIds: [alphaStep.id],
+    includeSteps: true,
+    matchingSearchEntityIds: new Set([alpha.id, alphaStep.id]),
+    searchIsActive: true,
+    selectedTasks: [alpha],
+    tasks,
+  });
+  assert.deepEqual(selectedBucket.map((task) => task.id), [alpha.id, alphaStep.id]);
+});
+
+test("Calendar consumes the existing Task search selection instead of matching child previews itself", () => {
+  const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  assert.match(source, /selectCalendarTasks\(\{/);
+  assert.match(source, /matchingSearchEntityIds: calendarSearchMatchingEntityIds/);
+  assert.match(source, /searchIsActive: effectiveSearchQuery\.length > 0/);
+  assert.match(source, /taskSearchSelection\?\.matchingEntityIds/);
 });
 
 test("manual selected roots make an unlisted depth-one child searchable", () => {

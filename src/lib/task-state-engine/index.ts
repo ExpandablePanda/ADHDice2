@@ -23,6 +23,7 @@ export type {
   NamedCustomRulesetBehaviorPolicyRevisionMap,
   TaskBehaviorPolicy,
   TaskBehaviorPolicyField,
+  TaskBehaviorPolicyResolution,
   TaskBehaviorPolicyResolutionContext,
   TaskBehaviorPolicyRevision,
   TaskBehaviorPolicyRevisionMap,

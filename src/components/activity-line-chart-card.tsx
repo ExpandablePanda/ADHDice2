@@ -283,9 +283,9 @@ export function ActivityLineChartCard({
   const chartHeader = (
     <div className={`page-shell-chart-header flex min-w-0 flex-col gap-3 ${isPageShellSurface ? "" : "lg:flex-row lg:items-start lg:justify-between"}`}>
       <div className="min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">{eyebrow}</p>
-        <h4 className={`mt-2 font-black tracking-tight text-[var(--text-primary)] ${isEmbedded ? "text-lg" : "text-2xl"}`} id={titleId}>{title}</h4>
-        <p className="mt-1 text-sm text-[var(--text-secondary)]">{subtitle}</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]" data-style-component="ActivityLineChartCard" data-style-role="ui.section.label">{eyebrow}</p>
+        <h4 className={`mt-2 font-black tracking-tight text-[var(--text-primary)] ${isEmbedded ? "text-lg" : "text-2xl"}`} data-style-component="ActivityLineChartCard" data-style-role="ui.section.title" id={titleId}>{title}</h4>
+        <p className="mt-1 text-sm text-[var(--text-secondary)]" data-style-component="ActivityLineChartCard" data-style-role="ui.section.subtitle">{subtitle}</p>
       </div>
       {series.length > 0 ? (
         <div className="flex min-w-0 max-w-2xl flex-wrap gap-2 lg:justify-end">

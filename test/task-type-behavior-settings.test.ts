@@ -67,6 +67,19 @@ test("Custom Task Type settings expose only active named types and gate deletion
   assert.match(behaviorProfilesHookSource, /return refreshCustomBehaviorRulesets\(\)/);
 });
 
+test("Task behavior authority exposes a stable initial readiness latch", () => {
+  assert.match(behaviorProfilesHookSource, /const \[isBehaviorAuthorityReady, setIsBehaviorAuthorityReady\] = useState\(false\)/);
+  assert.match(behaviorProfilesHookSource, /setIsBehaviorAuthorityReady\(false\)/);
+  assert.match(behaviorProfilesHookSource, /setIsBehaviorAuthorityReady\(true\)/);
+  assert.match(behaviorProfilesHookSource, /isBehaviorAuthorityReady,\n\s+profileRevisions/);
+
+  const refreshStart = behaviorProfilesHookSource.indexOf("const refreshCustomBehaviorRulesets");
+  const refreshEnd = behaviorProfilesHookSource.indexOf("useEffect(() =>", refreshStart);
+  assert.ok(refreshStart >= 0 && refreshEnd > refreshStart);
+  assert.doesNotMatch(behaviorProfilesHookSource.slice(refreshStart, refreshEnd), /setIsBehaviorAuthorityReady\(false\)/);
+  assert.doesNotMatch(behaviorProfilesHookSource, /setIsBehaviorAuthorityReady\([^)]*(?:length|Object\.keys)/);
+});
+
 test("blocked named-ruleset deletion exposes task resolution actions with singular/plural copy", () => {
   assert.match(behaviorSettingsSource, /is currently assigned to \{blockedDelete\.count\} Task\{blockedDelete\.count === 1 \? "" : "s"\}/);
   assert.match(behaviorSettingsSource, />Show Tasks<\/AdhdChip>/);

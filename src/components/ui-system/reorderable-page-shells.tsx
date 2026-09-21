@@ -24,6 +24,7 @@ import {
   isValidPageShellExplicitLayout,
   migratePageShellLayoutWithMeasuredParity,
   planPageShellMove,
+  planPageShellResize,
   packPageShellLayout,
   PAGE_SHELL_MIN_HEIGHT,
   PAGE_SHELL_PACKING_GAP_PX,
@@ -427,7 +428,7 @@ export function PageShell({ children }: PageShellProps) {
 
 export function PageShellSurface({ children, className, ref, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode; ref?: Ref<HTMLDivElement> }) {
   return (
-    <div className={`page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className ?? ""}`} ref={ref} {...props}>
+    <div className={`page-shell-surface flex h-full min-h-0 min-w-0 flex-col overflow-hidden ${className ?? ""}`} data-style-component="PageShellSurface" data-style-role="page.shell.surface" ref={ref} {...props}>
       {children}
     </div>
   );
@@ -435,7 +436,7 @@ export function PageShellSurface({ children, className, ref, ...props }: HTMLAtt
 
 export function PageShellBody({ children, className, ...props }: HTMLAttributes<HTMLDivElement> & { children: ReactNode }) {
   return (
-    <div className={`page-shell-body adhdice-scrollbar min-w-0 ${className ?? ""}`} {...props}>
+    <div className={`page-shell-body adhdice-scrollbar min-w-0 ${className ?? ""}`} data-style-component="PageShellBody" data-style-role="page.shell.body" {...props}>
       {children}
     </div>
   );
@@ -1193,10 +1194,6 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     layout.commitPreview();
   }
 
-  function clampPlacementForSpan(placement: PageShellLayoutState["placements"][string] | undefined, span: PageShellSize["span"]) {
-    return placement ? normalizePageShellPlacement(placement, span) : placement;
-  }
-
   function setShellWidth(id: string, rawValue: string) {
     const currentLayoutValue = currentLayout();
     const currentSize = currentLayoutValue.sizes[id];
@@ -1205,15 +1202,21 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (!Number.isFinite(numericValue)) return;
     const span = normalizePageShellSpan(numericValue, currentSize.span);
     if (currentSize.span === span) return;
-    layout.beginPreview(currentLayoutValue);
-    layout.setPreviewSizes((sizes) => ({
-      ...sizes,
-      [id]: { ...currentSize, span },
-    }));
-    const nextPlacement = clampPlacementForSpan(currentLayoutValue.placements?.[id], span);
-    if (nextPlacement) {
-      layout.setPreviewPlacements((placements) => ({ ...placements, [id]: nextPlacement }));
+    const resizePlan = planPageShellResize({
+      chromeHeightPx: layout.isEditing ? 32 : 0,
+      layout: currentLayoutValue,
+      naturalHeights,
+      sourceId: id,
+      span,
+      visibleShellIds,
+    });
+    if (!resizePlan.valid) {
+      showDragMoveWarning(resizePlan.message);
+      return;
     }
+    layout.beginPreview(currentLayoutValue);
+    layout.setPreviewSizes(resizePlan.layout.sizes);
+    layout.setPreviewPlacements(resizePlan.layout.placements ?? {});
     layout.commitPreview();
   }
 
@@ -1262,27 +1265,34 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
     if (interaction.kind === "width-resize") {
       const currentSize = layout.sizes[interaction.id];
       if (currentSize?.span === span) return;
-      layout.setPreviewSizes((sizes) => ({
-        ...sizes,
-        [interaction.id]: { ...(sizes[interaction.id] ?? interaction.initialSize), span },
-      }));
-      const nextPlacement = clampPlacementForSpan(interaction.startLayout.placements?.[interaction.id], span);
-      if (nextPlacement) {
-        layout.setPreviewPlacements((placements) => ({ ...placements, [interaction.id]: nextPlacement }));
-      }
+      const resizePlan = planPageShellResize({
+        chromeHeightPx: layout.isEditing ? 32 : 0,
+        layout: interaction.startLayout,
+        naturalHeights,
+        sourceId: interaction.id,
+        span,
+        visibleShellIds,
+      });
+      if (!resizePlan.valid) return;
+      layout.setPreviewSizes(resizePlan.layout.sizes);
+      layout.setPreviewPlacements(resizePlan.layout.placements ?? {});
       return;
     }
     const heightPx = clampPageShellHeight(interaction.initialHeight + (event.clientY - interaction.startY), interaction.naturalHeight);
     const currentSize = layout.sizes[interaction.id];
     if (currentSize?.span === span && currentSize.heightPx === heightPx) return;
-    layout.setPreviewSizes((sizes) => ({
-      ...sizes,
-      [interaction.id]: { heightPx, span },
-    }));
-    const nextPlacement = clampPlacementForSpan(interaction.startLayout.placements?.[interaction.id], span);
-    if (nextPlacement) {
-      layout.setPreviewPlacements((placements) => ({ ...placements, [interaction.id]: nextPlacement }));
-    }
+    const resizePlan = planPageShellResize({
+      chromeHeightPx: layout.isEditing ? 32 : 0,
+      heightPx,
+      layout: interaction.startLayout,
+      naturalHeights,
+      sourceId: interaction.id,
+      span,
+      visibleShellIds,
+    });
+    if (!resizePlan.valid) return;
+    layout.setPreviewSizes(resizePlan.layout.sizes);
+    layout.setPreviewPlacements(resizePlan.layout.placements ?? {});
   }
 
   function endInteraction(event: ShellPointerEvent | null, cancelled: boolean) {
@@ -1394,6 +1404,7 @@ export function ReorderablePageShells({ children, layout, shellsClassName = "gri
       <div
         className={`min-w-0 transition-transform ${shellPlacementClass} ${layout.isEditing ? "relative" : ""} ${draggingId === shell.id ? "z-10 opacity-75" : ""} ${dragDropTarget?.targetId === shell.id && dragDropTarget.relationship === "replace" ? (dragMovePlan?.valid === false ? "ring-2 ring-[#d65775]/70 ring-offset-2 ring-offset-[#fff8fa] dark:ring-[#ffb0c1]/70 dark:ring-offset-[#31141b]" : "ring-2 ring-[#6f57f6]/55 ring-offset-2 ring-offset-[#faf8ff] dark:ring-[#a99bff]/60 dark:ring-offset-[#171228]") : ""} ${resizingId === shell.id ? "z-10" : ""} ${shell.className ?? ""}`}
         data-page-shell-id={shell.id}
+        data-page-shell-label={shell.label}
         data-page-shell-dragging={draggingId === shell.id ? "true" : "false"}
         data-page-shell-resizing={resizingId === shell.id ? "true" : "false"}
         data-page-shell-centered={isCentered ? "true" : "false"}

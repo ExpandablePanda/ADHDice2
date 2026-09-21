@@ -11,6 +11,8 @@ test("Records is the third accessible Progress tab and preserves tabpanel wiring
   assert.match(page, /role="tablist"/);
   assert.match(page, /progress-panel-records/);
   assert.match(page, /<RecordsTab/);
+  assert.match(page, /initialRecordMetricKey/);
+  assert.match(page, /initialRecordMetricKey \? "records" : "achievements"/);
 });
 
 test("Records UI exposes required sections, refresh, history, and factual disclosure", () => {
@@ -18,6 +20,36 @@ test("Records UI exposes required sections, refresh, history, and factual disclo
   assert.match(records, /Past hard deletions cannot be reconstructed/);
   assert.match(records, /fallback occurrence identity/);
   assert.match(records, /Show invalidated/);
+  assert.match(records, /initialMetricKey/);
+  assert.match(records, /candidate\.scope_kind === "global"/);
+  assert.match(records, /buildCurrentRecordCard\(record, records\.events, records\.hasDetailedEvidence, records\.taskEvidenceByRecordIdentity\)/);
+  assert.match(records, /Record Evidence/);
+  assert.match(records, /getRecordTaskEvidenceCount/);
+  assert.match(records, /evidenceCount\.warning/);
+  assert.match(records, /data-record-evidence-list/);
+  assert.match(records, /Detailed Evidence is not cached on this device\. Refresh Records to load it\./);
+  assert.match(records, /Unavailable/);
+  assert.match(records, /Select all/);
+  assert.match(records, /Clear/);
+  assert.match(records, /Tasks selected/);
+  assert.match(records, /Exclude selected/);
+  assert.match(records, /getSelectableRecordEvidenceTaskIds/);
+  assert.match(records, /onChange=\{\(\) => onToggleTaskSelection\(item\.taskId\)\}/);
+});
+
+test("Home Record deep-links acknowledge only after the requested detail is ready", () => {
+  assert.doesNotMatch(page, /useEffect\(\(\) => \{\n    if \(initialRecordMetricKey\) onRecordRequestHandled/);
+  assert.match(page, /onRecordRequestHandled=\{onRecordRequestHandled\}/);
+  const effectStart = records.indexOf("useEffect(() => {\n    if (!initialMetricKey");
+  const effectEnd = records.indexOf("\n\n  function toggleSection", effectStart);
+  assert.ok(effectStart >= 0 && effectEnd > effectStart);
+  const effect = records.slice(effectStart, effectEnd);
+  assert.doesNotMatch(effect, /setTimeout|clearTimeout/);
+  const detailOpen = effect.indexOf("setDetailRecord(buildCurrentRecordCard(record, records.events, records.hasDetailedEvidence, records.taskEvidenceByRecordIdentity));");
+  const consumed = effect.indexOf("openedInitialMetricRef.current = initialMetricKey;", detailOpen);
+  const acknowledged = effect.indexOf("onRecordRequestHandled?.();", consumed);
+  assert.ok(detailOpen >= 0 && consumed > detailOpen && acknowledged > consumed);
+  assert.match(effect, /if \(!record\) \{\n      openedInitialMetricRef\.current = initialMetricKey;\n      onRecordRequestHandled\?\.\(\);/);
 });
 
 test("Records stays lazy, prevents overlap, and contains a migration-missing fallback", () => {
@@ -25,4 +57,24 @@ test("Records stays lazy, prevents overlap, and contains a migration-missing fal
   assert.match(hook, /runningRef\.current = true/);
   assert.match(hook, /Records storage is not installed/);
   assert.match(records, /Records setup required/);
+});
+
+test("Records evidence reuses the successful evaluation projection and opens through TaskApp", () => {
+  assert.match(hook, /buildTaskEvidenceByRecordIdentity\(result\.evaluation\.currentRecords\)/);
+  assert.match(page, /onOpenTask: \(taskId: string\) => void/);
+  assert.match(page, /onOpenTask=\{onOpenTask\}/);
+  assert.match(records, /props\.onOpenTask\(taskId\)/);
+  assert.match(records, /setDetailRecord\(null\)/);
+  assert.doesNotMatch(records, /runRecordsPipeline/);
+});
+
+test("Record Evidence bulk flow blocks during exclusion and exposes the real Records stage", () => {
+  assert.match(records, /aria-busy=\{running\}/);
+  assert.match(records, /setBulkProgress\(\{ count: taskIds\.length, phase: "excluding"/);
+  assert.match(records, /closeRecordDetails\(\);[\s\S]*await records\.refresh\(\)/);
+  assert.match(records, /Recalculating Records/);
+  assert.match(records, /progress=\{records\.progress\}/);
+  assert.match(records, /Use Refresh Records to try again/);
+  assert.match(records, /Nothing was excluded; your selections remain/);
+  assert.equal((records.match(/await records\.refresh\(\)/g) ?? []).length, 1);
 });

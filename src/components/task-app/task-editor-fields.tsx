@@ -151,7 +151,7 @@ export function LabeledInput({
 }) {
   return (
     <label className="grid gap-2">
-      <span className="ui-field-label dark:text-white/40">{label}</span>
+      <span className="ui-field-label dark:text-white/40" data-style-component="TaskEditorFieldLabel" data-style-role="typography.field-label">{label}</span>
       <input
         className="h-12 rounded-[1rem] bg-[#f7f5ff] px-4 text-base text-[#1f2642] outline-none dark:bg-white/8 dark:text-white"
         onChange={(event) => onChange(event.target.value)}
@@ -238,7 +238,7 @@ export function CompactSelectField<T extends string>({
 
   return (
     <div className="grid gap-2" ref={rootRef}>
-      <span className="ui-field-label dark:text-white/40">{label}</span>
+      <span className="ui-field-label dark:text-white/40" data-style-component="TaskEditorFieldLabel" data-style-role="typography.field-label">{label}</span>
       <div className="relative">
         <button
           aria-expanded={isOpen}

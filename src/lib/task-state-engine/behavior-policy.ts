@@ -91,6 +91,15 @@ export type TaskBehaviorPolicyResolutionContext = {
   behaviorSelectionsByTaskId?: TaskBehaviorSelectionMap;
 };
 
+export type TaskBehaviorPolicyResolution = {
+  policy: TaskBehaviorPolicy;
+  revisions: readonly TaskBehaviorPolicyRevision[];
+  /** Compatibility/debugging boundary for the active TaskType/ruleset selection. */
+  currentBehaviorSelectionEffectiveFromLogicalDate: string | null;
+  /** Effective boundary of the policy currently active within that selection. */
+  currentBehaviorPolicyEffectiveFromLogicalDate: string | null;
+};
+
 export type TaskBehaviorProjectionSemantics = {
   activeStatus: {
     profile: Pick<TaskBehaviorPolicy, "unresolvedOccurrence">;
@@ -389,17 +398,24 @@ export function resolveTaskBehaviorPolicyForLogicalDate(input: {
   revisions?: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate" | "unresolvedOccurrence" | "positiveStreakOnUnhandled" | "missedStreakOnUnhandled" | "rewards" | "availableActions" | "needsActionTriggers" | "successOutcomes">[];
   logicalDate: string;
 }): TaskBehaviorPolicy {
-  const orderedRevisions = [...(input.revisions ?? [])]
-    .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
-  const revision = orderedRevisions
-    .filter((candidate) => candidate.effectiveFromLogicalDate <= input.logicalDate)
-    .at(-1)
-    ?? orderedRevisions[0];
+  const revision = effectivePolicyRevisionForLogicalDate(input.revisions, input.logicalDate);
   if (!revision) return STANDARD_TASK_BEHAVIOR_POLICY;
   return normalizeTaskBehaviorProfile({
     ...revision,
     id: "effective-task-behavior-policy",
   });
+}
+
+function effectivePolicyRevisionForLogicalDate(
+  revisions: readonly Pick<TaskBehaviorPolicyRevision, "effectiveFromLogicalDate">[] | undefined,
+  logicalDate: string,
+) {
+  const orderedRevisions = [...(revisions ?? [])]
+    .sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
+  return orderedRevisions
+    .filter((candidate) => candidate.effectiveFromLogicalDate <= logicalDate)
+    .at(-1)
+    ?? orderedRevisions[0];
 }
 
 /** Resolve a persisted TaskType, or a compatibility policy input, to the current profile. */
@@ -436,7 +452,7 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
   logicalDate: string;
   taskId?: string;
   taskType: TaskType;
-}) {
+}): TaskBehaviorPolicyResolution {
   normalizeTaskType(input.taskType);
   const selectionRows = input.taskId
     ? [...(input.behaviorSelectionsByTaskId?.[input.taskId] ?? [])]
@@ -454,6 +470,8 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
           logicalDate: input.logicalDate,
         }),
         revisions: currentNamedRulesetRevisions,
+        currentBehaviorSelectionEffectiveFromLogicalDate: null,
+        currentBehaviorPolicyEffectiveFromLogicalDate: effectivePolicyRevisionForLogicalDate(currentNamedRulesetRevisions, input.logicalDate)?.effectiveFromLogicalDate ?? null,
       };
     }
     const revisions = isActiveTaskBehaviorProfileTaskType(input.taskType)
@@ -464,6 +482,8 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
         ? resolveTaskBehaviorPolicy(input.taskType, input.behaviorProfiles, input.behaviorPolicyRevisions, input.logicalDate)
         : STANDARD_TASK_BEHAVIOR_POLICY,
       revisions,
+      currentBehaviorSelectionEffectiveFromLogicalDate: null,
+      currentBehaviorPolicyEffectiveFromLogicalDate: effectivePolicyRevisionForLogicalDate(revisions, input.logicalDate)?.effectiveFromLogicalDate ?? null,
     };
   }
   const selections = selectionRows;
@@ -482,6 +502,8 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
       ? STANDARD_TASK_BEHAVIOR_POLICY
       : resolvedPolicy,
     revisions,
+    currentBehaviorSelectionEffectiveFromLogicalDate: effectiveSelection?.effectiveFromLogicalDate ?? null,
+    currentBehaviorPolicyEffectiveFromLogicalDate: effectivePolicyRevisionForLogicalDate(revisions, input.logicalDate)?.effectiveFromLogicalDate ?? null,
   };
 }
 

@@ -486,6 +486,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     const replayPlan = buildTaskEffectiveTimeline({
       behaviorPolicy,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
+      currentBehaviorSelectionEffectiveFromLogicalDate: input.currentBehaviorSelectionEffectiveFromLogicalDate,
+      currentBehaviorPolicyEffectiveFromLogicalDate: input.currentBehaviorPolicyEffectiveFromLogicalDate,
       task,
       history: rows,
       logicalDate: today,
@@ -666,6 +668,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   // expose a new Calendar occurrence, but that must not replace the frozen
   // overdue occurrence until an explicit handled outcome resolves it.
   const activeMissedDueOn = task.lifecycle === "active"
+    && behaviorPolicy.unresolvedOccurrence === "missed"
     && task.activeStatus === "missed"
     && task.dueOn
     && task.dueOn < today
@@ -696,7 +699,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       || Boolean(task.activeStatusLogicalDate && task.activeStatusLogicalDate <= today)
       || Boolean(task.activeOccurrenceDueOn && task.activeOccurrenceDueOn <= today)
     );
-  const activeMissedOccurrence = concreteActiveMissedOccurrence || explicitActiveMissedOccurrence;
+  const activeMissedOccurrence = behaviorPolicy.unresolvedOccurrence === "missed"
+    && (concreteActiveMissedOccurrence || explicitActiveMissedOccurrence);
 
   const staleInProgress = task.lifecycle === "active"
     && task.activeStatus === "in_progress"
@@ -777,6 +781,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const replayTimeline = buildTaskEffectiveTimeline({
     behaviorPolicy,
     behaviorPolicyRevisions: input.behaviorPolicyRevisions,
+    currentBehaviorSelectionEffectiveFromLogicalDate: input.currentBehaviorSelectionEffectiveFromLogicalDate,
+    currentBehaviorPolicyEffectiveFromLogicalDate: input.currentBehaviorPolicyEffectiveFromLogicalDate,
     task,
     history: rows,
     logicalDate: today,
@@ -838,7 +844,9 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     || activeMissedOccurrence
     || overdueAnchor
     || (action?.outcome === "missed" && action.replaceExisting === true)
-    || ((!scheduleChange || unresolvedMissed.ambiguous) && unresolvedMissed.hasUnresolved)
+    || (behaviorPolicy.unresolvedOccurrence === "missed"
+      && (!scheduleChange || unresolvedMissed.ambiguous)
+      && unresolvedMissed.hasUnresolved)
   ) {
     activeStatus = "missed";
   } else if (currentRecurrenceOutcome === "delayed" || (delayedRow && nextDue && nextDue > today)) {

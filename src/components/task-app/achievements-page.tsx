@@ -24,6 +24,7 @@ import { CompletedMilestonesWorkspace } from "./completed-milestones-workspace";
 import { PageShellHeader } from "./page-shell-header";
 import { RecordsTab } from "./records-tab";
 import { ManagedTrophyCollectionShowcase } from "./trophy-case/trophy-collection-showcase";
+import type { RecordMetricKey } from "@/lib/records/types";
 
 type AchievementsPageProps = {
   achievementError: string | null;
@@ -36,6 +37,10 @@ type AchievementsPageProps = {
   milestoneLoading: boolean;
   model: AchievementProgressModel;
   notificationError: string | null;
+  initialRecordMetricKey?: RecordMetricKey | null;
+  onRecordRequestHandled?: () => void;
+  onOpenTask: (taskId: string) => void;
+  onExcludeTasksFromTracking?: (taskIds: readonly string[]) => Promise<{ error: string | null; success: boolean }>;
   onTriggerDevelopmentAchievementTest?: (kind?: DevelopmentAchievementTestFixtureKind) => void;
   onOpenMilestoneTask: (taskId: string) => void;
   onOpenMilestones: () => void;
@@ -58,6 +63,10 @@ export function AchievementsPage({
   milestoneLoading,
   model,
   notificationError,
+  initialRecordMetricKey = null,
+  onRecordRequestHandled,
+  onOpenTask,
+  onExcludeTasksFromTracking,
   onTriggerDevelopmentAchievementTest,
   onOpenMilestoneTask,
   onOpenMilestones,
@@ -66,7 +75,8 @@ export function AchievementsPage({
   timezone,
   userId,
 }: AchievementsPageProps) {
-  const [activeTab, setActiveTab] = useState<ProgressTab>("achievements");
+  const [activeTab, setActiveTab] = useState<ProgressTab>(initialRecordMetricKey ? "records" : "achievements");
+  const [requestedRecordMetricKey] = useState<RecordMetricKey | null>(() => initialRecordMetricKey);
   const tabRefs = useRef<Record<ProgressTab, HTMLButtonElement | null>>({ achievements: null, milestones: null, records: null });
 
   function handleTabKeyDown(event: KeyboardEvent<HTMLButtonElement>) {
@@ -124,7 +134,7 @@ export function AchievementsPage({
         </div>
       ) : null}
       <div aria-labelledby="progress-tab-records" hidden={activeTab !== "records"} id="progress-panel-records" role="tabpanel">
-        <RecordsTab active={activeTab === "records"} client={recordsClient} logicalDayStart={logicalDayStart} timezone={timezone} userId={userId} />
+        <RecordsTab active={activeTab === "records"} client={recordsClient} initialMetricKey={requestedRecordMetricKey} logicalDayStart={logicalDayStart} onExcludeTasksFromTracking={onExcludeTasksFromTracking} onOpenTask={onOpenTask} onRecordRequestHandled={onRecordRequestHandled} tasks={tasks} timezone={timezone} userId={userId} />
       </div>
     </section>
   );

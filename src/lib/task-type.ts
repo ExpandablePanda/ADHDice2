@@ -1,5 +1,5 @@
 import type { CustomBehaviorRuleset } from "./database.types.ts";
-import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, STANDARD_TASK_TYPE_PRESENTATION, normalizeTaskTypePresentation, type TaskTypeAccentKey, type TaskTypeIconKey } from "./task-type-presentation.ts";
+import { STANDARD_TASK_TYPE_PRESENTATION, normalizeTaskTypePresentation, type TaskTypeAccentKey, type TaskTypeIconKey } from "./task-type-presentation.ts";
 
 export type TaskType = "task" | "custom";
 
@@ -10,6 +10,7 @@ export type TaskTypeSelection =
 export type TaskTypeSelectionOption = {
   accentKey: TaskTypeAccentKey;
   description: string;
+  highlightTaskRows: boolean;
   iconKey: TaskTypeIconKey;
   label: string;
   value: string;
@@ -40,7 +41,7 @@ export function normalizeTaskType(value: unknown): TaskType {
 }
 
 function isNamedCustomRuleset(
-  ruleset: Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null },
+  ruleset: Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null },
 ): boolean {
   return ruleset.task_type === "custom"
     && ruleset.deleted_at == null
@@ -49,13 +50,13 @@ function isNamedCustomRuleset(
 }
 
 function isRulesetIdentity(
-  ruleset: Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null },
+  ruleset: Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null },
 ) {
   return ruleset.task_type === "custom" && Boolean(ruleset.id.trim()) && Boolean(ruleset.name.trim());
 }
 
 function sortNamedCustomRulesets(
-  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null })[],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null })[],
   includeDeleted = false,
 ) {
   return rulesets
@@ -66,7 +67,7 @@ function sortNamedCustomRulesets(
 
 /** Build the one shared user-facing Task Type choice model. */
 export function buildTaskTypeSelectionOptions(
-  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null })[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null })[] = [],
 ): ReadonlyArray<TaskTypeSelectionOption> {
   return [
     ...BASE_TASK_TYPE_SELECTION_OPTIONS,
@@ -74,6 +75,7 @@ export function buildTaskTypeSelectionOptions(
       ...normalizeTaskTypePresentation({
         accentKey: ruleset.accent_key,
         description: ruleset.description,
+        highlightTaskRows: ruleset.highlight_task_rows,
         iconKey: ruleset.icon_key,
       }),
       label: ruleset.name.trim(),
@@ -85,7 +87,7 @@ export function buildTaskTypeSelectionOptions(
 export function taskTypeSelectionValue(
   taskType: unknown,
   customRulesetId: string | null | undefined,
-  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null })[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null })[] = [],
 ): string {
   const normalizedTaskType = normalizeTaskType(taskType);
   if (normalizedTaskType === "custom" && customRulesetId && sortNamedCustomRulesets(rulesets).some((ruleset) => ruleset.id === customRulesetId)) {
@@ -96,7 +98,7 @@ export function taskTypeSelectionValue(
 
 export function resolveTaskTypeSelection(
   value: unknown,
-  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null })[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null })[] = [],
 ): TaskTypeSelection | null {
   const namedRuleset = sortNamedCustomRulesets(rulesets).find((ruleset) => ruleset.id === value);
   if (namedRuleset) {
@@ -109,7 +111,7 @@ export function resolveTaskTypeSelection(
 export function formatTaskTypeLabel(
   value: unknown,
   customRulesetId?: string | null,
-  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null })[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null })[] = [],
 ): string {
   const normalizedTaskType = normalizeTaskType(value);
   if (normalizedTaskType === "custom") {
@@ -122,19 +124,22 @@ export function formatTaskTypeLabel(
 export function resolveTaskTypeSelectionOption(
   taskType: unknown,
   customRulesetId: string | null | undefined,
-  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description">> & { deleted_at?: string | null })[] = [],
+  rulesets: readonly (Pick<CustomBehaviorRuleset, "id" | "name" | "task_type"> & Partial<Pick<CustomBehaviorRuleset, "icon_key" | "accent_key" | "description" | "highlight_task_rows">> & { deleted_at?: string | null })[] = [],
 ): TaskTypeSelectionOption {
   const normalizedTaskType = normalizeTaskType(taskType);
   if (normalizedTaskType === "custom") {
     const namedRuleset = sortNamedCustomRulesets(rulesets, true).find((ruleset) => ruleset.id === customRulesetId);
     if (namedRuleset) {
+      const presentation = namedRuleset.deleted_at != null
+        ? STANDARD_TASK_TYPE_PRESENTATION
+        : normalizeTaskTypePresentation({ accentKey: namedRuleset.accent_key, description: namedRuleset.description, highlightTaskRows: namedRuleset.highlight_task_rows, iconKey: namedRuleset.icon_key });
       return {
-        ...normalizeTaskTypePresentation({ accentKey: namedRuleset.accent_key, description: namedRuleset.description, iconKey: namedRuleset.icon_key }),
+        ...presentation,
         label: namedRuleset.name.trim(),
         value: namedRuleset.id,
       };
     }
-    return { ...DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, label: "Custom Task Type (legacy)", value: "custom" };
+    return { ...STANDARD_TASK_TYPE_PRESENTATION, label: "Custom Task Type (legacy)", value: "custom" };
   }
   return BASE_TASK_TYPE_SELECTION_OPTIONS[0];
 }

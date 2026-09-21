@@ -613,6 +613,17 @@ export type PageShellMovePlan =
       message: string;
     };
 
+export type PageShellResizePlan =
+  | {
+      valid: true;
+      layout: PageShellLayoutPreference;
+    }
+  | {
+      valid: false;
+      reason: "COLLISION" | "INVALID_TARGET";
+      message: string;
+    };
+
 export type PageShellMovePlanningInput = {
   chromeHeightPx?: number;
   layout: PageShellLayoutPreference;
@@ -1283,6 +1294,80 @@ export function getPageShellExplicitLayoutGeometryValidationErrors(
     }
   }
   return errors;
+}
+
+/** Plans a span change as one size-plus-placement transaction. */
+export function planPageShellResize({
+  chromeHeightPx,
+  heightPx,
+  layout,
+  naturalHeights,
+  sourceId,
+  span,
+  visibleShellIds,
+}: {
+  chromeHeightPx?: number;
+  heightPx?: number | null;
+  layout: PageShellLayoutPreference;
+  naturalHeights?: Readonly<Record<string, number>>;
+  sourceId: string;
+  span: PageShellSpan;
+  visibleShellIds: readonly string[];
+}): PageShellResizePlan {
+  const sourceSize = layout.sizes[sourceId];
+  if (!sourceSize || !visibleShellIds.includes(sourceId)) {
+    return { valid: false, message: "This width change isn't available.", reason: "INVALID_TARGET" };
+  }
+
+  const candidate = clonePageShellLayout(layout);
+  candidate.sizes[sourceId] = {
+    ...sourceSize,
+    ...(heightPx === undefined ? {} : { heightPx }),
+    span,
+  };
+  candidate.placements ??= {};
+  candidate.placements[sourceId] = normalizePageShellPlacement(
+    candidate.placements[sourceId] ?? { columnStart: 1, laneOrder: 0 },
+    span,
+  );
+
+  const ids = uniquePageShellIds(visibleShellIds);
+  if (isValidPageShellExplicitLayout(layout, ids)) {
+    const sourcePlacement = candidate.placements[sourceId];
+    if (!sourcePlacement) {
+      return { valid: false, message: "This width change would overlap another shell.", reason: "COLLISION" };
+    }
+    const originalColumnStart = sourcePlacement.columnStart;
+    const candidateColumnStarts = [
+      originalColumnStart,
+      ...Array.from({ length: 12 - span + 1 }, (_, index) => index + 1)
+        .filter((columnStart) => columnStart !== originalColumnStart)
+        .sort((left, right) => Math.abs(left - originalColumnStart) - Math.abs(right - originalColumnStart) || left - right),
+    ];
+    for (const columnStart of candidateColumnStarts) {
+      const next = clonePageShellLayout(candidate);
+      next.placements![sourceId] = { ...sourcePlacement, columnStart };
+      if (!isValidPageShellExplicitLayout(next, ids)) continue;
+      const geometryErrors = getPageShellExplicitLayoutGeometryValidationErrors(next, ids, {
+        chromeHeightPx,
+        naturalHeights,
+      });
+      if (geometryErrors.length === 0) return { valid: true, layout: next };
+    }
+    return { valid: false, message: "This width change would overlap another shell.", reason: "COLLISION" };
+  }
+
+  // Incomplete layouts retain the established legacy packer, which already
+  // guarantees non-overlapping runtime footprints and can safely reflow rows.
+  const positions = packPageShellLayoutLegacy(projectVisiblePageShellOrder(candidate.order, ids), candidate.sizes, {
+    chromeHeightPx,
+    naturalHeights,
+    placements: candidate.placements,
+  });
+  if (ids.some((id) => !positions[id])) {
+    return { valid: false, message: "This width change isn't available.", reason: "INVALID_TARGET" };
+  }
+  return { valid: true, layout: candidate };
 }
 
 /** Rebuilds row-major visible order while preserving hidden shell positions in the full order. */

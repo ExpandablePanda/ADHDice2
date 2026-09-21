@@ -14,7 +14,7 @@ type ManualSelectOption = {
 };
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="ui-field-label dark:text-white/40">{children}</span>;
+  return <span className="ui-field-label dark:text-white/40" data-style-component="FocusModalFieldLabel" data-style-role="typography.field-label">{children}</span>;
 }
 
 function ManualSuggestionInput({
@@ -88,12 +88,13 @@ function ManualSuggestionInput({
           value={value}
         />
         <button
+          aria-label={isOpen ? `Close ${label} options` : `Open ${label} options`}
           aria-expanded={isOpen}
           className="absolute right-4 top-1/2 flex -translate-y-1/2 items-center justify-center text-[#6f57f6] dark:text-[#cabfff]"
           onClick={() => setIsOpen((current) => !current)}
           type="button"
         >
-          <ChevronDown className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
+          <ChevronDown aria-hidden="true" className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`} />
         </button>
         {isOpen && filteredOptions.length > 0 ? (
           <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 w-full overflow-hidden rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
@@ -177,7 +178,7 @@ function ManualPillSelect({
           type="button"
         >
           <span className="truncate pr-3 text-left">{selectedLabel}</span>
-          <ChevronDown className={`h-4 w-4 shrink-0 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
+          <ChevronDown aria-hidden="true" className={`h-4 w-4 shrink-0 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
         </button>
         {isOpen ? (
           <div className="absolute left-0 top-[calc(100%+0.5rem)] z-30 min-w-full overflow-hidden rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]">
@@ -297,7 +298,7 @@ function SearchableManualPillSelect({
           ref={inputRef}
           value={query}
         />
-        <ChevronDown className={`pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
+        <ChevronDown aria-hidden="true" className={`pointer-events-none absolute right-4 top-1/2 h-4 w-4 -translate-y-1/2 text-[#6f57f6] transition-transform dark:text-[#cabfff] ${isOpen ? "rotate-180" : ""}`} />
         {isOpen ? (
           <div className="adhdice-scrollbar absolute left-0 top-[calc(100%+0.5rem)] z-30 max-h-64 w-full overflow-y-auto rounded-[1.1rem] border border-[#ddd6fb] bg-white p-2 shadow-[0_22px_60px_rgba(56,42,116,0.18)] dark:border-white/10 dark:bg-[#241d3f]" ref={panelRef}>
             {filteredOptions.map((option, index) => (

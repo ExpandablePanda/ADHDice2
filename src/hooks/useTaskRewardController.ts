@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { EconomyState } from "@/hooks/useEconomy";
+import type { Task } from "@/lib/database.types";
 import {
   type PendingTaskReward,
   type TaskRewardCandidate,
 } from "@/lib/task-rewards";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import {
   parseAuthoritativeClaimSession,
   parsePendingRewardItems,
@@ -24,6 +26,7 @@ type Message = {
 type UseTaskRewardControllerOptions = {
   client: SupabaseClient;
   currentUserId: string | null;
+  tasks: Task[];
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setEconomy: Dispatch<SetStateAction<EconomyState>>;
 };
@@ -31,6 +34,7 @@ type UseTaskRewardControllerOptions = {
 export function useTaskRewardController({
   client,
   currentUserId,
+  tasks,
   setMessage,
   setEconomy,
 }: UseTaskRewardControllerOptions) {
@@ -168,7 +172,8 @@ export function useTaskRewardController({
   }
 
   async function queueTaskRewards(candidates: TaskRewardCandidate[]) {
-    await fulfillCanonicalRewardEntitlements(candidates.filter((candidate) => Boolean(candidate.canonicalRewardEntitlementId)));
+    const excludedTaskIds = buildEffectiveTrackingExclusionSet(tasks);
+    await fulfillCanonicalRewardEntitlements(candidates.filter((candidate) => Boolean(candidate.canonicalRewardEntitlementId) && !excludedTaskIds.has(candidate.task.id)));
   }
 
   async function claimPendingRewardBank() {

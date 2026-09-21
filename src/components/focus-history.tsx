@@ -2002,8 +2002,8 @@ function FocusActivitySummaryCard({
         <div className="flex flex-col gap-3">
           <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
             <div>
-              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Activity Summary</p>
-              <h4 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]" id="activity-card-title">Focus Activity</h4>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]" data-style-component="FocusActivityCard" data-style-role="ui.section.label">Activity Summary</p>
+              <h4 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]" data-style-component="FocusActivityCard" data-style-role="ui.section.title" id="activity-card-title">Focus Activity</h4>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 <TaskTableChipButton aria-label="Previous focus range" className="h-[18px] w-[26px] px-0 py-0" onClick={() => onShiftPeriod(-1)} toneClassName={FOCUS_ACTIVITY_OUTLINE_CHIP_CLASS}>
                   <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="2.6" viewBox="0 0 24 24">

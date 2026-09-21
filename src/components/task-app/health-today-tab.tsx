@@ -105,8 +105,8 @@ export function HealthTodayTab({
   return (
     <div className="mt-5 grid gap-5">
       <div>
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Today · {formatHealthDateLabel(today).toUpperCase()}</p>
-        <h2 className="mt-1 text-xl font-black text-[#1e2744] dark:text-white">Today&apos;s Snapshot</h2>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" data-style-component="HealthTodayTab" data-style-role="ui.section.label">Today · {formatHealthDateLabel(today).toUpperCase()}</p>
+        <h2 className="mt-1 text-xl font-black text-[#1e2744] dark:text-white" data-style-component="HealthTodayTab" data-style-role="ui.section.title">Today&apos;s Snapshot</h2>
       </div>
 
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5">
@@ -153,7 +153,7 @@ export function HealthTodayTab({
       <PageShellSurface>
       <PageShellBody>
       <section aria-labelledby="health-today-quick-log-heading" className="grid gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" id="health-today-quick-log-heading">Quick Log</p>
+        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40" data-style-component="HealthTodayTab" data-style-role="ui.section.label" id="health-today-quick-log-heading">Quick Log</p>
         <div className="flex flex-wrap gap-2">
           {([
             ["Journal", "Journal"],
@@ -219,7 +219,7 @@ function HealthTodaySnapshotCard({ children, label, onClick }: { children: React
   return (
     <AdhdCard interactive padding="sm">
       <button aria-label={`Open ${label}`} className="block w-full appearance-none border-0 bg-transparent p-0 text-left" onClick={onClick} type="button">
-        <h4 className="text-sm font-semibold text-[#26324f] dark:text-white">{label}</h4>
+        <h4 className="text-sm font-semibold text-[#26324f] dark:text-white" data-style-component="HealthTodaySnapshotCard" data-style-role="ui.section.title">{label}</h4>
         <div className="mt-2 text-sm text-[#4f5872] dark:text-white/75">{children}</div>
       </button>
     </AdhdCard>

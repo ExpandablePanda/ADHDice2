@@ -13,7 +13,7 @@ import { createTask } from "../src/lib/task-buckets.ts";
 import type { TaskHistory } from "../src/lib/database.types.ts";
 import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 import type { TaskListManualMembership as DbTaskListManualMembership } from "../src/lib/database.types.ts";
-import type { TaskListManualMembership } from "../src/lib/task-lists.ts";
+import { getBuiltInTaskLists, type TaskListManualMembership } from "../src/lib/task-lists.ts";
 
 test("action hooks expose expected callable actions", async () => {
   let routingState: Record<string, "inbox" | "today" | "quick_wins" | "waiting" | "later"> = {};
@@ -315,6 +315,89 @@ test("action hooks expose expected callable actions", async () => {
   assert.equal(typeof actions.updateTask, "function");
   assert.equal(typeof actions.saveTaskEditor, "function");
   assert.equal(typeof actions.applyBatchTaskEdit, "function");
+});
+
+test("Routine routing uses the existing manual-membership persistence path for add and remove", async () => {
+  let memberships: TaskListManualMembership[] = [];
+  let persistenceError: { message: string } | null = null;
+  const messages: string[] = [];
+  const writes: Array<{ operation: string; payload?: unknown }> = [];
+  const setTaskListManualMemberships = (updater: (current: TaskListManualMembership[]) => TaskListManualMembership[]) => {
+    memberships = updater(memberships);
+  };
+  const client = {
+    from(table: string) {
+      assert.equal(table, "adhdice_task_list_manual_memberships");
+      return {
+        insert(payload: unknown) {
+          writes.push({ operation: "insert", payload });
+          return {
+            select: () => ({
+              single: async () => ({
+                data: {
+                  created_at: "2026-06-24T10:00:00.000Z",
+                  id: "routine-membership",
+                  list_id: "routine",
+                  task_id: "task-routine",
+                  user_id: "u1",
+                },
+                error: persistenceError,
+              }),
+            }),
+          };
+        },
+        delete() {
+          writes.push({ operation: "delete" });
+          const query = {
+            eq: () => query,
+            then: (resolve: (value: { error: { message: string } | null }) => unknown) => resolve({ error: persistenceError }),
+          };
+          return query;
+        },
+      };
+    },
+  } as never;
+
+  const useRoutineRouting = (manualMembershipsByTaskId: Record<string, string[]>, taskListManualMemberships: TaskListManualMembership[]) => useTaskRoutingActions({
+    client,
+    currentUserId: "u1",
+    isMissingTaskListManualMembershipsTableError: () => false,
+    manualMembershipsByTaskId,
+    mapTaskListManualMembershipRow: (row: DbTaskListManualMembership) => row as unknown as TaskListManualMembership,
+    setMessage: (message: { text: string }) => { messages.push(message.text); },
+    setTaskListManualMemberships,
+    setTaskRouting: (() => {}) as never,
+    taskListDefinitions: getBuiltInTaskLists(),
+    taskListManualMemberships,
+  });
+
+  await useRoutineRouting({}, []).toggleTaskManualListMembership("task-routine", "routine");
+  assert.equal(memberships[0]?.list_id, "routine");
+  assert.deepEqual(writes[0], {
+    operation: "insert",
+    payload: { list_id: "routine", task_id: "task-routine", user_id: "u1" },
+  });
+
+  await useRoutineRouting({ "task-routine": ["routine"] }, memberships).toggleTaskManualListMembership("task-routine", "routine");
+  assert.equal(memberships.length, 0);
+  assert.equal(writes[1]?.operation, "delete");
+
+  persistenceError = { message: "Routine write failed." };
+  await useRoutineRouting({}, []).toggleTaskManualListMembership("task-routine-error", "routine");
+  assert.equal(memberships.some((membership) => membership.task_id === "task-routine-error"), false);
+  assert.equal(messages.at(-1), "Routine write failed.");
+
+  persistenceError = { message: "Routine removal failed." };
+  memberships = [{
+    created_at: "2026-06-24T10:00:00.000Z",
+    id: "routine-membership",
+    list_id: "routine",
+    task_id: "task-routine",
+    user_id: "u1",
+  }];
+  await useRoutineRouting({ "task-routine": ["routine"] }, memberships).toggleTaskManualListMembership("task-routine", "routine");
+  assert.equal(memberships.some((membership) => membership.task_id === "task-routine" && membership.list_id === "routine"), true);
+  assert.equal(messages.at(-1), "Routine removal failed.");
 });
 
 test("import task merge replaces existing rows by task id", () => {
@@ -776,6 +859,7 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
     route: "unchanged",
     status: "unchanged",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   });
@@ -1133,6 +1217,7 @@ test("manual due-date edits preserve unresolved History and skip reconciliation,
     route: "unchanged",
     status: "unchanged",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   });
@@ -1579,6 +1664,7 @@ test("batch edit rejects Task State validation before any task or History writes
     route: "unchanged",
     status: "missed",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   });

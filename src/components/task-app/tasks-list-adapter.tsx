@@ -19,7 +19,7 @@ import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { DuplicateTaskGroupsPanel } from "./duplicate-task-groups-panel";
 import { type ChildTaskPreview, type ChildTaskPreviewGroup, type ChildTaskPreviewLookup, type ChildTaskPreviewPriority, type DuplicateTitleGroup } from "@/lib/task-app-derived";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
-import type { CustomBehaviorRuleset, Task, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskContentFolder, TaskHistory, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus, TaskType } from "@/lib/database.types";
 import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/task-complete";
 import { resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
@@ -34,6 +34,12 @@ import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summari
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ComponentProps, type DragEvent as ReactDragEvent, type ReactNode, type RefObject } from "react";
 import { TasksListViewPanel } from "./tasks-page";
+import {
+  buildTaskContentFolderContextMenuState,
+  TaskContentFolderContextMenu,
+  type TaskContentFolderContextMenuState,
+} from "./task-content-folder-context-menu";
+import { TaskContentFolderEditableHeader, type TaskContentFolderEditSurface } from "./task-content-folder-editable-header";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
@@ -65,7 +71,10 @@ import {
   TaskHierarchySearchChip,
   TaskCurrentStreakChip,
   TaskListQuickPanelShell,
+  TASK_TABLE_SELECTED_TASK_SURFACE_CLASS,
   TaskTableChipButton,
+  TaskSelectionToolbar,
+  useTaskRowLongPress,
 } from "@/components/ui/task-table-primitives";
 import { AdhdIconButton } from "@/components/ui-system/index";
 import { TaskTypeSelect } from "./task-type-identity";
@@ -78,9 +87,21 @@ import {
 } from "@/lib/task-list-sort";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyResolutionContext, TaskBehaviorProfiles, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
-import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
+import { resolveTaskTypeRowPresentation } from "@/lib/task-type-presentation";
 import { buildTaskTypeSelectionOptions, resolveTaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskTypePresentation } from "@/lib/task-type-presentation";
+import { TaskTypeTitleIcon } from "./task-type-identity";
+import {
+  buildTaskContentFolderMemberSummary,
+  buildTaskContentFolderPresentation,
+  flattenTaskContentFolderPresentation,
+  getActuallyEmptyTaskContentFolderIds,
+  getTaskContentFolderMenuOptions,
+  getTaskContentFolderMoveOptions,
+  shouldIncludeEmptyTaskContentFolders,
+  type TaskContentFolderMemberSummary,
+  type TaskContentFolderMenuOption,
+} from "@/lib/task-content-folders";
 
 type ListQuickPanelMode = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "list" | "notes" | "priority" | "repeat" | "status" | "tags";
 
@@ -270,6 +291,17 @@ function isKeyboardEventFromEditableTarget(target: EventTarget | null) {
 }
 
 type TasksTableSourceProps = {
+  taskContentFolders?: readonly TaskContentFolder[];
+  collapsedTaskContentFolderIds?: ReadonlySet<string>;
+  onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
+  onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
+  onAddFolderToContentFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
+  onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
+  onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
+  onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
+  onMoveFolder?: (folderId: string, destinationFolderId: string | null) => Promise<boolean>;
+  onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: TaskEditorLinkedNote[];
   allTagOptions?: string[];
@@ -280,12 +312,14 @@ type TasksTableSourceProps = {
   highlightedRevealShouldFocus?: boolean;
   highlightedScrollToken?: number | null;
   highlightedTaskIds?: string[];
+  matchedTaskContentFolderIds?: ReadonlySet<string>;
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
   searchMatchedChildTaskIds?: string[];
   statusMatchedChildTaskIds?: string[];
   statusMatchedStepParentTaskIds?: string[];
   statusFilterActive?: boolean;
+  searchActive?: boolean;
   hierarchyScopeKey?: string;
   columnFilters?: TaskTableColumnFilters;
   energyColumnFilters?: Task["energy"][];
@@ -316,6 +350,7 @@ type TasksTableSourceProps = {
   onOpenChildTask?: (taskId: string) => void;
   onMoveTaskIntoParent?: (taskId: string, parentTaskId: string) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
+  onUnlinkTasks?: (taskIds: string[]) => Promise<boolean> | boolean;
   onPromoteTaskToMilestone?: (taskId: string) => void;
   onDetachAndPromoteTaskToMilestone?: (taskId: string) => void;
   milestonePromotionTaskIds?: ReadonlySet<string>;
@@ -599,7 +634,7 @@ export function TasksTableAdapter({
       : null,
     [rowModelCache, tableProps.requestedOpenTask, tableProps.rowContext],
   );
-  if (presentationTasks.length === 0 && !tableProps.requestedOpenTask) {
+  if (presentationTasks.length === 0 && !tableProps.taskContentFolders?.length && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -643,12 +678,14 @@ export function TasksTableAdapter({
           highlightedRevealShouldFocus={tableProps.highlightedRevealShouldFocus}
           highlightedScrollToken={tableProps.highlightedScrollToken}
           highlightedTaskIds={tableProps.highlightedTaskIds}
+          matchedTaskContentFolderIds={tableProps.matchedTaskContentFolderIds}
           onVisibleSearchMatchIdsChange={tableProps.onVisibleSearchMatchIdsChange}
           searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
           searchMatchedChildTaskIds={tableProps.searchMatchedChildTaskIds}
           statusMatchedChildTaskIds={tableProps.statusMatchedChildTaskIds}
           statusMatchedStepParentTaskIds={tableProps.statusMatchedStepParentTaskIds}
           statusFilterActive={tableProps.statusFilterActive}
+          searchActive={tableProps.searchActive}
           hierarchyScopeKey={tableProps.hierarchyScopeKey}
           columnFilters={tableProps.columnFilters}
           energyColumnFilters={tableProps.energyColumnFilters}
@@ -658,6 +695,7 @@ export function TasksTableAdapter({
           onStatusColumnFiltersChange={tableProps.onStatusColumnFiltersChange}
           className="max-w-none p-0"
           currentListLabel={tableProps.currentListLabel}
+          currentListId={tableProps.currentListId}
           canRemoveFromCurrentList={canRemoveFromCurrentList}
           onRemoveFromCurrentList={(taskId) => {
             if (tableProps.currentListId) {
@@ -687,6 +725,18 @@ export function TasksTableAdapter({
           onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
           onOpenChildTask={tableProps.onOpenChildTask}
           onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
+          onUnlinkTasks={tableProps.onUnlinkTasks}
+          taskContentFolders={tableProps.taskContentFolders}
+          collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
+          onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
+          onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+          onAddFolderToContentFolder={tableProps.onAddFolderToContentFolder}
+          onAddTaskToContentFolder={tableProps.onAddTaskToContentFolder}
+          onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
+          onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
+          onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
+          onMoveFolder={tableProps.onMoveFolder}
+          onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
           onUnlinkTask={tableProps.onUnlinkTask}
           onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
           onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
@@ -1407,7 +1457,8 @@ function StepsCardPreview({
             const siblingIndex = siblingItems.findIndex((candidate) => candidate.id === item.id);
             const childTask = childTasksById.get(item.id) ?? null;
             const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
-            const childTaskSurface = getTaskTypeSurfaceClassName(childTaskTypeOption.accentKey);
+            const childTaskRowPresentation = resolveTaskTypeRowPresentation(childTaskTypeOption);
+            const childTaskSurface = childTaskRowPresentation.surfaceClassName;
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
@@ -1512,6 +1563,7 @@ function StepsCardPreview({
                                   {item.title || (item.depth > 1 ? "Untitled substep" : "Untitled step")}
                                 </p>
                               </button>
+                              {childTaskRowPresentation.titleIcon ? <TaskTypeTitleIcon label={childTaskRowPresentation.titleIcon.label} option={childTaskRowPresentation.titleIcon} /> : null}
                               <StepLayerChip depth={item.depth} />
                               <StepHistoryChips currentStreak={item.currentStreak} missedStreak={item.missedStreak} />
                               <MetadataDisclosureButton
@@ -2635,6 +2687,7 @@ function TasksSimpleList({
   selectedBucket,
   tableProps,
 }: TasksListAdapterProps) {
+  const selectedTaskIds = tableProps.selectedTaskIds ?? [];
   const [rowModelCache] = useState(createStableTaskRowModelCache);
   const canRemoveFromCurrentList = (taskId: string) => canRemoveTaskFromCurrentList(
     taskId,
@@ -2643,6 +2696,8 @@ function TasksSimpleList({
     tableProps.rowContext.manualMembershipsByTaskId,
   );
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
+  const [contentFolderContextMenu, setContentFolderContextMenu] = useState<TaskContentFolderContextMenuState | null>(null);
+  const [activeTaskContentFolderEdit, setActiveTaskContentFolderEdit] = useState<TaskContentFolderEditSurface>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
@@ -2678,6 +2733,35 @@ function TasksSimpleList({
     ? rowWindow.count
     : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
   const windowedTasks = useMemo(() => tasks.slice(0, rowWindowCount), [rowWindowCount, tasks]);
+  const allFolderMemberTasks = tableProps.allTasks ?? tableProps.tasks;
+  const actuallyEmptyTaskContentFolderIds = useMemo(
+    () => getActuallyEmptyTaskContentFolderIds(allFolderMemberTasks, tableProps.taskContentFolders ?? []),
+    [allFolderMemberTasks, tableProps.taskContentFolders],
+  );
+  const taskContentFolderPresentation = useMemo(
+    () => buildTaskContentFolderPresentation(windowedTasks, tableProps.taskContentFolders ?? [], {
+      includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({
+        currentListId: tableProps.currentListId ?? selectedBucket,
+        hasHierarchyFiltersActive: Boolean(tableProps.statusFilterActive),
+        hasSearchActive: Boolean(tableProps.searchActive),
+      }),
+      persistentEmptyFolderIds: actuallyEmptyTaskContentFolderIds,
+    }),
+    [actuallyEmptyTaskContentFolderIds, selectedBucket, tableProps.currentListId, tableProps.searchActive, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
+  );
+  const folderMemberSummaryById = useMemo(() => {
+    const memberFacts = allFolderMemberTasks.map((task) => ({
+      id: task.id,
+      parent_task_id: task.parent_task_id,
+      task_content_folder_id: task.task_content_folder_id,
+      isPinned: Boolean(task.pinned_at),
+      isRoutine: (tableProps.rowContext.listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"),
+      hasAttention: Boolean(tableProps.rowContext.taskAttentionReasonByTaskId[task.id]),
+    }));
+    return new Map<string, TaskContentFolderMemberSummary>(
+      (tableProps.taskContentFolders ?? []).map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id, tableProps.taskContentFolders ?? [])]),
+    );
+  }, [allFolderMemberTasks, tableProps.rowContext.listMembershipsByTaskId, tableProps.rowContext.taskAttentionReasonByTaskId, tableProps.taskContentFolders]);
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
@@ -2815,7 +2899,24 @@ function TasksSimpleList({
     pendingMeasuredStatusScrollAnchorRef.current = null;
     return candidateTaskIds;
   };
-  const selectedTaskIdSet = useMemo(() => new Set(tableProps.selectedTaskIds), [tableProps.selectedTaskIds]);
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const taskRowLongPressHandlers = useTaskRowLongPress({
+    isInteractiveTarget: shouldIgnoreListOverlayOpen,
+    onLongPress: (target) => {
+      const taskId = target.dataset.taskListRow;
+      if (!taskId) {
+        return;
+      }
+      setRowContextMenu(null);
+      closeQuickPanel();
+      if (!selectedTaskIdSet.has(taskId)) {
+        tableProps.onToggleTaskSelection?.(taskId, {
+          additive: true,
+          visibleTaskIds,
+        });
+      }
+    },
+  });
   const highlightedTaskIdSet = useMemo(() => new Set(tableProps.highlightedTaskIds ?? []), [tableProps.highlightedTaskIds]);
   const searchMatchedStepParentTaskIdSet = useMemo(
     () => new Set(tableProps.searchMatchedStepParentTaskIds ?? []),
@@ -2911,6 +3012,15 @@ function TasksSimpleList({
       })
       : [],
     [allRows, rowContextMenuTask, rowModelCache, tableProps.childTaskPreviewByParentTaskId, tableProps.rowContext, tasks],
+  );
+  const rowContextMenuTaskContentFolderOptions = useMemo<TaskContentFolderMenuOption[]>(() => {
+    return rowContextMenuTask ? getTaskContentFolderMenuOptions(tableProps.taskContentFolders ?? [], rowContextMenuTask) : [];
+  }, [rowContextMenuTask, tableProps.taskContentFolders]);
+  const contentFolderMoveOptions = useMemo(
+    () => contentFolderContextMenu
+      ? getTaskContentFolderMoveOptions(tableProps.taskContentFolders ?? [], contentFolderContextMenu.folderId)
+      : [],
+    [contentFolderContextMenu, tableProps.taskContentFolders],
   );
   useEffect(() => {
     if (parentStepDraftTaskId) {
@@ -3044,6 +3154,15 @@ function TasksSimpleList({
     return true;
   }
 
+  function openContentFolderContextMenu(folderId: string, clientX: number, clientY: number) {
+    const nextMenu = buildTaskContentFolderContextMenuState(listShellRef.current, folderId, clientX, clientY);
+    if (!nextMenu) return false;
+    setRowContextMenu(null);
+    setActiveTaskContentFolderEdit(null);
+    setContentFolderContextMenu(nextMenu);
+    return true;
+  }
+
   async function commitParentStepDraft(parentTaskId: string, taskTypeSelectionValue = "task") {
     const nextTitle = parentStepTitleDrafts[parentTaskId]?.trim() ?? "";
     if (!nextTitle) {
@@ -3096,7 +3215,7 @@ function TasksSimpleList({
     });
   }
 
-  if (tasks.length === 0 && !tableProps.requestedOpenTask) {
+  if (tasks.length === 0 && taskContentFolderPresentation.length === 0 && !tableProps.requestedOpenTask) {
     return (
       <TasksListViewPanel
         {...panelProps}
@@ -3129,8 +3248,11 @@ function TasksSimpleList({
               highlightedRevealShouldFocus={tableProps.highlightedRevealShouldFocus}
               highlightedScrollToken={tableProps.highlightedScrollToken}
               highlightedTaskIds={tableProps.highlightedTaskIds}
+              matchedTaskContentFolderIds={tableProps.matchedTaskContentFolderIds}
+              searchActive={tableProps.searchActive}
               className="m-0 max-w-none p-0"
               currentListLabel={tableProps.currentListLabel}
+              currentListId={tableProps.currentListId}
               canRemoveFromCurrentList={canRemoveFromCurrentList}
               onRemoveFromCurrentList={(taskId) => {
                 const currentListId = tableProps.currentListId ?? selectedBucket;
@@ -3160,6 +3282,19 @@ function TasksSimpleList({
               onOpenTaskInNewTab={tableProps.onOpenTaskInNewTab}
               onOpenTaskHistory={tableProps.onOpenTaskHistory}
               onMoveTaskIntoParent={tableProps.onMoveTaskIntoParent}
+              onUnlinkTasks={tableProps.onUnlinkTasks}
+              taskContentFolders={tableProps.taskContentFolders}
+              collapsedTaskContentFolderIds={tableProps.collapsedTaskContentFolderIds}
+              onToggleTaskContentFolderCollapsed={tableProps.onToggleTaskContentFolderCollapsed}
+              onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder}
+              onAddFolderToContentFolder={tableProps.onAddFolderToContentFolder}
+              onAddTaskToContentFolder={tableProps.onAddTaskToContentFolder}
+              onRenameTaskContentFolder={tableProps.onRenameTaskContentFolder}
+              onUpdateTaskContentFolderIcon={tableProps.onUpdateTaskContentFolderIcon}
+              onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
+              onMoveFolder={tableProps.onMoveFolder}
+              onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
+              onUnlinkTask={tableProps.onUnlinkTask}
               onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
               onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
               milestonePromotionTaskIds={tableProps.milestonePromotionTaskIds}
@@ -3246,9 +3381,59 @@ function TasksSimpleList({
               visibleColumns={OVERLAY_VISIBLE_COLUMNS}
             />
           ) : null}
-            {windowedTasks.map((task) => {
+          <TaskSelectionToolbar
+            onClearSelection={tableProps.onClearSelection}
+            onDeleteSelected={selectedTaskIds.length > 1 ? tableProps.onOpenBatchDelete : undefined}
+            onEditSelected={selectedTaskIds.length > 1 ? tableProps.onOpenBatchEdit : undefined}
+            onEditTask={selectedTaskIds.length === 1 && tableProps.onOpenTaskEditor ? () => tableProps.onOpenTaskEditor?.(selectedTaskIds[0]!, visibleTaskIds) : undefined}
+            onSelectAllVisible={tableProps.onSelectAllVisible ? () => tableProps.onSelectAllVisible?.(visibleTaskIds) : undefined}
+            selectedCount={selectedTaskIds.length}
+          />
+            {taskContentFolderPresentation
+              .flatMap((block) => {
+                if (block.kind === "task") return [{ depth: block.depth, kind: "task" as const, task: block.task }];
+                const collapsed = tableProps.collapsedTaskContentFolderIds?.has(block.folder.id) ?? false;
+                const nestedEntries = block.children.some((child) => child.kind === "folder")
+                  ? block.children.flatMap((child) => flattenTaskContentFolderPresentation([child], tableProps.collapsedTaskContentFolderIds))
+                  : block.members.map((task) => ({ depth: block.depth + 1, kind: "task" as const, task }));
+                return [
+                  { depth: block.depth, kind: "folder" as const, folder: block.folder, members: block.members, visibleTaskCount: block.visibleTaskCount, collapsed },
+                  ...(collapsed ? [] : nestedEntries),
+                ];
+              })
+              .map((entry) => {
+                if (entry.kind === "folder") {
+                  return (
+                    <Fragment key={`content-folder:${entry.folder.id}`}>
+                      <TaskContentFolderEditableHeader
+                        activeSurface={activeTaskContentFolderEdit}
+                        collapsed={entry.collapsed}
+                        depth={entry.depth}
+                        folder={entry.folder}
+                        memberSummary={folderMemberSummaryById.get(entry.folder.id)}
+                        memberCount={entry.visibleTaskCount}
+                        onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
+                        onAddTaskToFolder={tableProps.onAddTaskToContentFolder}
+                        onAddFolderToFolder={tableProps.onAddFolderToContentFolder}
+                        customBehaviorRulesets={tableProps.customBehaviorRulesets}
+                        onRename={tableProps.onRenameTaskContentFolder}
+                        onSurfaceChange={(surface) => {
+                          setActiveTaskContentFolderEdit(surface);
+                          if (surface) setContentFolderContextMenu(null);
+                        }}
+                        onToggleMemberPinned={tableProps.onTogglePinned}
+                        onToggleMemberRoutine={tableProps.onToggleTaskList}
+                        onToggle={() => tableProps.onToggleTaskContentFolderCollapsed?.(entry.folder.id)}
+                        onUpdateIcon={tableProps.onUpdateTaskContentFolderIcon}
+                      />
+                    </Fragment>
+                  );
+                }
+
+        const task = entry.task;
         const taskTypeOption = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, tableProps.customBehaviorRulesets);
-        const taskSurface = getTaskTypeSurfaceClassName(taskTypeOption.accentKey);
+        const taskTypeRowPresentation = resolveTaskTypeRowPresentation(taskTypeOption);
+        const taskSurface = taskTypeRowPresentation.surfaceClassName;
         const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
@@ -3320,11 +3505,12 @@ function TasksSimpleList({
           ),
         );
         return (
-          <div className="space-y-3" data-task-list-hierarchy-group={task.id} key={task.id}>
+          <Fragment key={task.id}>
+            <div className="space-y-3" data-task-list-hierarchy-group={task.id} style={{ marginLeft: entry.depth ? `${entry.depth * 1}rem` : undefined }}>
             <article
               className={`rounded-[1.35rem] border p-4 shadow-[0_16px_38px_rgba(81,61,168,0.06)] transition ${taskSurface} ${
                 selectedTaskIdSet.has(task.id)
-                  ? "ring-2 ring-[#6f57f6]/35 ring-offset-0 dark:ring-[#cabfff]/35"
+                  ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS
                   : ""
               } ${
                 isQuickPanelOpen
@@ -3332,12 +3518,21 @@ function TasksSimpleList({
                   : ""
               } ${hasVisibleRenderedDescendants ? "sticky top-[4.75rem] z-10" : ""}`}
               data-task-list-row={task.id}
+              {...taskRowLongPressHandlers}
               onClick={(event) => {
                 if (shouldIgnoreListOverlayOpen(event.target)) {
                   return;
                 }
                 setRowContextMenu(null);
                 closeQuickPanel();
+                if (selectedTaskIds.length > 0 && tableProps.onToggleTaskSelection) {
+                  tableProps.onToggleTaskSelection(task.id, {
+                    additive: true,
+                    range: event.shiftKey,
+                    visibleTaskIds,
+                  });
+                  return;
+                }
                 tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
               }}
               onContextMenu={(event) => {
@@ -3360,6 +3555,14 @@ function TasksSimpleList({
                         event.preventDefault();
                         setRowContextMenu(null);
                         closeQuickPanel();
+                        if (selectedTaskIds.length > 0 && tableProps.onToggleTaskSelection) {
+                          tableProps.onToggleTaskSelection(task.id, {
+                            additive: true,
+                            range: event.shiftKey,
+                            visibleTaskIds,
+                          });
+                          return;
+                        }
                         tableProps.onOpenTaskEditor?.(task.id, visibleTaskIds);
                       }
                     }}
@@ -3403,6 +3606,7 @@ function TasksSimpleList({
                           </p>
                         </button>
                       )}
+                      {taskTypeRowPresentation.titleIcon ? <TaskTypeTitleIcon label={taskTypeRowPresentation.titleIcon.label} option={taskTypeRowPresentation.titleIcon} /> : null}
                       <TaskHistoryChips
                         currentStreak={taskRow.currentStreak}
                         missedStreak={taskRow.missedStreak}
@@ -3825,20 +4029,22 @@ function TasksSimpleList({
               />
             ) : null}
           </div>
+          </Fragment>
         );
-      })}
+        })}
           {windowedTasks.length < tasks.length ? <div aria-hidden="true" className="h-px" ref={loadMoreListRowsRef} /> : null}
           {rowContextMenu && rowContextMenuTask ? (
             <TaskRowContextMenu
               allowInlineInspector
               enableInspector
-              hasBatchQuickEdit={selectedTaskIdSet.has(rowContextMenuTask.id) && tableProps.selectedTaskIds.length > 1}
+              hasBatchQuickEdit={selectedTaskIdSet.has(rowContextMenuTask.id) && selectedTaskIds.length > 1}
               isTaskSelected={selectedTaskIdSet.has(rowContextMenuTask.id)}
               menu={rowContextMenu}
               onClearSelection={tableProps.onClearSelection ? () => {
-                tableProps.onClearSelection();
+                tableProps.onClearSelection?.();
                 setRowContextMenu(null);
               } : undefined}
+              onCreateTaskContentFolder={tableProps.onCreateTaskContentFolder ? (name) => tableProps.onCreateTaskContentFolder!(rowContextMenuTask.id, name) : undefined}
               onDeleteTask={tableProps.onOpenDeleteTask ? () => {
                 tableProps.onOpenDeleteTask?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
@@ -3854,6 +4060,10 @@ function TasksSimpleList({
               } : undefined}
               onMoveIntoParent={tableProps.onMoveTaskIntoParent ? async (parentTaskId) => {
                 await tableProps.onMoveTaskIntoParent?.(rowContextMenuTask.id, parentTaskId);
+                setRowContextMenu(null);
+              } : undefined}
+              onMoveToTaskContentFolder={tableProps.onMoveTaskToContentFolder ? async (folderId) => {
+                await tableProps.onMoveTaskToContentFolder?.(rowContextMenuTask.id, folderId);
                 setRowContextMenu(null);
               } : undefined}
               onOpenInNewTab={tableProps.onOpenTaskInNewTab ? () => {
@@ -3912,6 +4122,7 @@ function TasksSimpleList({
                 setRowContextMenu(null);
               } : undefined}
               moveIntoParentOptions={rowContextMenuMoveIntoParentOptions}
+              taskContentFolderOptions={rowContextMenuTaskContentFolderOptions}
               onSelectAllVisible={tableProps.onSelectAllVisible ? () => {
                 tableProps.onSelectAllVisible?.(visibleTaskIds);
                 setRowContextMenu(null);
@@ -3936,11 +4147,26 @@ function TasksSimpleList({
                 { label: "Link", mode: "link" },
                 { label: "Notes", mode: "notes" },
               ]}
-              quickEditTitle={selectedTaskIdSet.has(rowContextMenuTask.id) && tableProps.selectedTaskIds.length > 1 ? `Quick edit ${tableProps.selectedTaskIds.length} selected tasks` : "Quick edit"}
-              selectedTaskCount={tableProps.selectedTaskIds.length}
+              quickEditTitle={selectedTaskIdSet.has(rowContextMenuTask.id) && selectedTaskIds.length > 1 ? `Quick edit ${selectedTaskIds.length} selected tasks` : "Quick edit"}
+              selectedTaskCount={selectedTaskIds.length}
               task={rowContextMenuTask}
             />
           ) : null}
+          {contentFolderContextMenu && tableProps.onRenameTaskContentFolder && tableProps.onDeleteTaskContentFolder ? (() => {
+            const folder = (tableProps.taskContentFolders ?? []).find((entry) => entry.id === contentFolderContextMenu.folderId);
+            return folder ? (
+              <TaskContentFolderContextMenu
+                folder={folder}
+                menu={contentFolderContextMenu}
+                moveOptions={contentFolderMoveOptions}
+                onAddChildFolder={() => setActiveTaskContentFolderEdit({ folderId: folder.id, kind: "folder" })}
+                onDelete={tableProps.onDeleteTaskContentFolder}
+                onDismiss={() => setContentFolderContextMenu(null)}
+                onMoveFolder={tableProps.onMoveFolder}
+                onRename={tableProps.onRenameTaskContentFolder}
+              />
+            ) : null;
+          })() : null}
         </div>
       )}
     />

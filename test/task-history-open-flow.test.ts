@@ -129,7 +129,8 @@ test("Task History stats retain effective timeline streak calculations", () => {
   assert.match(modalSource, /label: "Best streak"/);
   assert.match(modalSource, /longestMissedStreak: resolvedStreaks\.longestMissedStreak/);
   assert.match(modalSource, /const resolvedTimelineDays = calendarRead\?\.timeline\?\.days/);
-  assert.match(modalSource, /computeTaskEffectiveTimelineStreaks\(resolvedTimelineDays, today\)/);
+  assert.match(modalSource, /computeTaskEffectiveTimelineStreaks\(\s*resolvedTimelineDays,\s*today,/);
+  assert.match(modalSource, /currentMissedStreakStartLogicalDate/);
 });
 
 test("parent, Step, Substep, and context-menu History actions preserve their row IDs", () => {

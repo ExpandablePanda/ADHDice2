@@ -12,6 +12,7 @@ import {
   TASK_TABLE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
 import { AdhdChip, AdhdDropdownPanel } from "@/components/ui-system";
+import { StyleLabIconPreviewSlot } from "@/components/style-lab/style-lab-icon-slot";
 
 import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
@@ -940,6 +941,8 @@ export function ReorderableTaskChipRail({
       data-list-reorder-rail="true"
       data-rail-container-id={currentFolderId ?? ""}
       data-rail-container-key={railContainerKey}
+      data-style-component="TasksRailSurface"
+      data-style-role="tasks.rail.surface"
       ref={railElementRef}
     >
       {renderedLists.map((list) => {
@@ -959,7 +962,6 @@ export function ReorderableTaskChipRail({
           aria-pressed={selected}
           className={`${TASK_RAIL_CHIP_BUTTON_CLASS} ${reorderable ? "cursor-grab" : ""} ${draggedListId === list.structuralKey ? "adhdice-native-interaction-suppressed cursor-grabbing relative z-10 opacity-[0.55]" : ""}`}
           data-folder-drop-id={list.structureKind === "folder" ? list.entityId : undefined}
-          data-rail-chip-surface
           data-rail-container-key={reorderable ? listRailContainerKey : undefined}
           data-rail-drag-id={reorderable ? list.structuralKey : undefined}
           data-rail-entity-id={reorderable ? list.entityId : undefined}
@@ -1085,15 +1087,26 @@ export function ReorderableTaskChipRail({
             WebkitUserSelect: draggedListId === list.structuralKey ? "none" : undefined,
             userSelect: draggedListId === list.structuralKey ? "none" : undefined,
           } : undefined}
+          data-style-component="TasksRailChip"
+          data-style-lab-structure-key={list.structuralKey ?? list.id}
+          data-style-role="tasks.rail.chip"
           title={accessibleFolderSummary}
           type="button"
         >
-          <span className={`pointer-events-none cursor-inherit ${TASK_TABLE_CHIP_BASE_CLASS} ${selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS} ${draggedListId === list.structuralKey ? "shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""} ${outlinedFolderStructuralKey === list.structuralKey ? "ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]" : ""}`}>
+          <span
+            className={`${TASK_TABLE_CHIP_BASE_CLASS} ${selected ? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS} ${draggedListId === list.structuralKey ? "shadow-lg ring-2 ring-[#c9bcff] dark:ring-[#6e5ab2]" : ""} ${outlinedFolderStructuralKey === list.structuralKey ? "ring-2 ring-inset ring-[#6f57f6] dark:ring-[#cabfff]" : ""} pointer-events-none cursor-inherit`}
+            data-rail-chip-surface
+            data-style-part="surface"
+          >
             <span className="inline-flex items-center">
-              {list.structureKind === "folder" ? <Folder className="mr-1.5 h-3.5 w-3.5 shrink-0" /> : null}
-              {list.label}
-              {folderCountLabel ? <span className="ml-1 opacity-70">{folderCountLabel}</span> : null}
-              {list.structureKind === "folder" ? null : <span className="ml-1 opacity-70">{list.count}</span>}
+              {list.structureKind === "folder" ? (
+                <StyleLabIconPreviewSlot iconName="folder">
+                  <Folder className="mr-1.5 h-3.5 w-3.5 shrink-0" />
+                </StyleLabIconPreviewSlot>
+              ) : null}
+              <span data-style-part="label" data-style-text-part="label">{list.label}</span>
+              {folderCountLabel ? <span className="ml-1 opacity-70" data-style-part="count">{folderCountLabel}</span> : null}
+              {list.structureKind === "folder" ? null : <span className="ml-1 opacity-70" data-style-part="count">{list.count}</span>}
             </span>
           </span>
         </button>
@@ -1145,13 +1158,25 @@ function TaskChipButton({
   active,
   autoFocus,
   children,
+  contentClassName,
+  count,
+  icon,
+  iconName,
   onClick,
+  trailingIcon,
+  trailingIconName,
   tone = "muted",
 }: {
   active?: boolean;
   autoFocus?: boolean;
   children: ReactNode;
+  contentClassName?: string;
+  count?: ReactNode;
+  icon?: ReactNode;
+  iconName?: string;
   onClick: () => void;
+  trailingIcon?: ReactNode;
+  trailingIconName?: string;
   tone?: "muted" | "primary" | "purple";
 }) {
   const toneClassName = active
@@ -1163,7 +1188,19 @@ function TaskChipButton({
         : SHARED_CHIP_MUTED_CLASS;
 
   return (
-    <AdhdChip aria-pressed={active} autoFocus={autoFocus} onClick={onClick} selected={active} toneClassName={toneClassName}>
+    <AdhdChip
+      aria-pressed={active}
+      autoFocus={autoFocus}
+      contentClassName={contentClassName}
+      count={count}
+      icon={icon}
+      iconName={iconName}
+      onClick={onClick}
+      selected={active}
+      toneClassName={toneClassName}
+      trailingIcon={trailingIcon}
+      trailingIconName={trailingIconName}
+    >
       {children}
     </AdhdChip>
   );
@@ -1231,10 +1268,11 @@ function TaskViewsMenu({
         aria-expanded={isOpen}
         className="gap-2"
         onClick={() => setIsOpen((current) => !current)}
+        trailingIcon={<ChevronDown className={`h-4 w-4 transition ${isOpen ? "rotate-180" : ""}`} />}
+        trailingIconName="chevron-down"
         toneClassName={SHARED_CHIP_MUTED_CLASS}
       >
         Views
-        <ChevronDown className={`h-4 w-4 transition ${isOpen ? "rotate-180" : ""}`} />
       </AdhdChip>
       {isOpen ? (
         <AdhdDropdownPanel className="px-[2px] py-2" widthClassName="min-w-0">
@@ -1529,9 +1567,13 @@ export function TaskOperationsHeader({
                 Import
               </TaskChipButton>
               <div className="relative">
-                <TaskChipButton onClick={() => setIsNewMenuOpen((current) => !current)} tone="primary">
+                <TaskChipButton
+                  onClick={() => setIsNewMenuOpen((current) => !current)}
+                  tone="primary"
+                  trailingIcon={<ChevronDown className={`h-3.5 w-3.5 transition ${isNewMenuOpen ? "rotate-180" : ""}`} />}
+                  trailingIconName="chevron-down"
+                >
                   New
-                  <ChevronDown className={`h-3.5 w-3.5 transition ${isNewMenuOpen ? "rotate-180" : ""}`} />
                 </TaskChipButton>
                 {isNewMenuOpen ? (
                   <AdhdDropdownPanel className="p-1.5" widthClassName="min-w-32">
@@ -1546,24 +1588,31 @@ export function TaskOperationsHeader({
                 ) : null}
               </div>
               {selectedBucket === "milestones" && onOpenCompletedMilestones ? <TaskChipButton onClick={onOpenCompletedMilestones}>Completed Milestones</TaskChipButton> : null}
-              <TaskChipButton active={selectedBucket === "archive"} onClick={() => startTransition(onOpenArchive)}>
-                <span className="inline-flex items-center gap-2">
-                  <BookOpen className="h-3.5 w-3.5" />
-                  Archive
-                  <span className="opacity-70">{archiveCount}</span>
-                </span>
+              <TaskChipButton
+                active={selectedBucket === "archive"}
+                contentClassName="gap-2"
+                count={archiveCount}
+                icon={<BookOpen className="h-3.5 w-3.5" />}
+                iconName="book-open"
+                onClick={() => startTransition(onOpenArchive)}
+              >
+                Archive
               </TaskChipButton>
-              <TaskChipButton active={selectedBucket === "trash"} onClick={() => startTransition(onOpenTrash)}>
-                <span className="inline-flex items-center gap-2">
-                  <Trash2 className="h-3.5 w-3.5" />
-                  Trash
-                  <span className="opacity-70">{trashCount}</span>
-                </span>
+              <TaskChipButton
+                active={selectedBucket === "trash"}
+                contentClassName="gap-2"
+                count={trashCount}
+                icon={<Trash2 className="h-3.5 w-3.5" />}
+                iconName="trash-2"
+                onClick={() => startTransition(onOpenTrash)}
+              >
+                Trash
               </TaskChipButton>
               {selectedBucket === "trash" && trashCount > 0 ? (
                 <AdhdChip
                   contentClassName="gap-2"
                   icon={<Trash2 aria-hidden="true" className="h-3.5 w-3.5" />}
+                  iconName="trash-2"
                   onClick={onEmptyTrash}
                   tone="danger"
                 >
@@ -1572,11 +1621,12 @@ export function TaskOperationsHeader({
               ) : null}
               <TaskViewsMenu onViewChange={onViewChange} view={view} />
               {view === "table" ? (
-                <TaskChipButton onClick={onToggleRail}>
-                  <span className="inline-flex items-center gap-2">
-                    {isRailHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
-                    {isRailHidden ? "Show Lists" : "Hide Lists"}
-                  </span>
+                <TaskChipButton
+                  icon={isRailHidden ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5" />}
+                  iconName={isRailHidden ? "eye" : "eye-off"}
+                  onClick={onToggleRail}
+                >
+                  {isRailHidden ? "Show Lists" : "Hide Lists"}
                 </TaskChipButton>
               ) : null}
               <div className="relative" ref={listColumnMenuRef}>
@@ -1584,10 +1634,11 @@ export function TaskOperationsHeader({
                   className="gap-2"
                   data-list-columns-menu
                   onClick={onToggleListColumnMenu}
+                  trailingIcon={<ChevronDown className={`h-4 w-4 transition ${isListColumnMenuOpen ? "rotate-180" : ""}`} />}
+                  trailingIconName="chevron-down"
                   toneClassName={SHARED_CHIP_MUTED_CLASS}
                 >
                   Columns
-                  <ChevronDown className={`h-4 w-4 transition ${isListColumnMenuOpen ? "rotate-180" : ""}`} />
                 </AdhdChip>
                 {isListColumnMenuOpen ? (
                   <AdhdDropdownPanel widthClassName="w-72">
@@ -1623,10 +1674,11 @@ export function TaskOperationsHeader({
                   className="gap-2"
                   data-keyboard-shortcuts-menu
                   onClick={onToggleKeyboardShortcutsMenu}
+                  trailingIcon={<ChevronDown className={`h-4 w-4 transition ${isKeyboardShortcutsMenuOpen ? "rotate-180" : ""}`} />}
+                  trailingIconName="chevron-down"
                   toneClassName={SHARED_CHIP_MUTED_CLASS}
                 >
                   Shortcuts
-                  <ChevronDown className={`h-4 w-4 transition ${isKeyboardShortcutsMenuOpen ? "rotate-180" : ""}`} />
                 </AdhdChip>
                 {isKeyboardShortcutsMenuOpen ? (
                   <AdhdDropdownPanel widthClassName="w-72">

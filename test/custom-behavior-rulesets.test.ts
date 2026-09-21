@@ -35,6 +35,7 @@ const context = {
 
 const migration = readFileSync(new URL("../supabase/add_custom_behavior_rulesets_7_13_27.sql", import.meta.url), "utf8");
 const presentationMigration = readFileSync(new URL("../supabase/20260913000000_add_custom_task_type_presentation_identity_7_13_62.sql", import.meta.url), "utf8");
+const rowHighlightMigration = readFileSync(new URL("../supabase/add_custom_task_type_row_highlighting_7_14_41.sql", import.meta.url), "utf8");
 const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
 const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
 const softDeleteMigration = readFileSync(new URL("../supabase/add_custom_behavior_ruleset_soft_delete_7_13_33.sql", import.meta.url), "utf8");
@@ -152,6 +153,67 @@ test("named ruleset earliest revision is the baseline and later revisions take e
   assert.equal(resolve("2026-09-15").unresolvedOccurrence, "blank");
   assert.equal(resolve("2026-09-25").unresolvedOccurrence, "missed");
   assert.equal(resolve("2026-09-25").rewards, "disabled");
+});
+
+test("current policy boundary follows a revision inside the active selection", () => {
+  const hobbiesRevisions = [
+    revision("hobbies-tracking", "2026-09-01"),
+    revision("hobbies-no-miss", "2026-10-01", { unresolvedOccurrence: "blank", missedStreakOnUnhandled: "ignore" }),
+  ];
+  const selections = {
+    [task.id]: [
+      { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+      { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
+    ],
+  };
+  const resolved = resolveTaskBehaviorPolicyForTask({
+    behaviorPolicyRevisions: { task: [revision("task-baseline", "2026-09-01")] },
+    behaviorSelectionsByTaskId: selections,
+    customRulesetId: "ruleset-practice",
+    logicalDate: "2026-10-01",
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": hobbiesRevisions },
+    taskId: task.id,
+    taskType: "custom",
+  });
+
+  assert.equal(resolved.policy.unresolvedOccurrence, "blank");
+  assert.equal(resolved.currentBehaviorSelectionEffectiveFromLogicalDate, "2026-09-20");
+  assert.equal(resolved.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
+
+  const taskTypeRevision = resolveTaskBehaviorPolicyForTask({
+    behaviorPolicyRevisions: {
+      task: [
+        revision("task-baseline", "2026-09-01"),
+        revision("task-no-miss", "2026-10-01", { unresolvedOccurrence: "blank", missedStreakOnUnhandled: "ignore" }),
+      ],
+    },
+    behaviorSelectionsByTaskId: {
+      [task.id]: [{ effectiveFromLogicalDate: "2026-09-20", taskType: "task" as const, customRulesetId: null }],
+    },
+    logicalDate: "2026-10-01",
+    taskId: task.id,
+    taskType: "task",
+  });
+  assert.equal(taskTypeRevision.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
+
+  const switchedThenRevised = resolveTaskBehaviorPolicyForTask({
+    behaviorSelectionsByTaskId: {
+      [task.id]: [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "ruleset-routine" },
+        { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
+      ],
+    },
+    logicalDate: "2026-10-01",
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      "ruleset-practice": hobbiesRevisions,
+      "ruleset-routine": [revision("routine-tracking", "2026-09-01")],
+    },
+    taskId: task.id,
+    taskType: "custom",
+    customRulesetId: "ruleset-practice",
+  });
+  assert.equal(switchedThenRevised.currentBehaviorSelectionEffectiveFromLogicalDate, "2026-09-20");
+  assert.equal(switchedThenRevised.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
 });
 
 test("the earliest Task ruleset assignment is the baseline and later assignments switch by logical date", () => {
@@ -449,7 +511,7 @@ test("named ruleset loader keeps historical identities while ignoring non-Custom
     { effectiveFromLogicalDate: "2026-09-21", taskType: "custom", customRulesetId: "ruleset-routine" },
   ]);
   assert.equal(loaded.behaviorSelectionsByTaskId["legacy-task"], undefined);
-  assert.deepEqual({ iconKey: loaded.data[0]?.icon_key, accentKey: loaded.data[0]?.accent_key, description: loaded.data[0]?.description }, DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION);
+  assert.deepEqual({ iconKey: loaded.data[0]?.icon_key, accentKey: loaded.data[0]?.accent_key, description: loaded.data[0]?.description, highlightTaskRows: loaded.data[0]?.highlight_task_rows }, DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION);
 });
 
 test("Custom Task Type identity presentation has bounded descriptions and additive migration parity", () => {
@@ -461,20 +523,26 @@ test("Custom Task Type identity presentation has bounded descriptions and additi
   assert.match(presentationMigration, /accent_key text not null default 'purple'/i);
   assert.match(presentationMigration, /description text not null default ''/i);
   assert.match(presentationMigration, /char_length\(description\) <= 240/i);
+  assert.match(rowHighlightMigration, /alter table public\.adhdice_custom_behavior_rulesets/i);
+  assert.match(rowHighlightMigration, /add column if not exists highlight_task_rows boolean not null default true/i);
+  assert.doesNotMatch(rowHighlightMigration, /\b(update|insert|delete)\b/i);
   assert.match(schema, /icon_key text not null default 'list-todo'/i);
   assert.match(schema, /accent_key text not null default 'purple'/i);
   assert.match(schema, /description text not null default ''/i);
+  assert.match(schema, /highlight_task_rows boolean not null default true/i);
 });
 
 test("presentation editing updates only the identity row and never creates a behavior revision", async () => {
   const calls: string[] = [];
-  const updated = { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, icon_key: "music", accent_key: "teal", description: "Guitar time", deleted_at: null, created_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-12T00:00:00.000Z" };
+  const updated = { id: "ruleset-practice", user_id: "owner-1", name: "Practice", task_type: "custom" as const, icon_key: "music", accent_key: "teal", description: "Guitar time", highlight_task_rows: false, deleted_at: null, created_at: "2026-09-10T00:00:00.000Z", updated_at: "2026-09-12T00:00:00.000Z" };
+  let updateValues: unknown = null;
   const client = {
     from(table: string) {
       calls.push(table);
       if (table === "adhdice_custom_behavior_rulesets") {
         return {
-          update() {
+          update(values: unknown) {
+            updateValues = values;
             return { eq() { return this; }, select: async () => ({ data: [updated], error: null }) };
           },
         };
@@ -482,9 +550,10 @@ test("presentation editing updates only the identity row and never creates a beh
       throw new Error(`unexpected table ${table}`);
     },
   };
-  const result = await updateCustomBehaviorRulesetPresentation(client as never, "owner-1", "ruleset-practice", { iconKey: "music", accentKey: "teal", description: "  Guitar time " }, [{ id: updated.id, name: updated.name }]);
+  const result = await updateCustomBehaviorRulesetPresentation(client as never, "owner-1", "ruleset-practice", { iconKey: "music", accentKey: "teal", description: "  Guitar time ", highlightTaskRows: false }, [{ id: updated.id, name: updated.name }]);
   assert.equal(result.error, null);
   assert.deepEqual(result.data && { icon_key: result.data.icon_key, accent_key: result.data.accent_key, description: result.data.description }, { icon_key: "music", accent_key: "teal", description: "Guitar time" });
+  assert.deepEqual(updateValues && (updateValues as { highlight_task_rows: boolean }).highlight_task_rows, false);
   assert.deepEqual(calls, ["adhdice_custom_behavior_rulesets"]);
 });
 
@@ -561,7 +630,7 @@ test("named ruleset creation persists the supplied draft policy and does not pub
   assert.equal(result.error, null);
   assert.equal(result.data?.id, identity.id);
   assert.deepEqual(calls, [
-    { table: "adhdice_custom_behavior_rulesets", operation: "insert", values: { accent_key: "teal", description: "Practice music", icon_key: "music", name: "Practice", task_type: "custom", user_id: "owner-1" } },
+    { table: "adhdice_custom_behavior_rulesets", operation: "insert", values: { accent_key: "teal", description: "Practice music", highlight_task_rows: true, icon_key: "music", name: "Practice", task_type: "custom", user_id: "owner-1" } },
     {
       table: "adhdice_custom_behavior_ruleset_revisions",
       operation: "upsert",

@@ -440,6 +440,53 @@ test("daily calorie series includes seven local dates, sums meals, and preserves
   assert.deepEqual(entries, originalEntries);
 });
 
+test("daily calorie series prefers finite nutrition snapshots and safely falls back for legacy or invalid calories", () => {
+  const entries = [
+    {
+      ...food,
+      calories: 100,
+      entry_date: "2026-08-13",
+      id: "meal-snapshot",
+      logged_at: "2026-08-13T08:00:00.000Z",
+      meal_slot: "breakfast" as const,
+      nutrition_snapshot: { calories: 250, protein_g: null, carbs_g: null, fat_g: null },
+    },
+    {
+      ...food,
+      calories: 175,
+      entry_date: "2026-08-12",
+      id: "meal-legacy",
+      logged_at: "2026-08-12T12:00:00.000Z",
+      meal_slot: "lunch" as const,
+      nutrition_snapshot: null,
+    },
+    {
+      ...food,
+      calories: Number.NaN,
+      entry_date: "2026-08-11",
+      id: "meal-invalid",
+      logged_at: "2026-08-11T18:00:00.000Z",
+      meal_slot: "dinner" as const,
+      nutrition_snapshot: { calories: Number.NaN, protein_g: null, carbs_g: null, fat_g: null },
+    },
+    {
+      ...food,
+      calories: undefined as never,
+      entry_date: "2026-08-11",
+      id: "meal-missing",
+      logged_at: "2026-08-11T20:00:00.000Z",
+      meal_slot: "snack" as const,
+      nutrition_snapshot: null,
+    },
+  ];
+
+  const series = buildHealthDailyCalorieSeries({ endDate: "2026-08-13", mealEntries: entries });
+  assert.equal(series.find((point) => point.date === "2026-08-13")?.calories, 250);
+  assert.equal(series.find((point) => point.date === "2026-08-12")?.calories, 175);
+  assert.equal(series.find((point) => point.date === "2026-08-11")?.calories, 0);
+  assert.ok(series.every((point) => Number.isFinite(point.calories)));
+});
+
 test("food history index counts and sorts identity-matched meals without mutating input", () => {
   const newest = {
     ...food,

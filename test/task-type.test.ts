@@ -44,7 +44,7 @@ test("named Custom Task Types extend the shared selection model without becoming
     { id: "practice", name: "Practice", task_type: "custom" as const, icon_key: "music", accent_key: "teal", description: "Practice time" },
   ];
   assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).map((option) => option.label), ["Task", "Practice", "Routine"]);
-  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).find((option) => option.value === "practice"), { accentKey: "teal", description: "Practice time", iconKey: "music", label: "Practice", value: "practice" });
+  assert.deepEqual(buildTaskTypeSelectionOptions(rulesets).find((option) => option.value === "practice"), { accentKey: "teal", description: "Practice time", highlightTaskRows: true, iconKey: "music", label: "Practice", value: "practice" });
   assert.deepEqual(resolveTaskTypeSelection("practice", rulesets), { taskType: "custom", customRulesetId: "practice" });
   assert.equal(resolveTaskTypeSelection("custom", rulesets), null);
   assert.deepEqual(resolveTaskTypeSelection("task", rulesets), { taskType: "task", customRulesetId: null });
@@ -100,6 +100,19 @@ test("Table View owns a Task Type column and reuses the shared label/filter auth
   assert.match(taskAppSource, /deleteRuleset: \(\) => deleteCustomRuleset\(rulesetId\)/);
   assert.match(uiStateSource, /task_type/);
   assert.match(uiStateSource, /withNotes\.includes\("task_type"\)/);
+});
+
+test("Batch Edit exposes shared Task Type choices with an unchanged option", () => {
+  const modalSource = readFileSync("src/components/task-app/task-batch-edit-modal.tsx", "utf8");
+  const batchHookSource = readFileSync("src/hooks/useTaskBatchEditAction.ts", "utf8");
+  assert.match(modalSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(modalSource, /label: "Leave unchanged", value: "unchanged"/);
+  assert.match(modalSource, /<TaskTypeSelect/);
+  assert.match(modalSource, /value=\{draft\.taskType\}/);
+  assert.match(batchHookSource, /resolveTaskTypeSelection\(draft\.taskType, customBehaviorRulesets\)/);
+  assert.match(batchHookSource, /deferBehaviorSelectionRefresh: hasBehaviorSelectionMutation/);
+  assert.match(batchHookSource, /refreshCustomBehaviorRulesets\(\)/);
+  assert.doesNotMatch(batchHookSource, /Promise\.all/);
 });
 
 test("anonymous Custom assignments are invalid while named Custom display remains authoritative", () => {

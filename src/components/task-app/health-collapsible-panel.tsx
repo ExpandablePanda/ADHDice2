@@ -57,11 +57,11 @@ export function HealthCollapsiblePanel({
           <span className="flex min-w-0 items-start gap-3">
             {header}
             <span className="min-w-0">
-              <span className="block text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">
+              <span className="block text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35" data-style-component="HealthCollapsiblePanel" data-style-role="ui.panel.title">
                 {title}
               </span>
               {subtitle !== undefined ? (
-                <span className="mt-1 block text-sm leading-6 text-[#7d7598] dark:text-white/55">
+                <span className="mt-1 block text-sm leading-6 text-[#7d7598] dark:text-white/55" data-style-component="HealthCollapsiblePanel" data-style-role="ui.panel.subtitle">
                   {subtitle}
                 </span>
               ) : null}

@@ -47,6 +47,8 @@ export function AdhdCard({
         CARD_PADDING_CLASS[padding],
         className,
       )}
+      data-style-component="AdhdCard"
+      data-style-role="ui.card.surface"
       {...props}
     >
       {children}

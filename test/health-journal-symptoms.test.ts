@@ -868,12 +868,13 @@ test("Health hydration checks lifecycle before and after each recovery mutation 
   for (const phaseWrite of phaseWrites) {
     const writeIndex = recoverySection.indexOf(phaseWrite);
     assert.ok(writeIndex >= 0, `expected ${phaseWrite} recovery write`);
-    assert.ok(recoverySection.lastIndexOf("if (!isActive) {", writeIndex) >= 0, `expected lifecycle guard before ${phaseWrite}`);
+    assert.ok(recoverySection.lastIndexOf("if (!isActive", writeIndex) >= 0, `expected lifecycle guard before ${phaseWrite}`);
   }
 
-  assert.match(recoverySection, /\.from\("adhdice_health_symptoms"\)[\s\S]*?\.select\("\*"\);\s*if \(!isActive\) \{\s*return;\s*\}/);
-  assert.match(recoverySection, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*?\.select\("\*"\);\s*if \(!isActive\) \{\s*return;\s*\}/);
-  assert.match(recoverySection, /\.from\("adhdice_health_workouts"\)[\s\S]*?\);\s*if \(!isActive\) \{\s*return;\s*\}/);
-  assert.match(recoverySection, /await client[\s\S]*?adhdice_health_meal_plan_entries[\s\S]*?\.eq\("user_id", userId\);\s*if \(!isActive\) \{\s*return;\s*\}/);
-  assert.match(recoverySection, /for \(const \[planId, mutation\] of Object\.entries\(pendingMealPlanMutations\)\) \{\s*if \(!isActive\) \{\s*return;/);
+  const currentLifecycleGuard = /if \(!isActive(?: \|\| !isCurrentOperation\(hydrationOperation\))?\) \{\s*return;\s*\}/;
+  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_symptoms"\\)[\\s\\S]*?\\.select\\("\\*"\\);\\s*${currentLifecycleGuard.source}`));
+  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_symptom_entries"\\)[\\s\\S]*?\\.select\\("\\*"\\);\\s*${currentLifecycleGuard.source}`));
+  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_workouts"\\)[\\s\\S]*?\\);\\s*${currentLifecycleGuard.source}`));
+  assert.match(recoverySection, new RegExp(`await client[\\s\\S]*?adhdice_health_meal_plan_entries[\\s\\S]*?\\.eq\\("user_id", userId\\);\\s*${currentLifecycleGuard.source}`));
+  assert.match(recoverySection, new RegExp(`for \\(const \\[planId, mutation\\] of Object\\.entries\\(pendingMealPlanMutations\\)\\) \\{\\s*${currentLifecycleGuard.source}`));
 });

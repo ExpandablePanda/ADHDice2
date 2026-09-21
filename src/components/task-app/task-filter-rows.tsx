@@ -49,7 +49,12 @@ function FilterChip({
   onClick: () => void;
 }) {
   return (
-    <TaskTableChipButton onClick={onClick} toneClassName={active ? FILTER_ACTIVE_CHIP_CLASS : FILTER_LABEL_CHIP_CLASS}>
+    <TaskTableChipButton
+      onClick={onClick}
+      styleComponent="TasksFilterChip"
+      styleRole="tasks.filter.chip"
+      toneClassName={active ? FILTER_ACTIVE_CHIP_CLASS : FILTER_LABEL_CHIP_CLASS}
+    >
       {children}
     </TaskTableChipButton>
   );
@@ -72,6 +77,8 @@ function CompactStatusFilterChip({
     <TaskTableChipButton
       className={`transition ${selected ? "" : "opacity-85 hover:opacity-100"}`}
       onClick={onClick}
+      styleComponent="TasksFilterChip"
+      styleRole="tasks.filter.chip"
       toneClassName={selected ? COMPACT_ACTIVE_STATUS_CHIP_STYLES[status] : TASK_DISPLAY_STATUS_CHIP_STYLES[status]}
     >
       <span className="inline-flex items-center gap-1 text-inherit">
@@ -187,6 +194,8 @@ function ListSortFilterControls({
           aria-haspopup="menu"
           className="gap-1.5"
           onClick={() => isOpen ? setIsOpen(false) : openPanel()}
+          styleComponent="TasksFilterChip"
+          styleRole="tasks.filter.chip"
           toneClassName={FILTER_LABEL_CHIP_CLASS}
         >
           Sort: {selectedLabel}
@@ -198,6 +207,8 @@ function ListSortFilterControls({
           aria-label={preference.direction === "asc" ? "Sort descending" : "Sort ascending"}
           className="gap-1.5"
           onClick={() => onChange({ ...preference, direction: preference.direction === "asc" ? "desc" : "asc" })}
+          styleComponent="TasksFilterChip"
+          styleRole="tasks.filter.chip"
           toneClassName={FILTER_LABEL_CHIP_CLASS}
         >
           {preference.direction === "asc" ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
@@ -226,6 +237,8 @@ function ListSortFilterControls({
                     setIsOpen(false);
                   }}
                   role="menuitemradio"
+                  styleComponent="TasksFilterChip"
+                  styleRole="tasks.filter.chip"
                   toneClassName={preference.field === option.value ? FILTER_ACTIVE_CHIP_CLASS : FILTER_LABEL_CHIP_CLASS}
                 >
                   {option.label}
@@ -290,7 +303,7 @@ export function FilterRowsComponent({
   ];
 
   return (
-    <div className={`${compact ? "space-y-2" : "mt-5"}`}>
+    <div className={`${compact ? "space-y-2" : "mt-5"}`} data-style-component="TasksFilterSurface" data-style-role="tasks.filter.surface">
       {compact ? (
         <div className="adhdice-scrollbar flex gap-2 overflow-x-auto pb-0.5">
           <span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${FILTER_LABEL_CHIP_CLASS}`}>
@@ -345,6 +358,8 @@ export function FilterRowsComponent({
               className="gap-1.5"
               key={filter.dimension}
               onClick={() => onClearTableColumnFilter?.(filter.dimension)}
+              styleComponent="TasksFilterChip"
+              styleRole="tasks.filter.chip"
               toneClassName={FILTER_ACTIVE_CHIP_CLASS}
             >
               {filter.label}
@@ -358,7 +373,7 @@ export function FilterRowsComponent({
           onClick={onToggleOpen}
           type="button"
         >
-          <span className={FILTER_LABEL_CHIP_CLASS}>
+          <span className={FILTER_LABEL_CHIP_CLASS} data-style-component="TasksFilterChip" data-style-role="tasks.filter.chip">
             {isOpen ? "Hide Filters" : "Show Filters"}
             {activeFilterCount > 0 ? ` (${activeFilterCount})` : ""}
           </span>
@@ -367,6 +382,8 @@ export function FilterRowsComponent({
       {isOpen && !compact ? (
         <div
           className="mt-3 rounded-[1.2rem] border border-[#efe9ff] bg-white p-4 shadow-[0_18px_36px_rgba(81,61,168,0.12)] dark:border-white/10 dark:bg-[#171328]"
+          data-style-component="TasksFilterSurface"
+          data-style-role="tasks.filter.surface"
         >
           <div className="space-y-4">
             <div>
@@ -404,6 +421,8 @@ export function FilterRowsComponent({
                     className={`transition ${selectedStatuses.includes(status) ? "ring-2 ring-[#6f57f6]/35" : "opacity-85 hover:opacity-100"}`}
                     key={status}
                     onClick={() => onToggleStatusFilter(status)}
+                    styleComponent="TasksFilterChip"
+                    styleRole="tasks.filter.chip"
                     toneClassName={TASK_DISPLAY_STATUS_CHIP_STYLES[status]}
                   >
                     {renderTaskStatusChip(status, { count: statusCounts[status], size: "sm" })}

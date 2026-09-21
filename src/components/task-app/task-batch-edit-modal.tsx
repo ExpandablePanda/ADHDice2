@@ -3,12 +3,13 @@
 import { X } from "lucide-react";
 import { useState } from "react";
 
-import type { Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskEnergy, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import { getBatchSelectableTaskStatuses } from "@/lib/task-complete";
 import { filterTaskStatusesForTasksByAvailableActions } from "@/lib/task-state-engine/action-authority";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
+import { buildTaskTypeSelectionOptions } from "@/lib/task-type";
 import { formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass } from "@/lib/task-priority";
 
 import { ModalShell } from "../modal-shell";
@@ -20,6 +21,7 @@ import {
   Pill,
   TagChipInput,
 } from "./task-editor-fields";
+import { TaskTypeSelect } from "./task-type-identity";
 
 type BatchFieldMode = "clear" | "set" | "unchanged";
 type BatchBooleanChoice = "false" | "true" | "unchanged";
@@ -43,6 +45,7 @@ export type BatchTaskEditDraft = {
   route: BatchRouteChoice;
   status: BatchStatusChoice;
   subtasksAutoReset: BatchBooleanChoice;
+  taskType: string;
   tags: string[];
   tagsMode: BatchTagsMode;
 };
@@ -50,6 +53,7 @@ export type BatchTaskEditDraft = {
 export function TaskBatchEditModal({
   allTags,
   count,
+  customBehaviorRulesets,
   energyOptions,
   onClose,
   onSave,
@@ -66,6 +70,7 @@ export function TaskBatchEditModal({
 }: {
   allTags: string[];
   count: number;
+  customBehaviorRulesets: readonly CustomBehaviorRuleset[];
   energyOptions: TaskEnergy[];
   onClose: () => void;
   onSave: (draft: BatchTaskEditDraft) => Promise<void>;
@@ -91,6 +96,11 @@ export function TaskBatchEditModal({
   const booleanOptions = ["unchanged", "true", "false"] as const;
   const fieldModeOptions = ["unchanged", "set", "clear"] as const;
   const tagsModeOptions = ["unchanged", "replace", "clear"] as const;
+  const taskTypeOptions = buildTaskTypeSelectionOptions(customBehaviorRulesets);
+  const taskTypeOptionsWithUnchanged = [
+    { ...taskTypeOptions[0]!, label: "Leave unchanged", value: "unchanged" },
+    ...taskTypeOptions,
+  ];
   const batchStatusOptions = ["unchanged", ...filterTaskStatusesForTasksByAvailableActions({
     behaviorPolicyRevisions,
     behaviorProfiles,
@@ -167,6 +177,13 @@ export function TaskBatchEditModal({
                 options={energyOptionsWithUnchanged}
                 renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : formatOptionLabel(value)}
                 value={draft.energy}
+              />
+              <TaskTypeSelect
+                ariaLabel="Task Type"
+                label="Task Type"
+                onChange={(value) => setDraft((current) => ({ ...current, taskType: value }))}
+                options={taskTypeOptionsWithUnchanged}
+                value={draft.taskType}
               />
             </div>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -308,6 +325,7 @@ function createEmptyBatchTaskEditDraft(): BatchTaskEditDraft {
     route: "unchanged",
     status: "unchanged",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   };

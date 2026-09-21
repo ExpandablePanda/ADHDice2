@@ -160,6 +160,8 @@ export function resolveTaskHistoryCalendarRead(input: TaskHistoryCalendarReadInp
     const timeline = buildTaskEffectiveTimeline({
       behaviorPolicy: engineInput.behaviorPolicy,
       behaviorPolicyRevisions: engineInput.behaviorPolicyRevisions,
+      currentBehaviorSelectionEffectiveFromLogicalDate: engineInput.currentBehaviorSelectionEffectiveFromLogicalDate,
+      currentBehaviorPolicyEffectiveFromLogicalDate: engineInput.currentBehaviorPolicyEffectiveFromLogicalDate,
       task: engineInput.task,
       history: engineInput.history,
       calendarOverrides: input.calendarOverrides,

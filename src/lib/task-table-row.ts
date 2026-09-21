@@ -3,7 +3,7 @@ import type {
   Task,
   TaskHistory,
 } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
+import { getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskAttentionReason } from "@/lib/task-attention";
@@ -27,6 +27,8 @@ export type TaskTableRowContext = {
   taskHistory: TaskHistory[];
   taskHistoryStreakSummary?: TaskHistoryStreakSummary;
   attentionReason?: TaskAttentionReason | null;
+  directlyExcludedFromTracking?: boolean;
+  effectivelyExcludedFromTracking?: boolean;
   todayDateKey: string;
 };
 
@@ -45,6 +47,8 @@ export function createStableTaskRowModelCache() {
         task,
         taskHistoryStreakSummary: context.taskHistoryStreakSummary,
         attentionReason: context.attentionReason,
+        directlyExcludedFromTracking: context.directlyExcludedFromTracking,
+        effectivelyExcludedFromTracking: context.effectivelyExcludedFromTracking,
         todayDateKey: context.todayDateKey,
       });
       const cached = rowsByTaskId.get(task.id);
@@ -85,10 +89,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
   if (isDevelopment) {
     buildTaskTableRowDebugCount += 1;
   }
-  const historyStats = context.taskHistoryStreakSummary
-    ?? computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
-  const missedStreak = historyStats.missedStreak;
-  const currentStreak = missedStreak > 0 ? 0 : historyStats.currentStreak;
+  const missedStreak = context.taskHistoryStreakSummary?.missedStreak ?? 0;
+  const currentStreak = missedStreak > 0 ? 0 : context.taskHistoryStreakSummary?.currentStreak ?? 0;
   const lastDone = context.taskHistoryStreakSummary
     ? {
       dateKey: context.taskHistoryStreakSummary.lastDoneDate,
@@ -120,6 +122,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     energy: task.energy,
     estimatedMinutes: task.estimated_minutes ?? null,
     id: task.id,
+    parent_task_id: task.parent_task_id,
+    task_content_folder_id: task.task_content_folder_id,
     taskType: normalizeTaskType(task.task_type),
     customRulesetId: task.custom_ruleset_id,
     linkLabel: task.external_link_label ?? "",
@@ -137,6 +141,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     currentStreak,
     missedStreak,
     attentionReason: context.attentionReason ?? null,
+    directlyExcludedFromTracking: context.directlyExcludedFromTracking ?? task.exclude_from_tracking === true,
+    effectivelyExcludedFromTracking: context.effectivelyExcludedFromTracking ?? task.exclude_from_tracking === true,
     repeat: task.repeat_frequency,
     repeatInterval: Math.max(1, task.repeat_interval ?? 1),
     repeatDaysOfWeek: task.repeat_days_of_week ?? [],

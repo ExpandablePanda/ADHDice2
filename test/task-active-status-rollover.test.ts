@@ -103,13 +103,15 @@ test("weekly early completion advances from the scheduled occurrence, not the ac
   assert.equal(calcNextDueDateFromDate(mondayWednesdayFriday, "2026-07-22"), "2026-07-24");
 });
 
-test("client rollover uses the coordinator and targeted reconciliation only after owned success", () => {
+test("client rollover uses the coordinator and targeted reconciliation after owned success", () => {
   const source = readFileSync("src/components/task-app.tsx", "utf8");
   const coordinatorIndex = source.indexOf("taskRolloverCoordinator.run");
   const ownedSettlementIndex = source.indexOf("onOwnedSettled", coordinatorIndex);
   const reconciliationIndex = source.indexOf("await reconcileRolloverWorkspace();", ownedSettlementIndex);
   assert.ok(coordinatorIndex >= 0 && ownedSettlementIndex > coordinatorIndex && reconciliationIndex > ownedSettlementIndex);
-  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(error\)[\s\S]*if \(!didMutate\) return/);
+  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(error\)/);
+  assert.doesNotMatch(source.slice(ownedSettlementIndex, reconciliationIndex), /if \(!didMutate\) return/);
+  assert.match(source.slice(ownedSettlementIndex, reconciliationIndex), /Rollover completed; requesting targeted workspace reconciliation/);
   assert.doesNotMatch(source, /adhdice_reconcile_task_rollover|adhdice_apply_task_state_engine_rollover/);
   assert.doesNotMatch(source, /lastResetDateRef/);
 });
@@ -132,11 +134,24 @@ test("engine rollover waits for loaded Tasks and History, then reads current inp
   const end = source.indexOf('const visibleTaskSubtasks', start);
   const lifecycle = source.slice(start, end);
   assert.match(lifecycle, /const inputs = rolloverInputsRef\.current/);
-  assert.match(lifecycle, /if \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded\) return/);
+  assert.match(lifecycle, /if \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded \|\| !inputs\.behaviorAuthorityReady \|\| inputs\.behaviorAuthorityLoading\) return/);
+  assert.match(lifecycle, /behaviorProfiles: inputs\.behaviorProfiles/);
+  assert.match(lifecycle, /behaviorSelectionsByTaskId: inputs\.behaviorSelectionsByTaskId/);
   assert.match(lifecycle, /history: rolloverHistory[\s\S]*tasks: rolloverTasks/);
-  assert.match(lifecycle, /\}, \[isTaskHistoryLoaded, runDayReset, session\?\.user\?\.id, supabase\]\);/);
+  assert.match(lifecycle, /\}, \[isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session\?\.user\?\.id, supabase\]\);/);
   assert.match(lifecycle, /plannedTaskPatches = mutationCandidates\.length/);
   assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
+});
+
+test("unready rollover returns before coordinator ownership and processed-day persistence", () => {
+  const source = readFileSync("src/components/task-app.tsx", "utf8");
+  const start = source.indexOf("const runDayReset = useCallback");
+  const coordinatorIndex = source.indexOf("taskRolloverCoordinator.run", start);
+  const gate = source.slice(start, coordinatorIndex);
+  assert.match(gate, /!inputs\.behaviorAuthorityReady \|\| inputs\.behaviorAuthorityLoading/);
+  assert.doesNotMatch(gate, /persistProcessedTaskRolloverKey/);
+  const settlement = source.slice(source.indexOf("onOwnedSettled", coordinatorIndex), source.indexOf("await reconcileRolloverWorkspace();", coordinatorIndex));
+  assert.match(settlement, /if \(!error[\s\S]*persistProcessedTaskRolloverKey/);
 });
 
 test("canonical rollover commands are mutation-scoped and use plan-specific replay identities", () => {

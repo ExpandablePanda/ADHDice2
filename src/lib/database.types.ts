@@ -102,6 +102,7 @@ export type TaskTypeBehaviorProfileUpdate = Partial<Pick<TaskTypeBehaviorProfile
 export type CustomBehaviorRuleset = {
   accent_key: string;
   description: string;
+  highlight_task_rows: boolean;
   id: string;
   icon_key: string;
   user_id: string;
@@ -119,7 +120,7 @@ export type CustomBehaviorRulesetInsert = Omit<CustomBehaviorRuleset, "created_a
   updated_at?: string;
 };
 
-export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "accent_key" | "deleted_at" | "description" | "icon_key" | "name" | "updated_at">>;
+export type CustomBehaviorRulesetUpdate = Partial<Pick<CustomBehaviorRuleset, "accent_key" | "deleted_at" | "description" | "highlight_task_rows" | "icon_key" | "name" | "updated_at">>;
 
 export type CustomBehaviorRulesetDeleteResult = {
   ruleset_id: string;
@@ -350,6 +351,27 @@ export type TaskListFolderUpdate = Partial<
   Pick<TaskListFolder, "name" | "parent_folder_id" | "revision" | "sort_order">
 >;
 
+export type TaskContentFolder = {
+  created_at: string;
+  icon_key: string;
+  id: string;
+  name: string;
+  parent_folder_id: string | null;
+  updated_at: string;
+  user_id: string;
+};
+
+export type TaskContentFolderInsert = {
+  icon_key?: string;
+  id?: string;
+  name: string;
+  parent_folder_id?: string | null;
+  user_id: string;
+};
+
+export type TaskContentFolderUpdate = Partial<Pick<TaskContentFolder, "icon_key" | "name">>
+  & Partial<Pick<TaskContentFolder, "parent_folder_id">>;
+
 export type TaskListContainer = {
   created_at: string;
   folder_id: string | null;
@@ -404,6 +426,11 @@ export type Task = {
   id: string;
   user_id: string;
   parent_task_id: string | null;
+  /** Nullable assignment; optional for rows/fixtures read before 7.14.18 is applied. */
+  task_content_folder_id?: string | null;
+  /** Nullable for fixtures and rows read before the additive 7.13.86 migration. */
+  exclude_from_tracking?: boolean;
+
   revision: number;
   title: string;
   task_type: import("./task-type.ts").TaskType;
@@ -441,6 +468,27 @@ export type Task = {
   completed_at: string | null;
   trashed_at: string | null;
   permanently_deleted_at?: string | null;
+  /** Canonical Task State columns returned by the live task row when initialized. */
+  canonicalization_status?: CanonicalTaskStateColumns["canonicalization_status"];
+  entity_kind?: CanonicalTaskStateColumns["entity_kind"];
+  terminal_state?: CanonicalTaskStateColumns["terminal_state"];
+  container_state?: CanonicalTaskStateColumns["container_state"];
+  prior_container_state?: CanonicalTaskStateColumns["prior_container_state"];
+  prior_container_state_status?: CanonicalTaskStateColumns["prior_container_state_status"];
+  terminal_completed_at?: CanonicalTaskStateColumns["terminal_completed_at"];
+  container_trashed_at?: CanonicalTaskStateColumns["container_trashed_at"];
+  workflow_state?: CanonicalTaskStateColumns["workflow_state"];
+  workflow_started_at?: CanonicalTaskStateColumns["workflow_started_at"];
+  workflow_logical_date?: CanonicalTaskStateColumns["workflow_logical_date"];
+  workflow_occurrence_id?: CanonicalTaskStateColumns["workflow_occurrence_id"];
+  workflow_command_id?: CanonicalTaskStateColumns["workflow_command_id"];
+  workflow_revision?: CanonicalTaskStateColumns["workflow_revision"];
+  canonical_revision?: CanonicalTaskStateColumns["canonical_revision"];
+  canonical_created_at?: CanonicalTaskStateColumns["canonical_created_at"];
+  canonical_updated_at?: CanonicalTaskStateColumns["canonical_updated_at"];
+  projection_source_canonical_revision?: CanonicalTaskStateColumns["projection_source_canonical_revision"];
+  projection_source_fingerprint?: CanonicalTaskStateColumns["projection_source_fingerprint"];
+  projection_version?: CanonicalTaskStateColumns["projection_version"];
   created_at: string;
   updated_at: string;
 };
@@ -449,6 +497,9 @@ export type TaskInsert = {
   id?: string;
   user_id: string;
   parent_task_id?: string | null;
+  task_content_folder_id?: string | null;
+  exclude_from_tracking?: boolean;
+
   revision?: number;
   title: string;
   task_type?: import("./task-type.ts").TaskType;
@@ -513,6 +564,9 @@ export type TaskUpdate = Partial<
     | "one_step_at_a_time"
     | "subtasks_auto_reset"
     | "parent_task_id"
+    | "task_content_folder_id"
+    | "exclude_from_tracking"
+
     | "repeat_frequency"
     | "repeat_interval"
     | "repeat_days_of_week"
@@ -2833,6 +2887,12 @@ export type Database = {
         Update: TaskListFolderUpdate;
         Relationships: [];
       };
+      adhdice_task_content_folders: {
+        Row: TaskContentFolder;
+        Insert: TaskContentFolderInsert;
+        Update: TaskContentFolderUpdate;
+        Relationships: [];
+      };
       adhdice_task_list_containers: {
         Row: TaskListContainer;
         Insert: Omit<TaskListContainer, "created_at" | "id" | "revision" | "updated_at"> & Partial<Pick<TaskListContainer, "created_at" | "id" | "revision" | "updated_at">>;
@@ -3226,6 +3286,33 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_move_task_hierarchy: {
+        Args: {
+          p_expected_canonical_revision: number | null;
+          p_expected_revision: number;
+          p_new_parent_task_id: string | null;
+          p_new_task_content_folder_id: string | null;
+          p_task_id: string;
+        };
+        Returns: Task[];
+      };
+      adhdice_delete_task_content_folder: {
+        Args: { p_folder_id: string };
+        Returns: boolean;
+      };
+      adhdice_exclude_tasks_from_tracking: {
+        Args: { p_task_ids: string[] };
+        Returns: Task[];
+      };
+      adhdice_set_task_tracking_exclusion: {
+        Args: { p_excluded: boolean; p_task_id: string };
+        Returns: Task;
+      };
+      adhdice_task_effectively_excluded_from_tracking: {
+        Args: { p_task_id: string; p_user_id: string };
+
+        Returns: boolean;
+      };
       adhdice_delete_custom_behavior_ruleset: {
         Args: { p_ruleset_id: string };
         Returns: CustomBehaviorRulesetDeleteResult[];
@@ -3245,6 +3332,10 @@ export type Database = {
       adhdice_finalize_records_reconciliation: {
         Args: { p_payload: unknown };
         Returns: unknown;
+      };
+      adhdice_get_latest_completed_records_run: {
+        Args: { p_logical_day_start: string; p_rules_version: string; p_timezone: string };
+        Returns: Array<Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "timezone">>;
       };
       adhdice_activate_achievement_profile: {
         Args: {

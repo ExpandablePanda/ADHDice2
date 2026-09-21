@@ -247,7 +247,7 @@ test("Table renders the active same-table QA hierarchy on a plain descendant pla
   assert.equal(childGridStyles.length, 2);
   assert.equal(childGridStyles.every((style) => style === parentGridStyle), true);
   assert.match(markup, /data-task-table-child-cell="qa-step:due"/);
-  assert.match(selectedChildGridTag, /bg-\[#f7f2ff\] dark:bg-\[#201733\]/);
+  assert.match(selectedChildGridTag, /!bg-\[#f3eeff\] dark:!bg-\[#2a2148\]/);
   assert.match(markup, /data-step-title-edit="qa-step"/);
   assert.match(tableSource, /TaskTitleDraftInput[\s\S]*bg-white[\s\S]*dark:bg-\[#22193f\]/);
   assert.match(parentRowTag, /sticky top-8 z-10/);

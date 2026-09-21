@@ -35,6 +35,8 @@ import {
 export type BuildTaskEffectiveTimelineInput = {
   behaviorPolicy?: TaskBehaviorPolicy;
   behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
+  currentBehaviorSelectionEffectiveFromLogicalDate?: string;
+  currentBehaviorPolicyEffectiveFromLogicalDate?: string;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   logicalDate: string;
@@ -96,6 +98,7 @@ function classifyFinalizedCalendarDay(day: TaskEffectiveTimelineStreakDay | unde
 export function computeTaskEffectiveTimelineStreaks(
   days: Readonly<Record<string, TaskEffectiveTimelineStreakDay>>,
   logicalDate: string,
+  options: { currentMissedStreakStartLogicalDate?: string } = {},
 ): TaskEffectiveTimelineStreaks {
   let cursor: string | null = logicalDate;
   let currentCompletedStreak = 0;
@@ -117,6 +120,7 @@ export function computeTaskEffectiveTimelineStreaks(
   cursor = logicalDate;
   let currentMissedStreak = 0;
   while (cursor && Object.hasOwn(days, cursor)) {
+    if (options.currentMissedStreakStartLogicalDate && cursor < options.currentMissedStreakStartLogicalDate) break;
     const day = days[cursor];
     const finalizedKind = classifyFinalizedCalendarDay(day);
     if (!day || !finalizedKind || finalizedKind === "neutral" || isIgnoredUnhandled(day)) {
@@ -663,6 +667,12 @@ export function buildTaskEffectiveTimeline(
   const streaks = computeTaskEffectiveTimelineStreaks(
     effectiveDays,
     input.logicalDate,
+    behaviorPolicy.unresolvedOccurrence === "blank"
+      ? {
+          currentMissedStreakStartLogicalDate: input.currentBehaviorPolicyEffectiveFromLogicalDate
+            ?? input.currentBehaviorSelectionEffectiveFromLogicalDate,
+        }
+      : {},
   );
 
   const activeStatus = (() => {
@@ -670,7 +680,8 @@ export function buildTaskEffectiveTimeline(
     if (currentDay?.state === "done" || currentDay?.state === "did_my_best" || currentDay?.state === "complete") return currentDay.state;
     if (currentDay?.state === "in_progress") return "in_progress" as const;
     if (currentDay?.state === "delayed" || (delayedUntilDate && delayedUntilDate > input.logicalDate)) return "delayed" as const;
-    if (streaks.currentMissedStreak > 0 || currentDay?.state === "missed" || currentDay?.obligation === "overdue") return "missed" as const;
+    if (streaks.currentMissedStreak > 0 || currentDay?.state === "missed"
+      || (behaviorPolicy.unresolvedOccurrence === "missed" && currentDay?.obligation === "overdue")) return "missed" as const;
     if (currentDay?.state === "scheduled") return daysBetween(input.logicalDate, currentDay.logicalDate) <= 7 ? "upcoming" as const : "not_due" as const;
     if (currentDay?.state === "not_due" || currentDay?.state === "no_entry") {
       if (!activeDueOn && input.task.recurrence.kind === "none") return "unscheduled" as const;

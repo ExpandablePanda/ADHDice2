@@ -126,7 +126,23 @@ test("rendered normal and folder chips own pointer handlers and grab state on th
   assert.match(renderedChipSource, /cursor-grabbing/);
   assert.match(renderedChipSource, /event\.currentTarget\.setPointerCapture\(event\.pointerId\)/);
   assert.match(renderedChipSource, /pointer-events-none cursor-inherit/);
+  assert.match(renderedChipSource, /data-style-component="TasksRailChip"\s+data-style-role="tasks\.rail\.chip"/);
   assert.match(renderedChipSource, /type="button"/);
+});
+
+test("rail interaction hosts keep the normal chip baseline on the inspectable visual surface", () => {
+  const renderedChipStart = railSource.indexOf("<button", railSource.indexOf("const accessibleFolderSummary"));
+  const renderedChipEnd = railSource.indexOf("</button>", renderedChipStart);
+  const renderedChipSource = railSource.slice(renderedChipStart, renderedChipEnd);
+  const buttonOpeningTagEnd = renderedChipSource.indexOf("\n        >");
+  const buttonOpeningTag = renderedChipSource.slice(0, buttonOpeningTagEnd);
+
+  assert.match(buttonOpeningTag, /data-style-role="tasks\.rail\.chip"/);
+  assert.match(buttonOpeningTag, /TASK_RAIL_CHIP_BUTTON_CLASS/);
+  assert.doesNotMatch(buttonOpeningTag, /TASK_TABLE_CHIP_BASE_CLASS|SHARED_CHIP_ACTIVE_CLASS|SHARED_CHIP_MUTED_CLASS/);
+  assert.match(renderedChipSource, /className=\{`\$\{TASK_TABLE_CHIP_BASE_CLASS\} \$\{selected \? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS\}/);
+  assert.match(renderedChipSource, /data-style-part="surface"/);
+  assert.match(renderedChipSource, /data-style-part="label" data-style-text-part="label"/);
 });
 
 test("folder chip renders only its name and numeric contained-list count", () => {
@@ -135,11 +151,11 @@ test("folder chip renders only its name and numeric contained-list count", () =>
   const renderedChipSource = railSource.slice(renderedChipStart, renderedChipEnd);
   assert.match(railSource, /const folderCountLabel = list\.folderCounts\s*\? String\(list\.folderCounts\.containedListCount\)/);
   assert.match(renderedChipSource, /\{list\.label\}/);
-  assert.match(renderedChipSource, /<span className="ml-1 opacity-70">\{folderCountLabel\}<\/span>/);
+  assert.match(renderedChipSource, /<span className="ml-1 opacity-70" data-style-part="count">\{folderCountLabel\}<\/span>/);
   assert.doesNotMatch(renderedChipSource, /containedListCount === 1 \? "list" : "lists"/);
   assert.doesNotMatch(renderedChipSource, />\s*\{folderCountLabel\}\s*(?:list|lists)/);
   assert.match(railSource, /aria-label=\{accessibleFolderSummary \? `\$\{list\.label\}\. \$\{accessibleFolderSummary\}`/);
-  assert.match(renderedChipSource, /list\.structureKind === "folder" \? null : <span className="ml-1 opacity-70">\{list\.count\}<\/span>/);
+  assert.match(renderedChipSource, /list\.structureKind === "folder" \? null : <span className="ml-1 opacity-70" data-style-part="count">\{list\.count\}<\/span>/);
   assert.doesNotMatch(railSource, /containedListCount\}L/);
   assert.doesNotMatch(railSource, /visibleTaskCount\}T/);
   assert.doesNotMatch(railSource, /dueTodayCount\}D/);
@@ -148,7 +164,9 @@ test("folder chip renders only its name and numeric contained-list count", () =>
 
 test("folder, root-list, nested-list, and system chips share the compact rail variant", () => {
   assert.match(railSource, /const TASK_RAIL_CHIP_BUTTON_CLASS = `\$\{TASK_TABLE_CONTROL_FONT_CLASS\} inline-flex shrink-0 items-center appearance-none border-0 bg-transparent p-0 shadow-none`/);
-  assert.match(railSource, /<span className=\{`pointer-events-none cursor-inherit \$\{TASK_TABLE_CHIP_BASE_CLASS\} \$\{selected \? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS\}/);
+  assert.match(railSource, /className=\{`\$\{TASK_TABLE_CHIP_BASE_CLASS\} \$\{selected \? SHARED_CHIP_ACTIVE_CLASS : SHARED_CHIP_MUTED_CLASS\}/);
+  assert.match(railSource, /data-style-part="surface"/);
+  assert.doesNotMatch(railSource, /className=\{`\$\{TASK_RAIL_CHIP_BUTTON_CLASS\} \$\{TASK_TABLE_CHIP_BASE_CLASS\}/);
   assert.match(primitivesSource, /TASK_TABLE_CHIP_BASE_CLASS = `inline-flex items-center justify-center rounded-full border px-2 py-1 whitespace-nowrap/);
   assert.match(railSource, /<TaskListRailHierarchy[\s\S]*?lists=\{lists\}/);
   assert.match(railSource, /currentFolderId=\{rail\.folderId\}[\s\S]*?lists=\{rail\.lists\}/);

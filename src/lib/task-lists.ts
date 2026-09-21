@@ -114,7 +114,7 @@ export function getTaskListCapabilities(list: Pick<TaskListDefinition, "id" | "i
   const usesRuleEvaluation = isAttention || list.membershipMode === "rules" || list.membershipMode === "hybrid";
   return {
     acceptsManualMembership: !isAttention && list.id !== "today",
-    canAssignManualMembership: isManualTaskListDestination(list),
+    canAssignManualMembership: list.id === "routine" || isManualTaskListDestination(list),
     canDelete: list.type === "custom" && list.isDeletable,
     canEditRules: usesRuleEvaluation && (isAttention || list.isEditable),
     canRename: list.type === "custom" && list.isEditable,
@@ -154,6 +154,10 @@ export function getStoredTaskListMembershipMode(mode: TaskListMembershipMode): E
 export function isManualTaskListDestination(list: Pick<TaskListDefinition, "id" | "membershipMode">) {
   return !isAppOwnedSystemTaskListId(list.id)
     && (list.membershipMode === "manual" || list.membershipMode === "hybrid" || list.id === "waiting");
+}
+
+export function canSetRoutineTaskMembership(list: Pick<TaskListDefinition, "id" | "membershipMode" | "type">) {
+  return list.id === "routine" && list.membershipMode === "system" && list.type === "system";
 }
 
 export function canRemoveTaskFromCurrentList(

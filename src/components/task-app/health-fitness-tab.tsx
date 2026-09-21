@@ -37,6 +37,7 @@ import {
   buildHealthWorkoutFormPayload,
   addHealthWorkoutTypeOption,
   addHealthWorkoutTitleOption,
+  createDefaultHealthWorkoutDraft,
   getHealthDailyMovementMetrics,
   getHealthWorkoutActiveCaloriesForDate,
   getHealthWorkoutDisplayTitle,
@@ -62,7 +63,6 @@ import {
   formatHealthDateLabel,
   formatHealthTimestampDate,
   formatMealLoggedTime,
-  getCurrentHealthDateTimeInputs,
   shiftHealthDate,
   todayHealthDate,
 } from "@/lib/health-utils";
@@ -124,19 +124,6 @@ type HealthFitnessTabProps = {
   layout: PageShellLayoutState;
 };
 
-function createDefaultWorkoutDraft(workoutTypes: readonly string[] = HEALTH_WORKOUT_TYPES, plannedItem?: HealthFitnessPlanItem): HealthWorkoutFormInput {
-  const { date } = getCurrentHealthDateTimeInputs();
-  return {
-    activeCalories: "",
-    date,
-    durationMinutes: plannedItem?.expected_duration_seconds === null || plannedItem?.expected_duration_seconds === undefined ? "" : String(plannedItem.expected_duration_seconds / 60),
-    notes: plannedItem?.notes ?? "",
-    startTime: "",
-    title: plannedItem?.title ?? "",
-    workoutType: plannedItem?.workout_type ?? workoutTypes[0] ?? HEALTH_WORKOUT_TYPES[0],
-  };
-}
-
 export function HealthFitnessTab({
   addWorkout,
   archiveExercise,
@@ -183,7 +170,7 @@ export function HealthFitnessTab({
   layout,
 }: HealthFitnessTabProps) {
   const today = todayHealthDate();
-  const [draft, setDraft] = useState<HealthWorkoutFormInput>(() => createDefaultWorkoutDraft());
+  const [draft, setDraft] = useState<HealthWorkoutFormInput>(() => createDefaultHealthWorkoutDraft());
   const [structuredDraft, setStructuredDraft] = useState<HealthWorkoutStructuredDraft>({ exercises: [] });
   const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
@@ -325,7 +312,7 @@ export function HealthFitnessTab({
   }, [isSettingsOpen]);
 
   function resetForm() {
-    setDraft(createDefaultWorkoutDraft());
+    setDraft(createDefaultHealthWorkoutDraft());
     setStructuredDraft({ exercises: [] });
     setEditingWorkoutId(null);
     setFormError(null);
@@ -349,7 +336,7 @@ export function HealthFitnessTab({
   }
 
   function openWorkoutForm(plannedItem?: HealthFitnessPlanItem) {
-    setDraft(createDefaultWorkoutDraft(workoutTypes, plannedItem));
+    setDraft(createDefaultHealthWorkoutDraft(workoutTypes, plannedItem, selectedFitnessDate));
     setStructuredDraft({ exercises: [] });
     setEditingWorkoutId(null);
     setFormError(null);

@@ -172,8 +172,30 @@ test("workspace ownership effect does not depend on active page navigation", asy
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
   assert.match(source, /activePageRef\.current = activePage/);
-  assert.match(source, /\}, \[currentUser\?\.id, supabase, suppressCategoryReload\]\);/);
+  assert.match(source, /\}, \[currentUser\?\.id, behaviorSelectionStateRef, supabase, suppressCategoryReload\]\);/);
   assert.doesNotMatch(source, /\}, \[activePage, currentUser\?\.id/);
+});
+
+test("useWorkspaceData binds both behavior authority readiness options", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const signatureStart = source.indexOf("export function useWorkspaceData");
+  const signatureEnd = source.indexOf("}: UseWorkspaceDataOptions", signatureStart);
+  const parameterBinding = source.slice(signatureStart, signatureEnd);
+
+  assert.match(parameterBinding, /activePage,\s+behaviorAuthorityReady,\s+behaviorAuthorityLoading,\s+behaviorProfiles,/);
+});
+
+test("behavior authority readiness gates streak publication without replacing a committed summary", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const summaryStart = source.indexOf("async function loadTaskHistoryStreakSummaries");
+  const summaryEnd = source.indexOf("async function reloadTaskHistoryStreakSummaryForTask", summaryStart);
+  const summaryLoader = source.slice(summaryStart, summaryEnd);
+
+  assert.match(source, /behaviorAuthorityReady: boolean/);
+  assert.match(source, /behaviorAuthorityLoading: boolean/);
+  assert.match(summaryLoader, /if \(!canApplyBehaviorAuthorityProjection\(\)\) \{[\s\S]*return false;/);
+  assert.match(summaryLoader, /&& canApplyBehaviorAuthorityProjection\(\)/);
+  assert.match(summaryLoader, /setTaskHistoryStreakSummaries\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextSummaries\.summaries\)\)/);
 });
 
 test("initial boot guards lifecycle refreshes and only persisted pageshow is eligible", async () => {
@@ -435,6 +457,28 @@ test("summary failure clears only its owned promise so a later retry can start",
 
   assert.match(summaryLoader, /if \(result\.error\) return false;/);
   assert.match(summaryLoader, /if \(taskHistoryStreakSummaryLoadPromiseRef\.current === summaryLoadOwner\) \{\s*taskHistoryStreakSummaryLoadPromiseRef\.current = null/);
+});
+
+test("a logical-day transition supersedes the shared streak summary and uses the new day", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  assert.match(source, /if \(todayKeyRef\.current === todayKey\) return;\s*todayKeyRef\.current = todayKey;\s*void loadTaskHistoryStreakSummariesRef\.current\?\.\(tasksRef\.current, \{ supersede: true \}\);/);
+});
+
+test("rollover refreshes streak summaries after the canonical History snapshot, including zero Task mutations", async () => {
+  const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const reconciliation = workspaceSource.slice(
+    workspaceSource.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>"),
+    workspaceSource.indexOf("prepareTaskMutationRef.current = async () =>"),
+  );
+  const rolloverLifecycle = appSource.slice(
+    appSource.indexOf("const runDayReset = useCallback"),
+    appSource.indexOf("await reconcileRolloverWorkspace();"),
+  );
+  assert.match(reconciliation, /const didRefreshHistory = await loadTaskHistory\(\{ silent: true, source: "rollover" \}\);/);
+  assert.match(reconciliation, /if \(didRefreshHistory\) \{[\s\S]*loadTaskHistoryStreakSummaries\(tasksRef\.current, \{ supersede: true \}\);/);
+  assert.doesNotMatch(rolloverLifecycle, /if \(!didMutate\) return/);
+  assert.match(rolloverLifecycle, /Rollover completed; requesting targeted workspace reconciliation/);
 });
 
 test("the full-History summary branch rechecks ownership after waiting for the full load", async () => {

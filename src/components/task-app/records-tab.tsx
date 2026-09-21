@@ -1,7 +1,7 @@
 "use client";
 
-import { ChevronDown, ClipboardCheck, Flame, Timer, Trophy, X } from "lucide-react";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { ChevronDown, ClipboardCheck, Flame, LoaderCircle, Timer, Trophy, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
@@ -15,14 +15,32 @@ import {
   type RecordsSectionExpandedState,
   type RecordsSectionId,
 } from "@/lib/records/ui-preferences";
+import { formatRecordTaskEvidenceEntityKind, formatRecordTaskEvidenceOutcome, getRecordTaskEvidenceCount, isSupportedTaskEvidenceMetric, parseRecordTaskEvidenceSourceRows, recordIdentity, type RecordTaskEvidenceItem, type RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
 import { RECORD_METRICS, type PersistedRecordCurrent, type PersistedRecordEvent, type ProvisionalRecordCandidate, type RecordMetricKey, type RecordUnit } from "@/lib/records/types";
+import type { Task } from "@/lib/database.types";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
+import { getSelectableRecordEvidenceTaskIds, normalizeRecordEvidenceTaskSelection, toggleRecordEvidenceTaskSelection } from "@/lib/records/tracking-selection";
 
 type RecordsTabProps = {
   active: boolean;
   client: ReturnType<typeof createBrowserSupabaseClient>;
+  initialMetricKey?: RecordMetricKey | null;
   logicalDayStart: string;
+  onExcludeTasksFromTracking?: (taskIds: readonly string[]) => Promise<{ error: string | null; success: boolean }>;
+  onOpenTask: (taskId: string) => void;
+  onRecordRequestHandled?: () => void;
+  tasks: Task[];
   timezone: string;
   userId: string | null;
+};
+
+type BulkTrackingExclusionProgress = {
+  count: number;
+  error?: string;
+  excluded?: boolean;
+  phase: "excluding" | "error" | "recalculating";
+  taskIds: string[];
 };
 
 function formatValue(value: number, unit: RecordUnit) {
@@ -58,6 +76,9 @@ type RecordCardModel = {
   };
   icon: ReactNode;
   id: string;
+  numericValue: number;
+  taskEvidence: RecordTaskEvidenceItem[] | null;
+  taskEvidenceUnavailable: boolean;
   title: string;
   value: string;
 };
@@ -81,10 +102,11 @@ function getSourceCount(evidence: Record<string, unknown>) {
   const sourceRows = evidence.sourceRows;
   if (Array.isArray(sourceRows)) return sourceRows.length;
   const identities = evidence.identities;
+  if (typeof evidence.evidenceCount === "number" && Number.isFinite(evidence.evidenceCount)) return evidence.evidenceCount;
   return Array.isArray(identities) ? identities.length : 0;
 }
 
-function buildCurrentRecordCard(record: PersistedRecordCurrent, events: PersistedRecordEvent[]): RecordCardModel {
+function buildCurrentRecordCard(record: PersistedRecordCurrent, events: PersistedRecordEvent[], hasDetailedEvidence: boolean, taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity): RecordCardModel {
   const previousValue = events
     .filter((event) => event.validity_state === "valid" && matchesRecord(event, record) && event.value < record.value)
     .reduce<number | null>((highest, event) => highest === null ? event.value : Math.max(highest, event.value), null);
@@ -106,6 +128,11 @@ function buildCurrentRecordCard(record: PersistedRecordCurrent, events: Persiste
     },
     icon: category.icon,
     id: `${record.metric_key}:${record.scope_id ?? "global"}`,
+    numericValue: record.value,
+    taskEvidence: hasDetailedEvidence && isSupportedTaskEvidenceMetric(record.metric_key)
+      ? taskEvidenceByRecordIdentity[recordIdentity(record.metric_key, record.scope_kind, record.scope_id)] ?? []
+      : null,
+    taskEvidenceUnavailable: !hasDetailedEvidence && isSupportedTaskEvidenceMetric(record.metric_key),
     title: RECORD_METRICS[record.metric_key].label,
     value: formatValue(record.value, record.unit),
   };
@@ -130,6 +157,9 @@ function buildProvisionalRecordCard(record: ProvisionalRecordCandidate, currentR
     },
     icon: category.icon,
     id: `provisional:${record.candidateIdentity}`,
+    numericValue: record.value,
+    taskEvidence: isSupportedTaskEvidenceMetric(record.metricKey) ? parseRecordTaskEvidenceSourceRows(record.metricKey, record.evidence.sourceRows) : null,
+    taskEvidenceUnavailable: false,
     title: RECORD_METRICS[record.metricKey].label,
     value: formatValue(record.value, record.unit),
   };
@@ -138,19 +168,23 @@ function buildProvisionalRecordCard(record: ProvisionalRecordCandidate, currentR
 function RecordGrid({
   currentRecords,
   events,
+  hasDetailedEvidence,
   onOpenDetails,
+  taskEvidenceByRecordIdentity,
   provisional = [],
   records,
 }: {
   currentRecords: PersistedRecordCurrent[];
   events: PersistedRecordEvent[];
+  hasDetailedEvidence: boolean;
   onOpenDetails: (record: RecordCardModel) => void;
   provisional?: ProvisionalRecordCandidate[];
   records: PersistedRecordCurrent[];
+  taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity;
 }) {
   if (!records.length && !provisional.length) return <p className="text-sm text-[#817990] dark:text-white/50">No qualifying history is available yet.</p>;
   const cards = [
-    ...records.map((record) => buildCurrentRecordCard(record, events)),
+    ...records.map((record) => buildCurrentRecordCard(record, events, hasDetailedEvidence, taskEvidenceByRecordIdentity)),
     ...provisional.map((record) => buildProvisionalRecordCard(record, currentRecords)),
   ];
   return (
@@ -215,6 +249,7 @@ function RecordsSection({
 }
 
 export function RecordsTab(props: RecordsTabProps) {
+  const { initialMetricKey, onRecordRequestHandled } = props;
   const records = useRecords(props);
   const [sectionPreferences, setSectionPreferences] = useState<{ ownerUserId: string | null; state: RecordsSectionExpandedState }>(() => {
     const state = props.userId && typeof window !== "undefined"
@@ -228,8 +263,13 @@ export function RecordsTab(props: RecordsTabProps) {
       ? readRecordsSectionExpandedState(window.localStorage, props.userId)
       : DEFAULT_RECORDS_SECTION_EXPANDED_STATE;
   const [detailRecord, setDetailRecord] = useState<RecordCardModel | null>(null);
+  const openedInitialMetricRef = useRef<RecordMetricKey | null>(null);
   const [taskQuery, setTaskQuery] = useState("");
   const [showInvalidated, setShowInvalidated] = useState(false);
+  const [selectedTaskIds, setSelectedTaskIds] = useState<string[]>([]);
+  const [pendingBulkTaskIds, setPendingBulkTaskIds] = useState<string[] | null>(null);
+  const [bulkProgress, setBulkProgress] = useState<BulkTrackingExclusionProgress | null>(null);
+  const [bulkFeedback, setBulkFeedback] = useState<string | null>(null);
   const sectionRecords = (section: "tasks" | "streaks" | "focus") => records.currentRecords.filter((record) => RECORD_METRICS[record.metric_key].section === section);
   const sectionProvisional = (section: "tasks" | "focus") => records.provisionalCandidates.filter((record) => RECORD_METRICS[record.metricKey].section === section);
   const perTaskRecords = useMemo(() => {
@@ -247,6 +287,38 @@ export function RecordsTab(props: RecordsTabProps) {
       .flatMap(([, item]) => [item.streak, item.comeback].filter((record): record is PersistedRecordCurrent => Boolean(record)));
   }, [records.currentRecords, taskQuery]);
   const history = records.events.filter((event) => showInvalidated || event.validity_state === "valid");
+  const availableTaskIds = useMemo(() => new Set(props.tasks.filter((task) => task.status !== "archived" && task.status !== "trashed").map((task) => task.id)), [props.tasks]);
+  const taskById = useMemo(() => new Map(props.tasks.map((task) => [task.id, task])), [props.tasks]);
+  const effectivelyExcludedTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(props.tasks), [props.tasks]);
+  const taskHierarchy = useMemo(() => buildTaskHierarchyAdapter(props.tasks), [props.tasks]);
+  const selectableTaskIds = useMemo(
+    () => detailRecord?.taskEvidence ? getSelectableRecordEvidenceTaskIds(detailRecord.taskEvidence, taskById, effectivelyExcludedTaskIds) : [],
+    [detailRecord, effectivelyExcludedTaskIds, taskById],
+  );
+  const selectableTaskIdSet = useMemo(() => new Set(selectableTaskIds), [selectableTaskIds]);
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+
+  useEffect(() => {
+    // Selection is derived from the current authoritative evidence/task set; prune stale IDs when it changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setSelectedTaskIds((current) => normalizeRecordEvidenceTaskSelection(current, selectableTaskIdSet));
+  }, [selectableTaskIdSet]);
+
+  useEffect(() => {
+    if (!initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === initialMetricKey) return;
+    const record = records.currentRecords.find((candidate) => candidate.metric_key === initialMetricKey && candidate.scope_kind === "global" && candidate.scope_id === null);
+    if (!record) {
+      openedInitialMetricRef.current = initialMetricKey;
+      onRecordRequestHandled?.();
+      return;
+    }
+    // Deep-link state must be opened in this effect before the request is consumed; deferring it recreates the cached-path race.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional synchronous Record deep-link handoff
+    setSelectedTaskIds([]);
+    setDetailRecord(buildCurrentRecordCard(record, records.events, records.hasDetailedEvidence, records.taskEvidenceByRecordIdentity));
+    openedInitialMetricRef.current = initialMetricKey;
+    onRecordRequestHandled?.();
+  }, [initialMetricKey, onRecordRequestHandled, records.currentRecords, records.events, records.hasDetailedEvidence, records.hasSuccessfulResult, records.taskEvidenceByRecordIdentity]);
 
   function toggleSection(sectionId: RecordsSectionId) {
     const next = { ...expandedSections, [sectionId]: !expandedSections[sectionId] };
@@ -254,11 +326,51 @@ export function RecordsTab(props: RecordsTabProps) {
     setSectionPreferences({ ownerUserId: props.userId, state: next });
   }
 
+  function openRecordDetails(record: RecordCardModel) {
+    setBulkFeedback(null);
+    setSelectedTaskIds([]);
+    setDetailRecord(record);
+  }
+
+  function closeRecordDetails() {
+    setSelectedTaskIds([]);
+    setDetailRecord(null);
+  }
+
+  async function confirmBulkTrackingExclusion() {
+    const taskIds = normalizeRecordEvidenceTaskSelection(pendingBulkTaskIds ?? [], selectableTaskIdSet);
+    if (!taskIds.length || !props.onExcludeTasksFromTracking || bulkProgress) return;
+    setPendingBulkTaskIds(null);
+    setBulkFeedback(null);
+    setBulkProgress({ count: taskIds.length, phase: "excluding", taskIds });
+    try {
+      const mutation = await props.onExcludeTasksFromTracking(taskIds);
+      if (!mutation.success) {
+        setBulkProgress({ count: taskIds.length, error: mutation.error ?? "Nothing was excluded.", phase: "error", taskIds });
+        return;
+      }
+
+      closeRecordDetails();
+      setBulkProgress({ count: taskIds.length, phase: "recalculating", taskIds });
+      const refresh = await records.refresh();
+      if (!refresh.success) {
+        setBulkProgress({ count: taskIds.length, error: refresh.error ?? "Records could not refresh.", excluded: true, phase: "error", taskIds });
+        return;
+      }
+      setBulkProgress(null);
+      setBulkFeedback(`${taskIds.length} Tasks excluded from tracking. Records updated.`);
+    } catch (error) {
+      const detail = error as { message?: string };
+      setBulkProgress({ count: taskIds.length, error: detail.message ?? "Task tracking exclusion could not be saved.", phase: "error", taskIds });
+    }
+  }
+
   if (!props.userId) return <WorkspaceMessage title="Sign in to calculate Records" />;
   if (records.setupRequired) return <div className="space-y-3"><WorkspaceMessage detail="Apply the 7.2.24 Records chunked-reconciliation migration, then return here and refresh. The rest of ADHDice remains available." title="Records setup required" tone="error" /><TaskTableChipButton disabled={records.isRecalculating} onClick={records.refresh}>Refresh Records</TaskTableChipButton></div>;
   if (records.isLoading) return <WorkspaceMessage title={records.progress ?? "Preparing Records"} />;
   return (
     <div className="space-y-4">
+      {bulkFeedback ? <div aria-live="polite" className="rounded-lg border border-[#b9e4cd] bg-[#f1fff6] px-4 py-3 text-sm font-medium text-[#28795e] dark:border-[#2e6b4e] dark:bg-[#153326] dark:text-[#a9e8c5]">{bulkFeedback}</div> : null}
       {records.error ? <WorkspaceMessage detail={records.error} title="Records could not refresh" tone="error" /> : null}
       {records.isRecalculating && records.progress ? <WorkspaceMessage title={records.progress} /> : null}
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -267,17 +379,17 @@ export function RecordsTab(props: RecordsTabProps) {
       </div>
       {!records.hasSuccessfulResult ? null : <>
       <RecordsSection expanded={expandedSections.global_tasks} id="global_tasks" onToggle={() => toggleSection("global_tasks")} title="Global Task records">
-        <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={setDetailRecord} provisional={sectionProvisional("tasks")} records={sectionRecords("tasks")} />
+        <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} provisional={sectionProvisional("tasks")} records={sectionRecords("tasks")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
       </RecordsSection>
       <RecordsSection expanded={expandedSections.streaks} id="streaks" onToggle={() => toggleSection("streaks")} title="Streak records">
-        <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={setDetailRecord} records={sectionRecords("streaks")} />
+        <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} records={sectionRecords("streaks")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
       </RecordsSection>
       <RecordsSection expanded={expandedSections.focus} id="focus" onToggle={() => toggleSection("focus")} title="Focus records">
-        <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={setDetailRecord} provisional={sectionProvisional("focus")} records={sectionRecords("focus")} />
+        <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} provisional={sectionProvisional("focus")} records={sectionRecords("focus")} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} />
       </RecordsSection>
       <RecordsSection expanded={expandedSections.per_task} id="per_task" onToggle={() => toggleSection("per_task")} title="Per-task records">
         <label className="mb-3 block text-xs font-medium text-[#817990] dark:text-white/50">Filter by Task title<input className="mt-1 block min-h-10 w-full max-w-sm rounded-lg border border-[#ded7ea] bg-white px-3 text-sm text-[#30294d] outline-none focus:border-[#8c79f6] dark:border-white/15 dark:bg-white/[0.06] dark:text-white" onChange={(event) => setTaskQuery(event.target.value)} placeholder="Search Tasks and Steps" type="search" value={taskQuery} /></label>
-        {perTaskRecords.length ? <RecordGrid currentRecords={records.currentRecords} events={records.events} onOpenDetails={setDetailRecord} records={perTaskRecords} /> : <p className="text-sm text-[#817990] dark:text-white/50">No matching per-task records.</p>}
+        {perTaskRecords.length ? <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} records={perTaskRecords} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} /> : <p className="text-sm text-[#817990] dark:text-white/50">No matching per-task records.</p>}
       </RecordsSection>
       <RecordsSection expanded={expandedSections.history} id="history" onToggle={() => toggleSection("history")} title="Record history">
         <div className="mb-3"><TaskTableChipButton aria-pressed={showInvalidated} onClick={() => setShowInvalidated((value) => !value)}>{showInvalidated ? "Hide invalidated" : "Show invalidated"}</TaskTableChipButton></div>
@@ -287,12 +399,40 @@ export function RecordsTab(props: RecordsTabProps) {
         Records use the currently available Task History and Focus data. Past hard deletions cannot be reconstructed. Historical recurrence and parent/Step changes were not previously snapshotted, and older rows may use fallback occurrence identity. Record events captured from 7.2.19 onward preserve their evidence snapshot.
       </aside>
       </>}
-      {detailRecord ? <RecordDetailOverlay onClose={() => setDetailRecord(null)} record={detailRecord} /> : null}
+      {detailRecord && (!bulkProgress || bulkProgress.phase === "error") ? <RecordDetailOverlay
+        availableTaskIds={availableTaskIds}
+        onClose={closeRecordDetails}
+        onClearSelection={() => setSelectedTaskIds([])}
+        onRequestBulkTrackingExclusion={(taskIds) => setPendingBulkTaskIds(normalizeRecordEvidenceTaskSelection(taskIds, selectableTaskIdSet))}
+        onOpenTask={(taskId) => { closeRecordDetails(); props.onOpenTask(taskId); }}
+        onSelectAll={() => setSelectedTaskIds(selectableTaskIds)}
+        record={detailRecord}
+        onToggleTaskSelection={(taskId) => setSelectedTaskIds((current) => toggleRecordEvidenceTaskSelection(current, taskId, selectableTaskIdSet))}
+        selectableTaskIds={selectableTaskIdSet}
+        selectedTaskIds={selectedTaskIdSet}
+        taskById={taskById}
+      /> : null}
+      {pendingBulkTaskIds ? <RecordBulkTrackingExclusionConfirmation
+        hasDescendants={pendingBulkTaskIds.some((taskId) => taskHierarchy.getDescendants(taskId).length > 0)}
+        onCancel={() => setPendingBulkTaskIds(null)}
+        onConfirm={() => { void confirmBulkTrackingExclusion(); }}
+        taskCount={pendingBulkTaskIds.length}
+      /> : null}
+      {bulkProgress ? <RecordBulkTrackingExclusionProgress
+        error={bulkProgress.error}
+        excluded={bulkProgress.excluded}
+        onDismiss={() => setBulkProgress(null)}
+        phase={bulkProgress.phase}
+        progress={records.progress}
+        taskCount={bulkProgress.count}
+      /> : null}
     </div>
   );
 }
 
-function RecordDetailOverlay({ onClose, record }: { onClose: () => void; record: RecordCardModel }) {
+function RecordDetailOverlay({ availableTaskIds, onClearSelection, onClose, onOpenTask, onRequestBulkTrackingExclusion, onSelectAll, onToggleTaskSelection, record, selectableTaskIds, selectedTaskIds, taskById }: { availableTaskIds: ReadonlySet<string>; onClearSelection: () => void; onClose: () => void; onOpenTask: (taskId: string) => void; onRequestBulkTrackingExclusion: (taskIds: string[]) => void; onSelectAll: () => void; onToggleTaskSelection: (taskId: string) => void; record: RecordCardModel; selectableTaskIds: ReadonlySet<string>; selectedTaskIds: ReadonlySet<string>; taskById: ReadonlyMap<string, Task> }) {
+  const evidenceCount = record.taskEvidence ? getRecordTaskEvidenceCount(record.numericValue, record.taskEvidence) : null;
+
   useEffect(() => {
     function handleKeyDown(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape") onClose();
@@ -303,7 +443,7 @@ function RecordDetailOverlay({ onClose, record }: { onClose: () => void; record:
 
   return (
     <div aria-labelledby="record-detail-title" aria-modal="true" className="fixed inset-0 z-[150] flex items-center justify-center bg-[#f7f3ff]/82 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/84" onClick={onClose} role="dialog">
-      <AdhdPanel className="w-full max-w-md" header={<div className="flex items-start justify-between gap-3"><div className="flex items-center gap-2"><span className="h-5 w-5 text-[#7561dc] dark:text-[#c9beff] [&>svg]:h-full [&>svg]:w-full">{record.icon}</span><span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS}`}>{record.category}</span></div><AdhdIconButton aria-label="Close Record details" onClick={onClose} size="sm" tone="ghost"><X /></AdhdIconButton></div>} onClick={(event) => event.stopPropagation()} padding="md" variant="floating">
+      <AdhdPanel className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-hidden" header={<div className="flex items-start justify-between gap-3"><div className="flex items-center gap-2"><span className="h-5 w-5 text-[#7561dc] dark:text-[#c9beff] [&>svg]:h-full [&>svg]:w-full">{record.icon}</span><span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS}`}>{record.category}</span></div><AdhdIconButton aria-label="Close Record details" onClick={onClose} size="sm" tone="ghost"><X /></AdhdIconButton></div>} onClick={(event) => event.stopPropagation()} padding="md" variant="floating">
         <h2 className="mt-4 text-lg font-semibold leading-6 text-[#30294d] dark:text-white" id="record-detail-title">{record.title}</h2>
         <p className="mt-2 text-2xl font-semibold text-[#30294d] dark:text-white">{record.value}</p>
         <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
@@ -315,9 +455,79 @@ function RecordDetailOverlay({ onClose, record }: { onClose: () => void; record:
           <dt className="text-[#817990] dark:text-white/50">Evidence items</dt><dd>{record.detail.sourceCount.toLocaleString()}</dd>
           {record.detail.firstAchievedAt ? <><dt className="text-[#817990] dark:text-white/50">First achieved</dt><dd>{new Date(record.detail.firstAchievedAt).toLocaleDateString()}</dd></> : null}
         </dl>
+        {record.taskEvidenceUnavailable ? <p className="mt-5 border-t border-[#eee9f5] pt-4 text-xs leading-5 text-[#817990] dark:border-white/10 dark:text-white/50">Detailed Evidence is not cached on this device. Refresh Records to load it.</p> : record.taskEvidence && evidenceCount ? <section className="mt-5 min-w-0 border-t border-[#eee9f5] pt-4 dark:border-white/10" data-record-evidence>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="text-sm font-semibold text-[#514969] dark:text-white/85">Record Evidence</h3>
+            <span aria-live="polite" className="text-xs text-[#817990] dark:text-white/50">{selectedTaskIds.size} Tasks selected</span>
+          </div>
+          <p className="mt-1 text-xs text-[#817990] dark:text-white/50">{evidenceCount.text}</p>
+          {evidenceCount.warning ? <p className="mt-2 rounded-md border border-[#f2df9d] bg-[#fff8dc] px-2.5 py-2 text-xs leading-4 text-[#80620f] dark:border-[#66521d] dark:bg-[#342b12] dark:text-[#f3d38a]">{evidenceCount.warning}</p> : null}
+          <div className="mt-3 flex flex-wrap items-center gap-2">
+            <TaskTableChipButton disabled={!selectableTaskIds.size} onClick={onSelectAll}>Select all</TaskTableChipButton>
+            <TaskTableChipButton disabled={!selectedTaskIds.size} onClick={onClearSelection}>Clear</TaskTableChipButton>
+            <TaskTableChipButton disabled={!selectedTaskIds.size} onClick={() => onRequestBulkTrackingExclusion([...selectedTaskIds])} toneClassName="border-[#7d6cf5] bg-[#7d6cf5] text-white">Exclude selected ({selectedTaskIds.size})</TaskTableChipButton>
+          </div>
+          <div className="mt-3 max-h-64 overflow-y-auto pr-1" data-record-evidence-list>
+            {record.taskEvidence.length ? <ul className="divide-y divide-[#eee9f5] dark:divide-white/10">{record.taskEvidence.map((item) => {
+              const available = availableTaskIds.has(item.taskId);
+              const selectable = selectableTaskIds.has(item.taskId);
+              return <li className="py-2 first:pt-0 last:pb-0" key={`${item.sourceRowId}:${item.occurrenceIdentity}`}>
+                <div className="flex min-w-0 items-start justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    {selectable ? <input aria-label={`Select ${item.title} for tracking exclusion`} checked={selectedTaskIds.has(item.taskId)} className="h-4 w-4 shrink-0 accent-[#7d6cf5]" onChange={() => onToggleTaskSelection(item.taskId)} type="checkbox" /> : null}
+                    {available ? <button aria-label={`Open ${item.title}`} className="min-w-0 truncate text-left text-sm font-medium text-[#5b43dc] underline-offset-2 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8c79f6] dark:text-[#cabfff]" onClick={() => onOpenTask(item.taskId)} type="button">{item.title}</button> : <p className="min-w-0 truncate text-sm font-medium text-[#514969] dark:text-white/80">{item.title}</p>}
+                  </div>
+                  {taskById.has(item.taskId) && !selectable ? <span className="shrink-0 text-[10px] text-[#817990] dark:text-white/50">Excluded</span> : null}
+                </div>
+                <p className="mt-0.5 text-xs text-[#817990] dark:text-white/50">{formatRecordTaskEvidenceEntityKind(item.entityKind)} · {formatRecordTaskEvidenceOutcome(item.outcome)} · {formatDate(item.logicalDate)}{available ? "" : " · Unavailable"}</p>
+              </li>;
+            })}</ul> : <p className="text-xs text-[#817990] dark:text-white/50">No valid evidence rows were available for this Record.</p>}
+          </div>
+        </section> : null}
       </AdhdPanel>
     </div>
   );
+}
+
+function RecordBulkTrackingExclusionConfirmation({ hasDescendants, onCancel, onConfirm, taskCount }: { hasDescendants: boolean; onCancel: () => void; onConfirm: () => void; taskCount: number }) {
+  return <div aria-labelledby="record-bulk-tracking-exclusion-title" aria-modal="true" className="fixed inset-0 z-[170] flex items-center justify-center bg-[#f7f3ff]/82 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/84" role="dialog">
+    <AdhdPanel className="w-full max-w-md" header={<div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-[#30294d] dark:text-white" id="record-bulk-tracking-exclusion-title">Exclude {taskCount} Tasks from tracking?</h2><AdhdIconButton aria-label="Cancel" onClick={onCancel} size="sm" tone="ghost"><X /></AdhdIconButton></div>} padding="md" variant="floating">
+      <p className="mt-3 text-sm leading-6 text-[#625b78] dark:text-white/65">These Tasks will stop contributing to Records, Stats, Reports, streaks, Achievement progress, and future Task rewards. Their History remains intact.</p>
+      <p className="mt-2 text-sm leading-6 text-[#625b78] dark:text-white/65">Already-earned rewards and permanent Achievement awards will not be removed.</p>
+      {hasDescendants ? <p className="mt-2 text-sm leading-6 text-[#625b78] dark:text-white/65">At least one selected Task has descendants; its Steps/Substeps inherit the exclusion.</p> : null}
+      <div className="mt-5 flex justify-end gap-2"><TaskTableChipButton onClick={onCancel}>Cancel</TaskTableChipButton><TaskTableChipButton onClick={onConfirm} toneClassName="border-[#7d6cf5] bg-[#7d6cf5] text-white">Exclude {taskCount} Tasks</TaskTableChipButton></div>
+    </AdhdPanel>
+  </div>;
+}
+
+function RecordBulkTrackingExclusionProgress({ error, excluded, onDismiss, phase, progress, taskCount }: { error?: string; excluded?: boolean; onDismiss: () => void; phase: BulkTrackingExclusionProgress["phase"]; progress: string | null; taskCount: number }) {
+  const running = phase !== "error";
+  const title = phase === "excluding"
+    ? `Excluding ${taskCount} Tasks from tracking…`
+    : phase === "recalculating"
+      ? "Recalculating Records…"
+      : excluded
+        ? "Tasks excluded, but Records could not refresh."
+        : "Tasks were not excluded.";
+  const detail = phase === "excluding"
+    ? "Applying one authoritative bulk mutation."
+    : phase === "recalculating"
+      ? (progress ?? "Preparing Records")
+      : excluded
+        ? `${error ?? "Records could not refresh."} Use Refresh Records to try again.`
+        : `${error ?? "The bulk mutation failed."} Nothing was excluded; your selections remain.`;
+  return <div aria-busy={running} aria-labelledby="record-bulk-tracking-progress-title" aria-modal="true" className="fixed inset-0 z-[200] flex items-center justify-center bg-[#f7f3ff]/88 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/90" role="dialog">
+    <AdhdPanel className="w-full max-w-md" padding="md" variant="floating">
+      <div className="flex items-start gap-3">
+        {running ? <LoaderCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-[#7d6cf5]" /> : null}
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold text-[#30294d] dark:text-white" id="record-bulk-tracking-progress-title">{title}</h2>
+          <p aria-live="polite" className="mt-2 text-sm leading-6 text-[#625b78] dark:text-white/65">{detail}</p>
+        </div>
+      </div>
+      {!running ? <div className="mt-5 flex justify-end"><TaskTableChipButton onClick={onDismiss}>Close</TaskTableChipButton></div> : null}
+    </AdhdPanel>
+  </div>;
 }
 
 function HistoryItem({ event }: { event: PersistedRecordEvent }) {

@@ -4,10 +4,14 @@ import test from "node:test";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { getTaskDisplayStatusWithHistory } from "../src/lib/task-cockpit.ts";
 import { evaluateTaskActionAuthority as evaluateCanonicalTaskActionAuthority, evaluateTaskScheduleAuthority as evaluateCanonicalTaskScheduleAuthority, stripStatusFromScheduleIntent } from "../src/lib/task-state-engine/action-authority.ts";
-import { resolveTaskHistoryCalendarActionStatuses as resolveCanonicalTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarStates as resolveCanonicalTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
+import { resolveTaskHistoryCalendarActionStatuses as resolveCanonicalTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead as resolveCanonicalTaskHistoryCalendarRead, resolveTaskHistoryCalendarStates as resolveCanonicalTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { createEngineRolloverPlan as createCanonicalEngineRolloverPlan } from "../src/lib/task-state-engine/rollover-authority.ts";
 import { resolveCompatibilityTaskStatuses as resolveCanonicalCompatibilityTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { buildDirectTaskStateEngineInput } from "../src/lib/task-state-engine/direct-input.ts";
+import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { normalizeTaskBehaviorProfile, STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
+import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
+import { buildTaskHistoryStreakSummary } from "../src/lib/task-history-streak-summaries.ts";
 
 const evaluateTaskActionAuthority = (input: Parameters<typeof evaluateCanonicalTaskActionAuthority>[0]) => evaluateCanonicalTaskActionAuthority({ ...input, compatibilityOnly: true });
 const evaluateTaskScheduleAuthority = (input: Parameters<typeof evaluateCanonicalTaskScheduleAuthority>[0]) => evaluateCanonicalTaskScheduleAuthority({ ...input, compatibilityOnly: true });
@@ -60,6 +64,396 @@ test("a concrete active Missed occurrence remains Missed through a schedule edit
   assert.equal(authority?.activeStatus, "missed");
   assert.equal(authority?.mutationPlan.taskUpdate.status, "missed");
   assert.equal(authority?.mutationPlan.historyIntents.length, 0);
+});
+
+test("a no-miss behavior selection resets current Missed projections without changing History", () => {
+  const sourceTask = task({
+    custom_ruleset_id: "hobbies",
+    due_on: "2026-09-19",
+    id: "behavior-boundary-task",
+    status: "missed",
+    task_type: "custom",
+  });
+  const oldMissed = history("missed", "2026-09-19");
+  oldMissed.task_id = sourceTask.id;
+  oldMissed.id = "rollover-missed-2026-09-19";
+  const historicalSnapshot = structuredClone(oldMissed);
+  const hobbiesPolicy = normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    availableActions: ["done", "did_my_best", "delay", "complete"],
+    id: "hobbies",
+    missedStreakOnUnhandled: "ignore",
+    unresolvedOccurrence: "blank",
+  }, "custom");
+  const behaviorContext = {
+    behaviorPolicyRevisions: {
+      task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "task-policy", effectiveFromLogicalDate: "2026-09-01" }],
+    },
+    behaviorProfiles: { task: STANDARD_TASK_BEHAVIOR_POLICY, custom: hobbiesPolicy },
+    behaviorSelectionsByTaskId: {
+      [sourceTask.id]: [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+        { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "hobbies" },
+      ],
+    },
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      hobbies: [{ ...hobbiesPolicy, effectiveFromLogicalDate: "2026-09-01" }],
+    },
+  };
+  const read = resolveActiveTaskStatuses({
+    ...behaviorContext,
+    historyByTaskId: { [sourceTask.id]: [oldMissed] },
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    tasks: [sourceTask],
+    timezone: "UTC",
+  });
+  assert.notEqual(read.statusesByTaskId[sourceTask.id], "missed");
+
+  const directInput = buildDirectTaskStateEngineInput({
+    ...sourceTask,
+    canonical_schedule_boundary: {
+      anchor_confidence: "proven",
+      anchor_date: "2026-09-19",
+      one_time_due_on: null,
+      repeat_day_of_month: null,
+      repeat_days_of_week: [],
+      repeat_frequency: "daily",
+      repeat_interval: 1,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      schedule_model: "rolling",
+    },
+    canonicalization_status: "canonical_proven",
+    container_state: "active",
+    entity_kind: "parent",
+    terminal_state: "active",
+    workflow_state: "none",
+  }, [oldMissed], {
+    ...behaviorContext,
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    timezone: "UTC",
+  });
+  assert.equal(directInput.currentBehaviorSelectionEffectiveFromLogicalDate, "2026-09-20");
+  const directEvaluation = evaluateTaskState(directInput);
+  assert.notEqual(directEvaluation.activeStatus, "missed");
+  assert.deepEqual(directEvaluation.proposedHistoryChanges, []);
+
+  const calendarStates = resolveTaskHistoryCalendarStates({
+    ...behaviorContext,
+    calendarEnd: "2026-09-20",
+    calendarStart: "2026-09-19",
+    history: [oldMissed],
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    task: sourceTask,
+    timezone: "UTC",
+  });
+  assert.equal(calendarStates?.["2026-09-19"], "missed");
+  const calendarRead = resolveCanonicalTaskHistoryCalendarRead({
+    ...behaviorContext,
+    compatibilityOnly: true,
+    calendarEnd: "2026-09-20",
+    calendarStart: "2026-09-19",
+    history: [oldMissed],
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    task: sourceTask,
+    timezone: "UTC",
+  });
+  assert.equal(calendarRead?.timeline?.currentMissedStreak, 0);
+  assert.equal(calendarRead?.timeline?.longestMissedStreak, 1);
+  assert.notEqual(calendarRead?.timeline?.activeStatus, "missed");
+
+  const summary = buildTaskHistoryStreakSummary(sourceTask, [oldMissed], "2026-09-20", {
+    ...behaviorContext,
+    compatibilityOnly: true,
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    timezone: "UTC",
+  });
+  assert.equal(summary.missedStreak, 0);
+  assert.deepEqual(oldMissed, historicalSnapshot);
+
+  const namedSwitchTask = { ...sourceTask, id: "named-ruleset-switch-task" };
+  const namedSwitchHistory = { ...oldMissed, id: "named-switch-missed-2026-09-19", task_id: namedSwitchTask.id };
+  const namedSwitchRead = resolveActiveTaskStatuses({
+    ...behaviorContext,
+    behaviorSelectionsByTaskId: {
+      [namedSwitchTask.id]: [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "routine" },
+        { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "hobbies" },
+      ],
+    },
+    historyByTaskId: { [namedSwitchTask.id]: [namedSwitchHistory] },
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      hobbies: [{ ...hobbiesPolicy, effectiveFromLogicalDate: "2026-09-01" }],
+      routine: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "routine", effectiveFromLogicalDate: "2026-09-01" }],
+    },
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    tasks: [namedSwitchTask],
+    timezone: "UTC",
+  });
+  assert.notEqual(namedSwitchRead.statusesByTaskId[namedSwitchTask.id], "missed");
+  assert.equal(buildTaskHistoryStreakSummary(namedSwitchTask, [namedSwitchHistory], "2026-09-20", {
+    behaviorProfiles: behaviorContext.behaviorProfiles,
+    behaviorSelectionsByTaskId: {
+      [namedSwitchTask.id]: [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "routine" },
+        { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "hobbies" },
+      ],
+    },
+    compatibilityOnly: true,
+    logicalDayRollover: "00:00",
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      hobbies: [{ ...hobbiesPolicy, effectiveFromLogicalDate: "2026-09-01" }],
+      routine: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "routine", effectiveFromLogicalDate: "2026-09-01" }],
+    },
+    now: "2026-09-20T12:00:00.000Z",
+    timezone: "UTC",
+  }).missedStreak, 0);
+
+  const switchedBackTask = { ...sourceTask, custom_ruleset_id: "routine" };
+  const switchedBackSelections = {
+    [switchedBackTask.id]: [
+      { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+      { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "routine" },
+    ],
+  };
+  const switchedBack = resolveActiveTaskStatuses({
+    ...behaviorContext,
+    historyByTaskId: { [switchedBackTask.id]: [oldMissed] },
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      hobbies: [{ ...hobbiesPolicy, effectiveFromLogicalDate: "2026-09-01" }],
+      routine: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "routine", effectiveFromLogicalDate: "2026-09-01" }],
+    },
+    behaviorSelectionsByTaskId: switchedBackSelections,
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    tasks: [switchedBackTask],
+    timezone: "UTC",
+  });
+  assert.equal(switchedBack.statusesByTaskId[switchedBackTask.id], "missed");
+  const switchedBackSummary = buildTaskHistoryStreakSummary(switchedBackTask, [oldMissed], "2026-09-20", {
+    behaviorPolicyRevisions: behaviorContext.behaviorPolicyRevisions,
+    behaviorProfiles: behaviorContext.behaviorProfiles,
+    behaviorSelectionsByTaskId: switchedBackSelections,
+    compatibilityOnly: true,
+    logicalDayRollover: "00:00",
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      routine: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, id: "routine", effectiveFromLogicalDate: "2026-09-01" }],
+    },
+    now: "2026-09-20T12:00:00.000Z",
+    timezone: "UTC",
+  });
+  assert.equal(switchedBackSummary.missedStreak, 1);
+
+  const priorDone = { ...oldMissed, id: "done-2026-09-19", status: "done" as const, was_completed: true };
+  const positiveSummary = buildTaskHistoryStreakSummary(sourceTask, [priorDone], "2026-09-20", {
+    ...behaviorContext,
+    compatibilityOnly: true,
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    timezone: "UTC",
+  });
+  assert.equal(positiveSummary.currentStreak, 1);
+
+  const noMissFromStartTask = { ...sourceTask, id: "no-miss-from-start", custom_ruleset_id: "hobbies" };
+  const noMissFromStart = resolveActiveTaskStatuses({
+    ...behaviorContext,
+    behaviorSelectionsByTaskId: {
+      [noMissFromStartTask.id]: [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "hobbies" },
+      ],
+    },
+    historyByTaskId: { [noMissFromStartTask.id]: [] },
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    tasks: [noMissFromStartTask],
+    timezone: "UTC",
+  });
+  assert.notEqual(noMissFromStart.statusesByTaskId[noMissFromStartTask.id], "missed");
+  assert.equal(buildTaskHistoryStreakSummary(noMissFromStartTask, [], "2026-09-20", {
+    ...behaviorContext,
+    behaviorSelectionsByTaskId: {
+      [noMissFromStartTask.id]: [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "hobbies" },
+      ],
+    },
+    compatibilityOnly: true,
+    logicalDayRollover: "00:00",
+    now: "2026-09-20T12:00:00.000Z",
+    timezone: "UTC",
+  }).missedStreak, 0);
+});
+
+test("a policy revision resets current Missed projections while preserving historical facts", () => {
+  const sourceTask = task({
+    custom_ruleset_id: "hobbies",
+    due_on: "2026-09-25",
+    id: "policy-revision-boundary-task",
+    status: "missed",
+    task_type: "custom",
+  });
+  const missedDates = ["2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30"];
+  const oldMisses = missedDates.map((entryDate) => ({
+    ...history("missed", entryDate),
+    id: `policy-revision-missed-${entryDate}`,
+    task_id: sourceTask.id,
+  }));
+  const historyBefore = structuredClone(oldMisses);
+  const trackingPolicy = normalizeTaskBehaviorProfile({
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "hobbies-tracking",
+  }, "custom");
+  const noMissPolicy = normalizeTaskBehaviorProfile({
+    ...trackingPolicy,
+    id: "hobbies-no-miss",
+    missedStreakOnUnhandled: "ignore",
+    unresolvedOccurrence: "blank",
+  }, "custom");
+  const behaviorContext = {
+    behaviorPolicyRevisions: {
+      task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-09-01" }],
+    },
+    behaviorProfiles: { task: STANDARD_TASK_BEHAVIOR_POLICY, custom: trackingPolicy },
+    behaviorSelectionsByTaskId: {
+      [sourceTask.id]: [{ effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "hobbies" }],
+    },
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      hobbies: [
+        { ...trackingPolicy, effectiveFromLogicalDate: "2026-09-01" },
+        { ...noMissPolicy, effectiveFromLogicalDate: "2026-10-01" },
+      ],
+    },
+    logicalDayRollover: "00:00",
+    now: "2026-10-01T12:00:00.000Z",
+    timezone: "UTC",
+  };
+  const projectedTask = {
+    ...sourceTask,
+    canonical_schedule_boundary: {
+      anchor_confidence: "proven",
+      anchor_date: "2026-09-25",
+      one_time_due_on: null,
+      repeat_day_of_month: null,
+      repeat_days_of_week: [],
+      repeat_frequency: "daily",
+      repeat_interval: 1,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      schedule_model: "rolling",
+    },
+    canonicalization_status: "canonical_proven",
+    container_state: "active",
+    entity_kind: "parent",
+    terminal_state: "active",
+    workflow_state: "none",
+  };
+
+  const directInput = buildDirectTaskStateEngineInput(projectedTask, oldMisses, behaviorContext);
+  assert.equal(directInput.currentBehaviorSelectionEffectiveFromLogicalDate, "2026-09-20");
+  assert.equal(directInput.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
+  assert.equal(directInput.behaviorPolicy?.unresolvedOccurrence, "blank");
+  const directEvaluation = evaluateTaskState(directInput);
+  assert.notEqual(directEvaluation.activeStatus, "missed");
+  assert.deepEqual(directEvaluation.proposedHistoryChanges, []);
+
+  const activeStatus = resolveActiveTaskStatuses({
+    ...behaviorContext,
+    historyByTaskId: { [sourceTask.id]: oldMisses },
+    tasks: [sourceTask],
+  });
+  assert.notEqual(activeStatus.statusesByTaskId[sourceTask.id], "missed");
+
+  const calendarRead = resolveCanonicalTaskHistoryCalendarRead({
+    ...behaviorContext,
+    compatibilityOnly: true,
+    calendarEnd: "2026-10-01",
+    calendarStart: "2026-09-25",
+    history: oldMisses,
+    task: sourceTask,
+  });
+  assert.equal(calendarRead?.timeline?.currentMissedStreak, 0);
+  assert.equal(calendarRead?.timeline?.longestMissedStreak, 6);
+  for (const logicalDate of missedDates) {
+    assert.equal(calendarRead?.timeline?.days[logicalDate]?.state, "missed", logicalDate);
+    assert.equal(calendarRead?.timeline?.days[logicalDate]?.sourceKind, "history_fact", logicalDate);
+  }
+
+  const summary = buildTaskHistoryStreakSummary(sourceTask, oldMisses, "2026-10-01", {
+    ...behaviorContext,
+    compatibilityOnly: true,
+  });
+  assert.equal(summary.missedStreak, 0);
+  assert.deepEqual(oldMisses, historyBefore);
+
+  const trackingRevisionContext = {
+    ...behaviorContext,
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      hobbies: [
+        { ...trackingPolicy, effectiveFromLogicalDate: "2026-09-01" },
+        { ...trackingPolicy, id: "hobbies-tracking-later", effectiveFromLogicalDate: "2026-10-01", rewards: "disabled" as const },
+      ],
+    },
+  };
+  const stillTrackingRead = resolveCanonicalTaskHistoryCalendarRead({
+    ...trackingRevisionContext,
+    compatibilityOnly: true,
+    calendarEnd: "2026-10-01",
+    calendarStart: "2026-09-25",
+    history: oldMisses,
+    task: sourceTask,
+  });
+  assert.equal(stillTrackingRead?.timeline?.currentMissedStreak, 6);
+  assert.equal(stillTrackingRead?.timeline?.activeStatus, "missed");
+
+  const taskTypeTask = { ...sourceTask, custom_ruleset_id: null, id: "task-type-policy-boundary-task", task_type: "task" as const };
+  const taskTypeContext = {
+    ...behaviorContext,
+    behaviorProfiles: { task: trackingPolicy },
+    behaviorPolicyRevisions: {
+      task: [
+        { ...trackingPolicy, effectiveFromLogicalDate: "2026-09-01" },
+        { ...noMissPolicy, effectiveFromLogicalDate: "2026-10-01" },
+      ],
+    },
+    behaviorSelectionsByTaskId: {
+      [taskTypeTask.id]: [{ effectiveFromLogicalDate: "2026-09-20", taskType: "task" as const, customRulesetId: null }],
+    },
+    namedCustomRulesetBehaviorPolicyRevisions: {},
+  };
+  const taskTypeInput = buildDirectTaskStateEngineInput({ ...projectedTask, ...taskTypeTask }, oldMisses.map((row) => ({ ...row, task_id: taskTypeTask.id })), taskTypeContext);
+  assert.equal(taskTypeInput.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
+  const taskTypeCalendarRead = resolveCanonicalTaskHistoryCalendarRead({
+    ...taskTypeContext,
+    compatibilityOnly: true,
+    calendarEnd: "2026-10-01",
+    calendarStart: "2026-09-25",
+    history: oldMisses.map((row) => ({ ...row, task_id: taskTypeTask.id })),
+    task: taskTypeTask,
+  });
+  assert.equal(taskTypeCalendarRead?.timeline?.currentMissedStreak, 0);
+  assert.equal(buildTaskEffectiveTimeline({
+    behaviorPolicy: noMissPolicy,
+    behaviorPolicyRevisions: [
+      { ...trackingPolicy, effectiveFromLogicalDate: "2026-09-01" },
+      { ...noMissPolicy, effectiveFromLogicalDate: "2026-10-01" },
+    ],
+    currentBehaviorPolicyEffectiveFromLogicalDate: "2026-10-01",
+    task: directInput.task,
+    history: [
+      { ...directInput.history[0]!, id: "positive-2026-09-29", logicalDate: "2026-09-29", outcome: "done", occurredAt: "2026-09-29T12:00:00.000Z" },
+      { ...directInput.history[1]!, id: "positive-2026-09-30", logicalDate: "2026-09-30", outcome: "done", occurredAt: "2026-09-30T12:00:00.000Z" },
+    ],
+    logicalDate: "2026-10-01",
+    calendarStart: "2026-09-29",
+    calendarEnd: "2026-10-01",
+  }).currentCompletedStreak, 2);
 });
 
 test("explicit Missed status actions still carry status intent and History", () => {

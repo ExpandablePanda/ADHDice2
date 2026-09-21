@@ -8,6 +8,7 @@ import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT, SETTINGS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
+import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 
 type ThemeMode = "light" | "dark";
 
@@ -149,7 +150,7 @@ export function SettingsPage({
       <PageShell id="settings-appearance" label="Appearance">
       <PageShellSurface className={sectionClass}>
       <PageShellBody>
-        <p className={sectionTitle} data-settings-section="appearance" id="settings-section-appearance">Appearance</p>
+        <p className={sectionTitle} data-settings-section="appearance" data-style-component="SettingsPage" data-style-role="ui.section.label" id="settings-section-appearance">Appearance</p>
         <div className={row}>
           <span className={label}>Theme</span>
           <ThemeToggle theme={theme} onLowStimChange={onLowStimChange} onThemeChange={onThemeChange} lowStim={lowStim} />
@@ -162,6 +163,13 @@ export function SettingsPage({
             ))}
           </div>
         </div>
+        {process.env.NODE_ENV === "development" ? (
+          <div className="border-t border-[#e5e0f5] px-5 py-4 dark:border-white/10">
+            <p className={label}>Developer tools</p>
+            <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Inspect registered UI roles and preview semantic styling locally.</p>
+            <div className="mt-3"><StyleLabLauncher /></div>
+          </div>
+        ) : null}
       </PageShellBody>
       </PageShellSurface>
       </PageShell>
@@ -169,7 +177,7 @@ export function SettingsPage({
       <PageShell id="settings-day-reset" label="Day Reset">
       <PageShellSurface className={sectionClass}>
       <PageShellBody>
-        <p className={sectionTitle} data-settings-section="day-reset" id="settings-section-day-reset">Day reset</p>
+        <p className={sectionTitle} data-settings-section="day-reset" data-style-component="SettingsPage" data-style-role="ui.section.label" id="settings-section-day-reset">Day reset</p>
         <div className={row}><span className={label}>Day starts at</span><input className="rounded-full bg-white px-3 py-2 text-sm font-semibold text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => onDayStartTimeChange(event.target.value)} type="time" value={dayStartTime} /></div>
         <div className={row}><span className={label}>Time zone</span><select className="max-w-[14rem] rounded-full bg-white px-3 py-2 text-sm font-semibold text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => onTimeZoneChange(event.target.value)} value={timeZone}>{timezoneOptions.map((timezone) => <option key={timezone} value={timezone}>{timezone}</option>)}</select></div>
       </PageShellBody>
@@ -179,7 +187,7 @@ export function SettingsPage({
       <PageShell id="settings-economy" label="Economy">
       <PageShellSurface className={sectionClass}>
       <PageShellBody>
-        <p className={sectionTitle} data-settings-section="economy" id="settings-section-economy">Economy</p>
+        <p className={sectionTitle} data-settings-section="economy" data-style-component="SettingsPage" data-style-role="ui.section.label" id="settings-section-economy">Economy</p>
         <div className={`${row} gap-4`}><div><p className={label}>Reset XP, points, tokens, and free-roll bank</p><p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Leaves task history in place and sets level back to 1.</p></div><button className="ui-pill-button-danger-light shrink-0 transition disabled:cursor-not-allowed disabled:opacity-60" disabled={isResettingEconomy} onClick={() => { void handleResetEconomy(); }} type="button">{isResettingEconomy ? "Resetting..." : "Reset economy"}</button></div>
         {economyStatus ? <div className="px-5 pb-4 text-xs text-[#7d88a1] dark:text-white/55">{economyStatus}</div> : null}
       </PageShellBody>
@@ -189,7 +197,7 @@ export function SettingsPage({
       <PageShell id="settings-import-export" label="Import / Export">
       <PageShellSurface className={`${sectionClass} overflow-hidden`}>
       <PageShellBody>
-        <p className={sectionTitle} data-settings-section="import-export" id="settings-section-import-export">Import / export</p>
+        <p className={sectionTitle} data-settings-section="import-export" data-style-component="SettingsPage" data-style-role="ui.section.label" id="settings-section-import-export">Import / export</p>
         <div className="px-5 py-4"><button className="ui-pill-button-strong-light" onClick={handleExportJSON} type="button">Export tasks JSON</button><textarea className="mt-4 min-h-40 w-full rounded-[1.2rem] bg-white px-4 py-3 text-sm text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => setImportText(event.target.value)} placeholder="Paste exported tasks JSON here..." value={importText} /><div className="mt-3 flex items-center justify-between gap-3"><button className="ui-pill-button-strong-light" onClick={() => { void handleImportJSON(); }} type="button">Import JSON</button>{importStatus ? <p className="text-right text-xs text-[#7d88a1] dark:text-white/55">{importStatus}</p> : null}</div></div>
       </PageShellBody>
       </PageShellSurface>

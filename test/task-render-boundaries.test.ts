@@ -10,7 +10,7 @@ const shellSource = readFileSync(new URL("../src/components/task-app/tasks-page.
 
 test("Table interaction state stays in the direct windowed hierarchy render", () => {
   assert.doesNotMatch(tableSource, /TaskTableRow|uiRevision|areTaskRowPropsEqual|render=\{\(\) => \(/);
-  assert.match(tableSource, /renderedTasks\.map\(\(task\) =>/);
+  assert.match(tableSource, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(tableSource, /hasRenderedDescendants/);
   assert.match(tableSource, /hasTableStepDraft/);
   assert.match(tableSource, /setOverlayMode\(mode\)/);
@@ -22,9 +22,9 @@ test("Table interaction state stays in the direct windowed hierarchy render", ()
 
 test("List interaction state stays in the direct windowed hierarchy render", () => {
   assert.doesNotMatch(listSource, /TaskListRow|uiRevision|areTaskRowPropsEqual|render=\{\(\) => \(/);
-  assert.match(listSource, /windowedTasks\.map\(\(task\) =>/);
+  assert.match(listSource, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);
   assert.match(listSource, /isQuickPanelOpen/);
-  assert.match(listSource, /tableProps\.onOpenTaskEditor\?\.\(task\.id\)/);
+  assert.match(listSource, /tableProps\.onOpenTaskEditor\?\.\(task\.id, visibleTaskIds\)/);
   assert.match(listSource, /tableProps\.onOpenTaskHistory\?\.\(task\.id\)/);
   assert.match(listSource, /TaskStatusCircleRail/);
   assert.match(listSource, /runningTimerByTaskId\.get\(task\.id\)/);
@@ -63,4 +63,38 @@ test("Stable row caches and bounded windowing remain the performance controls", 
   assert.match(tableSource, /const renderedTasks = useMemo\(/);
   assert.match(tableSource, /loadMoreTasksRef/);
   assert.match(tableSource, /remainingRenderedTaskCount/);
+});
+
+test("Complete confirmation is app-global while Tasks retains only its other flows", () => {
+  const completeFlowStart = appSource.indexOf("const completeFlow");
+  const taskWorkspaceFlowStart = appSource.indexOf("const taskWorkspaceFlowLayer");
+  const returnStart = appSource.indexOf("\n  return (\n    <main");
+  const homeBranchStart = appSource.indexOf(') : activePage === "Home" ?', returnStart);
+  const achievementsBranchStart = appSource.indexOf(') : activePage === "Achievements" ?', homeBranchStart);
+  const tasksBranchStart = appSource.indexOf(') : activePage === "Tasks" ?', achievementsBranchStart);
+  const focusBranchStart = appSource.indexOf(') : activePage === "Focus" ?', tasksBranchStart);
+  const completeFlow = appSource.slice(completeFlowStart, taskWorkspaceFlowStart);
+  const appGlobalRender = appSource.slice(returnStart, homeBranchStart);
+  const taskWorkspaceFlowLayer = appSource.slice(taskWorkspaceFlowStart, tasksBranchStart);
+  const homeBranch = appSource.slice(homeBranchStart, achievementsBranchStart);
+
+  assert.ok(completeFlowStart >= 0 && completeFlowStart < taskWorkspaceFlowStart);
+  assert.ok(returnStart >= 0 && homeBranchStart > returnStart);
+  assert.ok(focusBranchStart > tasksBranchStart);
+  assert.equal((appSource.match(/<TaskEditFlows/g) ?? []).length, 2);
+  assert.match(completeFlow, /pendingCompleteAction/);
+  assert.match(completeFlow, /getTaskCompleteConfirmationDescription\(completeFlowTask\)/);
+  assert.match(completeFlow, /Complete Milestone and award trophy\?/);
+  assert.match(completeFlow, /onClose: \(\) => setPendingCompleteAction\(null\)/);
+  assert.match(completeFlow, /onConfirm: \(\) => \{ void confirmPendingTaskComplete\(\); \}/);
+  assert.match(appGlobalRender, /<TaskEditFlows[\s\S]*batchDeleteFlow=\{null\}[\s\S]*batchEditFlow=\{null\}[\s\S]*completeFlow=\{completeFlow\}[\s\S]*focusPlannerFlow=\{null\}[\s\S]*momentumFlow=\{null\}[\s\S]*taskHistoryFlow=\{null\}/);
+  assert.match(taskWorkspaceFlowLayer, /completeFlow=\{null\}/);
+  assert.doesNotMatch(taskWorkspaceFlowLayer, /pendingCompleteAction|confirmPendingTaskComplete|Complete Milestone and award trophy/);
+  assert.match(homeBranch, /onSetStatus=\{\(task, status\) => \{ void updateTaskStatus\(task, status\); \}\}/);
+  assert.doesNotMatch(homeBranch, /setActivePage\(\"Tasks\"\)/);
+
+  const updateTaskStatusStart = appSource.indexOf("async function updateTaskStatus");
+  const updateTaskStatusEnd = appSource.indexOf("async function toggleTaskPinned", updateTaskStatusStart);
+  const updateTaskStatus = appSource.slice(updateTaskStatusStart, updateTaskStatusEnd);
+  assert.match(updateTaskStatus, /if \(status === "complete"\) \{[\s\S]*requestTaskComplete\(task/);
 });

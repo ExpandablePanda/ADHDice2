@@ -1,18 +1,421 @@
 # Current State
 
-Last reviewed: 2026-09-16
+Last reviewed: 2026-09-21
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.81`.
-- Current release group: `7.13.x` Tasks + Custom Task Types.
+- Current working app version: `7.14.46`.
+- Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-21 7.14.46 Consolidate Side Work into 7.14
+
+Merged the completed `codex/Side` application work into the active `7.14`
+development line while preserving the newer 7.14 Task authority, Active Status,
+streak-summary, behavior-policy, hierarchy, folder, and Style Lab boundaries.
+
+The integrated Side work includes the expanded Home To-do/Routine experience,
+Routine hierarchy and ordering, Home completion and Record chases, Record
+Evidence/freshness/cache work, tracking-exclusion application support, Move to
+Day, task signals, row menus, and list-level long-press fast actions.
+
+Tracking-exclusion SQL patches carried by Side remain source-only during this
+branch consolidation. This merge does not apply SQL or mutate the live Supabase
+schema. Native iOS work remains separate on `ios/native-development`.
+
+## 2026-09-21 7.13.95 Home List-Level Fast Actions
+
+Home fast-action mode is now scoped to the active Home list rather than the
+Task that initiated the long press. Every eligible row in the active To-do or
+Routine view expands together; any chevron collapses the shared mode, and tab
+switching exits it. Existing pointer gesture and Home mutation behavior remain
+unchanged.
+
+## 2026-09-21 7.13.94 Home Gear Long-Press Fast Actions
+
+Home To-do and Routine root gear buttons now support a 475ms pointer long
+press that replaces the gear with persistent inline fast actions. Normal gear
+clicks still open the existing dropdown, and long-press activation suppresses
+the following click. To-do Move to day continues using the existing dropdown
+destination view; Routine child rows remain unchanged.
+
+## 2026-09-21 7.13.93 Home Row Action Menus
+
+Home To-do and Routine anchor rows now consolidate their existing row actions
+behind one compact gear menu. To-do Move to day uses the same anchored panel's
+destination view, preserving Home day capacity/current disabling and the
+existing Home-only mutation paths. Routine child rows remain unchanged.
+
+## 2026-09-21 7.13.92 Home To-do Task Signals
+
+Home To-do rows now consume the canonical Task History streak summary and
+TaskApp Attention reason map beside the title. Missed streaks take precedence
+with the existing Skull badge; otherwise the shared current-streak chip is
+shown. Attention uses the existing TaskAttentionChip without Home-side rules.
+
+## 2026-09-20 7.13.91 Home To-do Move to Day
+
+Home To-do rows now expose a compact Move to day menu backed only by the
+existing `taskDayOffsets` Home organization state. The menu uses the existing
+seven day-section labels plus Later, disables full/current destinations, and
+does not mutate Task scheduling or recurrence fields.
+
+## 2026-09-20 7.13.90 Correct Rich Evidence Cache Payload + Safari Fallback
+
+The client-only rich Records detail cache now writes an explicit schema-v2
+payload containing only calculation time, session key, Task Evidence,
+provisional candidates, and warnings. If the full localStorage write is
+rejected, it retries with provisional candidates removed so current Record
+Evidence can still restore. No SQL or database migration changed.
+
+## 2026-09-20 7.13.84 Exclude Task from Tracking
+
+Tasks now have an additive direct tracking-exclusion flag. Client tracking
+projections inherit exclusion through same-table parent chains without mutating
+descendant rows. The unpublished SQL patch was replaced before deployment by
+the 7.13.85 correction below.
+
+## 2026-09-20 7.13.85 Correct Tracking Exclusion Achievement Authority
+
+The 7.13.85 version of the unpublished tracking-exclusion migration guarded
+`adhdice_achievement_occurrences` before Task-derived qualification can reach
+the evaluator. Exclusion dequalifies existing Task and Step-set evidence before
+rebuilding progress, while re-inclusion drains the canonical resumable
+Achievement recalculation cursor to completion. It was superseded before
+deployment by 7.13.86, which remains source-only until manually applied and
+verified; the unsafe 7.13.84 and superseded 7.13.85 migration files are no
+longer present.
+
+## 2026-09-20 7.13.86 Final Tracking Exclusion Authority + Cache Correction
+
+The unpublished tracking-exclusion migration now scopes every Task-derived
+Achievement evaluation and re-inclusion recalculation identity to the updated
+Task revision, so repeated exclude/include toggles cannot replay an earlier
+completed operation. Successful Task editor tracking mutations invalidate every
+in-memory Records session snapshot for the current user; Record Evidence keeps
+its explicit refresh after closing stale detail. The 7.13.86 migration remains
+source-only until manual application and live verification.
+
+## 2026-09-20 7.13.87 Bulk Record Evidence Tracking Exclusion
+
+Record Evidence now deduplicates Task-level selections across repeated evidence
+occurrences and submits one authenticated bulk exclusion RPC. The RPC validates
+the complete request atomically, increments revisions only for direct flag
+changes, blocks applicable pending rewards once, dequalifies affected
+Task/Step-set Achievement evidence, and evaluates current Achievement progress
+once. TaskApp reconciles returned Task rows, invalidates the current user's
+Records session cache, and refreshes streak summaries once. Records closes stale
+detail and runs exactly one explicit refresh with the existing pipeline stage
+text while showing blocking progress. The 7.13.87 migration remains source-only
+until manual application and live verification.
+
+## 2026-09-20 7.13.88 Durable Records Freshness + Home Loading UX
+
+Records now uses a narrow authenticated freshness RPC over the owner-protected
+reconciliation metadata, with a 12-hour saved-result bootstrap, user-scoped
+invalidation, and best-effort local rich Evidence details. Home shows explicit
+loading status for Finished Today and saved Record targets, and the bulk Task
+exclusion merge starts from the latest canonical Task state. The
+`supabase/patch_records_freshness_read_7_13_88.sql` migration is source-only
+until manual inspection and application.
+
+## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
+
+Records now opens a requested successful global Record synchronously inside the
+deep-link effect, then marks the metric consumed and acknowledges the request.
+The effect no longer defers the detail state update with a timer that cleanup
+could cancel on the cached path. Missing Records retain the synchronous
+consume-and-acknowledge fallback.
+
+## 2026-09-20 7.13.82 Fix Cached Home Record Deep-Link Handoff
+
+Home Record deep-links now keep the pending metric request until the Records
+tab has a successful cached or freshly loaded projection and schedules the
+matching global Record detail overlay. The Progress page no longer acknowledges
+the request merely because it mounted; the Records consumer owns that handoff.
+
+## 2026-09-19 7.13.81 Records Session Snapshot Across Navigation
+
+Records now retains the complete successful in-memory UI projection in a
+module-level session cache keyed by user, rules version, timezone, and logical
+day start. Returning to Records restores current cards, events, provisional
+candidates, Task evidence, warnings, and calculation time without rerunning
+the pipeline. Explicit Refresh Records bypasses the cache and replaces it only
+after a successful calculation; failed refreshes retain the prior snapshot.
+Persisted Records rows and compact evidence schema v2 remain unchanged.
+
+## 2026-09-19 7.13.80 Record Evidence Verification
+
+Current Task-based aggregate Record details retain the exact Task/Step
+occurrences from the successful in-memory Records evaluation for
+`parent_tasks_day`, `parent_tasks_week`, `parent_tasks_month`, `steps_day`,
+`steps_week`, `steps_month`, and `permanent_completes_day`. The detail overlay
+shows chronological evidence rows, verifies the reconstructed count against
+the Record value, and opens available Tasks through the existing shared editor.
+Persisted Records continue using compact evidence schema v2; detail opening does
+not run another Records query or pipeline.
+
+## 2026-09-19 7.13.79 Deep-link Home Record Chases to Progress Records
+
+Home Records to Beat rows now navigate to the existing Progress page, select
+the Records tab, and open the matching global durable Record detail overlay by
+metric key. No new AppPage, Records persistence, or Records pipeline was
+introduced; the existing Records tab remains the source of the detail view.
+
+## 2026-09-19 7.13.78 Add Finished Today Details and Correct Record Loading
+
+Home now presents a unique-entity Finished Today summary grouped by canonical
+Done, Did My Best, and Completed outcomes, with an expandable list of the
+finished Tasks and Steps. The Home record-target loader now invokes its async
+read lifecycle, so the Records to Beat panel can resolve its narrow persisted
+target query instead of remaining in its initial loading state. Records remain
+occurrence-based and Home does not run reconciliation or the Records pipeline.
+No SQL or schema change was made.
+
+## 2026-09-19 7.13.77 Add Home Daily Completion and Record Chases
+
+Home now shows compact Daily Tasks Completed and Records to Beat panels above
+the existing To-do/Routine workspace. Daily completion uses the shared loaded
+Task History snapshot and `todayKey`, with unique Task entities in the summary
+and canonical occurrence values for the three daily Records metrics. Home reads
+only the persisted current targets for those metrics, does not run Records
+reconciliation, and treats timezone/day-start mismatches as stale. No SQL or
+schema change was made.
+
+## 2026-09-19 7.13.73 Named Routine Sections and Quiet Routine Metadata
+
+Home Routine now uses named ordinal Sections backed by Home state V5, migrating
+the persisted V4 `routinesPerPhase` capacity without changing Routine
+membership, hierarchy, or order. Routine rows show their own due metadata and
+canonical History streak summaries, with missed streaks taking precedence over
+active streaks. Home save/sync status remains internal and background
+persistence remains unchanged; no SQL or schema change was made.
+
+## 2026-09-19 7.13.74 Add Routine Top / Bottom Controls
+
+Home Routine now exposes the existing Top and Bottom ordering controls on
+directly displayed Routine anchors. The controls update the persisted flat
+Routine order, so inherited Steps/Substeps move with their parent group while
+ordinal Section names remain unchanged. To-do ordering and all other Home
+Routine semantics are unchanged.
+
+## 2026-09-19 7.13.76 Keep Complete Confirmation on the Initiating Page
+
+Complete confirmation is now rendered by an app-level `TaskEditFlows`
+instance using the existing `pendingCompleteAction` state. Tasks retains the
+other workspace-only flows while passing `completeFlow={null}`, so Home,
+shared-editor, Table, and List Complete actions show one confirmation over the
+current surface without changing Complete semantics or page routing.
+
+## 2026-09-19 7.13.75 Drag Routine Steps/Substeps Within Their Parent
+
+Home Routine now exposes a compact child drag handle for visible Steps and
+Substeps. Drops are restricted to visible siblings with the same immediate
+parent and hierarchy depth, and valid before/after placements reuse TaskApp's
+canonical `reorderChildTask` path. Root Routine anchors still use Home's
+`routineTaskIds` ordering, while To-do behavior and Home child-order
+persistence remain unchanged. No SQL or schema change was made.
+
+## 2026-09-19 7.13.71 Routine Hierarchy, Ordering, and Phase Sections
+
+Home Routine now derives hierarchical groups from direct Routine membership and
+the canonical Task hierarchy. Group-anchor ordering and Routines-per-Phase are
+persisted in the existing JSON-backed Home state, while Phase sections remain a
+projection of that flat order. No Task hierarchy, Task ordering, SQL, or schema
+changed.
+
+## 2026-09-19 7.13.72 Protect Routine Order During Home State Hydration
+
+Home state hydration now defers Routine order reconciliation until hydration
+is resolved and bootstraps meaningful V4 Routine/capacity state even when
+To-do IDs are empty. No Task-domain, SQL, or schema changes.
+
+## 2026-09-18 7.13.68 Home To-do Metadata and Strict Daily Capacity
+
+Home To-do quick creation now carries due date/time, recurrence cadence, tags,
+numeric priority, and resolved Task Type metadata through the canonical Task
+creation path. Home day projection treats Tasks Per Day as a hard capacity for
+all seven normal sections, spilling preferred-day overflow forward and then to
+Later without rewriting durable offsets or Task rows.
+
+## 2026-09-18 7.13.69 Correct Home New Task Metadata UI
+
+Home New Task keeps its 7.13.68 metadata and canonical creation behavior while
+using the current Edit Task input, chip, cadence, and tag presentation directly
+inside the composer. The legacy Task Details accordion and field components are
+no longer used by Home.
+
+## 2026-09-18 7.13.70 Merge Home To-do and Routine Tabs
+
+Home now presents To-do and the built-in system-owned Routine list in one tabbed
+task panel. To-do retains its seven-day planning and strict capacity projection;
+Routine uses existing Routine memberships as an unlimited active-task list with
+explicit membership removal and search/new-task enablement.
+
+## 2026-09-21 7.14.40 Batch Task Type Changes and Determinate Operation Progress
+
+Batch Edit now exposes the shared Task Type and named Custom Task Type choices,
+routes each changed selection through the existing effective-dated behavior
+authority, skips already-correct Tasks, and preserves canonical schedule and
+History projections. The existing Batch Edit progress banner now presents a
+real accessible determinate bar for known-count operations with failure and
+skip counts. Browser QA remains Andrew's responsibility.
+
+## 2026-09-20 7.14.39 Preserve Canonical Recurrence Across Metadata Updates and Enable Multi-Select Clear
+
+Metadata-only Task Type, named Custom ruleset, and other Task-row responses now
+reapply the existing canonical schedule projection without creating or mutating
+a schedule boundary. Calendar History Clear is available for a multi-selection
+only when every selected persisted entry is individually clearable, then uses
+the existing sequential canonical clear path and one refresh. Browser QA remains
+Andrew's responsibility.
+
+## 2026-09-20 7.14.38 Use the Effective Behavior Policy Boundary for Current Missed Streaks
+
+Current Missed streak reset now follows the effective policy revision inside the
+active Task behavior selection. TaskType and named Custom revisions can reset
+current no-miss projections at their own effective logical date, while explicit
+History facts, historical policy interpretation, Calendar facts, and positive
+streaks remain unchanged. Browser QA remains Andrew's responsibility.
+
+## 2026-09-20 7.14.37 Correct Current Missed Projections Across Behavior Boundaries
+
+Current Active Status and Missed streak projections now honor the effective
+behavior-selection segment. Historical Missed facts and Calendar dates remain
+unchanged, and no History cleanup or SQL change is included. Browser QA remains
+Andrew's responsibility.
+
+## 2026-09-20 7.14.36 Batch Unlink Selected Task Hierarchy Rows
+
+The shared Task context menu can now unlink selected child Tasks in one
+canonical hierarchy batch. The browser snapshots the hierarchy, processes
+selected descendants deepest-first, preserves each root Task's Folder, and
+reconciles each committed row without changing the hierarchy RPC contract or
+SQL. Browser QA remains Andrew's responsibility.
+
+## 2026-09-20 7.14.33 Canonical Task Hierarchy Move Path
+
+Step/Substep detachment, parent moves, and direct Task Content Folder moves now
+use the dedicated atomic `adhdice_move_task_hierarchy` authority. It owns the
+mutually exclusive parent/Folder fields, applies revision fencing, preserves
+root Folder inheritance on detach, and returns the committed Task row for local
+reconciliation. Historical History facts and schedule boundaries are not
+rewritten. The source SQL remains unapplied pending explicit database rollout;
+browser QA remains Andrew's responsibility.
+
+## 2026-09-20 7.14.35 Search Task Content Folders as Semantic Containers
+
+Canonical Task search now indexes each root Task's inherited Task Content Folder
+path, so matching Folder names reveal eligible contained Tasks while selected
+list, status, energy, and structured filters remain intersections. Active search
+also hides unrelated empty Folder branches; a directly matched actually empty
+Folder may remain as structural search context. Browser QA remains Andrew's
+responsibility.
+
+## 2026-09-20 7.14.34 Reconcile Descendant Roles During Hierarchy Moves
+
+The canonical hierarchy move authority now returns the moved Task plus each
+direct canonical child whose current `entity_kind` changes because of the move.
+Those rows receive coordinated canonical projection revisions in the same
+transaction; grandchildren and unchanged child roles are not rewritten. The
+browser keeps the moved Task and direct children pending until every returned
+row is reconciled locally. The 7.14.34 replacement SQL is authored but remains
+unapplied pending review; do not apply the earlier 7.14.33 patch separately.
+Browser QA remains Andrew's responsibility.
+
+## 2026-09-20 7.14.32 Keep Empty Folders Visible in All
+
+The All Task list now authoritatively retains empty Task Content Folder rows
+even when stale hierarchy, search, or structured filter state is present. Table
+and List pass their actual current list ID through the shared visibility helper;
+projection, nesting, ordering, collapse, and persistence remain unchanged.
+Browser QA remains Andrew's responsibility.
+
+## 2026-09-19 7.14.31 Reveal Newly Created Empty Folders
+
+Structural empty Task Content Folders now sort before Task-anchored content
+within their container, with deterministic `created_at`/`id` ordering. Creating
+a child Folder under a collapsed parent explicitly expands that parent after a
+successful create; existing collapse-state persistence remains unchanged.
+Browser QA remains Andrew's responsibility.
+
+## 2026-09-19 7.14.30 Fix False Search Gate Hiding Empty Folders
+
+Task Content Folder empty visibility now uses only real search, hierarchy/status,
+and structured-filter state. Search-selection result IDs no longer hide truly
+empty Folders during ordinary Today/List browsing. Browser QA remains Andrew's
+responsibility.
+
+## 2026-09-19 7.14.29 Keep Truly Empty Task Content Folders Visible
+
+Normal Task browsing now keeps Folders that are empty across the broad Task
+universe visible in All, Today, Routine, Attention, and custom Lists. Folders
+whose Tasks are filtered out remain hidden unless retained as ancestry for a
+genuinely empty descendant. Table and List use the same actual-empty Folder
+calculation and recursive projection. Browser QA remains Andrew's
+responsibility.
+
+## 2026-09-19 7.14.28 Finish Nested Folder Runtime Wiring and Filtered Visibility
+
+Table Task-to-Folder movement now uses the exact shared callback prop, and Table
+and List use one `shouldIncludeEmptyTaskContentFolders` decision: empty Folder
+containers appear only in the broad, unfiltered All workspace while filtered
+results retain only the ancestor context required by matching Tasks. The
+checked-in nested migration was applied to live ADHDice project
+`mnwcuinnshsncqrhvsks` as migration
+`20260920020454 add_nested_task_content_folders_7_14_27`. Live schema,
+constraint, trigger, function, and disposable authenticated promotion/cycle
+checks passed with QA rows cleaned up. Security Advisor showed no new
+nested-Folder finding; browser QA remains Andrew's responsibility.
+
+## 2026-09-19 7.14.27 Add Nested Task Content Folders
+
+Task Content Folders now use an owner-scoped `parent_folder_id` hierarchy with
+application and database cycle protection. Table and List consume one shared
+recursive projection that preserves Task order, filtered ancestor context,
+independent collapse state, empty child Folders, and subtree Pin/Routine/
+Attention/count semantics. Add Folder, Move Folder, nesting-aware Create
+Folder, and transactional delete promotion preserve Folder identity and keep
+Tasks outside Folder hierarchy. The additive migration and schema source are
+authored but have not been applied to a live Supabase project in this worktree;
+browser QA remains Andrew's responsibility.
+
+## 2026-09-19 7.14.26 Restore Routine Assignment and Typed Folder Task Creation
+
+Routine remains an app-owned system list while its dedicated Task and Folder
+toolbar actions can persist manual membership through
+`adhdice_task_list_manual_memberships`. Folder Add Task now uses a compact
+left-aligned card with the shared Task Type selector, resolves active named
+Custom identities before canonical Task creation, and assigns the created Task
+to the Folder afterward. Browser QA remains Andrew's responsibility.
+
+## 2026-09-19 7.14.25 Keep Folder Actions Beside the Title
+
+Folder headers keep their full-width surface while using content-sized title
+regions and a wrapping left-aligned action group, so Table and List controls
+remain reachable without horizontal scrolling to the table edge.
+
+## 2026-09-19 7.14.24 Polish Folder Rows and Refresh Missed Streaks
+
+Folder headers now share bounded inline rename sizing and aggregate member
+quick actions across Table and List, while remaining presentation-only
+containers. Logical-day rollover, visibility resume, and refreshed History
+snapshots now invalidate the shared Task streak-summary loader so current
+Missed badges do not remain stale across a day boundary.
+
+## 2026-09-16 7.14.0 Start Development Line
+
+Version 7.13.81 was the completed consolidated 7.13 web release, and `main`
+was advanced to that release. `ios/native-development` was merged with
+consolidated `main`, and the native device build passed. Version 7.14.0 starts
+the next active development line. No product behavior changed in this version
+bump.
 
 ## 2026-09-16 7.13.81 Consolidate Side and Journal Web Work
 

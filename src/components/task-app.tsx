@@ -67,7 +67,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
   BottomDockAdapter as BottomDock,
@@ -97,6 +97,7 @@ import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
 import { ScratchPaperWidget, type ScratchPaperData } from "./task-app/scratch-paper";
+import { OperationProgressBar } from "./task-app/operation-progress";
 import { formatTaskStatusLabel } from "./task-app/task-status-ui";
 import {
   buildNewTaskDraft,
@@ -108,7 +109,9 @@ import {
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
+import { buildEffectiveTrackingExclusionSet, filterTrackedTaskHistory } from "@/lib/task-tracking";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
 import { WorkspaceLoadingScreen } from "./workspace-loading-screen";
@@ -145,6 +148,7 @@ import { useWorkspaceData } from "@/hooks/useWorkspaceData";
 import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
 import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
+import { useTaskContentFolderActions } from "@/hooks/useTaskContentFolderActions";
 import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
 import { useTaskListViewStateController } from "@/hooks/useTaskListViewStateController";
@@ -156,6 +160,7 @@ import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportContro
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
+import { useHomeRecordTargets } from "@/hooks/useHomeRecordTargets";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
@@ -236,6 +241,10 @@ import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
 import { formatDateKeyInTimeZone, getBrowserTimeZone, getLogicalDayKey, saveLogicalDaySettings } from "@/lib/logical-day";
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
+import { buildHomeDailyProgress, buildHomeRecordChases } from "@/lib/home-progress";
+import type { RecordMetricKey } from "@/lib/records/types";
+import { buildRecordsSessionCacheKey, invalidateRecordsSessionSnapshotsForUser } from "@/lib/records/session-cache";
+import { getRecordsLocalStorage, markRecordsInvalidated } from "@/lib/records/persistent-cache";
 import {
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
@@ -245,16 +254,20 @@ import {
 import {
   buildTaskUpdateConflictMessage,
   deleteTaskRow,
+  excludeTasksFromTracking as excludeTasksFromTrackingRpc,
   insertTaskRowWithCanonicalCreation,
   markTaskRowsPermanentlyDeleted,
+  setTaskTrackingExclusion as setTaskTrackingExclusionRpc,
   updateTaskRowWithLegacyEnergyFallback,
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
+import { buildTaskHierarchyUnlinkPlan, getRootTaskContentFolderId, moveTaskHierarchy as persistTaskHierarchy } from "@/lib/task-hierarchy-mutation";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import type { HomeTodoTaskMetadata } from "@/lib/home-todo-state";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
@@ -269,9 +282,11 @@ import {
   buildTaskAppStructuralData,
   buildTaskAppWorkspaceFacts,
   computeTaskAppDerivedData,
+  getTaskContentFolderSearchMatchIds,
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
+import { selectCalendarTasks } from "@/lib/task-calendar-selection";
 import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
 import {
@@ -363,6 +378,7 @@ import type {
   Milestone,
   Note,
   Task,
+  TaskContentFolder,
   TaskEnergy,
   TaskFocusDay as DbTaskFocusDay,
   TaskGridLayout as DbTaskGridLayout,
@@ -1148,6 +1164,7 @@ export function TaskApp() {
   }, [tasks]);
   const [message, setMessage] = useState<Message | null>(null);
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
+  const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
@@ -1490,6 +1507,9 @@ export function TaskApp() {
   const lastNonPinnedBucketRef = useRef(taskUiState.selectedBucket === "pinned" ? DEFAULT_TASK_UI_STATE.selectedBucket : taskUiState.selectedBucket);
   const [taskLists, setTaskLists] = useState<TaskListDefinition[]>([]);
   const [taskListFolders, setTaskListFolders] = useState<DbTaskListFolder[]>([]);
+  const [taskContentFolders, setTaskContentFolders] = useState<TaskContentFolder[]>([]);
+  const [collapsedTaskContentFolderIds, setCollapsedTaskContentFolderIds] = useState<Set<string>>(() => new Set());
+  const [isTaskContentFolderCollapseHydrated, setIsTaskContentFolderCollapseHydrated] = useState(false);
   const [taskListContainers, setTaskListContainers] = useState<DbTaskListContainer[]>([]);
   const [taskListRailItems, setTaskListRailItems] = useState<DbTaskListRailItem[]>([]);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(null);
@@ -1500,6 +1520,38 @@ export function TaskApp() {
   const taskSubtasks = tasks;
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
   const [isGridEditMode, setIsGridEditMode] = useState(false);
+
+  useEffect(() => {
+    const storageKey = session?.user?.id ? `adhdice:task-content-folder-collapse:${session.user.id}` : null;
+    setIsTaskContentFolderCollapseHydrated(false);
+    if (!storageKey) {
+      setCollapsedTaskContentFolderIds(new Set());
+      setIsTaskContentFolderCollapseHydrated(true);
+      return;
+    }
+    try {
+      const parsed = JSON.parse(window.localStorage.getItem(storageKey) ?? "[]");
+      setCollapsedTaskContentFolderIds(new Set(Array.isArray(parsed) ? parsed.filter((value): value is string => typeof value === "string") : []));
+    } catch {
+      setCollapsedTaskContentFolderIds(new Set());
+    }
+    setIsTaskContentFolderCollapseHydrated(true);
+  }, [session?.user?.id]);
+
+  useEffect(() => {
+    const userId = session?.user?.id;
+    if (!userId || !isTaskContentFolderCollapseHydrated) return;
+    window.localStorage.setItem(`adhdice:task-content-folder-collapse:${userId}`, JSON.stringify([...collapsedTaskContentFolderIds]));
+  }, [collapsedTaskContentFolderIds, isTaskContentFolderCollapseHydrated, session?.user?.id]);
+
+  const toggleTaskContentFolderCollapsed = useCallback((folderId: string) => {
+    setCollapsedTaskContentFolderIds((current) => {
+      const next = new Set(current);
+      if (next.has(folderId)) next.delete(folderId);
+      else next.add(folderId);
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     if (taskUiState.selectedBucket !== "pinned") {
@@ -1879,8 +1931,16 @@ export function TaskApp() {
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
     [dayStartTime, logicalDayNow, userTimeZone],
   );
+  const homeRecordTargets = useHomeRecordTargets({
+    active: activePage === "Home",
+    client: supabase,
+    logicalDayStart: dayStartTime,
+    timezone: userTimeZone,
+    userId: currentUserId,
+  });
   const {
     isLoading: isTaskTypeBehaviorProfilesLoading,
+    isBehaviorAuthorityReady,
     profileRevisions: taskTypeBehaviorProfileRevisions,
     profiles: taskTypeBehaviorProfiles,
     customBehaviorRulesets,
@@ -1934,6 +1994,8 @@ export function TaskApp() {
     workspaceGenerationRef,
   } = useWorkspaceData({
     activePage,
+    behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    behaviorAuthorityReady: isBehaviorAuthorityReady,
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
@@ -2002,6 +2064,7 @@ export function TaskApp() {
     setTaskListManualMemberships,
     setTaskListContainers,
     setTaskListFolders,
+    setTaskContentFolders,
     setTaskListRailItems,
     setTaskLists,
     setTasks,
@@ -2053,16 +2116,24 @@ export function TaskApp() {
     [behaviorSelectionsByTaskId, namedCustomRulesetProjectionSemantics, taskTypeBehaviorProjectionSemantics],
   );
   const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
+  const behaviorAuthorityProjectionReadyRef = useRef(false);
   useEffect(() => {
-    if (!isTaskHistoryLoaded || tasks.length === 0 || refreshedBehaviorProfilesRevisionRef.current === taskTypeBehaviorProfilesRevision) return;
-    const hasPreviouslyObservedPolicy = refreshedBehaviorProfilesRevisionRef.current !== null;
+    const isBehaviorAuthorityProjectionReady = isBehaviorAuthorityReady && !isTaskTypeBehaviorProfilesLoading;
+    if (!isBehaviorAuthorityProjectionReady) {
+      behaviorAuthorityProjectionReadyRef.current = false;
+      return;
+    }
+    if (!isTaskHistoryLoaded || tasks.length === 0) return;
+    const authorityWasPreviouslyReady = behaviorAuthorityProjectionReadyRef.current;
+    const behaviorPolicyChanged = refreshedBehaviorProfilesRevisionRef.current !== taskTypeBehaviorProfilesRevision;
+    behaviorAuthorityProjectionReadyRef.current = true;
+    if (authorityWasPreviouslyReady && !behaviorPolicyChanged) return;
     refreshedBehaviorProfilesRevisionRef.current = taskTypeBehaviorProfilesRevision;
-    if (!hasPreviouslyObservedPolicy) return;
     if (isWorkspacePerformanceDiagnosticsEnabled()) {
       console.info(`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=${tasks.length}`);
     }
     void refreshTaskHistoryStreakSummaries(tasks, { supersede: true });
-  }, [isTaskHistoryLoaded, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
+  }, [isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
@@ -2513,15 +2584,35 @@ export function TaskApp() {
   });
   const taskStateHistory = stabilizeTaskStateHistory(taskStateHistoryContentRevision, nextTaskStateHistory);
   const rolloverInputsRef = useRef({
+    behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    behaviorAuthorityReady: isBehaviorAuthorityReady,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    behaviorSelectionsByTaskId,
     dayStartTime,
     isTaskHistoryLoaded,
     isTasksReady: !isWorkspaceLoading,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     taskHistory: taskStateHistory,
     tasks,
     todayKey,
     userTimeZone,
   });
-  rolloverInputsRef.current = { dayStartTime, isTaskHistoryLoaded, isTasksReady: !isWorkspaceLoading, taskHistory: taskStateHistory, tasks, todayKey, userTimeZone };
+  rolloverInputsRef.current = {
+    behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    behaviorAuthorityReady: isBehaviorAuthorityReady,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    behaviorSelectionsByTaskId,
+    dayStartTime,
+    isTaskHistoryLoaded,
+    isTasksReady: !isWorkspaceLoading,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    taskHistory: taskStateHistory,
+    tasks,
+    todayKey,
+    userTimeZone,
+  };
   const wasDocumentVisibleRef = useRef(typeof document === "undefined" || document.visibilityState === "visible");
 
   useEffect(() => {
@@ -2529,13 +2620,13 @@ export function TaskApp() {
   }, [session?.user?.id, supabase]);
 
   const runDayReset = useCallback(async (source: "initial_load" | "visibility" | "pageshow" | "timer") => {
-    if (source !== "initial_load") await prepareTaskMutation();
     const inputs = rolloverInputsRef.current;
     const client = supabase;
     const userId = session?.user?.id;
     if (!client || !userId) return;
-    // The canonical plan is authoritative only after both independently loaded inputs exist.
-    if (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded) return;
+    // The canonical plan is authoritative only after every independent input exists.
+    if (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded || !inputs.behaviorAuthorityReady || inputs.behaviorAuthorityLoading) return;
+    if (source !== "initial_load") await prepareTaskMutation();
     const rolloverSettingsKey = createTaskRolloverSettingsKey({
       logicalDayKey: inputs.todayKey,
       rolloverTime: inputs.dayStartTime,
@@ -2576,10 +2667,10 @@ export function TaskApp() {
         ]);
         const plan = createEngineRolloverPlan({
             allowCanonicalAutomaticMissed: true,
-            behaviorProfiles: taskTypeBehaviorProfiles,
-            behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
-            namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-            behaviorSelectionsByTaskId,
+            behaviorProfiles: inputs.behaviorProfiles,
+            behaviorPolicyRevisions: inputs.behaviorPolicyRevisions,
+            namedCustomRulesetBehaviorPolicyRevisions: inputs.namedCustomRulesetBehaviorPolicyRevisions,
+            behaviorSelectionsByTaskId: inputs.behaviorSelectionsByTaskId,
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
@@ -2650,8 +2741,7 @@ export function TaskApp() {
           }
         }
         if (error) setMessage((previous) => previous ?? { tone: "warn", text: error.message });
-        if (!didMutate) return;
-        if (diagnosticsEnabled) console.info("[rollover] Rollover completed; requesting targeted workspace reconciliation.");
+        if (diagnosticsEnabled) console.info(`[rollover] Rollover completed; requesting targeted workspace reconciliation (task mutation=${didMutate}).`);
         await reconcileRolloverWorkspace();
       },
     });
@@ -2682,7 +2772,7 @@ export function TaskApp() {
       window.removeEventListener("pageshow", handlePageShow);
       window.clearInterval(intervalId);
     };
-  }, [isTaskHistoryLoaded, runDayReset, session?.user?.id, supabase]);
+  }, [isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session?.user?.id, supabase]);
   const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(tasks), [tasks]);
   const hasStepsByTaskId = useMemo(
     () => {
@@ -2695,7 +2785,8 @@ export function TaskApp() {
     },
     [taskSubtasksByTaskId, tasks],
   );
-  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory, todayKey), [taskHistory, todayKey]);
+  const trackedTaskHistoryForStats = useMemo(() => filterTrackedTaskHistory(taskHistory, tasks), [taskHistory, tasks]);
+  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(trackedTaskHistoryForStats, todayKey), [todayKey, trackedTaskHistoryForStats]);
   const { saveFocusSelection } = useFocusSelectionPersistence({
     currentUserId,
     defaultValidTaskIds: tasks,
@@ -2795,6 +2886,130 @@ export function TaskApp() {
     refresh: softRefreshWorkspace,
     setMessage,
   });
+  const persistTaskHierarchyRow = useCallback(async (
+    task: Task,
+    newParentTaskId: string | null,
+    newTaskContentFolderId: string | null,
+    options?: { quiet?: boolean },
+  ) => {
+    if (!supabase || !session?.user?.id) {
+      if (!options?.quiet) {
+        setMessage({ tone: "warn", text: "Tasks are unavailable until you sign in." });
+      }
+      return false;
+    }
+
+    const hierarchy = buildTaskHierarchyAdapter(tasks);
+    const pendingTaskIds = [
+      task.id,
+      ...hierarchy.getChildren(task.id).map((child) => child.id),
+    ];
+    markPendingTaskMutations(pendingTaskIds);
+    try {
+      const result = await persistTaskHierarchy(supabase, {
+        expectedCanonicalRevision: task.canonical_revision ?? null,
+        expectedRevision: task.revision,
+        newParentTaskId,
+        newTaskContentFolderId,
+        taskId: task.id,
+      });
+      if (result.error) {
+        if (!options?.quiet) {
+          setMessage({ tone: "warn", text: result.error.message });
+        }
+        return false;
+      }
+      if (result.data.length === 0) {
+        if (!options?.quiet) {
+          setMessage({ tone: "warn", text: "The committed Task hierarchy rows were not returned." });
+        }
+        return false;
+      }
+
+      const authoritativeRowsById = new Map(result.data.map((row) => [row.id, row]));
+      setTasks((current) => sortTasksForUi(current.map((candidate) => {
+        const authoritativeRow = authoritativeRowsById.get(candidate.id);
+        if (!authoritativeRow) return candidate;
+
+        const nextTask = mergeTaskWithCanonicalScheduleProjection(candidate, authoritativeRow);
+        canonicalTaskMutationStateRef.current.taskSnapshots.set(
+          candidate.id,
+          nextTask as TaskStateRuntimeLocalTask,
+        );
+        return nextTask;
+      })));
+      return true;
+    } finally {
+      clearPendingTaskMutations(pendingTaskIds);
+    }
+  }, [clearPendingTaskMutations, markPendingTaskMutations, session?.user?.id, setMessage, setTasks, supabase, tasks]);
+  const unlinkSameTableTasks = useCallback(async (taskIds: string[]) => {
+    const unlinkPlan = buildTaskHierarchyUnlinkPlan(tasks, taskIds);
+    let successCount = 0;
+    let failedCount = 0;
+
+    for (const plan of unlinkPlan) {
+      if (plan.inheritedFolderId === undefined) {
+        failedCount += 1;
+        continue;
+      }
+
+      const didUnlink = await persistTaskHierarchyRow(
+        plan.task,
+        null,
+        plan.inheritedFolderId,
+        { quiet: true },
+      );
+      if (didUnlink) {
+        successCount += 1;
+      } else {
+        failedCount += 1;
+      }
+    }
+
+    if (successCount > 0 && failedCount === 0) {
+      setMessage({ tone: "good", text: `Unlinked ${successCount} selected tasks.` });
+    } else if (successCount > 0) {
+      setMessage({ tone: "warn", text: `Unlinked ${successCount} selected tasks; ${failedCount} failed.` });
+    } else if (failedCount > 0) {
+      setMessage({ tone: "warn", text: `Unable to unlink selected tasks; ${failedCount} failed.` });
+    }
+
+    return successCount > 0 && failedCount === 0;
+  }, [persistTaskHierarchyRow, setMessage, tasks]);
+  const taskContentFolderActions = useTaskContentFolderActions({
+    client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
+    folders: taskContentFolders,
+    setFolders: setTaskContentFolders,
+    setMessage,
+    setTasks,
+    moveTaskHierarchy: persistTaskHierarchyRow,
+    userId: session?.user?.id,
+  });
+  const moveTaskToContentFolder = useCallback(async (taskId: string, folderId: string | null) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    return task ? taskContentFolderActions.moveTaskToFolder(task, folderId) : false;
+  }, [taskContentFolderActions.moveTaskToFolder, tasks]);
+  const createTaskContentFolder = useCallback(async (taskId: string, name: string) => {
+    const task = tasks.find((entry) => entry.id === taskId);
+    return task ? taskContentFolderActions.createFolderAndMoveTask(task, name) : false;
+  }, [taskContentFolderActions.createFolderAndMoveTask, tasks]);
+  const addFolderToTaskContentFolder = useCallback(
+    async (parentFolderId: string, name: string) => {
+      const didCreate = await taskContentFolderActions.createFolder(name, parentFolderId);
+      if (didCreate) {
+        setCollapsedTaskContentFolderIds((current) => {
+          if (!current.has(parentFolderId)) return current;
+
+          const next = new Set(current);
+          next.delete(parentFolderId);
+          return next;
+        });
+      }
+      return didCreate;
+    },
+    [taskContentFolderActions.createFolder],
+  );
   const compatibilityRoutingMemberships = useMemo(
     () =>
       Object.fromEntries(
@@ -2807,6 +3022,21 @@ export function TaskApp() {
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
   const taskHistoryByTaskId = sharedTaskHistoryByTaskId;
+  const homeDailyProgress = useMemo(
+    () => buildHomeDailyProgress({ taskHistoryByTaskId, tasks, todayKey }),
+    [taskHistoryByTaskId, tasks, todayKey],
+  );
+  const openHomeRecord = useCallback((metricKey: RecordMetricKey) => {
+    setPendingProgressRecordMetricKey(metricKey);
+    setActivePage("Achievements");
+  }, [setActivePage]);
+  const clearPendingProgressRecordMetricKey = useCallback(() => {
+    setPendingProgressRecordMetricKey(null);
+  }, []);
+  const homeRecordChases = useMemo(
+    () => buildHomeRecordChases(homeDailyProgress.recordLiveValues, homeRecordTargets.targets),
+    [homeDailyProgress.recordLiveValues, homeRecordTargets.targets],
+  );
   const taskHistoryFactsByTaskId = useMemo(
     () => Object.fromEntries(
       tasks.map((task) => [
@@ -2853,6 +3083,13 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
     [isTaskHistoryLoaded],
   );
+  const taskActiveStatusAuthorityReadinessRevision = useMemo(
+    () => createProjectionDomainRevision("task-status-authority-readiness", {
+      isBehaviorAuthorityReady,
+      isBehaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    }),
+    [isBehaviorAuthorityReady, isTaskTypeBehaviorProfilesLoading],
+  );
   const taskActiveStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
       behavior: {
@@ -2886,6 +3123,7 @@ export function TaskApp() {
     taskActiveStatusSettingsRevision,
     taskActiveStatusAssignmentsRevision,
     taskHistoryReadinessRevision,
+    taskActiveStatusAuthorityReadinessRevision,
   );
   const [activeStatusRead, setActiveStatusRead] = useState<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
   const activeStatusCalculationTokenRef = useRef(0);
@@ -2901,6 +3139,11 @@ export function TaskApp() {
       committedActiveStatusBehaviorRevisionRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped projection when History is unavailable.
       setActiveStatusRead(null);
+      return () => {
+        if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+      };
+    }
+    if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
@@ -2949,7 +3192,7 @@ export function TaskApp() {
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache, taskActiveStatusBehaviorRevision]);
+  }, [activeStatusInputRevision, isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, projectionCache, taskActiveStatusBehaviorRevision]);
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
   const activeStatusRevision = useMemo(
@@ -3003,15 +3246,55 @@ export function TaskApp() {
     }
   }, [activeStatusRead, isTaskHistoryLoaded]);
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+  const updateTaskTrackingExclusion = useCallback(async (taskId: string, excluded: boolean) => {
+    const result = await setTaskTrackingExclusionRpc(client, taskId, excluded);
+    if (result.error || !result.data) {
+      setMessage({ tone: "warn", text: result.error?.message ?? "Task tracking exclusion could not be saved." });
+      return false;
+    }
+    const nextTasks = sortTasksForUi(tasks.map((task) => task.id === taskId ? { ...task, ...result.data } : task));
+    setTasks(nextTasks);
+    if (currentUserId) {
+      invalidateRecordsSessionSnapshotsForUser(currentUserId);
+      markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
+    }
+    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    setMessage({
+      tone: "good",
+      text: excluded ? "Task excluded from tracking." : "Task included in tracking.",
+    });
+    return true;
+  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks, userTimeZone]);
+  const excludeTasksFromTracking = useCallback(async (taskIds: readonly string[]) => {
+    const result = await excludeTasksFromTrackingRpc(client, taskIds);
+    if (result.error || !result.data) {
+      return { error: result.error?.message ?? "Task tracking exclusion could not be saved.", success: false };
+    }
+
+    const nextTaskById = new Map(canonicalTasksRef.current.map((task) => [task.id, task]));
+    for (const task of result.data) {
+      const priorTask = nextTaskById.get(task.id);
+      nextTaskById.set(task.id, priorTask ? { ...priorTask, ...task } : task);
+    }
+    const nextTasks = sortTasksForUi([...nextTaskById.values()]);
+    setTasks(nextTasks);
+    if (currentUserId) {
+      invalidateRecordsSessionSnapshotsForUser(currentUserId);
+      markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
+    }
+    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    return { error: null, success: true };
+  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, sortTasksForUi, userTimeZone]);
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
     values: TaskUpdate,
     options?: TaskRowUpdateOptions,
   ) => {
     const refreshedBeforeMutation = await prepareTaskMutation();
-    const refreshBehaviorSelectionState = (Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id"))
-      ? refreshCustomBehaviorRulesets
-      : options?.refreshCustomBehaviorRulesets;
+    const refreshBehaviorSelectionState = options?.refreshCustomBehaviorRulesets
+      ?? ((Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id")) && !options?.deferBehaviorSelectionRefresh
+        ? refreshCustomBehaviorRulesets
+        : undefined);
     let nextOptions: TaskRowUpdateOptions = {
       ...options,
       effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
@@ -3181,6 +3464,7 @@ export function TaskApp() {
     hierarchyStatusRevision,
     listMembershipRevision,
     milestoneProjectionRevision,
+    createProjectionDomainRevision("task-content-folders", taskContentFolders),
   );
   const [structuralDiagnosticTracker] = useState(() => createDevelopmentComputationTracker("task structural projection", "TaskApp"));
   const [canonicalDiagnosticTracker] = useState(() => createDevelopmentComputationTracker("stable canonical task index", "TaskApp"));
@@ -3232,6 +3516,7 @@ export function TaskApp() {
         taskHistoryByTaskId,
         taskListEvaluationContext,
         taskSubtasksByTaskId,
+        taskContentFolders,
         taskDisplayStatusByTaskId,
         tasks: tasksForActiveStatusRead,
         todayDateKey: todayKey,
@@ -3291,6 +3576,10 @@ export function TaskApp() {
     );
     return { ...result, visibleTasks };
   }, [activePage, bucketContext, effectiveSearchQuery, stableCanonicalTaskIndex, stableTaskSearchScope, taskUiStateForDerivedData]);
+  const matchedTaskContentFolderIds = useMemo(
+    () => getTaskContentFolderSearchMatchIds(stableCanonicalTaskIndex, effectiveSearchQuery),
+    [effectiveSearchQuery, stableCanonicalTaskIndex],
+  );
   const taskSearchMeasurementRef = useRef<{ inputPublishedAt: number; query: string; searchStartedAt: number } | null>(null);
   useEffect(() => {
     if (!taskSearchSelection || !isWorkspacePerformanceDiagnosticsEnabled() || typeof performance === "undefined") return;
@@ -3404,6 +3693,7 @@ export function TaskApp() {
       taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
       taskHistoryByTaskId,
       taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
+      taskContentFolders,
       todayDateKey: todayKey,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
@@ -3478,6 +3768,7 @@ export function TaskApp() {
     [attentionRuleGroup, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, taskListMembershipsByTaskId, tasksForActiveStatusRead, todayKey],
   );
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
+  const trackingExclusionTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(tasksForActiveStatusRead), [tasksForActiveStatusRead]);
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
       ? tasksForActiveStatusRead.map((task) => sharedEditorRowModelCache.getOrCreate(task, {
@@ -3490,6 +3781,8 @@ export function TaskApp() {
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: taskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
+        directlyExcludedFromTracking: task.exclude_from_tracking === true,
+        effectivelyExcludedFromTracking: trackingExclusionTaskIds.has(task.id),
         todayDateKey: todayKey,
       }))
       : [],
@@ -3502,6 +3795,7 @@ export function TaskApp() {
       taskHistoryStreakSummaries,
       taskDisplayStatusByTaskId,
       taskAttentionReasonByTaskId,
+      trackingExclusionTaskIds,
       taskLinkedNotesByTaskId,
       taskListMembershipsByTaskId,
       taskSubtasksByTaskId,
@@ -3624,23 +3918,19 @@ export function TaskApp() {
     urgentTasks,
   }, momentumView);
   const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
+  const calendarSearchMatchingEntityIds = effectiveSearchQuery.length > 0
+    ? taskSearchSelection?.matchingEntityIds
+    : null;
   const calendarTasks = useMemo(() => {
-    const tasksById = new Map(tasksForActiveStatusRead.map((task) => [task.id, task] as const));
-    const selectedTasksById = new Map(selectedBucketTasks.map((task) => [task.id, task] as const));
-
-    if (taskUiState.includeStepsByView.calendar) {
-      for (const group of Object.values(childTaskPreviewByParentTaskId)) {
-        for (const item of group.items) {
-          const task = tasksById.get(item.id);
-          if (task) {
-            selectedTasksById.set(task.id, task);
-          }
-        }
-      }
-    }
-
-    return Array.from(selectedTasksById.values());
-  }, [childTaskPreviewByParentTaskId, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
+    return selectCalendarTasks({
+      childTaskIds: Object.values(childTaskPreviewByParentTaskId).flatMap((group) => group.items.map((item) => item.id)),
+      includeSteps: taskUiState.includeStepsByView.calendar,
+      matchingSearchEntityIds: calendarSearchMatchingEntityIds,
+      searchIsActive: effectiveSearchQuery.length > 0,
+      selectedTasks: selectedBucketTasks,
+      tasks: tasksForActiveStatusRead,
+    });
+  }, [calendarSearchMatchingEntityIds, childTaskPreviewByParentTaskId, effectiveSearchQuery, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
   const searchMatchedChildTaskIds = taskSearchSelection
     ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
       .flatMap((descendantIds) => Array.from(descendantIds))
@@ -3948,6 +4238,7 @@ export function TaskApp() {
   } = useTaskRewardController({
     client,
     currentUserId: session?.user?.id ?? null,
+    tasks,
     setMessage,
     setEconomy,
   });
@@ -4000,6 +4291,7 @@ export function TaskApp() {
     routeTask,
     saveTaskEditor,
     saveTaskListDefinition,
+    setTaskManualListMembership,
     syncTaskHistoryEntries,
     syncTaskHistoryEntry,
     syncTaskNoteLinks,
@@ -4038,6 +4330,8 @@ export function TaskApp() {
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       behaviorSelectionsByTaskId,
+      customBehaviorRulesets,
+      refreshCustomBehaviorRulesets,
       clearListTaskSelection,
       dayStartTime,
       focusedTaskIds,
@@ -4179,6 +4473,34 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
+  const addTaskToContentFolder = useCallback(async (folderId: string, rawTitle: string, taskTypeSelectionValue = "task") => {
+    const title = rawTitle.trim();
+    if (!title) {
+      setMessage({ tone: "warn", text: "Task title can't be empty." });
+      return false;
+    }
+    const selection = resolveTaskTypeSelection(taskTypeSelectionValue, customBehaviorRulesets);
+    if (!selection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return false;
+    }
+    const createdTask = await addTask({
+      ...buildNewTaskDraft(title),
+      custom_ruleset_id: selection.customRulesetId,
+      task_type: selection.taskType,
+    });
+    if (!createdTask) return false;
+
+    const didMove = await taskContentFolderActions.moveTaskToFolder(createdTask, folderId);
+    if (!didMove) {
+      setMessage({
+        tone: "warn",
+        text: `"${createdTask.title}" was created, but it could not be added to the Folder.`,
+      });
+      return false;
+    }
+    return true;
+  }, [addTask, customBehaviorRulesets, setMessage, taskContentFolderActions.moveTaskToFolder]);
   async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
     const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
     const action = taskManualActionForStatus(status);
@@ -4524,7 +4846,7 @@ export function TaskApp() {
     }, { routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
 
-  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string) => {
+  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string, metadata: HomeTodoTaskMetadata) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
@@ -4533,6 +4855,8 @@ export function TaskApp() {
 
     return addTask({
       ...buildNewTaskDraft(title),
+      ...metadata,
+      ...buildTaskPriorityUpdate(metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
@@ -4798,8 +5122,20 @@ export function TaskApp() {
   }, [runningTaskTimers.length]);
 
   const shouldDeferPageRender = isRestoringPersistedUiState;
-  const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
+  const isInitialTaskStateProjectionReady = isTaskHistoryLoaded && isBehaviorAuthorityReady && activeStatusRead !== null;
+  const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
+  const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
+    ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
+    : null;
+  const isSharedTaskEditorOpen = Boolean(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow);
+
+  useEffect(() => {
+    if (!session?.user || !isAuthenticatedAppBootReady || !isSharedTaskEditorOpen) {
+      return;
+    }
+    void loadTaskNotes();
+  }, [isAuthenticatedAppBootReady, isSharedTaskEditorOpen, loadTaskNotes, session?.user]);
 
   useEffect(() => {
     const requestedNavigation = requestedPageShell;
@@ -5009,10 +5345,15 @@ export function TaskApp() {
       return false;
     }
 
-    const didUnlink = await applyTaskMutationWithoutHistory(
-      taskId,
-      { parent_task_id: null },
-      { expectedTask: task },
+    const inheritedFolderId = getRootTaskContentFolderId(tasks, task.id);
+    if (inheritedFolderId === undefined) {
+      setMessage({ tone: "warn", text: "This task cannot be detached until the current hierarchy issues are fixed." });
+      return false;
+    }
+    const didUnlink = await persistTaskHierarchyRow(
+      task,
+      null,
+      inheritedFolderId,
     );
     if (!didUnlink) {
       return false;
@@ -5023,7 +5364,7 @@ export function TaskApp() {
       text: `"${task.title}" is now a top-level task.`,
     });
     return true;
-  }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
+  }, [persistTaskHierarchyRow, setMessage, tasks]);
   const openMilestoneSetup = useCallback((taskId: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !canPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
@@ -5098,11 +5439,7 @@ export function TaskApp() {
       return false;
     }
 
-    const didMove = await applyTaskMutationWithoutHistory(
-      taskId,
-      { parent_task_id: parentTaskId },
-      { expectedTask: task },
-    );
+    const didMove = await persistTaskHierarchyRow(task, parentTaskId, null);
     if (!didMove) {
       return false;
     }
@@ -5112,7 +5449,7 @@ export function TaskApp() {
       text: `"${task.title}" now lives under "${parentTask.title}".`,
     });
     return true;
-  }, [applyTaskMutationWithoutHistory, setMessage, tasks]);
+  }, [persistTaskHierarchyRow, setMessage, tasks]);
 
   // Delay is a user action, so it is always anchored to its logical action day
   // rather than a future (or stale) scheduled occurrence.
@@ -5512,9 +5849,6 @@ export function TaskApp() {
   );
   const requestedOpenListTask = requestedListOverlayTaskId
     ? tasks.find((task) => task.id === requestedListOverlayTaskId) ?? null
-    : null;
-  const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
-    ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
   const effectiveTaskUiState = { ...taskUiState, duplicateTitleMode: duplicateTitleModeActive };
   const toggleDuplicateTitleMode = () => {
@@ -6195,7 +6529,10 @@ export function TaskApp() {
 
     if (result.conflict) {
       if (result.conflict.latestTask) {
-        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? result.conflict.latestTask ?? task : task)));
+        const latestTask = previousTask
+          ? mergeTaskWithCanonicalScheduleProjection(previousTask, result.conflict.latestTask)
+          : result.conflict.latestTask;
+        setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? latestTask : task)));
         if (
           result.conflict.latestTask.status === "done"
           || result.conflict.latestTask.status === "did_my_best"
@@ -6217,13 +6554,16 @@ export function TaskApp() {
     const nextData = result.usedActualSecondsFallback && typeof values.actual_seconds === "number"
       ? { ...result.data, actual_seconds: values.actual_seconds }
       : result.data;
-    setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? nextData : task)));
+    const reconciledNextData = previousTask
+      ? mergeTaskWithCanonicalScheduleProjection(previousTask, nextData)
+      : nextData;
+    setTasks((current) => sortTasksForUi(current.map((task) => task.id === taskId ? reconciledNextData : task)));
     if (
-      nextData.status === "done"
-      || nextData.status === "did_my_best"
-      || nextData.status === "complete"
-      || nextData.status === "archived"
-      || nextData.status === "trashed"
+      reconciledNextData.status === "done"
+      || reconciledNextData.status === "did_my_best"
+      || reconciledNextData.status === "complete"
+      || reconciledNextData.status === "archived"
+      || reconciledNextData.status === "trashed"
     ) {
       routeTask(taskId, null);
     }
@@ -6429,6 +6769,7 @@ export function TaskApp() {
   const batchEditFlow = isBatchEditModalOpen ? {
     allTags: allTaskTags,
     count: selectedListTaskIds.length,
+    customBehaviorRulesets,
     energyOptions,
     onClose: closeBatchEditModal,
     onSave: applyBatchTaskEdit,
@@ -6952,38 +7293,40 @@ export function TaskApp() {
     });
   };
 
+  const completeFlow = (() => {
+    if (!pendingCompleteAction) {
+      return null;
+    }
+    const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
+    const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
+    const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
+    const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
+    return {
+      confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
+      description: isMilestoneComplete
+        ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
+        : getTaskCompleteConfirmationDescription(completeFlowTask),
+      modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
+        ? "Mark step complete"
+        : "Mark task permanently complete",
+      onClose: () => setPendingCompleteAction(null),
+      onConfirm: () => { void confirmPendingTaskComplete(); },
+      pending: isMilestoneComplete && isMilestoneLifecyclePending,
+      taskTitle: pendingCompleteTask?.title ?? "Task",
+      title: isMilestoneComplete
+        ? "Complete Milestone and award trophy?"
+        : (pendingCompleteTask?.parent_task_id ?? null)
+        ? "Mark this Step Complete?"
+        : "Mark permanently Complete?",
+    };
+  })();
+
   const taskWorkspaceFlowLayer = (
     <>
       <TaskEditFlows
         batchDeleteFlow={batchDeleteFlow}
         batchEditFlow={batchEditFlow}
-        completeFlow={(() => {
-          if (!pendingCompleteAction) {
-            return null;
-          }
-          const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
-          const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
-          const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
-          const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
-          return {
-            confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
-            description: isMilestoneComplete
-              ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
-              : getTaskCompleteConfirmationDescription(completeFlowTask),
-            modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
-              ? "Mark step complete"
-              : "Mark task permanently complete",
-            onClose: () => setPendingCompleteAction(null),
-            onConfirm: () => { void confirmPendingTaskComplete(); },
-            pending: isMilestoneComplete && isMilestoneLifecyclePending,
-            taskTitle: pendingCompleteTask?.title ?? "Task",
-            title: isMilestoneComplete
-              ? "Complete Milestone and award trophy?"
-              : (pendingCompleteTask?.parent_task_id ?? null)
-              ? "Mark this Step Complete?"
-              : "Mark permanently Complete?",
-          };
-        })()}
+        completeFlow={null}
         focusPlannerFlow={focusPlannerFlow}
         momentumFlow={momentumFlow}
         taskHistoryFlow={taskHistoryFlow}
@@ -7039,6 +7382,14 @@ export function TaskApp() {
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
+      <TaskEditFlows
+        batchDeleteFlow={null}
+        batchEditFlow={null}
+        completeFlow={completeFlow}
+        focusPlannerFlow={null}
+        momentumFlow={null}
+        taskHistoryFlow={null}
+      />
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
         <TaskManagementTableV2
           allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
@@ -7135,6 +7486,7 @@ export function TaskApp() {
           onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
           onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
           onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
+          onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
           onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
           onUnlinkTask={unlinkSameTableTask}
           overlayOnly
@@ -7321,11 +7673,25 @@ export function TaskApp() {
           </div>
         ) : activePage === "Home" ? (
           <TaskHomePage
+            allTags={allTaskTags}
             listMembershipsByTaskId={taskListMembershipsByTaskId}
+            manualMembershipsByTaskId={manualMembershipsByTaskId}
             onCreateTaskWithType={createHomeTodoTaskWithType}
+            onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
+            onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+            dailyProgress={homeDailyProgress}
+            homeRecordChases={homeRecordChases}
+            isTaskHistoryLoaded={isTaskHistoryLoaded}
+            onOpenRecord={openHomeRecord}
+            recordTargetsError={homeRecordTargets.error}
+            recordTargetsLoading={homeRecordTargets.loading}
+            recordTargetsRecalculatedAt={homeRecordTargets.recalculatedAt}
+            recordTargetsSettingsMismatch={homeRecordTargets.settingsMismatch}
+            taskAttentionReasonByTaskId={taskAttentionReasonByTaskId}
+            taskHistoryStreakSummaries={taskHistoryStreakSummaries}
             behaviorProfiles={taskTypeBehaviorProfiles}
             behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
             namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
@@ -7350,6 +7716,10 @@ export function TaskApp() {
             milestoneLoading={milestoneData.isLoading}
             model={achievementProgress.model}
             notificationError={achievementNotifications.claimError ?? achievementNotifications.seenError}
+            initialRecordMetricKey={pendingProgressRecordMetricKey}
+            onRecordRequestHandled={clearPendingProgressRecordMetricKey}
+            onExcludeTasksFromTracking={excludeTasksFromTracking}
+            onOpenTask={openTaskEditorFromId}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
               setActivePage("Tasks");
@@ -7508,12 +7878,14 @@ export function TaskApp() {
                   highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
                   highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
+                  matchedTaskContentFolderIds,
                   onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   searchMatchedChildTaskIds,
                   statusMatchedChildTaskIds,
                   statusMatchedStepParentTaskIds,
                   statusFilterActive: hierarchyStatusFilterActive,
+                  searchActive: effectiveSearchQuery.length > 0,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   currentListId: taskUiState.selectedBucket,
@@ -7562,6 +7934,8 @@ export function TaskApp() {
                   onOpenChildTask: openChildTaskFromPreview,
                   onMoveTaskIntoParent: moveTaskIntoParent,
                   onReorderChildTask: (taskId, direction) => { void reorderChildTask(taskId, direction); },
+                  onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onUnlinkTasks: unlinkSameTableTasks,
                   onFollowDetachedTask: followDetachedTask,
                   onDismissDetachedTask: dismissDetachedTask,
                   onDuplicateTask: (taskId) => {
@@ -7649,6 +8023,7 @@ export function TaskApp() {
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onUnlinkTasks: unlinkSameTableTasks,
                   onPromoteTaskToMilestone: openMilestoneSetup,
                   onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,
@@ -7661,6 +8036,17 @@ export function TaskApp() {
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
                   tasks: selectedBucketTasks,
+                  taskContentFolders,
+                  collapsedTaskContentFolderIds,
+                  onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
+                  onCreateTaskContentFolder: createTaskContentFolder,
+                  onAddFolderToContentFolder: addFolderToTaskContentFolder,
+                  onAddTaskToContentFolder: addTaskToContentFolder,
+                  onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
+                  onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
+                  onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
+                  onMoveTaskToContentFolder: moveTaskToContentFolder,
+                  onMoveFolder: taskContentFolderActions.moveFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
@@ -7698,11 +8084,13 @@ export function TaskApp() {
                   highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
                   highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
+                  matchedTaskContentFolderIds,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   searchMatchedChildTaskIds,
                   statusMatchedChildTaskIds,
                   statusMatchedStepParentTaskIds,
                   statusFilterActive: hierarchyStatusFilterActive,
+                  searchActive: effectiveSearchQuery.length > 0,
                   activeTaskTimerIndex,
                   currentListLabel: selectedBucketLabel,
                   getFollowTaskDestination,
@@ -7832,6 +8220,7 @@ export function TaskApp() {
                   onToggleTaskSelection: toggleListTaskSelection,
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
+                  onUnlinkTasks: unlinkSameTableTasks,
                   onPromoteTaskToMilestone: openMilestoneSetup,
                   onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,
@@ -7844,6 +8233,17 @@ export function TaskApp() {
                   runningTaskTimers,
                   selectedTaskIds: selectedListTaskIds,
                   tasks: selectedBucketTasks,
+                  taskContentFolders,
+                  collapsedTaskContentFolderIds,
+                  onToggleTaskContentFolderCollapsed: toggleTaskContentFolderCollapsed,
+                  onCreateTaskContentFolder: createTaskContentFolder,
+                  onAddFolderToContentFolder: addFolderToTaskContentFolder,
+                  onAddTaskToContentFolder: addTaskToContentFolder,
+                  onRenameTaskContentFolder: taskContentFolderActions.renameFolder,
+                  onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
+                  onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
+                  onMoveFolder: taskContentFolderActions.moveFolder,
+                  onMoveTaskToContentFolder: moveTaskToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,
@@ -8385,7 +8785,7 @@ function StatusBanner({
   onDismiss,
   showDismiss = true,
 }: {
-  detail?: string | null;
+  detail?: ReactNode;
   message: Message;
   onDismiss?: () => void;
   showDismiss?: boolean;
@@ -8416,10 +8816,10 @@ function StatusBanner({
       className={`fixed right-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[160] flex w-[calc(100vw-1.5rem)] max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] sm:right-4 sm:w-auto sm:min-w-80 ${className}`}
       role={message.tone === "warn" ? "alert" : "status"}
     >
-      <span className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1">
         <span className="block">{message.text}</span>
-        {detail ? <span className="mt-1 block text-xs font-normal opacity-80">{detail}</span> : null}
-      </span>
+        {detail ? <div className="mt-1 text-xs font-normal opacity-80">{detail}</div> : null}
+      </div>
       {showDismiss && !onDismiss ? (
         <TaskTableChipButton
           className="shrink-0"
@@ -8460,7 +8860,12 @@ function BatchEditProgressBanner({
 
   return (
     <StatusBanner
-      detail={formatBatchEditProgressDetail(progress)}
+      detail={(
+        <>
+          <OperationProgressBar progress={{ completed: progress.processed, failed: progress.failed, label: progress.operationLabel, total: progress.total }} />
+          {formatBatchEditProgressDetail(progress) ? <span className="mt-1 block">{formatBatchEditProgressDetail(progress)}</span> : null}
+        </>
+      )}
       message={{ tone, text: formatBatchEditProgressText(progress) }}
       onDismiss={progress.phase === "running" ? undefined : onDismiss}
       showDismiss={progress.phase !== "running"}
@@ -9153,6 +9558,8 @@ function CommandCenterHeader({
           <div className={isNativeIosPlatform
             ? "grid w-max shrink-0 grid-flow-col grid-rows-[min-content_min-content] items-center gap-x-2 gap-y-0 rounded-[1.15rem] bg-[var(--hud-surface)] px-0 py-1"
             : "mx-auto flex w-max items-center gap-2 rounded-[1.15rem] bg-[var(--hud-surface)] px-2 py-1"}
+            data-style-component="CollapsedHudSurface"
+            data-style-role="hud.collapsed.surface"
           >
             <button
               aria-label="Expand HUD"
@@ -9162,12 +9569,14 @@ function CommandCenterHeader({
               onClick={() => setHudCollapsed(!isHudCollapsed)}
               type="button"
             >
-              <span className="pointer-events-none flex items-center">
-                <BrandMark compact profile={profile} />
+              <span className="flex items-center">
+                <BrandMark compact profile={profile} styleRole="hud.brand.logo" />
               </span>
               <span className={isNativeIosPlatform
-                ? "pointer-events-none rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"
-                : "pointer-events-none rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"}
+                ? "rounded-full bg-[var(--hud-surface)] px-1 py-0.5 text-[10px] font-semibold uppercase leading-none tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"
+                : "rounded-full bg-[var(--hud-surface)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.16em] text-[#7f6af7] dark:text-[#c5b8ff]"}
+                data-style-component="HudVersion"
+                data-style-role="hud.version"
               >
                 {HUD_VERSION}
               </span>
@@ -9177,9 +9586,13 @@ function CommandCenterHeader({
                 aria-label={`${collapsedHudFocusTimer.isPaused ? "Resume" : "Pause"} timer for ${collapsedHudFocusTimer.title}`}
                 className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
                 onClick={() => onToggleFocusTimer(collapsedHudFocusTimer.categoryId)}
+                styleIcon={collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                styleIconName={collapsedHudFocusTimer.isPaused ? "circle-play" : "circle-pause"}
+                stylePart="label"
                 toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                styleRole="hud.collapsed.timer"
+                styleTextPart
               >
-                {collapsedHudFocusTimer.isPaused ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
                 <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
                   {formatCollapsedHudTimerLabel(collapsedHudFocusTimer.seconds)}
                 </span>
@@ -9190,9 +9603,13 @@ function CommandCenterHeader({
                 aria-label={`${collapsedHudTaskTimer.pausedAt ? "Resume" : "Pause"} timer for ${collapsedHudTaskTimer.title}`}
                 className="shrink-0 gap-1.5 text-[#5f4ac9] dark:text-[#d6cdff]"
                 onClick={() => collapsedHudTaskTimer.pausedAt ? onResumeTaskTimer(collapsedHudTaskTimer.taskId) : onPauseTaskTimer(collapsedHudTaskTimer.taskId)}
+                styleIcon={collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
+                styleIconName={collapsedHudTaskTimer.pausedAt ? "circle-play" : "circle-pause"}
+                stylePart="label"
                 toneClassName="border-[#ddd2ff] bg-[#f5f1ff] dark:border-[#42306f] dark:bg-[#241c42]"
+                styleRole="hud.collapsed.timer"
+                styleTextPart
               >
-                {collapsedHudTaskTimer.pausedAt ? <CirclePlay className="h-3.5 w-3.5 shrink-0" /> : <CirclePause className="h-3.5 w-3.5 shrink-0" />}
                 <span className="shrink-0 text-[11px] font-semibold tabular-nums text-[#5f4ac9] dark:text-[#d6cdff]">
                   {formatCollapsedHudTimerLabel(getTaskTimerDisplaySeconds(collapsedHudTaskTimer, taskTimerNow))}
                 </span>
@@ -9201,12 +9618,12 @@ function CommandCenterHeader({
             ) : null}
             {currentHudPageId !== "overview" ? (
               <span className="hidden shrink-0 sm:inline">
-                <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`}>
+                <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`} data-style-component="HudCollapsedChip" data-style-role="hud.collapsed.chip">
                   {activeHudPageTitle}
                 </span>
               </span>
             ) : null}
-            <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`}>
+            <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} shrink-0 border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]`} data-style-component="HudCollapsedChip" data-style-role="hud.collapsed.chip">
               Points {economy.points}
             </span>
             {pendingRewardDiceCount > 0 ? (
@@ -9214,9 +9631,13 @@ function CommandCenterHeader({
                 aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}
                 className="shrink-0 gap-1.5 text-[#119a69] dark:text-[#8ff0cc]"
                 onClick={onOpenPendingRewardBank}
+                styleIcon={<Dice5 className="h-3.5 w-3.5" />}
+                styleIconName="dice-5"
+                stylePart="label"
                 toneClassName="border-[#cfeedd] bg-[#ecfbf3] dark:border-[#1e5a42] dark:bg-[#103726]"
+                styleRole="hud.collapsed.chip"
+                styleTextPart
               >
-                <Dice5 className="h-3.5 w-3.5" />
                 {formatPendingDiceChipLabel(pendingRewardDiceCount)}
               </TaskTableChipButton>
             ) : null}
@@ -9225,16 +9646,23 @@ function CommandCenterHeader({
               className={`${isNativeIosPlatform ? "-translate-y-0.5 " : ""}shrink-0 gap-1.5 text-[#5f56a6] dark:text-white/72`}
               disabled={isWorkspaceRefreshing}
               onClick={onRefreshWorkspace}
+              styleIcon={<Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />}
+              styleIconName="wifi"
+              stylePart="label"
               toneClassName="border-[#e4deef] bg-[#f8f5ff] dark:border-white/10 dark:bg-white/[0.05]"
+              styleRole="hud.collapsed.chip"
+              styleTextPart
             >
-              <Wifi className={`h-3.5 w-3.5 ${isWorkspaceRefreshing ? "animate-pulse" : ""}`} />
               {refreshStatus === "updating" ? "Updating" : isWorkspaceRefreshing ? "Syncing" : "Refresh"}
             </TaskTableChipButton>
             <TaskTableChipButton
               aria-label="Open Scratch Paper notes"
               className="shrink-0 text-[#6f57f6] dark:text-[#cabfff]"
               onClick={onViewScratchPaper}
+              stylePart="label"
               toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+              styleRole="hud.collapsed.chip"
+              styleTextPart
             >
               Scratch Paper
             </TaskTableChipButton>
@@ -9242,15 +9670,19 @@ function CommandCenterHeader({
               aria-label="Expand HUD"
               className={`${isNativeIosPlatform ? "-translate-y-0.5 " : ""}shrink-0 gap-1.5 text-[#6f57f6] dark:text-[#cabfff]`}
               onClick={() => setHudCollapsed(false)}
+              styleIcon={<ChevronUp className="h-3.5 w-3.5" />}
+              styleIconName="chevron-up"
+              stylePart="label"
               toneClassName="border-[#ddd6fb] bg-white/90 dark:border-white/10 dark:bg-white/[0.06]"
+              styleRole="hud.collapsed.chip"
+              styleTextPart
             >
-              <ChevronUp className="h-3.5 w-3.5" />
               Open
             </TaskTableChipButton>
             <div className={isNativeIosPlatform ? "row-span-2 shrink-0" : "shrink-0"}>{accountButton}</div>
           </div>
         </div>
-        {hudDateTime ? <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55">{hudDateTime}</span> : null}
+        {hudDateTime ? <span className="mt-1 block text-left text-[11px] font-medium leading-none tabular-nums text-[#817a9d] dark:text-white/55" data-style-component="HudDateTime" data-style-role="hud.datetime">{hudDateTime}</span> : null}
       </header>
     );
   }
@@ -9339,9 +9771,11 @@ function ProfileAvatarImage({ avatarSrc }: { avatarSrc: string }) {
 function BrandMark({
   compact = false,
   profile,
+  styleRole,
 }: {
   compact?: boolean;
   profile: UserProfile;
+  styleRole?: string;
 }) {
   const [errored, setErrored] = useState(false);
   const logoSrc = (!errored && profile.logoSrc) || "/logo.png";
@@ -9354,6 +9788,8 @@ function BrandMark({
       onError={() => setErrored(true)}
       priority
       src={withBasePath(logoSrc)}
+      data-style-component={styleRole ? "HudBrandLogo" : undefined}
+      data-style-role={styleRole}
       unoptimized={logoSrc.startsWith("data:")}
       width={compact ? 122 : 170}
     />
@@ -9731,7 +10167,10 @@ function TestPageWorkspace({ isDark, userId }: { isDark: boolean; userId: string
           <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">Test workspace</p>
           <p className="mt-1 text-sm text-[#726a96] dark:text-white/60">Outer tools can be arranged independently; the D20 mapper has its own inner layout.</p>
         </div>
-        <PageShellLayoutControls layout={layout} />
+        <div className="flex flex-wrap items-center gap-2">
+          <StyleLabLauncher />
+          <PageShellLayoutControls layout={layout} />
+        </div>
       </div>
 
       <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">

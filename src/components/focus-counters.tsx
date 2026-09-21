@@ -242,10 +242,10 @@ export function FocusCounterHistoryCard({
         <div className="shrink-0 p-5 pb-0">
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]">Counter Activity</p>
-            <h3 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]">Recent Counter Changes</h3>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.22em] text-[var(--text-muted)]" data-style-component="FocusCounterHistoryCard" data-style-role="ui.section.label">Counter Activity</p>
+            <h3 className="mt-2 text-2xl font-black tracking-tight text-[var(--text-primary)]" data-style-component="FocusCounterHistoryCard" data-style-role="ui.section.title">Recent Counter Changes</h3>
           </div>
-          <p className="text-sm text-[var(--text-secondary)]">Separate from Focus timer history and minute totals.</p>
+          <p className="text-sm text-[var(--text-secondary)]" data-style-component="FocusCounterHistoryCard" data-style-role="ui.section.subtitle">Separate from Focus timer history and minute totals.</p>
         </div>
         </div>
         <PageShellBody className="p-5 pt-4">
