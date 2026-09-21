@@ -48,7 +48,7 @@ import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleAct
 import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
+import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import type {
   CustomBehaviorRuleset,
@@ -766,8 +766,24 @@ export function TaskHistoryModal({
   const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
   const resolvedTimelineDays = calendarRead?.timeline?.days
     ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
+  const behaviorResolution = resolveTaskBehaviorPolicyForTask({
+    behaviorPolicyRevisions,
+    behaviorProfiles,
+    behaviorSelectionsByTaskId,
+    customRulesetId: task.custom_ruleset_id,
+    logicalDate: today,
+    namedCustomRulesetBehaviorPolicyRevisions,
+    taskId: task.id,
+    taskType: task.task_type ?? "task",
+  });
   const resolvedStreaks = resolvedTimelineDays
-    ? computeTaskEffectiveTimelineStreaks(resolvedTimelineDays, today)
+    ? computeTaskEffectiveTimelineStreaks(
+      resolvedTimelineDays,
+      today,
+      behaviorResolution.policy.unresolvedOccurrence === "blank"
+        ? { currentMissedStreakStartLogicalDate: behaviorResolution.currentBehaviorSelectionEffectiveFromLogicalDate ?? undefined }
+        : {},
+    )
     : null;
   const stats = resolvedStreaks
     ? {

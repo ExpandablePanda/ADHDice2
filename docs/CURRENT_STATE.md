@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.36`.
+- Current working app version: `7.14.37`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.14.37 Correct Current Missed Projections Across Behavior Boundaries
+
+Current Active Status and Missed streak projections now honor the effective
+behavior-selection segment. Historical Missed facts and Calendar dates remain
+unchanged, and no History cleanup or SQL change is included. Browser QA remains
+Andrew's responsibility.
 
 ## 2026-09-20 7.14.36 Batch Unlink Selected Task Hierarchy Rows
 

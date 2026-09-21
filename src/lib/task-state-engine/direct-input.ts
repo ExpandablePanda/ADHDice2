@@ -239,6 +239,9 @@ function buildTaskStateEngineInput(
     ...(policyResolution.revisions.length
       ? { behaviorPolicyRevisions: [...policyResolution.revisions] }
       : {}),
+    ...(policyResolution.currentBehaviorSelectionEffectiveFromLogicalDate
+      ? { currentBehaviorSelectionEffectiveFromLogicalDate: policyResolution.currentBehaviorSelectionEffectiveFromLogicalDate }
+      : {}),
     task: {
       id: task.id,
       lifecycle,

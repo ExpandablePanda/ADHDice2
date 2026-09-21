@@ -454,6 +454,7 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
           logicalDate: input.logicalDate,
         }),
         revisions: currentNamedRulesetRevisions,
+        currentBehaviorSelectionEffectiveFromLogicalDate: null,
       };
     }
     const revisions = isActiveTaskBehaviorProfileTaskType(input.taskType)
@@ -464,6 +465,7 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
         ? resolveTaskBehaviorPolicy(input.taskType, input.behaviorProfiles, input.behaviorPolicyRevisions, input.logicalDate)
         : STANDARD_TASK_BEHAVIOR_POLICY,
       revisions,
+      currentBehaviorSelectionEffectiveFromLogicalDate: null,
     };
   }
   const selections = selectionRows;
@@ -482,6 +484,7 @@ export function resolveTaskBehaviorPolicyForTask(input: TaskBehaviorPolicyResolu
       ? STANDARD_TASK_BEHAVIOR_POLICY
       : resolvedPolicy,
     revisions,
+    currentBehaviorSelectionEffectiveFromLogicalDate: effectiveSelection?.effectiveFromLogicalDate ?? null,
   };
 }
 

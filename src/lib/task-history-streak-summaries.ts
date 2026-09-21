@@ -7,7 +7,7 @@ import {
 import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
+import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
 import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "@/lib/task-history-last-handled";
 import { forEachCooperatively, type CooperativeChunkOptions } from "@/lib/stable-task-projection";
@@ -83,8 +83,24 @@ export function buildTaskHistoryStreakSummary(
   });
   const resolvedTimelineDays = calendarRead?.timeline?.days
     ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
+  const behaviorResolution = resolveTaskBehaviorPolicyForTask({
+    behaviorPolicyRevisions: context.behaviorPolicyRevisions,
+    behaviorProfiles: context.behaviorProfiles,
+    behaviorSelectionsByTaskId: context.behaviorSelectionsByTaskId,
+    customRulesetId: task.custom_ruleset_id,
+    logicalDate: todayDateKey,
+    namedCustomRulesetBehaviorPolicyRevisions: context.namedCustomRulesetBehaviorPolicyRevisions,
+    taskId: task.id,
+    taskType: task.task_type ?? "task",
+  });
   const streaks = resolvedTimelineDays
-    ? computeTaskEffectiveTimelineStreaks(resolvedTimelineDays, todayDateKey)
+    ? computeTaskEffectiveTimelineStreaks(
+      resolvedTimelineDays,
+      todayDateKey,
+      behaviorResolution.policy.unresolvedOccurrence === "blank"
+        ? { currentMissedStreakStartLogicalDate: behaviorResolution.currentBehaviorSelectionEffectiveFromLogicalDate ?? undefined }
+        : {},
+    )
     : { currentCompletedStreak: 0, currentMissedStreak: 0 };
   const lastDone = getTaskHistoryLastDone(normalizedHistory, todayDateKey);
   const lastHandled = context.manualActionSummaryByTaskId?.[task.id];
