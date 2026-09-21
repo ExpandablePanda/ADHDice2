@@ -2,7 +2,7 @@
 
 import type { Dispatch, SetStateAction } from "react";
 import type { BatchTaskEditDraft } from "@/components/task-app/task-batch-edit-modal";
-import type { Task, TaskHistory, TaskHistoryActionInput, TaskStatus, TaskUpdate } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskHistory, TaskHistoryActionInput, TaskStatus, TaskUpdate } from "@/lib/database.types";
 import type { TaskRowUpdateOptions } from "@/lib/task-db-mutations";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { buildTaskPriorityUpdate } from "@/lib/task-priority";
@@ -18,6 +18,7 @@ import {
   type BatchEditProgress,
 } from "@/lib/task-batch-edit-progress";
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, type TaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
+import { resolveTaskTypeSelection } from "@/lib/task-type";
 import {
   executeTaskStateRuntimeAction,
   type TaskStateRuntimeExecutionResult,
@@ -46,6 +47,7 @@ type UpdateTaskRowResult = {
 type UseTaskBatchEditActionOptions = TaskBehaviorPolicyResolutionContext & {
   canonicalCommandExecutor?: (action: Extract<TaskStateRuntimeAction, { kind: "canonical_action" }>, task: TaskStateRuntimeLocalTask) => Promise<TaskStateRuntimeExecutionResult>;
   clearListTaskSelection: () => void;
+  customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   currentDayKey: string;
   dayStartTime: string;
   focusedTaskIds: string[];
@@ -54,6 +56,7 @@ type UseTaskBatchEditActionOptions = TaskBehaviorPolicyResolutionContext & {
   parseDayOfMonth: (value: string) => number | null;
   parsePositiveInteger: (value: string) => number | null;
   routeTask: (taskId: string, bucket: TaskRoutingBucket | null) => void;
+  refreshCustomBehaviorRulesets?: () => Promise<boolean>;
   saveFocusSelection: (nextTaskIds: string[], validTaskIds?: Set<string> | Task[]) => Promise<void>;
   setBatchEditProgress: Dispatch<SetStateAction<BatchEditProgress | null>>;
   selectedListTasks: Task[];
@@ -79,6 +82,7 @@ export function useTaskBatchEditAction({
   behaviorSelectionsByTaskId,
   canonicalCommandExecutor = (action, task) => executeTaskStateRuntimeAction(action, task),
   clearListTaskSelection,
+  customBehaviorRulesets = [],
   currentDayKey,
   dayStartTime = "00:00",
   focusedTaskIds,
@@ -87,6 +91,7 @@ export function useTaskBatchEditAction({
   parseDayOfMonth,
   parsePositiveInteger,
   routeTask,
+  refreshCustomBehaviorRulesets,
   saveFocusSelection,
   setBatchEditProgress,
   selectedListTasks,
@@ -114,6 +119,7 @@ export function useTaskBatchEditAction({
     type BatchTaskPlan = {
       actionAuthority: ReturnType<typeof evaluateTaskActionAuthority>;
       runtimeAction: TaskStateRuntimeAction | null;
+      taskTypeSkipped: boolean;
       dueDateOnlyEdit: boolean;
       scopedHistory: TaskHistory[];
       task: Task;
@@ -125,10 +131,27 @@ export function useTaskBatchEditAction({
     const nextFocusedTaskIds = new Set(focusedTaskIds);
     const completedCandidates: TaskRewardCandidate[] = [];
     const taskPlans: BatchTaskPlan[] = [];
+    const requestedTaskTypeSelection = draft.taskType === "unchanged"
+      ? null
+      : resolveTaskTypeSelection(draft.taskType, customBehaviorRulesets);
+    if (draft.taskType !== "unchanged" && !requestedTaskTypeSelection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return;
+    }
+    let behaviorSelectionMutationCommitted = false;
 
     // Preflight every selected task before persisting any part of the batch.
     for (const task of selectedListTasks) {
       const updateValues: TaskUpdate = {};
+      const taskTypeSkipped = Boolean(
+        requestedTaskTypeSelection
+        && task.task_type === requestedTaskTypeSelection.taskType
+        && (task.custom_ruleset_id ?? null) === requestedTaskTypeSelection.customRulesetId,
+      );
+      if (requestedTaskTypeSelection && !taskTypeSkipped) {
+        updateValues.task_type = requestedTaskTypeSelection.taskType;
+        updateValues.custom_ruleset_id = requestedTaskTypeSelection.customRulesetId;
+      }
 
       if (draft.status !== "unchanged") {
         updateValues.status = draft.status;
@@ -211,6 +234,7 @@ export function useTaskBatchEditAction({
           dueDateOnlyEdit: false,
           runtimeAction: runtimeAction.kind === "canonical_action" ? runtimeAction : null,
           scopedHistory,
+          taskTypeSkipped,
           task,
           trackedUpdateValues: updateValues,
         });
@@ -265,15 +289,16 @@ export function useTaskBatchEditAction({
         ? { ...updateValues, ...authorityUpdate }
         : applyTaskActiveStatusTracking(task, updateValues, currentDayKey);
 
-      taskPlans.push({ actionAuthority, dueDateOnlyEdit, runtimeAction: null, scopedHistory, task, trackedUpdateValues });
+      taskPlans.push({ actionAuthority, dueDateOnlyEdit, runtimeAction: null, scopedHistory, taskTypeSkipped, task, trackedUpdateValues });
     }
 
     setIsBatchEditModalOpen(false);
-    let progress = createBatchEditProgress(taskPlans.length);
+    let progress = createBatchEditProgress(taskPlans.length, draft.taskType === "unchanged" ? "Batch Edit" : "Changing Task Type");
     setBatchEditProgress(progress);
 
-    for (const { actionAuthority, dueDateOnlyEdit, runtimeAction, scopedHistory, task, trackedUpdateValues } of taskPlans) {
+    for (const { actionAuthority, dueDateOnlyEdit, runtimeAction, scopedHistory, taskTypeSkipped, task, trackedUpdateValues } of taskPlans) {
       let planSuccess = false;
+      let planSkipped = false;
       let planErrorMessage: string | null = null;
       let planFallbackUsed = false;
 
@@ -295,6 +320,9 @@ export function useTaskBatchEditAction({
           } else if (draft.focusToday === "false") {
             nextFocusedTaskIds.delete(task.id);
           }
+          planSkipped = taskTypeSkipped
+            && draft.route === "unchanged"
+            && draft.focusToday === "unchanged";
           planSuccess = true;
         } else if (runtimeAction?.kind === "canonical_action") {
           const canonicalResult = await canonicalCommandExecutor(runtimeAction, task as TaskStateRuntimeLocalTask);
@@ -329,7 +357,12 @@ export function useTaskBatchEditAction({
             planSuccess = true;
           }
         } else {
-          const { data, error, behaviorSelectionStateRefreshError, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, { expectedTask: task });
+          const hasBehaviorSelectionMutation = Object.hasOwn(trackedUpdateValues, "task_type")
+            || Object.hasOwn(trackedUpdateValues, "custom_ruleset_id");
+          const { data, error, behaviorSelectionStateRefreshError, usedEnergyFallback } = await updateTaskRowWithLegacyEnergyFallback(task.id, trackedUpdateValues, {
+            deferBehaviorSelectionRefresh: hasBehaviorSelectionMutation,
+            expectedTask: task,
+          });
           planFallbackUsed = usedEnergyFallback;
 
           if (error) {
@@ -339,6 +372,9 @@ export function useTaskBatchEditAction({
           } else if (!data) {
             planErrorMessage = `Task "${task.title}" updated, but no task row came back from Supabase.`;
           } else {
+            if (hasBehaviorSelectionMutation) {
+              behaviorSelectionMutationCommitted = true;
+            }
             const nextData = mergeTaskWithCanonicalScheduleProjection(task, data);
             nextTasks = nextTasks.map((currentTask) => currentTask.id === task.id ? nextData : currentTask);
             hasAuthoritativeTaskRowsToReconcile = true;
@@ -400,6 +436,7 @@ export function useTaskBatchEditAction({
       progress = recordBatchEditPlan(progress, {
         errorMessage: planErrorMessage,
         fallbackUsed: planFallbackUsed,
+        skipped: planSkipped,
         success: planSuccess,
       });
       setBatchEditProgress(progress);
@@ -418,6 +455,9 @@ export function useTaskBatchEditAction({
           }
         }
         clearListTaskSelection();
+      }
+      if (behaviorSelectionMutationCommitted && refreshCustomBehaviorRulesets && !(await refreshCustomBehaviorRulesets())) {
+        throw new Error("The committed Task behavior selections could not be refreshed in the browser.");
       }
     } catch (error) {
       const finalizationError = error instanceof Error ? error.message : "Batch Edit finalization could not be completed.";

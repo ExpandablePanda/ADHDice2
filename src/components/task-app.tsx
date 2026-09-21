@@ -66,7 +66,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
   BottomDockAdapter as BottomDock,
@@ -96,6 +96,7 @@ import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center
 import { FocusAlarmWidget } from "./task-app/focus-alarm-widget";
 import { TaskActiveTimersTray } from "./task-app/task-active-timers-tray";
 import { ScratchPaperWidget, type ScratchPaperData } from "./task-app/scratch-paper";
+import { OperationProgressBar } from "./task-app/operation-progress";
 import { formatTaskStatusLabel } from "./task-app/task-status-ui";
 import {
   buildNewTaskDraft,
@@ -3095,9 +3096,10 @@ export function TaskApp() {
     options?: TaskRowUpdateOptions,
   ) => {
     const refreshedBeforeMutation = await prepareTaskMutation();
-    const refreshBehaviorSelectionState = (Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id"))
-      ? refreshCustomBehaviorRulesets
-      : options?.refreshCustomBehaviorRulesets;
+    const refreshBehaviorSelectionState = options?.refreshCustomBehaviorRulesets
+      ?? ((Object.hasOwn(values, "task_type") || Object.hasOwn(values, "custom_ruleset_id")) && !options?.deferBehaviorSelectionRefresh
+        ? refreshCustomBehaviorRulesets
+        : undefined);
     let nextOptions: TaskRowUpdateOptions = {
       ...options,
       effectiveFromLogicalDate: options?.effectiveFromLogicalDate ?? todayKey,
@@ -4127,6 +4129,8 @@ export function TaskApp() {
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
       behaviorSelectionsByTaskId,
+      customBehaviorRulesets,
+      refreshCustomBehaviorRulesets,
       clearListTaskSelection,
       dayStartTime,
       focusedTaskIds,
@@ -6561,6 +6565,7 @@ export function TaskApp() {
   const batchEditFlow = isBatchEditModalOpen ? {
     allTags: allTaskTags,
     count: selectedListTaskIds.length,
+    customBehaviorRulesets,
     energyOptions,
     onClose: closeBatchEditModal,
     onSave: applyBatchTaskEdit,
@@ -8544,7 +8549,7 @@ function StatusBanner({
   onDismiss,
   showDismiss = true,
 }: {
-  detail?: string | null;
+  detail?: ReactNode;
   message: Message;
   onDismiss?: () => void;
   showDismiss?: boolean;
@@ -8575,10 +8580,10 @@ function StatusBanner({
       className={`fixed right-3 top-[calc(env(safe-area-inset-top)+1rem)] z-[160] flex w-[calc(100vw-1.5rem)] max-w-xl items-center justify-between gap-3 rounded-[1.25rem] border px-4 py-3 text-sm font-medium shadow-[0_18px_48px_rgba(39,28,89,0.18)] sm:right-4 sm:w-auto sm:min-w-80 ${className}`}
       role={message.tone === "warn" ? "alert" : "status"}
     >
-      <span className="min-w-0 flex-1">
+      <div className="min-w-0 flex-1">
         <span className="block">{message.text}</span>
-        {detail ? <span className="mt-1 block text-xs font-normal opacity-80">{detail}</span> : null}
-      </span>
+        {detail ? <div className="mt-1 text-xs font-normal opacity-80">{detail}</div> : null}
+      </div>
       {showDismiss && !onDismiss ? (
         <TaskTableChipButton
           className="shrink-0"
@@ -8619,7 +8624,12 @@ function BatchEditProgressBanner({
 
   return (
     <StatusBanner
-      detail={formatBatchEditProgressDetail(progress)}
+      detail={(
+        <>
+          <OperationProgressBar progress={{ completed: progress.processed, failed: progress.failed, label: progress.operationLabel, total: progress.total }} />
+          {formatBatchEditProgressDetail(progress) ? <span className="mt-1 block">{formatBatchEditProgressDetail(progress)}</span> : null}
+        </>
+      )}
       message={{ tone, text: formatBatchEditProgressText(progress) }}
       onDismiss={progress.phase === "running" ? undefined : onDismiss}
       showDismiss={progress.phase !== "running"}

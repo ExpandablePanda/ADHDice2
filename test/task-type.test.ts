@@ -102,6 +102,19 @@ test("Table View owns a Task Type column and reuses the shared label/filter auth
   assert.match(uiStateSource, /withNotes\.includes\("task_type"\)/);
 });
 
+test("Batch Edit exposes shared Task Type choices with an unchanged option", () => {
+  const modalSource = readFileSync("src/components/task-app/task-batch-edit-modal.tsx", "utf8");
+  const batchHookSource = readFileSync("src/hooks/useTaskBatchEditAction.ts", "utf8");
+  assert.match(modalSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
+  assert.match(modalSource, /label: "Leave unchanged", value: "unchanged"/);
+  assert.match(modalSource, /<TaskTypeSelect/);
+  assert.match(modalSource, /value=\{draft\.taskType\}/);
+  assert.match(batchHookSource, /resolveTaskTypeSelection\(draft\.taskType, customBehaviorRulesets\)/);
+  assert.match(batchHookSource, /deferBehaviorSelectionRefresh: hasBehaviorSelectionMutation/);
+  assert.match(batchHookSource, /refreshCustomBehaviorRulesets\(\)/);
+  assert.doesNotMatch(batchHookSource, /Promise\.all/);
+});
+
 test("anonymous Custom assignments are invalid while named Custom display remains authoritative", () => {
   const migration = readFileSync("supabase/20260913000000_remove_anonymous_custom_task_type_7_13_58.sql", "utf8");
   const schema = readFileSync("supabase/schema.sql", "utf8");

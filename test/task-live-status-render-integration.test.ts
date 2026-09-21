@@ -395,6 +395,7 @@ test("schedule-only callbacks pass the returned task for immediate Effective Tim
     route: "unchanged",
     status: "unchanged",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   });

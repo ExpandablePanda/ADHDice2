@@ -31,3 +31,11 @@ test("ordinary good-message timeout stays separate from Batch Edit progress", ()
   assert.match(batchHookSource, /setBatchEditProgress\(progress\)/);
   assert.doesNotMatch(batchHookSource, /setMessage\(\{ tone: "good"/);
 });
+
+test("Batch Edit progress renders the generic known-count operation bar", () => {
+  const operationProgressSource = readFileSync(new URL("../src/components/task-app/operation-progress.tsx", import.meta.url), "utf8");
+  assert.match(appSource, /<OperationProgressBar progress=\{\{ completed: progress\.processed/);
+  assert.match(appSource, /label: progress\.operationLabel/);
+  assert.match(operationProgressSource, /total: number \| null/);
+  assert.match(operationProgressSource, /role="progressbar"/);
+});

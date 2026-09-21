@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.39`.
+- Current working app version: `7.14.40`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-21 7.14.40 Batch Task Type Changes and Determinate Operation Progress
+
+Batch Edit now exposes the shared Task Type and named Custom Task Type choices,
+routes each changed selection through the existing effective-dated behavior
+authority, skips already-correct Tasks, and preserves canonical schedule and
+History projections. The existing Batch Edit progress banner now presents a
+real accessible determinate bar for known-count operations with failure and
+skip counts. Browser QA remains Andrew's responsibility.
 
 ## 2026-09-20 7.14.39 Preserve Canonical Recurrence Across Metadata Updates and Enable Multi-Select Clear
 

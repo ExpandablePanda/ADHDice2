@@ -10,6 +10,8 @@ export type TaskRowUpdateOptions = {
   /** Logical date on which a Task behavior selection change takes effect. */
   effectiveFromLogicalDate?: string;
   expectedTask?: Task | null;
+  /** Batch callers can defer the browser-owned selection refresh until final reconciliation. */
+  deferBehaviorSelectionRefresh?: boolean;
   /** Refresh the browser-owned behavior-selection state after the selection RPC commits. */
   refreshCustomBehaviorRulesets?: () => Promise<boolean>;
 };
@@ -371,7 +373,7 @@ async function updateTaskBehaviorSelection(
     });
     if (!result.error) {
       let behaviorSelectionStateRefreshError: string | undefined;
-      if (result.data && options?.refreshCustomBehaviorRulesets) {
+      if (result.data && options?.refreshCustomBehaviorRulesets && !options.deferBehaviorSelectionRefresh) {
         try {
           if (!(await options.refreshCustomBehaviorRulesets())) {
             behaviorSelectionStateRefreshError = "The committed Task behavior selection could not be refreshed in the browser.";

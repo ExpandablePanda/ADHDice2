@@ -859,6 +859,7 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
     route: "unchanged",
     status: "unchanged",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   });
@@ -1216,6 +1217,7 @@ test("manual due-date edits preserve unresolved History and skip reconciliation,
     route: "unchanged",
     status: "unchanged",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   });
@@ -1662,6 +1664,7 @@ test("batch edit rejects Task State validation before any task or History writes
     route: "unchanged",
     status: "missed",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
   });

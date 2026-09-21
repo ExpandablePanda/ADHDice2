@@ -15,10 +15,10 @@ import {
   type BatchEditProgress,
 } from "../src/lib/task-batch-edit-progress.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
-import type { Task } from "../src/lib/database.types.ts";
+import type { CustomBehaviorRuleset, Task, TaskUpdate } from "../src/lib/database.types.ts";
 import type { TaskRewardCandidate } from "../src/lib/task-rewards.ts";
 
-function task(id: string, status: Task["status"] = "pending", dueOn: string | null = null) {
+function task(id: string, status: Task["status"] = "pending", dueOn: string | null = null, overrides: Partial<Task> = {}) {
   return createTask({
     created_at: "2026-08-16T09:00:00.000Z",
     due_on: dueOn,
@@ -26,7 +26,23 @@ function task(id: string, status: Task["status"] = "pending", dueOn: string | nu
     sort_order: 1,
     status,
     title: id,
+    ...overrides,
   });
+}
+
+function ruleset(id: string, name = id): CustomBehaviorRuleset {
+  return {
+    accent_key: "purple",
+    created_at: "2026-08-16T09:00:00.000Z",
+    deleted_at: null,
+    description: `${name} ruleset`,
+    icon_key: "list-todo",
+    id,
+    name,
+    task_type: "custom",
+    updated_at: "2026-08-16T09:00:00.000Z",
+    user_id: "test-user",
+  };
 }
 
 function draft(overrides: Partial<BatchTaskEditDraft> = {}): BatchTaskEditDraft {
@@ -46,6 +62,7 @@ function draft(overrides: Partial<BatchTaskEditDraft> = {}): BatchTaskEditDraft 
     route: "unchanged",
     status: "unchanged",
     subtasksAutoReset: "unchanged",
+    taskType: "unchanged",
     tags: [],
     tagsMode: "unchanged",
     ...overrides,
@@ -55,18 +72,22 @@ function draft(overrides: Partial<BatchTaskEditDraft> = {}): BatchTaskEditDraft 
 function useBatchEditTestHarness(
   selectedTasks: Task[],
   options: {
+    customBehaviorRulesets?: CustomBehaviorRuleset[];
     onTasksCompleted?: (candidates: TaskRewardCandidate[]) => Promise<void>;
+    refreshCustomBehaviorRulesets?: () => Promise<boolean>;
     syncTaskHistoryEntry?: (taskId: string) => Promise<boolean>;
-    updateTask?: (task: Task) => Promise<{ data: Task | null; error: { message: string } | null; usedEnergyFallback?: boolean }>;
+    updateTask?: (task: Task, values: TaskUpdate) => Promise<{ data: Task | null; error: { message: string } | null; usedEnergyFallback?: boolean }>;
   } = {},
 ) {
   let localTasks = [...selectedTasks];
   let progress: BatchEditProgress | null = null;
   const progressSnapshots: Array<BatchEditProgress | null> = [];
   const events: string[] = [];
+  const behaviorUpdates: Array<{ taskId: string; values: TaskUpdate }> = [];
   const actions = useTaskBatchEditAction({
     canonicalCommandsEnabled: false,
     clearListTaskSelection: () => { events.push("selection:cleared"); },
+    customBehaviorRulesets: options.customBehaviorRulesets,
     currentDayKey: "2026-08-16",
     dayStartTime: "06:00",
     focusedTaskIds: [],
@@ -74,6 +95,7 @@ function useBatchEditTestHarness(
     parseDayOfMonth: () => null,
     parsePositiveInteger: (value) => Number.parseInt(value, 10) || null,
     routeTask: (taskId) => { events.push(`route:${taskId}`); },
+    refreshCustomBehaviorRulesets: options.refreshCustomBehaviorRulesets,
     saveFocusSelection: async () => {},
     selectedListTasks: selectedTasks,
     setBatchEditProgress: (update: SetStateAction<BatchEditProgress | null>) => {
@@ -89,10 +111,11 @@ function useBatchEditTestHarness(
     syncTaskHistoryEntry: async (taskId) => options.syncTaskHistoryEntry?.(taskId) ?? true,
     tasks: selectedTasks,
     timezone: "UTC",
-    updateTaskRowWithLegacyEnergyFallback: async (taskId) => {
+    updateTaskRowWithLegacyEnergyFallback: async (taskId, values) => {
       const currentTask = selectedTasks.find((candidate) => candidate.id === taskId) ?? selectedTasks[0]!;
       events.push(`execute:${taskId}`);
-      const result = await options.updateTask?.(currentTask) ?? { data: { ...currentTask, priority_level: 1 }, error: null };
+      behaviorUpdates.push({ taskId, values });
+      const result = await options.updateTask?.(currentTask, values) ?? { data: { ...currentTask, ...values, priority_level: 1 }, error: null };
       return {
         data: result.data,
         error: result.error,
@@ -104,6 +127,7 @@ function useBatchEditTestHarness(
   return {
     actions,
     events,
+    behaviorUpdates,
     get localTasks() { return localTasks; },
     get progress() { return progress; },
     progressSnapshots,
@@ -120,11 +144,131 @@ test("progress transitions use real plan accounting and preserve fallback separa
   assert.equal(progress.updated, 1);
   assert.equal(progress.failed, 1);
   assert.equal(progress.fallbackCount, 1);
-  assert.equal(formatBatchEditProgressText(progress), "Batch Edit: 2/5 processed · 3 remaining · 1 failed");
+  assert.equal(formatBatchEditProgressText(progress), "Batch Edit… 2 of 5 (40%) · 3 remaining · 1 failed");
   const complete = completeBatchEditProgress(progress);
   assert.equal(complete.phase, "complete");
-  assert.equal(formatBatchEditProgressText(complete), "1 updated · 1 failed");
+  assert.equal(formatBatchEditProgressText(complete), "Batch Edit complete · 2 of 5 (40%) · 1 updated · 1 failed");
   assert.match(formatBatchEditProgressDetail(complete) ?? "", /used low energy/);
+});
+
+test("Task Type batch drafts default to unchanged and count already-correct Tasks as skipped", async () => {
+  assert.equal(draft().taskType, "unchanged");
+  const hobbies = ruleset("hobbies", "Hobbies");
+  const selected = task("already-hobbies", "pending", null, { custom_ruleset_id: hobbies.id, task_type: "custom" });
+  const harnessState = useBatchEditTestHarness([selected], { customBehaviorRulesets: [hobbies] });
+
+  await harnessState.actions.applyBatchTaskEdit(draft({ priority: "unchanged", taskType: hobbies.id }));
+
+  assert.deepEqual(harnessState.behaviorUpdates, []);
+  assert.equal(harnessState.progress?.processed, 1);
+  assert.equal(harnessState.progress?.updated, 0);
+  assert.equal(harnessState.progress?.skipped, 1);
+  assert.equal(harnessState.progress?.failed, 0);
+});
+
+test("Task Type batch changes use the named Custom selection authority in sequence", async () => {
+  const hobbies = ruleset("hobbies", "Hobbies");
+  const errands = ruleset("errands", "Errands");
+  const selected = [
+    task("task-to-hobbies"),
+    task("hobbies-to-task", "pending", null, { custom_ruleset_id: hobbies.id, task_type: "custom" }),
+    task("hobbies-to-errands", "pending", null, { custom_ruleset_id: hobbies.id, task_type: "custom" }),
+  ];
+  let refreshCalls = 0;
+  const harnessState = useBatchEditTestHarness(selected, {
+    customBehaviorRulesets: [hobbies, errands],
+    refreshCustomBehaviorRulesets: async () => {
+      refreshCalls += 1;
+      return true;
+    },
+  });
+
+  await harnessState.actions.applyBatchTaskEdit(draft({ priority: "unchanged", taskType: errands.id }));
+
+  assert.deepEqual(harnessState.behaviorUpdates.map(({ taskId, values }) => ({ taskId, values })), [
+    { taskId: "task-to-hobbies", values: { custom_ruleset_id: errands.id, task_type: "custom" } },
+    { taskId: "hobbies-to-task", values: { custom_ruleset_id: errands.id, task_type: "custom" } },
+    { taskId: "hobbies-to-errands", values: { custom_ruleset_id: errands.id, task_type: "custom" } },
+  ]);
+  assert.equal(harnessState.progress?.processed, 3);
+  assert.equal(harnessState.progress?.updated, 3);
+  assert.equal(harnessState.progress?.failed, 0);
+  assert.equal(harnessState.progress?.remaining, 0);
+  assert.equal(harnessState.progress?.operationLabel, "Changing Task Type");
+  assert.equal(refreshCalls, 1);
+});
+
+test("Task Type batch supports named Custom to Task and preserves schedule and metadata", async () => {
+  const hobbies = ruleset("hobbies", "Hobbies");
+  let historyCalls = 0;
+  const selected = task("morph", "pending", "2026-09-05", {
+    custom_ruleset_id: hobbies.id,
+    notes: "Keep these notes",
+    repeat_frequency: "daily",
+    repeat_interval: 5,
+    tags: ["important"],
+    task_type: "custom",
+  });
+  const harnessState = useBatchEditTestHarness([selected], {
+    customBehaviorRulesets: [hobbies],
+    syncTaskHistoryEntry: async () => {
+      historyCalls += 1;
+      return true;
+    },
+  });
+
+  await harnessState.actions.applyBatchTaskEdit(draft({ priority: "unchanged", taskType: "task" }));
+
+  assert.deepEqual(harnessState.behaviorUpdates, [{
+    taskId: "morph",
+    values: { custom_ruleset_id: null, task_type: "task" },
+  }]);
+  const reconciled = harnessState.localTasks[0]!;
+  assert.equal(reconciled.task_type, "task");
+  assert.equal(reconciled.custom_ruleset_id, null);
+  assert.equal(reconciled.due_on, selected.due_on);
+  assert.equal(reconciled.repeat_frequency, "daily");
+  assert.equal(reconciled.repeat_interval, 5);
+  assert.equal(reconciled.notes, "Keep these notes");
+  assert.deepEqual(reconciled.tags, ["important"]);
+  assert.equal(historyCalls, 0);
+});
+
+test("Task Type batch preserves the Task-to-Custom transition and reaches 100 percent", async () => {
+  const hobbies = ruleset("hobbies", "Hobbies");
+  const selected = task("task-to-custom");
+  const harnessState = useBatchEditTestHarness([selected], { customBehaviorRulesets: [hobbies] });
+
+  await harnessState.actions.applyBatchTaskEdit(draft({ priority: "unchanged", taskType: hobbies.id }));
+
+  assert.deepEqual(harnessState.behaviorUpdates, [{
+    taskId: "task-to-custom",
+    values: { custom_ruleset_id: hobbies.id, task_type: "custom" },
+  }]);
+  assert.equal(harnessState.progress?.processed, 1);
+  assert.equal(harnessState.progress?.total, 1);
+  assert.equal(harnessState.progress?.remaining, 0);
+  assert.equal(harnessState.progress?.phase, "complete");
+});
+
+test("Task Type batch reports partial failures after deterministic prior successes", async () => {
+  const hobbies = ruleset("hobbies", "Hobbies");
+  const selected = [task("success"), task("failure")];
+  const harnessState = useBatchEditTestHarness(selected, {
+    customBehaviorRulesets: [hobbies],
+    updateTask: async (currentTask, values) => currentTask.id === "failure"
+      ? { data: null, error: { message: "Task write failed." } }
+      : { data: { ...currentTask, ...values }, error: null },
+  });
+
+  await harnessState.actions.applyBatchTaskEdit(draft({ priority: "unchanged", taskType: hobbies.id }));
+
+  assert.deepEqual(harnessState.events.filter((event) => event.startsWith("execute:")), ["execute:success", "execute:failure"]);
+  assert.equal(harnessState.progress?.processed, 2);
+  assert.equal(harnessState.progress?.remaining, 0);
+  assert.equal(harnessState.progress?.updated, 1);
+  assert.equal(harnessState.progress?.failed, 1);
+  assert.equal(harnessState.progress?.phase, "complete");
 });
 
 test("preflight failure leaves the modal open and does not initialize progress", async () => {
