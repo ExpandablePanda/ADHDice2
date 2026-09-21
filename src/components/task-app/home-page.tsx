@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -81,6 +81,8 @@ const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-whit
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
 const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
 const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
+const HOME_GEAR_LONG_PRESS_MS = 475;
+const HOME_GEAR_LONG_PRESS_MOVE_PX = 8;
 const HOME_REPEAT_OPTIONS: ReadonlyArray<{ label: string; value: TaskRepeatFrequency }> = [
   { label: "No Repeat", value: "none" },
   { label: "Daily", value: "daily" },
@@ -102,6 +104,14 @@ type HomeRowActionMenuView = "actions" | "move-day";
 type HomeRowActionMenuState = {
   taskId: string;
   view: HomeRowActionMenuView;
+};
+
+type HomeGearLongPressPointer = {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  taskId: string;
+  triggered: boolean;
 };
 
 type HomeRoutineChildDragState = {
@@ -368,6 +378,7 @@ export function HomePage({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
   const [rowActionMenu, setRowActionMenu] = useState<HomeRowActionMenuState | null>(null);
+  const [fastActionTaskId, setFastActionTaskId] = useState<string | null>(null);
   const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
@@ -376,11 +387,21 @@ export function HomePage({
   const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const rowActionMenuRef = useRef<HTMLDivElement | null>(null);
+  const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressPointerRef = useRef<HomeGearLongPressPointer | null>(null);
+  const suppressGearClickRef = useRef(false);
+  const suppressGearClickResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const routineSectionRenameCanceledRef = useRef(false);
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
   const routineChildDropTargetRef = useRef<HomeRoutineChildDropTarget | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+
+  useEffect(() => () => {
+    if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
+    if (suppressGearClickResetTimerRef.current) clearTimeout(suppressGearClickResetTimerRef.current);
+  }, []);
+
   const reconciledTaskIds = useMemo(
     () => reconcileHomeTodoTaskIds(state.taskIds, tasks),
     [state.taskIds, tasks],
@@ -455,6 +476,91 @@ export function HomePage({
     setIsSearchOpen(false);
     setRowActionMenu(null);
     setIsSettingsOpen(false);
+  }
+
+  function clearGearLongPressTimer() {
+    if (longPressTimerRef.current) {
+      clearTimeout(longPressTimerRef.current);
+      longPressTimerRef.current = null;
+    }
+  }
+
+  function scheduleGearClickSuppressionReset() {
+    if (suppressGearClickResetTimerRef.current) clearTimeout(suppressGearClickResetTimerRef.current);
+    suppressGearClickResetTimerRef.current = setTimeout(() => {
+      clearGearClickSuppression();
+    }, HOME_GEAR_LONG_PRESS_MS * 2);
+  }
+
+  function clearGearClickSuppression() {
+    suppressGearClickRef.current = false;
+    if (suppressGearClickResetTimerRef.current) {
+      clearTimeout(suppressGearClickResetTimerRef.current);
+      suppressGearClickResetTimerRef.current = null;
+    }
+  }
+
+  function beginGearLongPress(taskId: string, event: ReactPointerEvent<HTMLButtonElement>) {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    clearGearLongPressTimer();
+    const pending: HomeGearLongPressPointer = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      taskId,
+      triggered: false,
+    };
+    longPressPointerRef.current = pending;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    longPressTimerRef.current = setTimeout(() => {
+      if (longPressPointerRef.current !== pending) return;
+      pending.triggered = true;
+      setFastActionTaskId(taskId);
+      setRowActionMenu(null);
+      suppressGearClickRef.current = true;
+      scheduleGearClickSuppressionReset();
+      longPressTimerRef.current = null;
+    }, HOME_GEAR_LONG_PRESS_MS);
+  }
+
+  function cancelGearLongPress(event: ReactPointerEvent<HTMLButtonElement>, suppressClick = false) {
+    const pending = longPressPointerRef.current;
+    if (!pending || pending.pointerId !== event.pointerId) return;
+    clearGearLongPressTimer();
+    if (pending.triggered && suppressClick) {
+      suppressGearClickRef.current = true;
+      scheduleGearClickSuppressionReset();
+    }
+    longPressPointerRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function handleGearLongPressMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const pending = longPressPointerRef.current;
+    if (!pending || pending.pointerId !== event.pointerId || pending.triggered) return;
+    const movedX = event.clientX - pending.startX;
+    const movedY = event.clientY - pending.startY;
+    if (Math.hypot(movedX, movedY) > HOME_GEAR_LONG_PRESS_MOVE_PX) {
+      clearGearLongPressTimer();
+      longPressPointerRef.current = null;
+    }
+  }
+
+  function handleGearClick(taskId: string, event: ReactMouseEvent<HTMLButtonElement>) {
+    if (suppressGearClickRef.current) {
+      clearGearClickSuppression();
+      event.preventDefault();
+      event.stopPropagation();
+      return;
+    }
+    setRowActionMenu((current) => current?.taskId === taskId ? null : { taskId, view: "actions" });
+  }
+
+  function handleFastActionClickCapture(event: ReactMouseEvent<HTMLDivElement>) {
+    if (!suppressGearClickRef.current) return;
+    clearGearClickSuppression();
+    event.preventDefault();
+    event.stopPropagation();
   }
 
   function selectNewTaskRepeatFrequency(nextFrequency: TaskRepeatFrequency) {
@@ -823,6 +929,7 @@ export function HomePage({
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
+    const fastActionOpen = fastActionTaskId === task.id;
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
     const durableTaskIndex = state.taskIds.indexOf(task.id);
@@ -941,19 +1048,137 @@ export function HomePage({
         </div>
         {!isRoutineChild ? (
           <div className="relative flex shrink-0 items-center gap-1" ref={rowActionMenuOpen ? rowActionMenuRef : undefined}>
-            <AdhdIconButton
-              aria-expanded={rowActionMenuOpen}
-              aria-haspopup="menu"
-              aria-label={`${rowActionMenuOpen ? "Close" : "Open"} actions for ${task.title || "Untitled task"}`}
-              className={HOME_TODO_ACTION_CLASS}
-              iconClassName={HOME_TODO_ACTION_ICON_CLASS}
-              onClick={() => setRowActionMenu((current) => current?.taskId === task.id ? null : { taskId: task.id, view: "actions" })}
-              selected={rowActionMenuOpen}
-              size="sm"
-              title="Task actions"
-            >
-              <Settings2 aria-hidden="true" />
-            </AdhdIconButton>
+            {fastActionOpen ? (
+              <div className="flex shrink-0 items-center gap-0.5" onClickCapture={handleFastActionClickCapture}>
+                {!isRoutine ? (
+                  <AdhdIconButton
+                    aria-expanded={rowActionMenuOpen && rowActionMenuView === "move-day"}
+                    aria-haspopup="menu"
+                    aria-label={`Move ${task.title || "Untitled task"} to day`}
+                    className={HOME_TODO_ACTION_CLASS}
+                    iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                    onClick={() => setRowActionMenu({ taskId: task.id, view: "move-day" })}
+                    selected={rowActionMenuOpen && rowActionMenuView === "move-day"}
+                    size="sm"
+                    title="Move to day"
+                  >
+                    <CalendarDays aria-hidden="true" />
+                  </AdhdIconButton>
+                ) : null}
+                {!isRoutine && !isAtAbsoluteTop ? (
+                  <AdhdIconButton
+                    aria-label={`Move ${task.title || "Untitled task"} to Top`}
+                    className={HOME_TODO_ACTION_CLASS}
+                    iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                    onClick={() => {
+                      updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                      updateTaskDayOffset(task.id, 0);
+                      setRowActionMenu(null);
+                    }}
+                    size="sm"
+                    title="Move task to Top"
+                  >
+                    <ArrowUpToLine aria-hidden="true" />
+                  </AdhdIconButton>
+                ) : null}
+                {!isRoutine && !isAtAbsoluteBottom ? (
+                  <AdhdIconButton
+                    aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+                    className={HOME_TODO_ACTION_CLASS}
+                    iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                    onClick={() => {
+                      updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                      updateTaskDayOffset(task.id, 7);
+                      setRowActionMenu(null);
+                    }}
+                    size="sm"
+                    title="Move task to Bottom"
+                  >
+                    <ArrowDownToLine aria-hidden="true" />
+                  </AdhdIconButton>
+                ) : null}
+                {isRoutine && !isAtRoutineTop ? (
+                  <AdhdIconButton
+                    aria-label={`Move ${task.title || "Untitled task"} to Top`}
+                    className={HOME_TODO_ACTION_CLASS}
+                    iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                    onClick={() => {
+                      updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                      setRowActionMenu(null);
+                    }}
+                    size="sm"
+                    title="Move task to Top"
+                  >
+                    <ArrowUpToLine aria-hidden="true" />
+                  </AdhdIconButton>
+                ) : null}
+                {isRoutine && !isAtRoutineBottom ? (
+                  <AdhdIconButton
+                    aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
+                    className={HOME_TODO_ACTION_CLASS}
+                    iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                    onClick={() => {
+                      updateRoutineTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                      setRowActionMenu(null);
+                    }}
+                    size="sm"
+                    title="Move task to Bottom"
+                  >
+                    <ArrowDownToLine aria-hidden="true" />
+                  </AdhdIconButton>
+                ) : null}
+                <AdhdIconButton
+                  aria-label={`Remove ${task.title || "Untitled task"} from ${isRoutine ? "Routine" : "Home To-do"}`}
+                  className={HOME_TODO_ACTION_CLASS}
+                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                  onClick={() => {
+                    setFastActionTaskId(null);
+                    setRowActionMenu(null);
+                    if (isRoutine) {
+                      void onSetRoutineMembership(task.id, false);
+                    } else {
+                      updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
+                    }
+                  }}
+                  size="sm"
+                  title={isRoutine ? "Remove from Routine" : "Remove from Home To-do"}
+                  tone="danger"
+                >
+                  <Minus aria-hidden="true" />
+                </AdhdIconButton>
+                <AdhdIconButton
+                  aria-label={`Collapse actions for ${task.title || "Untitled task"}`}
+                  className={HOME_TODO_ACTION_CLASS}
+                  iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                  onClick={() => {
+                    setFastActionTaskId(null);
+                    setRowActionMenu(null);
+                  }}
+                  size="sm"
+                  title="Collapse actions"
+                >
+                  <ChevronDown aria-hidden="true" className="rotate-180" />
+                </AdhdIconButton>
+              </div>
+            ) : (
+              <AdhdIconButton
+                aria-expanded={rowActionMenuOpen}
+                aria-haspopup="menu"
+                aria-label={`${rowActionMenuOpen ? "Close" : "Open"} actions for ${task.title || "Untitled task"}`}
+                className={HOME_TODO_ACTION_CLASS}
+                iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                onClick={(event) => handleGearClick(task.id, event)}
+                onPointerCancel={(event) => cancelGearLongPress(event)}
+                onPointerDown={(event) => beginGearLongPress(task.id, event)}
+                onPointerMove={handleGearLongPressMove}
+                onPointerUp={(event) => cancelGearLongPress(event, true)}
+                selected={rowActionMenuOpen}
+                size="sm"
+                title="Task actions"
+              >
+                <Settings2 aria-hidden="true" />
+              </AdhdIconButton>
+            )}
             {rowActionMenuOpen ? (
               <AdhdDropdownPanel
                 aria-label={rowActionMenuView === "move-day" ? `Move ${task.title || "Untitled task"} to day` : `${task.title || "Untitled task"} actions`}

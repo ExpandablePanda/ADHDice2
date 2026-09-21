@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.93`.
+- Current working app version: `7.13.94`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-21 7.13.94 Home Gear Long-Press Fast Actions
+
+Home To-do and Routine root gear buttons now support a 475ms pointer long
+press that replaces the gear with persistent inline fast actions. Normal gear
+clicks still open the existing dropdown, and long-press activation suppresses
+the following click. To-do Move to day continues using the existing dropdown
+destination view; Routine child rows remain unchanged.
 
 ## 2026-09-21 7.13.93 Home Row Action Menus
 
