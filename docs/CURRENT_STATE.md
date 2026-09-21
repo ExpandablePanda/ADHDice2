@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.13.94`.
+- Current working app version: `7.13.95`.
 - Current release group: `7.13.x` Tasks + Custom Task Types.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-21 7.13.95 Home List-Level Fast Actions
+
+Home fast-action mode is now scoped to the active Home list rather than the
+Task that initiated the long press. Every eligible row in the active To-do or
+Routine view expands together; any chevron collapses the shared mode, and tab
+switching exits it. Existing pointer gesture and Home mutation behavior remain
+unchanged.
 
 ## 2026-09-21 7.13.94 Home Gear Long-Press Fast Actions
 

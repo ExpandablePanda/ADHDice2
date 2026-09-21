@@ -110,7 +110,6 @@ type HomeGearLongPressPointer = {
   pointerId: number;
   startX: number;
   startY: number;
-  taskId: string;
   triggered: boolean;
 };
 
@@ -378,7 +377,7 @@ export function HomePage({
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
   const [rowActionMenu, setRowActionMenu] = useState<HomeRowActionMenuState | null>(null);
-  const [fastActionTaskId, setFastActionTaskId] = useState<string | null>(null);
+  const [isFastActionMode, setIsFastActionMode] = useState(false);
   const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
@@ -475,6 +474,7 @@ export function HomePage({
     setActiveHomeTab(nextTab);
     setIsSearchOpen(false);
     setRowActionMenu(null);
+    setIsFastActionMode(false);
     setIsSettingsOpen(false);
   }
 
@@ -500,14 +500,13 @@ export function HomePage({
     }
   }
 
-  function beginGearLongPress(taskId: string, event: ReactPointerEvent<HTMLButtonElement>) {
+  function beginGearLongPress(event: ReactPointerEvent<HTMLButtonElement>) {
     if (event.pointerType === "mouse" && event.button !== 0) return;
     clearGearLongPressTimer();
     const pending: HomeGearLongPressPointer = {
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
-      taskId,
       triggered: false,
     };
     longPressPointerRef.current = pending;
@@ -515,7 +514,7 @@ export function HomePage({
     longPressTimerRef.current = setTimeout(() => {
       if (longPressPointerRef.current !== pending) return;
       pending.triggered = true;
-      setFastActionTaskId(taskId);
+      setIsFastActionMode(true);
       setRowActionMenu(null);
       suppressGearClickRef.current = true;
       scheduleGearClickSuppressionReset();
@@ -929,7 +928,7 @@ export function HomePage({
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
-    const fastActionOpen = fastActionTaskId === task.id;
+    const fastActionOpen = isFastActionMode;
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
     const durableTaskIndex = state.taskIds.indexOf(task.id);
@@ -1132,7 +1131,6 @@ export function HomePage({
                   className={HOME_TODO_ACTION_CLASS}
                   iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                   onClick={() => {
-                    setFastActionTaskId(null);
                     setRowActionMenu(null);
                     if (isRoutine) {
                       void onSetRoutineMembership(task.id, false);
@@ -1151,7 +1149,7 @@ export function HomePage({
                   className={HOME_TODO_ACTION_CLASS}
                   iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                   onClick={() => {
-                    setFastActionTaskId(null);
+                    setIsFastActionMode(false);
                     setRowActionMenu(null);
                   }}
                   size="sm"
@@ -1169,7 +1167,7 @@ export function HomePage({
                 iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                 onClick={(event) => handleGearClick(task.id, event)}
                 onPointerCancel={(event) => cancelGearLongPress(event)}
-                onPointerDown={(event) => beginGearLongPress(task.id, event)}
+                onPointerDown={beginGearLongPress}
                 onPointerMove={handleGearLongPressMove}
                 onPointerUp={(event) => cancelGearLongPress(event, true)}
                 selected={rowActionMenuOpen}

@@ -901,7 +901,7 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7"/);
   assert.match(source, /const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-\[12\.25px\] max-sm:!w-\[12\.25px\]"/);
   assert.equal((renderHomeTask.match(/<Settings2 aria-hidden="true" \/>/g) ?? []).length, 1);
-  assert.match(renderHomeTask, /onPointerDown=\{\(event\) => beginGearLongPress\(task\.id, event\)\}/);
+  assert.match(renderHomeTask, /onPointerDown=\{beginGearLongPress\}/);
   assert.match(sharedIconButton, /sm: "h-8 w-8"/);
   assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /text-\[#d65775\]/);
@@ -1027,12 +1027,13 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
 
   assert.match(source, /type HomeRowActionMenuView = "actions" \| "move-day"/);
   assert.match(source, /const \[rowActionMenu, setRowActionMenu\] = useState<HomeRowActionMenuState \| null>\(null\)/);
-  assert.match(source, /const \[fastActionTaskId, setFastActionTaskId\] = useState<string \| null>\(null\)/);
+  assert.match(source, /const \[isFastActionMode, setIsFastActionMode\] = useState\(false\)/);
+  assert.doesNotMatch(source, /fastActionTaskId|setFastActionTaskId/);
   assert.match(source, /const HOME_GEAR_LONG_PRESS_MS = 475/);
   assert.match(source, /const HOME_GEAR_LONG_PRESS_MOVE_PX = 8/);
   assert.match(gestureSource, /function beginGearLongPress/);
   assert.match(gestureSource, /setTimeout\(\(\) =>/);
-  assert.match(gestureSource, /setFastActionTaskId\(taskId\)/);
+  assert.match(gestureSource, /setIsFastActionMode\(true\)/);
   assert.match(gestureSource, /setRowActionMenu\(null\)/);
   assert.match(gestureSource, /suppressGearClickRef\.current = true/);
   assert.match(gestureSource, /function handleGearLongPressMove/);
@@ -1041,6 +1042,7 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   assert.match(gestureSource, /function handleFastActionClickCapture/);
   assert.match(gestureSource, /event\.preventDefault\(\)/);
   assert.match(renderSource, /onClick=\{\(event\) => handleGearClick\(task\.id, event\)\}/);
+  assert.match(renderSource, /const fastActionOpen = isFastActionMode/);
   assert.match(renderSource, /onPointerCancel=\{\(event\) => cancelGearLongPress\(event\)\}/);
   assert.match(renderSource, /onPointerMove=\{handleGearLongPressMove\}/);
   assert.match(renderSource, /onPointerUp=\{\(event\) => cancelGearLongPress\(event, true\)\}/);
@@ -1053,13 +1055,15 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   assert.match(fastActionSource, /<Minus aria-hidden="true" \/>/);
   assert.match(fastActionSource, /onClickCapture=\{handleFastActionClickCapture\}/);
   assert.match(fastActionSource, /aria-label=\{`Collapse actions for \$\{task\.title \|\| "Untitled task"\}`\}/);
-  assert.match(fastActionSource, /setFastActionTaskId\(null\)/);
+  assert.match(fastActionSource, /setIsFastActionMode\(false\)/);
   assert.match(fastActionSource, /onClick=\{\(\) => setRowActionMenu\(\{ taskId: task\.id, view: "move-day" \}\)\}/);
   assert.match(fastActionSource, /updateTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)\)/);
   assert.match(fastActionSource, /updateTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)\)/);
   assert.match(fastActionSource, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)\)/);
   assert.match(fastActionSource, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)\)/);
   assert.match(fastActionSource, /!isRoutine \?[\s\S]*CalendarDays/);
+  const fastActionControlsSource = fastActionSource.slice(0, fastActionSource.indexOf("aria-label={`Collapse actions"));
+  assert.doesNotMatch(fastActionControlsSource, /setIsFastActionMode\(false\)/);
   assert.match(actionsSource, /Move to day/);
   assert.match(actionsSource, /Move to Top/);
   assert.match(actionsSource, /Move to Bottom/);
@@ -1090,7 +1094,7 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   assert.match(source, /if \(!rowActionMenu\) return/);
   assert.match(source, /if \(event\.key === "Escape"\)/);
   assert.match(source, /if \(!rowActionMenuRef\.current\?\.contains\(event\.target as Node\)\) setRowActionMenu\(null\)/);
-  assert.match(source, /setActiveHomeTab\(nextTab\);[\s\S]*setRowActionMenu\(null\)/);
+  assert.match(source, /setActiveHomeTab\(nextTab\);[\s\S]*setRowActionMenu\(null\);[\s\S]*setIsFastActionMode\(false\)/);
   assert.doesNotMatch(source, /moveDayMenuTaskId|moveDayMenuRef/);
   assert.match(source, /!isRoutineChild \? \(/);
 });
