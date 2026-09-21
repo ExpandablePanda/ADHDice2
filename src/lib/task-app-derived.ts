@@ -494,7 +494,7 @@ export function buildChildTaskPreviewLookup(
           lastHandledDate: lastHandled?.dateKey ?? null,
           linkLabel: descendant.external_link_label ?? "",
           linkUrl: descendant.external_link_url ?? "",
-          missedStreak: historyStats.missedStreak,
+          missedStreak,
           notes: descendant.notes ?? "",
           parentTaskId: descendant.parent_task_id,
           pinnedAt: descendant.pinned_at ?? null,
