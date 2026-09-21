@@ -205,6 +205,8 @@ export type TaskStateEngineInput = {
   behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   /** Effective boundary of the behavior selection active on logicalDate. */
   currentBehaviorSelectionEffectiveFromLogicalDate?: string;
+  /** Effective boundary of the policy active within that behavior selection. */
+  currentBehaviorPolicyEffectiveFromLogicalDate?: string;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   now: string | Date;

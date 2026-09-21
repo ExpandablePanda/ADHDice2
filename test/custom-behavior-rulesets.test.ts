@@ -154,6 +154,67 @@ test("named ruleset earliest revision is the baseline and later revisions take e
   assert.equal(resolve("2026-09-25").rewards, "disabled");
 });
 
+test("current policy boundary follows a revision inside the active selection", () => {
+  const hobbiesRevisions = [
+    revision("hobbies-tracking", "2026-09-01"),
+    revision("hobbies-no-miss", "2026-10-01", { unresolvedOccurrence: "blank", missedStreakOnUnhandled: "ignore" }),
+  ];
+  const selections = {
+    [task.id]: [
+      { effectiveFromLogicalDate: "2026-09-01", taskType: "task" as const, customRulesetId: null },
+      { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
+    ],
+  };
+  const resolved = resolveTaskBehaviorPolicyForTask({
+    behaviorPolicyRevisions: { task: [revision("task-baseline", "2026-09-01")] },
+    behaviorSelectionsByTaskId: selections,
+    customRulesetId: "ruleset-practice",
+    logicalDate: "2026-10-01",
+    namedCustomRulesetBehaviorPolicyRevisions: { "ruleset-practice": hobbiesRevisions },
+    taskId: task.id,
+    taskType: "custom",
+  });
+
+  assert.equal(resolved.policy.unresolvedOccurrence, "blank");
+  assert.equal(resolved.currentBehaviorSelectionEffectiveFromLogicalDate, "2026-09-20");
+  assert.equal(resolved.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
+
+  const taskTypeRevision = resolveTaskBehaviorPolicyForTask({
+    behaviorPolicyRevisions: {
+      task: [
+        revision("task-baseline", "2026-09-01"),
+        revision("task-no-miss", "2026-10-01", { unresolvedOccurrence: "blank", missedStreakOnUnhandled: "ignore" }),
+      ],
+    },
+    behaviorSelectionsByTaskId: {
+      [task.id]: [{ effectiveFromLogicalDate: "2026-09-20", taskType: "task" as const, customRulesetId: null }],
+    },
+    logicalDate: "2026-10-01",
+    taskId: task.id,
+    taskType: "task",
+  });
+  assert.equal(taskTypeRevision.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
+
+  const switchedThenRevised = resolveTaskBehaviorPolicyForTask({
+    behaviorSelectionsByTaskId: {
+      [task.id]: [
+        { effectiveFromLogicalDate: "2026-09-01", taskType: "custom" as const, customRulesetId: "ruleset-routine" },
+        { effectiveFromLogicalDate: "2026-09-20", taskType: "custom" as const, customRulesetId: "ruleset-practice" },
+      ],
+    },
+    logicalDate: "2026-10-01",
+    namedCustomRulesetBehaviorPolicyRevisions: {
+      "ruleset-practice": hobbiesRevisions,
+      "ruleset-routine": [revision("routine-tracking", "2026-09-01")],
+    },
+    taskId: task.id,
+    taskType: "custom",
+    customRulesetId: "ruleset-practice",
+  });
+  assert.equal(switchedThenRevised.currentBehaviorSelectionEffectiveFromLogicalDate, "2026-09-20");
+  assert.equal(switchedThenRevised.currentBehaviorPolicyEffectiveFromLogicalDate, "2026-10-01");
+});
+
 test("the earliest Task ruleset assignment is the baseline and later assignments switch by logical date", () => {
   const assignments = [
     { effectiveFromLogicalDate: "2026-09-10", taskType: "custom" as const, customRulesetId: "ruleset-practice" },

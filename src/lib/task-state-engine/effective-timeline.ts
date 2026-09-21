@@ -36,6 +36,7 @@ export type BuildTaskEffectiveTimelineInput = {
   behaviorPolicy?: TaskBehaviorPolicy;
   behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
   currentBehaviorSelectionEffectiveFromLogicalDate?: string;
+  currentBehaviorPolicyEffectiveFromLogicalDate?: string;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
   logicalDate: string;
@@ -667,7 +668,10 @@ export function buildTaskEffectiveTimeline(
     effectiveDays,
     input.logicalDate,
     behaviorPolicy.unresolvedOccurrence === "blank"
-      ? { currentMissedStreakStartLogicalDate: input.currentBehaviorSelectionEffectiveFromLogicalDate }
+      ? {
+          currentMissedStreakStartLogicalDate: input.currentBehaviorPolicyEffectiveFromLogicalDate
+            ?? input.currentBehaviorSelectionEffectiveFromLogicalDate,
+        }
       : {},
   );
 

@@ -98,7 +98,7 @@ export function buildTaskHistoryStreakSummary(
       resolvedTimelineDays,
       todayDateKey,
       behaviorResolution.policy.unresolvedOccurrence === "blank"
-        ? { currentMissedStreakStartLogicalDate: behaviorResolution.currentBehaviorSelectionEffectiveFromLogicalDate ?? undefined }
+        ? { currentMissedStreakStartLogicalDate: behaviorResolution.currentBehaviorPolicyEffectiveFromLogicalDate ?? undefined }
         : {},
     )
     : { currentCompletedStreak: 0, currentMissedStreak: 0 };

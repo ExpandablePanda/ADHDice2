@@ -781,7 +781,7 @@ export function TaskHistoryModal({
       resolvedTimelineDays,
       today,
       behaviorResolution.policy.unresolvedOccurrence === "blank"
-        ? { currentMissedStreakStartLogicalDate: behaviorResolution.currentBehaviorSelectionEffectiveFromLogicalDate ?? undefined }
+        ? { currentMissedStreakStartLogicalDate: behaviorResolution.currentBehaviorPolicyEffectiveFromLogicalDate ?? undefined }
         : {},
     )
     : null;

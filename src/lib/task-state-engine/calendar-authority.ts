@@ -161,6 +161,7 @@ export function resolveTaskHistoryCalendarRead(input: TaskHistoryCalendarReadInp
       behaviorPolicy: engineInput.behaviorPolicy,
       behaviorPolicyRevisions: engineInput.behaviorPolicyRevisions,
       currentBehaviorSelectionEffectiveFromLogicalDate: engineInput.currentBehaviorSelectionEffectiveFromLogicalDate,
+      currentBehaviorPolicyEffectiveFromLogicalDate: engineInput.currentBehaviorPolicyEffectiveFromLogicalDate,
       task: engineInput.task,
       history: engineInput.history,
       calendarOverrides: input.calendarOverrides,

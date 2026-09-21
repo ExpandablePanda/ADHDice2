@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.37`.
+- Current working app version: `7.14.38`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-20 7.14.38 Use the Effective Behavior Policy Boundary for Current Missed Streaks
+
+Current Missed streak reset now follows the effective policy revision inside the
+active Task behavior selection. TaskType and named Custom revisions can reset
+current no-miss projections at their own effective logical date, while explicit
+History facts, historical policy interpretation, Calendar facts, and positive
+streaks remain unchanged. Browser QA remains Andrew's responsibility.
 
 ## 2026-09-20 7.14.37 Correct Current Missed Projections Across Behavior Boundaries
 

@@ -242,6 +242,9 @@ function buildTaskStateEngineInput(
     ...(policyResolution.currentBehaviorSelectionEffectiveFromLogicalDate
       ? { currentBehaviorSelectionEffectiveFromLogicalDate: policyResolution.currentBehaviorSelectionEffectiveFromLogicalDate }
       : {}),
+    ...(policyResolution.currentBehaviorPolicyEffectiveFromLogicalDate
+      ? { currentBehaviorPolicyEffectiveFromLogicalDate: policyResolution.currentBehaviorPolicyEffectiveFromLogicalDate }
+      : {}),
     task: {
       id: task.id,
       lifecycle,
