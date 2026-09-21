@@ -134,11 +134,24 @@ test("engine rollover waits for loaded Tasks and History, then reads current inp
   const end = source.indexOf('const visibleTaskSubtasks', start);
   const lifecycle = source.slice(start, end);
   assert.match(lifecycle, /const inputs = rolloverInputsRef\.current/);
-  assert.match(lifecycle, /if \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded\) return/);
+  assert.match(lifecycle, /if \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded \|\| !inputs\.behaviorAuthorityReady \|\| inputs\.behaviorAuthorityLoading\) return/);
+  assert.match(lifecycle, /behaviorProfiles: inputs\.behaviorProfiles/);
+  assert.match(lifecycle, /behaviorSelectionsByTaskId: inputs\.behaviorSelectionsByTaskId/);
   assert.match(lifecycle, /history: rolloverHistory[\s\S]*tasks: rolloverTasks/);
-  assert.match(lifecycle, /\}, \[isTaskHistoryLoaded, runDayReset, session\?\.user\?\.id, supabase\]\);/);
+  assert.match(lifecycle, /\}, \[isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session\?\.user\?\.id, supabase\]\);/);
   assert.match(lifecycle, /plannedTaskPatches = mutationCandidates\.length/);
   assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
+});
+
+test("unready rollover returns before coordinator ownership and processed-day persistence", () => {
+  const source = readFileSync("src/components/task-app.tsx", "utf8");
+  const start = source.indexOf("const runDayReset = useCallback");
+  const coordinatorIndex = source.indexOf("taskRolloverCoordinator.run", start);
+  const gate = source.slice(start, coordinatorIndex);
+  assert.match(gate, /!inputs\.behaviorAuthorityReady \|\| inputs\.behaviorAuthorityLoading/);
+  assert.doesNotMatch(gate, /persistProcessedTaskRolloverKey/);
+  const settlement = source.slice(source.indexOf("onOwnedSettled", coordinatorIndex), source.indexOf("await reconcileRolloverWorkspace();", coordinatorIndex));
+  assert.match(settlement, /if \(!error[\s\S]*persistProcessedTaskRolloverKey/);
 });
 
 test("canonical rollover commands are mutation-scoped and use plan-specific replay identities", () => {

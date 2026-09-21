@@ -57,6 +57,7 @@ export function useTaskTypeBehaviorProfiles(
   const [customRulesetBehaviorPolicyRevisions, setCustomRulesetBehaviorPolicyRevisions] = useState<Record<string, readonly TaskBehaviorPolicyRevision[]>>({});
   const [behaviorSelectionsByTaskId, setBehaviorSelectionsByTaskId] = useState<Record<string, readonly TaskBehaviorSelection[]>>({});
   const [isLoading, setIsLoading] = useState(() => Boolean(userId));
+  const [isBehaviorAuthorityReady, setIsBehaviorAuthorityReady] = useState(false);
   const behaviorSelectionStateRef = useRef<CustomBehaviorRulesetState>({
     data: [],
     revisions: {},
@@ -136,6 +137,9 @@ export function useTaskTypeBehaviorProfiles(
     let cancelled = false;
     const loadGeneration = customRulesetLoadGenerationRef.current + 1;
     customRulesetLoadGenerationRef.current = loadGeneration;
+    // A new auth owner must not inherit the previous user's authority readiness.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the user-scoped authority latch on session ownership changes.
+    setIsBehaviorAuthorityReady(false);
     if (!client || !userId) {
       // The hook must clear user-scoped cached profiles when auth leaves the workspace.
       // This is an intentional synchronization with the external auth owner.
@@ -165,6 +169,19 @@ export function useTaskTypeBehaviorProfiles(
       if (!customRulesetError || isMissingCustomBehaviorRulesetsTableError(customRulesetError)) {
         publishCustomRulesetState(customRulesetsResult);
       }
+      setIsLoading(false);
+      if (
+        (!result.error || isMissingTaskTypeBehaviorProfilesTableError(result.error))
+        && (!customRulesetError || isMissingCustomBehaviorRulesetsTableError(customRulesetError))
+      ) {
+        setIsBehaviorAuthorityReady(true);
+      }
+    }).catch((error) => {
+      if (cancelled || customRulesetLoadGenerationRef.current !== loadGeneration) return;
+      setMessage({
+        tone: "warn",
+        text: formatCustomTaskTypeMessage(error instanceof Error ? error.message : null, "Could not load Task behavior settings."),
+      });
       setIsLoading(false);
     });
     return () => { cancelled = true; };
@@ -366,6 +383,7 @@ export function useTaskTypeBehaviorProfiles(
 
   return {
     isLoading,
+    isBehaviorAuthorityReady,
     profileRevisions,
     profiles,
     customBehaviorRulesets,

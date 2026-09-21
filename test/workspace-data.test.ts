@@ -172,8 +172,21 @@ test("workspace ownership effect does not depend on active page navigation", asy
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
   assert.match(source, /activePageRef\.current = activePage/);
-  assert.match(source, /\}, \[currentUser\?\.id, supabase, suppressCategoryReload\]\);/);
+  assert.match(source, /\}, \[currentUser\?\.id, behaviorSelectionStateRef, supabase, suppressCategoryReload\]\);/);
   assert.doesNotMatch(source, /\}, \[activePage, currentUser\?\.id/);
+});
+
+test("behavior authority readiness gates streak publication without replacing a committed summary", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+  const summaryStart = source.indexOf("async function loadTaskHistoryStreakSummaries");
+  const summaryEnd = source.indexOf("async function reloadTaskHistoryStreakSummaryForTask", summaryStart);
+  const summaryLoader = source.slice(summaryStart, summaryEnd);
+
+  assert.match(source, /behaviorAuthorityReady: boolean/);
+  assert.match(source, /behaviorAuthorityLoading: boolean/);
+  assert.match(summaryLoader, /if \(!canApplyBehaviorAuthorityProjection\(\)\) \{[\s\S]*return false;/);
+  assert.match(summaryLoader, /&& canApplyBehaviorAuthorityProjection\(\)/);
+  assert.match(summaryLoader, /setTaskHistoryStreakSummaries\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextSummaries\.summaries\)\)/);
 });
 
 test("initial boot guards lifecycle refreshes and only persisted pageshow is eligible", async () => {

@@ -73,6 +73,8 @@ type Message = {
 
 type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   activePage: AppPage;
+  behaviorAuthorityReady: boolean;
+  behaviorAuthorityLoading: boolean;
   behaviorProfiles: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorProfiles"]>;
   behaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"]>;
   namedCustomRulesetBehaviorPolicyRevisions: NonNullable<TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"]>;
@@ -368,6 +370,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const retryTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
   const fetchTaskHistoryForRolloverRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
   const tasksRef = useRef(tasks);
+  const behaviorAuthorityOwnerUserIdRef = useRef<string | null>(currentUser?.id ?? null);
+  const behaviorAuthorityReadyRef = useRef(behaviorAuthorityReady);
+  const behaviorAuthorityLoadingRef = useRef(behaviorAuthorityLoading);
   const behaviorProfilesRef = useRef(behaviorProfiles);
   const behaviorPolicyRevisionsRef = useRef(behaviorPolicyRevisions);
   const namedCustomRulesetBehaviorPolicyRevisionsRef = useRef(namedCustomRulesetBehaviorPolicyRevisions);
@@ -442,6 +447,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   }, [behaviorProfiles]);
 
   useEffect(() => {
+    behaviorAuthorityReadyRef.current = behaviorAuthorityReady;
+    behaviorAuthorityLoadingRef.current = behaviorAuthorityLoading;
+    // These refs feed long-lived workspace callbacks; they intentionally mirror the current owner inputs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [behaviorAuthorityLoading, behaviorAuthorityReady]);
+
+  useEffect(() => {
     behaviorPolicyRevisionsRef.current = behaviorPolicyRevisions;
   }, [behaviorPolicyRevisions]);
 
@@ -458,6 +470,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     workspaceGenerationRef.current = workspaceGeneration;
 
     if (!supabase || !currentUser) {
+      behaviorAuthorityOwnerUserIdRef.current = null;
+      behaviorAuthorityReadyRef.current = false;
+      behaviorAuthorityLoadingRef.current = false;
       setActiveProfileUserId(null);
       workspaceStartupRequestRegistry.invalidate(startupRequestUserIdRef.current);
       startupRequestUserIdRef.current = null;
@@ -509,6 +524,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     const client = supabase;
     const user = currentUser;
     const userId = user.id;
+    if (behaviorAuthorityOwnerUserIdRef.current !== userId) {
+      behaviorAuthorityOwnerUserIdRef.current = userId;
+      behaviorAuthorityReadyRef.current = false;
+      behaviorAuthorityLoadingRef.current = true;
+    }
     clearTaskHistoryTaskCache();
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
     fullTaskHistoryRowsRef.current = [];
@@ -923,6 +943,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
       }
+      if (!canApplyBehaviorAuthorityProjection()) {
+        return false;
+      }
 
       if (options.supersede) {
         taskHistoryStreakSummaryCalculationTokenRef.current += 1;
@@ -946,6 +969,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const canApplySummaryCalculation = () => (
         isActive
         && canApplyCoreWorkspaceResult()
+        && canApplyBehaviorAuthorityProjection()
         && taskHistoryStreakSummaryCalculationTokenRef.current === calculationToken
       );
       const summaryLoadPromise = Promise.resolve().then(async () => {
@@ -1020,6 +1044,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
       }
+      if (!canApplyBehaviorAuthorityProjection()) {
+        return false;
+      }
       const existingReload = taskHistoryStreakSummaryTaskReloadsRef.current.get(taskId);
       if (existingReload?.generation === workspaceGeneration) return await existingReload.promise;
       if (existingReload) taskHistoryStreakSummaryTaskReloadsRef.current.delete(taskId);
@@ -1034,7 +1061,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           if (summaryLoad?.generation === workspaceGeneration) {
             await summaryLoad.promise;
           }
-          if (!isActive || !canApplyCoreWorkspaceResult()) {
+          if (!isActive || !canApplyCoreWorkspaceResult() || !canApplyBehaviorAuthorityProjection()) {
             return false;
           }
 
@@ -1044,7 +1071,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             loadActiveCalendarOverrides(taskId),
             loadManualActionCommandOperations(taskId),
           ]);
-          if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult()) return false;
+          if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult() || !canApplyBehaviorAuthorityProjection()) return false;
           const summaryContext = {
             behaviorProfiles: behaviorProfilesRef.current,
             behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
@@ -1074,7 +1101,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
           if (hasPrivateTaskHistory) {
             const didReloadPrivateHistory = await loadTaskHistoryForTask(taskId, { force: true, silent: true });
-            if (!didReloadPrivateHistory) return false;
+            if (!didReloadPrivateHistory || !canApplyBehaviorAuthorityProjection()) return false;
             const taskHistory = taskHistoryByTaskIdRef.current[taskId] ?? [];
             if (hasLoadedFullTaskHistoryRef.current) {
               fullTaskHistoryRowsRef.current = deduplicateTaskHistoryByLogicalDate([
@@ -1091,7 +1118,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             return true;
           }
           const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery(taskId).range(from, to));
-          if (result.error || !isActive || !canApplyCoreWorkspaceResult()) return false;
+          if (result.error || !isActive || !canApplyCoreWorkspaceResult() || !canApplyBehaviorAuthorityProjection()) return false;
 
           const streakRows: TaskHistoryStreakEntry[] = mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]);
           const nextSummary = buildTaskHistoryStreakSummary(task, streakRows, todayKeyRef.current, summaryContext);
@@ -1139,6 +1166,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         liveWorkspaceUserIdRef.current === userId
         && workspaceGenerationRef.current === workspaceGeneration
       );
+    }
+
+    function canApplyBehaviorAuthorityProjection() {
+      return behaviorAuthorityReadyRef.current && !behaviorAuthorityLoadingRef.current;
     }
 
     async function loadCoreWorkspaceData({ silent = false, source = "refresh" }: { silent?: boolean; source?: string } = {}) {

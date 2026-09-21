@@ -1844,6 +1844,7 @@ export function TaskApp() {
   );
   const {
     isLoading: isTaskTypeBehaviorProfilesLoading,
+    isBehaviorAuthorityReady,
     profileRevisions: taskTypeBehaviorProfileRevisions,
     profiles: taskTypeBehaviorProfiles,
     customBehaviorRulesets,
@@ -1897,6 +1898,8 @@ export function TaskApp() {
     workspaceGenerationRef,
   } = useWorkspaceData({
     activePage,
+    behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    behaviorAuthorityReady: isBehaviorAuthorityReady,
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
@@ -2017,16 +2020,24 @@ export function TaskApp() {
     [behaviorSelectionsByTaskId, namedCustomRulesetProjectionSemantics, taskTypeBehaviorProjectionSemantics],
   );
   const refreshedBehaviorProfilesRevisionRef = useRef<string | null>(null);
+  const behaviorAuthorityProjectionReadyRef = useRef(false);
   useEffect(() => {
-    if (!isTaskHistoryLoaded || tasks.length === 0 || refreshedBehaviorProfilesRevisionRef.current === taskTypeBehaviorProfilesRevision) return;
-    const hasPreviouslyObservedPolicy = refreshedBehaviorProfilesRevisionRef.current !== null;
+    const isBehaviorAuthorityProjectionReady = isBehaviorAuthorityReady && !isTaskTypeBehaviorProfilesLoading;
+    if (!isBehaviorAuthorityProjectionReady) {
+      behaviorAuthorityProjectionReadyRef.current = false;
+      return;
+    }
+    if (!isTaskHistoryLoaded || tasks.length === 0) return;
+    const authorityWasPreviouslyReady = behaviorAuthorityProjectionReadyRef.current;
+    const behaviorPolicyChanged = refreshedBehaviorProfilesRevisionRef.current !== taskTypeBehaviorProfilesRevision;
+    behaviorAuthorityProjectionReadyRef.current = true;
+    if (authorityWasPreviouslyReady && !behaviorPolicyChanged) return;
     refreshedBehaviorProfilesRevisionRef.current = taskTypeBehaviorProfilesRevision;
-    if (!hasPreviouslyObservedPolicy) return;
     if (isWorkspacePerformanceDiagnosticsEnabled()) {
       console.info(`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=${tasks.length}`);
     }
     void refreshTaskHistoryStreakSummaries(tasks, { supersede: true });
-  }, [isTaskHistoryLoaded, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
+  }, [isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
@@ -2477,15 +2488,35 @@ export function TaskApp() {
   });
   const taskStateHistory = stabilizeTaskStateHistory(taskStateHistoryContentRevision, nextTaskStateHistory);
   const rolloverInputsRef = useRef({
+    behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    behaviorAuthorityReady: isBehaviorAuthorityReady,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    behaviorSelectionsByTaskId,
     dayStartTime,
     isTaskHistoryLoaded,
     isTasksReady: !isWorkspaceLoading,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     taskHistory: taskStateHistory,
     tasks,
     todayKey,
     userTimeZone,
   });
-  rolloverInputsRef.current = { dayStartTime, isTaskHistoryLoaded, isTasksReady: !isWorkspaceLoading, taskHistory: taskStateHistory, tasks, todayKey, userTimeZone };
+  rolloverInputsRef.current = {
+    behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    behaviorAuthorityReady: isBehaviorAuthorityReady,
+    behaviorProfiles: taskTypeBehaviorProfiles,
+    behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
+    behaviorSelectionsByTaskId,
+    dayStartTime,
+    isTaskHistoryLoaded,
+    isTasksReady: !isWorkspaceLoading,
+    namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
+    taskHistory: taskStateHistory,
+    tasks,
+    todayKey,
+    userTimeZone,
+  };
   const wasDocumentVisibleRef = useRef(typeof document === "undefined" || document.visibilityState === "visible");
 
   useEffect(() => {
@@ -2493,13 +2524,13 @@ export function TaskApp() {
   }, [session?.user?.id, supabase]);
 
   const runDayReset = useCallback(async (source: "initial_load" | "visibility" | "pageshow" | "timer") => {
-    if (source !== "initial_load") await prepareTaskMutation();
     const inputs = rolloverInputsRef.current;
     const client = supabase;
     const userId = session?.user?.id;
     if (!client || !userId) return;
-    // The canonical plan is authoritative only after both independently loaded inputs exist.
-    if (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded) return;
+    // The canonical plan is authoritative only after every independent input exists.
+    if (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded || !inputs.behaviorAuthorityReady || inputs.behaviorAuthorityLoading) return;
+    if (source !== "initial_load") await prepareTaskMutation();
     const rolloverSettingsKey = createTaskRolloverSettingsKey({
       logicalDayKey: inputs.todayKey,
       rolloverTime: inputs.dayStartTime,
@@ -2540,10 +2571,10 @@ export function TaskApp() {
         ]);
         const plan = createEngineRolloverPlan({
             allowCanonicalAutomaticMissed: true,
-            behaviorProfiles: taskTypeBehaviorProfiles,
-            behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
-            namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
-            behaviorSelectionsByTaskId,
+            behaviorProfiles: inputs.behaviorProfiles,
+            behaviorPolicyRevisions: inputs.behaviorPolicyRevisions,
+            namedCustomRulesetBehaviorPolicyRevisions: inputs.namedCustomRulesetBehaviorPolicyRevisions,
+            behaviorSelectionsByTaskId: inputs.behaviorSelectionsByTaskId,
             history: rolloverHistory,
             includeDiagnostics: diagnosticsEnabled,
             now: new Date(),
@@ -2645,7 +2676,7 @@ export function TaskApp() {
       window.removeEventListener("pageshow", handlePageShow);
       window.clearInterval(intervalId);
     };
-  }, [isTaskHistoryLoaded, runDayReset, session?.user?.id, supabase]);
+  }, [isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session?.user?.id, supabase]);
   const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(tasks), [tasks]);
   const hasStepsByTaskId = useMemo(
     () => {
@@ -2940,6 +2971,13 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
     [isTaskHistoryLoaded],
   );
+  const taskActiveStatusAuthorityReadinessRevision = useMemo(
+    () => createProjectionDomainRevision("task-status-authority-readiness", {
+      isBehaviorAuthorityReady,
+      isBehaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    }),
+    [isBehaviorAuthorityReady, isTaskTypeBehaviorProfilesLoading],
+  );
   const taskActiveStatusSettingsRevision = useMemo(
     () => createProjectionDomainRevision("task-status-settings", {
       behavior: {
@@ -2973,6 +3011,7 @@ export function TaskApp() {
     taskActiveStatusSettingsRevision,
     taskActiveStatusAssignmentsRevision,
     taskHistoryReadinessRevision,
+    taskActiveStatusAuthorityReadinessRevision,
   );
   const [activeStatusRead, setActiveStatusRead] = useState<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
   const activeStatusCalculationTokenRef = useRef(0);
@@ -2988,6 +3027,11 @@ export function TaskApp() {
       committedActiveStatusBehaviorRevisionRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped projection when History is unavailable.
       setActiveStatusRead(null);
+      return () => {
+        if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+      };
+    }
+    if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
@@ -3036,7 +3080,7 @@ export function TaskApp() {
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStatusInputRevision, isTaskHistoryLoaded, projectionCache, taskActiveStatusBehaviorRevision]);
+  }, [activeStatusInputRevision, isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, projectionCache, taskActiveStatusBehaviorRevision]);
   const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
   const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
   const activeStatusRevision = useMemo(
@@ -4919,7 +4963,7 @@ export function TaskApp() {
   }, [runningTaskTimers.length]);
 
   const shouldDeferPageRender = isRestoringPersistedUiState;
-  const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
+  const isAuthenticatedAppBootReady = isHudAppearanceReady && isBehaviorAuthorityReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null

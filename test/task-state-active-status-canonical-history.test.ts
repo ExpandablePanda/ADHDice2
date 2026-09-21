@@ -265,8 +265,11 @@ test("TaskApp keeps persisted Task status authoritative until full History is re
   assert.match(taskAppSource, /const persistedTaskDisplayStatusByTaskId = useMemo\([\s\S]*tasks\.map\(\(task\) => \[task\.id, task\.status\]\)/);
   assert.match(taskAppSource, /const taskDisplayStatusByTaskId = activeStatusRead\?\.statusesByTaskId \?\? persistedTaskDisplayStatusByTaskId/);
   assert.match(taskAppSource, /const taskHistoryReadinessRevision = useMemo\([\s\S]*createProjectionDomainRevision\("task-history-readiness", isTaskHistoryLoaded\)/);
+  assert.match(taskAppSource, /taskActiveStatusAuthorityReadinessRevision/);
   assert.match(taskAppSource, /taskHistoryReadinessRevision,[\s\S]*activeStatusRead/);
   assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\)/);
+  assert.match(activeStatusRead, /if \(!isBehaviorAuthorityReady \|\| isTaskTypeBehaviorProfilesLoading\)/);
+  assert.match(activeStatusRead, /if \(activeStatusCalculationTokenRef\.current === calculationToken\) activeStatusCalculationTokenRef\.current \+= 1/);
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementally\(/);
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementallyChunked\(/);
   assert.match(activeStatusRead, /mode=global-chunked tasks=\$\{tasks\.length\} chunks=\$\{result\.chunks\}/);
