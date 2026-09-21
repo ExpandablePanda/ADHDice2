@@ -80,6 +80,8 @@ export type TaskContentFolderProjectionOptions = {
   includeEmptyFolders?: boolean;
   /** Folder IDs that are empty across the broad Task universe, not just the visible result. */
   persistentEmptyFolderIds?: ReadonlySet<string>;
+  /** Folder IDs whose own path directly matched the active Task search. */
+  matchedFolderIds?: ReadonlySet<string>;
 };
 
 export type TaskContentFolderVisibilityInput = {
@@ -96,10 +98,10 @@ export function shouldIncludeEmptyTaskContentFolders({
   hasSearchActive = false,
   hasStructuredFiltersActive = false,
 }: TaskContentFolderVisibilityInput) {
+  if (hasSearchActive) return false;
   if (currentListId === "all") return true;
 
   return !hasHierarchyFiltersActive
-    && !hasSearchActive
     && !hasStructuredFiltersActive;
 }
 
@@ -191,6 +193,15 @@ export function getTaskContentFolderPathLabel(
   folderId: string,
 ) {
   return getTaskContentFolderPath(folders, folderId).join(" / ");
+}
+
+export function getTaskContentFolderSearchDocument(
+  folders: readonly TaskContentFolderRow[],
+  folderId: string,
+) {
+  const path = getTaskContentFolderPath(folders, folderId);
+  const pathLabel = path.join(" / ");
+  return [pathLabel, path.join(" "), ...path].join("\n").toLowerCase();
 }
 
 export function getTaskContentFolderMoveOptions(
@@ -367,6 +378,7 @@ export function buildTaskContentFolderPresentation<TTask extends FolderProjectio
 ): TaskContentFolderPresentationBlock<TTask>[] {
   const includeEmptyFolders = options.includeEmptyFolders ?? false;
   const persistentEmptyFolderIds = options.persistentEmptyFolderIds;
+  const matchedFolderIds = options.matchedFolderIds;
   const folderById = new Map(folders.map((folder) => [folder.id, folder]));
   const visibleTaskIndex = new Map(visibleTasks.map((task, index) => [task.id, index]));
   const directTasksByFolder = new Map<string, TTask[]>();
@@ -416,7 +428,8 @@ export function buildTaskContentFolderPresentation<TTask extends FolderProjectio
       .filter((index): index is number => typeof index === "number");
     const keepFolder = descendantTaskIds.length > 0
       || childNodes.length > 0
-      || (includeEmptyFolders && (!persistentEmptyFolderIds || persistentEmptyFolderIds.has(folder.id)));
+      || (includeEmptyFolders && (!persistentEmptyFolderIds || persistentEmptyFolderIds.has(folder.id)))
+      || (matchedFolderIds?.has(folder.id) === true && persistentEmptyFolderIds?.has(folder.id) === true);
     if (!keepFolder) return null;
     const firstVisibleDescendantIndex = descendantIndexes.length > 0 ? Math.min(...descendantIndexes) : null;
     return {

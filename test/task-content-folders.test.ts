@@ -174,9 +174,15 @@ test("the All list keeps empty Folder structure visible despite stale hierarchy 
   assert.equal(shouldIncludeEmptyTaskContentFolders({
     currentListId: "all",
     hasHierarchyFiltersActive: true,
-    hasSearchActive: true,
+    hasSearchActive: false,
     hasStructuredFiltersActive: true,
   }), true);
+  assert.equal(shouldIncludeEmptyTaskContentFolders({
+    currentListId: "all",
+    hasHierarchyFiltersActive: true,
+    hasSearchActive: true,
+    hasStructuredFiltersActive: true,
+  }), false);
 });
 
 test("search-selection result IDs do not falsely gate empty Folder visibility", () => {
@@ -207,6 +213,20 @@ test("search-selection result IDs do not falsely gate empty Folder visibility", 
       persistentEmptyFolderIds,
     }).some((block) => block.kind === "folder" && block.folder.id === "folder-b"),
     false,
+  );
+});
+
+test("active Folder search keeps a directly matched empty Folder without keeping unrelated empties", () => {
+  const persistentEmptyFolderIds = getActuallyEmptyTaskContentFolderIds([], folders);
+  const presentation = buildTaskContentFolderPresentation([], folders, {
+    includeEmptyFolders: shouldIncludeEmptyTaskContentFolders({ currentListId: "all", hasSearchActive: true }),
+    matchedFolderIds: new Set(["folder-a"]),
+    persistentEmptyFolderIds,
+  });
+
+  assert.deepEqual(
+    presentation.filter((block) => block.kind === "folder").map((block) => block.folder.id),
+    ["folder-a"],
   );
 });
 

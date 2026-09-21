@@ -1309,6 +1309,7 @@ type TaskManagementTableV2Props = {
   highlightedRevealShouldFocus?: boolean;
   highlightedScrollToken?: number | null;
   highlightedTaskIds?: string[];
+  matchedTaskContentFolderIds?: ReadonlySet<string>;
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
   searchMatchedChildTaskIds?: string[];
@@ -2702,6 +2703,7 @@ export function TaskManagementTableV2({
   highlightedRevealShouldFocus,
   highlightedScrollToken = null,
   highlightedTaskIds = [],
+  matchedTaskContentFolderIds = new Set<string>(),
   onVisibleSearchMatchIdsChange,
   searchMatchedStepParentTaskIds = [],
   searchMatchedChildTaskIds = [],
@@ -3542,8 +3544,9 @@ export function TaskManagementTableV2({
           || structuredFilters.task_type.length > 0,
       }),
       persistentEmptyFolderIds: actuallyEmptyTaskContentFolderIds,
+      matchedFolderIds: matchedTaskContentFolderIds,
     }),
-    [actuallyEmptyTaskContentFolderIds, currentListId, renderedTasks, searchActive, statusFilterActive, structuredFilters, taskContentFolders, textFilters],
+    [actuallyEmptyTaskContentFolderIds, currentListId, matchedTaskContentFolderIds, renderedTasks, searchActive, statusFilterActive, structuredFilters, taskContentFolders, textFilters],
   );
   const folderMemberSummaryById = useMemo(() => {
     const memberFacts = allFolderMemberRows.map((task) => ({

@@ -27,6 +27,7 @@ import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOp
 import { getTaskRepeatCategory } from "@/lib/task-repeat";
 import { isTaskInRecentTrash } from "@/lib/task-trash";
 import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
+import { getTaskContentFolderSearchDocument, type TaskContentFolderRow } from "@/lib/task-content-folders";
 import { todayISO } from "@/lib/utils";
 import { matchesTaskTypeSelections } from "@/lib/task-type";
 
@@ -167,6 +168,7 @@ export type StableCanonicalTaskIndex = {
   entityFactsById: Map<string, CanonicalTaskEntityFact>;
   focusedTaskIds: string[];
   listNameById: ReadonlyMap<string, string>;
+  taskContentFolderSearchDocumentsById: ReadonlyMap<string, string>;
   taskById: ReadonlyMap<string, Task>;
   taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
   todayDateKey: string;
@@ -198,6 +200,7 @@ export type CanonicalTaskEntityProjection = {
   contextAncestorIds: Set<string>;
   contextRootParentIds: Set<string>;
   directSearchMatchedEntityIds: Set<string>;
+  directSearchMatchedTaskContentFolderIds: Set<string>;
   entityFactsById: Map<string, CanonicalTaskEntityFact>;
   hierarchyScopedEntityIds: Set<string>;
   hierarchyScopeKey: string;
@@ -593,6 +596,7 @@ export function buildStableCanonicalTaskIndex({
   tasks,
   todayDateKey,
   taskDisplayStatusByTaskId = {},
+  taskContentFolders = [],
   hierarchy = buildTaskHierarchyAdapter(tasks),
 }: {
   availableTaskLists: TaskListDefinition[];
@@ -606,6 +610,7 @@ export function buildStableCanonicalTaskIndex({
   tasks: Task[];
   todayDateKey: string;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
+  taskContentFolders?: readonly TaskContentFolderRow[];
   hierarchy?: TaskHierarchyAdapter<Task>;
 }): StableCanonicalTaskIndex {
   const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
@@ -643,6 +648,9 @@ export function buildStableCanonicalTaskIndex({
   };
   const taskListLookup = buildTaskListLookup(availableTaskLists);
   const listNameById = new Map(availableTaskLists.map((list) => [list.id, list.name]));
+  const taskContentFolderSearchDocumentsById = new Map(
+    taskContentFolders.map((folder) => [folder.id, getTaskContentFolderSearchDocument(taskContentFolders, folder.id)]),
+  );
   const entityFactsById = new Map<string, CanonicalTaskEntityFact>();
   const taskListMembershipsByTaskId: Record<string, TaskListMembership[]> = {};
 
@@ -655,9 +663,14 @@ export function buildStableCanonicalTaskIndex({
       taskListLookup,
     );
     taskListMembershipsByTaskId[task.id] = listMemberships;
+    const rootTask = taskById.get(rootParentIdByTaskId.get(task.id) ?? task.id);
+    const taskContentFolderSearchDocument = rootTask?.task_content_folder_id
+      ? taskContentFolderSearchDocumentsById.get(rootTask.task_content_folder_id) ?? ""
+      : "";
     const searchDocument = [
       task.title,
       ...(task.tags ?? []),
+      taskContentFolderSearchDocument,
       ...(milestoneSearchTokensByTaskId?.get(task.id) ?? []),
       ...(taskSubtasksByTaskId[task.id] ?? [])
         .filter((subtask) => subtask.status !== "trashed")
@@ -679,6 +692,7 @@ export function buildStableCanonicalTaskIndex({
     entityFactsById,
     focusedTaskIds,
     listNameById,
+    taskContentFolderSearchDocumentsById,
     taskById,
     taskListMembershipsByTaskId,
     todayDateKey,
@@ -686,6 +700,19 @@ export function buildStableCanonicalTaskIndex({
   };
   if (diagnosticDetails) logDevelopmentComputation(diagnosticDetails, performance.now() - startedAt);
   return result;
+}
+
+export function getTaskContentFolderSearchMatchIds(
+  index: StableCanonicalTaskIndex,
+  normalizedSearchQuery: string,
+) {
+  const query = normalizedSearchQuery.trim().toLowerCase();
+  if (!query) return new Set<string>();
+  return new Set(
+    Array.from(index.taskContentFolderSearchDocumentsById.entries())
+      .filter(([, searchDocument]) => searchDocument.includes(query))
+      .map(([folderId]) => folderId),
+  );
 }
 
 export function queryCanonicalTaskEntityProjection({
@@ -703,6 +730,7 @@ export function queryCanonicalTaskEntityProjection({
     focusedTaskIds,
     listNameById,
     taskById,
+    taskContentFolderSearchDocumentsById,
     taskListMembershipsByTaskId,
     validChildTaskIdSet,
   } = index;
@@ -751,6 +779,7 @@ export function queryCanonicalTaskEntityProjection({
   );
 
   const directSearchMatchedEntityIds = new Set<string>();
+  const directSearchMatchedTaskContentFolderIds = new Set<string>();
   const searchExpandedDescendantIds = new Set<string>();
   const hierarchyScopedEntityIds = new Set<string>();
   const selectedScopeCandidateIds = new Set<string>();
@@ -782,6 +811,11 @@ export function queryCanonicalTaskEntityProjection({
     }
     if (searchIsActive && selectedScopeCandidateIds.has(fact.id) && fact.searchDocument.includes(normalizedSearchQuery)) {
       directSearchMatchedEntityIds.add(fact.id);
+    }
+  }
+  if (searchIsActive) {
+    for (const [folderId, searchDocument] of taskContentFolderSearchDocumentsById) {
+      if (searchDocument.includes(normalizedSearchQuery)) directSearchMatchedTaskContentFolderIds.add(folderId);
     }
   }
 
@@ -919,6 +953,7 @@ export function queryCanonicalTaskEntityProjection({
     contextAncestorIds,
     contextRootParentIds,
     directSearchMatchedEntityIds,
+    directSearchMatchedTaskContentFolderIds,
     entityFactsById,
     hierarchyScopedEntityIds,
     hierarchyScopeKey,
@@ -1077,6 +1112,7 @@ type ComputeTaskAppDerivedDataInput = {
   taskGridWidgetTypes: string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
+  taskContentFolders?: readonly TaskContentFolderRow[];
   todayDateKey: string;
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, Task[]>;
@@ -1104,6 +1140,7 @@ export function computeTaskAppDerivedData({
   taskGridWidgetTypes,
   taskHistoryByTaskId,
   taskHistoryStreakSummaryByTaskId,
+  taskContentFolders,
   todayDateKey,
   taskListEvaluationContext,
   taskSubtasksByTaskId,
@@ -1131,6 +1168,7 @@ export function computeTaskAppDerivedData({
       taskHistoryByTaskId,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
+      taskContentFolders,
       taskDisplayStatusByTaskId,
       tasks,
       todayDateKey,
@@ -1224,6 +1262,7 @@ export function computeTaskAppDerivedData({
     taskHistoryByTaskId,
     taskListEvaluationContext,
     taskSubtasksByTaskId,
+    taskContentFolders,
     taskDisplayStatusByTaskId,
     tasks,
     todayDateKey,

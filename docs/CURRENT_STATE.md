@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.34`.
+- Current working app version: `7.14.35`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,6 +23,15 @@ root Folder inheritance on detach, and returns the committed Task row for local
 reconciliation. Historical History facts and schedule boundaries are not
 rewritten. The source SQL remains unapplied pending explicit database rollout;
 browser QA remains Andrew's responsibility.
+
+## 2026-09-20 7.14.35 Search Task Content Folders as Semantic Containers
+
+Canonical Task search now indexes each root Task's inherited Task Content Folder
+path, so matching Folder names reveal eligible contained Tasks while selected
+list, status, energy, and structured filters remain intersections. Active search
+also hides unrelated empty Folder branches; a directly matched actually empty
+Folder may remain as structural search context. Browser QA remains Andrew's
+responsibility.
 
 ## 2026-09-20 7.14.34 Reconcile Descendant Roles During Hierarchy Moves
 

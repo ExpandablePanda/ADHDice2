@@ -267,6 +267,7 @@ import {
   buildTaskAppStructuralData,
   buildTaskAppWorkspaceFacts,
   computeTaskAppDerivedData,
+  getTaskContentFolderSearchMatchIds,
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
@@ -3225,6 +3226,7 @@ export function TaskApp() {
     hierarchyStatusRevision,
     listMembershipRevision,
     milestoneProjectionRevision,
+    createProjectionDomainRevision("task-content-folders", taskContentFolders),
   );
   const [structuralDiagnosticTracker] = useState(() => createDevelopmentComputationTracker("task structural projection", "TaskApp"));
   const [canonicalDiagnosticTracker] = useState(() => createDevelopmentComputationTracker("stable canonical task index", "TaskApp"));
@@ -3276,6 +3278,7 @@ export function TaskApp() {
         taskHistoryByTaskId,
         taskListEvaluationContext,
         taskSubtasksByTaskId,
+        taskContentFolders,
         taskDisplayStatusByTaskId,
         tasks: tasksForActiveStatusRead,
         todayDateKey: todayKey,
@@ -3335,6 +3338,10 @@ export function TaskApp() {
     );
     return { ...result, visibleTasks };
   }, [activePage, bucketContext, effectiveSearchQuery, stableCanonicalTaskIndex, stableTaskSearchScope, taskUiStateForDerivedData]);
+  const matchedTaskContentFolderIds = useMemo(
+    () => getTaskContentFolderSearchMatchIds(stableCanonicalTaskIndex, effectiveSearchQuery),
+    [effectiveSearchQuery, stableCanonicalTaskIndex],
+  );
   const taskSearchMeasurementRef = useRef<{ inputPublishedAt: number; query: string; searchStartedAt: number } | null>(null);
   useEffect(() => {
     if (!taskSearchSelection || !isWorkspacePerformanceDiagnosticsEnabled() || typeof performance === "undefined") return;
@@ -3448,6 +3455,7 @@ export function TaskApp() {
       taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
       taskHistoryByTaskId,
       taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
+      taskContentFolders,
       todayDateKey: todayKey,
       taskListEvaluationContext,
       taskSubtasksByTaskId,
@@ -7591,6 +7599,7 @@ export function TaskApp() {
                   highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
                   highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
+                  matchedTaskContentFolderIds,
                   onVisibleSearchMatchIdsChange: handleTableVisibleSearchMatchIdsChange,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   searchMatchedChildTaskIds,
@@ -7793,6 +7802,7 @@ export function TaskApp() {
                   highlightedRevealShouldFocus: activeTaskRevealShouldFocus,
                   highlightedScrollToken: activeTaskRevealScrollToken,
                   highlightedTaskIds: taskHighlightMatches.matchedRowIds,
+                  matchedTaskContentFolderIds,
                   searchMatchedStepParentTaskIds: highlightedSearchMatchedStepParentTaskIds,
                   searchMatchedChildTaskIds,
                   statusMatchedChildTaskIds,

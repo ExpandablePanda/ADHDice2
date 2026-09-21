@@ -4,6 +4,7 @@ import test from "node:test";
 import { createTask } from "../src/lib/task-buckets.ts";
 import {
   buildStableCanonicalTaskIndex,
+  getTaskContentFolderSearchMatchIds,
   queryCanonicalTaskEntityProjection,
 } from "../src/lib/task-app-derived.ts";
 import {
@@ -66,6 +67,7 @@ function project(
   manualMembershipsByTaskId: Record<string, TaskListId[]> = {},
   includeSteps = true,
   taskSubtasksByTaskId: Record<string, ReturnType<typeof createTask>[]> = {},
+  taskContentFolders: Array<{ id: string; user_id: string; name: string; icon_key: string; parent_folder_id: string | null; created_at: string; updated_at: string }> = [],
 ) {
   const index = buildStableCanonicalTaskIndex({
     availableTaskLists,
@@ -73,6 +75,7 @@ function project(
     taskHistoryByTaskId: {},
     taskListEvaluationContext: evaluationContext(manualMembershipsByTaskId),
     taskSubtasksByTaskId,
+    taskContentFolders,
     tasks,
     todayDateKey: "2026-08-03",
   });
@@ -87,6 +90,125 @@ function project(
     },
   });
 }
+
+const taskContentFolders = [
+  { id: "video-game", user_id: "user-1", name: "Video Game", icon_key: "folder", parent_folder_id: null, created_at: "2026-08-01", updated_at: "2026-08-01" },
+  { id: "test", user_id: "user-1", name: "Test", icon_key: "folder", parent_folder_id: null, created_at: "2026-08-02", updated_at: "2026-08-02" },
+  { id: "test-4", user_id: "user-1", name: "Test 4", icon_key: "folder", parent_folder_id: null, created_at: "2026-08-03", updated_at: "2026-08-03" },
+];
+
+test("Task Content Folder search matches every eligible root Task through the Folder path", () => {
+  const playWolverine = createTask({ id: "play-wolverine", status: "pending", task_content_folder_id: "video-game", title: "Play Wolverine" });
+  const buyController = createTask({ id: "buy-controller", status: "pending", task_content_folder_id: "video-game", title: "Buy controller" });
+  const unrelated = createTask({ id: "test-task", status: "pending", task_content_folder_id: "test", title: "Unrelated task" });
+  const result = project(
+    [playWolverine, buyController, unrelated],
+    "all",
+    "video game",
+    getBuiltInTaskLists(),
+    {},
+    true,
+    {},
+    taskContentFolders,
+  );
+
+  assert.deepEqual([...result.directSearchMatchedEntityIds], [playWolverine.id, buyController.id]);
+  assert.deepEqual([...result.postStatusMatchedEntityIds], [playWolverine.id, buyController.id]);
+  assert.equal(result.directSearchMatchedTaskContentFolderIds.has("video-game"), true);
+  assert.equal(result.directSearchMatchedTaskContentFolderIds.has("test"), false);
+});
+
+test("Folder search preserves title search, root-inherited Step context, nested paths, and selected scope", () => {
+  const nestedFolders = [
+    { id: "work", user_id: "user-1", name: "Work", icon_key: "folder", parent_folder_id: null, created_at: "2026-08-01", updated_at: "2026-08-01" },
+    { id: "video-game", user_id: "user-1", name: "Video Game", icon_key: "folder", parent_folder_id: "work", created_at: "2026-08-02", updated_at: "2026-08-02" },
+  ];
+  const root = createTask({ id: "root", status: "pending", task_content_folder_id: "video-game", title: "Play Wolverine" });
+  const step = createTask({ id: "step", parent_task_id: root.id, status: "pending", title: "Unrelated Step" });
+  const outsideList = createTask({ id: "outside", status: "pending", task_content_folder_id: "video-game", title: "Buy controller" });
+  const result = project(
+    [root, step, outsideList],
+    manualList.id,
+    "work",
+    [...getBuiltInTaskLists(), manualList],
+    { [root.id]: [manualList.id] },
+    true,
+    {},
+    nestedFolders,
+  );
+  const index = buildStableCanonicalTaskIndex({
+    availableTaskLists: [...getBuiltInTaskLists(), manualList],
+    focusedTaskIds: [],
+    taskContentFolders: nestedFolders,
+    taskHistoryByTaskId: {},
+    taskListEvaluationContext: evaluationContext({ [root.id]: [manualList.id] }),
+    taskSubtasksByTaskId: {},
+    tasks: [root, step, outsideList],
+    todayDateKey: "2026-08-03",
+  });
+
+  assert.deepEqual([...result.directSearchMatchedEntityIds], [root.id, step.id]);
+  assert.equal(index.entityFactsById.get(step.id)?.searchDocument.includes("work / video game"), true);
+  assert.deepEqual([...getTaskContentFolderSearchMatchIds(index, "work")], ["work", "video-game"]);
+  assert.equal(result.postStatusMatchedEntityIds.has(outsideList.id), false);
+
+  const selectorResult = queryTaskSearch(
+    "work",
+    buildStableTaskSearchScope(
+      Array.from(index.entityFactsById.values()).map((fact) => ({
+        ancestorIds: fact.ancestorIds,
+        displayStatus: fact.displayStatus,
+        id: fact.id,
+        listIds: fact.listMemberships.map((membership) => membership.id),
+        rootParentId: fact.rootParentId,
+        searchDocument: fact.searchDocument,
+        task: fact.task,
+      })),
+      {
+        energyFilters: [],
+        focusedTaskIds: [],
+        matchAny: false,
+        quickFilters: [],
+        selectedBucket: manualList.id,
+        statusFilters: [],
+        tableColumnFilters: { priority: [], repeat: [], text: {} },
+      },
+    ),
+    true,
+  );
+  assert.deepEqual(selectorResult.visibleRootTaskIds, [root.id]);
+});
+
+test("Folder search remains an intersection with status, energy, and structured filters", () => {
+  const eligible = createTask({ id: "eligible", energy: "high", status: "pending", task_content_folder_id: "video-game", title: "Play Wolverine" });
+  const wrongEnergy = createTask({ id: "wrong-energy", energy: "low", status: "pending", task_content_folder_id: "video-game", title: "Play Wolverine" });
+  const wrongStatus = createTask({ id: "wrong-status", energy: "high", status: "done", task_content_folder_id: "video-game", title: "Play Wolverine" });
+  const wrongTitle = createTask({ id: "wrong-title", energy: "high", status: "pending", task_content_folder_id: "video-game", title: "Buy controller" });
+  const index = buildStableCanonicalTaskIndex({
+    availableTaskLists: getBuiltInTaskLists(),
+    focusedTaskIds: [],
+    taskContentFolders,
+    taskHistoryByTaskId: {},
+    taskListEvaluationContext: evaluationContext(),
+    taskSubtasksByTaskId: {},
+    tasks: [eligible, wrongEnergy, wrongStatus, wrongTitle],
+    todayDateKey: "2026-08-03",
+  });
+  const result = queryCanonicalTaskEntityProjection({
+    index,
+    normalizedSearchQuery: "video game",
+    taskUiState: {
+      ...DEFAULT_TASK_UI_STATE,
+      energyFilters: ["high"],
+      selectedBucket: "all",
+      statusFilters: ["pending"],
+      tableColumnFilters: { ...DEFAULT_TASK_UI_STATE.tableColumnFilters, text: { title: "play" } },
+      view: "table",
+    },
+  });
+
+  assert.deepEqual([...result.postStatusMatchedEntityIds], [eligible.id]);
+});
 
 test("canonical active search ignores trashed source-child titles", () => {
   const parent = createTask({ id: "parent", status: "pending", title: "No Fast Food" });

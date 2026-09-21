@@ -311,6 +311,7 @@ type TasksTableSourceProps = {
   highlightedRevealShouldFocus?: boolean;
   highlightedScrollToken?: number | null;
   highlightedTaskIds?: string[];
+  matchedTaskContentFolderIds?: ReadonlySet<string>;
   onVisibleSearchMatchIdsChange?: (taskIds: string[]) => void;
   searchMatchedStepParentTaskIds?: string[];
   searchMatchedChildTaskIds?: string[];
@@ -675,6 +676,7 @@ export function TasksTableAdapter({
           highlightedRevealShouldFocus={tableProps.highlightedRevealShouldFocus}
           highlightedScrollToken={tableProps.highlightedScrollToken}
           highlightedTaskIds={tableProps.highlightedTaskIds}
+          matchedTaskContentFolderIds={tableProps.matchedTaskContentFolderIds}
           onVisibleSearchMatchIdsChange={tableProps.onVisibleSearchMatchIdsChange}
           searchMatchedStepParentTaskIds={tableProps.searchMatchedStepParentTaskIds}
           searchMatchedChildTaskIds={tableProps.searchMatchedChildTaskIds}
@@ -3241,6 +3243,7 @@ function TasksSimpleList({
               highlightedRevealShouldFocus={tableProps.highlightedRevealShouldFocus}
               highlightedScrollToken={tableProps.highlightedScrollToken}
               highlightedTaskIds={tableProps.highlightedTaskIds}
+              matchedTaskContentFolderIds={tableProps.matchedTaskContentFolderIds}
               searchActive={tableProps.searchActive}
               className="m-0 max-w-none p-0"
               currentListLabel={tableProps.currentListLabel}
