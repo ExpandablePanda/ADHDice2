@@ -256,7 +256,7 @@ test("modal canonical hydration invalidates the active-status projection without
   assert.match(taskAppSource, /taskHistoryByTaskId\[task\.id\]/);
 });
 
-test("TaskApp keeps persisted Task status authoritative until full History is ready", async () => {
+test("TaskApp gates initial Task presentation on the authoritative Active Status read", async () => {
   const taskAppSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const activeStatusStart = taskAppSource.indexOf("const [activeStatusRead");
   const activeStatusEnd = taskAppSource.indexOf("const taskDisplayStatusByTaskId", activeStatusStart);
@@ -264,12 +264,18 @@ test("TaskApp keeps persisted Task status authoritative until full History is re
 
   assert.match(taskAppSource, /const persistedTaskDisplayStatusByTaskId = useMemo\([\s\S]*tasks\.map\(\(task\) => \[task\.id, task\.status\]\)/);
   assert.match(taskAppSource, /const taskDisplayStatusByTaskId = activeStatusRead\?\.statusesByTaskId \?\? persistedTaskDisplayStatusByTaskId/);
+  assert.match(taskAppSource, /const isInitialTaskStateProjectionReady = isTaskHistoryLoaded && isBehaviorAuthorityReady && activeStatusRead !== null/);
+  assert.match(taskAppSource, /const isAuthenticatedAppBootReady = [\s\S]*isInitialTaskStateProjectionReady/);
+  assert.match(taskAppSource, /const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady/);
   assert.match(taskAppSource, /const taskHistoryReadinessRevision = useMemo\([\s\S]*createProjectionDomainRevision\("task-history-readiness", isTaskHistoryLoaded\)/);
   assert.match(taskAppSource, /taskActiveStatusAuthorityReadinessRevision/);
   assert.match(taskAppSource, /taskHistoryReadinessRevision,[\s\S]*activeStatusRead/);
   assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\)/);
   assert.match(activeStatusRead, /if \(!isBehaviorAuthorityReady \|\| isTaskTypeBehaviorProfilesLoading\)/);
   assert.match(activeStatusRead, /if \(activeStatusCalculationTokenRef\.current === calculationToken\) activeStatusCalculationTokenRef\.current \+= 1/);
+  const authorityRefreshGateStart = activeStatusRead.indexOf("if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading)");
+  const activeStatusInputStart = activeStatusRead.indexOf("const activeStatusInput", authorityRefreshGateStart);
+  assert.doesNotMatch(activeStatusRead.slice(authorityRefreshGateStart, activeStatusInputStart), /setActiveStatusRead\(null\)/);
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementally\(/);
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementallyChunked\(/);
   assert.match(activeStatusRead, /mode=global-chunked tasks=\$\{tasks\.length\} chunks=\$\{result\.chunks\}/);

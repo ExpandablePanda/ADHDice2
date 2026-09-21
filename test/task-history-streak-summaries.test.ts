@@ -32,6 +32,7 @@ function buildTaskHistoryStreakSummaryMap(
 
 const streakSummarySource = readFileSync(new URL("../src/lib/task-history-streak-summaries.ts", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+const derivedSource = readFileSync(new URL("../src/lib/task-app-derived.ts", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 
@@ -515,9 +516,14 @@ test("superseded bulk streak-summary work does not expose its partial map", asyn
 
 test("parent and child Table/List title paths consume compact summary fields", () => {
   assert.match(appSource, /taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries/);
+  assert.match(derivedSource, /const missedStreak = streakSummary\?\.missedStreak \?\? 0/);
+  assert.match(derivedSource, /const currentStreak = missedStreak > 0 \? 0 : streakSummary\?\.currentStreak \?\? 0/);
+  assert.doesNotMatch(derivedSource, /computeTaskSpecificHistoryStats/);
   assert.match(tableSource, /task\.currentStreak > 0/);
   assert.match(tableSource, /task\.missedStreak > 0/);
   assert.match(tableSource, /renderStepHistoryChips\(\s*item\.currentStreak,\s*item\.missedStreak/);
+  assert.match(listSource, /windowedTasks\.map\(\(task\) => rowModelCache\.getOrCreate\(task, \{[\s\S]*taskHistoryStreakSummary: tableProps\.rowContext\.taskHistoryStreakSummaryByTaskId\[task\.id\]/);
+  assert.match(listSource, /getAllRows=\{\(\) => \(tableProps\.allTasks \?\? tableProps\.tasks\)\.map\(getOrCreateTaskRow\)\}/);
   assert.match(listSource, /currentStreak=\{taskRow\.currentStreak\}/);
   assert.match(listSource, /missedStreak=\{taskRow\.missedStreak\}/);
   assert.match(listSource, /taskHistoryStreakSummary: rowContext\.taskHistoryStreakSummaryByTaskId\[task\.id\]/);

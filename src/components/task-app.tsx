@@ -4963,7 +4963,8 @@ export function TaskApp() {
   }, [runningTaskTimers.length]);
 
   const shouldDeferPageRender = isRestoringPersistedUiState;
-  const isAuthenticatedAppBootReady = isHudAppearanceReady && isBehaviorAuthorityReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender;
+  const isInitialTaskStateProjectionReady = isTaskHistoryLoaded && isBehaviorAuthorityReady && activeStatusRead !== null;
+  const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null

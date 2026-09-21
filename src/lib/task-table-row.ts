@@ -3,7 +3,7 @@ import type {
   Task,
   TaskHistory,
 } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
+import { getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskAttentionReason } from "@/lib/task-attention";
@@ -85,10 +85,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
   if (isDevelopment) {
     buildTaskTableRowDebugCount += 1;
   }
-  const historyStats = context.taskHistoryStreakSummary
-    ?? computeTaskSpecificHistoryStats(task, context.taskHistory, context.todayDateKey);
-  const missedStreak = historyStats.missedStreak;
-  const currentStreak = missedStreak > 0 ? 0 : historyStats.currentStreak;
+  const missedStreak = context.taskHistoryStreakSummary?.missedStreak ?? 0;
+  const currentStreak = missedStreak > 0 ? 0 : context.taskHistoryStreakSummary?.currentStreak ?? 0;
   const lastDone = context.taskHistoryStreakSummary
     ? {
       dateKey: context.taskHistoryStreakSummary.lastDoneDate,

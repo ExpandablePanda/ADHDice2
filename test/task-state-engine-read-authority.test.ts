@@ -7,6 +7,7 @@ import { formatTaskStatusLabel, TASK_STATUS_OPTIONS } from "../src/components/ta
 import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
 import { projectTasksForActiveStatusRead, resolveCompatibilityTaskStatuses as resolveActiveTaskStatuses } from "../src/lib/task-state-engine/index.ts";
 import { resolveTaskHistoryCalendarStates } from "../src/lib/task-state-engine/calendar-authority.ts";
+import type { TaskHistoryStreakSummary } from "../src/lib/task-history-streak-summaries.ts";
 
 type ReadTask = Task & Partial<Pick<CanonicalTaskStateColumns, "workflow_state" | "workflow_logical_date">>;
 
@@ -106,6 +107,65 @@ test("canonical due projection replaces stale fixed compatibility due without mu
     todayDateKey: "2026-08-31",
   });
   assert.equal(row.dueOn, "2026-09-13");
+});
+
+test("Task rows do not infer current or missed streaks from History before the authoritative summary", () => {
+  const hobbiesTask = task({ custom_ruleset_id: "hobbies", status: "missed", task_type: "custom", title: "Hobbies" });
+  const historicalMiss = {
+    counted_as_due_occurrence: true,
+    created_at: "2026-07-27T12:00:00.000Z",
+    entry_date: "2026-07-27",
+    event_type: "status" as const,
+    id: "hobbies-missed",
+    occurrence_due_on: "2026-07-27",
+    occurrence_key: "occurrence:2026-07-27",
+    status: "missed" as const,
+    task_id: hobbiesTask.id,
+    updated_at: "2026-07-27T12:00:00.000Z",
+    user_id: hobbiesTask.user_id,
+    was_completed: false,
+  } satisfies TaskHistory;
+
+  const row = buildTaskTableRow(hobbiesTask, {
+    focusedTaskIdSet: new Set(),
+    linkedNotes: [],
+    listDefinitions: [],
+    listMemberships: [],
+    subtasks: [],
+    taskHistory: [historicalMiss],
+    todayDateKey: "2026-07-28",
+  });
+
+  assert.equal(row.currentStreak, 0);
+  assert.equal(row.missedStreak, 0);
+});
+
+test("Task rows use authoritative current and missed streak values when supplied", () => {
+  const standardTask = task({ status: "pending" });
+  const context = {
+    focusedTaskIdSet: new Set<string>(),
+    linkedNotes: [],
+    listDefinitions: [],
+    listMemberships: [],
+    subtasks: [],
+    taskHistory: [],
+    todayDateKey: "2026-07-28",
+  };
+  const currentSummary: TaskHistoryStreakSummary = {
+    currentStreak: 4,
+    lastDoneAt: null,
+    lastDoneDate: null,
+    missedStreak: 0,
+  };
+  const missedSummary: TaskHistoryStreakSummary = {
+    currentStreak: 0,
+    lastDoneAt: null,
+    lastDoneDate: null,
+    missedStreak: 2,
+  };
+
+  assert.equal(buildTaskTableRow(standardTask, { ...context, taskHistoryStreakSummary: currentSummary }).currentStreak, 4);
+  assert.equal(buildTaskTableRow(standardTask, { ...context, taskHistoryStreakSummary: missedSummary }).missedStreak, 2);
 });
 
 test("canonical null due clears a presentation copy while keeping unscheduled status engine-only", () => {

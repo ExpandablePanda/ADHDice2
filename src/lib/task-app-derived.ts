@@ -8,8 +8,8 @@ import type {
   TaskHistory,
   TaskStatus,
 } from "@/lib/database.types";
-import { computeTaskSpecificHistoryStats, getTaskFocusFilterFacts, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
-import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
+import { getTaskFocusFilterFacts, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
+import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
@@ -459,12 +459,8 @@ export function buildChildTaskPreviewLookup(
           ? Math.max(1, descendantDepth - parentBaseDepth)
           : 1;
         const streakSummary = taskHistoryStreakSummaryByTaskId[descendant.id];
-        const historyStats: Pick<TaskHistoryStreakSummary, "currentStreak" | "missedStreak"> = streakSummary
-          ?? computeTaskSpecificHistoryStats(
-            descendant,
-            taskHistoryByTaskId[descendant.id] ?? [],
-            todayDateKey,
-          );
+        const missedStreak = streakSummary?.missedStreak ?? 0;
+        const currentStreak = missedStreak > 0 ? 0 : streakSummary?.currentStreak ?? 0;
         const lastDone = streakSummary
           ? {
             dateKey: streakSummary.lastDoneDate,
@@ -481,7 +477,7 @@ export function buildChildTaskPreviewLookup(
         return {
           actualSeconds: descendant.actual_seconds,
           createdAt: descendant.created_at,
-          currentStreak: historyStats.currentStreak,
+          currentStreak,
           depth: relativeDepth,
           dueOn: descendant.due_on,
           dueTime: descendant.due_time,
