@@ -380,12 +380,12 @@ test("detailed report uses the shipped detailed sections and current status line
   assert.match(report, /Brush teeth.*Current Status: Open/);
   assert.match(report, /Floss.*Current Status: Open/);
   assert.match(report, /Invoice filing.*Current Status: Missed/);
-  assert.match(report, /Showing 25 of 27/);
+  assert.match(report, /Showing 25 of 28/);
   assert.match(report, /### Mon, Jun 29, 2026/);
-  assert.match(report, /Summary: Parents handled 1; Steps\/Substeps handled 2; Combined handled 3; Missed 2/);
+  assert.match(report, /Summary: Parents handled 1; Steps\/Substeps handled 2; Combined handled 3; Missed 3/);
   assert.match(report, /### Tue, Jun 30, 2026/);
-  assert.match(report, /Summary: Parents handled 1; Steps\/Substeps handled 1; Combined handled 2; Missed 27/);
-  assert.doesNotMatch(report, /Test inbox thing.*Current Status: Missed/);
+  assert.match(report, /Summary: Parents handled 1; Steps\/Substeps handled 1; Combined handled 2; Missed 28/);
+  assert.match(report, /Test inbox thing.*Current Status: Missed/);
   assert.doesNotMatch(report, /Old trashed task.*Current Status: Missed/);
 });
 
@@ -424,6 +424,30 @@ test("report distinguishes credited history day from the real logged timestamp",
 
   assert.match(report, /History: Done: Jul 8 \(logged /);
   assert.doesNotMatch(report, /Edited /);
+});
+
+test("Reports keep real Test-titled Tasks and exclude only the explicit tracking flag", () => {
+  const trackedBloodTest = createTask({ created_at: "2026-09-01T12:00:00.000Z", id: "blood-test", sort_order: 1, title: "Blood Test", status: "pending" });
+  const excludedTask = createTask({ created_at: "2026-09-01T12:00:00.000Z", exclude_from_tracking: true, id: "excluded", sort_order: 2, title: "Routine admin", status: "pending" });
+  const report = generateTaskReport({
+    appVersion: "7.13.87",
+    availableTaskLists: getBuiltInTaskLists(),
+    detailLevel: "detailed",
+    focusCategories: [],
+    focusHistory: [],
+    generatedAt: new Date("2026-09-20T15:00:00.000Z"),
+    historySourceLabel: "test",
+    historyWarning: null,
+    rangeId: "all",
+    taskHistory: [
+      createHistoryEntry({ id: "blood-history", status: "done", task_id: trackedBloodTest.id }),
+      createHistoryEntry({ id: "excluded-history", status: "done", task_id: excludedTask.id }),
+    ],
+    tasks: [trackedBloodTest, excludedTask],
+    todayDateKey: "2026-09-20",
+  });
+  assert.match(report, /Blood Test/);
+  assert.doesNotMatch(report, /Routine admin/);
 });
 
 test("report labels edited history timestamps separately from logged timestamps", () => {

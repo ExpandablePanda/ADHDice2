@@ -61,6 +61,7 @@ test("7.2.25 signature mismatch stays stage-specific while genuine absence retai
     currentRecords: [{ id: "record-1" }] as never[],
     error: null,
     events: [{ id: "event-1" }] as never[],
+    hasDetailedEvidence: false,
     hasSuccessfulResult: true,
     isLoading: false,
     isRecalculating: true,
@@ -69,6 +70,7 @@ test("7.2.25 signature mismatch stays stage-specific while genuine absence retai
     progress: "Preparing Records",
     provisionalCandidates: [],
     setupRequired: false,
+    taskEvidenceByRecordIdentity: {},
     warnings: [],
   };
   const retained = retainRecordsAfterRefreshFailure(prior, { error: "Begin Records RPC argument mismatch; expected p_payload.", ownerUserId: "user-1", setupRequired: false });

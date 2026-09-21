@@ -1146,6 +1146,29 @@ test("same-parent sibling reorder supports drag-style before and after placement
   });
 });
 
+test("reordering a Step changes only its canonical sibling order and keeps its Substeps attached", () => {
+  const tasks = [
+    createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" }),
+    createTask({ id: "step-a", parent_task_id: "parent", sort_order: 1, status: "pending", title: "A" }),
+    createTask({ id: "sub-a1", parent_task_id: "step-a", sort_order: 1, status: "pending", title: "A1" }),
+    createTask({ id: "sub-a2", parent_task_id: "step-a", sort_order: 2, status: "pending", title: "A2" }),
+    createTask({ id: "step-b", parent_task_id: "parent", sort_order: 2, status: "pending", title: "B" }),
+  ];
+
+  const plan = buildTaskSiblingReorderPlan(tasks, "step-b", { placement: "before", targetTaskId: "step-a" });
+
+  assert.equal(plan.ok, true);
+  if (!plan.ok) return;
+  assert.deepEqual(plan.orderedTaskIds, ["step-b", "step-a"]);
+  assert.equal(plan.parentTaskId, "parent");
+  assert.deepEqual(plan.updates, [
+    { id: "step-b", sortOrder: 1 },
+    { id: "step-a", sortOrder: 2 },
+  ]);
+  assert.equal(tasks.find((task) => task.id === "step-a")?.parent_task_id, "parent");
+  assert.deepEqual(buildTaskHierarchyAdapter(tasks).getDescendants("step-a").map((task) => task.id), ["sub-a1", "sub-a2"]);
+});
+
 test("same-parent sibling reorder drag placement rejects cross-parent and no-op drops", () => {
   const tasks = [
     createTask({ id: "parent", sort_order: 1, status: "pending", title: "Parent" }),

@@ -73,6 +73,13 @@ test("Focus uses stored durations for session and closed period records", () => 
   assert.equal(result.currentRecords.find((record) => record.metricKey === "focus_duration_week")?.value, 8400);
 });
 
+test("effective Task exclusion removes task Records but does not affect Focus Records", () => {
+  const tasks = [task("parent"), { ...task("blood-test", "parent"), exclude_from_tracking: true }];
+  const result = evaluate(tasks, [history("excluded", "blood-test", "2026-07-10", "done")], [focus("focus", "2026-07-10", 3600)]);
+  assert.equal(result.currentRecords.some((record) => record.metricKey.startsWith("parent_") || record.metricKey.startsWith("step_")), false);
+  assert.equal(result.currentRecords.find((record) => record.metricKey === "focus_duration_day")?.value, 3600);
+});
+
 test("per-task streaks cap one-offs at one and Biggest Comeback requires an immediate success endpoint", () => {
   const recurring = task("recurring");
   const oneOff = task("one-off", null, "none");

@@ -156,6 +156,10 @@ export function isManualTaskListDestination(list: Pick<TaskListDefinition, "id" 
     && (list.membershipMode === "manual" || list.membershipMode === "hybrid" || list.id === "waiting");
 }
 
+export function canSetRoutineTaskMembership(list: Pick<TaskListDefinition, "id" | "membershipMode" | "type">) {
+  return list.id === "routine" && list.membershipMode === "system" && list.type === "system";
+}
+
 export function canRemoveTaskFromCurrentList(
   taskId: string,
   currentListId: string | null | undefined,

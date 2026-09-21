@@ -54,6 +54,16 @@ export type PermanentTaskDeletionResult = {
   error: { message: string } | null;
 };
 
+export type SetTaskTrackingExclusionResult = {
+  data: Task | null;
+  error: { message: string } | null;
+};
+
+export type ExcludeTasksFromTrackingResult = {
+  data: Task[] | null;
+  error: { message: string } | null;
+};
+
 export type CanonicalTaskCreationSource = "task_creation" | "task_import";
 
 export type CanonicalTaskCreationResult = {
@@ -210,6 +220,50 @@ export async function insertTaskRowWithCanonicalCreation(
     usedEnergyFallback: isRecord(response.data) && response.data.used_energy_fallback === true,
     usedActualSecondsFallback: false,
   };
+}
+
+/**
+ * Tracking metadata has its own authenticated RPC so a UI metadata edit can
+ * never accidentally become a lifecycle, schedule, or History mutation.
+ */
+export async function setTaskTrackingExclusion(
+  client: SupabaseClient,
+  taskId: string,
+  excluded: boolean,
+): Promise<SetTaskTrackingExclusionResult> {
+  const result = await client.rpc("adhdice_set_task_tracking_exclusion", {
+    p_excluded: excluded,
+    p_task_id: taskId,
+  });
+  if (result.error) return { data: null, error: result.error };
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return row && typeof row === "object" ? { data: row as Task, error: null } : { data: null, error: { message: "Tracking exclusion RPC returned an unusable Task row." } };
+}
+
+/**
+ * The bulk tracking RPC owns one authoritative reward/Achievement
+ * reconciliation for the complete selection. Never replace this with a loop
+ * over setTaskTrackingExclusion.
+ */
+export async function excludeTasksFromTracking(
+  client: SupabaseClient,
+  taskIds: readonly string[],
+): Promise<ExcludeTasksFromTrackingResult> {
+  const uniqueTaskIds = [...new Set(taskIds)];
+  if (!uniqueTaskIds.length) return { data: null, error: { message: "At least one Task must be selected." } };
+
+  const result = await client.rpc("adhdice_exclude_tasks_from_tracking", {
+    p_task_ids: uniqueTaskIds,
+  });
+  if (result.error) return { data: null, error: result.error };
+  if (!Array.isArray(result.data)) return { data: null, error: { message: "Bulk tracking exclusion RPC returned unusable Task rows." } };
+
+  const rows = result.data.filter((row): row is Task => row !== null && typeof row === "object" && !Array.isArray(row)) as Task[];
+  const returnedIds = new Set(rows.map((row) => row.id));
+  if (rows.length !== uniqueTaskIds.length || uniqueTaskIds.some((taskId) => !returnedIds.has(taskId))) {
+    return { data: null, error: { message: "Bulk tracking exclusion RPC did not return every requested Task." } };
+  }
+  return { data: rows, error: null };
 }
 
 export async function updateTaskRowWithLegacyEnergyFallback(

@@ -1,7 +1,10 @@
 import type { Task } from "@/lib/database.types";
 import { getCalendarDayKey } from "@/lib/logical-day";
+import type { TaskPriorityLevel } from "@/lib/task-priority";
 import type { TaskListMembership } from "@/lib/task-lists";
+import { formatDueTimeLabel } from "@/lib/task-cockpit";
 import { shiftDateKey } from "@/lib/task-grid-layout";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 
 export type HomeTodoStateV1 = {
   clientUpdatedAt: string;
@@ -9,31 +12,58 @@ export type HomeTodoStateV1 = {
   taskIds: string[];
 };
 
-export type HomeTodoStateV2 = {
+export type HomeTodoStateV4 = {
   clientUpdatedAt: string;
-  schemaVersion: 3;
+  schemaVersion: 4;
   taskIds: string[];
   taskDayOffsets: Record<string, number>;
   tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routinesPerPhase: HomeTodoRoutinesPerSection;
 };
+
+export type HomeTodoStateV5 = {
+  clientUpdatedAt: string;
+  schemaVersion: 5;
+  taskIds: string[];
+  taskDayOffsets: Record<string, number>;
+  tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routinesPerSection: HomeTodoRoutinesPerSection;
+  routineSectionNames: Record<string, string>;
+};
+
+export type HomeTodoStateV2 = HomeTodoStateV4;
+export type HomeTodoState = HomeTodoStateV5;
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
   taskIds?: unknown;
   taskDayOffsets?: unknown;
   tasksPerDay?: unknown;
+  routineTaskIds?: unknown;
+  routinesPerSection?: unknown;
+  routinesPerPhase?: unknown;
+  routineSectionNames?: unknown;
 };
 
 export const HOME_TODO_TASKS_PER_DAY_OPTIONS = [10, 11, 12, 13, 14, 15] as const;
 export type HomeTodoTasksPerDay = typeof HOME_TODO_TASKS_PER_DAY_OPTIONS[number];
 export const DEFAULT_HOME_TODO_TASKS_PER_DAY: HomeTodoTasksPerDay = 10;
+export const HOME_ROUTINES_PER_SECTION_OPTIONS = [1, 2, 3, 4, 5, 6] as const;
+export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTIONS[number];
+export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
+export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV2 = {
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV5 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 3,
+  schemaVersion: 5,
   taskIds: [],
   taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
+  routineTaskIds: [],
+  routinesPerSection: DEFAULT_HOME_TODO_ROUTINES_PER_SECTION,
+  routineSectionNames: {},
 };
 
 export type HomeTodoDaySection<T = string> = {
@@ -44,15 +74,86 @@ export type HomeTodoDaySection<T = string> = {
   taskIds: T[];
 };
 
+export type HomeRoutineSection<T = string> = {
+  groupIds: T[];
+  label: string;
+  sectionIndex: number;
+  startIndex: number;
+};
+
+export type HomeRoutineTask = {
+  depth: number;
+  isAnchor: boolean;
+  task: Task;
+};
+
+export type HomeRoutineGroup = {
+  anchorId: string;
+  taskIds: string[];
+  tasks: HomeRoutineTask[];
+};
+
+export type HomeTodoTaskMetadata = Pick<
+  Task,
+  | "due_on"
+  | "due_time"
+  | "repeat_frequency"
+  | "repeat_interval"
+  | "repeat_days_of_week"
+  | "repeat_day_of_month"
+  | "repeat_monthly_mode"
+  | "repeat_monthly_ordinal"
+  | "repeat_monthly_weekday"
+  | "tags"
+> & {
+  priority_level: TaskPriorityLevel;
+};
+
 export type HomeTodoTaskCreator = (
   title: string,
   taskTypeSelectionValue: string,
+  metadata: HomeTodoTaskMetadata,
 ) => Promise<Task | null>;
 
 export function normalizeHomeTodoTasksPerDay(value: unknown): HomeTodoTasksPerDay {
   return HOME_TODO_TASKS_PER_DAY_OPTIONS.includes(value as HomeTodoTasksPerDay)
     ? value as HomeTodoTasksPerDay
     : DEFAULT_HOME_TODO_TASKS_PER_DAY;
+}
+
+export function normalizeHomeTodoRoutinesPerSection(value: unknown): HomeTodoRoutinesPerSection {
+  return HOME_ROUTINES_PER_SECTION_OPTIONS.includes(value as HomeTodoRoutinesPerSection)
+    ? value as HomeTodoRoutinesPerSection
+    : DEFAULT_HOME_TODO_ROUTINES_PER_SECTION;
+}
+
+function isHomeTodoRoutinesPerSection(value: unknown): value is HomeTodoRoutinesPerSection {
+  return HOME_ROUTINES_PER_SECTION_OPTIONS.includes(value as HomeTodoRoutinesPerSection);
+}
+
+export function normalizeHomeTodoRoutineSectionNames(value: unknown): Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>).filter(([key, name]) => {
+    const sectionIndex = Number(key);
+    return Number.isSafeInteger(sectionIndex)
+      && sectionIndex >= 0
+      && String(sectionIndex) === key
+      && typeof name === "string"
+      && name.trim().length > 0;
+  }).map(([key, name]) => [key, (name as string).trim()]));
+}
+
+export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
+  return state.taskIds.length > 0
+    || Object.keys(state.taskDayOffsets).length > 0
+    || state.tasksPerDay !== DEFAULT_HOME_TODO_TASKS_PER_DAY
+    || state.routineTaskIds.length > 0
+    || state.routinesPerSection !== DEFAULT_HOME_TODO_ROUTINES_PER_SECTION
+    || Object.keys(state.routineSectionNames).length > 0;
+}
+
+export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
+  return syncStatus !== "loading";
 }
 
 function formatOrdinalDay(day: number) {
@@ -97,6 +198,7 @@ export function buildHomeTodoDaySections<T>(
     startIndex: 0,
     taskIds: [],
   }));
+  const manuallyAssignedTaskIds: Array<{ dayIndex: number; taskId: T }> = [];
   const unassignedTaskIds: T[] = [];
   const laterTaskIds: T[] = [];
 
@@ -104,22 +206,29 @@ export function buildHomeTodoDaySections<T>(
     const assignedDayOffset = taskDayOffsets[String(taskId)];
     if (Number.isInteger(assignedDayOffset) && assignedDayOffset >= 0 && assignedDayOffset <= 7) {
       if (assignedDayOffset === 7) laterTaskIds.push(taskId);
-      else sections[assignedDayOffset]!.taskIds.push(taskId);
+      else manuallyAssignedTaskIds.push({ dayIndex: assignedDayOffset, taskId });
     } else {
       unassignedTaskIds.push(taskId);
     }
   }
 
-  let automaticDayIndex = 0;
-  for (const taskId of unassignedTaskIds) {
-    while (automaticDayIndex < sections.length && sections[automaticDayIndex]!.taskIds.length >= normalizedTasksPerDay) {
-      automaticDayIndex += 1;
+  function placeTaskAtOrAfter(taskId: T, preferredDayIndex: number) {
+    let dayIndex = preferredDayIndex;
+    while (dayIndex < sections.length && sections[dayIndex]!.taskIds.length >= normalizedTasksPerDay) {
+      dayIndex += 1;
     }
-    if (automaticDayIndex >= sections.length) {
+    if (dayIndex >= sections.length) {
       laterTaskIds.push(taskId);
     } else {
-      sections[automaticDayIndex]!.taskIds.push(taskId);
+      sections[dayIndex]!.taskIds.push(taskId);
     }
+  }
+
+  for (const { dayIndex, taskId } of manuallyAssignedTaskIds) {
+    placeTaskAtOrAfter(taskId, dayIndex);
+  }
+  for (const taskId of unassignedTaskIds) {
+    placeTaskAtOrAfter(taskId, 0);
   }
 
   let startIndex = 0;
@@ -130,23 +239,61 @@ export function buildHomeTodoDaySections<T>(
   return { sections, laterTaskIds };
 }
 
+export function buildHomeRoutineSections<T>(
+  routineTaskIds: readonly T[],
+  routinesPerSection: unknown = DEFAULT_HOME_TODO_ROUTINES_PER_SECTION,
+  routineSectionNames: Readonly<Record<string, string>> = {},
+): HomeRoutineSection<T>[] {
+  const normalizedRoutinesPerSection = normalizeHomeTodoRoutinesPerSection(routinesPerSection);
+  const sections: HomeRoutineSection<T>[] = [];
+  for (let startIndex = 0; startIndex < routineTaskIds.length; startIndex += normalizedRoutinesPerSection) {
+    const sectionIndex = sections.length;
+    sections.push({
+      groupIds: routineTaskIds.slice(startIndex, startIndex + normalizedRoutinesPerSection),
+      label: routineSectionNames[String(sectionIndex)]?.trim() || `Section ${sectionIndex + 1}`,
+      sectionIndex,
+      startIndex,
+    });
+  }
+  return sections;
+}
+
+export function formatHomeRoutineDueLabel(task: Pick<Task, "due_on" | "due_time">) {
+  if (!task.due_on) return null;
+  const [year, month, day] = task.due_on.split("-").map((part) => Number.parseInt(part ?? "", 10));
+  const dateLabel = Number.isFinite(year) && Number.isFinite(month) && Number.isFinite(day)
+    ? `${month}/${day}/${String(year).slice(-2)}`
+    : task.due_on;
+  const dueTimeLabel = formatDueTimeLabel(task.due_time);
+  return dueTimeLabel ? `${dateLabel} · ${dueTimeLabel}` : dateLabel;
+}
+
+export function getHomeRoutineStreakMetadata(summary?: { currentStreak: number; missedStreak: number }) {
+  const missedStreak = summary?.missedStreak ?? 0;
+  const currentStreak = summary?.currentStreak ?? 0;
+  if (missedStreak > 0) return { count: missedStreak, kind: "missed" as const };
+  if (currentStreak > 0) return { count: currentStreak, kind: "current" as const };
+  return null;
+}
+
 export async function createHomeTodoTask(
   title: string,
   taskTypeSelectionValue: string,
   onCreateTask: HomeTodoTaskCreator,
   appendTaskId: (taskId: string) => void,
+  metadata: HomeTodoTaskMetadata,
 ) {
   const trimmedTitle = title.trim();
   if (!trimmedTitle) return null;
 
-  const createdTask = await onCreateTask(trimmedTitle, taskTypeSelectionValue);
+  const createdTask = await onCreateTask(trimmedTitle, taskTypeSelectionValue, metadata);
   if (!createdTask) return null;
 
   appendTaskId(createdTask.id);
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV2 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV5 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
@@ -168,14 +315,23 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV2 {
       taskIdSet.has(taskId) && Number.isInteger(offset) && Number(offset) >= 0 && Number(offset) <= 7
     )).map(([taskId, offset]) => [taskId, Number(offset)]))
     : {};
+  const routineTaskIds = Array.isArray(candidate.routineTaskIds)
+    ? normalizeHomeRoutineTaskIds(candidate.routineTaskIds)
+    : [];
+  const routinesPerSection = isHomeTodoRoutinesPerSection(candidate.routinesPerSection)
+    ? candidate.routinesPerSection
+    : normalizeHomeTodoRoutinesPerSection(candidate.routinesPerPhase);
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 3,
+    schemaVersion: 5,
     taskIds,
     taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
+    routineTaskIds,
+    routinesPerSection,
+    routineSectionNames: normalizeHomeTodoRoutineSectionNames(candidate.routineSectionNames),
   };
 }
 
@@ -204,6 +360,85 @@ export function isHomeTodoTaskEligible(
     parentId = parent.parent_task_id;
   }
   return true;
+}
+
+export function getHomeRoutineTaskIds(
+  tasks: readonly Task[],
+  listMembershipsByTaskId: Readonly<Record<string, readonly Pick<TaskListMembership, "id">[]>>,
+  directMembershipsByTaskId?: Readonly<Record<string, readonly string[]>>,
+) {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const hierarchy = buildTaskHierarchyAdapter(tasks);
+  const directRoutineTaskIds = new Set(tasks
+    .filter((task) => directMembershipsByTaskId
+      ? (directMembershipsByTaskId[task.id] ?? []).includes("routine")
+      : (listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"))
+    .map((task) => task.id));
+  return tasks
+    .filter((task) => directRoutineTaskIds.has(task.id))
+    .filter((task) => !hierarchy.getParentChain(task.id).some((ancestor) => directRoutineTaskIds.has(ancestor.id)))
+    .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById))
+    .map((task) => task.id);
+}
+
+export function buildHomeRoutineGroups(
+  routineTaskIds: readonly string[],
+  tasks: readonly Task[],
+) {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const hierarchy = buildTaskHierarchyAdapter(tasks);
+  const groups: HomeRoutineGroup[] = [];
+
+  for (const anchorId of routineTaskIds) {
+    const anchor = taskById.get(anchorId);
+    if (!anchor || !isHomeTodoTaskEligible(anchor, tasks, taskById)) continue;
+    const anchorDepth = hierarchy.getDepth(anchor.id) ?? 0;
+    const groupTasks: HomeRoutineTask[] = [{ depth: 0, isAnchor: true, task: anchor }];
+    for (const descendant of hierarchy.getDescendants(anchor.id)) {
+      if (!isHomeTodoTaskEligible(descendant, tasks, taskById)) continue;
+      groupTasks.push({
+        depth: Math.max(0, (hierarchy.getDepth(descendant.id) ?? anchorDepth) - anchorDepth),
+        isAnchor: false,
+        task: descendant,
+      });
+    }
+    groups.push({
+      anchorId,
+      taskIds: groupTasks.map(({ task }) => task.id),
+      tasks: groupTasks,
+    });
+  }
+
+  return groups;
+}
+
+export function reconcileHomeRoutineTaskIds(
+  routineTaskIds: readonly string[],
+  routineGroupAnchorIds: readonly string[],
+) {
+  const eligibleIds = new Set(routineGroupAnchorIds);
+  const next: string[] = [];
+  const seen = new Set<string>();
+  for (const taskId of routineTaskIds) {
+    if (!eligibleIds.has(taskId) || seen.has(taskId)) continue;
+    seen.add(taskId);
+    next.push(taskId);
+  }
+  for (const taskId of routineGroupAnchorIds) {
+    if (seen.has(taskId)) continue;
+    seen.add(taskId);
+    next.push(taskId);
+  }
+  return next;
+}
+
+function normalizeHomeRoutineTaskIds(value: readonly unknown[]) {
+  const seen = new Set<string>();
+  return value.filter((taskId): taskId is string => {
+    if (typeof taskId !== "string" || !taskId.trim() || seen.has(taskId)) return false;
+    seen.add(taskId);
+    return true;
+  });
 }
 
 export function buildHomeTodoHierarchy(

@@ -27,6 +27,8 @@ export type TaskTableRowContext = {
   taskHistory: TaskHistory[];
   taskHistoryStreakSummary?: TaskHistoryStreakSummary;
   attentionReason?: TaskAttentionReason | null;
+  directlyExcludedFromTracking?: boolean;
+  effectivelyExcludedFromTracking?: boolean;
   todayDateKey: string;
 };
 
@@ -45,6 +47,8 @@ export function createStableTaskRowModelCache() {
         task,
         taskHistoryStreakSummary: context.taskHistoryStreakSummary,
         attentionReason: context.attentionReason,
+        directlyExcludedFromTracking: context.directlyExcludedFromTracking,
+        effectivelyExcludedFromTracking: context.effectivelyExcludedFromTracking,
         todayDateKey: context.todayDateKey,
       });
       const cached = rowsByTaskId.get(task.id);
@@ -137,6 +141,8 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     currentStreak,
     missedStreak,
     attentionReason: context.attentionReason ?? null,
+    directlyExcludedFromTracking: context.directlyExcludedFromTracking ?? task.exclude_from_tracking === true,
+    effectivelyExcludedFromTracking: context.effectivelyExcludedFromTracking ?? task.exclude_from_tracking === true,
     repeat: task.repeat_frequency,
     repeatInterval: Math.max(1, task.repeat_interval ?? 1),
     repeatDaysOfWeek: task.repeat_days_of_week ?? [],

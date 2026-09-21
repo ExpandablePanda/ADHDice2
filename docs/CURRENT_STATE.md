@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-20
+Last reviewed: 2026-09-21
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.40`.
+- Current working app version: `7.14.46`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,250 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-21 7.14.46 Consolidate Side Work into 7.14
+
+Merged the completed `codex/Side` application work into the active `7.14`
+development line while preserving the newer 7.14 Task authority, Active Status,
+streak-summary, behavior-policy, hierarchy, folder, and Style Lab boundaries.
+
+The integrated Side work includes the expanded Home To-do/Routine experience,
+Routine hierarchy and ordering, Home completion and Record chases, Record
+Evidence/freshness/cache work, tracking-exclusion application support, Move to
+Day, task signals, row menus, and list-level long-press fast actions.
+
+Tracking-exclusion SQL patches carried by Side remain source-only during this
+branch consolidation. This merge does not apply SQL or mutate the live Supabase
+schema. Native iOS work remains separate on `ios/native-development`.
+
+## 2026-09-21 7.13.95 Home List-Level Fast Actions
+
+Home fast-action mode is now scoped to the active Home list rather than the
+Task that initiated the long press. Every eligible row in the active To-do or
+Routine view expands together; any chevron collapses the shared mode, and tab
+switching exits it. Existing pointer gesture and Home mutation behavior remain
+unchanged.
+
+## 2026-09-21 7.13.94 Home Gear Long-Press Fast Actions
+
+Home To-do and Routine root gear buttons now support a 475ms pointer long
+press that replaces the gear with persistent inline fast actions. Normal gear
+clicks still open the existing dropdown, and long-press activation suppresses
+the following click. To-do Move to day continues using the existing dropdown
+destination view; Routine child rows remain unchanged.
+
+## 2026-09-21 7.13.93 Home Row Action Menus
+
+Home To-do and Routine anchor rows now consolidate their existing row actions
+behind one compact gear menu. To-do Move to day uses the same anchored panel's
+destination view, preserving Home day capacity/current disabling and the
+existing Home-only mutation paths. Routine child rows remain unchanged.
+
+## 2026-09-21 7.13.92 Home To-do Task Signals
+
+Home To-do rows now consume the canonical Task History streak summary and
+TaskApp Attention reason map beside the title. Missed streaks take precedence
+with the existing Skull badge; otherwise the shared current-streak chip is
+shown. Attention uses the existing TaskAttentionChip without Home-side rules.
+
+## 2026-09-20 7.13.91 Home To-do Move to Day
+
+Home To-do rows now expose a compact Move to day menu backed only by the
+existing `taskDayOffsets` Home organization state. The menu uses the existing
+seven day-section labels plus Later, disables full/current destinations, and
+does not mutate Task scheduling or recurrence fields.
+
+## 2026-09-20 7.13.90 Correct Rich Evidence Cache Payload + Safari Fallback
+
+The client-only rich Records detail cache now writes an explicit schema-v2
+payload containing only calculation time, session key, Task Evidence,
+provisional candidates, and warnings. If the full localStorage write is
+rejected, it retries with provisional candidates removed so current Record
+Evidence can still restore. No SQL or database migration changed.
+
+## 2026-09-20 7.13.84 Exclude Task from Tracking
+
+Tasks now have an additive direct tracking-exclusion flag. Client tracking
+projections inherit exclusion through same-table parent chains without mutating
+descendant rows. The unpublished SQL patch was replaced before deployment by
+the 7.13.85 correction below.
+
+## 2026-09-20 7.13.85 Correct Tracking Exclusion Achievement Authority
+
+The 7.13.85 version of the unpublished tracking-exclusion migration guarded
+`adhdice_achievement_occurrences` before Task-derived qualification can reach
+the evaluator. Exclusion dequalifies existing Task and Step-set evidence before
+rebuilding progress, while re-inclusion drains the canonical resumable
+Achievement recalculation cursor to completion. It was superseded before
+deployment by 7.13.86, which remains source-only until manually applied and
+verified; the unsafe 7.13.84 and superseded 7.13.85 migration files are no
+longer present.
+
+## 2026-09-20 7.13.86 Final Tracking Exclusion Authority + Cache Correction
+
+The unpublished tracking-exclusion migration now scopes every Task-derived
+Achievement evaluation and re-inclusion recalculation identity to the updated
+Task revision, so repeated exclude/include toggles cannot replay an earlier
+completed operation. Successful Task editor tracking mutations invalidate every
+in-memory Records session snapshot for the current user; Record Evidence keeps
+its explicit refresh after closing stale detail. The 7.13.86 migration remains
+source-only until manual application and live verification.
+
+## 2026-09-20 7.13.87 Bulk Record Evidence Tracking Exclusion
+
+Record Evidence now deduplicates Task-level selections across repeated evidence
+occurrences and submits one authenticated bulk exclusion RPC. The RPC validates
+the complete request atomically, increments revisions only for direct flag
+changes, blocks applicable pending rewards once, dequalifies affected
+Task/Step-set Achievement evidence, and evaluates current Achievement progress
+once. TaskApp reconciles returned Task rows, invalidates the current user's
+Records session cache, and refreshes streak summaries once. Records closes stale
+detail and runs exactly one explicit refresh with the existing pipeline stage
+text while showing blocking progress. The 7.13.87 migration remains source-only
+until manual application and live verification.
+
+## 2026-09-20 7.13.88 Durable Records Freshness + Home Loading UX
+
+Records now uses a narrow authenticated freshness RPC over the owner-protected
+reconciliation metadata, with a 12-hour saved-result bootstrap, user-scoped
+invalidation, and best-effort local rich Evidence details. Home shows explicit
+loading status for Finished Today and saved Record targets, and the bulk Task
+exclusion merge starts from the latest canonical Task state. The
+`supabase/patch_records_freshness_read_7_13_88.sql` migration is source-only
+until manual inspection and application.
+
+## 2026-09-20 7.13.83 Fix Cached Record Detail Open Race
+
+Records now opens a requested successful global Record synchronously inside the
+deep-link effect, then marks the metric consumed and acknowledges the request.
+The effect no longer defers the detail state update with a timer that cleanup
+could cancel on the cached path. Missing Records retain the synchronous
+consume-and-acknowledge fallback.
+
+## 2026-09-20 7.13.82 Fix Cached Home Record Deep-Link Handoff
+
+Home Record deep-links now keep the pending metric request until the Records
+tab has a successful cached or freshly loaded projection and schedules the
+matching global Record detail overlay. The Progress page no longer acknowledges
+the request merely because it mounted; the Records consumer owns that handoff.
+
+## 2026-09-19 7.13.81 Records Session Snapshot Across Navigation
+
+Records now retains the complete successful in-memory UI projection in a
+module-level session cache keyed by user, rules version, timezone, and logical
+day start. Returning to Records restores current cards, events, provisional
+candidates, Task evidence, warnings, and calculation time without rerunning
+the pipeline. Explicit Refresh Records bypasses the cache and replaces it only
+after a successful calculation; failed refreshes retain the prior snapshot.
+Persisted Records rows and compact evidence schema v2 remain unchanged.
+
+## 2026-09-19 7.13.80 Record Evidence Verification
+
+Current Task-based aggregate Record details retain the exact Task/Step
+occurrences from the successful in-memory Records evaluation for
+`parent_tasks_day`, `parent_tasks_week`, `parent_tasks_month`, `steps_day`,
+`steps_week`, `steps_month`, and `permanent_completes_day`. The detail overlay
+shows chronological evidence rows, verifies the reconstructed count against
+the Record value, and opens available Tasks through the existing shared editor.
+Persisted Records continue using compact evidence schema v2; detail opening does
+not run another Records query or pipeline.
+
+## 2026-09-19 7.13.79 Deep-link Home Record Chases to Progress Records
+
+Home Records to Beat rows now navigate to the existing Progress page, select
+the Records tab, and open the matching global durable Record detail overlay by
+metric key. No new AppPage, Records persistence, or Records pipeline was
+introduced; the existing Records tab remains the source of the detail view.
+
+## 2026-09-19 7.13.78 Add Finished Today Details and Correct Record Loading
+
+Home now presents a unique-entity Finished Today summary grouped by canonical
+Done, Did My Best, and Completed outcomes, with an expandable list of the
+finished Tasks and Steps. The Home record-target loader now invokes its async
+read lifecycle, so the Records to Beat panel can resolve its narrow persisted
+target query instead of remaining in its initial loading state. Records remain
+occurrence-based and Home does not run reconciliation or the Records pipeline.
+No SQL or schema change was made.
+
+## 2026-09-19 7.13.77 Add Home Daily Completion and Record Chases
+
+Home now shows compact Daily Tasks Completed and Records to Beat panels above
+the existing To-do/Routine workspace. Daily completion uses the shared loaded
+Task History snapshot and `todayKey`, with unique Task entities in the summary
+and canonical occurrence values for the three daily Records metrics. Home reads
+only the persisted current targets for those metrics, does not run Records
+reconciliation, and treats timezone/day-start mismatches as stale. No SQL or
+schema change was made.
+
+## 2026-09-19 7.13.73 Named Routine Sections and Quiet Routine Metadata
+
+Home Routine now uses named ordinal Sections backed by Home state V5, migrating
+the persisted V4 `routinesPerPhase` capacity without changing Routine
+membership, hierarchy, or order. Routine rows show their own due metadata and
+canonical History streak summaries, with missed streaks taking precedence over
+active streaks. Home save/sync status remains internal and background
+persistence remains unchanged; no SQL or schema change was made.
+
+## 2026-09-19 7.13.74 Add Routine Top / Bottom Controls
+
+Home Routine now exposes the existing Top and Bottom ordering controls on
+directly displayed Routine anchors. The controls update the persisted flat
+Routine order, so inherited Steps/Substeps move with their parent group while
+ordinal Section names remain unchanged. To-do ordering and all other Home
+Routine semantics are unchanged.
+
+## 2026-09-19 7.13.76 Keep Complete Confirmation on the Initiating Page
+
+Complete confirmation is now rendered by an app-level `TaskEditFlows`
+instance using the existing `pendingCompleteAction` state. Tasks retains the
+other workspace-only flows while passing `completeFlow={null}`, so Home,
+shared-editor, Table, and List Complete actions show one confirmation over the
+current surface without changing Complete semantics or page routing.
+
+## 2026-09-19 7.13.75 Drag Routine Steps/Substeps Within Their Parent
+
+Home Routine now exposes a compact child drag handle for visible Steps and
+Substeps. Drops are restricted to visible siblings with the same immediate
+parent and hierarchy depth, and valid before/after placements reuse TaskApp's
+canonical `reorderChildTask` path. Root Routine anchors still use Home's
+`routineTaskIds` ordering, while To-do behavior and Home child-order
+persistence remain unchanged. No SQL or schema change was made.
+
+## 2026-09-19 7.13.71 Routine Hierarchy, Ordering, and Phase Sections
+
+Home Routine now derives hierarchical groups from direct Routine membership and
+the canonical Task hierarchy. Group-anchor ordering and Routines-per-Phase are
+persisted in the existing JSON-backed Home state, while Phase sections remain a
+projection of that flat order. No Task hierarchy, Task ordering, SQL, or schema
+changed.
+
+## 2026-09-19 7.13.72 Protect Routine Order During Home State Hydration
+
+Home state hydration now defers Routine order reconciliation until hydration
+is resolved and bootstraps meaningful V4 Routine/capacity state even when
+To-do IDs are empty. No Task-domain, SQL, or schema changes.
+
+## 2026-09-18 7.13.68 Home To-do Metadata and Strict Daily Capacity
+
+Home To-do quick creation now carries due date/time, recurrence cadence, tags,
+numeric priority, and resolved Task Type metadata through the canonical Task
+creation path. Home day projection treats Tasks Per Day as a hard capacity for
+all seven normal sections, spilling preferred-day overflow forward and then to
+Later without rewriting durable offsets or Task rows.
+
+## 2026-09-18 7.13.69 Correct Home New Task Metadata UI
+
+Home New Task keeps its 7.13.68 metadata and canonical creation behavior while
+using the current Edit Task input, chip, cadence, and tag presentation directly
+inside the composer. The legacy Task Details accordion and field components are
+no longer used by Home.
+
+## 2026-09-18 7.13.70 Merge Home To-do and Routine Tabs
+
+Home now presents To-do and the built-in system-owned Routine list in one tabbed
+task panel. To-do retains its seven-day planning and strict capacity projection;
+Routine uses existing Routine memberships as an unlimited active-task list with
+explicit membership removal and search/new-task enablement.
 
 ## 2026-09-21 7.14.40 Batch Task Type Changes and Determinate Operation Progress
 

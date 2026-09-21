@@ -13,6 +13,33 @@ function joinClasses(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
 }
 
+export function cleanTaskTagLabel(value: string) {
+  return value.trim().replace(/^#+/, "").replace(/\s+/g, " ");
+}
+
+export function normalizeTaskTagValue(value: string) {
+  return cleanTaskTagLabel(value).toLowerCase().replace(/\s+/g, "-");
+}
+
+export function formatNewTaskTagLabel(value: string) {
+  return normalizeTaskTagValue(value);
+}
+
+export function dedupeTaskTagLabels(tags: string[]) {
+  const seen = new Set<string>();
+  const nextTags: string[] = [];
+  for (const tag of tags) {
+    const cleanedTag = cleanTaskTagLabel(tag);
+    const normalizedTag = normalizeTaskTagValue(cleanedTag);
+    if (!normalizedTag || seen.has(normalizedTag)) {
+      continue;
+    }
+    seen.add(normalizedTag);
+    nextTags.push(cleanedTag);
+  }
+  return nextTags;
+}
+
 export const TASK_TABLE_CHIP_TEXT_CLASS = "text-[13px] font-medium leading-none tracking-normal";
 export const TASK_TABLE_CHIP_BASE_CLASS = `inline-flex items-center justify-center rounded-full border px-2 py-1 whitespace-nowrap ${TASK_TABLE_CHIP_TEXT_CLASS}`;
 export const TASK_TABLE_ICON_LABEL_GAP_CLASS = "gap-1";

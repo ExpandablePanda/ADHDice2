@@ -108,6 +108,7 @@ import {
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
+import { buildEffectiveTrackingExclusionSet, filterTrackedTaskHistory } from "@/lib/task-tracking";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
@@ -154,6 +155,7 @@ import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportContro
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
+import { useHomeRecordTargets } from "@/hooks/useHomeRecordTargets";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
@@ -234,6 +236,10 @@ import { formatLocalDate, todayISO, withBasePath } from "@/lib/utils";
 import { formatDateKeyInTimeZone, getBrowserTimeZone, getLogicalDayKey, saveLogicalDaySettings } from "@/lib/logical-day";
 import { runStorageMigrations } from "@/lib/storage-migrations";
 import { buildProfileSnapshot, DEFAULT_PROFILE, markProfileMediaCachedForSession, saveProfile, setActiveProfileUserId, type UserProfile, useProfileStore } from "@/lib/profile-store";
+import { buildHomeDailyProgress, buildHomeRecordChases } from "@/lib/home-progress";
+import type { RecordMetricKey } from "@/lib/records/types";
+import { buildRecordsSessionCacheKey, invalidateRecordsSessionSnapshotsForUser } from "@/lib/records/session-cache";
+import { getRecordsLocalStorage, markRecordsInvalidated } from "@/lib/records/persistent-cache";
 import {
   isMissingTaskActualSecondsColumnError,
   isMissingTaskEnergyNoneEnumError,
@@ -243,8 +249,10 @@ import {
 import {
   buildTaskUpdateConflictMessage,
   deleteTaskRow,
+  excludeTasksFromTracking as excludeTasksFromTrackingRpc,
   insertTaskRowWithCanonicalCreation,
   markTaskRowsPermanentlyDeleted,
+  setTaskTrackingExclusion as setTaskTrackingExclusionRpc,
   updateTaskRowWithLegacyEnergyFallback,
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
@@ -254,6 +262,7 @@ import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/li
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import type { HomeTodoTaskMetadata } from "@/lib/home-todo-state";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
@@ -1150,6 +1159,7 @@ export function TaskApp() {
   }, [tasks]);
   const [message, setMessage] = useState<Message | null>(null);
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
+  const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
@@ -1842,6 +1852,13 @@ export function TaskApp() {
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
     [dayStartTime, logicalDayNow, userTimeZone],
   );
+  const homeRecordTargets = useHomeRecordTargets({
+    active: activePage === "Home",
+    client: supabase,
+    logicalDayStart: dayStartTime,
+    timezone: userTimeZone,
+    userId: currentUserId,
+  });
   const {
     isLoading: isTaskTypeBehaviorProfilesLoading,
     isBehaviorAuthorityReady,
@@ -2689,7 +2706,8 @@ export function TaskApp() {
     },
     [taskSubtasksByTaskId, tasks],
   );
-  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(taskHistory, todayKey), [taskHistory, todayKey]);
+  const trackedTaskHistoryForStats = useMemo(() => filterTrackedTaskHistory(taskHistory, tasks), [taskHistory, tasks]);
+  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(trackedTaskHistoryForStats, todayKey), [todayKey, trackedTaskHistoryForStats]);
   const { saveFocusSelection } = useFocusSelectionPersistence({
     currentUserId,
     defaultValidTaskIds: tasks,
@@ -2925,6 +2943,21 @@ export function TaskApp() {
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
   const taskHistoryByTaskId = sharedTaskHistoryByTaskId;
+  const homeDailyProgress = useMemo(
+    () => buildHomeDailyProgress({ taskHistoryByTaskId, tasks, todayKey }),
+    [taskHistoryByTaskId, tasks, todayKey],
+  );
+  const openHomeRecord = useCallback((metricKey: RecordMetricKey) => {
+    setPendingProgressRecordMetricKey(metricKey);
+    setActivePage("Achievements");
+  }, [setActivePage]);
+  const clearPendingProgressRecordMetricKey = useCallback(() => {
+    setPendingProgressRecordMetricKey(null);
+  }, []);
+  const homeRecordChases = useMemo(
+    () => buildHomeRecordChases(homeDailyProgress.recordLiveValues, homeRecordTargets.targets),
+    [homeDailyProgress.recordLiveValues, homeRecordTargets.targets],
+  );
   const taskHistoryFactsByTaskId = useMemo(
     () => Object.fromEntries(
       tasks.map((task) => [
@@ -3134,6 +3167,45 @@ export function TaskApp() {
     }
   }, [activeStatusRead, isTaskHistoryLoaded]);
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+  const updateTaskTrackingExclusion = useCallback(async (taskId: string, excluded: boolean) => {
+    const result = await setTaskTrackingExclusionRpc(client, taskId, excluded);
+    if (result.error || !result.data) {
+      setMessage({ tone: "warn", text: result.error?.message ?? "Task tracking exclusion could not be saved." });
+      return false;
+    }
+    const nextTasks = sortTasksForUi(tasks.map((task) => task.id === taskId ? { ...task, ...result.data } : task));
+    setTasks(nextTasks);
+    if (currentUserId) {
+      invalidateRecordsSessionSnapshotsForUser(currentUserId);
+      markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
+    }
+    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    setMessage({
+      tone: "good",
+      text: excluded ? "Task excluded from tracking." : "Task included in tracking.",
+    });
+    return true;
+  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks, userTimeZone]);
+  const excludeTasksFromTracking = useCallback(async (taskIds: readonly string[]) => {
+    const result = await excludeTasksFromTrackingRpc(client, taskIds);
+    if (result.error || !result.data) {
+      return { error: result.error?.message ?? "Task tracking exclusion could not be saved.", success: false };
+    }
+
+    const nextTaskById = new Map(canonicalTasksRef.current.map((task) => [task.id, task]));
+    for (const task of result.data) {
+      const priorTask = nextTaskById.get(task.id);
+      nextTaskById.set(task.id, priorTask ? { ...priorTask, ...task } : task);
+    }
+    const nextTasks = sortTasksForUi([...nextTaskById.values()]);
+    setTasks(nextTasks);
+    if (currentUserId) {
+      invalidateRecordsSessionSnapshotsForUser(currentUserId);
+      markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
+    }
+    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    return { error: null, success: true };
+  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, sortTasksForUi, userTimeZone]);
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
     values: TaskUpdate,
@@ -3617,6 +3689,7 @@ export function TaskApp() {
     [attentionRuleGroup, taskDisplayDueOnByTaskId, taskDisplayStatusByTaskId, taskListMembershipsByTaskId, tasksForActiveStatusRead, todayKey],
   );
   const [sharedEditorRowModelCache] = useState(createStableTaskRowModelCache);
+  const trackingExclusionTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(tasksForActiveStatusRead), [tasksForActiveStatusRead]);
   const sharedTaskEditorRows = useMemo(
     () => sharedTaskEditorOverlayTaskId
       ? tasksForActiveStatusRead.map((task) => sharedEditorRowModelCache.getOrCreate(task, {
@@ -3629,6 +3702,8 @@ export function TaskApp() {
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: taskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
+        directlyExcludedFromTracking: task.exclude_from_tracking === true,
+        effectivelyExcludedFromTracking: trackingExclusionTaskIds.has(task.id),
         todayDateKey: todayKey,
       }))
       : [],
@@ -3641,6 +3716,7 @@ export function TaskApp() {
       taskHistoryStreakSummaries,
       taskDisplayStatusByTaskId,
       taskAttentionReasonByTaskId,
+      trackingExclusionTaskIds,
       taskLinkedNotesByTaskId,
       taskListMembershipsByTaskId,
       taskSubtasksByTaskId,
@@ -4083,6 +4159,7 @@ export function TaskApp() {
   } = useTaskRewardController({
     client,
     currentUserId: session?.user?.id ?? null,
+    tasks,
     setMessage,
     setEconomy,
   });
@@ -4135,6 +4212,7 @@ export function TaskApp() {
     routeTask,
     saveTaskEditor,
     saveTaskListDefinition,
+    setTaskManualListMembership,
     syncTaskHistoryEntries,
     syncTaskHistoryEntry,
     syncTaskNoteLinks,
@@ -4689,7 +4767,7 @@ export function TaskApp() {
     }, { routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
 
-  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string) => {
+  const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string, metadata: HomeTodoTaskMetadata) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
@@ -4698,6 +4776,8 @@ export function TaskApp() {
 
     return addTask({
       ...buildNewTaskDraft(title),
+      ...metadata,
+      ...buildTaskPriorityUpdate(metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
@@ -7134,38 +7214,40 @@ export function TaskApp() {
     });
   };
 
+  const completeFlow = (() => {
+    if (!pendingCompleteAction) {
+      return null;
+    }
+    const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
+    const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
+    const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
+    const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
+    return {
+      confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
+      description: isMilestoneComplete
+        ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
+        : getTaskCompleteConfirmationDescription(completeFlowTask),
+      modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
+        ? "Mark step complete"
+        : "Mark task permanently complete",
+      onClose: () => setPendingCompleteAction(null),
+      onConfirm: () => { void confirmPendingTaskComplete(); },
+      pending: isMilestoneComplete && isMilestoneLifecyclePending,
+      taskTitle: pendingCompleteTask?.title ?? "Task",
+      title: isMilestoneComplete
+        ? "Complete Milestone and award trophy?"
+        : (pendingCompleteTask?.parent_task_id ?? null)
+        ? "Mark this Step Complete?"
+        : "Mark permanently Complete?",
+    };
+  })();
+
   const taskWorkspaceFlowLayer = (
     <>
       <TaskEditFlows
         batchDeleteFlow={batchDeleteFlow}
         batchEditFlow={batchEditFlow}
-        completeFlow={(() => {
-          if (!pendingCompleteAction) {
-            return null;
-          }
-          const pendingCompleteTask = tasks.find((task) => task.id === pendingCompleteAction.taskId) ?? null;
-          const completeFlowTask = pendingCompleteTask ?? { parent_task_id: null };
-          const pendingCompleteMilestone = pendingCompleteTask ? milestoneData.milestoneByTaskId.get(pendingCompleteTask.id) : null;
-          const isMilestoneComplete = pendingCompleteMilestone?.status === "active" && pendingCompleteMilestone.task_trashed_at === null;
-          return {
-            confirmLabel: isMilestoneComplete ? "Complete Milestone" : "Mark Complete",
-            description: isMilestoneComplete
-              ? "The task will be permanently completed. The locked trophy will be awarded. Aura eligibility depends on the locked target and grace dates."
-              : getTaskCompleteConfirmationDescription(completeFlowTask),
-            modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
-              ? "Mark step complete"
-              : "Mark task permanently complete",
-            onClose: () => setPendingCompleteAction(null),
-            onConfirm: () => { void confirmPendingTaskComplete(); },
-            pending: isMilestoneComplete && isMilestoneLifecyclePending,
-            taskTitle: pendingCompleteTask?.title ?? "Task",
-            title: isMilestoneComplete
-              ? "Complete Milestone and award trophy?"
-              : (pendingCompleteTask?.parent_task_id ?? null)
-              ? "Mark this Step Complete?"
-              : "Mark permanently Complete?",
-          };
-        })()}
+        completeFlow={null}
         focusPlannerFlow={focusPlannerFlow}
         momentumFlow={momentumFlow}
         taskHistoryFlow={taskHistoryFlow}
@@ -7221,6 +7303,14 @@ export function TaskApp() {
       data-lowstim={lowStim ? "" : undefined}
       className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
     >
+      <TaskEditFlows
+        batchDeleteFlow={null}
+        batchEditFlow={null}
+        completeFlow={completeFlow}
+        focusPlannerFlow={null}
+        momentumFlow={null}
+        taskHistoryFlow={null}
+      />
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
         <TaskManagementTableV2
           allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
@@ -7317,6 +7407,7 @@ export function TaskApp() {
           onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
           onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
           onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
+          onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
           onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
           onUnlinkTask={unlinkSameTableTask}
           overlayOnly
@@ -7503,11 +7594,25 @@ export function TaskApp() {
           </div>
         ) : activePage === "Home" ? (
           <TaskHomePage
+            allTags={allTaskTags}
             listMembershipsByTaskId={taskListMembershipsByTaskId}
+            manualMembershipsByTaskId={manualMembershipsByTaskId}
             onCreateTaskWithType={createHomeTodoTaskWithType}
+            onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
+            onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
             onOpenTask={openTaskEditorFromId}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+            dailyProgress={homeDailyProgress}
+            homeRecordChases={homeRecordChases}
+            isTaskHistoryLoaded={isTaskHistoryLoaded}
+            onOpenRecord={openHomeRecord}
+            recordTargetsError={homeRecordTargets.error}
+            recordTargetsLoading={homeRecordTargets.loading}
+            recordTargetsRecalculatedAt={homeRecordTargets.recalculatedAt}
+            recordTargetsSettingsMismatch={homeRecordTargets.settingsMismatch}
+            taskAttentionReasonByTaskId={taskAttentionReasonByTaskId}
+            taskHistoryStreakSummaries={taskHistoryStreakSummaries}
             behaviorProfiles={taskTypeBehaviorProfiles}
             behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
             namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
@@ -7532,6 +7637,10 @@ export function TaskApp() {
             milestoneLoading={milestoneData.isLoading}
             model={achievementProgress.model}
             notificationError={achievementNotifications.claimError ?? achievementNotifications.seenError}
+            initialRecordMetricKey={pendingProgressRecordMetricKey}
+            onRecordRequestHandled={clearPendingProgressRecordMetricKey}
+            onExcludeTasksFromTracking={excludeTasksFromTracking}
+            onOpenTask={openTaskEditorFromId}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
               setActivePage("Tasks");

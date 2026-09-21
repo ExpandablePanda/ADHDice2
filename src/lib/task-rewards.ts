@@ -1,5 +1,6 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
 import { computeTaskSpecificHistoryStats } from "@/lib/task-history";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { todayISO } from "@/lib/utils";
 
 export type TaskRewardMode = "single" | "batch";
@@ -173,7 +174,7 @@ export function resolveTaskRewardTier(streakLength: number) {
 
 export function buildSingleTaskReward(tasks: Task[], history: DbTaskHistory[], rewardDate = todayISO()): PendingTaskReward | null {
   const task = tasks[0] ?? null;
-  if (!task) {
+  if (!task || buildEffectiveTrackingExclusionSet(tasks).has(task.id)) {
     return null;
   }
 
@@ -197,18 +198,20 @@ export function buildSingleTaskReward(tasks: Task[], history: DbTaskHistory[], r
 }
 
 export function buildBatchTaskReward(tasks: Task[], rewardDate = todayISO()): PendingTaskReward | null {
-  if (tasks.length === 0) {
+  const excludedTaskIds = buildEffectiveTrackingExclusionSet(tasks);
+  const eligibleTasks = tasks.filter((task) => !excludedTaskIds.has(task.id));
+  if (eligibleTasks.length === 0) {
     return null;
   }
 
   return {
-    claimRefs: tasks.map((task) => ({ subtaskId: null, taskId: task.id, title: task.title })),
+    claimRefs: eligibleTasks.map((task) => ({ subtaskId: null, taskId: task.id, title: task.title })),
     createdAt: new Date().toISOString(),
-    diceCount: tasks.length,
+    diceCount: eligibleTasks.length,
     mode: "batch",
     rewardDate,
     streakLength: 0,
-    tasks,
+    tasks: eligibleTasks,
     tier: null,
   };
 }

@@ -519,6 +519,7 @@ test("parent and child Table/List title paths consume compact summary fields", (
   assert.match(derivedSource, /const missedStreak = streakSummary\?\.missedStreak \?\? 0/);
   assert.match(derivedSource, /const currentStreak = missedStreak > 0 \? 0 : streakSummary\?\.currentStreak \?\? 0/);
   assert.doesNotMatch(derivedSource, /computeTaskSpecificHistoryStats/);
+  assert.match(appSource, /<TaskHomePage[\s\S]*taskHistoryStreakSummaries=\{taskHistoryStreakSummaries\}/);
   assert.match(tableSource, /task\.currentStreak > 0/);
   assert.match(tableSource, /task\.missedStreak > 0/);
   assert.match(tableSource, /renderStepHistoryChips\(\s*item\.currentStreak,\s*item\.missedStreak/);
