@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import { loadLatestCompletedRecordsRun } from "../src/lib/record-repository.ts";
-import { isRecordsFresh, isRecordsInvalidatedAfter, normalizeRecordsLogicalDayStart, RECORDS_AUTO_REFRESH_INTERVAL_MS } from "../src/lib/records/freshness.ts";
+import { isRecordsFresh, isRecordsInvalidatedAfter, normalizeRecordsLogicalDayStart, recordsTimestampsMatch, RECORDS_AUTO_REFRESH_INTERVAL_MS } from "../src/lib/records/freshness.ts";
 import {
   clearRecordsInvalidation,
   markRecordsInvalidated,
@@ -49,6 +49,13 @@ test("Records freshness normalizes database time values and honors newer invalid
   assert.equal(isRecordsInvalidatedAfter("2026-09-20T10:00:00.000Z", "2026-09-20T10:00:00.000Z"), false);
 });
 
+test("Records timestamp identity compares exact instants across valid serializations", () => {
+  assert.equal(recordsTimestampsMatch("2026-09-20T14:17:52.587Z", "2026-09-20T14:17:52.587+00:00"), true);
+  assert.equal(recordsTimestampsMatch("2026-09-20T14:17:52.587Z", "2026-09-20T09:17:52.587-05:00"), true);
+  assert.equal(recordsTimestampsMatch("2026-09-20T14:17:52.587Z", "2026-09-20T14:17:52.588Z"), false);
+  assert.equal(recordsTimestampsMatch("not-a-timestamp", "not-a-timestamp"), false);
+});
+
 test("freshness RPC query sends only current settings and maps the narrow row", async () => {
   const calls: Array<{ name: string; args: unknown }> = [];
   const client = {
@@ -92,13 +99,24 @@ test("rich detail cache restores only exact calculation identity and fails safel
   } as never;
   assert.equal(writeRecordsLocalDetailCache(cache, input), true);
   assert.ok(readRecordsLocalDetailCache(cache, input.sessionKey, input.lastCalculatedAt));
+  assert.ok(readRecordsLocalDetailCache(cache, input.sessionKey, "2026-09-20T10:00:00.000+00:00"));
   assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, "2026-09-20T10:00:01.000Z"), null);
+  assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, "2026-09-20T10:00:00.001Z"), null);
   assert.equal(readRecordsLocalDetailCache(cache, "user-2:records-v1:America/New_York:06:00", input.lastCalculatedAt), null);
   cache.setItem(`adhdice:records:details:v1:${input.sessionKey}`, JSON.stringify({ ...input, schemaVersion: 1, taskEvidenceByRecordIdentity: { malformed: 1 } }));
   assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, input.lastCalculatedAt), null);
   cache.setItem(`adhdice:records:details:v1:${input.sessionKey}`, "not-json");
   assert.equal(readRecordsLocalDetailCache(cache, input.sessionKey, input.lastCalculatedAt), null);
   assert.equal(writeRecordsLocalDetailCache(storage({}, { failWrite: true }), input), false);
+});
+
+test("missing or invalid rich detail cache keeps the missing-Evidence fallback", () => {
+  const cache = storage();
+  const sessionKey = "user-1:records-v1:America/New_York:06:00";
+  assert.equal(readRecordsLocalDetailCache(cache, sessionKey, "2026-09-20T10:00:00.000Z"), null);
+  assert.match(hook, /hasDetailedEvidence: false/);
+  assert.match(hook, /taskEvidenceByRecordIdentity: \{\}/);
+  assert.match(hook, /readRecordsLocalDetailCache\(getRecordsLocalStorage\(\), sessionKey, evaluatedAt\)/);
 });
 
 test("invalidation markers are user/settings scoped and storage failures are harmless", () => {

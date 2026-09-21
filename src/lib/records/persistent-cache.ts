@@ -1,5 +1,6 @@
 import { RECORD_METRICS, type ProvisionalRecordCandidate } from "@/lib/records/types";
 import type { RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
+import { recordsTimestampsMatch } from "@/lib/records/freshness";
 
 export const RECORDS_LOCAL_DETAIL_CACHE_SCHEMA_VERSION = 1;
 
@@ -102,7 +103,8 @@ export function readRecordsLocalDetailCache(storage: Storage | null, sessionKey:
     if (!isRecordObject(parsed)
       || parsed.schemaVersion !== RECORDS_LOCAL_DETAIL_CACHE_SCHEMA_VERSION
       || parsed.sessionKey !== sessionKey
-      || parsed.lastCalculatedAt !== lastCalculatedAt
+      || typeof parsed.lastCalculatedAt !== "string"
+      || !recordsTimestampsMatch(parsed.lastCalculatedAt, lastCalculatedAt)
       || !isCachedProvisionalCandidates(parsed.provisionalCandidates)
       || !Array.isArray(parsed.warnings)
       || !parsed.warnings.every((warning) => typeof warning === "string")

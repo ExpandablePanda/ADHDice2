@@ -1,5 +1,11 @@
 export const RECORDS_AUTO_REFRESH_INTERVAL_MS = 12 * 60 * 60 * 1000;
 
+export function recordsTimestampsMatch(left: string, right: string) {
+  const leftMs = Date.parse(left);
+  const rightMs = Date.parse(right);
+  return Number.isFinite(leftMs) && Number.isFinite(rightMs) && leftMs === rightMs;
+}
+
 export function isRecordsFresh(lastCalculatedAt: string | null | undefined, nowMs = Date.now()) {
   if (!lastCalculatedAt) return false;
   const calculatedAtMs = Date.parse(lastCalculatedAt);
