@@ -2,6 +2,10 @@ export type WorkspaceRefreshRequest = {
   source: string;
 };
 
+export type SingleFlightRefreshRequestOptions = {
+  refreshAfterCurrent?: boolean;
+};
+
 export const WORKSPACE_STALE_RESUME_THRESHOLD_MS = 5 * 60 * 1000;
 
 export type WorkspaceResumeRefreshReason = "stale-resume" | "online-reconnect" | "bfcache-restore";
@@ -168,5 +172,54 @@ export function createWorkspaceRefreshCoordinator<TRequest extends WorkspaceRefr
     isRunning() {
       return inFlight !== null;
     },
+  };
+}
+
+type RefreshRunner<T> = () => Promise<T>;
+
+/**
+ * Shares an equivalent in-flight read and collapses freshness requests into
+ * one trailing read. The runner is intentionally not a cache; it only owns
+ * the current promise and its optional trailing refresh.
+ */
+export function createSingleFlightRefreshCoordinator<T>() {
+  let inFlight: Promise<T> | null = null;
+  let trailingRunner: RefreshRunner<T> | null = null;
+
+  function request(
+    runner: RefreshRunner<T>,
+    { refreshAfterCurrent = false }: SingleFlightRefreshRequestOptions = {},
+  ) {
+    if (inFlight) {
+      if (refreshAfterCurrent && !trailingRunner) {
+        trailingRunner = runner;
+      }
+      return inFlight;
+    }
+
+    let activeRunner: RefreshRunner<T> | null = runner;
+    const promise = (async () => {
+      let result!: T;
+      while (activeRunner) {
+        result = await activeRunner();
+        activeRunner = trailingRunner;
+        trailingRunner = null;
+      }
+      return result;
+    })();
+    inFlight = promise;
+    const clearInFlight = () => {
+      if (inFlight === promise) {
+        inFlight = null;
+        trailingRunner = null;
+      }
+    };
+    void promise.then(clearInFlight, clearInFlight);
+    return promise;
+  }
+
+  return {
+    isRunning: () => inFlight !== null,
+    request,
   };
 }
