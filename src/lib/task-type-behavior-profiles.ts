@@ -15,7 +15,7 @@ import {
   type TaskNeedsActionTrigger,
   type TaskSuccessOutcome,
 } from "./task-state-engine/behavior-policy.ts";
-import type { TaskType } from "./task-type.ts";
+import type { TaskType } from "./task-type-domain.ts";
 
 type ProfileQueryRow = Pick<TaskTypeBehaviorProfile, "task_type" | "effective_from_logical_date" | "unresolved_occurrence" | "positive_streak_on_unhandled" | "missed_streak_on_unhandled" | "rewards" | "created_at" | "updated_at"> & {
   /** Optional keeps pre-7.13.38 source/test rows compatible. */

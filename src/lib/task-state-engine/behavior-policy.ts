@@ -11,8 +11,8 @@
  * configurable profiles; invalid retired Task Types are rejected before they
  * reach the engine.
  */
-import type { TaskType } from "../task-type.ts";
-import { isTaskType, normalizeTaskType } from "../task-type.ts";
+import type { TaskType } from "../task-type-domain.ts";
+import { isTaskType, normalizeTaskType } from "../task-type-domain.ts";
 
 export type UnresolvedOccurrenceBehavior = "missed" | "blank";
 /**

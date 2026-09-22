@@ -1,5 +1,5 @@
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/persisted-types.ts";
-import type { TaskType } from "./task-type.ts";
+import type { TaskType } from "./task-type-domain.ts";
 import type { TaskManualAction, TaskNeedsActionTrigger, TaskSuccessOutcome } from "./task-state-engine/behavior-policy.ts";
 import type {
   CanonicalTaskCalendarOverride,
@@ -75,7 +75,7 @@ export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
-export type { TaskType } from "./task-type.ts";
+export type { TaskType } from "./task-type-domain.ts";
 export type TaskTypeBehaviorProfile = {
   user_id: string;
   task_type: TaskType;
@@ -433,7 +433,7 @@ export type Task = {
 
   revision: number;
   title: string;
-  task_type: import("./task-type.ts").TaskType;
+  task_type: import("./task-type-domain.ts").TaskType;
   /** Nullable assignment; optional for rows/fixtures read before 7.13.27 is applied. */
   custom_ruleset_id?: string | null;
   notes: string | null;
@@ -502,7 +502,7 @@ export type TaskInsert = {
 
   revision?: number;
   title: string;
-  task_type?: import("./task-type.ts").TaskType;
+  task_type?: import("./task-type-domain.ts").TaskType;
   custom_ruleset_id?: string | null;
   notes?: string | null;
   status?: TaskStatus;

@@ -4,6 +4,8 @@ import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurrin
 import { shouldExposeHistoryEventTimestamp } from "@/lib/task-history-cutover";
 import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";
 import type { TaskCalendarOverride, TaskEffectiveTimelineDay, TaskRecurrence } from "@/lib/task-state-engine/types";
+import { deduplicateTaskHistoryByLogicalDate } from "./task-state-canonical/history-deduplication.ts";
+export { deduplicateTaskHistoryByLogicalDate, getTaskHistoryLogicalIdentity } from "./task-state-canonical/history-deduplication.ts";
 
 export type TaskHistoryLoadResult =
   | { status: "ready"; history: DbTaskHistory[]; error: null }
@@ -207,41 +209,6 @@ export type TaskHistoryStreakEntry = Pick<
   | "canonical_provenance_kind"
   | "recurrence_authoritative"
 >;
-
-type TaskHistoryIdentityEntry = Pick<DbTaskHistory, "id" | "task_id" | "entry_date" | "created_at" | "updated_at">
-  & Pick<DbTaskHistory, "canonical_fact_id">;
-
-export function getTaskHistoryLogicalIdentity(entry: Pick<DbTaskHistory, "task_id" | "entry_date">) {
-  return `${entry.task_id}:${entry.entry_date}`;
-}
-
-function compareHistoryRowFreshness(left: TaskHistoryIdentityEntry, right: TaskHistoryIdentityEntry) {
-  const leftIsCanonical = Boolean(left.canonical_fact_id);
-  const rightIsCanonical = Boolean(right.canonical_fact_id);
-  if (leftIsCanonical !== rightIsCanonical) {
-    return leftIsCanonical ? 1 : -1;
-  }
-  const leftTimestamp = getHistoryTimestamp(left);
-  const rightTimestamp = getHistoryTimestamp(right);
-  if (leftTimestamp !== rightTimestamp) {
-    if (!leftTimestamp) return -1;
-    if (!rightTimestamp) return 1;
-    return leftTimestamp < rightTimestamp ? -1 : 1;
-  }
-  return left.id.localeCompare(right.id);
-}
-
-export function deduplicateTaskHistoryByLogicalDate<T extends TaskHistoryIdentityEntry>(history: readonly T[]) {
-  const byLogicalDate = new Map<string, T>();
-  for (const entry of history) {
-    const identity = getTaskHistoryLogicalIdentity(entry);
-    const existing = byLogicalDate.get(identity);
-    if (!existing || compareHistoryRowFreshness(existing, entry) <= 0) {
-      byLogicalDate.set(identity, entry);
-    }
-  }
-  return [...byLogicalDate.values()];
-}
 
 /**
  * Build the History read model used by active status and task surfaces.

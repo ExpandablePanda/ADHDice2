@@ -1,45 +1,24 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
-import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
-import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts";
-import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
-import { evaluateTaskState } from "./engine.ts";
-import type { TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
+import {
+  resolveActiveTaskStatus,
+  type ActiveStatusReadInput,
+  type ActiveStatusReadTask,
+  type ActiveStatusTaskReadInput,
+  type ActiveStatusReadResult,
+} from "../task-state-canonical/active-status-read.ts";
+export { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "../task-state-canonical/active-status-read.ts";
 import { selectTaskBehaviorProjectionSemantics } from "./behavior-policy.ts";
 import { createProjectionDomainRevision, forEachCooperatively, type CooperativeChunkOptions, type CooperativeChunkResult, type StableTaskProjectionCache } from "../stable-task-projection.ts";
-import { normalizeTaskType } from "../task-type.ts";
+import { normalizeTaskType } from "../task-type-domain.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
 
 /**
  * Compatibility export retained for callers that still gate Task State
  * integration. Active Status reads themselves always use the engine below.
  */
-export const TASK_STATE_ENGINE_INTEGRATION_ENABLED = true;
-
-export type ActiveStatusAuthority = "engine";
-export type ActiveStatusReadResult = {
-  authority: ActiveStatusAuthority;
-  statusesByTaskId: TaskDisplayStatusByTaskId;
-  dueOnByTaskId: Record<string, string | null>;
-};
-
-type ActiveStatusReadTask = Task & Partial<CanonicalTaskStateColumns> & {
-  canonical_schedule_anchor_date?: string | null;
-  canonical_schedule_boundary?: CanonicalProjectedTaskState["canonical_schedule_boundary"];
-};
-type ActiveStatusReadInput = TaskBehaviorPolicyResolutionContext & {
-  enabled?: boolean;
-  historyByTaskId: Record<string, TaskHistory[]>;
-  logicalDayRollover: string;
-  now: string | Date;
-  tasks: ActiveStatusReadTask[];
-  timezone: string;
-};
-
-export type ActiveStatusTaskReadInput = Omit<ActiveStatusReadInput, "historyByTaskId" | "tasks"> & {
-  history: TaskHistory[];
-  task: ActiveStatusReadTask;
-};
+export type { ActiveStatusReadInput, ActiveStatusReadResult, ActiveStatusTaskReadInput } from "../task-state-canonical/active-status-read.ts";
+export { resolveActiveTaskStatus, resolveActiveTaskStatuses, resolveCompatibilityTaskStatuses } from "../task-state-canonical/active-status-read.ts";
 
 function activeStatusTaskIdentity(
   task: ActiveStatusReadTask,
@@ -124,21 +103,6 @@ export function createActiveStatusTaskProjectionRevision(input: ActiveStatusTask
     task: activeStatusTaskIdentity(input.task, input.behaviorSelectionsByTaskId),
     timezone: input.timezone,
   });
-}
-
-export function resolveActiveTaskStatus(input: ActiveStatusTaskReadInput) {
-  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
-  if (isCanonicalArchivedOrTrashed(input.task)) {
-    return {
-      status: input.task.container_state === "trashed" || input.task.status === "trashed" ? "trashed" : "archived",
-      // The legacy whole-collection read omitted archived/trashed due dates.
-      // Preserve that presentation fallback in the incremental path.
-      dueOn: undefined,
-    } as const;
-  }
-  const engineInput = buildDirectTaskStateEngineInput(input.task, normalizedHistory, input);
-  const evaluated = evaluateTaskState(engineInput);
-  return { dueOn: evaluated.nextDueDate, status: evaluated.activeStatus } as const;
 }
 
 export type IncrementalActiveStatusReadResult = ActiveStatusReadResult & {
@@ -229,42 +193,6 @@ export async function resolveActiveTaskStatusesIncrementallyChunked(
     reusedTasks,
     statusesByTaskId: result.completed ? statusesByTaskId : {},
   };
-}
-
-function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: boolean): ActiveStatusReadResult {
-  const statusesByTaskId: TaskDisplayStatusByTaskId = {};
-  const dueOnByTaskId: Record<string, string | null> = {};
-  for (const task of input.tasks) {
-    const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
-    if (isCanonicalArchivedOrTrashed(task)) {
-      statusesByTaskId[task.id] = task.container_state === "trashed" || task.status === "trashed" ? "trashed" : "archived";
-      continue;
-    }
-    const buildInput = compatibilityOnly ? buildCompatibilityTaskStateEngineInput : buildDirectTaskStateEngineInput;
-    const engineInput = buildInput(task, normalizedHistory, {
-      behaviorProfiles: input.behaviorProfiles,
-      behaviorPolicyRevisions: input.behaviorPolicyRevisions,
-      namedCustomRulesetBehaviorPolicyRevisions: input.namedCustomRulesetBehaviorPolicyRevisions,
-      behaviorSelectionsByTaskId: input.behaviorSelectionsByTaskId,
-      now: input.now,
-      timezone: input.timezone,
-      logicalDayRollover: input.logicalDayRollover,
-    });
-    const evaluated = evaluateTaskState(engineInput);
-    statusesByTaskId[task.id] = evaluated.activeStatus;
-    dueOnByTaskId[task.id] = evaluated.nextDueDate;
-  }
-  return { authority: "engine", dueOnByTaskId, statusesByTaskId };
-}
-
-/** The production shared Active Status authority. */
-export function resolveActiveTaskStatuses(input: ActiveStatusReadInput): ActiveStatusReadResult {
-  return resolveTaskStatuses(input, false);
-}
-
-/** Compatibility-only Active Status translation for legacy/test-shaped Task fixtures. */
-export function resolveCompatibilityTaskStatuses(input: ActiveStatusReadInput): ActiveStatusReadResult {
-  return resolveTaskStatuses(input, true);
 }
 
 /** Presentation-only copies; never pass these to a persistence mutation. */

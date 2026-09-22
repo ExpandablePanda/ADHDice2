@@ -3,7 +3,7 @@ import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts
 import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
-import { normalizeTaskType } from "../task-type.ts";
+import { normalizeTaskType } from "../task-type-domain.ts";
 import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import type {
   TaskCalendarOverride,
