@@ -1,11 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizeTaskWorkspaceTabsState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs, VALID_TASK_VIEWS } from "../src/lib/task-ui-state.ts";
 
 test("calendar is a valid task view with independent include-steps defaults", () => {
-  assert.deepEqual(VALID_TASK_VIEWS, ["table", "list", "cards", "matrix", "grid", "calendar"]);
+  assert.deepEqual(VALID_TASK_VIEWS, ["table", "list", "cards", "matrix", "calendar"]);
   assert.equal(DEFAULT_TASK_UI_STATE.includeStepsByView.calendar, false);
   assert.ok(DEFAULT_TASK_UI_STATE.visibleColumnsByView.calendar.length > 0);
+});
+
+test("useTaskUiState has no retired Task Grid local-storage path", async () => {
+  const source = await readFile(new URL("../src/hooks/useTaskUiState.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /TASK_GRID_STORAGE_KEY|taskGridLayout|TaskGrid/);
 });
 
 test("task ui state migration repairs missing newer columns", () => {
@@ -16,11 +23,10 @@ test("task ui state migration repairs missing newer columns", () => {
       table: ["bucket", "due"],
       cards: ["bucket"],
       matrix: ["bucket"],
-      grid: ["bucket"],
     },
   });
 
-  for (const view of ["table", "list", "cards", "matrix", "grid", "calendar"] as const) {
+  for (const view of ["table", "list", "cards", "matrix", "calendar"] as const) {
     assert.equal(migrated.visibleColumnsByView[view].includes("estimated_time"), true);
     assert.equal(migrated.visibleColumnsByView[view].includes("actual_time"), true);
     assert.equal(migrated.visibleColumnsByView[view].includes("tags"), true);
@@ -87,7 +93,6 @@ test("task ui state migration drops invalid columns and repairs bucket/view/stat
       table: ["bucket", "fake_column_table", "due"],
       cards: ["fake_column_2"],
       matrix: ["notes", "fake_column_3"],
-      grid: ["signal", "signal", "fake_column_4"],
     } as unknown as typeof DEFAULT_TASK_UI_STATE.visibleColumnsByView,
   });
 
@@ -98,8 +103,6 @@ test("task ui state migration drops invalid columns and repairs bucket/view/stat
   assert.equal(migrated.visibleColumnsByView.list.includes("fake_column" as never), false);
   assert.equal(migrated.visibleColumnsByView.cards.includes("fake_column_2" as never), false);
   assert.equal(migrated.visibleColumnsByView.matrix.includes("fake_column_3" as never), false);
-  assert.equal(migrated.visibleColumnsByView.grid.includes("fake_column_4" as never), false);
-  assert.equal(new Set(migrated.visibleColumnsByView.grid).size, migrated.visibleColumnsByView.grid.length);
 });
 
 test("task ui state migration removes the retired Trash status filter", () => {
@@ -129,7 +132,6 @@ test("task ui state migration maps legacy list columns onto table view", () => {
       list: ["bucket", "due"],
       cards: ["bucket"],
       matrix: ["bucket"],
-      grid: ["bucket"],
     } as unknown as typeof DEFAULT_TASK_UI_STATE.visibleColumnsByView,
   });
 

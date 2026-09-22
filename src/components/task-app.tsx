@@ -73,7 +73,6 @@ import {
   FilterRowsAdapter as FilterRows,
   ImportWidgetCardAdapter as ImportWidgetCard,
   TaskCardGalleryAdapter as TaskCardGallery,
-  TaskGridViewAdapter as TaskGridView,
   TaskMatrixViewAdapter as TaskMatrixView,
 } from "./task-app/task-view-adapters";
 import { DailyPlanningPanel } from "./task-app/daily-planning-panel";
@@ -144,11 +143,9 @@ import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles
 import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
 import { useTaskContentFolderActions } from "@/hooks/useTaskContentFolderActions";
-import { useResponsiveTaskGridColumns } from "@/hooks/useResponsiveTaskGridColumns";
 import { useTaskListSelection } from "@/hooks/useTaskListSelection";
 import { useTaskListViewStateController } from "@/hooks/useTaskListViewStateController";
 import { useTaskPlannerActions } from "@/hooks/useTaskPlannerActions";
-import { useTaskGridLayoutController } from "@/hooks/useTaskGridLayoutController";
 import { useFocusSelectionPersistence } from "@/hooks/useFocusSelectionPersistence";
 import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRoutingController";
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
@@ -192,12 +189,7 @@ import {
 } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import { appendTaskListRuleRow, removeTaskListRuleRow, summarizeTaskListRules, updateTaskListRuleRow, updateTaskListRuleRowConnector } from "@/lib/task-list-rule-editor";
-import {
-  normalizeTaskGridLayout,
-  shiftDateKey,
-  type TaskGridLayoutItem,
-} from "@/lib/task-grid-layout";
-import { buildWidgetTypeGuard, resolveTaskGridLayout } from "@/lib/task-grid-parser";
+import { shiftDateKey } from "@/lib/date-key";
 import { isPageShellLayoutReady, subscribeToPageShellLayoutReadiness, TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { arePageShellNavigationRectsStable, getPageShellNavigationScrollTop, isPageShellNavigationRectUsable, PAGE_SHELL_NAVIGATION_GAP_PX, PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX, type PageShellNavigationRect } from "@/lib/page-shell-navigation";
 import {
@@ -376,7 +368,6 @@ import type {
   TaskContentFolder,
   TaskEnergy,
   TaskFocusDay as DbTaskFocusDay,
-  TaskGridLayout as DbTaskGridLayout,
   TaskInsert,
   TaskRepeatFrequency,
   TaskStatus,
@@ -432,19 +423,9 @@ type AuthMode = "sign-in" | "sign-up";
 const AUTH_MODE_STORAGE_KEY = "adhdice-auth-mode";
 type ThemeMode = "light" | "dark";
 type FocusPlannerStep = 0 | 1 | 2;
-type TaskGridWidgetType =
-  | "urgent"
-  | "focus_today"
-  | "due_today"
-  | "active_queue"
-  | "completed"
-  | "quick_capture"
-  | "import"
-  | "focus_stats";
 
 const MOBILE_ZOOM_LEVELS = [0.5, 0.6, 0.7, 0.8, 0.9, 1, 1.1, 1.2] as const;
 const EMPTY_TASK_IDS: string[] = [];
-type TaskGridItem = TaskGridLayoutItem<TaskGridWidgetType>;
 type TaskKeyboardShortcut = {
   action: string;
   alternateKeys?: string[];
@@ -1076,33 +1057,6 @@ const PAGE_SHELL_NAVIGATION_HIGHLIGHT_MS = 1800;
 const PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS = 120;
 const PAGE_SHELL_NAVIGATION_STABILITY_COMPARISONS = 2;
 const PAGE_SHELL_NAVIGATION_ANCHOR_STABLE_FRAMES = 16;
-const TASK_GRID_MAX_COLUMNS = 4;
-const TASK_GRID_TABLET_COLUMNS = 2;
-const TASK_GRID_PHONE_COLUMNS = 1;
-const TASK_GRID_ROW_HEIGHT = 42;
-const TASK_GRID_MAX_DISPLAY_ROWS = 24;
-const TASK_GRID_WIDGET_LABELS: Record<TaskGridWidgetType, string> = {
-  urgent: "Urgent Tasks",
-  focus_today: "Focus",
-  due_today: "Due Today",
-  active_queue: "Active Queue",
-  completed: "Completed",
-  quick_capture: "Quick Capture",
-  import: "Import",
-  focus_stats: "Focus Stats",
-};
-const isTaskGridWidgetType = buildWidgetTypeGuard(TASK_GRID_WIDGET_LABELS);
-const TASK_GRID_STARTER_LAYOUT: TaskGridItem[] = normalizeTaskGridLayout([
-  { h: 9, id: "grid-urgent", type: "urgent", w: 2, x: 0, y: 0 },
-  { h: 6, id: "grid-focus-today", type: "focus_today", w: 1, x: 0, y: 0 },
-  { h: 8, id: "grid-quick-capture", type: "quick_capture", w: 1, x: 0, y: 0 },
-  { h: 6, id: "grid-due-today", type: "due_today", w: 2, x: 0, y: 0 },
-  { h: 6, id: "grid-active-queue", type: "active_queue", w: 1, x: 0, y: 0 },
-  { h: 6, id: "grid-focus-stats", type: "focus_stats", w: 1, x: 0, y: 0 },
-  { h: 8, id: "grid-import", type: "import", w: 2, x: 0, y: 0 },
-  { h: 6, id: "grid-completed", type: "completed", w: 2, x: 0, y: 0 },
-], isTaskGridWidgetType, TASK_GRID_MAX_COLUMNS, TASK_GRID_MAX_DISPLAY_ROWS);
-
 function isSupabaseSessionLockError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
   return message.includes("Lock was stolen by another request")
@@ -1178,11 +1132,6 @@ export function TaskApp() {
   const countdownAlarmGainRef = useRef<GainNode | null>(null);
   const countdownAlarmOscillatorRef = useRef<OscillatorNode | null>(null);
   const countdownAlarmPulseIntervalRef = useRef<number | null>(null);
-  const normalizePersistedTaskGridLayout = useMemo(
-    () => (layout: TaskGridItem[]) =>
-      normalizeTaskGridLayout(layout, isTaskGridWidgetType, TASK_GRID_MAX_COLUMNS, TASK_GRID_MAX_DISPLAY_ROWS),
-    [],
-  );
   const {
     activeTaskWorkspaceTab,
     activePage,
@@ -1203,18 +1152,14 @@ export function TaskApp() {
     setTaskTableLayoutPreferences,
     setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
-    setTaskGridLayout,
     setTaskRouting,
     setTaskUiState,
     taskTableLayoutPreferences,
-    taskGridLayout,
     taskRouting,
     taskWorkspaceTabsState,
     taskUiState,
   } = useTaskUiState({
-    normalizeTaskGridLayout: normalizePersistedTaskGridLayout,
     supabase,
-    taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
     userId: session?.user?.id,
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
@@ -1440,7 +1385,6 @@ export function TaskApp() {
   const [taskCalendarOverridesByTaskId, setTaskCalendarOverridesByTaskId] = useState<Record<string, TaskCalendarOverride[]>>({});
   const taskSubtasks = tasks;
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
-  const [isGridEditMode, setIsGridEditMode] = useState(false);
 
   useEffect(() => {
     const storageKey = session?.user?.id ? `adhdice:task-content-folder-collapse:${session.user.id}` : null;
@@ -1601,8 +1545,6 @@ export function TaskApp() {
     setDismissedCountdownAlertSessionKey(activeCountdownAlertSessionKey);
     setActiveCountdownAlertSessionKey(null);
   }, [activeCountdownAlertSessionKey]);
-  const [selectedGridWidgetId, setSelectedGridWidgetId] = useState<string | null>(null);
-  const [draggedGridWidgetId, setDraggedGridWidgetId] = useState<string | null>(null);
   const [showFocusPlanner, setShowFocusPlanner] = useState(false);
   const [focusPlannerStep, setFocusPlannerStep] = useState<FocusPlannerStep>(0);
   const [focusDraftIds, setFocusDraftIds] = useState<string[]>([]);
@@ -1692,11 +1634,6 @@ export function TaskApp() {
     achievementProgress.model.summary,
     achievementProgress.isReadyForUser,
   );
-  const gridColumns = useResponsiveTaskGridColumns({
-    maxColumns: TASK_GRID_MAX_COLUMNS,
-    phoneColumns: TASK_GRID_PHONE_COLUMNS,
-    tabletColumns: TASK_GRID_TABLET_COLUMNS,
-  });
   const [dayStartTime, setDayStartTime] = useState<string>("06:00");
   const [userTimeZone, setUserTimeZone] = useState<string>(getBrowserTimeZone());
   const onTimePlan = useOnTimePlan(
@@ -1839,14 +1776,6 @@ export function TaskApp() {
     document.documentElement.style.setProperty("--accent-strong", accentColor);
   }, [accentColor]);
 
-  const resolveTaskGridLayoutFromRow = (row: DbTaskGridLayout | null) =>
-    resolveTaskGridLayout(
-      row,
-      TASK_GRID_STARTER_LAYOUT,
-      isTaskGridWidgetType,
-      TASK_GRID_MAX_COLUMNS,
-      TASK_GRID_MAX_DISPLAY_ROWS,
-  );
   const taskListDataGeneration = useRef(0);
   const todayKey = useMemo(
     () => getLogicalDayKey(new Date(logicalDayNow), { dayStartTime, timezone: userTimeZone }),
@@ -1968,7 +1897,6 @@ export function TaskApp() {
       profileSettingsHydratedRef.current = true;
       setIsHudAppearanceReady(true);
     },
-    resolveTaskGridLayout: resolveTaskGridLayoutFromRow,
     saveFocusCategories,
     saveFocusHistory,
     shouldSkipTaskReload,
@@ -1977,10 +1905,7 @@ export function TaskApp() {
     setFocusCategories,
     setFocusHistory,
     setFocusedTaskIdsByDate,
-    setIsGridEditMode,
     setMessage,
-    setSelectedGridWidgetId,
-    setTaskGridLayout,
     setTaskHistory,
     setTaskListManualMemberships,
     setTaskListContainers,
@@ -1992,7 +1917,6 @@ export function TaskApp() {
     suppressCategoryReload,
     supabase,
     tasks,
-    taskGridStarterLayout: TASK_GRID_STARTER_LAYOUT,
     taskListDataGeneration,
     logicalDayRollover: dayStartTime,
     now: new Date(logicalDayNow),
@@ -2171,8 +2095,6 @@ export function TaskApp() {
         setTaskHistory([]);
         setTaskCalendarOverridesByTaskId({});
         setAvailableTaskNotes([]);
-        setIsGridEditMode(false);
-        setSelectedGridWidgetId(null);
         saveProfile(DEFAULT_PROFILE);
       }
       if (event === "INITIAL_SESSION" || event === "SIGNED_IN" || event === "TOKEN_REFRESHED" || event === "USER_UPDATED" || event === "PASSWORD_RECOVERY") {
@@ -2275,12 +2197,6 @@ export function TaskApp() {
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isKeyboardShortcutsMenuOpen]);
-
-  useEffect(() => {
-    if (selectedGridWidgetId && !taskGridLayout.some((item) => item.id === selectedGridWidgetId)) {
-      setSelectedGridWidgetId(null);
-    }
-  }, [selectedGridWidgetId, taskGridLayout]);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -3278,27 +3194,6 @@ export function TaskApp() {
     setTaskCalendarOverridesByTaskId((current) => ({ ...current, [taskId]: activeOverrides }));
     return activeOverrides;
   }, [client, currentUserIdText, setMessage]);
-  const {
-    handleAddGridWidget,
-    handleDropGridWidget,
-    handleMoveGridWidget,
-    handleRemoveGridWidget,
-    handleResetGridLayout,
-    handleResizeGridWidget,
-  } = useTaskGridLayoutController({
-    currentUserId: currentUserIdText,
-    draggedGridWidgetId,
-    isWidgetType: isTaskGridWidgetType,
-    maxColumns: TASK_GRID_MAX_COLUMNS,
-    maxDisplayRows: TASK_GRID_MAX_DISPLAY_ROWS,
-    setDraggedGridWidgetId,
-    setMessage,
-    setSelectedGridWidgetId,
-    setTaskGridLayout,
-    starterLayout: TASK_GRID_STARTER_LAYOUT,
-    supabase: client,
-    taskGridLayout,
-  });
   const taskListEvaluationContext = useMemo<TaskListEvaluationContext>(() => ({
     activeMilestoneTaskIds: milestoneData.activeMilestoneTaskIds,
     milestoneTaskIds: milestoneData.milestoneTaskIds,
@@ -3550,10 +3445,9 @@ export function TaskApp() {
   );
   const derivationSettingsRevision = useMemo(
     () => createProjectionDomainRevision("view-settings", {
-      grid: taskGridLayout,
       listVisibleColumns: taskUiState.visibleColumnsByView.table,
     }),
-    [taskGridLayout, taskUiState.visibleColumnsByView.table],
+    [taskUiState.visibleColumnsByView.table],
   );
   const taskDerivationRevision = createTaskDerivationRevisionKey({
     historyRevision: taskHistoryRevision,
@@ -3577,7 +3471,6 @@ export function TaskApp() {
           milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
           milestoneTaskIds: milestoneData.milestoneTaskIds,
           taskAppStructuralData,
-          taskGridLayout,
           taskHistoryByTaskId,
           taskListEvaluationContext,
           taskSubtasksByTaskId,
@@ -3592,7 +3485,6 @@ export function TaskApp() {
             focusedTaskIds,
             milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
             milestoneTaskIds: milestoneData.milestoneTaskIds,
-            taskGridLayout,
             taskUiStateForDerivedData,
             todayKey,
           },
@@ -3610,8 +3502,6 @@ export function TaskApp() {
       listVisibleColumns: taskUiState.visibleColumnsByView.table,
       milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
       milestoneTaskIds: milestoneData.milestoneTaskIds,
-      taskGridLayout,
-      taskGridWidgetTypes: Object.keys(TASK_GRID_WIDGET_LABELS) as TaskGridWidgetType[],
       taskHistoryByTaskId,
       taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
       taskContentFolders,
@@ -3868,7 +3758,6 @@ export function TaskApp() {
     || (taskUiState.tableColumnFilters.taskType?.length ?? 0) > 0
     || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()))
   );
-  const selectedGridWidget = taskGridLayout.find((item) => item.id === selectedGridWidgetId) ?? null;
   const visiblePinnedTaskCount = taskSearchSelection
     ? activeListFacetCounts.pinned ?? 0
     : visibleListCounts.pinned ?? 0;
@@ -4547,15 +4436,10 @@ export function TaskApp() {
   } = useTaskEditorImportController({
     clearListTaskSelection,
     deleteTasks,
-    handleAddGridWidget,
     selectedListTaskIds,
     setIsBatchDeleteModalOpen,
     setIsImportWidgetMenuOpen,
     setMessage,
-    setSelectedGridWidgetId,
-    setTaskUiState,
-    taskGridLayout,
-    taskUiView: taskUiState.view,
     tasks,
     todayDateKey: todayKey,
     updateTask: async (taskId, updates) => {
@@ -5674,68 +5558,6 @@ export function TaskApp() {
     });
   }
 
-  const gridContentNode = (
-    <TaskGridView
-      activeCount={filteredActiveTasks.length}
-      currentColumns={gridColumns}
-      currentStreakByTaskId={currentStreakByTaskId}
-      customBehaviorRulesets={customBehaviorRulesets}
-      doneCount={filteredDoneTasks.length}
-      draggedWidgetId={draggedGridWidgetId}
-      focusedTaskIds={focusedTaskIds}
-      getTaskStatusOptions={resolveCurrentTaskStatusOptions}
-      gridAutoRowHeight={TASK_GRID_ROW_HEIGHT}
-      gridLayout={taskGridLayout}
-      isEditMode={isGridEditMode}
-      labelsByWidgetType={TASK_GRID_WIDGET_LABELS}
-      maxColumns={TASK_GRID_MAX_COLUMNS}
-      maxDisplayRows={TASK_GRID_MAX_DISPLAY_ROWS}
-      message={message}
-      onAddTask={async ({ focusToday, values }) => {
-        await saveTaskEditor(values, { focusToday });
-      }}
-      onAddWidget={(widgetType) => {
-        void handleAddGridWidget(widgetType);
-      }}
-      onImportTasks={importTasks}
-      onMoveWidget={(widgetId, direction) => {
-        void handleMoveGridWidget(widgetId, direction);
-      }}
-      onRemoveWidget={(widgetId) => {
-        void handleRemoveGridWidget(widgetId);
-      }}
-      onReorderWidget={(targetWidgetId) => {
-        void handleDropGridWidget(targetWidgetId);
-      }}
-      onResetLayout={() => {
-        void handleResetGridLayout();
-      }}
-      onResizeWidget={(widgetId, nextWidth, nextHeight) => {
-        void handleResizeGridWidget(widgetId, nextWidth, nextHeight);
-      }}
-      onEditTask={(task) => openExistingTaskEditor(task, selectedBucketTasks.map((entry) => entry.id))}
-      onSelectWidget={setSelectedGridWidgetId}
-      onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
-      onSetSubtaskStatus={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
-      onSetDraggedWidget={setDraggedGridWidgetId}
-      overdueCount={filteredOverdueTasks.length}
-      selectedWidgetId={selectedGridWidget?.id ?? null}
-      subtasksByTaskId={taskSubtasksByTaskId}
-      taskHistoryStats={taskHistoryStats}
-      tasksByWidget={{
-        activeQueue: filteredActiveTasks,
-        completed: filteredDoneTasks,
-        dueToday: filteredTodayTasks,
-        focusToday: filteredFocusTasks,
-        urgent: filteredUrgentTasks,
-      }}
-      onToggleEditMode={() => {
-        setIsGridEditMode((prev) => !prev);
-        setSelectedGridWidgetId(null);
-        setDraggedGridWidgetId(null);
-      }}
-    />
-  );
   const matrixContentNode = (
     <TaskMatrixView
       currentStreakByTaskId={currentStreakByTaskId}
@@ -8182,7 +8004,6 @@ export function TaskApp() {
                 cardsNode={cardsContentNode}
                 dailyPlanningNode={nonListDailyPlanningNode}
                 filterRowsNode={nonListFilterRowsNode}
-                gridNode={gridContentNode}
                 listNode={null}
                 matrixNode={matrixContentNode}
                 view={taskUiState.view}

@@ -9,7 +9,6 @@ import type {
   FocusSession as DbFocusSession,
   Task,
   TaskFocusDay as DbTaskFocusDay,
-  TaskGridLayout as DbTaskGridLayout,
   TaskHistory as DbTaskHistory,
   TaskContentFolder,
   TaskList as DbTaskList,
@@ -70,7 +69,6 @@ import {
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
-type TaskGridLayoutItem = { h: number; id: string; type: string; w: number; x: number; y: number };
 type OwnedWorkspacePromise<T> = {
   generation: number;
   promise: Promise<T>;
@@ -88,7 +86,7 @@ type Message = {
   tone: "neutral" | "good" | "warn";
 };
 
-type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
+type UseWorkspaceDataOptions = {
   activePage: AppPage;
   behaviorAuthorityReady: boolean;
   behaviorAuthorityLoading: boolean;
@@ -110,7 +108,6 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   isMissingTaskListManualMembershipsTableError: (message: string) => boolean;
   isMissingTaskListsTableError: (message: string) => boolean;
   onProfileLoaded: (profileRow: WorkspaceProfileRow | null, user: User) => void;
-  resolveTaskGridLayout: (row: DbTaskGridLayout | null) => TTaskGridItem[];
   saveFocusCategories: (categories: FocusCategory[]) => void;
   saveFocusHistory: (history: HistoricalFocusSession[]) => void;
   shouldSkipTaskReload?: (change: { eventType: string; taskId: string | null }) => boolean;
@@ -119,10 +116,7 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   setFocusCategories: Dispatch<SetStateAction<FocusCategory[]>>;
   setFocusHistory: Dispatch<SetStateAction<HistoricalFocusSession[]>>;
   setFocusedTaskIdsByDate: Dispatch<SetStateAction<Record<string, string[]>>>;
-  setIsGridEditMode: Dispatch<SetStateAction<boolean>>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
-  setSelectedGridWidgetId: Dispatch<SetStateAction<string | null>>;
-  setTaskGridLayout: Dispatch<SetStateAction<TTaskGridItem[]>>;
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
   setTaskListManualMemberships: Dispatch<SetStateAction<TaskListManualMembership[]>>;
   setTaskListContainers: Dispatch<SetStateAction<TaskListContainer[]>>;
@@ -134,7 +128,6 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
   suppressCategoryReload: MutableRefObject<boolean>;
   supabase: SupabaseClient;
   tasks: Task[];
-  taskGridStarterLayout: TTaskGridItem[];
   taskListDataGeneration: MutableRefObject<number>;
   logicalDayRollover: string;
   now: Date | string;
@@ -284,7 +277,7 @@ function logWorkspaceTiming(step: string, startedAt: number, details: Record<str
   console.info(`[workspace] ${step} in ${Math.round(performance.now() - startedAt)}ms${detailString ? ` ${detailString}` : ""}.`);
 }
 
-export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
+export function useWorkspaceData({
   activePage,
   behaviorAuthorityReady,
   behaviorAuthorityLoading,
@@ -305,7 +298,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   isMissingTaskListManualMembershipsTableError,
   isMissingTaskListsTableError,
   onProfileLoaded,
-  resolveTaskGridLayout,
   saveFocusCategories,
   saveFocusHistory,
   shouldSkipTaskReload,
@@ -314,10 +306,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   setFocusCategories,
   setFocusHistory,
   setFocusedTaskIdsByDate,
-  setIsGridEditMode,
   setMessage,
-  setSelectedGridWidgetId,
-  setTaskGridLayout,
   setTaskHistory,
   setTaskListManualMemberships,
   setTaskListContainers,
@@ -329,13 +318,12 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   suppressCategoryReload,
   supabase,
   tasks,
-  taskGridStarterLayout,
   taskListDataGeneration,
   logicalDayRollover,
   now,
   todayKey,
   timezone,
-}: UseWorkspaceDataOptions<TTaskGridItem>) {
+}: UseWorkspaceDataOptions) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
   const [taskHistoryLoadedUserId, setTaskHistoryLoadedUserId] = useState<string | null>(null);
   const [taskHistoryByTaskId, setTaskHistoryByTaskId] = useState<Record<string, DbTaskHistory[]>>({});
@@ -1440,11 +1428,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .select("*")
           .eq("user_id", userId)
           .order("created_at", { ascending: true }),
-        client
-          .from("adhdice_task_grid_layouts")
-          .select("*")
-          .eq("user_id", userId)
-          .maybeSingle(),
         loadTaskListFolders(client, userId)
           .then((data) => ({ data, error: null }))
           .catch((error: { message?: string }) => ({ data: null, error })),
@@ -1524,7 +1507,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       void loadTaskHistoryStreakSummaries(nextTasks);
 
       const secondaryCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
-      const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult, folderStructureResult, taskContentFolderResult] = await secondaryCoreRequest;
+      const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, folderStructureResult, taskContentFolderResult] = await secondaryCoreRequest;
 
       if (source !== "initial") {
         await canonicalHistoryHydration;
@@ -1543,7 +1526,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         focusDayResult.error,
         taskListsResult.error && !isMissingTaskListsTableError(taskListsResult.error.message) ? taskListsResult.error : null,
         manualMembershipResult.error && !isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message) ? manualMembershipResult.error : null,
-        gridLayoutResult.error,
         folderStructureResult.error,
         taskContentFolderResult.error,
       ].filter(Boolean);
@@ -1564,7 +1546,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       const nextTaskListManualMemberships = (manualMembershipResult.error && isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message))
         ? []
         : (manualMembershipResult.data ?? []).map(mapTaskListManualMembershipRow);
-      const nextTaskGridLayout = resolveTaskGridLayout(gridLayoutResult.data);
       const nextTaskListFolders = folderStructureResult.data?.folders ?? [];
       const nextTaskListContainers = folderStructureResult.data?.containers ?? [];
       const nextTaskListRailItems = folderStructureResult.data?.railItems ?? [];
@@ -1641,7 +1622,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       }
       setTaskListManualMemberships((current) => keepCurrentIfStructurallyEqual(current, nextTaskListManualMemberships));
       setTaskListMembershipDataReadyUserId(userId);
-      setTaskGridLayout((current) => keepCurrentIfStructurallyEqual(current, nextTaskGridLayout));
       saveFocusCategories(nextCategories);
       if (shouldLoadFocusHistory) saveFocusHistory(nextFocusHistory);
       logWorkspaceTiming("Secondary workspace core ready", secondaryCoreStartedAt, {
@@ -1959,18 +1939,6 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         {
           event: "*",
           schema: "public",
-          table: "adhdice_task_grid_layouts",
-          filter: `user_id=eq.${userId}`,
-        },
-        () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "*",
-          schema: "public",
           table: "adhdice_notes",
           filter: `user_id=eq.${userId}`,
         },
@@ -2065,22 +2033,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       setTaskContentFolders([]);
       setTaskListRailItems([]);
       setAvailableTaskNotes([]);
-      setTaskGridLayout(taskGridStarterLayout);
-      setIsGridEditMode(false);
-      setSelectedGridWidgetId(null);
     }
   }, [
     currentUser,
     setAvailableTaskNotes,
-    setIsGridEditMode,
-    setSelectedGridWidgetId,
-    setTaskGridLayout,
     setTaskHistory,
     setTaskListContainers,
     setTaskListFolders,
     setTaskContentFolders,
     setTaskListRailItems,
-    taskGridStarterLayout,
   ]);
 
   const softRefreshWorkspace = useCallback(async () => {

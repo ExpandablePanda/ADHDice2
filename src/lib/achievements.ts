@@ -1,5 +1,5 @@
 import type { HealthAchievementAward, Task, TaskHistory as DbTaskHistory } from "@/lib/database.types";
-import { shiftDateKey } from "@/lib/task-grid-layout";
+import { shiftDateKey } from "@/lib/date-key";
 import type { TaskHistoryStats } from "@/lib/task-history";
 import type { HistoricalFocusSession } from "@/lib/types";
 

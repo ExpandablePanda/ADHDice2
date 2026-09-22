@@ -1,4 +1,4 @@
-import { shiftDateKey } from "./task-grid-layout.ts";
+import { shiftDateKey } from "./date-key.ts";
 
 const TASK_HISTORY_PAST_DAY_COUNT = 140;
 const TASK_HISTORY_FUTURE_DAY_COUNT = 42;

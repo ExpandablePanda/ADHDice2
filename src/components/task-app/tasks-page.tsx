@@ -1258,7 +1258,6 @@ function TaskViewsMenu({
     { label: "List View", value: "list" },
     { label: "Cards", value: "cards" },
     { label: "Matrix", value: "matrix" },
-    { label: "Grid", value: "grid" },
     { label: "Calendar", value: "calendar" },
   ];
 

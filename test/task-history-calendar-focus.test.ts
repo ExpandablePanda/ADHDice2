@@ -7,7 +7,7 @@ import {
 } from "../src/lib/task-history-calendar-focus.ts";
 import { createTaskHistoryCalendarReadRevision } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
-import { shiftDateKey } from "../src/lib/task-grid-layout.ts";
+import { shiftDateKey } from "../src/lib/date-key.ts";
 
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const taskHistoryModalSource = modalSource.slice(modalSource.indexOf("export function TaskHistoryModal"));

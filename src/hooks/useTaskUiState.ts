@@ -30,7 +30,6 @@ import {
   reorderTaskWorkspaceTabs,
   TASK_FILTERS_OPEN_STORAGE_KEY,
   TASK_FOCUS_STORAGE_KEY,
-  TASK_GRID_STORAGE_KEY,
   TASK_ROUTING_STORAGE_KEY,
   TASK_UI_STORAGE_KEY,
   type AppPage,
@@ -61,10 +60,8 @@ const HUD_UI_UPDATED_AT_STORAGE_KEY = "adhdice-hud-ui-updated-at";
 const TASK_TABLE_LAYOUT_UPDATED_AT_STORAGE_KEY = "adhdice-task-table-layout-updated-at";
 const HUD_CLOUD_WRITE_DEBOUNCE_MS = 900;
 
-type UseTaskUiStateOptions<TTaskGridItem> = {
-  normalizeTaskGridLayout: (layout: TTaskGridItem[]) => TTaskGridItem[];
+type UseTaskUiStateOptions = {
   supabase?: SupabaseClient;
-  taskGridStarterLayout: TTaskGridItem[];
   userId: string | null | undefined;
 };
 
@@ -132,17 +129,14 @@ function latestSyncTimestamp(...timestamps: Array<string | null>) {
   ));
 }
 
-export function useTaskUiState<TTaskGridItem>({
-  normalizeTaskGridLayout,
+export function useTaskUiState({
   supabase,
-  taskGridStarterLayout,
   userId,
-}: UseTaskUiStateOptions<TTaskGridItem>) {
+}: UseTaskUiStateOptions) {
   const [activePage, setActivePage] = useState<AppPage>("Home");
   const [taskWorkspaceTabsState, setTaskWorkspaceTabsState] = useState<TaskWorkspaceTabsState>(DEFAULT_TASK_WORKSPACE_TABS_STATE);
   const [taskRouting, setTaskRouting] = useState<Record<string, TaskRoutingBucket>>({});
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
-  const [taskGridLayout, setTaskGridLayout] = useState<TTaskGridItem[]>(taskGridStarterLayout);
   const [hudUiState, setHudUiStateState] = useState<HudUiState>(() => (userId ? readStoredHudState(userId) : createDefaultHudState()));
   const [taskTableLayoutPreferences, setTaskTableLayoutPreferencesState] = useState<TaskTableLayoutPreferences>(() => (
     userId
@@ -190,7 +184,6 @@ export function useTaskUiState<TTaskGridItem>({
       setTaskWorkspaceTabsState(DEFAULT_TASK_WORKSPACE_TABS_STATE);
       setTaskRouting({});
       setFocusedTaskIdsByDate({});
-      setTaskGridLayout(taskGridStarterLayout);
       setHudUiStateState(createDefaultHudState());
       setTaskTableLayoutPreferencesState({});
       hudSyncMetadataRef.current = {
@@ -223,14 +216,6 @@ export function useTaskUiState<TTaskGridItem>({
       parseStoredJson<Record<string, string[]>>(
         getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, userId),
         {},
-      ),
-    );
-    setTaskGridLayout(
-      normalizeTaskGridLayout(
-        parseStoredJson<TTaskGridItem[]>(
-          getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId),
-          taskGridStarterLayout,
-        ),
       ),
     );
     setHudUiStateState(readStoredHudState(userId));
@@ -271,7 +256,7 @@ export function useTaskUiState<TTaskGridItem>({
       ),
     );
     setRestoredUserId(userId);
-  }, [normalizeTaskGridLayout, taskGridStarterLayout, userId]);
+  }, [userId]);
 
   const isRestoringPersistedUiState = Boolean(userId) && restoredUserId !== userId;
 
@@ -324,16 +309,6 @@ export function useTaskUiState<TTaskGridItem>({
       JSON.stringify(focusedTaskIdsByDate),
     );
   }, [focusedTaskIdsByDate, userId]);
-
-  useEffect(() => {
-    if (!userId || typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(
-      getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId),
-      JSON.stringify(taskGridLayout),
-    );
-  }, [taskGridLayout, userId]);
 
   useEffect(() => {
     if (!userId || typeof window === "undefined") {
@@ -793,12 +768,10 @@ export function useTaskUiState<TTaskGridItem>({
     setTaskWorkspaceRailHidden,
     setTaskTableLayoutPreferences,
     setIsTaskFiltersOpen,
-    setTaskGridLayout,
     setTaskRouting,
     taskWorkspaceTabsState,
     setTaskUiState,
     taskTableLayoutPreferences,
-    taskGridLayout,
     taskRouting,
     taskUiState: activeTaskWorkspaceTab.taskUiState,
   };

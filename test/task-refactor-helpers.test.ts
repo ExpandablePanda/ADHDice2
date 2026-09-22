@@ -27,7 +27,6 @@ import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
 import { hasTaskManualListMembership, isManualTaskListDestination, matchesTaskListRules } from "../src/lib/task-lists.ts";
 import { migrateLegacyTaskUiState, type TaskUiState } from "../src/lib/task-ui-state.ts";
 import { buildFocusLabelOptions } from "../src/lib/task-focus-labels.ts";
-import { buildWidgetTypeGuard, parseTaskGridLayoutJson } from "../src/lib/task-grid-parser.ts";
 import { mapTaskListManualMembershipRow } from "../src/lib/task-list-mappers.ts";
 import { getNextPendingSubtask } from "../src/lib/task-subtasks.ts";
 
@@ -456,20 +455,6 @@ test("task list rule evaluation memoizes duplicate list references", () => {
     true,
   );
   assert.equal(isOpenChecks, 1);
-});
-
-test("grid parser helpers handle invalid and valid layout json", () => {
-  const guard = buildWidgetTypeGuard({ urgent: "Urgent", import: "Import" } as const);
-  const fallback = [{ h: 6, id: "fallback", type: "urgent" as const, w: 1, x: 0, y: 0 }];
-  const parsed = parseTaskGridLayoutJson(
-    JSON.stringify([{ id: "a", type: "urgent", h: 8, w: 2, x: 1, y: 3 }]),
-    fallback,
-    guard,
-  );
-  assert.equal(parsed.length, 1);
-  assert.equal(parsed[0]?.id, "a");
-  const invalid = parseTaskGridLayoutJson("{}", fallback, guard);
-  assert.equal(invalid[0]?.id, "fallback");
 });
 
 test("focus label helper merges non-default category and history labels", () => {

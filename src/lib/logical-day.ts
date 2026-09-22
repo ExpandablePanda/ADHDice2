@@ -1,4 +1,4 @@
-import { shiftDateKey } from "@/lib/task-grid-layout";
+import { shiftDateKey } from "@/lib/date-key";
 
 export const LOGICAL_DAY_SETTINGS_STORAGE_KEY = "adhdice-logical-day-settings";
 export const DEFAULT_LOGICAL_DAY_START = "06:00";

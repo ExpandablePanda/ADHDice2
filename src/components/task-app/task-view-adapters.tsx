@@ -1,12 +1,11 @@
 "use client";
 
 import { ChevronDown, X } from "lucide-react";
-import { useMemo, useRef, useState, type ComponentProps, type JSX, type ReactNode } from "react";
+import { useMemo, useRef, useState, type ComponentProps, type ReactNode } from "react";
 import { ModalShell } from "../modal-shell";
 import { BottomDockComponent } from "./bottom-dock";
 import { FilterRowsComponent } from "./task-filter-rows";
 import { FocusPlannerModalComponent } from "./focus-planner-modal";
-import { Select } from "./task-status-select";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES } from "./task-status-ui";
 import {
@@ -14,23 +13,16 @@ import {
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
 import { AdhdIconButton, EditableEntityHeaderTitle } from "@/components/ui-system";
-import { TaskGridViewComponent } from "./task-grid-view";
 import {
-  computeTaskSpecificHistoryStats,
   buildTaskHistoryRowProjections,
   deduplicateTaskHistoryByLogicalDate,
   getTaskHistoryLastDone,
-  type TaskHistoryStats,
 } from "@/lib/task-history";
 import {
   TaskCardGalleryComponent,
-  TaskComposerCardComponent,
-  TaskLaneComponent,
   TaskMatrixViewComponent,
 } from "./task-secondary-views";
-import { UrgentTasksPanelComponent } from "./task-grid-widgets";
 import { formatTaskHistoryCalendarDay, formatTaskHistoryCalendarMonth, getTaskHistoryCalendarMonthDays, TaskHistoryCalendarDay, TaskHistoryCalendarPresentation } from "./task-history-calendar-presentation";
-import type { TaskDraft } from "./task-editor-model";
 import {
   buildTaskHistoryCalendarDateKeys,
   getTaskHistoryInitialFocusDateKey,
@@ -64,23 +56,6 @@ type Message = {
 };
 
 type FocusPlannerStep = 0 | 1 | 2;
-
-type SelectProps<T extends string> = {
-  label: string;
-  onChange: (value: T) => void;
-  options: T[];
-  showLabel?: boolean;
-  value: T;
-};
-
-type GridItem = {
-  h: number;
-  id: string;
-  type: string;
-  w: number;
-  x: number;
-  y: number;
-};
 
 function EmptyTaskState({ text }: { text: string }) {
   return (
@@ -144,63 +119,8 @@ function statusTone(status: TaskStatus) {
   return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
 
-function FocusStatsCard({
-  activeCount,
-  doneCount,
-  overdueCount,
-  taskHistoryStats,
-}: {
-  activeCount: number;
-  doneCount: number;
-  overdueCount: number;
-  taskHistoryStats: TaskHistoryStats;
-}) {
-  const stats = [
-    { label: "Active", meter: Math.min(100, 28 + activeCount * 4), value: String(activeCount) },
-    { label: "Completed", meter: Math.min(100, 28 + doneCount * 4), value: String(doneCount) },
-    { label: "Overdue", meter: Math.min(100, 28 + overdueCount * 4), value: String(overdueCount) },
-    { label: "Current Streak", meter: Math.min(100, 28 + taskHistoryStats.currentStreak * 6), value: String(taskHistoryStats.currentStreak) },
-    { label: "Best Streak", meter: Math.min(100, 28 + taskHistoryStats.bestStreak * 6), value: String(taskHistoryStats.bestStreak) },
-    { label: "Done Rate", meter: taskHistoryStats.doneRate, value: `${taskHistoryStats.doneRate}%` },
-  ];
-
-  return (
-    <section className="w-full overflow-hidden rounded-[2rem] border p-5 flex flex-col items-center text-center transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6">
-      <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">
-        Focus Stats
-      </h2>
-      <div className="mt-4 grid w-full gap-3 sm:grid-cols-2">
-        {stats.map((stat, index) => (
-          <div className="rounded-[1.25rem] p-4 flex flex-col items-center bg-[#f8f5ff] dark:bg-white/8" key={stat.label}>
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">{stat.label}</p>
-            <p className="mt-2 text-3xl font-black text-[#1f2746] dark:text-white">{stat.value}</p>
-            <div className="mt-2 h-1.5 w-full max-w-[120px] overflow-hidden rounded-full bg-[#ded7f7] dark:bg-white/10">
-              <div
-                className={`h-full rounded-full ${index === 2 ? "bg-[#f05566] dark:bg-[#ff9eaf]" : "bg-[#6f57f6] dark:bg-[#cabfff]"}`}
-                style={{ width: `${stat.meter}%` }}
-              />
-            </div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
 export function FilterRowsAdapter(props: ComponentProps<typeof FilterRowsComponent>) {
   return <FilterRowsComponent {...props} />;
-}
-
-export function UrgentTasksPanelAdapter(props: ComponentProps<typeof UrgentTasksPanelComponent>) {
-  return <UrgentTasksPanelComponent {...props} />;
-}
-
-export function TaskComposerCardAdapter({
-  onAdd,
-}: {
-  onAdd: (draft: { focusToday: boolean; values: TaskDraft }) => Promise<void>;
-}) {
-  return <TaskComposerCardComponent onAdd={onAdd} SelectComponent={Select as <T extends string>(props: SelectProps<T>) => JSX.Element} />;
 }
 
 export function ImportWidgetCardAdapter({
@@ -325,10 +245,6 @@ export function ImportWidgetCardAdapter({
   );
 }
 
-export function TaskLaneAdapter(props: ComponentProps<typeof TaskLaneComponent>) {
-  return <TaskLaneComponent {...props} />;
-}
-
 export function TaskCardGalleryAdapter(props: ComponentProps<typeof TaskCardGalleryComponent>) {
   return <TaskCardGalleryComponent {...props} />;
 }
@@ -366,203 +282,6 @@ export function FocusPlannerModalAdapter({
       step={step}
       tasks={tasks}
       todayDateKey={todayDateKey}
-    />
-  );
-}
-
-export function TaskGridViewAdapter<TWidgetType extends string>({
-  activeCount,
-  currentColumns,
-  currentStreakByTaskId,
-  customBehaviorRulesets = [],
-  doneCount,
-  draggedWidgetId,
-  focusedTaskIds,
-  getTaskStatusOptions,
-  gridAutoRowHeight,
-  gridLayout,
-  isEditMode,
-  labelsByWidgetType,
-  maxColumns,
-  maxDisplayRows,
-  message,
-  onAddTask,
-  onEditTask,
-  onSetStatus,
-  onSetSubtaskStatus,
-  onAddWidget,
-  onImportTasks,
-  onMoveWidget,
-  onRemoveWidget,
-  onReorderWidget,
-  onResetLayout,
-  onResizeWidget,
-  onSelectWidget,
-  onSetDraggedWidget,
-  onToggleEditMode,
-  overdueCount,
-  selectedWidgetId,
-  subtasksByTaskId,
-  taskHistoryStats,
-  tasksByWidget,
-}: {
-  activeCount: number;
-  currentColumns: number;
-  currentStreakByTaskId: Readonly<Record<string, number>>;
-  customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type" | "icon_key" | "accent_key" | "description">[];
-  doneCount: number;
-  draggedWidgetId: string | null;
-  focusedTaskIds: string[];
-  getTaskStatusOptions?: (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
-  gridAutoRowHeight: number;
-  gridLayout: GridItem[];
-  isEditMode: boolean;
-  labelsByWidgetType: Record<TWidgetType, string>;
-  maxColumns: number;
-  maxDisplayRows: number;
-  message: Message | null;
-  onAddTask: (draft: { focusToday: boolean; values: TaskDraft }) => Promise<void>;
-  onEditTask: (task: Task) => void;
-  onSetStatus: (task: Task, status: TaskStatus) => void;
-  onSetSubtaskStatus: (subtaskId: string, status: TaskStatus) => void;
-  onAddWidget: (widgetType: TWidgetType) => void;
-  onImportTasks: (lines: string[], options?: TaskImportOptions) => Promise<ImportTasksResult | void>;
-  onMoveWidget: (widgetId: string, direction: "up" | "down") => void;
-  onRemoveWidget: (widgetId: string) => void;
-  onReorderWidget: (targetWidgetId: string) => void;
-  onResetLayout: () => void;
-  onResizeWidget: (widgetId: string, nextWidth: number, nextHeight: number) => void;
-  onSelectWidget: (widgetId: string | null) => void;
-  onSetDraggedWidget: (widgetId: string | null) => void;
-  onToggleEditMode: () => void;
-  overdueCount: number;
-  selectedWidgetId: string | null;
-  subtasksByTaskId: Record<string, Task[]>;
-  taskHistoryStats: TaskHistoryStats;
-  tasksByWidget: {
-    activeQueue: Task[];
-    completed: Task[];
-    dueToday: Task[];
-    focusToday: Task[];
-    urgent: Task[];
-  };
-}) {
-  return (
-    <TaskGridViewComponent
-      currentColumns={currentColumns}
-      draggedWidgetId={draggedWidgetId}
-      gridAutoRowHeight={gridAutoRowHeight}
-      gridLayout={gridLayout}
-      isEditMode={isEditMode}
-      labelsByWidgetType={labelsByWidgetType}
-      maxColumns={maxColumns}
-      maxDisplayRows={maxDisplayRows}
-      onAddWidget={(widgetType) => onAddWidget(widgetType as TWidgetType)}
-      onMoveWidget={onMoveWidget}
-      onRemoveWidget={onRemoveWidget}
-      onReorderWidget={onReorderWidget}
-      onResetLayout={onResetLayout}
-      onResizeWidget={onResizeWidget}
-      onSelectWidget={onSelectWidget}
-      onSetDraggedWidget={onSetDraggedWidget}
-      onToggleEditMode={onToggleEditMode}
-      renderWidget={(widgetType) => {
-        if (widgetType === "urgent") {
-          return (
-            <UrgentTasksPanelAdapter
-              currentStreakByTaskId={currentStreakByTaskId}
-              customBehaviorRulesets={customBehaviorRulesets}
-              focusedTaskIds={focusedTaskIds}
-              getTaskStatusOptions={getTaskStatusOptions}
-              onEditTask={onEditTask}
-              onSetStatus={onSetStatus}
-              onSetSubtaskStatus={onSetSubtaskStatus}
-              subtasksByTaskId={subtasksByTaskId}
-              tasks={tasksByWidget.urgent}
-            />
-          );
-        }
-        if (widgetType === "focus_today") {
-          return (
-            <TaskLaneAdapter
-              count={tasksByWidget.focusToday.length}
-              currentStreakByTaskId={currentStreakByTaskId}
-              customBehaviorRulesets={customBehaviorRulesets}
-              defaultExpanded
-              onEditTask={onEditTask}
-              subtasksByTaskId={subtasksByTaskId}
-              tasks={tasksByWidget.focusToday}
-              title="Focus"
-              tone="purple"
-            />
-          );
-        }
-        if (widgetType === "due_today") {
-          return (
-            <TaskLaneAdapter
-              count={tasksByWidget.dueToday.length}
-              currentStreakByTaskId={currentStreakByTaskId}
-              customBehaviorRulesets={customBehaviorRulesets}
-              onEditTask={onEditTask}
-              subtasksByTaskId={subtasksByTaskId}
-              tasks={tasksByWidget.dueToday}
-              title="Due Today"
-              tone="purple"
-            />
-          );
-        }
-        if (widgetType === "active_queue") {
-          return (
-            <TaskLaneAdapter
-              count={tasksByWidget.activeQueue.length}
-              currentStreakByTaskId={currentStreakByTaskId}
-              customBehaviorRulesets={customBehaviorRulesets}
-              onEditTask={onEditTask}
-              subtasksByTaskId={subtasksByTaskId}
-              tasks={tasksByWidget.activeQueue}
-              title="Active Queue"
-              tone="soft"
-            />
-          );
-        }
-        if (widgetType === "completed") {
-          return (
-            <TaskLaneAdapter
-              count={tasksByWidget.completed.length}
-              currentStreakByTaskId={currentStreakByTaskId}
-              customBehaviorRulesets={customBehaviorRulesets}
-              onEditTask={onEditTask}
-              subtasksByTaskId={subtasksByTaskId}
-              tasks={tasksByWidget.completed}
-              title="Completed"
-              tone="soft"
-            />
-          );
-        }
-        if (widgetType === "quick_capture") {
-          return (
-            <div id="task-composer-card">
-              <TaskComposerCardAdapter onAdd={onAddTask} />
-            </div>
-          );
-        }
-        if (widgetType === "import") {
-          return (
-            <div id="task-import-panel">
-              <ImportWidgetCardAdapter message={message} onImport={onImportTasks} />
-            </div>
-          );
-        }
-        return (
-          <FocusStatsCard
-            activeCount={activeCount}
-            doneCount={doneCount}
-            overdueCount={overdueCount}
-            taskHistoryStats={taskHistoryStats}
-          />
-        );
-      }}
-      selectedWidgetId={selectedWidgetId}
     />
   );
 }

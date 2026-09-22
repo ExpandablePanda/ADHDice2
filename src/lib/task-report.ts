@@ -1,7 +1,7 @@
 import type { Milestone, MilestoneEvent, Task, TaskHistory, TaskStatus } from "@/lib/database.types";
 import { buildFocusGoalPlan } from "@/lib/focus-goals";
 import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
-import { shiftDateKey } from "@/lib/task-grid-layout";
+import { shiftDateKey } from "@/lib/date-key";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { hasTaskListMembership, type TaskListDefinition, type TaskListMembership } from "@/lib/task-lists";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, inferLegacyTaskPriorityLevel, type TaskPriorityLevel } from "@/lib/task-priority";

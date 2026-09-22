@@ -1,18 +1,27 @@
 # Current State
 
-Last reviewed: 2026-09-21
+Last reviewed: 2026-09-22
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.46`.
-- Current release group: `7.14.x`.
+- Current working app version: `7.15.8`.
+- Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-22 7.15.8 Retire Obsolete Task Grid Runtime
+
+The retired Task Grid View runtime no longer participates in workspace
+hydration, Realtime subscriptions, TaskApp state, local UI-state persistence,
+derived settings revisions, or current Tasks view routing. The dormant
+`adhdice_task_grid_layouts` schema/table and its historical data were not
+changed or deleted. HUD shell/widget sizing and placement, HUD local/cloud
+persistence, and current Table/List layout preferences remain unchanged.
 
 ## 2026-09-21 7.14.46 Consolidate Side Work into 7.14
 

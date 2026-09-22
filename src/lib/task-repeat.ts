@@ -1,4 +1,4 @@
-import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
+import { formatDateKey, shiftDateKey } from "@/lib/date-key";
 import type { Task, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
 
 export type TaskRepeatCategory = Task["repeat_frequency"] | "weekdays";

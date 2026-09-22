@@ -1,7 +1,6 @@
 import { buildTaskHierarchyAdapter, type TaskHierarchyAdapter, type TaskHierarchyIssue } from "@/lib/task-hierarchy";
 import { isWorkspacePerformanceDiagnosticsEnabled, logDevelopmentComputation, type DevelopmentComputationDiagnostic } from "@/lib/workspace-performance-diagnostics";
 import { isArchiveLikeTask } from "@/lib/task-complete";
-import { getMissingTaskGridWidgetTypes, type TaskGridLayoutItem } from "@/lib/task-grid-layout";
 import { sortTasksForCockpit, matchesTaskQuickFilter } from "@/lib/task-cockpit";
 import type {
   Task,
@@ -31,7 +30,6 @@ import { getTaskContentFolderSearchDocument, type TaskContentFolderRow } from "@
 import { todayISO } from "@/lib/utils";
 import { matchesTaskTypeSelections } from "@/lib/task-type";
 
-type TaskGridItem = TaskGridLayoutItem<string>;
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
 
 type VisibleTaskBaseFacts = {
@@ -1104,8 +1102,6 @@ type ComputeTaskAppDerivedDataInput = {
   listVisibleColumns: string[];
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
   milestoneTaskIds?: ReadonlySet<string>;
-  taskGridLayout: TaskGridItem[];
-  taskGridWidgetTypes: string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   taskContentFolders?: readonly TaskContentFolderRow[];
@@ -1132,8 +1128,6 @@ export function computeTaskAppDerivedData({
   listVisibleColumns,
   milestoneSearchTokensByTaskId,
   milestoneTaskIds,
-  taskGridLayout,
-  taskGridWidgetTypes,
   taskHistoryByTaskId,
   taskHistoryStreakSummaryByTaskId,
   taskContentFolders,
@@ -1202,7 +1196,6 @@ export function computeTaskAppDerivedData({
       lowEnergyTasks: emptyTasks,
       manualListOptions: [],
       milestoneFilteredTasksSorted: emptyTasks,
-      missingGridWidgetTypes: [],
       momentumPercent: 0,
       overdueTasks: emptyTasks,
       planningCandidates: emptyTasks,
@@ -1592,10 +1585,8 @@ export function computeTaskAppDerivedData({
         label: list.name,
         value: list.id,
       }));
-  const missingGridWidgetTypes = getMissingTaskGridWidgetTypes(taskGridLayout, taskGridWidgetTypes);
   logTaskDeriveStep("custom/manual list handling and final assembly", listAssemblyStartedAt, {
     manualListOptions: manualListOptions.length,
-    missingGridWidgetTypes: missingGridWidgetTypes.length,
     tasks: tasks.length,
   });
   logTaskDeriveStep("total compute", totalStartedAt, {
@@ -1667,7 +1658,6 @@ export function computeTaskAppDerivedData({
     lowEnergyTasks,
     manualListOptions,
     milestoneFilteredTasksSorted,
-    missingGridWidgetTypes,
     momentumPercent,
     overdueTasks,
     planningCandidates,

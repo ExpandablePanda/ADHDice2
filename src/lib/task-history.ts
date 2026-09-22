@@ -1,5 +1,5 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
-import { shiftDateKey } from "@/lib/task-grid-layout";
+import { shiftDateKey } from "@/lib/date-key";
 import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
 import { shouldExposeHistoryEventTimestamp } from "@/lib/task-history-cutover";
 import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";

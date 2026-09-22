@@ -7,7 +7,7 @@ import type { AchievementSummaryPresentation } from "@/lib/achievement-progress"
 import type { Task, TaskEnergy, TaskHistory as DbTaskHistory } from "@/lib/database.types";
 import { getLevelProgress } from "@/lib/economy-levels";
 import type { HistoricalFocusSession } from "@/lib/types";
-import { shiftDateKey } from "@/lib/task-grid-layout";
+import { shiftDateKey } from "@/lib/date-key";
 import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 
 import { PageShellHeader } from "./page-shell-header";

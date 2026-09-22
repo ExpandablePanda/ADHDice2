@@ -185,6 +185,13 @@ test("useWorkspaceData binds both behavior authority readiness options", async (
   assert.match(parameterBinding, /activePage,\s+behaviorAuthorityReady,\s+behaviorAuthorityLoading,\s+behaviorProfiles,/);
 });
 
+test("useWorkspaceData does not hydrate or subscribe to the retired Task Grid", async () => {
+  const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
+
+  assert.doesNotMatch(source, /adhdice_task_grid_layouts/);
+  assert.doesNotMatch(source, /TaskGrid|taskGrid/);
+});
+
 test("behavior authority readiness gates streak publication without replacing a committed summary", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summaryStart = source.indexOf("async function loadTaskHistoryStreakSummaries");
