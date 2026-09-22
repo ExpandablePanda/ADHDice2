@@ -6,10 +6,11 @@ import { legacyHistory, legacyTask } from "./task-state-engine-shadow-fixtures.t
 import {
   buildCompactActiveStatusReadProjection,
   createActiveStatusReadInputFingerprint,
+  type ActiveStatusReadProjectionRecord,
   type ActiveStatusReadProjectionInput,
 } from "../src/lib/task-state-canonical/active-status-read.ts";
 import type { CanonicalTaskScheduleBoundary, CanonicalTaskStateColumns } from "../src/lib/task-state-canonical/types.ts";
-import { resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
+import { projectTasksForActiveStatusRead, resolveActiveTaskStatuses } from "../src/lib/task-state-engine/read-authority.ts";
 
 const NOW = "2026-08-17T16:00:00.000Z";
 const TIMEZONE = "America/New_York";
@@ -293,23 +294,80 @@ const scenarios: Scenario[] = [
   },
 ];
 
-function expectedCompactRecords(scenarioInput: ActiveStatusReadProjectionInput) {
-  const reference = resolveActiveTaskStatuses(scenarioInput);
-  return scenarioInput.tasks.map((task) => ({
-    activeStatus: reference.statusesByTaskId[task.id],
-    dueOn: Object.hasOwn(reference.dueOnByTaskId, task.id) ? reference.dueOnByTaskId[task.id] : null,
-    taskId: task.id,
-  }));
+function reconstructCompactProjection(records: readonly ActiveStatusReadProjectionRecord[]) {
+  const statusesByTaskId: Record<string, ActiveStatusReadProjectionRecord["activeStatus"]> = {};
+  const dueOnByTaskId: Record<string, string | null> = {};
+  for (const record of records) {
+    statusesByTaskId[record.taskId] = record.activeStatus;
+    if (Object.hasOwn(record, "dueOn")) dueOnByTaskId[record.taskId] = record.dueOn!;
+  }
+  return { dueOnByTaskId, statusesByTaskId };
 }
 
 test("compact Active Status projection has exact full-History resolver parity across required scenarios", () => {
   assert.equal(scenarios.length, 23);
   for (const scenario of scenarios) {
     const compact = buildCompactActiveStatusReadProjection(scenario.input);
-    assert.deepEqual(compact.tasks, expectedCompactRecords(scenario.input), scenario.name);
+    const reference = resolveActiveTaskStatuses(scenario.input);
+    assert.equal(compact.tasks.length, scenario.input.tasks.length, scenario.name);
+    for (const [index, task] of scenario.input.tasks.entries()) {
+      const record = compact.tasks[index]!;
+      const hasReferenceDueOn = Object.hasOwn(reference.dueOnByTaskId, task.id);
+      assert.equal(record.taskId, task.id, scenario.name);
+      assert.equal(record.activeStatus, reference.statusesByTaskId[task.id], scenario.name);
+      assert.equal(Object.hasOwn(record, "dueOn"), hasReferenceDueOn, scenario.name);
+      if (hasReferenceDueOn) assert.equal(record.dueOn, reference.dueOnByTaskId[task.id], scenario.name);
+    }
     assert.equal(compact.projectionVersion, "active-status-read-v1", scenario.name);
     assert.equal(compact.context.logicalDate, "2026-08-17", scenario.name);
-    assert.equal(compact.tasks.length, scenario.input.tasks.length, scenario.name);
+  }
+});
+
+test("compact dueOn preserves explicit null/date and omits lifecycle projections", () => {
+  const tasks = [
+    canonicalTask("unscheduled-presence", { due_on: null }),
+    canonicalTask("scheduled-presence", { due_on: "2026-08-18" }),
+    canonicalTask("archived-presence", { container_state: "archived", due_on: "2026-08-19", status: "archived" }),
+    canonicalTask("trashed-presence", { container_state: "trashed", due_on: "2026-08-20", status: "trashed" }),
+  ];
+  const scenarioInput = input(tasks);
+  const reference = resolveActiveTaskStatuses(scenarioInput);
+  const compact = buildCompactActiveStatusReadProjection(scenarioInput);
+  const recordFor = (taskId: string) => compact.tasks.find((record) => record.taskId === taskId)!;
+
+  assert.equal(Object.hasOwn(recordFor("unscheduled-presence"), "dueOn"), true);
+  assert.equal(recordFor("unscheduled-presence").dueOn, null);
+  assert.equal(Object.hasOwn(reference.dueOnByTaskId, "unscheduled-presence"), true);
+
+  assert.equal(Object.hasOwn(recordFor("scheduled-presence"), "dueOn"), true);
+  assert.equal(recordFor("scheduled-presence").dueOn, reference.dueOnByTaskId["scheduled-presence"]);
+
+  for (const taskId of ["archived-presence", "trashed-presence"]) {
+    assert.equal(Object.hasOwn(recordFor(taskId), "dueOn"), false);
+    assert.equal(Object.hasOwn(reference.dueOnByTaskId, taskId), false);
+  }
+
+  const reconstructed = reconstructCompactProjection(compact.tasks);
+  const projected = projectTasksForActiveStatusRead(tasks, reconstructed.statusesByTaskId, reconstructed.dueOnByTaskId);
+  assert.equal(projected.find((task) => task.id === "archived-presence")?.due_on, "2026-08-19");
+  assert.equal(projected.find((task) => task.id === "trashed-presence")?.due_on, "2026-08-20");
+});
+
+test("compact records reconstruct exact resolver maps, including dueOn presence", () => {
+  for (const scenario of scenarios) {
+    const reference = resolveActiveTaskStatuses(scenario.input);
+    const compact = buildCompactActiveStatusReadProjection(scenario.input);
+    const reconstructed = reconstructCompactProjection(compact.tasks);
+
+    assert.deepEqual(reconstructed.statusesByTaskId, reference.statusesByTaskId, scenario.name);
+    assert.deepEqual(reconstructed.dueOnByTaskId, reference.dueOnByTaskId, scenario.name);
+    for (const task of scenario.input.tasks) {
+      assert.equal(
+        Object.hasOwn(reconstructed.dueOnByTaskId, task.id),
+        Object.hasOwn(reference.dueOnByTaskId, task.id),
+        scenario.name,
+      );
+    }
   }
 });
 
@@ -324,7 +382,8 @@ test("compact Active Status projection has no History transport and scales with 
   assert.equal(Object.hasOwn(compact, "history"), false);
   assert.equal(JSON.stringify(compact).includes("history-scale-"), false);
   assert.equal(compact.tasks.length, 500);
-  assert.equal(compact.tasks.every((record) => Object.keys(record).sort().join(",") === "activeStatus,dueOn,taskId"), true);
+  const allowedRecordKeys = new Set(["activeStatus,dueOn,taskId", "activeStatus,taskId"]);
+  assert.equal(compact.tasks.every((record) => allowedRecordKeys.has(Object.keys(record).sort().join(","))), true);
 });
 
 test("projection fingerprint distinguishes logical-day, policy, source, and Task State context", () => {

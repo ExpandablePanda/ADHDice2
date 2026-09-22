@@ -99,7 +99,8 @@ export type ActiveStatusReadProjectionInput = ActiveStatusReadInput & {
 export type ActiveStatusReadProjectionRecord = {
   taskId: string;
   activeStatus: CanonicalActiveStatus;
-  dueOn: string | null;
+  /** Absent when the canonical Active Status read did not project due state. */
+  dueOn?: string | null;
 };
 
 export type ActiveStatusReadProjectionContext = {
@@ -156,10 +157,15 @@ export function buildCompactActiveStatusReadProjection(
       timezone: input.timezone,
     },
     projectionVersion: ACTIVE_STATUS_READ_PROJECTION_VERSION,
-    tasks: input.tasks.map((task) => ({
-      activeStatus: reference.statusesByTaskId[task.id]!,
-      dueOn: Object.hasOwn(reference.dueOnByTaskId, task.id) ? reference.dueOnByTaskId[task.id]! : null,
-      taskId: task.id,
-    })),
+    tasks: input.tasks.map((task) => {
+      const record: ActiveStatusReadProjectionRecord = {
+        activeStatus: reference.statusesByTaskId[task.id]!,
+        taskId: task.id,
+      };
+      if (Object.hasOwn(reference.dueOnByTaskId, task.id)) {
+        record.dueOn = reference.dueOnByTaskId[task.id]!;
+      }
+      return record;
+    }),
   };
 }
