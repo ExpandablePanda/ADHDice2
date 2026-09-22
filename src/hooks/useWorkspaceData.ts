@@ -55,6 +55,18 @@ import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-perfor
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
+import {
+  applyTaskHistoryDelta,
+  createTaskHistoryCacheMetadata,
+  fetchTaskHistoryDelta,
+  readTaskHistorySyncState,
+  TaskHistorySyncError,
+} from "@/lib/task-history-sync";
+import {
+  indexedDbTaskHistoryCache,
+  TASK_HISTORY_SYNC_PROTOCOL_VERSION,
+  type TaskHistoryCacheSnapshot,
+} from "@/lib/task-history-sync-cache";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
@@ -132,6 +144,17 @@ type UseWorkspaceDataOptions<TTaskGridItem extends TaskGridLayoutItem> = {
 
 const TASK_RESUME_SYNC_COOLDOWN_MS = 1500;
 const TASK_HISTORY_PAGE_SIZE = 1000;
+const TASK_HISTORY_SYNC_MAX_DELTA_ATTEMPTS = 3;
+const TASK_HISTORY_BOOTSTRAP_MAX_ATTEMPTS = 2;
+
+type TaskHistorySyncLoadResult = {
+  facts: CanonicalTaskHistoryFact[];
+  path: "validated-cache-hit" | "delta-sync" | "full-bootstrap";
+  fallbackReason?: string;
+  fromRevision?: number;
+  toRevision?: number;
+  serverFactsReceived: number;
+};
 
 function keepCurrentIfStructurallyEqual<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next) ? current : next;
@@ -545,6 +568,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     let isActive = true;
     let taskChannel: RealtimeChannel | null = null;
     const taskHistoryRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
+    let taskHistoryRevisionReconciliationScheduled = false;
     taskChannelSubscriptionCountRef.current = 0;
     workspaceChannelSubscriptionCountRef.current = 0;
     taskChannelCleanupCountRef.current = 0;
@@ -565,6 +589,194 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
     function mapCanonicalHistoryRows(rows: CanonicalTaskHistoryFact[]) {
       return mapCanonicalTaskHistoryFacts(rows) as DbTaskHistory[];
+    }
+
+    function historySyncErrorReason(error: unknown) {
+      return error instanceof TaskHistorySyncError ? error.code : "unknown-sync-error";
+    }
+
+    function logTaskHistorySync(result: TaskHistorySyncLoadResult) {
+      if (!isWorkspacePerformanceDiagnosticsEnabled()) return;
+      console.info(
+        `[workspace:history-sync] path=${result.path}`
+          + ` facts=${result.serverFactsReceived}`
+          + `${result.fromRevision === undefined ? "" : ` from=${result.fromRevision}`}`
+          + `${result.toRevision === undefined ? "" : ` to=${result.toRevision}`}`
+          + `${result.fallbackReason ? ` reason=${result.fallbackReason}` : ""}`,
+      );
+    }
+
+    async function fetchFullCanonicalHistoryFacts() {
+      const taskHistoryResult = await fetchAllPagedRows<CanonicalTaskHistoryFact>(
+        async (from, to) => await canonicalHistoryQuery().range(from, to),
+      );
+      if (taskHistoryResult.error) return { data: null, error: taskHistoryResult.error };
+      return { data: (taskHistoryResult.data ?? []) as CanonicalTaskHistoryFact[], error: null };
+    }
+
+    async function fullCanonicalHistoryBootstrap(fallbackReason: string): Promise<TaskHistorySyncLoadResult | null> {
+      let lastReason = fallbackReason;
+      for (let attempt = 0; attempt < TASK_HISTORY_BOOTSTRAP_MAX_ATTEMPTS; attempt += 1) {
+        let beforeState;
+        try {
+          beforeState = await readTaskHistorySyncState(client, userId);
+        } catch (error) {
+          const factsResult = await fetchFullCanonicalHistoryFacts();
+          if (factsResult.error || !factsResult.data) return null;
+          return {
+            facts: factsResult.data,
+            path: "full-bootstrap",
+            fallbackReason: `${lastReason}:${historySyncErrorReason(error)}`,
+            serverFactsReceived: factsResult.data.length,
+          };
+        }
+
+        const factsResult = await fetchFullCanonicalHistoryFacts();
+        if (factsResult.error || !factsResult.data) return null;
+        if (!beforeState) {
+          return {
+            facts: factsResult.data,
+            path: "full-bootstrap",
+            fallbackReason: `${lastReason}:sync-state-missing`,
+            serverFactsReceived: factsResult.data.length,
+          };
+        }
+
+        let afterState;
+        try {
+          afterState = await readTaskHistorySyncState(client, userId);
+        } catch (error) {
+          return {
+            facts: factsResult.data,
+            path: "full-bootstrap",
+            fallbackReason: `${lastReason}:post-watermark-${historySyncErrorReason(error)}`,
+            serverFactsReceived: factsResult.data.length,
+          };
+        }
+        if (!afterState) {
+          return {
+            facts: factsResult.data,
+            path: "full-bootstrap",
+            fallbackReason: `${lastReason}:post-sync-state-missing`,
+            serverFactsReceived: factsResult.data.length,
+          };
+        }
+        if (beforeState.protocol_version !== TASK_HISTORY_SYNC_PROTOCOL_VERSION
+          || afterState.protocol_version !== TASK_HISTORY_SYNC_PROTOCOL_VERSION
+          || beforeState.sync_epoch !== afterState.sync_epoch
+          || beforeState.current_revision !== afterState.current_revision) {
+          lastReason = "bootstrap-revision-raced";
+          continue;
+        }
+
+        const metadata = createTaskHistoryCacheMetadata(userId, afterState, factsResult.data.length);
+        try {
+          const snapshot: TaskHistoryCacheSnapshot = { metadata, facts: factsResult.data };
+          await indexedDbTaskHistoryCache.replaceSnapshot(snapshot);
+          return {
+            facts: factsResult.data,
+            path: "full-bootstrap",
+            fallbackReason: fallbackReason === "cache-miss" ? undefined : fallbackReason,
+            fromRevision: afterState.current_revision,
+            toRevision: afterState.current_revision,
+            serverFactsReceived: factsResult.data.length,
+          };
+        } catch {
+          return {
+            facts: factsResult.data,
+            path: "full-bootstrap",
+            fallbackReason: `${lastReason}:cache-write-failed`,
+            fromRevision: afterState.current_revision,
+            toRevision: afterState.current_revision,
+            serverFactsReceived: factsResult.data.length,
+          };
+        }
+      }
+      return null;
+    }
+
+    async function synchronizeCanonicalHistory(): Promise<TaskHistorySyncLoadResult | null> {
+      let serverState;
+      try {
+        serverState = await readTaskHistorySyncState(client, userId);
+      } catch (error) {
+        return await fullCanonicalHistoryBootstrap(`watermark-${historySyncErrorReason(error)}`);
+      }
+      if (!serverState) return await fullCanonicalHistoryBootstrap("sync-state-missing");
+
+      const cache = await indexedDbTaskHistoryCache.read(userId);
+      if (cache.status !== "hit") {
+        return await fullCanonicalHistoryBootstrap(cache.status === "miss" ? "cache-miss" : `${cache.status}-${cache.reason}`);
+      }
+      if (cache.snapshot.metadata.protocolVersion !== TASK_HISTORY_SYNC_PROTOCOL_VERSION) {
+        return await fullCanonicalHistoryBootstrap("cache-protocol-mismatch");
+      }
+      if (cache.snapshot.metadata.syncEpoch !== serverState.sync_epoch) {
+        return await fullCanonicalHistoryBootstrap("sync-epoch-mismatch");
+      }
+      if (cache.snapshot.metadata.validatedRevision > serverState.current_revision) {
+        return await fullCanonicalHistoryBootstrap("server-revision-behind-cache");
+      }
+      if (cache.snapshot.metadata.validatedRevision === serverState.current_revision) {
+        return {
+          facts: cache.snapshot.facts,
+          path: "validated-cache-hit",
+          fromRevision: serverState.current_revision,
+          toRevision: serverState.current_revision,
+          serverFactsReceived: 0,
+        };
+      }
+
+      let facts = cache.snapshot.facts;
+      let fromRevision = cache.snapshot.metadata.validatedRevision;
+      let currentServerState = serverState;
+      for (let attempt = 0; attempt < TASK_HISTORY_SYNC_MAX_DELTA_ATTEMPTS; attempt += 1) {
+        let delta;
+        try {
+          delta = await fetchTaskHistoryDelta(client, userId, currentServerState, fromRevision);
+        } catch (error) {
+          return await fullCanonicalHistoryBootstrap(`delta-${historySyncErrorReason(error)}`);
+        }
+        if (delta.syncEpoch !== currentServerState.sync_epoch || delta.fromRevision !== fromRevision) {
+          return await fullCanonicalHistoryBootstrap("delta-fence-mismatch");
+        }
+        try {
+          facts = applyTaskHistoryDelta(facts, delta, userId);
+          await indexedDbTaskHistoryCache.applyDelta(
+            userId,
+            delta.changes,
+            createTaskHistoryCacheMetadata(userId, {
+              current_revision: delta.toRevision,
+              sync_epoch: delta.syncEpoch,
+            }, facts.length),
+            fromRevision,
+          );
+        } catch (error) {
+          return await fullCanonicalHistoryBootstrap(`delta-apply-${historySyncErrorReason(error)}`);
+        }
+
+        let afterState;
+        try {
+          afterState = await readTaskHistorySyncState(client, userId);
+        } catch (error) {
+          return await fullCanonicalHistoryBootstrap(`delta-post-watermark-${historySyncErrorReason(error)}`);
+        }
+        if (!afterState || afterState.sync_epoch !== delta.syncEpoch || afterState.current_revision < delta.toRevision) {
+          return await fullCanonicalHistoryBootstrap("delta-post-fence-mismatch");
+        }
+        if (afterState.current_revision === delta.toRevision) {
+          return {
+            facts,
+            path: "delta-sync",
+            fromRevision: cache.snapshot.metadata.validatedRevision,
+            toRevision: delta.toRevision,
+            serverFactsReceived: delta.changes.length,
+          };
+        }
+        fromRevision = delta.toRevision;
+        currentServerState = afterState;
+      }
+      return await fullCanonicalHistoryBootstrap("delta-reconciliation-bounded");
     }
 
     async function loadActiveCalendarOverrides(taskId?: string) {
@@ -807,20 +1019,18 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const taskHistoryLoadPromise = taskHistoryRefreshCoordinator.request(
         async () => {
-          const taskHistoryResult = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery().range(from, to));
-
           if (!isActive || !canApplyCoreWorkspaceResult()) {
             return false;
           }
 
-          if (taskHistoryResult.error) {
+          const synchronizedHistory = await synchronizeCanonicalHistory();
+          if (!synchronizedHistory) {
             if (!silent) {
-              setMessage({ tone: "warn", text: taskHistoryResult.error.message ?? "Could not refresh your task history." });
+              setMessage({ tone: "warn", text: "Could not validate canonical task history." });
             }
             return false;
           }
-
-          const nextTaskHistory = deduplicateTaskHistoryByLogicalDate(mapCanonicalHistoryRows((taskHistoryResult.data ?? []) as CanonicalTaskHistoryFact[]));
+          const nextTaskHistory = deduplicateTaskHistoryByLogicalDate(mapCanonicalHistoryRows(synchronizedHistory.facts));
           const nextByTaskId = Object.fromEntries(
             [...new Set([...tasksRef.current.map((task) => task.id), ...nextTaskHistory.map((entry) => entry.task_id)])]
               .map((taskId) => [taskId, nextTaskHistory.filter((entry) => entry.task_id === taskId)]),
@@ -840,6 +1050,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           hasLoadedTaskHistoryRef.current = true;
           hasLoadedFullTaskHistoryRef.current = true;
           setTaskHistoryLoadedUserId(userId);
+          logTaskHistorySync(synchronizedHistory);
           return true;
         },
         { refreshAfterCurrent },
@@ -853,6 +1064,14 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           taskHistoryLoadPromiseRef.current = null;
         }
       }
+    }
+
+    function scheduleTaskHistoryRevisionReconciliation() {
+      if (taskHistoryRevisionReconciliationScheduled) return;
+      taskHistoryRevisionReconciliationScheduled = true;
+      void loadTaskHistory({ silent: true, source: "realtime", refreshAfterCurrent: true })
+        .then((loaded) => loaded ? loadTaskHistoryStreakSummaries() : false)
+        .finally(() => { taskHistoryRevisionReconciliationScheduled = false; });
     }
 
     async function fetchTaskHistoryForRollover(taskIds: string[]) {
@@ -1780,12 +1999,15 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
                 ? reloadTaskHistoryStreakSummaryForTask(taskId, result.history ?? undefined)
                 : false
             ));
-            return;
           }
           if (hasLoadedFullTaskHistoryRef.current) {
-            void loadTaskHistory({ silent: true, source: "realtime", refreshAfterCurrent: true }).then(() => loadTaskHistoryStreakSummaries());
+            void loadTaskHistory({ silent: true, source: "realtime", refreshAfterCurrent: true })
+              .then(() => loadTaskHistoryStreakSummaries());
             return;
           }
+          // Realtime is an immediate-read hint only. Persistent completeness
+          // advances through the fenced watermark/delta path.
+          scheduleTaskHistoryRevisionReconciliation();
           void loadTaskHistoryStreakSummaries();
         },
       )

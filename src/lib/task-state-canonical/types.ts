@@ -241,7 +241,8 @@ export type CanonicalHistoryFactEventKind =
   | "terminal_complete"
   | "delay_audit"
   | "correction"
-  | "authorized_automation";
+  | "authorized_automation"
+  | "migration_reconstruction";
 
 export type CanonicalTaskHistoryFact = {
   id: string;
@@ -265,6 +266,8 @@ export type CanonicalTaskHistoryFact = {
   day_start_time: string;
   command_id: string | null;
   idempotence_identity: string;
+  /** Present in the canonical table for migration-reconstructed facts. */
+  migration_operation_id?: string | null;
   source_legacy_history_id: string | null;
   revision: number;
   created_at: string;
