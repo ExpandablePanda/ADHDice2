@@ -639,6 +639,26 @@ export type TaskHistory = {
 
 export type TaskHistoryEventType = "status" | "completed_permanently";
 
+export type TaskHistorySyncState = {
+  user_id: string;
+  current_revision: number;
+  sync_epoch: string;
+  protocol_version: "task-history-sync-v1";
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskHistoryChange = {
+  user_id: string;
+  sequence: number;
+  history_fact_id: string;
+  entity_id: string;
+  logical_date: string;
+  operation: "upsert" | "delete";
+  row_revision: number | null;
+  changed_at: string;
+};
+
 export type TaskHistoryActionInput = {
   id?: string;
   task_id: string;
@@ -2784,6 +2804,18 @@ export type Database = {
         Row: CanonicalTaskHistoryFact;
         Insert: Partial<CanonicalTaskHistoryFact>;
         Update: Partial<CanonicalTaskHistoryFact>;
+        Relationships: [];
+      };
+      adhdice_task_history_sync_state: {
+        Row: TaskHistorySyncState;
+        Insert: Partial<TaskHistorySyncState>;
+        Update: Partial<TaskHistorySyncState>;
+        Relationships: [];
+      };
+      adhdice_task_history_changes: {
+        Row: TaskHistoryChange;
+        Insert: Partial<TaskHistoryChange>;
+        Update: Partial<TaskHistoryChange>;
         Relationships: [];
       };
       adhdice_task_calendar_overrides: {
