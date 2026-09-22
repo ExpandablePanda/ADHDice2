@@ -4,7 +4,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskHistory as DbTaskHistory, TaskHistoryActionInput, TaskStatus } from "@/lib/database.types";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
-import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import type { TaskHistoryLoadMap, TaskHistoryLoadOptions } from "@/lib/task-history";
 import { classifyTaskStateRuntimeAction, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import {
   executeTaskHistoryOutcomeBatch,
@@ -48,7 +48,7 @@ type UseTaskHistoryActionsOptions = {
   setTasks: Dispatch<SetStateAction<Task[]>>;
   sortTasksForUi: (tasks: Task[]) => Task[];
   taskHistory?: DbTaskHistory[];
-  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
+  loadTaskHistoryForTasks?: (taskIds: string[], options?: TaskHistoryLoadOptions) => Promise<TaskHistoryLoadMap>;
   tasks: Task[];
   timezone: string;
 };
@@ -118,7 +118,7 @@ export function useTaskHistoryActions({
 
     if (!batchResult.success) {
       if (batchResult.completedChildren.length > 0 && loadTaskHistoryForTasks) {
-        const refreshed = (await loadTaskHistoryForTasks([taskId]))[taskId];
+        const refreshed = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId];
         if (refreshed?.status === "ready") {
           setTaskHistory((current) => [
             ...refreshed.history,
@@ -141,7 +141,7 @@ export function useTaskHistoryActions({
     if (batchResult.response.achievement.status === "completed" || batchResult.response.achievement.status === "inactive") {
       calendarReplayAttempts.delete(replayKey);
     }
-    const refreshed = loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId]))[taskId] : null;
+    const refreshed = loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId] : null;
     if (refreshed?.status === "ready") {
       setTaskHistory((current) => [
         ...refreshed.history,
@@ -285,7 +285,7 @@ export function useTaskHistoryActions({
     }
 
     setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId ? currentTask : candidate)));
-    const refreshed = loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId]))[taskId] : null;
+    const refreshed = loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId] : null;
     if (refreshed?.status === "ready") {
       setTaskHistory((current) => [
         ...refreshed.history,

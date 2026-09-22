@@ -29,6 +29,7 @@ import {
   fetchTaskHistoryForTaskIdsInBatches,
   TASK_HISTORY_ROLLOVER_BATCH_SIZE,
   type TaskHistoryLoadMap,
+  type TaskHistoryLoadOptions,
   type TaskHistoryLoadResult,
   type TaskHistoryStreakEntry,
 } from "@/lib/task-history";
@@ -222,11 +223,6 @@ export type TaskHistoryTaskLoadState = {
   status: "error" | "loading" | "ready";
 };
 
-export type TaskHistoryLoadOptions = {
-  force?: boolean;
-  silent?: boolean;
-};
-
 type TaskHistoryCacheUpdate = DbTaskHistory[] | ((current: DbTaskHistory[]) => DbTaskHistory[]);
 
 export async function fetchAllPagedRows<T>(
@@ -331,7 +327,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
   const taskHistoryByTaskIdRef = useRef<Record<string, DbTaskHistory[]>>({});
   const taskHistoryLoadStateByTaskIdRef = useRef<Record<string, TaskHistoryTaskLoadState>>({});
   const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<TaskHistoryLoadResult>>());
-  const loadTaskHistoryForTasksRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
+  const loadTaskHistoryForTasksRef = useRef<((taskIds: string[], options?: TaskHistoryLoadOptions) => Promise<TaskHistoryLoadMap>) | null>(null);
   const loadTaskHistoryStreakSummariesRef = useRef<((nextTasks?: Task[], options?: TaskHistoryStreakSummaryRefreshOptions) => Promise<boolean>) | null>(null);
   const taskHistoryStreakSummaryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
   const taskHistoryStreakSummaryCalculationTokenRef = useRef(0);
@@ -835,9 +831,13 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             taskHistoryByTaskIdRef.current = nextByTaskId;
             setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextTaskHistory));
             setTaskHistoryByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextByTaskId));
+            const nextTaskHistoryLoadStateByTaskId = Object.fromEntries(
+              Object.keys(nextByTaskId).map((taskId) => [taskId, { error: null, status: "ready" }]),
+            ) as Record<string, TaskHistoryTaskLoadState>;
+            taskHistoryLoadStateByTaskIdRef.current = nextTaskHistoryLoadStateByTaskId;
             setTaskHistoryLoadStateByTaskId((current) => keepCurrentIfStructurallyEqual(
               current,
-              Object.fromEntries(Object.keys(nextByTaskId).map((taskId) => [taskId, { error: null, status: "ready" }])),
+              nextTaskHistoryLoadStateByTaskId,
             ));
             hasLoadedTaskHistoryRef.current = true;
             hasLoadedFullTaskHistoryRef.current = true;
@@ -929,11 +929,11 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
       return await taskLoadPromise;
     }
 
-    async function loadTaskHistoryForTasks(taskIds: string[]) {
+    async function loadTaskHistoryForTasks(taskIds: string[], options: TaskHistoryLoadOptions = {}) {
       const uniqueTaskIds = [...new Set(taskIds)].filter(Boolean);
       const results = await Promise.all(uniqueTaskIds.map(async (taskId) => [
         taskId,
-        await loadTaskHistoryForTask(taskId, { force: true, silent: true }),
+        await loadTaskHistoryForTask(taskId, { ...options, silent: true }),
       ] as const));
       return Object.fromEntries(results) as TaskHistoryLoadMap;
     }
@@ -1086,10 +1086,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             now,
             timezone,
           };
-          const hasPrivateTaskHistory = Object.hasOwn(taskHistoryByTaskIdRef.current, taskId);
           if (nextTaskHistory) {
             const taskHistory = deduplicateTaskHistoryByLogicalDate(nextTaskHistory);
-            if (hasPrivateTaskHistory) {
+            if (Object.hasOwn(taskHistoryByTaskIdRef.current, taskId)) {
               setTaskHistoryCacheForTask(taskId, taskHistory);
             }
             const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, summaryContext);
@@ -1101,33 +1100,28 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
             return true;
           }
 
-          if (hasPrivateTaskHistory) {
-            const didReloadPrivateHistory = await loadTaskHistoryForTask(taskId, { force: true, silent: true });
-            if (!didReloadPrivateHistory || !canApplyBehaviorAuthorityProjection()) return false;
-            const taskHistory = taskHistoryByTaskIdRef.current[taskId] ?? [];
-            if (hasLoadedFullTaskHistoryRef.current) {
-              fullTaskHistoryRowsRef.current = deduplicateTaskHistoryByLogicalDate([
-                ...fullTaskHistoryRowsRef.current.filter((entry) => entry.task_id !== taskId),
-                ...taskHistory,
-              ]);
-            }
-            const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, summaryContext);
-            setTaskHistoryStreakSummaries((current) => (
-              JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
-                ? current
-                : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, summaryContext)
-            ));
-            return true;
+          const hasAuthoritativeTaskHistory = taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready"
+            && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId);
+          let taskHistory: DbTaskHistory[];
+          if (hasAuthoritativeTaskHistory) {
+            taskHistory = [...(taskHistoryByTaskIdRef.current[taskId] ?? [])];
+          } else {
+            const historyLoad = await loadTaskHistoryForTask(taskId, { silent: true });
+            if (historyLoad.status !== "ready" || !canApplyBehaviorAuthorityProjection()) return false;
+            taskHistory = historyLoad.history;
           }
-          const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery(taskId).range(from, to));
-          if (result.error || !isActive || !canApplyCoreWorkspaceResult() || !canApplyBehaviorAuthorityProjection()) return false;
-
-          const streakRows: TaskHistoryStreakEntry[] = mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]);
-          const nextSummary = buildTaskHistoryStreakSummary(task, streakRows, todayKeyRef.current, summaryContext);
+          if (!canApplyBehaviorAuthorityProjection()) return false;
+          if (hasAuthoritativeTaskHistory && hasLoadedFullTaskHistoryRef.current) {
+            fullTaskHistoryRowsRef.current = deduplicateTaskHistoryByLogicalDate([
+              ...fullTaskHistoryRowsRef.current.filter((entry) => entry.task_id !== taskId),
+              ...taskHistory,
+            ]);
+          }
+          const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, summaryContext);
           setTaskHistoryStreakSummaries((current) => (
             JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
               ? current
-              : updateTaskHistoryStreakSummaryMap(current, task, streakRows, todayKeyRef.current, summaryContext)
+              : updateTaskHistoryStreakSummaryMap(current, task, taskHistory, todayKeyRef.current, summaryContext)
           ));
           return true;
         } finally {
@@ -1879,7 +1873,7 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     [],
   );
   const loadTaskHistoryForTasks = useCallback(
-    async (taskIds: string[]) => await loadTaskHistoryForTasksRef.current?.(taskIds) ?? {},
+    async (taskIds: string[], options?: TaskHistoryLoadOptions) => await loadTaskHistoryForTasksRef.current?.(taskIds, options) ?? {},
     [],
   );
   const refreshTaskHistoryStreakSummaries = useCallback(

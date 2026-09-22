@@ -9,7 +9,7 @@ import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { normalizeTaskPriorityFields } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
-import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import type { TaskHistoryLoadMap, TaskHistoryLoadOptions } from "@/lib/task-history";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isTaskStateRuntimeLifecycleTransition, TASK_METADATA_UPDATE_FIELDS, TASK_STATE_OWNED_UPDATE_FIELDS } from "@/lib/task-state-runtime-actions";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
@@ -55,7 +55,7 @@ type UseTaskEditorSaveActionOptions = TaskBehaviorPolicyResolutionContext & {
   syncTaskNoteLinks: (taskId: string, linkedNoteIds: string[]) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
-  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
+  loadTaskHistoryForTasks?: (taskIds: string[], options?: TaskHistoryLoadOptions) => Promise<TaskHistoryLoadMap>;
   logicalDayNow?: Date | string;
   timezone: string;
   updateTaskRowWithLegacyEnergyFallback: (taskId: string, values: TaskUpdate, options?: TaskRowUpdateOptions) => Promise<UpdateTaskRowResult>;

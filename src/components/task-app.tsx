@@ -5888,7 +5888,7 @@ export function TaskApp() {
 
   function openTaskHistoryForTask(taskId: string) {
     setTaskHistoryModalTaskId(taskId);
-    void loadTaskHistoryForTask(taskId, { force: true });
+    void loadTaskHistoryForTask(taskId);
     void loadTaskCalendarOverridesForTask(taskId);
   }
 
@@ -6072,7 +6072,7 @@ export function TaskApp() {
       const completedTask = completion.result.task_row;
       setTasks((current) => sortTasksForUi(mergeAuthoritativeMilestoneTask(current, completedTask)));
       if (completion.result.canonicalHistoryFactId) {
-        const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+        const historyLoad = (await loadTaskHistoryForTasks([task.id], { force: true, silent: true }))[task.id];
         if (!historyLoad || historyLoad.status !== "ready") {
           setMessage({ tone: "warn", text: historyLoad?.error ?? "Milestone committed, but History could not be refreshed." });
         } else {
@@ -6781,7 +6781,7 @@ export function TaskApp() {
       return null;
     }
 
-    const refreshedHistory = (await loadTaskHistoryForTasks([taskId]))[taskId];
+    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId];
     const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId);
     if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
       setMessage({ tone: "warn", text: `Task was saved, but History could not be reconciled while replacing the existing status with ${replacementLabel}.` });
@@ -6825,7 +6825,7 @@ export function TaskApp() {
       return false;
     }
 
-    const refreshedHistory = (await loadTaskHistoryForTasks([taskId]))[taskId];
+    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId];
     const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId);
     if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
       setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });

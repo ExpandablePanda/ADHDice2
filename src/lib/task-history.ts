@@ -11,6 +11,11 @@ export type TaskHistoryLoadResult =
 
 export type TaskHistoryLoadMap = Record<string, TaskHistoryLoadResult>;
 
+export type TaskHistoryLoadOptions = {
+  force?: boolean;
+  silent?: boolean;
+};
+
 export const TASK_HISTORY_ROLLOVER_BATCH_SIZE = 100;
 
 type TaskHistoryBatchFetchResult = {

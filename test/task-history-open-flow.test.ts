@@ -22,12 +22,13 @@ test("rollover History reads use an isolated lifecycle instead of claiming the m
   assert.doesNotMatch(rolloverReader, /setTaskHistoryCacheForTask|setTaskHistoryTaskLoadState|taskHistoryLoadStateByTaskIdRef|taskHistoryByTaskIdRef/);
 });
 
-test("opening Task History stores the requested task ID before loading details", () => {
+test("opening Task History stores the requested task ID before using cache-first details", () => {
   const handlerStart = appSource.indexOf("function openTaskHistoryForTask");
   const handlerEnd = appSource.indexOf("\n  async function closeActualTimeEntry", handlerStart);
   const handler = appSource.slice(handlerStart, handlerEnd);
   assert.match(handler, /setTaskHistoryModalTaskId\(taskId\)/);
-  assert.match(handler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
+  assert.match(handler, /loadTaskHistoryForTask\(taskId\)/);
+  assert.doesNotMatch(handler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
   assert.match(handler, /tasks\.find\(\(entry\) => entry\.id === taskId\)/);
   assert.match(handler, /loadTaskCalendarOverridesForTask\(taskId\)/);
 });
@@ -51,7 +52,7 @@ test("Task History Not Due replaces handled outcomes through clear then override
   const notDue = appSource.slice(notDueStart, notDueEnd);
   assert.match(notDue, /clearTaskHistoryCalendarDate\(taskId, logicalDate, "Not Due", \{ clearReplaceableOutcome: true \}\)/);
   assert.ok(notDue.indexOf("clearTaskHistoryCalendarDate") < notDue.indexOf('type: "calendar_override"'));
-  assert.match(notDue, /loadTaskHistoryForTasks\(\[taskId\]\)/g);
+  assert.match(notDue, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/g);
   assert.match(notDue, /activeNotDue/);
   assert.match(notDue, /conflictingEntry/);
   assert.match(notDue, /Task was saved, but the requested History change to Not Due/);

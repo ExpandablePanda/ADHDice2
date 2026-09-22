@@ -8,7 +8,7 @@ import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { evaluateTaskScheduleAuthority, hasTaskScheduleChange, isOccurrenceSensitiveTaskMutation, stripStatusFromScheduleIntent } from "@/lib/task-state-engine/action-authority";
-import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import type { TaskHistoryLoadMap, TaskHistoryLoadOptions } from "@/lib/task-history";
 import { classifyTaskStateRuntimeAction, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import {
   executeTaskStateRuntimeAction,
@@ -70,7 +70,7 @@ type UseTaskUpdateActionOptions = TaskBehaviorPolicyResolutionContext & {
   syncTaskHistoryEntries?: (taskId: string, status: Task["status"], entryDates: string[], options?: { historyEntries?: TaskHistoryActionInput[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
-  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
+  loadTaskHistoryForTasks?: (taskIds: string[], options?: TaskHistoryLoadOptions) => Promise<TaskHistoryLoadMap>;
   loadCanonicalScheduleBoundary?: (taskId: string, boundaryId: string) => Promise<CanonicalTaskScheduleBoundary | null>;
   logicalDayNow?: Date | string;
   timezone: string;
@@ -292,7 +292,7 @@ export function useTaskUpdateAction({
             return false;
           }
           try {
-            const refresh = await loadTaskHistoryForTasks([taskId]);
+            const refresh = await loadTaskHistoryForTasks([taskId], { force: true, silent: true });
             const refreshed = refresh[taskId];
             if (!refreshed || refreshed.status !== "ready") {
               setMessage({ tone: "warn", text: taskCommitReconciliationFailureMessage(refreshed?.error ?? "Task History could not be refreshed.") });

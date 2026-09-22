@@ -9,7 +9,7 @@ import { buildTaskPriorityUpdate } from "@/lib/task-priority";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import { applyTaskActiveStatusTracking } from "@/lib/task-active-status";
 import { evaluateTaskActionAuthority, evaluateTaskScheduleAuthority, isOccurrenceSensitiveTaskMutation } from "@/lib/task-state-engine/action-authority";
-import type { TaskHistoryLoadMap } from "@/lib/task-history";
+import type { TaskHistoryLoadMap, TaskHistoryLoadOptions } from "@/lib/task-history";
 import {
   completeBatchEditProgress,
   createBatchEditProgress,
@@ -68,7 +68,7 @@ type UseTaskBatchEditActionOptions = TaskBehaviorPolicyResolutionContext & {
   syncTaskHistoryEntries?: (taskId: string, status: TaskStatus, entryDates: string[], options?: { historyEntries?: TaskHistoryActionInput[]; historySnapshot?: TaskHistory[] }) => Promise<boolean>;
   taskHistory?: TaskHistory[];
   tasks: Task[];
-  loadTaskHistoryForTasks?: (taskIds: string[]) => Promise<TaskHistoryLoadMap>;
+  loadTaskHistoryForTasks?: (taskIds: string[], options?: TaskHistoryLoadOptions) => Promise<TaskHistoryLoadMap>;
   loadCanonicalScheduleBoundary?: (taskId: string, boundaryId: string) => Promise<CanonicalTaskScheduleBoundary | null>;
   logicalDayNow?: Date | string;
   timezone: string;

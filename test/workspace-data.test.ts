@@ -526,14 +526,15 @@ test("opening Task History refreshes the shared canonical History snapshot", asy
   assert.match(modalLoader, /\.range\(from, to\)/);
 });
 
-test("modal open force-refreshes both empty-ready and partial-ready private caches", async () => {
+test("modal open uses the authoritative cache first and retains the normal cache-miss fetch", async () => {
   const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const modalLoader = workspaceSource.slice(workspaceSource.indexOf("async function loadTaskHistoryForTask"), workspaceSource.indexOf("async function loadTaskHistoryStreakSummaries"));
   const openHandler = appSource.slice(appSource.indexOf("function openTaskHistoryForTask"), appSource.indexOf("async function closeActualTimeEntry", appSource.indexOf("function openTaskHistoryForTask")));
 
   assert.match(modalLoader, /if \(!force && taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"\)/);
-  assert.match(openHandler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
+  assert.match(openHandler, /loadTaskHistoryForTask\(taskId\)/);
+  assert.doesNotMatch(openHandler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
   assert.match(modalLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
   assert.match(modalLoader, /setTaskHistoryCacheForTask\(taskId, rows\)/);
 });
@@ -661,8 +662,8 @@ test("History mutations update the shared cache and summary ownership", async ()
   assert.match(source, /const updateTaskHistoryForTask = useCallback/);
   assert.match(source, /refreshTaskHistoryStreakSummaryRef\.current = reloadTaskHistoryStreakSummaryForTask/);
   assert.match(source, /if \(nextTaskHistory\) \{[\s\S]*?setTaskHistoryCacheForTask\(taskId, taskHistory\)/);
-  assert.match(source, /const hasPrivateTaskHistory = Object\.hasOwn\(taskHistoryByTaskIdRef\.current, taskId\)/);
-  assert.match(source, /await loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)/);
+  assert.match(source, /const hasAuthoritativeTaskHistory = taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"/);
+  assert.match(source, /const historyLoad = await loadTaskHistoryForTask\(taskId, \{ silent: true \}\)/);
 });
 
 test("History query pages have a stable logical row order and compact summaries deduplicate task dates", async () => {
