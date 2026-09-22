@@ -1279,8 +1279,9 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
         }
         setIsWorkspaceLoading(false);
       });
+      const canonicalHistoryHydration = loadTaskHistory({ silent, source });
       startBackgroundTaskHistoryHydration(
-        () => loadTaskHistory({ silent, source }),
+        () => canonicalHistoryHydration,
         {
           onFailure: (error: unknown) => {
             if (silent || !canApplyCoreWorkspaceResult()) return;
@@ -1305,6 +1306,10 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const secondaryCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
       const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, gridLayoutResult, folderStructureResult, taskContentFolderResult] = await secondaryCoreRequest;
+
+      if (source !== "initial") {
+        await canonicalHistoryHydration;
+      }
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {

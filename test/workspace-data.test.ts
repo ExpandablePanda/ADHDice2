@@ -496,7 +496,7 @@ test("startup History completion keeps the existing full canonical caches and re
   const historyLoader = source.slice(source.indexOf("async function loadTaskHistory"), source.indexOf("async function fetchTaskHistoryForRollover"));
   const startupLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
 
-  assert.match(startupLoader, /startBackgroundTaskHistoryHydration\([\s\S]*loadTaskHistory\(\{ silent, source \}\)/);
+  assert.match(startupLoader, /const canonicalHistoryHydration = loadTaskHistory\(\{ silent, source \}\);[\s\S]*startBackgroundTaskHistoryHydration\([\s\S]*canonicalHistoryHydration/);
   assert.match(historyLoader, /setTaskHistory\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextTaskHistory\)\)/);
   assert.match(historyLoader, /setTaskHistoryByTaskId\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextByTaskId\)\)/);
   assert.match(historyLoader, /hasLoadedFullTaskHistoryRef\.current = true/);
