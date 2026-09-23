@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.22`.
+- Current working app version: `7.15.23`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.23 Scalable Current Projection Backfill Candidate Query
+
+The backfill candidate-discovery failure paused at 382 valid projections and
+137 eligible Tasks still missing projections. Candidate discovery failed before
+the first projection write: the old Edge path loaded every projected
+`entity_id` and serialized hundreds of UUIDs into an unbounded PostgREST
+exclusion request.
+
+The new backend-only
+`adhdice_list_missing_task_current_projection_candidates(uuid, integer, uuid)`
+RPC performs the owner-scoped `NOT EXISTS` candidate selection in PostgreSQL,
+with deterministic ID keyset ordering and a hard 1–10 limit. The Edge function
+now receives at most ten UUIDs per request while retaining serial rebuilds, one
+retry for retryable projection fences, failure continuation within a batch,
+and the authoritative missing-count RPC.
+
+No projection semantic change, canonical Task/History change, task-state-command
+change, consumer cutover, or live backfill occurred. The SQL patch was applied
+only after fail-closed prerequisite checks, and only
+`task-current-projection-backfill` was redeployed as ACTIVE v3 with
+`verify_jwt=true`. Andrew's manual QA remains: click `Backfill 50 Projections`
+once.
 
 ## 2026-09-23 7.15.22 Stale Workflow Rollover Without Occurrence
 

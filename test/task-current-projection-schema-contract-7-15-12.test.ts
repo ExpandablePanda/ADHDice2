@@ -81,7 +81,7 @@ test("7.15.12 projection SQL is additive and parity-aligned", () => {
   assert.match(databaseTypes, /adhdice_task_current_projections:[\s\S]*Row: TaskCurrentProjection[\s\S]*Insert: TaskCurrentProjectionInsert[\s\S]*Update: TaskCurrentProjectionUpdate/i);
   assert.match(phase1e, /public\.adhdice_task_current_projections/);
   assert.match(phase1e, /adhdice_task_history_changes/);
-  assert.match(currentState, /Current working app version: `7\.15\.21`/);
+  assert.match(currentState, /Current working app version: `7\.15\.23`/);
   assert.match(currentState, /7\.15\.11 entry was\s+documentation-only/);
   assert.doesNotMatch(currentState, /working app version remains `7\.15\.8`/);
 });

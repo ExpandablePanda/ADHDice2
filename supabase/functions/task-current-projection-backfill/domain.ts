@@ -14,24 +14,7 @@ export type CurrentProjectionBackfillRequest = {
   afterTaskId: string | null;
 };
 
-export type BackfillQueryResult = {
-  data: unknown;
-  error: { code?: string | null; message?: string | null } | null;
-};
-
-export type BackfillQuery = PromiseLike<BackfillQueryResult> & {
-  select(columns: string): BackfillQuery;
-  eq(column: string, value: string): BackfillQuery;
-  is(column: string, value: null): BackfillQuery;
-  in(column: string, values: string[]): BackfillQuery;
-  gt(column: string, value: string): BackfillQuery;
-  not(column: string, operator: string, value: string): BackfillQuery;
-  order(column: string, options: { ascending: boolean }): BackfillQuery;
-  limit(value: number): BackfillQuery;
-};
-
 export type BackfillAdminClient = {
-  from(table: string): BackfillQuery;
   rpc(
     functionName: string,
     args: Record<string, unknown>,
@@ -93,7 +76,10 @@ export function parseCurrentProjectionBackfillRequest(value: unknown): CurrentPr
   return { limit, afterTaskId };
 }
 
-function queryError(result: BackfillQueryResult, operation: string) {
+function rpcError(
+  result: { error: { code?: string | null; message?: string | null } | null },
+  operation: string,
+) {
   if (!result.error) return;
   throw new Error(`${operation}: ${result.error.message ?? "database query failed"}`);
 }
@@ -110,42 +96,19 @@ export async function loadMissingCurrentProjectionCandidates(
   userId: string,
   request: CurrentProjectionBackfillRequest,
 ): Promise<string[]> {
-  let projectionQuery = adminClient
-    .from("adhdice_task_current_projections")
-    .select("entity_id")
-    .eq("user_id", userId)
-    .order("entity_id", { ascending: true });
-  if (request.afterTaskId) projectionQuery = projectionQuery.gt("entity_id", request.afterTaskId);
-  const projectionResult = await projectionQuery;
-  queryError(projectionResult, "Current projection candidate exclusion query failed");
-  if (!Array.isArray(projectionResult.data)) {
-    throw new Error("Current projection candidate exclusion query returned malformed data.");
+  const result = await adminClient.rpc(
+    "adhdice_list_missing_task_current_projection_candidates",
+    {
+      p_user_id: userId,
+      p_limit: request.limit,
+      p_after_task_id: request.afterTaskId,
+    },
+  );
+  rpcError(result, "Current projection candidate query failed");
+  if (!Array.isArray(result.data) || result.data.length > request.limit) {
+    throw new Error("Current projection candidate query returned malformed data.");
   }
-  const existingEntityIds = projectionResult.data.map((row) => rowId(
-    row,
-    "entity_id",
-    "Current projection candidate exclusion query",
-  ));
-
-  let taskQuery = adminClient
-    .from("adhdice_clean_tasks")
-    .select("id")
-    .eq("user_id", userId)
-    .is("permanently_deleted_at", null)
-    .eq("canonicalization_status", "canonical_runtime")
-    .in("entity_kind", ["parent", "step", "substep"]);
-  if (request.afterTaskId) taskQuery = taskQuery.gt("id", request.afterTaskId);
-  if (existingEntityIds.length > 0) {
-    taskQuery = taskQuery.not("id", "in", `(${existingEntityIds.join(",")})`);
-  }
-  const taskResult = await taskQuery
-    .order("id", { ascending: true })
-    .limit(request.limit);
-  queryError(taskResult, "Current projection backfill candidate query failed");
-  if (!Array.isArray(taskResult.data)) {
-    throw new Error("Current projection backfill candidate query returned malformed data.");
-  }
-  return taskResult.data.map((row) => rowId(row, "id", "Current projection backfill candidate query"));
+  return result.data.map((row) => rowId(row, "id", "Current projection candidate query"));
 }
 
 const defaultRebuildCurrentTaskProjection: RebuildCurrentTaskProjection = async ({ adminClient, userId, taskId }) => (
