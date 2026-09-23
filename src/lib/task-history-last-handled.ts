@@ -1,6 +1,6 @@
-import type { Task, TaskHistory } from "@/lib/database.types";
-import { shouldExposeHistoryEventTimestamp } from "@/lib/task-history-cutover";
-import type { CanonicalTaskCalendarOverride, CanonicalTaskCommandOperation } from "@/lib/task-state-canonical/types";
+import type { Task, TaskHistory } from "./database.types.ts";
+import { shouldExposeHistoryEventTimestamp } from "./task-history-cutover.ts";
+import type { CanonicalTaskCalendarOverride, CanonicalTaskCommandOperation } from "./task-state-canonical/types.ts";
 
 export type TaskManualActionRecord = {
   identity: string;

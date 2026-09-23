@@ -1,4 +1,4 @@
-import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "./workspace-performance-diagnostics.ts";
 
 type ProjectionLayer =
   | "active-status"

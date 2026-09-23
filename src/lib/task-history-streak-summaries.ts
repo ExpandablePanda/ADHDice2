@@ -1,17 +1,17 @@
-import type { Task, TaskHistory } from "@/lib/database.types";
+import type { Task, TaskHistory } from "./database.types.ts";
 import {
   deduplicateTaskHistoryByLogicalDate,
   getTaskHistoryLastDone,
   type TaskHistoryStreakEntry,
-} from "@/lib/task-history";
-import { resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine/calendar-authority";
-import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
-import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
-import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
-import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/types";
-import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "@/lib/task-history-last-handled";
-import { forEachCooperatively, type CooperativeChunkOptions } from "@/lib/stable-task-projection";
-import { buildEffectiveTrackingExclusionSet, isTaskDirectlyExcludedFromTracking } from "@/lib/task-tracking";
+} from "./task-history.ts";
+import { resolveTaskHistoryCalendarRead } from "./task-state-engine/calendar-authority.ts";
+import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "./task-state-engine/effective-timeline.ts";
+import type { TaskCalendarOverride } from "./task-state-engine/types.ts";
+import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "./task-state-engine/behavior-policy.ts";
+import type { CanonicalTaskCommandOperation, CanonicalTaskCalendarOverride } from "./task-state-canonical/types.ts";
+import { buildTaskHistoryLastHandledSummaryMap, type TaskHistoryLastHandledSummaryMap } from "./task-history-last-handled.ts";
+import { forEachCooperatively, type CooperativeChunkOptions } from "./stable-task-projection.ts";
+import { buildEffectiveTrackingExclusionSet, isTaskDirectlyExcludedFromTracking } from "./task-tracking.ts";
 
 export const TASK_HISTORY_STREAK_SUMMARY_COLUMNS = "id,task_id,entry_date,occurrence_key,occurrence_due_on,status,event_type,counted_as_due_occurrence,was_completed,created_at,updated_at";
 

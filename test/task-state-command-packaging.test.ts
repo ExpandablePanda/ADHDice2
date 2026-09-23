@@ -63,7 +63,16 @@ test("task-state-command uses no broad alias and has a narrow resolvable local g
     "supabase/functions/task-state-command/domain.ts",
     "src/lib/custom-behavior-rulesets.ts",
     "src/lib/database.types.ts",
+    "src/lib/date-key.ts",
     "src/lib/records/persisted-types.ts",
+    "src/lib/stable-task-projection.ts",
+    "src/lib/task-current-projection-rebuild.ts",
+    "src/lib/task-current-projection.ts",
+    "src/lib/task-history-cutover.ts",
+    "src/lib/task-history-last-handled.ts",
+    "src/lib/task-history-streak-summaries.ts",
+    "src/lib/task-history.ts",
+    "src/lib/task-repeat.ts",
     "src/lib/task-state-canonical/active-status-read.ts",
     "src/lib/task-state-canonical/command-service.ts",
     "src/lib/task-state-canonical/digest.ts",
@@ -75,6 +84,7 @@ test("task-state-command uses no broad alias and has a narrow resolvable local g
     "src/lib/task-state-canonical/types.ts",
     "src/lib/task-state-engine/action-authority.ts",
     "src/lib/task-state-engine/behavior-policy.ts",
+    "src/lib/task-state-engine/calendar-authority.ts",
     "src/lib/task-state-engine/calendar.ts",
     "src/lib/task-state-engine/direct-input.ts",
     "src/lib/task-state-engine/effective-timeline.ts",
@@ -86,6 +96,7 @@ test("task-state-command uses no broad alias and has a narrow resolvable local g
     "src/lib/task-type-behavior-profiles.ts",
     "src/lib/task-type-domain.ts",
     "src/lib/task-type-presentation-domain.ts",
+    "src/lib/workspace-performance-diagnostics.ts",
   ]);
 
   assert.deepEqual([...graphPaths].sort(), [...expectedPaths].sort());

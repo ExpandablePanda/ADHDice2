@@ -1,9 +1,9 @@
-import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "@/lib/database.types";
-import { shiftDateKey } from "@/lib/date-key";
-import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "@/lib/task-repeat";
-import { shouldExposeHistoryEventTimestamp } from "@/lib/task-history-cutover";
-import { isScheduledOccurrence, scheduledOccurrences } from "@/lib/task-state-engine/recurrence";
-import type { TaskCalendarOverride, TaskEffectiveTimelineDay, TaskRecurrence } from "@/lib/task-state-engine/types";
+import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "./database.types.ts";
+import { shiftDateKey } from "./date-key.ts";
+import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "./task-repeat.ts";
+import { shouldExposeHistoryEventTimestamp } from "./task-history-cutover.ts";
+import { isScheduledOccurrence, scheduledOccurrences } from "./task-state-engine/recurrence.ts";
+import type { TaskCalendarOverride, TaskEffectiveTimelineDay, TaskRecurrence } from "./task-state-engine/types.ts";
 import { deduplicateTaskHistoryByLogicalDate } from "./task-state-canonical/history-deduplication.ts";
 export { deduplicateTaskHistoryByLogicalDate, getTaskHistoryLogicalIdentity } from "./task-state-canonical/history-deduplication.ts";
 

@@ -1,12 +1,12 @@
 # Phase 1E: Current Task Read Projection Architecture
 
-Status: locked architecture direction; 7.15.15 source-fence and narrow-rebuild protocol authored
-Ticket: ADHDice 7.15.15 hardened Current Task projection source fences and rebuild inputs
+Status: locked architecture direction; 7.15.16 canonical-revision invalidation trigger and Edge shadow-maintenance protocol authored
+Ticket: ADHDice 7.15.16 replace fragile RPC patching and wire projection shadow maintenance
 Scope: ordinary current Task reads, projection persistence, freshness, invalidation,
 repair, and migration sequencing
-Implementation status: source-only persistence protocol and un wired rebuild
-helper; no runtime read/write cutover, backfill, Edge Function deployment, or
-live SQL application is authorized here
+Implementation status: source-only persistence protocol and wired Edge shadow
+rebuild source; no runtime read/write cutover, backfill, Edge Function deployment,
+or live SQL application is authorized here
 
 Required inputs: [`TASK_STATE_ENGINE.md`](../TASK_STATE_ENGINE.md),
 [`WORKSPACE_LOADING_ARCHITECTURE.md`](../WORKSPACE_LOADING_ARCHITECTURE.md),
@@ -41,8 +41,9 @@ The earlier strict rule that a canonical command must calculate and write a
 fully valid current projection inside the canonical command transaction is
 superseded. The safe protocol is:
 
-1. A semantic canonical command atomically marks an existing affected
-   projection `repair_required`; it never fabricates a row.
+1. Canonical Task `canonical_revision` advancement atomically marks an existing
+   affected projection `repair_required` through the database trigger; it never
+   fabricates a row.
 2. Canonical Task/History and related facts commit normally. Projection
    availability never decides whether valid canonical facts may commit.
 3. A trusted server immediately rebuilds the one affected entity with the
@@ -90,6 +91,40 @@ and unrelated command operations are not loaded. It fetches only the bounded
 ancestor chain required to prove inherited tracking exclusion and fails closed
 on missing, cyclic, or cross-owner hierarchy evidence. The existing broad
 loader remains unchanged for command paths that require its full contract.
+
+## 7.15.16 canonical-revision invalidation and shadow maintenance
+
+The locked rule is: **canonical_revision advancement is the atomic projection
+invalidation event.** The `AFTER UPDATE OF canonical_revision` trigger on
+`public.adhdice_clean_tasks` is the sole Phase 1E invalidation owner. It updates
+only an existing `(user_id, entity_id)` projection row to `repair_required` and
+updates its timestamp. An update that does not change `canonical_revision`, a
+semantic no-op, and a replay do not invalidate a projection.
+
+The canonical Task State command RPC is projection-agnostic. It retains its
+canonical revision advancement and commit behavior but contains no projection
+table update, projection marker, or source-text patching logic. The 7.15.14
+migration therefore installs the trusted writer and revision trigger directly;
+it does not inspect or rewrite `pg_get_functiondef` for the command RPC.
+
+After a successful fresh committed command response, the trusted
+`task-state-command` Edge source rebuilds exactly one affected Task using the
+7.15.15 narrow loader and database-issued schedule/behavior fences. A
+`retryable` stale-fence result receives at most one immediate retry. A
+`repair_required`, `failed`, or exhausted retry result emits a concise server
+diagnostic only; the canonical command response remains successful and its
+existing browser-facing shape is unchanged. Rejected commands, semantic
+no-ops, and replays perform zero rebuilds.
+
+The future manual install order is:
+
+1. `supabase/add_task_current_projection_7_15_12.sql`
+2. `supabase/patch_task_current_projection_persistence_7_15_14.sql`
+3. `supabase/patch_task_current_projection_source_fences_7_15_15.sql`
+4. `supabase/verify_task_current_projection_7_15_16.sql` (read-only verification)
+5. deploy the `task-state-command` Edge Function source
+
+All five steps remain future deployment work for this source-only ticket.
 
 ## Current problem
 
@@ -446,10 +481,10 @@ Every successful canonical Task command returns the authoritative after-state.
 For a semantic mutation, the trusted command transaction:
 
 1. validates the command identity and expected canonical/fact revisions;
-2. marks the existing owner/entity projection `repair_required` without
-   creating a row;
-3. writes the canonical Task, History, occurrence, boundary, override,
+2. writes the canonical Task, History, occurrence, boundary, override,
    lifecycle, workflow, and command facts required by the command; and
+3. advances `canonical_revision`, causing the same-transaction trigger to mark
+   an existing projection `repair_required`; and
 4. commits canonical truth without waiting for projection reconstruction.
 
 The immediate post-commit rebuild is a separate trusted server operation. It
@@ -509,9 +544,11 @@ A rebuild:
   retryable; and
 - is safe to repeat and safe to abandon without changing canonical truth.
 
-The 7.15.14 TypeScript helper is authored but not imported by live command
-orchestration. It never requests whole-workspace History or an unfiltered
-whole-user command-operation read, and it never falls back to raw Task status.
+The 7.15.14 TypeScript helper is now imported by the task-state-command Edge
+orchestration in shadow-write mode. It never requests whole-workspace History
+or an unfiltered whole-user command-operation read, and it never falls back to
+raw Task status. The helper's failure is non-business failure: it is logged and
+does not alter the already-successful command response.
 
 Repair must never create, delete, rewrite, or reclassify canonical History;
 create or remove occurrence facts; change schedule boundaries; alter command
@@ -578,12 +615,13 @@ read as a shadow/reference path until parity gates pass. The phases are:
    existing full canonical read across normal, recurring, delayed, lifecycle,
    behavior-boundary, logical-day, and legacy-provenance fixtures. Classify
    every mismatch; do not silently normalize it.
-4. **Atomic invalidation and post-commit materialization.** Update the trusted
-   canonical command boundary to invalidate an existing affected projection in
-   the canonical transaction, then rebuild it immediately after commit through
-   the TypeScript calculator and revision-fenced trusted writer. Backfill
-   existing entities only through explicit repair operations. Legacy direct
-   writers remain compatibility paths and are instrumented until retired.
+4. **Atomic invalidation and post-commit materialization.** Install the
+   canonical-revision trigger so every committed semantic revision advancement
+   invalidates an existing affected projection in the canonical transaction,
+   then rebuild it immediately after commit through the TypeScript calculator
+   and revision-fenced trusted writer. Backfill existing entities only through
+   explicit repair operations. Legacy direct writers remain compatibility paths
+   and are instrumented until retired.
 5. **Consumer cutover.** Move ordinary Task surfaces and current readiness to
    valid current projections. Keep History, Calendar detail, repair, and
    parity paths on canonical reads. A projection miss is entity-scoped
@@ -638,10 +676,10 @@ must not be extended with new current-surface dependencies.
 4. Projection freshness is proven by Task, History, schedule, behavior-policy,
    logical-day, projected-date, and algorithm/schema fences.
 5. The user-wide History sync revision is not treated as an entity revision.
-6. Successful canonical commands atomically invalidate any existing affected
-   projection, while projection materialization is an immediate,
-   revision-fenced, retryable post-commit operation that cannot block canonical
-   commit.
+6. `canonical_revision` advancement is the atomic invalidation event for any
+   existing affected projection, while projection materialization is an
+   immediate, revision-fenced, retryable post-commit operation that cannot
+   block canonical commit.
 7. Projection repair cannot write canonical History or reward evidence.
 8. Time passage can invalidate and reconcile projections, but cannot by itself
    create History, resolve recurrence, or grant rewards.
@@ -671,13 +709,14 @@ must not be extended with new current-surface dependencies.
 
 ## Scope record
 
-- Production runtime code: untouched; the rebuild helper is authored but not
-  wired into command orchestration.
-- Source SQL/schema/types/tests: 7.15.12 physical foundation plus 7.15.14
-  invalidation/writer protocol authored.
-- Edge Functions: not deployed or cut over.
+- Production runtime behavior: unchanged; task-state-command source now wires
+  the trusted rebuild helper in shadow-write mode without changing the browser
+  response contract.
+- Source SQL/schema/types/tests: 7.15.12 physical foundation, 7.15.14
+  trusted writer plus canonical-revision trigger, and 7.15.15 source fences.
+- Edge Functions: source wired but not deployed or cut over.
 - UI and browser behavior: untouched and unverified.
-- SQL remains unapplied. No backfill, deployment, live Supabase proof, or
+- SQL remains unapplied. No backfill, Edge deployment, live Supabase proof, or
   runtime cutover occurred; those require later tickets. The old strict
-  atomic-projection-write rule is superseded by atomic invalidation plus
-  revision-fenced immediate post-commit materialization.
+  atomic-projection-write rule is superseded by trigger-owned atomic
+  invalidation plus revision-fenced immediate post-commit materialization.

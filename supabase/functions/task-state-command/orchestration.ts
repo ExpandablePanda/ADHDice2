@@ -42,6 +42,10 @@ import {
   taskManualActionForCanonicalCommand,
   taskManualActionLabel,
 } from "../../../src/lib/task-state-engine/action-authority.ts";
+import {
+  rebuildCurrentTaskProjection,
+  type CurrentTaskProjectionRebuildResult,
+} from "../../../src/lib/task-current-projection-rebuild.ts";
 
 export type TrustedTaskStateCommandClient = CanonicalReadClient & {
   rpc(
@@ -126,6 +130,7 @@ type OrchestrationDependencies = {
     intent: TaskStateCommandIntent;
     deferAchievements?: boolean;
   }) => Promise<{ data: unknown; error: { code?: string | null; message?: string } | null }>;
+  rebuildCurrentTaskProjection: typeof rebuildCurrentTaskProjection;
   finalizeAchievements: (input: {
     adminClient: TrustedTaskStateCommandClient;
     userId: string;
@@ -164,6 +169,7 @@ const defaultDependencies: OrchestrationDependencies = {
       p_command: serializedPlan,
     });
   },
+  rebuildCurrentTaskProjection,
   finalizeAchievements: async ({ adminClient, userId, operationId }) => adminClient.rpc("adhdice_finalize_task_history_batch_achievements", {
     p_user_id: userId,
     p_operation_id: operationId,
@@ -341,6 +347,60 @@ function semanticNoOpResponse(input: {
   } satisfies TrustedTaskStateCommandResponse;
 }
 
+function isCommittedFreshCommandResult(value: unknown): value is Record<string, unknown> {
+  return isRecord(value)
+    && value.state === "committed"
+    && value.was_replayed !== true
+    && value.no_action !== true;
+}
+
+function projectionMaintenanceDiagnostic(result: CurrentTaskProjectionRebuildResult) {
+  if (result.status === "written") return null;
+  return { status: result.status, reason: result.reason };
+}
+
+async function maintainCurrentTaskProjection(input: {
+  dependencies: OrchestrationDependencies;
+  adminClient: TrustedTaskStateCommandClient;
+  userId: string;
+  taskId: string;
+}) {
+  let result: CurrentTaskProjectionRebuildResult;
+  let retried = false;
+  try {
+    result = await input.dependencies.rebuildCurrentTaskProjection({
+      adminClient: input.adminClient,
+      userId: input.userId,
+      taskId: input.taskId,
+    });
+    if (result.status === "retryable") {
+      retried = true;
+      result = await input.dependencies.rebuildCurrentTaskProjection({
+        adminClient: input.adminClient,
+        userId: input.userId,
+        taskId: input.taskId,
+      });
+    }
+  } catch {
+    console.info("[task-state-command] current projection shadow maintenance failed", {
+      task_id: input.taskId,
+      status: "failed",
+      reason: "unexpected_projection_rebuild_error",
+      retried,
+    });
+    return;
+  }
+
+  const diagnostic = projectionMaintenanceDiagnostic(result);
+  if (diagnostic) {
+    console.info("[task-state-command] current projection shadow maintenance failed", {
+      task_id: input.taskId,
+      ...diagnostic,
+      retried,
+    });
+  }
+}
+
 export async function executeTrustedTaskStateCommand(input: {
   userId: string;
   intent: TaskStateCommandIntent;
@@ -453,6 +513,15 @@ export async function executeTrustedTaskStateCommand(input: {
   if (rpcResult.error) {
     const status = rpcResult.error.code === "40001" ? 409 : rpcResult.error.code === "42501" ? 403 : 422;
     return errorResponse("command_rejected", "Canonical Task State command was rejected.", status);
+  }
+  if (isCommittedFreshCommandResult(rpcResult.data)
+    && !isCanonicalTaskStateCommandSemanticNoOp({ plan, task: readResult.data.task })) {
+    await maintainCurrentTaskProjection({
+      dependencies,
+      adminClient: input.adminClient,
+      userId: input.userId,
+      taskId: input.intent.task_id,
+    });
   }
   return { status: 200, body: rpcResult.data };
 }

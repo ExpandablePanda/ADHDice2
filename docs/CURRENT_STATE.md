@@ -14,6 +14,32 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-23 7.15.16 Replace Fragile Projection RPC Patching + Wire Shadow Maintenance
+
+The source-only 7.15.16 correction removes the fragile
+`pg_get_functiondef`/string-replacement patch from
+`patch_task_current_projection_persistence_7_15_14.sql` and removes the direct
+projection invalidation block from `add_task_state_command_rpc.sql`. The locked
+authority is: **canonical_revision advancement is the atomic projection
+invalidation event.** An idempotent `AFTER UPDATE OF canonical_revision` trigger
+on `adhdice_clean_tasks` marks only an existing owner/entity projection
+`repair_required`; it never creates a missing row. Semantic no-ops and replays
+do not advance the canonical revision and do not invalidate.
+
+The canonical Task State RPC is projection-agnostic. The trusted
+`task-state-command` Edge source now invokes `rebuildCurrentTaskProjection()`
+only after a fresh successful committed result, using the existing 7.15.15
+narrow entity loader and database-issued source fences. Rejected commands,
+semantic no-ops, and replays invoke zero rebuilds. A retryable stale-fence result
+gets at most one immediate retry; projection failure is logged server-side and
+does not change the successful Task command response or browser contract.
+
+Future manual install order: 7.15.12 projection schema, 7.15.14 writer and
+canonical-revision trigger, 7.15.15 source fences, read-only
+`verify_task_current_projection_7_15_16.sql`, then Edge deployment. SQL was not
+applied, the Edge Function was not deployed, no rows were created or backfilled,
+and no browser read cutover occurred. Runtime remains `7.15.10`.
+
 ## 2026-09-23 7.15.15 Harden Current Projection Source Fences and Rebuild Inputs
 
 The source-only 7.15.15 projection patch adds one trusted PostgreSQL

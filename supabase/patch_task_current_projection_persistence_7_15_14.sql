@@ -189,62 +189,38 @@ revoke all on function public.adhdice_upsert_task_current_projection(uuid, jsonb
 grant execute on function public.adhdice_upsert_task_current_projection(uuid, jsonb)
   to service_role;
 
--- Forward patch for an already-installed command RPC. The base source above
--- carries the same invalidation block; this patch changes only the installed
--- function definition when a later deployment is explicitly authorized.
-do $migration$
-declare
-  v_definition text;
-  v_marker text := '7.15.14: invalidate the existing entity projection';
-  v_old text := $$  update public.adhdice_clean_tasks
-     set canonicalization_status = case$$;
-  v_new text := $$  -- 7.15.14: invalidate the existing entity projection in
-  -- this canonical transaction before the Task facts commit. A semantic
-  -- no-op rollover has no projection-input mutation and is left untouched.
-  if v_command_type <> 'reconcile_rollover'
-     or v_history <> '{}'::jsonb
-     or v_automatic_history_facts <> '[]'::jsonb
-     or v_automatic_history_delete_ids <> '[]'::jsonb
-     or v_occurrence <> '{}'::jsonb
-     or v_schedule <> '{}'::jsonb
-     or v_effective_override <> '{}'::jsonb
-     or v_calendar_override <> '{}'::jsonb
-     or exists (
-       select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
-        where patch_key.key <> 'canonicalization_status'
-     ) then
-    update public.adhdice_task_current_projections
-       set validity = 'repair_required', updated_at = now()
-     where user_id = p_user_id and entity_id = v_entity_id;
-  end if;
-
-  update public.adhdice_clean_tasks
-     set canonicalization_status = case$$;
+-- Canonical revision advancement is the atomic projection invalidation event.
+-- The trigger observes the canonical Task row boundary rather than modifying
+-- the large command RPC. It marks only an existing owner/entity row and never
+-- fabricates a projection for a Task that has not been materialized yet.
+create or replace function public.adhdice_invalidate_task_current_projection_on_canonical_revision()
+returns trigger
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
 begin
-  select pg_get_functiondef(p.oid)
-    into v_definition
-    from pg_proc p
-    join pg_namespace n on n.oid = p.pronamespace
-   where n.nspname = 'public'
-     and p.proname = 'adhdice_execute_task_state_command'
-     and pg_get_function_identity_arguments(p.oid) = 'p_user_id uuid, p_command jsonb';
-
-  if v_definition is null then
-    raise exception 'Canonical Task State command RPC is not installed.';
-  end if;
-  if position(v_marker in v_definition) > 0 then
-    null;
-  elsif position(v_old in v_definition) = 0 then
-    raise exception 'Canonical Task projection invalidation anchor was not found.';
-  else
-    execute replace(v_definition, v_old, v_new);
-  end if;
+  update public.adhdice_task_current_projections
+     set validity = 'repair_required',
+         updated_at = now()
+   where user_id = new.user_id
+     and entity_id = new.id;
+  return new;
 end;
-$migration$;
+$function$;
 
-revoke all on function public.adhdice_execute_task_state_command(uuid, jsonb)
+revoke all on function public.adhdice_invalidate_task_current_projection_on_canonical_revision()
   from public, anon, authenticated;
-grant execute on function public.adhdice_execute_task_state_command(uuid, jsonb)
+grant execute on function public.adhdice_invalidate_task_current_projection_on_canonical_revision()
   to service_role;
+
+drop trigger if exists adhdice_clean_tasks_invalidate_task_current_projection
+  on public.adhdice_clean_tasks;
+create trigger adhdice_clean_tasks_invalidate_task_current_projection
+after update of canonical_revision
+on public.adhdice_clean_tasks
+for each row
+when (old.canonical_revision is distinct from new.canonical_revision)
+execute function public.adhdice_invalidate_task_current_projection_on_canonical_revision();
 
 commit;

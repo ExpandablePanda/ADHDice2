@@ -6,6 +6,7 @@ import {
   executeTrustedTaskStateCommand,
   type TrustedTaskStateCommandClient,
 } from "../supabase/functions/task-state-command/orchestration.ts";
+import type { CurrentTaskProjectionRebuildResult } from "../src/lib/task-current-projection-rebuild.ts";
 import type { TaskStateEngineInput } from "../src/lib/task-state-engine/types.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskCommandOperation } from "../src/lib/task-state-canonical/types.ts";
@@ -33,6 +34,9 @@ test("Edge boundary verifies the user, reads canonical state without legacy auth
   assert.match(orchestrationSource, /buildTrustedTaskStateCommandReplayDescriptor/);
   assert.match(orchestrationSource, /initialReplay[\s\S]*loadCanonicalState/);
   assert.match(orchestrationSource, /normalizedResult\.state === "rejected"[\s\S]*lookupReplay/);
+  assert.match(orchestrationSource, /rebuildCurrentTaskProjection/);
+  assert.match(orchestrationSource, /was_replayed !== true[\s\S]*no_action !== true/);
+  assert.match(orchestrationSource, /status === "retryable"[\s\S]*rebuildCurrentTaskProjection/);
   assert.doesNotMatch(edgeSource, /SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY\s*=/);
   assert.doesNotMatch(edgeSource, /console\.(log|error|warn)/);
 });
@@ -1106,6 +1110,11 @@ function harness(replayResults: Array<CanonicalTaskCommandOperation | null>) {
       planCalls += 1;
       return planTaskStateCommand(...args);
     }),
+    rebuildCurrentTaskProjection: async (): Promise<CurrentTaskProjectionRebuildResult> => ({
+      status: "written",
+      projection: {} as never,
+      writerResult: null,
+    }),
   };
   return { adminClient, dependencies, counts: () => ({ replayCalls, canonicalReads, planCalls, rpcCalls }) };
 }
@@ -1222,6 +1231,63 @@ test("a normal fresh command reaches the existing RPC exactly once", async () =>
   assert.deepEqual(harnessState.counts(), { replayCalls: 1, canonicalReads: 1, planCalls: 1, rpcCalls: 1 });
 });
 
+test("a successful committed command invokes one entity-scoped projection rebuild without changing its response", async () => {
+  const intent = archiveIntent("projection-success");
+  const harnessState = harness([null]);
+  const rebuilds: Array<{ userId: string; taskId: string }> = [];
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent,
+    adminClient: harnessState.adminClient,
+    dependencies: {
+      ...harnessState.dependencies,
+      rebuildCurrentTaskProjection: async ({ userId, taskId }) => {
+        rebuilds.push({ userId, taskId });
+        return { status: "written", projection: {} as never, writerResult: null };
+      },
+    },
+  });
+
+  assert.deepEqual(result, { status: 200, body: { state: "committed", was_replayed: false } });
+  assert.deepEqual(rebuilds, [{ userId: "owner-1", taskId: "task-1" }]);
+});
+
+test("rejected commands and replays invoke zero projection rebuilds", async () => {
+  const rejected = harness([null, null]);
+  let rejectedRebuilds = 0;
+  const rejectedResult = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: archiveIntent("projection-rejected", "task-1", 3),
+    adminClient: rejected.adminClient,
+    dependencies: {
+      ...rejected.dependencies,
+      rebuildCurrentTaskProjection: async () => {
+        rejectedRebuilds += 1;
+        return { status: "written", projection: {} as never, writerResult: null };
+      },
+    },
+  });
+  assert.equal(rejectedResult.status, 409);
+  assert.equal(rejectedRebuilds, 0);
+
+  const replay = harness([operationFor(archiveIntent("projection-replay"))]);
+  let replayRebuilds = 0;
+  const replayResult = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent: archiveIntent("projection-replay"),
+    adminClient: replay.adminClient,
+    dependencies: {
+      ...replay.dependencies,
+      rebuildCurrentTaskProjection: async () => {
+        replayRebuilds += 1;
+        return { status: "written", projection: {} as never, writerResult: null };
+      },
+    },
+  });
+  assert.equal(replayResult.status, 200);
+  assert.equal(replayRebuilds, 0);
+});
+
 test("a true rollover semantic no-op returns success without invoking the canonical RPC", async () => {
   let rpcCalls = 0;
   const intent: TaskStateCommandIntent = {
@@ -1280,6 +1346,7 @@ test("a true rollover semantic no-op returns success without invoking the canoni
 
 test("a non-rollover semantic no-op still uses the canonical RPC", async () => {
   let rpcCalls = 0;
+  let rebuildCalls = 0;
   const intent: TaskStateCommandIntent = {
     type: "archive_task",
     task_id: "task-1",
@@ -1300,6 +1367,10 @@ test("a non-rollover semantic no-op still uses the canonical RPC", async () => {
       loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
       buildEngineInput: (() => ({} as TaskStateEngineInput)),
       serializePlan: (() => ({})),
+      rebuildCurrentTaskProjection: async () => {
+        rebuildCalls += 1;
+        return { status: "written", projection: {} as never, writerResult: null };
+      },
       planCommand: ({ task }) => ({
         command: { commandId: "archive-no-op-command", commandType: "archive_task" },
         normalizedResult: {
@@ -1332,4 +1403,28 @@ test("a non-rollover semantic no-op still uses the canonical RPC", async () => {
   assert.equal(result.status, 200);
   assert.equal((result.body as { no_action?: boolean }).no_action, undefined);
   assert.equal(rpcCalls, 1);
+  assert.equal(rebuildCalls, 0);
+});
+
+test("projection failure preserves the successful command response and stale fences get one bounded retry", async () => {
+  const intent = archiveIntent("projection-retry");
+  const harnessState = harness([null]);
+  let rebuildCalls = 0;
+  const result = await executeTrustedTaskStateCommand({
+    userId: "owner-1",
+    intent,
+    adminClient: harnessState.adminClient,
+    dependencies: {
+      ...harnessState.dependencies,
+      rebuildCurrentTaskProjection: async () => {
+        rebuildCalls += 1;
+        return rebuildCalls === 1
+          ? { status: "retryable", reason: "stale_projection_fence", message: "stale" }
+          : { status: "failed", reason: "projection_write_failed", message: "writer unavailable" };
+      },
+    },
+  });
+
+  assert.deepEqual(result, { status: 200, body: { state: "committed", was_replayed: false } });
+  assert.equal(rebuildCalls, 2);
 });

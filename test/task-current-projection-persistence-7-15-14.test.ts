@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { tmpdir } from "node:os";
 import test from "node:test";
 import {
   rebuildCurrentTaskProjection,
@@ -11,8 +15,29 @@ import type { TaskCurrentProjection } from "../src/lib/database.types.ts";
 
 const commandSql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
 const persistenceSql = readFileSync(new URL("../supabase/patch_task_current_projection_persistence_7_15_14.sql", import.meta.url), "utf8");
+const verificationSql = readFileSync(new URL("../supabase/verify_task_current_projection_7_15_16.sql", import.meta.url), "utf8");
 const readModelSource = readFileSync(new URL("../src/lib/task-state-canonical/read-model.ts", import.meta.url), "utf8");
 const rebuildSource = readFileSync(new URL("../src/lib/task-current-projection-rebuild.ts", import.meta.url), "utf8");
+
+function functionSource(source: string, name: string) {
+  const start = source.indexOf(`create or replace function public.${name}`);
+  assert.ok(start >= 0, `missing ${name}`);
+  const end = source.indexOf("$function$;", start);
+  assert.ok(end > start, `unterminated ${name}`);
+  return source.slice(start, end + "$function$;".length);
+}
+
+const invalidationFunction = functionSource(
+  persistenceSql,
+  "adhdice_invalidate_task_current_projection_on_canonical_revision",
+);
+const repositoryRoot = process.cwd();
+const psql = process.env.ADHDICE_SQL_COMPILE_PSQL_BIN ?? "psql";
+const psqlDirectory = dirname(psql);
+const createdb = join(psqlDirectory, "createdb");
+const dropdb = join(psqlDirectory, "dropdb");
+const sqlCompileHost = process.env.ADHDICE_SQL_COMPILE_PGHOST;
+const sqlCompilePort = process.env.ADHDICE_SQL_COMPILE_PGPORT ?? "5432";
 
 const projection = {
   user_id: "owner-1",
@@ -71,14 +96,94 @@ test("7.15.14 accepts the pre-ledger revision-zero History baseline", () => {
   assert.match(rebuildSource, /adhdice_task_history_changes[\s\S]*\.eq\("entity_id", taskId\)[\s\S]*\.limit\(1\)/);
 });
 
-test("canonical command invalidates only an existing affected projection", () => {
-  assert.match(commandSql, /v_projection_inputs_changed\s+boolean/i);
-  assert.match(commandSql, /update public\.adhdice_task_current_projections[\s\S]*set validity = 'repair_required'[\s\S]*where user_id = p_user_id[\s\S]*entity_id = v_entity_id/i);
-  assert.doesNotMatch(commandSql, /insert into public\.adhdice_task_current_projections/i);
-  assert.match(commandSql, /v_command_type <> 'reconcile_rollover'/i);
-  assert.match(commandSql, /patch_key\.key <> 'canonicalization_status'/i);
-  assert.ok(commandSql.indexOf("return v_operation.result_references || jsonb_build_object('was_replayed', true)")
-    < commandSql.indexOf("update public.adhdice_task_current_projections"));
+test("canonical revision change invalidates only an existing affected projection", () => {
+  assert.match(commandSql, /canonical_revision = v_next_revision/i);
+  assert.match(persistenceSql, /create or replace function public\.adhdice_invalidate_task_current_projection_on_canonical_revision\(\)/i);
+  assert.match(invalidationFunction, /update public\.adhdice_task_current_projections[\s\S]*set validity = 'repair_required'[\s\S]*updated_at = now\(\)[\s\S]*where user_id = new\.user_id[\s\S]*entity_id = new\.id/i);
+  assert.match(persistenceSql, /after update of canonical_revision[\s\S]*for each row[\s\S]*when \(old\.canonical_revision is distinct from new\.canonical_revision\)/i);
+  assert.match(persistenceSql, /old\.canonical_revision is distinct from new\.canonical_revision/i);
+  assert.doesNotMatch(invalidationFunction, /insert into public\.adhdice_task_current_projections/i);
+});
+
+test("canonical command RPC is projection-agnostic and no dynamic source patch remains", () => {
+  assert.doesNotMatch(commandSql, /adhdice_task_current_projections/i);
+  assert.doesNotMatch(commandSql, /v_projection_inputs_changed|projection invalidation/i);
+  assert.doesNotMatch(persistenceSql, /pg_get_functiondef|execute\s+replace/i);
+  assert.doesNotMatch(persistenceSql, /adhdice_execute_task_state_command/i);
+});
+
+test("canonical revision trigger invalidates, preserves no-op updates, and does not fabricate rows", (t) => {
+  if (!sqlCompileHost) {
+    t.skip("set ADHDICE_SQL_COMPILE_PGHOST to run the disposable local PostgreSQL trigger regression");
+    return;
+  }
+  assert.ok(sqlCompileHost.startsWith("/") || ["localhost", "127.0.0.1", "::1"].includes(sqlCompileHost));
+
+  const scratch = mkdtempSync(join(tmpdir(), "adhdice-current-projection-trigger-"));
+  const database = `adhdice_projection_trigger_${process.pid}_${Date.now()}`;
+  const setupFile = join(scratch, "setup.sql");
+  const triggerFile = join(scratch, "trigger.sql");
+  const verificationFile = join(scratch, "verification.sql");
+  const triggerStart = persistenceSql.indexOf("-- Canonical revision advancement is the atomic projection invalidation event.");
+  const triggerEnd = persistenceSql.lastIndexOf("\ncommit;");
+  assert.ok(triggerStart >= 0 && triggerEnd > triggerStart);
+
+  const run = (file: string, output = false) => execFileSync(
+    psql,
+    ["-U", "postgres", "-h", sqlCompileHost, "-p", sqlCompilePort, "-d", database, "-v", "ON_ERROR_STOP=1", ...(output ? ["-At"] : []), "-f", file],
+    { cwd: repositoryRoot, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] },
+  );
+
+  try {
+    execFileSync(createdb, ["-U", "postgres", "-h", sqlCompileHost, "-p", sqlCompilePort, database], {
+      cwd: repositoryRoot,
+      stdio: "ignore",
+    });
+    writeFileSync(setupFile, `do $$ begin create role anon; exception when duplicate_object then null; end $$;
+do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+do $$ begin create role service_role; exception when duplicate_object then null; end $$;
+create table public.adhdice_clean_tasks (
+  id uuid primary key,
+  user_id uuid not null,
+  canonical_revision bigint
+);
+create table public.adhdice_task_current_projections (
+  user_id uuid not null,
+  entity_id uuid not null,
+  validity text not null,
+  updated_at timestamptz not null,
+  primary key (user_id, entity_id)
+);
+`);
+    run(setupFile);
+    writeFileSync(triggerFile, persistenceSql.slice(triggerStart, triggerEnd));
+    run(triggerFile);
+    writeFileSync(verificationFile, `insert into public.adhdice_clean_tasks(id, user_id, canonical_revision)
+values ('00000000-0000-4000-8000-000000000001', '00000000-0000-4000-8000-000000000002', 1);
+insert into public.adhdice_task_current_projections(user_id, entity_id, validity, updated_at)
+values ('00000000-0000-4000-8000-000000000002', '00000000-0000-4000-8000-000000000001', 'valid', '2000-01-01T00:00:00Z');
+update public.adhdice_clean_tasks set canonical_revision = 2;
+select validity = 'repair_required' and updated_at > '2000-01-01T00:00:00Z'
+from public.adhdice_task_current_projections;
+update public.adhdice_task_current_projections set validity = 'valid', updated_at = '2000-01-01T00:00:00Z';
+update public.adhdice_clean_tasks set canonical_revision = 2;
+select validity = 'valid' and updated_at = '2000-01-01T00:00:00Z'
+from public.adhdice_task_current_projections;
+delete from public.adhdice_task_current_projections;
+update public.adhdice_clean_tasks set canonical_revision = 3;
+select count(*) = 0 from public.adhdice_task_current_projections;
+`);
+    assert.deepEqual(run(verificationFile, true).trim().split("\n"), ["t", "t", "t"]);
+  } finally {
+    try {
+      execFileSync(dropdb, ["--if-exists", "--force", "-U", "postgres", "-h", sqlCompileHost, "-p", sqlCompilePort, database], {
+        cwd: repositoryRoot,
+        stdio: "ignore",
+      });
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
 });
 
 test("trusted projection writer is valid-only, fenced, monotonic, and browser-inaccessible", () => {
@@ -100,7 +205,22 @@ test("trusted projection writer is valid-only, fenced, monotonic, and browser-in
   assert.match(persistenceSql, /older than the stored projection/i);
   assert.match(persistenceSql, /revoke all on function public\.adhdice_upsert_task_current_projection\(uuid, jsonb\)\s+from public, anon, authenticated/i);
   assert.match(persistenceSql, /grant execute on function public\.adhdice_upsert_task_current_projection\(uuid, jsonb\)\s+to service_role/i);
-  assert.match(persistenceSql, /position\(v_marker in v_definition\) > 0/i);
+  assert.match(persistenceSql, /revoke all on function public\.adhdice_invalidate_task_current_projection_on_canonical_revision\(\)\s+from public, anon, authenticated/i);
+  assert.match(persistenceSql, /grant execute on function public\.adhdice_invalidate_task_current_projection_on_canonical_revision\(\)\s+to service_role/i);
+});
+
+test("deployment verification is read-only and covers the 7.15.16 install contract", () => {
+  assert.match(verificationSql, /to_regclass\('public\.adhdice_task_current_projections'\)/i);
+  assert.match(verificationSql, /projection_rows_before_backfill/i);
+  assert.match(verificationSql, /canonical_revision_invalidation_trigger_exists/i);
+  assert.match(verificationSql, /command_rpc_is_projection_agnostic/i);
+  assert.match(verificationSql, /adhdice_upsert_task_current_projection\(uuid, jsonb\)/i);
+  assert.match(verificationSql, /adhdice_get_task_current_projection_source_fences\(uuid, uuid, date\)/i);
+  assert.match(verificationSql, /authenticated_cannot_insert_projection/i);
+  assert.match(verificationSql, /history_entity_frontier_index_exists/i);
+  assert.match(verificationSql, /task-current-projection-schema-v1/i);
+  assert.match(verificationSql, /task-history-sync-v1/i);
+  assert.doesNotMatch(verificationSql, /\b(insert|update|delete|truncate)\s+(into\s+)?public\./i);
 });
 
 test("rebuild writes one valid entity projection", async () => {
