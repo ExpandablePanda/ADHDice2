@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.10`.
+- Current working app version: `7.15.18`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.18 Contain Runaway Task Hierarchy RPCs
+
+The browser hierarchy mutation boundary now deduplicates identical in-flight
+intents, blocks the exact expected-revision intent after a `40001` stale
+conflict, and coalesces one authoritative workspace refresh without retrying
+the stale move. Success, different Tasks, and explicit later intents with
+fresh revisions remain independent. No render/effect, dragover/pointermove,
+timer, visibility, or retry caller was found in the checked-in Table/List
+paths.
+
+The hierarchy RPC source now performs a cheap owner-scoped revision check
+before taking the Task row lock and repeats the revision fence after locking.
+`supabase/patch_task_hierarchy_move_7_14_34.sql` remains source-only; it was
+not applied to live Supabase. No projection backfill, projection read cutover,
+History startup change, or task-state-command v38 change was made. GitHub
+Pages deploys from `main`, whose current tracked source is still 7.14.46 and
+does not contain this containment fix; public deployment must receive the fix
+before normal hierarchy use resumes.
 
 ## 2026-09-23 7.15.17 Controlled Live Current Projection Infrastructure Rollout
 
