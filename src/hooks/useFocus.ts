@@ -44,7 +44,7 @@ type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 type FocusRuntimeRpcResult = { runtime?: FocusRuntimeRow | null; deleted_session_id?: string; completed_session?: DbFocusSession; was_replayed?: boolean };
 
-export function isFocusCounterAuthReady(confirmedUserId: string | null, userId: string | null) {
+export function isFocusAuthReady(confirmedUserId: string | null, userId: string | null) {
   return Boolean(confirmedUserId && userId && confirmedUserId === userId);
 }
 
@@ -297,6 +297,7 @@ export function useFocus(
   const suppressCategoryReload = useRef(false);
   const activeSessionsRef = useRef(activeSessions);
   const runtimeRequestGenerationRef = useRef(0);
+  const runtimeHydrationGenerationRef = useRef(0);
   const runtimeClosedRevisionsRef = useRef(new Map<string, number>());
   const counterRequestGenerationRef = useRef(0);
   const focusCounterStateRef = useRef(focusCounterState);
@@ -311,9 +312,9 @@ export function useFocus(
   const runtimeChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const counterChannelRef = useRef<RealtimeChannel | null>(null);
   const counterChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
-  const isFocusCounterSyncReady = isFocusCounterAuthReady(confirmedAuthUserId, userId);
-  const focusCounters = isFocusCounterSyncReady && focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
-  const focusCounterHistory = isFocusCounterSyncReady && focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
+  const isFocusAuthReadyForUser = isFocusAuthReady(confirmedAuthUserId, userId);
+  const focusCounters = isFocusAuthReadyForUser && focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
+  const focusCounterHistory = isFocusAuthReadyForUser && focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
   const pendingDailyGoalSurplus = pendingDailyGoalSurplusState.ownerUserId === userId
     ? pendingDailyGoalSurplusState.pending
     : null;
@@ -336,9 +337,13 @@ export function useFocus(
     }
 
     return subscribeToBrowserAuth((_event, session) => {
+      const previousUserId = confirmedAuthUserIdRef.current;
       const nextUserId = session?.user?.id ?? null;
       confirmedAuthUserIdRef.current = nextUserId;
+      if (previousUserId !== nextUserId) migratedRuntimeUserRef.current = null;
       counterRequestGenerationRef.current += 1;
+      runtimeRequestGenerationRef.current += 1;
+      runtimeHydrationGenerationRef.current += 1;
       setConfirmedAuthUserId(nextUserId);
       setAuthConfirmationVersion((current) => current + 1);
     });
@@ -353,6 +358,7 @@ export function useFocus(
 
   useEffect(() => {
     runtimeRequestGenerationRef.current += 1;
+    runtimeHydrationGenerationRef.current += 1;
     runtimeClosedRevisionsRef.current.clear();
   }, [userId]);
 
@@ -428,13 +434,22 @@ export function useFocus(
   }, [client]);
 
   const hydrateFocusRuntimes = useCallback(async () => {
-    if (!client || !userId) return;
+    if (!client || !userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+    const hydrationGeneration = ++runtimeHydrationGenerationRef.current;
     const generation = ++runtimeRequestGenerationRef.current;
     const { data, error } = await client
       .from("adhdice_focus_active_sessions")
       .select("session_id,user_id,runtime_kind,category_id,mode,mode_authoritative,countdown_target_seconds,state,current_run_started_at,accumulated_seconds,revision,closed_at,close_reason,created_at,updated_at")
       .eq("user_id", userId)
       .is("closed_at", null);
+    const isCurrentRuntimeHydration = () =>
+      currentUserIdRef.current === userId &&
+      isFocusAuthReady(confirmedAuthUserIdRef.current, userId) &&
+      isCurrentFocusRuntimeSnapshotRequest(hydrationGeneration, runtimeHydrationGenerationRef.current);
+    if (
+      !isCurrentRuntimeHydration() ||
+      !isCurrentFocusRuntimeSnapshotRequest(generation, runtimeRequestGenerationRef.current)
+    ) return;
     if (error) {
       if (!/does not exist|schema cache/i.test(error.message)) setMessage({ tone: "warn", text: `Focus timer sync failed: ${error.message}` });
       return;
@@ -462,6 +477,7 @@ export function useFocus(
     };
 
     for (const row of rows) {
+      if (!isCurrentRuntimeHydration()) return;
       if (row.runtime_kind !== "category" || !row.category_id) continue;
       const metadata = legacyMetadata[row.category_id];
       if (metadata?.mode !== "countdown" || !metadata.targetSeconds) continue;
@@ -479,6 +495,7 @@ export function useFocus(
         p_mode: "countdown",
         p_countdown_target_seconds: metadata.targetSeconds,
       });
+      if (!isCurrentRuntimeHydration()) return;
       if (!migrationError && migrated) {
         const result = migrated as FocusRuntimeRpcResult;
         if (result.runtime) applyRuntimeRow(result.runtime);
@@ -489,6 +506,7 @@ export function useFocus(
     }
 
     if (legacyStandalone) {
+      if (!isCurrentRuntimeHydration()) return;
       const { data: migrated, error: migrationError } = await client.rpc("adhdice_migrate_focus_runtime", {
         p_operation_id: getMigrationOperationId("standalone"),
         p_runtime_kind: "standalone_countdown",
@@ -499,6 +517,7 @@ export function useFocus(
         p_legacy_accumulated_seconds: legacyStandalone.accumulatedSeconds,
         p_legacy_is_running: legacyStandalone.isRunning,
       });
+      if (!isCurrentRuntimeHydration()) return;
       if (!migrationError && migrated) {
         const result = migrated as FocusRuntimeRpcResult;
         if (result.runtime) applyRuntimeRow(result.runtime);
@@ -511,7 +530,7 @@ export function useFocus(
   }, [applyRuntimeRow, client, setMessage, userId]);
 
   useEffect(() => {
-    if (!client || !userId) {
+    if (!client || !userId || !isFocusAuthReadyForUser) {
       migratedRuntimeUserRef.current = null;
       return;
     }
@@ -527,13 +546,14 @@ export function useFocus(
 
       await removalPromise;
 
-      if (!active) return;
+      if (!active || currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
 
       void hydrateFocusRuntimes();
 
       const channel = currentClient
         .channel(`focus-runtime:${userId}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_active_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
           if (payload.eventType === "DELETE") {
             const deleted = payload.old as Partial<FocusRuntimeRow>;
             runtimeRequestGenerationRef.current += 1;
@@ -549,6 +569,7 @@ export function useFocus(
           }
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
           const entry = mapFocusSessionRow(payload.new as DbFocusSession);
           setFocusHistory((current) => {
             const next = upsertFocusHistoryEntry(current, entry);
@@ -557,7 +578,7 @@ export function useFocus(
           });
         })
         .subscribe((status) => {
-          if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusRuntimes();
+          if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status) && isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) void hydrateFocusRuntimes();
         });
       runtimeChannelRef.current = channel;
       runtimeChannelRemovalPromiseRef.current = null;
@@ -573,6 +594,8 @@ export function useFocus(
     if (broadcast) broadcast.onmessage = refetch;
     return () => {
       active = false;
+      runtimeRequestGenerationRef.current += 1;
+      runtimeHydrationGenerationRef.current += 1;
       document.removeEventListener("visibilitychange", refetchWhenVisible);
       window.removeEventListener("pageshow", refetch);
       window.removeEventListener("online", refetch);
@@ -583,7 +606,7 @@ export function useFocus(
         runtimeChannelRemovalPromiseRef.current = removeRealtimeChannel(channel);
       }
     };
-  }, [applyRuntimeRow, client, hydrateFocusRuntimes, removeRealtimeChannel, userId]);
+  }, [applyRuntimeRow, authConfirmationVersion, client, hydrateFocusRuntimes, isFocusAuthReadyForUser, removeRealtimeChannel, userId]);
 
   const replaceFocusCounterState = useCallback((ownerUserId: string, counters: FocusCounter[], history: FocusCounterHistoryEntry[]) => {
     const nextState = { counters, history, ownerUserId };
@@ -594,7 +617,7 @@ export function useFocus(
   }, []);
 
   const hydrateFocusCounters = useCallback(async () => {
-    if (!client || !userId || !isFocusCounterAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+    if (!client || !userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
     const generation = ++counterRequestGenerationRef.current;
     const [counterResponse, eventResponse] = await Promise.all([
       client
@@ -612,7 +635,7 @@ export function useFocus(
     ]);
     if (
       currentUserIdRef.current !== userId ||
-      !isFocusCounterAuthReady(confirmedAuthUserIdRef.current, userId) ||
+      !isFocusAuthReady(confirmedAuthUserIdRef.current, userId) ||
       !isCurrentFocusCounterSnapshotRequest(generation, counterRequestGenerationRef.current)
     ) return;
     const error = counterResponse.error ?? eventResponse.error;
@@ -646,7 +669,7 @@ export function useFocus(
   }, [userId]);
 
   useEffect(() => {
-    if (!client || !userId || !isFocusCounterSyncReady) return;
+    if (!client || !userId || !isFocusAuthReadyForUser) return;
     const currentClient = client;
     let cancelled = false;
     async function subscribeToCounterChannel() {
@@ -659,7 +682,7 @@ export function useFocus(
 
       await removalPromise;
 
-      if (cancelled || currentUserIdRef.current !== userId || !isFocusCounterAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+      if (cancelled || currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
 
       void hydrateFocusCounters();
 
@@ -720,7 +743,7 @@ export function useFocus(
         counterChannelRemovalPromiseRef.current = removeRealtimeChannel(channel);
       }
     };
-  }, [authConfirmationVersion, client, hydrateFocusCounters, isFocusCounterSyncReady, removeRealtimeChannel, replaceFocusCounterState, setMessage, userId]);
+  }, [authConfirmationVersion, client, hydrateFocusCounters, isFocusAuthReadyForUser, removeRealtimeChannel, replaceFocusCounterState, setMessage, userId]);
 
   async function transitionFocusRuntime(categoryId: string, action: string, args: Record<string, unknown> = {}) {
     if (!client || !userId) return null;
