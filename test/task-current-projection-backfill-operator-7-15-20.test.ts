@@ -12,52 +12,23 @@ const settingsSource = readFileSync(new URL("../src/components/task-app/settings
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 type BatchPlan = {
-  response?: { candidateCount: number; writtenCount: number; failedCount: number };
+  response?: { candidateCount: number; writtenCount: number; failedCount: number; remainingCount: number };
   error?: { message: string };
 };
 
 function createClient(input: {
   plans: BatchPlan[];
-  remainingCounts: number[];
   events?: string[];
+  afterInvoke?: (index: number) => void;
   getMaximumInFlight?: (value: number) => void;
 }) {
   let planIndex = 0;
-  let countIndex = 0;
   let active = 0;
   let maximumInFlight = 0;
   const events = input.events ?? [];
   const updateMaximumInFlight = (value: number) => {
     maximumInFlight = Math.max(maximumInFlight, value);
     input.getMaximumInFlight?.(maximumInFlight);
-  };
-
-  const query = (count: number) => {
-    const current = {} as ReturnType<ProjectionBackfillOperatorClient["from"]>;
-    Object.assign(current, {
-      select: () => current,
-      eq: () => current,
-      is: () => current,
-      in: () => current,
-      then: (onfulfilled: (value: { count: number; error: null }) => unknown, onrejected?: (reason: unknown) => unknown) => {
-        active += 1;
-        updateMaximumInFlight(active);
-        events.push("count:start");
-        return Promise.resolve({ count, error: null }).then(
-          (value) => {
-            active -= 1;
-            events.push("count:end");
-            return onfulfilled(value);
-          },
-          (reason) => {
-            active -= 1;
-            events.push("count:end");
-            return onrejected?.(reason);
-          },
-        );
-      },
-    });
-    return current;
   };
 
   const client = {
@@ -71,31 +42,26 @@ function createClient(input: {
         await Promise.resolve();
         active -= 1;
         events.push(`invoke:${index}:end`);
+        input.afterInvoke?.(index);
         const plan = input.plans[index] ?? { error: { message: "Unexpected extra request." } };
         return { data: plan.response ?? null, error: plan.error ?? null };
       },
-    },
-    from: () => {
-      const count = input.remainingCounts[countIndex];
-      countIndex += 1;
-      return query(count ?? 0);
     },
   } as unknown as ProjectionBackfillOperatorClient;
 
   return { client, events, getPlanCount: () => planIndex, getMaximumInFlight: () => maximumInFlight };
 }
 
-function fullBatch() {
-  return { response: { candidateCount: CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, writtenCount: CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, failedCount: 0 } };
+function fullBatch(remainingCount: number) {
+  return { response: { candidateCount: CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, writtenCount: CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, failedCount: 0, remainingCount } };
 }
 
 test("50 operator makes exactly five sequential ten-candidate calls", async () => {
   const progress: number[] = [];
-  const fake = createClient({ plans: [fullBatch(), fullBatch(), fullBatch(), fullBatch(), fullBatch()], remainingCounts: [40, 30, 20, 10, 0] });
+  const fake = createClient({ plans: [fullBatch(40), fullBatch(30), fullBatch(20), fullBatch(10), fullBatch(0)] });
   const result = await runCurrentProjectionBackfillOperator({
     client: fake.client,
     maxBatches: 5,
-    userId: "owner-1",
     onProgress: (value) => progress.push(value.processedCount),
   });
 
@@ -107,17 +73,25 @@ test("50 operator makes exactly five sequential ten-candidate calls", async () =
   assert.equal(result.failedCount, 0);
   assert.equal(result.remainingCount, 0);
   assert.equal(result.stoppedReason, "completed");
-  assert.deepEqual(fake.events.filter((event) => event.startsWith("invoke") || event === "count:start"), [
-    "invoke:0:start", "invoke:0:end", "count:start", "invoke:1:start", "invoke:1:end", "count:start", "invoke:2:start", "invoke:2:end", "count:start", "invoke:3:start", "invoke:3:end", "count:start", "invoke:4:start", "invoke:4:end", "count:start",
+  assert.deepEqual(fake.events, [
+    "invoke:0:start", "invoke:0:end", "invoke:1:start", "invoke:1:end", "invoke:2:start", "invoke:2:end",
+    "invoke:3:start", "invoke:3:end", "invoke:4:start", "invoke:4:end",
   ]);
+});
+
+test("operator displays and returns the Edge-provided remaining count", async () => {
+  const fake = createClient({ plans: [fullBatch(430)] });
+  const result = await runCurrentProjectionBackfillOperator({ client: fake.client, maxBatches: 1 });
+
+  assert.equal(result.writtenCount, 10);
+  assert.equal(result.remainingCount, 430);
 });
 
 test("third request failure stops requests four and five", async () => {
   const fake = createClient({
-    plans: [fullBatch(), fullBatch(), { error: { message: "transport" } }, fullBatch(), fullBatch()],
-    remainingCounts: [40, 30],
+    plans: [fullBatch(40), fullBatch(30), { error: { message: "transport" } }, fullBatch(10), fullBatch(0)],
   });
-  const result = await runCurrentProjectionBackfillOperator({ client: fake.client, maxBatches: 5, userId: "owner-1" });
+  const result = await runCurrentProjectionBackfillOperator({ client: fake.client, maxBatches: 5 });
 
   assert.equal(fake.getPlanCount(), 3);
   assert.equal(result.writtenCount, 20);
@@ -128,10 +102,9 @@ test("third request failure stops requests four and five", async () => {
 
 test("failedCount greater than zero stops continuation after the failed batch", async () => {
   const fake = createClient({
-    plans: [fullBatch(), fullBatch(), { response: { candidateCount: 10, writtenCount: 9, failedCount: 1 } }, fullBatch(), fullBatch()],
-    remainingCounts: [40, 30, 21],
+    plans: [fullBatch(40), fullBatch(30), { response: { candidateCount: 10, writtenCount: 9, failedCount: 1, remainingCount: 21 } }, fullBatch(10), fullBatch(0)],
   });
-  const result = await runCurrentProjectionBackfillOperator({ client: fake.client, maxBatches: 5, userId: "owner-1" });
+  const result = await runCurrentProjectionBackfillOperator({ client: fake.client, maxBatches: 5 });
 
   assert.equal(fake.getPlanCount(), 3);
   assert.equal(result.writtenCount, 29);
@@ -142,10 +115,9 @@ test("failedCount greater than zero stops continuation after the failed batch", 
 
 test("candidateCount zero stops early", async () => {
   const fake = createClient({
-    plans: [fullBatch(), { response: { candidateCount: 0, writtenCount: 0, failedCount: 0 } }, fullBatch()],
-    remainingCounts: [40, 0],
+    plans: [fullBatch(40), { response: { candidateCount: 0, writtenCount: 0, failedCount: 0, remainingCount: 0 } }, fullBatch(0)],
   });
-  const result = await runCurrentProjectionBackfillOperator({ client: fake.client, maxBatches: 5, userId: "owner-1" });
+  const result = await runCurrentProjectionBackfillOperator({ client: fake.client, maxBatches: 5 });
 
   assert.equal(fake.getPlanCount(), 2);
   assert.equal(result.remainingCount, 0);
@@ -154,14 +126,12 @@ test("candidateCount zero stops early", async () => {
 
 test("27 remaining candidates produce 10 plus 10 plus 7 and stop", async () => {
   const fake = createClient({
-    plans: [fullBatch(), fullBatch(), { response: { candidateCount: 7, writtenCount: 7, failedCount: 0 } }, fullBatch()],
-    remainingCounts: [17, 7, 0],
+    plans: [fullBatch(17), fullBatch(7), { response: { candidateCount: 7, writtenCount: 7, failedCount: 0, remainingCount: 0 } }, fullBatch(0)],
   });
   const progress: number[] = [];
   const result = await runCurrentProjectionBackfillOperator({
     client: fake.client,
     maxBatches: 5,
-    userId: "owner-1",
     onProgress: (value) => progress.push(value.processedCount),
   });
 
@@ -172,13 +142,27 @@ test("27 remaining candidates produce 10 plus 10 plus 7 and stop", async () => {
   assert.equal(result.stoppedReason, "partial_batch");
 });
 
-test("unmount stops the loop before launching another request", async () => {
-  let mounted = true;
-  const fake = createClient({ plans: [fullBatch(), fullBatch()], remainingCounts: [17] });
+test("operator stops between batches when rollover becomes active", async () => {
+  let rolloverActive = false;
+  const fake = createClient({ plans: [fullBatch(40), fullBatch(30)], afterInvoke: () => { rolloverActive = true; } });
   const result = await runCurrentProjectionBackfillOperator({
     client: fake.client,
     maxBatches: 5,
-    userId: "owner-1",
+    isRolloverActive: () => rolloverActive,
+  });
+
+  assert.equal(fake.getPlanCount(), 1);
+  assert.equal(result.writtenCount, 10);
+  assert.equal(result.remainingCount, 40);
+  assert.equal(result.stoppedReason, "rollover_active");
+});
+
+test("unmount stops the loop before launching another request", async () => {
+  let mounted = true;
+  const fake = createClient({ plans: [fullBatch(17), fullBatch(7)] });
+  const result = await runCurrentProjectionBackfillOperator({
+    client: fake.client,
+    maxBatches: 5,
     shouldContinue: () => mounted,
     onProgress: () => { mounted = false; },
   });
@@ -187,22 +171,21 @@ test("unmount stops the loop before launching another request", async () => {
   assert.equal(result.stoppedReason, "unmounted");
 });
 
-test("operator count query is narrow, owner scoped, missing-only, and avoids cursor continuation", () => {
-  assert.match(operatorSource, /from\("adhdice_clean_tasks"\)/);
-  assert.match(operatorSource, /select\("id, adhdice_task_current_projections!left\(entity_id\)", \{ count: "exact", head: true \}\)/);
-  assert.match(operatorSource, /eq\("user_id", userId\)/);
-  assert.match(operatorSource, /is\("adhdice_task_current_projections\.entity_id", null\)/);
+test("operator uses Edge remainingCount, not a browser count query", () => {
+  assert.match(operatorSource, /remainingCount/);
   assert.match(operatorSource, /body: \{ limit: CURRENT_PROJECTION_BACKFILL_BATCH_SIZE \}/);
+  assert.doesNotMatch(operatorSource, /from\(|adhdice_clean_tasks|count: "exact"|select\(/);
   assert.doesNotMatch(operatorSource, /afterTaskId|nextCursor/);
   assert.doesNotMatch(operatorSource, /adhdice_execute_task_state_command|adhdice_task_history_facts|adhdice_task_command_operations/);
 });
 
-test("both controls are development-only, share the busy guard, and preserve the single ten-row action", () => {
+test("both controls are development-only, share the rollover busy guard, and preserve ten-row behavior", () => {
   assert.match(settingsSource, /process\.env\.NODE_ENV !== "production"/);
   assert.match(settingsSource, /Backfill 10 Projections/);
   assert.match(settingsSource, /Backfill 50 Projections/);
-  assert.equal((settingsSource.match(/disabled=\{isBackfillingProjections\}/g) ?? []).length, 2);
-  assert.match(settingsSource, /isBackfillRunActiveRef\.current/);
+  assert.equal((settingsSource.match(/disabled=\{isBackfillingProjections \|\| isRolloverActive\}/g) ?? []).length, 2);
+  assert.match(settingsSource, /isRolloverActive/);
+  assert.match(settingsSource, /Wait for Task rollover to finish before backfilling projections\./);
   assert.match(settingsSource, /handleProjectionBackfill\(1\)/);
   assert.match(settingsSource, /handleProjectionBackfill\(5\)/);
   assert.match(settingsSource, /shouldContinue: \(\) => isMountedRef\.current && isBackfillRunActiveRef\.current/);

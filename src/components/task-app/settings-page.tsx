@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Task } from "@/lib/database.types";
 import type { NavigatorSettingsSection } from "@/lib/navigator-search";
@@ -11,6 +11,7 @@ import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, runCurrentProjectionBackfillOperator, type ProjectionBackfillOperatorClient } from "@/lib/task-current-projection-backfill-operator";
+import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 
 type ThemeMode = "light" | "dark";
 
@@ -61,6 +62,11 @@ export function SettingsPage({
   const [economyStatus, setEconomyStatus] = useState<string | null>(null);
   const [isBackfillingProjections, setIsBackfillingProjections] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
+  const isRolloverActive = useSyncExternalStore(
+    taskRolloverCoordinator.subscribe,
+    taskRolloverCoordinator.isBusy,
+    () => false,
+  );
   const isBackfillRunActiveRef = useRef(false);
   const isMountedRef = useRef(true);
   const handledSectionRef = useRef<NavigatorSettingsSection | null>(null);
@@ -160,6 +166,10 @@ export function SettingsPage({
       return;
     }
     if (isBackfillRunActiveRef.current) return;
+    if (taskRolloverCoordinator.isBusy()) {
+      setBackfillStatus("Wait for Task rollover to finish before backfilling projections.");
+      return;
+    }
     isBackfillRunActiveRef.current = true;
     setIsBackfillingProjections(true);
     setBackfillStatus(`Backfilling projections · 0 / ${maxBatches * CURRENT_PROJECTION_BACKFILL_BATCH_SIZE}`);
@@ -167,15 +177,17 @@ export function SettingsPage({
       const result = await runCurrentProjectionBackfillOperator({
         client: client as unknown as ProjectionBackfillOperatorClient,
         maxBatches,
-        userId,
         shouldContinue: () => isMountedRef.current && isBackfillRunActiveRef.current,
+        isRolloverActive: () => taskRolloverCoordinator.isBusy(),
         onProgress: (progress) => {
           if (!isMountedRef.current) return;
           setBackfillStatus(`Backfilling projections · ${progress.processedCount} / ${progress.totalCount}`);
         },
       });
       if (!isMountedRef.current || result.stoppedReason === "unmounted") return;
-      if (result.errorMessage) {
+      if (result.stoppedReason === "rollover_active") {
+        setBackfillStatus("Wait for Task rollover to finish before backfilling projections.");
+      } else if (result.errorMessage) {
         setBackfillStatus("Backfill failed.");
       } else if (maxBatches === 1) {
         setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed`);
@@ -225,7 +237,7 @@ export function SettingsPage({
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isBackfillingProjections}
+                  disabled={isBackfillingProjections || isRolloverActive}
                   onClick={() => { void handleProjectionBackfill(1); }}
                   type="button"
                 >
@@ -233,14 +245,16 @@ export function SettingsPage({
                 </button>
                 <button
                   className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
-                  disabled={isBackfillingProjections}
+                  disabled={isBackfillingProjections || isRolloverActive}
                   onClick={() => { void handleProjectionBackfill(5); }}
                   type="button"
                 >
                   {isBackfillingProjections ? "Backfilling..." : "Backfill 50 Projections"}
                 </button>
               </div>
-              {backfillStatus ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">{backfillStatus}</p> : null}
+              {isRolloverActive
+                ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">Wait for Task rollover to finish before backfilling projections.</p>
+                : backfillStatus ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">{backfillStatus}</p> : null}
             </div>
           </div>
         ) : null}

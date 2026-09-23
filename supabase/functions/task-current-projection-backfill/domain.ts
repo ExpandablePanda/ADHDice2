@@ -50,6 +50,7 @@ export type ProjectionBackfillResponse = {
   writtenCount: number;
   failedCount: number;
   retryCount: number;
+  remainingCount: number;
   results: ProjectionBackfillTaskResult[];
   nextCursor: string | null;
   elapsedMs: number;
@@ -204,6 +205,7 @@ export async function runCurrentProjectionBackfill(input: {
     writtenCount,
     failedCount,
     retryCount,
+    remainingCount: await loadMissingCurrentProjectionCount(input.adminClient, input.userId),
     results,
     nextCursor: candidateIds.length > 0 ? candidateIds[candidateIds.length - 1]! : null,
     elapsedMs: Math.max(0, now() - startedAt),
@@ -217,4 +219,17 @@ export async function runCurrentProjectionBackfill(input: {
   } satisfies BackfillSummary;
   (input.logSummary ?? ((value) => console.info("[task-current-projection-backfill] completed", value)))(summary);
   return response;
+}
+
+async function loadMissingCurrentProjectionCount(adminClient: BackfillAdminClient, userId: string) {
+  const result = await adminClient.rpc("adhdice_count_missing_task_current_projections", {
+    p_user_id: userId,
+  });
+  if (result.error) {
+    throw new Error(`Current projection remaining-count query failed: ${result.error.message ?? "database query failed"}`);
+  }
+  if (typeof result.data !== "number" || !Number.isSafeInteger(result.data) || result.data < 0) {
+    throw new Error("Current projection remaining-count query returned malformed data.");
+  }
+  return result.data;
 }

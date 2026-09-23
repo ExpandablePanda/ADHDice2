@@ -1,8 +1,9 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent, validateRolloverSweepIntent, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
 import {
+  executeRolloverSweep,
   executeTrustedTaskStateCommand,
   type TrustedTaskStateCommandClient,
 } from "../supabase/functions/task-state-command/orchestration.ts";
@@ -147,6 +148,23 @@ test("rollover intent remains input-only while the trusted Edge command derives 
   assert.equal("outcome" in command, false);
 });
 
+test("rollover sweep validates unique canonical children and keeps the sweep bounded", () => {
+  const command = {
+    type: "reconcile_rollover",
+    task_id: "task-1",
+    replay_identity: "rollover:task-1:2026-08-10",
+    expected_revision: 4,
+  };
+  const valid = {
+    type: "reconcile_rollover_sweep",
+    replay_identity: "rollover-sweep:2026-08-10",
+    commands: [command],
+  };
+  assert.deepEqual(validateRolloverSweepIntent(valid), valid);
+  assert.equal(validateRolloverSweepIntent({ ...valid, commands: [{ ...command, task_id: "task-1" }, command] }), null);
+  assert.equal(validateRolloverSweepIntent({ ...valid, commands: [{ ...command, expected_revision: undefined }] }), null);
+});
+
 test("trusted rollover fails closed when a canonical workflow occurrence reference is broken", async () => {
   let rpcCalls = 0;
   let replayCalls = 0;
@@ -275,6 +293,124 @@ const canonicalReadModel = {
     settings_revision: 3,
   },
 } as unknown as CanonicalTaskStateReadModel;
+
+function rolloverReadModel(taskId: string) {
+  return {
+    ...canonicalReadModel,
+    task: { ...canonicalReadModel.task, id: taskId },
+    scheduleBoundaries: canonicalReadModel.scheduleBoundaries.map((boundary) => ({
+      ...boundary,
+      id: `boundary-${taskId}`,
+      entity_id: taskId,
+    })),
+  } as unknown as CanonicalTaskStateReadModel;
+}
+
+test("one rollover sweep defers each committed child and evaluates Achievements exactly once", async () => {
+  const deferredCalls: boolean[] = [];
+  const finalizerOperationIds: string[] = [];
+  const projectionTaskIds: string[] = [];
+  const result = await executeRolloverSweep({
+    userId: "owner-1",
+    intent: {
+      type: "reconcile_rollover_sweep",
+      replay_identity: "rollover-sweep:2026-09-25",
+      commands: [
+        { type: "reconcile_rollover", task_id: "task-1", replay_identity: "rollover:task-1", expected_revision: 4 },
+        { type: "reconcile_rollover", task_id: "task-2", replay_identity: "rollover:task-2", expected_revision: 4 },
+      ],
+    },
+    adminClient: { rpc: async () => ({ data: null, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-25T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async (_client, input) => ({ data: rolloverReadModel(input.taskId), error: null }),
+      loadBehaviorProfiles: async () => ({ data: {}, revisions: {}, error: null }),
+      loadCustomRulesets: async () => emptyCustomRulesetsResult(),
+      invokeCommand: async ({ serializedPlan, deferAchievements }) => {
+        deferredCalls.push(deferAchievements === true);
+        const command = serializedPlan as Record<string, unknown>;
+        return {
+          data: {
+            state: "committed",
+            task_id: command.entity_id,
+            command_id: command.command_id,
+            expected_revision: command.expected_entity_revision,
+            next_revision: Number(command.expected_entity_revision) + 1,
+            was_replayed: false,
+            conflict_code: null,
+            canonical_task_patch: command.task_patch,
+            compatibility_projection: command.compatibility_projection,
+            history_fact_ids: [`history-${command.entity_id}`],
+          },
+          error: null,
+        };
+      },
+      rebuildCurrentTaskProjection: async ({ taskId }) => {
+        projectionTaskIds.push(taskId);
+        return { status: "written", projection: {} as never, writerResult: null } satisfies CurrentTaskProjectionRebuildResult;
+      },
+      finalizeAchievements: async ({ operationId }) => {
+        finalizerOperationIds.push(operationId);
+        return { data: { status: "completed" }, error: null };
+      },
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal((result.body as Record<string, unknown>).state, "committed");
+  assert.deepEqual(deferredCalls, [true, true]);
+  assert.deepEqual(projectionTaskIds, ["task-1", "task-2"]);
+  assert.equal(finalizerOperationIds.length, 1);
+  const completedAchievement = ((result.body as Record<string, unknown>).achievement ?? {}) as Record<string, unknown>;
+  assert.equal(completedAchievement.status, "completed");
+  assert.equal(completedAchievement.operation_id, finalizerOperationIds[0]);
+});
+
+test("rollover finalization failure returns partial success without claiming a completed sweep", async () => {
+  const result = await executeRolloverSweep({
+    userId: "owner-1",
+    intent: {
+      type: "reconcile_rollover_sweep",
+      replay_identity: "rollover-sweep:finalizer-failure",
+      commands: [{ type: "reconcile_rollover", task_id: "task-1", replay_identity: "rollover:finalizer-failure", expected_revision: 4 }],
+    },
+    adminClient: { rpc: async () => ({ data: null, error: null }) } as unknown as TrustedTaskStateCommandClient,
+    now: "2026-09-25T16:00:00.000Z",
+    dependencies: {
+      loadReplayOperation: async () => ({ data: null, error: null }),
+      loadCanonicalState: async (_client, input) => ({ data: rolloverReadModel(input.taskId), error: null }),
+      loadBehaviorProfiles: async () => ({ data: {}, revisions: {}, error: null }),
+      loadCustomRulesets: async () => emptyCustomRulesetsResult(),
+      invokeCommand: async ({ serializedPlan }) => {
+        const command = serializedPlan as Record<string, unknown>;
+        return {
+          data: {
+            state: "committed",
+            task_id: command.entity_id,
+            command_id: command.command_id,
+            expected_revision: command.expected_entity_revision,
+            next_revision: Number(command.expected_entity_revision) + 1,
+            was_replayed: false,
+            conflict_code: null,
+            canonical_task_patch: command.task_patch,
+            compatibility_projection: command.compatibility_projection,
+            history_fact_ids: ["history-task-1"],
+          },
+          error: null,
+        };
+      },
+      rebuildCurrentTaskProjection: async () => ({ status: "written", projection: {} as never, writerResult: null }),
+      finalizeAchievements: async () => ({ data: null, error: { code: "57014", message: "statement timeout" } }),
+    },
+  });
+
+  const body = result.body as Record<string, unknown>;
+  assert.equal(body.state, "partial");
+  assert.equal((body.achievement as Record<string, unknown>).status, "failed");
+  assert.equal((body.error as Record<string, unknown>).kind, "achievement_finalization");
+  assert.equal(body.committed_task_ids.length, 1);
+});
 
 function behaviorRevision(
   effectiveFromLogicalDate: string,

@@ -19,6 +19,7 @@ import {
   buildTrustedTaskStateCommand,
   buildTrustedTaskStateCommandReplayDescriptor,
   type HistoryOutcomeBatchIntent,
+  type RolloverSweepIntent,
   type TaskStateCommandIntent,
   type TrustedTaskStateCommandReplayDescriptor,
 } from "./domain.ts";
@@ -634,6 +635,103 @@ async function finalizeBatchAchievements(input: {
     achievement,
     achievementWarning,
     durationMs: performance.now() - startedAt,
+  };
+}
+
+function rolloverResultHasAchievementSource(value: unknown) {
+  if (!isRecord(value)) return false;
+  return typeof value.history_fact_id === "string"
+    || (Array.isArray(value.history_fact_ids) && value.history_fact_ids.length > 0);
+}
+
+function rolloverFinalizationFailure(operationId: string, finalization: BatchAchievementFinalization) {
+  if (finalization.achievement.status !== "failed") return null;
+  return {
+    kind: "achievement_finalization",
+    message: "Rollover Tasks committed, but Achievement reconciliation did not complete.",
+    code: finalization.achievement.error_code ?? "ACHIEVEMENT_FINALIZATION_FAILED",
+    status: 503,
+    operation_id: operationId,
+  };
+}
+
+export async function executeRolloverSweep(input: {
+  userId: string;
+  intent: RolloverSweepIntent;
+  adminClient: TrustedTaskStateCommandClient;
+  now?: string;
+  dependencies?: Partial<OrchestrationDependencies>;
+}): Promise<TrustedTaskStateCommandResponse> {
+  const dependencies = { ...defaultDependencies, ...input.dependencies };
+  const operationId = deterministicUuid(`task-rollover-achievement:${input.userId}:${input.intent.replay_identity}`);
+  const childResults: Array<Record<string, unknown>> = [];
+  const settledTaskIds: string[] = [];
+  let achievementAffectingWork = false;
+  let failure: ReturnType<typeof batchFailure> | null = null;
+
+  for (const childIntent of input.intent.commands) {
+    const childResult = await executeTrustedTaskStateCommand({
+      userId: input.userId,
+      intent: childIntent,
+      adminClient: input.adminClient,
+      now: input.now,
+      dependencies: {
+        ...dependencies,
+        invokeCommand: (commandInput) => dependencies.invokeCommand({ ...commandInput, deferAchievements: true }),
+      },
+    });
+    const childBody = childResult.body;
+    if (childResult.status !== 200
+      || !isRecord(childBody)
+      || childBody.state !== "committed") {
+      failure = batchFailure(childBody, childResult.status);
+      childResults.push({
+        task_id: childIntent.task_id,
+        replay_identity: childIntent.replay_identity,
+        state: "rejected",
+        error: failure,
+      });
+      break;
+    }
+
+    childResults.push({
+      task_id: childIntent.task_id,
+      replay_identity: childIntent.replay_identity,
+      state: "committed",
+      result: childBody,
+    });
+    settledTaskIds.push(childIntent.task_id);
+    achievementAffectingWork ||= rolloverResultHasAchievementSource(childBody);
+  }
+
+  const shouldFinalize = achievementAffectingWork || input.intent.commands.length === 0;
+  const finalization = shouldFinalize
+    ? await finalizeBatchAchievements({
+        dependencies,
+        adminClient: input.adminClient,
+        userId: input.userId,
+        operationId,
+        partial: failure !== null,
+      })
+    : batchAchievementNotRun(operationId);
+  const finalizationFailure = rolloverFinalizationFailure(operationId, finalization);
+  const error = failure ?? finalizationFailure;
+  const state = error
+    ? settledTaskIds.length > 0 ? "partial" : "failed"
+    : "committed";
+
+  return {
+    status: 200,
+    body: {
+      type: "reconcile_rollover_sweep",
+      state,
+      replay_identity: input.intent.replay_identity,
+      committed_task_ids: settledTaskIds,
+      child_results: childResults,
+      achievement: finalization.achievement,
+      achievement_warning: finalization.achievementWarning,
+      error,
+    },
   };
 }
 

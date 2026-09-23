@@ -67,7 +67,12 @@ declare
   v_achievement_evaluation jsonb;
   v_achievement_operation_id uuid;
   v_operation_is_new boolean := false;
+  v_achievement_deferred_user_id text;
+  v_achievement_deferred_for_command boolean := false;
 begin
+  v_achievement_deferred_user_id := current_setting('adhdice.achievement_deferred_user_id', true);
+  v_achievement_deferred_for_command := coalesce(v_achievement_deferred_user_id = p_user_id::text, false);
+
   -- Only the trusted Edge Function's secret-key backend role may invoke this
   -- invoker function.  User ownership is established by the Edge Function
   -- from verified Auth claims, not by a browser-supplied body field.
@@ -1053,7 +1058,8 @@ begin
     end if;
   end if;
 
-  if jsonb_array_length(v_automatic_history_facts) > 0 then
+  if jsonb_array_length(v_automatic_history_facts) > 0
+     and not v_achievement_deferred_for_command then
     perform set_config('adhdice.achievement_deferred_user_id', p_user_id::text, true);
   end if;
 
@@ -1107,10 +1113,13 @@ begin
     v_automatic_history_ids := v_automatic_history_ids || to_jsonb(v_history_row.id);
   end loop;
 
-  if jsonb_array_length(v_automatic_history_facts) > 0 then
-    -- Keep the deferral transaction-local and clear it before the one strict
-    -- final evaluation. Any failure still aborts this command transaction.
-    perform set_config('adhdice.achievement_deferred_user_id', '', true);
+  if jsonb_array_length(v_automatic_history_facts) > 0
+     and not v_achievement_deferred_for_command then
+    -- Keep the deferral transaction-local and restore the caller's marker
+    -- before the one strict final evaluation. An outer same-user deferral is
+    -- preserved for the caller; a different-user marker is never treated as a
+    -- deferral for this command.
+    perform set_config('adhdice.achievement_deferred_user_id', coalesce(v_achievement_deferred_user_id, ''), true);
     v_achievement_operation_id := md5('task-state-command-achievement-evaluation:' || p_user_id::text || ':' || v_command_id::text)::uuid;
     v_achievement_evaluation := public.adhdice_evaluate_achievements(
       p_user_id,

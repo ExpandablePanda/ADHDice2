@@ -155,6 +155,41 @@ test("one failed single-flight request emits one owned error", async () => {
   assert.equal(messages, 1);
 });
 
+test("rollover busy state stays active through a request and carries finalization retry state", async () => {
+  const coordinator = new TaskRolloverSingleFlightCoordinator();
+  const client = {};
+  const firstPending = deferred<TaskRolloverRpcResult>();
+  const receivedPending: boolean[] = [];
+  coordinator.setOwner(client, "user-a");
+
+  const first = coordinator.run({
+    client,
+    execute: async ({ achievementFinalizationPending }) => {
+      receivedPending.push(achievementFinalizationPending);
+      return firstPending.promise;
+    },
+    logicalDayKey: "2026-07-19",
+    onOwnedSettled: () => {},
+    userId: "user-a",
+  });
+  assert.equal(coordinator.isBusy(), true);
+  firstPending.resolve({ error: { message: "finalizer unavailable" }, achievementFinalizationPending: true, settledTaskIds: ["task-a"] });
+  await first;
+  assert.equal(coordinator.isBusy(), false);
+
+  await coordinator.run({
+    client,
+    execute: async ({ achievementFinalizationPending }) => {
+      receivedPending.push(achievementFinalizationPending);
+      return success;
+    },
+    logicalDayKey: "2026-07-19",
+    onOwnedSettled: () => {},
+    userId: "user-a",
+  });
+  assert.deepEqual(receivedPending, [false, true]);
+});
+
 test("partial batch settlement preserves successful Tasks and retries only unresolved Tasks", async () => {
   const coordinator = new TaskRolloverSingleFlightCoordinator();
   const client = {};

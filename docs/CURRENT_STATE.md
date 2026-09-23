@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.20`.
+- Current working app version: `7.15.21`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,22 +14,58 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-23 7.15.21 Rollover Achievement Deferral + Backfill Count Correction
+
+This release corrects the two findings from the 7.15.20 live QA pass. The
+50-row operator completed five serial batches: 50 projection writes succeeded,
+0 failed, and 0 retried. Its displayed `519 remaining` value was incorrect;
+519 was the total eligible Task count, not the missing-projection count. The
+actual post-run state was 89 valid projections and 430 eligible Tasks still
+missing projections, with no invalid projection rows.
+
+The same QA pass recorded two automatic `reconcile_rollover` Task State RPC
+statement timeouts inside the full Achievement rebuild:
+`adhdice_execute_task_state_command` -> `adhdice_evaluate_achievements` ->
+`adhdice_rebuild_achievement_progress` -> insert into
+`adhdice_achievement_occurrence_matches`. The active scale was 2,212
+Achievement occurrences, 2,085 qualifying occurrences, and 12,285
+occurrence-match rows.
+
+The backfill Edge response now returns an owner-scoped authoritative
+`remainingCount` using the same canonical-runtime eligibility and missing-row
+contract as candidate selection; the operator displays that value directly.
+Rollover children now use the existing trusted Task State Edge orchestration
+with deferred per-command Achievement evaluation and one deterministic final
+evaluation per Achievement-affecting sweep. Finalizer failure leaves committed
+Tasks intact, does not persist the processed-rollover gate, and retries the
+finalizer without replaying successful child mutations. Backfill controls are
+disabled while the rollover coordinator is busy and a 50-row run stops between
+batches if rollover becomes active.
+
+No projection consumer cutover or automatic backfill is included. SQL and Edge
+deployment status must be verified separately from this source record; Andrew
+must first allow rollover to settle, then click `Backfill 50 Projections` once
+for manual QA.
+
 ## 2026-09-23 7.15.20 Controlled 50-Projection Backfill Operator
 
 The first authenticated 10-Task `task-current-projection-backfill` pilot
 passed with 10/10 valid projections, canonical revision, History frontier,
 logical-day revision, schedule-fence, and behavior-fence matches; there were
 0 failures, 0 retries, and 5,632 ms elapsed. There were no hierarchy-stale
-errors or recurring PostgREST 504s. The verified live state is 23 valid
-projections with 496 eligible Tasks still missing projections.
+errors or recurring PostgREST 504s. Before the later 50-run there were 23
+valid projections and 496 eligible Tasks missing projections. After the
+50-run, the actual state was 89 valid and 430 missing; no projection rows were
+invalid.
 
-Settings Developer tools now retain `Backfill 10 Projections` and add the
+Settings Developer tools retain `Backfill 10 Projections` and add the
 development-only `Backfill 50 Projections` operator. The 50-row operator is
-bounded to five sequential proven 10-row Edge requests, updates an
-owner-scoped missing-projection count after each batch, stops on request or
-batch failure, and stops early when no candidates or only a partial batch
-remain. Existing projection rows remain the progress authority; no cursor is
-carried between requests, so failed Tasks remain eligible for a future run.
+bounded to five sequential 10-row Edge requests. The browser's displayed
+remaining value in this release was wrong because it used the total eligible
+Task count rather than the missing count; 7.15.21 moves that count into the
+Edge response. Existing projection rows remain the progress authority; no
+cursor is carried between requests, so failed Tasks remain eligible for a
+future run.
 
 No automatic backfill, background continuation, canonical mutation path,
 History startup/read change, or projection consumer cutover was added. The

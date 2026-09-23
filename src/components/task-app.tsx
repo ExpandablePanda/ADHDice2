@@ -282,6 +282,7 @@ import {
 import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
 import { selectCalendarTasks } from "@/lib/task-calendar-selection";
 import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
+import { executeTaskRolloverSweep } from "@/lib/task-rollover-sweep";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
 import {
   createTaskRolloverReplayIdentity,
@@ -2493,7 +2494,7 @@ export function TaskApp() {
       client,
       logicalDayKey: rolloverSettingsKey,
       userId,
-      execute: async ({ settledTaskIds }) => {
+      execute: async ({ settledTaskIds, achievementFinalizationPending }) => {
         const rolloverTasks = inputs.tasks.filter((candidate) => candidate.status !== "archived" && candidate.status !== "trashed");
         const rolloverTaskIds = rolloverTasks.map((candidate) => candidate.id);
         const scopedRolloverHistory = await fetchTaskHistoryForRollover(rolloverTaskIds);
@@ -2527,9 +2528,8 @@ export function TaskApp() {
         tasksEvaluated = plan.tasksEvaluated;
         plannedTaskPatches = mutationCandidates.length;
         remainingTaskPatchSummaries = plan.remainingPatchSummaries;
-        let canonicalCommitted = 0;
         let canonicalFailures = 0;
-        const settledTaskIdsThisRun: string[] = [];
+        const sweepCandidates: Array<{ task: TaskStateRuntimeLocalTask; replayIdentity: string }> = [];
         for (const candidate of mutationCandidates) {
             if (settledTaskIds.has(candidate.taskId)) continue;
             const task = taskById.get(candidate.taskId);
@@ -2542,9 +2542,8 @@ export function TaskApp() {
               canonicalFailures += 1;
               continue;
             }
-            const committed = await updateTask(task.id, {}, {
-              canonicalIntent: { type: "reconcile_rollover" } satisfies TaskStateRuntimeCanonicalIntent,
-              expectedTask: task,
+            sweepCandidates.push({
+              task: task as TaskStateRuntimeLocalTask,
               replayIdentity: createTaskRolloverReplayIdentity({
                 canonicalRevision,
                 logicalDayKey: rolloverSettingsKey,
@@ -2552,17 +2551,29 @@ export function TaskApp() {
                 taskId: task.id,
               }),
             });
-            if (committed) {
-              canonicalCommitted += 1;
-              settledTaskIdsThisRun.push(candidate.taskId);
-            }
-            else canonicalFailures += 1;
         }
-        committedTaskPatches = canonicalCommitted;
-        didMutate = canonicalCommitted > 0;
+        const sweep = await executeTaskRolloverSweep({
+          achievementFinalizationPending,
+          candidates: sweepCandidates,
+          client: supabase,
+          settledTaskIds,
+          sweepReplayIdentity: rolloverSettingsKey,
+        });
+        if (sweep.committedTasks.length > 0) {
+          const committedByTaskId = new Map(sweep.committedTasks.map((entry) => [entry.taskId, entry.task] as const));
+          setTasks((current) => sortTasksForUi(current.map((task) => committedByTaskId.get(task.id) ?? task)));
+        }
+        committedTaskPatches = sweep.committedTasks.length;
+        didMutate = committedTaskPatches > 0;
+        if (sweep.errorMessage) canonicalFailures += 1;
         return {
-            error: canonicalFailures > 0 ? { message: `${canonicalFailures} Task State rollover command${canonicalFailures === 1 ? "" : "s"} failed.` } : null,
-            settledTaskIds: settledTaskIdsThisRun,
+            error: sweep.errorMessage
+              ? { message: sweep.errorMessage }
+              : canonicalFailures > 0
+                ? { message: `${canonicalFailures} Task State rollover command${canonicalFailures === 1 ? "" : "s"} failed.` }
+                : null,
+            achievementFinalizationPending: sweep.achievementFinalizationPending,
+            settledTaskIds: sweep.settledTaskIds,
         };
       },
       onOwnedSettled: async ({ error, settledTaskIds = [] }) => {

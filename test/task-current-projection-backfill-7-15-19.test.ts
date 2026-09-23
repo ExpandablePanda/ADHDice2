@@ -11,6 +11,7 @@ import {
 
 const backfillSource = readFileSync(new URL("../supabase/functions/task-current-projection-backfill/index.ts", import.meta.url), "utf8");
 const domainSource = readFileSync(new URL("../supabase/functions/task-current-projection-backfill/domain.ts", import.meta.url), "utf8");
+const remainingCountMigration = readFileSync(new URL("../supabase/patch_task_current_projection_backfill_remaining_count_7_15_21.sql", import.meta.url), "utf8");
 const operatorSource = readFileSync(new URL("../src/lib/task-current-projection-backfill-operator.ts", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
@@ -69,6 +70,7 @@ function query(data: unknown, calls: QueryCall[], table: string, error: { messag
 function adminClient(input: {
   projectionRows?: unknown[];
   taskRows?: unknown[];
+  remainingCount?: number;
   calls?: QueryCall[];
 } = {}): BackfillAdminClient {
   const calls = input.calls ?? [];
@@ -82,7 +84,10 @@ function adminClient(input: {
         table,
       );
     },
-    rpc: async () => ({ data: null, error: { message: "Unexpected RPC call" } }),
+    rpc: async (functionName) => {
+      assert.equal(functionName, "adhdice_count_missing_task_current_projections");
+      return { data: input.remainingCount ?? 0, error: null };
+    },
   };
 }
 
@@ -163,6 +168,7 @@ test("backfill rebuilds serially, retries stale fences once, and continues after
   assert.equal(response.writtenCount, 2);
   assert.equal(response.failedCount, 1);
   assert.equal(response.retryCount, 1);
+  assert.equal(response.remainingCount, 0);
   assert.equal(response.nextCursor, taskIds[2]);
   assert.deepEqual(response.results, [
     { taskId: taskIds[0], status: "written" },
@@ -178,12 +184,24 @@ test("backfill reuses the trusted rebuild only and does not add canonical mutati
   assert.doesNotMatch(backfillSource, /\.insert\(|\.update\(|\.delete\(/);
 });
 
+test("remaining count is a narrow owner-scoped missing-projection contract", () => {
+  assert.match(domainSource, /adhdice_count_missing_task_current_projections/);
+  assert.match(domainSource, /remainingCount/);
+  assert.match(remainingCountMigration, /task\.user_id = p_user_id/);
+  assert.match(remainingCountMigration, /task\.permanently_deleted_at is null/);
+  assert.match(remainingCountMigration, /task\.canonicalization_status = 'canonical_runtime'/);
+  assert.match(remainingCountMigration, /task\.entity_kind in \('parent', 'step', 'substep'\)/);
+  assert.match(remainingCountMigration, /not exists\s*\(\s*select 1[\s\S]*adhdice_task_current_projections/);
+  assert.doesNotMatch(remainingCountMigration, /adhdice_task_history_facts|adhdice_task_command_operations/);
+  assert.match(remainingCountMigration, /grant execute on function public\.adhdice_count_missing_task_current_projections\(uuid\) to service_role/);
+});
+
 test("the manual trigger is production-gated, uses the existing client, and is click-only", () => {
   assert.match(settingsSource, /process\.env\.NODE_ENV !== "production"/);
   assert.match(operatorSource, /task-current-projection-backfill/);
   assert.match(operatorSource, /CURRENT_PROJECTION_BACKFILL_BATCH_SIZE = 10/);
   assert.match(settingsSource, /Backfill 10 Projections/);
-  assert.match(settingsSource, /disabled=\{isBackfillingProjections\}/);
+  assert.match(settingsSource, /disabled=\{isBackfillingProjections \|\| isRolloverActive\}/);
   assert.match(taskAppSource, /client=\{supabase\}/);
   assert.match(settingsSource, /onClick=\{\(\) => \{ void handleProjectionBackfill\(1\); \}\}/);
 });
