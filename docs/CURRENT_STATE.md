@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.46`.
+- Current working app version: `7.14.47`.
 - Current release group: `7.14.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,12 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.14.47 Public Hierarchy Storm Containment Hotfix
+
+7.14.47 ports the hierarchy RPC storm containment from 7.15.18 to the public
+release line. This is a client-only hotfix; no SQL, Edge Function, or Task
+State semantic change is included.
 
 ## 2026-09-21 7.14.46 Consolidate Side Work into 7.14
 

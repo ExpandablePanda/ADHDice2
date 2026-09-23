@@ -257,7 +257,14 @@ import {
   type TaskRowUpdateOptions,
 } from "@/lib/task-db-mutations";
 import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
-import { buildTaskHierarchyUnlinkPlan, getRootTaskContentFolderId, moveTaskHierarchy as persistTaskHierarchy } from "@/lib/task-hierarchy-mutation";
+import {
+  buildTaskHierarchyUnlinkPlan,
+  getRootTaskContentFolderId,
+  getTaskHierarchyMutationIntentKey,
+  isTaskHierarchyStaleConflict,
+  moveTaskHierarchy as persistTaskHierarchy,
+  type MoveTaskHierarchyInput,
+} from "@/lib/task-hierarchy-mutation";
 import { isValidDateKey, mapTaskFocusDayRows, normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
@@ -2807,6 +2814,20 @@ export function TaskApp() {
     refresh: softRefreshWorkspace,
     setMessage,
   });
+  const staleHierarchyReconciliationRef = useRef(new Map<string, Promise<void>>());
+  const reconcileStaleHierarchyIntent = useCallback((input: MoveTaskHierarchyInput) => {
+    const intentKey = getTaskHierarchyMutationIntentKey(input);
+    const existingRefresh = staleHierarchyReconciliationRef.current.get(intentKey);
+    if (existingRefresh) return existingRefresh;
+
+    const refresh = softRefreshWorkspace().finally(() => {
+      if (staleHierarchyReconciliationRef.current.get(intentKey) === refresh) {
+        staleHierarchyReconciliationRef.current.delete(intentKey);
+      }
+    });
+    staleHierarchyReconciliationRef.current.set(intentKey, refresh);
+    return refresh;
+  }, [softRefreshWorkspace]);
   const persistTaskHierarchyRow = useCallback(async (
     task: Task,
     newParentTaskId: string | null,
@@ -2827,14 +2848,34 @@ export function TaskApp() {
     ];
     markPendingTaskMutations(pendingTaskIds);
     try {
-      const result = await persistTaskHierarchy(supabase, {
+      const hierarchyIntent = {
         expectedCanonicalRevision: task.canonical_revision ?? null,
         expectedRevision: task.revision,
         newParentTaskId,
         newTaskContentFolderId,
         taskId: task.id,
-      });
+      } satisfies MoveTaskHierarchyInput;
+      const result = await persistTaskHierarchy(supabase, hierarchyIntent);
       if (result.error) {
+        if (isTaskHierarchyStaleConflict(result.error)) {
+          let refreshFailed = false;
+          if (!result.staleIntentBlocked) {
+            try {
+              await reconcileStaleHierarchyIntent(hierarchyIntent);
+            } catch {
+              refreshFailed = true;
+            }
+          }
+          if (!options?.quiet) {
+            setMessage({
+              tone: "warn",
+              text: refreshFailed
+                ? "Task hierarchy changed elsewhere and the refresh failed. Try Refresh before moving it again."
+                : "Task hierarchy changed elsewhere. The latest Task data was refreshed; try the move again.",
+            });
+          }
+          return false;
+        }
         if (!options?.quiet) {
           setMessage({ tone: "warn", text: result.error.message });
         }
@@ -2863,7 +2904,7 @@ export function TaskApp() {
     } finally {
       clearPendingTaskMutations(pendingTaskIds);
     }
-  }, [clearPendingTaskMutations, markPendingTaskMutations, session?.user?.id, setMessage, setTasks, supabase, tasks]);
+  }, [clearPendingTaskMutations, markPendingTaskMutations, reconcileStaleHierarchyIntent, session?.user?.id, setMessage, setTasks, supabase, tasks]);
   const unlinkSameTableTasks = useCallback(async (taskIds: string[]) => {
     const unlinkPlan = buildTaskHierarchyUnlinkPlan(tasks, taskIds);
     let successCount = 0;

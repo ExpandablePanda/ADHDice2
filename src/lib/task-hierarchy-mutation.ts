@@ -7,6 +7,13 @@ type Client = Pick<NonNullable<ReturnType<typeof createBrowserSupabaseClient>>, 
 
 export type TaskHierarchyRow = Task & Partial<CanonicalTaskStateColumns>;
 
+export type TaskHierarchyMutationError = {
+  code?: string | null;
+  details?: string | null;
+  hint?: string | null;
+  message: string;
+};
+
 export type MoveTaskHierarchyInput = {
   expectedCanonicalRevision?: number | null;
   expectedRevision: number;
@@ -20,6 +27,60 @@ export type TaskHierarchyUnlinkPlan = {
   inheritedFolderId: string | null | undefined;
   task: Task;
 };
+
+export type TaskHierarchyMutationResult = {
+  data: TaskHierarchyRow[];
+  error: TaskHierarchyMutationError | null;
+  staleIntentBlocked?: boolean;
+};
+
+type TaskHierarchyMutationGuard = {
+  inFlight: Map<string, Promise<TaskHierarchyMutationResult>>;
+  staleIntentKeys: Set<string>;
+};
+
+const taskHierarchyMutationGuards = new WeakMap<object, TaskHierarchyMutationGuard>();
+
+export function getTaskHierarchyMutationIntentKey(input: MoveTaskHierarchyInput) {
+  return JSON.stringify([
+    input.taskId,
+    input.expectedRevision,
+    input.expectedCanonicalRevision ?? null,
+    input.newParentTaskId,
+    input.newTaskContentFolderId,
+  ]);
+}
+
+export function isTaskHierarchyStaleConflict(error: unknown) {
+  if (!error || typeof error !== "object") return false;
+
+  const candidate = error as { code?: unknown };
+  return candidate.code === "40001";
+}
+
+function getTaskHierarchyMutationGuard(client: Client) {
+  const clientKey = client as object;
+  const existing = taskHierarchyMutationGuards.get(clientKey);
+  if (existing) return existing;
+
+  const next: TaskHierarchyMutationGuard = {
+    inFlight: new Map(),
+    staleIntentKeys: new Set(),
+  };
+  taskHierarchyMutationGuards.set(clientKey, next);
+  return next;
+}
+
+function blockedStaleIntentResult(): TaskHierarchyMutationResult {
+  return {
+    data: [],
+    error: {
+      code: "40001",
+      message: "Task hierarchy is stale; refresh before moving it.",
+    },
+    staleIntentBlocked: true,
+  };
+}
 
 /** Resolve Folder inheritance from the direct Folder assignment of the root Task.
  * `undefined` means the hierarchy is invalid; `null` is a valid ungrouped root.
@@ -69,20 +130,43 @@ export function buildTaskHierarchyUnlinkPlan(
  * committed row changed by the hierarchy move so callers never have to
  * manufacture a local hierarchy projection.
  */
-export async function moveTaskHierarchy(
+export function moveTaskHierarchy(
   client: Client,
   input: MoveTaskHierarchyInput,
-) {
-  const result = await client.rpc("adhdice_move_task_hierarchy", {
-    p_expected_canonical_revision: input.expectedCanonicalRevision ?? null,
-    p_expected_revision: input.expectedRevision,
-    p_new_parent_task_id: input.newParentTaskId,
-    p_new_task_content_folder_id: input.newTaskContentFolderId,
-    p_task_id: input.taskId,
+): Promise<TaskHierarchyMutationResult> {
+  const guard = getTaskHierarchyMutationGuard(client);
+  const intentKey = getTaskHierarchyMutationIntentKey(input);
+
+  if (guard.staleIntentKeys.has(intentKey)) {
+    return Promise.resolve(blockedStaleIntentResult());
+  }
+
+  const existingAttempt = guard.inFlight.get(intentKey);
+  if (existingAttempt) {
+    return existingAttempt;
+  }
+
+  const attempt = (async () => {
+    const result = await client.rpc("adhdice_move_task_hierarchy", {
+      p_expected_canonical_revision: input.expectedCanonicalRevision ?? null,
+      p_expected_revision: input.expectedRevision,
+      p_new_parent_task_id: input.newParentTaskId,
+      p_new_task_content_folder_id: input.newTaskContentFolderId,
+      p_task_id: input.taskId,
+    });
+
+    const normalized: TaskHierarchyMutationResult = {
+      data: (result.data ?? []) as TaskHierarchyRow[],
+      error: result.error as TaskHierarchyMutationError | null,
+    };
+    if (isTaskHierarchyStaleConflict(normalized.error)) {
+      guard.staleIntentKeys.add(intentKey);
+    }
+    return normalized;
+  })().finally(() => {
+    guard.inFlight.delete(intentKey);
   });
 
-  return {
-    data: (result.data ?? []) as TaskHierarchyRow[],
-    error: result.error,
-  };
+  guard.inFlight.set(intentKey, attempt);
+  return attempt;
 }
