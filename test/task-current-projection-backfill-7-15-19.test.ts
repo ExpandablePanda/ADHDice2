@@ -11,6 +11,7 @@ import {
 
 const backfillSource = readFileSync(new URL("../supabase/functions/task-current-projection-backfill/index.ts", import.meta.url), "utf8");
 const domainSource = readFileSync(new URL("../supabase/functions/task-current-projection-backfill/domain.ts", import.meta.url), "utf8");
+const operatorSource = readFileSync(new URL("../src/lib/task-current-projection-backfill-operator.ts", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
@@ -179,10 +180,10 @@ test("backfill reuses the trusted rebuild only and does not add canonical mutati
 
 test("the manual trigger is production-gated, uses the existing client, and is click-only", () => {
   assert.match(settingsSource, /process\.env\.NODE_ENV !== "production"/);
-  assert.match(settingsSource, /task-current-projection-backfill/);
-  assert.match(settingsSource, /body: \{ limit: 10 \}/);
+  assert.match(operatorSource, /task-current-projection-backfill/);
+  assert.match(operatorSource, /CURRENT_PROJECTION_BACKFILL_BATCH_SIZE = 10/);
   assert.match(settingsSource, /Backfill 10 Projections/);
   assert.match(settingsSource, /disabled=\{isBackfillingProjections\}/);
   assert.match(taskAppSource, /client=\{supabase\}/);
-  assert.match(settingsSource, /onClick=\{\(\) => \{ void handleProjectionBackfill\(\); \}\}/);
+  assert.match(settingsSource, /onClick=\{\(\) => \{ void handleProjectionBackfill\(1\); \}\}/);
 });

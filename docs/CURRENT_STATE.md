@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.19`.
+- Current working app version: `7.15.20`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.20 Controlled 50-Projection Backfill Operator
+
+The first authenticated 10-Task `task-current-projection-backfill` pilot
+passed with 10/10 valid projections, canonical revision, History frontier,
+logical-day revision, schedule-fence, and behavior-fence matches; there were
+0 failures, 0 retries, and 5,632 ms elapsed. There were no hierarchy-stale
+errors or recurring PostgREST 504s. The verified live state is 23 valid
+projections with 496 eligible Tasks still missing projections.
+
+Settings Developer tools now retain `Backfill 10 Projections` and add the
+development-only `Backfill 50 Projections` operator. The 50-row operator is
+bounded to five sequential proven 10-row Edge requests, updates an
+owner-scoped missing-projection count after each batch, stops on request or
+batch failure, and stops early when no candidates or only a partial batch
+remain. Existing projection rows remain the progress authority; no cursor is
+carried between requests, so failed Tasks remain eligible for a future run.
+
+No automatic backfill, background continuation, canonical mutation path,
+History startup/read change, or projection consumer cutover was added. The
+Edge function and its maximum batch size remain unchanged and were not
+redeployed. Andrew's manual QA is still required: click `Backfill 50
+Projections` once.
 
 ## 2026-09-23 7.15.19 Controlled Current Projection Backfill Pilot
 
@@ -24,7 +47,7 @@ parent/step/substep projections, and rebuilds Tasks serially through the
 existing `rebuildCurrentTaskProjection()` authority. A retryable stale fence
 gets one immediate retry; failures do not abort the remaining batch.
 
-The first live pilot has **not** been run at commit time. The control is
+The first live pilot had **not** been run at the 7.15.19 commit time. The control is
 production-gated and never runs on startup. Browser projection consumers,
 History startup, and projection Realtime remain unchanged; the expected live
 projection count before Andrew's manual click remains 5.

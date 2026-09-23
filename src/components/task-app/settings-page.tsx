@@ -10,6 +10,7 @@ import { SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT, SETTINGS_PAGE_SHELL_IDS } from "@
 import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
+import { CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, runCurrentProjectionBackfillOperator, type ProjectionBackfillOperatorClient } from "@/lib/task-current-projection-backfill-operator";
 
 type ThemeMode = "light" | "dark";
 
@@ -60,12 +61,22 @@ export function SettingsPage({
   const [economyStatus, setEconomyStatus] = useState<string | null>(null);
   const [isBackfillingProjections, setIsBackfillingProjections] = useState(false);
   const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
+  const isBackfillRunActiveRef = useRef(false);
+  const isMountedRef = useRef(true);
   const handledSectionRef = useRef<NavigatorSettingsSection | null>(null);
   const timezoneOptions = useMemo(() => {
     if (typeof Intl === "undefined" || typeof Intl.supportedValuesOf !== "function") return [timeZone];
     const supported = Intl.supportedValuesOf("timeZone");
     return supported.includes(timeZone) ? supported : [timeZone, ...supported];
   }, [timeZone]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      isBackfillRunActiveRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!requestedSection) {
@@ -143,33 +154,39 @@ export function SettingsPage({
     setEconomyStatus(didReset ? "Economy reset to 0." : "Could not reset economy.");
   }
 
-  async function handleProjectionBackfill() {
-    if (!client) {
+  async function handleProjectionBackfill(maxBatches: number) {
+    if (!client || !userId) {
       setBackfillStatus("Authenticated Supabase client unavailable.");
       return;
     }
+    if (isBackfillRunActiveRef.current) return;
+    isBackfillRunActiveRef.current = true;
     setIsBackfillingProjections(true);
-    setBackfillStatus(null);
+    setBackfillStatus(`Backfilling projections · 0 / ${maxBatches * CURRENT_PROJECTION_BACKFILL_BATCH_SIZE}`);
     try {
-      const { data, error } = await client.functions.invoke<unknown>("task-current-projection-backfill", {
-        body: { limit: 10 },
+      const result = await runCurrentProjectionBackfillOperator({
+        client: client as unknown as ProjectionBackfillOperatorClient,
+        maxBatches,
+        userId,
+        shouldContinue: () => isMountedRef.current && isBackfillRunActiveRef.current,
+        onProgress: (progress) => {
+          if (!isMountedRef.current) return;
+          setBackfillStatus(`Backfilling projections · ${progress.processedCount} / ${progress.totalCount}`);
+        },
       });
-      if (error) {
+      if (!isMountedRef.current || result.stoppedReason === "unmounted") return;
+      if (result.errorMessage) {
         setBackfillStatus("Backfill failed.");
-        return;
+      } else if (maxBatches === 1) {
+        setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed`);
+      } else if (result.remainingCount !== null) {
+        setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed · ${result.remainingCount} remaining`);
+      } else {
+        setBackfillStatus("Backfill failed.");
       }
-      const result = data !== null && typeof data === "object" && !Array.isArray(data)
-        ? data as { writtenCount?: unknown; failedCount?: unknown }
-        : null;
-      if (!result || typeof result.writtenCount !== "number" || typeof result.failedCount !== "number") {
-        setBackfillStatus("Backfill returned an unusable result.");
-        return;
-      }
-      setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed`);
-    } catch {
-      setBackfillStatus("Backfill failed.");
     } finally {
-      setIsBackfillingProjections(false);
+      isBackfillRunActiveRef.current = false;
+      if (isMountedRef.current) setIsBackfillingProjections(false);
     }
   }
 
@@ -205,14 +222,24 @@ export function SettingsPage({
             <div className="mt-3"><StyleLabLauncher /></div>
             <div className="mt-4 border-t border-[#e5e0f5] pt-4 dark:border-white/10">
               <p className="text-xs text-[#7d88a1] dark:text-white/55">Temporary Current Task Projection pilot.</p>
-              <button
-                className="ui-pill-button-strong-light mt-3 transition disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isBackfillingProjections}
-                onClick={() => { void handleProjectionBackfill(); }}
-                type="button"
-              >
-                {isBackfillingProjections ? "Backfilling..." : "Backfill 10 Projections"}
-              </button>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isBackfillingProjections}
+                  onClick={() => { void handleProjectionBackfill(1); }}
+                  type="button"
+                >
+                  {isBackfillingProjections ? "Backfilling..." : "Backfill 10 Projections"}
+                </button>
+                <button
+                  className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isBackfillingProjections}
+                  onClick={() => { void handleProjectionBackfill(5); }}
+                  type="button"
+                >
+                  {isBackfillingProjections ? "Backfilling..." : "Backfill 50 Projections"}
+                </button>
+              </div>
               {backfillStatus ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">{backfillStatus}</p> : null}
             </div>
           </div>
