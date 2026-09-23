@@ -14,6 +14,30 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-23 7.15.17 Controlled Live Current Projection Infrastructure Rollout
+
+The reviewed current Task projection infrastructure is installed live in
+Supabase project `mnwcuinnshsncqrhvsks`. The locked 7.15.12 schema,
+7.15.14 persistence trigger/writer, and 7.15.15 source-fence authority were
+applied individually and verified by the read-only 7.15.16 SQL. The projection
+table remains at 0 rows: no backfill occurred, no test Task or user Task was
+mutated, and no projection Realtime path was added.
+
+The `task-state-command` Edge Function was deployed from `codex/7.15` as
+ACTIVE version 38 with `verify_jwt = true` and deployment SHA-256
+`f6ae7d61cf1afda61293d3dbba34f558ec7915fec9efbd159243799a17d24bde`.
+Shadow maintenance is active for fresh committed commands only; rejected
+commands, semantic no-ops, and replays do not rebuild projections, and a
+projection failure remains non-fatal to the existing command response.
+
+The canonical command RPC was not replaced or patched; its definition
+fingerprint remains `f875b0c36a844fcc101bc895fde212dc` and it remains
+projection-agnostic. Canonical Task, History fact, and History ledger counts
+remained 1,468, 17,535, and 115 respectively. Browser reads still use the
+existing current architecture; no consumer cutover or History startup removal
+occurred. Runtime web version remains `7.15.10`. Andrew's one-Task browser QA
+is still required before projection QA can be called passed.
+
 ## 2026-09-23 7.15.16 Replace Fragile Projection RPC Patching + Wire Shadow Maintenance
 
 The source-only 7.15.16 correction removes the fragile
