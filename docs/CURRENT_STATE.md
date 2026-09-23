@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.23`.
+- Current working app version: `7.15.24`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,77 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.24 Close Current Projection Freshness / Invalidation Matrix
+
+The completed 7.15.23 backfill now has 519/519 eligible projections materialized:
+519 valid, 0 repair-required, 0 unavailable, and 0 missing. Consumer cutover was
+intentionally still blocked at the start of this ticket; browser consumers and
+History startup remain unchanged, and no backfill was run for this release.
+
+The live audit found that canonical-revision invalidation alone did not cover
+direct or secondary changes to schedule, occurrence, effective override,
+calendar, behavior-selection, behavior-policy, logical-day, History sync-epoch,
+tracking-exclusion, or hierarchy sources. In particular,
+`adhdice_set_task_tracking_exclusion` changes `exclude_from_tracking` and the
+ordinary Task revision without advancing `canonical_revision`. Because inherited
+tracking exclusion is part of projection semantics, a parent change can stale a
+whole moved subtree even when descendants receive no canonical revision bump.
+
+The source-only matrix is now installed in
+`supabase/patch_task_current_projection_invalidation_matrix_7_15_24.sql` and
+has been applied to the live project after fail-closed prerequisite checks. It
+adds entity-scoped repair triggers for `adhdice_task_history_facts`,
+`adhdice_task_schedule_boundaries`, `adhdice_task_occurrences`,
+`adhdice_task_occurrence_effective_overrides`,
+`adhdice_task_calendar_overrides`, and `adhdice_task_behavior_selections`.
+History facts are the semantic source; the History change ledger's global
+`current_revision` advancement does not independently invalidate unrelated
+projections. It adds conservative owner-wide repair triggers for TaskType
+behavior profiles, named Custom ruleset identities/revisions, logical-day
+profile changes, and History sync epoch/protocol changes. Clean Task
+`task_type`/`custom_ruleset_id` changes repair the entity, while tracking
+exclusion and hierarchy parent changes use one bounded recursive subtree helper.
+Malformed, cyclic, orphaned, or over-depth owner hierarchies fail closed to
+owner-wide repair.
+
+The existing behavior-policy source fence remains authoritative and now also
+includes a bounded tracking-ancestry snapshot and effective exclusion value.
+This closes the race where an old child candidate could otherwise pass the
+trusted writer after an exclusion change that did not change
+`canonical_revision`. The helpers only update existing projection validity and
+`updated_at`; they never create rows, write canonical state, write History,
+create occurrences, or calculate projection values. No automatic rebuild is
+attached to these source triggers; the existing fresh-committed-command Edge
+shadow rebuild remains the only automatic materialization path.
+
+### 7.15.24 source invalidation matrix
+
+| Source / field | Semantics and mutation path | Canonical revision necessarily changes? | Scope | Automatic rebuild | Legacy fallback |
+| --- | --- | --- | --- | --- | --- |
+| `adhdice_clean_tasks.canonical_revision` | Canonical Task State command / canonical hierarchy paths | Yes when that canonical path commits; proven by the live Task trigger path | Entity | Existing canonical-revision trigger plus the fresh-committed-command Edge shadow | Required until cutover |
+| `adhdice_task_history_facts` | Canonical History insert/update/delete from command and History paths | No for arbitrary source-table DML; History sync ledger only advances global revision | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_schedule_boundaries` | Canonical schedule boundary writes and direct table mutations | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_occurrences` | Canonical occurrence materialization/resolution writes | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_occurrence_effective_overrides` | Canonical delay/effective-due writes | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_calendar_overrides` | Canonical calendar override writes | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_behavior_selections` | Effective-dated selection RPC and authenticated table DML | No universal proof | Entity | No source-trigger rebuild | Required |
+| TaskType behavior profiles | Authenticated owner DML; rare effective-dated policy edits | No | Owner | No source-trigger rebuild | Required |
+| Custom ruleset identity/revisions | Authenticated table DML and named-ruleset soft-delete RPC | No | Owner | No source-trigger rebuild | Required |
+| `clean_tasks.task_type/custom_ruleset_id` | Canonical behavior-selection RPC / authorized Task writes | Not for every mutation path | Entity | No source-trigger rebuild | Required |
+| `adhdice_user_profiles.timezone/day_start_time/settings_revision` | Profile update; the live BEFORE trigger advances settings revision for timezone/day-start changes | Timezone/day-start: yes through the profile trigger; not a sufficient projection invalidation boundary by itself | Owner | No source-trigger rebuild | Required |
+| `adhdice_task_history_sync_state.sync_epoch/protocol_version` | History protocol/reset authority; normal `current_revision` changes are excluded | No | Owner | No source-trigger rebuild | Required |
+| `clean_tasks.exclude_from_tracking` | Tracking-exclusion RPC/bulk path; ordinary revision only | No | Subtree | No source-trigger rebuild | Required |
+| `clean_tasks.parent_task_id` | Canonical hierarchy move path | Moved Task/direct role changes may; deeper descendants need not | Moved subtree | No source-trigger rebuild | Required |
+
+The pure future-consumer gate is `isCurrentTaskProjectionFresh()` in
+`src/lib/task-current-projection-freshness.ts`. It accepts only a valid row with
+supported schema/algorithm versions, matching user/entity and entity kind,
+matching Task canonical revision and History sync epoch, matching profile
+settings revision, and the current projected logical date. It is groundwork
+only: no consumer cutover and no History startup removal occurred.
+
+The runtime version is now `7.15.24`; Edge deployment status is unchanged.
 
 ## 2026-09-23 7.15.23 Scalable Current Projection Backfill Candidate Query
 
