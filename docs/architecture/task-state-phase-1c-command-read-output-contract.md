@@ -5,6 +5,15 @@ Scope: canonical Task reads, commands, command results, persistence plans, diagn
 Implementation status: specification only; no production implementation is started by this document
 Required sources: [Phase 1A core model](task-state-phase-1a-core-model.md), [Phase 1B-1 recurrence transitions](task-state-phase-1b1-recurrence-transitions.md), [Phase 1B-2A workflow/lifecycle transitions](task-state-phase-1b2a-workflow-lifecycle-transitions.md), [Phase 1B-2B rollover/reward semantics](task-state-phase-1b2b-rollover-reward-semantics.md), [Phase 0 inventory](task-state-phase-0-inventory.md)
 
+Phase 1E refinement: [Current Task Read Projection Architecture](task-state-phase-1e-current-task-read-projection-contract.md)
+is now the canonical transport and startup-read addendum to this contract. The
+Phase 1C evaluator remains the semantic authority and remains the required
+rebuild source. Ordinary current Task surfaces may consume a valid,
+revision-fenced current projection derived from its result; they do not require
+a workspace-wide History snapshot. This refinement changes read loading and
+persistence ownership, not Task, History, recurrence, lifecycle, workflow,
+Calendar, streak, reward, or rollover semantics.
+
 ## Scope and authority
 
 `TARGET` — Phases 1A and 1B define what Task state means. Phase 1C defines the boundary through which every caller reads that state or requests a business-state transition. It does not reopen recurrence, reward, lifecycle, workflow, Calendar, History, or rollover product semantics already locked by those phases.
@@ -95,6 +104,23 @@ The following table is a source-backed `CURRENT` map. It intentionally records l
 The engine is the correct target center, but the current production graph is not yet a single contract. The migration goal is convergence at the shared read/command/result boundary, not surface-specific compensation. Legacy helpers may temporarily translate or compare, but they may not remain hidden policy authorities.
 
 ## 2. Canonical read contract
+
+There are two read modes over the same semantic authority:
+
+- `readTaskState`/the full canonical evaluator consumes the canonical facts
+  needed for historical reads, explicit repair, parity, and rebuild. Its
+  `explicitHistory` input is range/entity-scoped as required by the result; it
+  is not a requirement that every browser workspace preload every user's full
+  History.
+- The Phase 1E current-read boundary consumes a durable current projection only
+  after its Task, History, schedule, behavior-policy, logical-day, projected
+  date, and algorithm/schema fences validate. A missing or stale projection
+  requests entity-scoped reconciliation or reports a diagnostic; it does not
+  fall back to raw Task fields or a second evaluator.
+
+Both modes are derived from and are differential-tested against the same
+canonical evaluator. The current projection is a transport/performance
+representation of the result, never a replacement for canonical evidence.
 
 ### 2.1 Conceptual function
 
@@ -866,7 +892,12 @@ Examples:
 - Complete: Complete History plus terminal lifecycle transition and recurrence termination;
 - historical correction: explicit History replacement/clear plus any canonical boundary/override fact directly part of that correction.
 
-Projection repair is subordinate and may retry separately. Failure to repair `Task.status`, `due_on`, or an active field must not undo a successful canonical fact transition or create a compensating business event.
+For a successful canonical Task command, the current-projection write is part
+of the same trusted persistence boundary: the canonical transition and its
+fenced current projection become visible together, or the command does not
+report success. A pre-existing stale projection may be repaired separately;
+that repair writes only projection state and diagnostics. It must not undo a
+successful canonical fact transition or create a compensating business event.
 
 Reward banking, claiming, economy, and achievements are downstream failure domains. They may retry independently from the canonical result and must be idempotent.
 
@@ -923,6 +954,14 @@ Every consumer receives either `EffectiveTaskState` or a named projection derive
 If a consumer cannot obtain canonical state, the target is an explicit unavailable/diagnostic state. It must not invent a second calculator.
 
 ## 22. Persistence projection contract
+
+Phase 1E names the ordinary current read model `task_current_projection`.
+Its minimum fields are current display status, current effective/next due,
+active occurrence identity/status, current-day handled state, last-handled and
+last-Done values, current positive/Missed streaks, and source fences for Task
+revision, entity-scoped History revision/fingerprint, schedule boundaries,
+behavior policy, logical-day settings, projected logical date, and projection
+schema/algorithm version. A physical table is not selected here.
 
 The target projection boundary is:
 
@@ -1372,7 +1411,7 @@ TaskApp, Table/List/Home, Smart Lists, Calendar, History, editor, batch, status 
 
 ### G. Storage gaps
 
-The next storage phase must make explicit History, occurrence origin, scheduled/effective due, recurrence anchor, schedule boundaries, Calendar overrides, independent lifecycle/container/workflow, reward entitlement/effect identity, restore evidence, command/revision/idempotence, and provenance durably representable. No schema is designed here.
+The next storage phase must make explicit History, occurrence origin, scheduled/effective due, recurrence anchor, schedule boundaries, Calendar overrides, independent lifecycle/container/workflow, reward entitlement/effect identity, restore evidence, command/revision/idempotence, provenance, and the owner-scoped current Task projection durably representable. No schema is designed here.
 
 ### H. Legacy authorities to retire
 
@@ -1380,10 +1419,11 @@ Retire or narrow `getTaskDisplayStatus*` as calculators, `resolveLiveTaskStatusF
 
 ### I. Remaining architecture work before production implementation
 
-1. Define persistence/storage and migration design for the durable concepts above.
-2. Define implementation sequencing and the compatibility gate between command/read authority and legacy adapters.
-3. Define compatibility retirement and deployment-proof criteria for the engine/legacy paths.
-4. Define focused contract tests and QA evidence for reads, commands, replay, concurrency, projection repair, rewards, hierarchy, and Calendar parity.
+1. Implement the Phase 1E current projection source contract and entity-scoped freshness proof.
+2. Define persistence/storage and migration design for the durable concepts above.
+3. Define implementation sequencing and the compatibility gate between command/read authority and legacy adapters.
+4. Define compatibility retirement and deployment-proof criteria for the engine/legacy paths.
+5. Define focused contract tests and QA evidence for reads, commands, replay, concurrency, projection repair, rewards, hierarchy, and Calendar parity.
 
 Recommended next phase: persistence/storage and migration design, followed by implementation sequencing and a focused contract-test/QA strategy. Those phases must remain separate and are not started here.
 

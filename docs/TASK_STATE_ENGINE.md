@@ -1,6 +1,6 @@
 # Task State Engine
 
-Last reviewed: 2026-08-18
+Last reviewed: 2026-09-23
 Role: canonical behavioral contract
 
 ## Purpose and architecture lock
@@ -11,6 +11,13 @@ persistable Task State projection. This document records the locked simplified
 model. It supersedes transitional rules that treated bounded History, calculated
 Missed rows, modal History, or legacy compatibility status as a separate source
 of truth.
+
+Phase 1E adds the read-transport boundary: ordinary current Task surfaces
+consume a valid, rebuildable current projection derived from this engine rather
+than requiring a workspace-wide canonical History snapshot. The projection is
+not a second authority. Canonical facts and this evaluator remain the evidence
+and rebuild source; History remains available for historical reads and explicit
+entity-scoped repair/rebuild.
 
 The source architecture is implemented through the existing canonical seams.
 This source contract does not claim frontend, Edge, SQL, browser, or live
@@ -74,7 +81,10 @@ rewrite unrelated dates or create a parallel Calendar authority.
 
 There is one Active Status result consumed everywhere: Table, List, Home,
 editor, Steps/Substeps, filters, counts, smart lists, and child previews.
-Surfaces consume the projection; they do not recalculate current status from a
+After the Phase 1E consumer cutover, those surfaces consume the valid current
+projection of that result. The projection is written from the canonical engine
+result and fenced by Task, History, schedule, behavior-policy, logical-day, and
+projection-version inputs. Surfaces do not recalculate current status from a
 Task row, a selected Calendar cell, or a private History subset.
 
 History date state and Active Status are different projections. An earlier
@@ -133,7 +143,10 @@ gap into a saved outcome.
 Status changes from Table, List, Home, Calendar, editor, and batch actions use
 the same canonical command infrastructure. A successful command reconciles
 Task State, canonical History, recurrence/cursor, Calendar, streaks, rewards,
-and all UI projections from the returned authoritative result.
+and the current read projection from the returned authoritative result in the
+same trusted persistence boundary. A projection repair may write only the
+rebuildable projection and its validity metadata; it cannot create canonical
+History or reward evidence.
 
 The browser supplies intent only. Trusted server/Edge code derives privileged
 outcome date, occurrence, provenance, timestamps, replay identity, and reward
@@ -186,13 +199,21 @@ boundaries.
 
 ### Loading and cache ownership
 
-- `useWorkspaceData` loads the full canonical History snapshot for all Tasks
-  during workspace startup. The retired bounded helper
-  `src/lib/workspace-critical-task-facts.ts` is no longer production plumbing.
-- The task-scoped modal cache, full-workspace History cache, streak-summary
-  fallback, and rollover-only History read use one canonical startup snapshot
-  plus ordinary mutation/realtime refreshes. A modal is not more authoritative
-  merely because it loaded older rows.
+- Phase 1E target: `useWorkspaceData` loads canonical Task rows, valid current
+  projections, profile context, and independently required domain data during
+  normal startup. It does not require a full canonical History snapshot for
+  current Active Status, current streaks, or Task readiness.
+- The current full-History startup path is transitional until the Phase 1E
+  migration gates pass. It must not gain new current-surface dependencies.
+- The task-scoped modal cache, full-workspace History cache, and
+  `task-history-sync-v1` IndexedDB/delta transport serve historical readers and
+  explicit repair/rebuild. They are not current-projection validity proof by
+  themselves.
+- Task/History/policy/time events invalidate the affected entity or domain.
+  Realtime and logical-day changes do not target a broad workspace reload.
+- A missing or stale projection fails closed to an entity-scoped diagnostic or
+  rebuild path. Raw `Task.status`, `due_on`, or a bounded History subset is not
+  a fallback authority.
 
 ### Focused contract coverage
 
@@ -211,18 +232,25 @@ boundaries.
 
 ### Schema conclusion
 
-No genuine schema change is required by the locked rules. Existing canonical
-History, occurrence, schedule-boundary, provenance, replay, and entitlement
-fields express the needed identity and trust boundaries. If later implementation
-work finds a hard invariant the existing schema cannot express, stop and report
-that contradiction before adding fields or tables.
+Existing canonical History, occurrence, schedule-boundary, provenance, replay,
+and entitlement fields express the evidence and trust boundaries needed to
+rebuild current state. Phase 1E now explicitly requires a durable,
+owner-scoped current-projection record or equivalent projection namespace for
+ordinary current reads, plus an entity-scoped History freshness proof. Its
+physical schema, indexes, RLS, and migration are a later implementation ticket;
+this document does not authorize SQL or runtime changes. If implementation
+finds that the existing canonical facts cannot prove a projection field without
+reopening a locked Task semantic, stop and report that contradiction.
 
 ## Related documents
 
-- [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) — full
-  canonical startup History and cache ownership.
+- [`WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) —
+  transitional source loading seams and post-cutover current-read loading.
 - [`TASKAPP_ARCHITECTURE.md`](TASKAPP_ARCHITECTURE.md) — shared Active Status
   read authority and UI projection routing.
+- [`architecture/task-state-phase-1e-current-task-read-projection-contract.md`](architecture/task-state-phase-1e-current-task-read-projection-contract.md)
+  — current Task projection, freshness, invalidation, repair, and migration
+  authority.
 - [`CURRENT_STATE.md`](CURRENT_STATE.md) — architecture-lock status, pending
   convergence work, migration finding, and verification boundaries.
 - [`VERIFICATION.md`](VERIFICATION.md) — evidence and runtime-validation rules.

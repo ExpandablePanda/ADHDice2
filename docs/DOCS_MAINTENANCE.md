@@ -1,6 +1,6 @@
 # Documentation Maintenance
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-09-23
 Role: canonical documentation governance and freshness authority
 
 This repo keeps markdown lightweight on purpose. Every markdown file must have one clear job so future sessions can load the right context quickly.
@@ -43,6 +43,7 @@ This repo keeps markdown lightweight on purpose. Every markdown file must have o
 - `docs/task-hierarchy-plan.md` - `active working`; current hierarchy product decisions and unresolved movement/migration boundaries.
 - `docs/daily-until-complete-plan.md` - `active working`; current Daily Until Complete and permanent-Complete rules plus unresolved product decisions.
 - `docs/TASK_STATE_ENGINE.md` - `canonical`; current Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar, reward eligibility, and persistence projection.
+- `docs/architecture/task-state-phase-1e-current-task-read-projection-contract.md` - `canonical`; current Task read projection, freshness, invalidation, repair, and migration authority.
 - `docs/WORKSPACE_LOADING_ARCHITECTURE.md` - `qualified source diagnostic`; source-backed workspace hydration, readiness, History loading, Realtime refresh, and caching observations.
 - `docs/AGENT_WORKFLOW.md` - `canonical`; durable workflow and execution-routing authority.
 - `docs/VERIFICATION.md` - `canonical`; durable verification and evidence authority.

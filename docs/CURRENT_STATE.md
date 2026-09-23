@@ -1,6 +1,6 @@
 # Current State
 
-Last reviewed: 2026-09-22
+Last reviewed: 2026-09-23
 Role: active working
 
 ## Current Release
@@ -13,6 +13,38 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.11 Lock Current Task Read Projection Architecture
+
+Phase 1E locks the target read architecture for ordinary current Task surfaces.
+Canonical History, occurrences, schedule boundaries, effective overrides,
+commands, lifecycle/workflow facts, rewards, and achievements remain
+authoritative evidence and rebuild sources. A rebuildable owner-scoped current
+projection is designated to own the ordinary read result after cutover for
+display/current Active Status, current effective and next due, active
+occurrence summary, current-day handled
+state, last handled/last Done values, and current positive/Missed streaks.
+
+Projection validity is fenced by canonical Task revision, entity-scoped
+History revision/fingerprint plus the existing History sync epoch, schedule
+boundary revision, behavior-policy revision, logical-day settings revision,
+projected logical date, and projection schema/algorithm version. Canonical Task
+commands must update canonical facts and the current projection in the same
+trusted persistence boundary. Projection repair writes no History, occurrence,
+reward, or achievement evidence.
+
+The previous full canonical History startup requirement for current Active
+Status, current streaks, and Task readiness is superseded. History, old
+boundaries, command ledgers, and detailed occurrences become lazy/bounded
+historical or explicit repair reads. Realtime and logical-day changes target
+the affected entity/domain rather than broad workspace reload. The current
+full-History source path remains transitional until shadow parity, command
+dual-write, consumer cutover, and retirement gates pass.
+
+This is documentation/architecture only. No runtime code, SQL, schema,
+generated types, Edge Functions, UI, or live Supabase state changed. The
+working app version remains `7.15.8`; no runtime version bump is required for a
+documentation-only architecture ticket.
 
 ## 2026-09-22 7.15.8 Retire Obsolete Task Grid Runtime
 
@@ -3504,20 +3536,28 @@ out of scope.
 
 ### Workspace, Loading, and Cache Ownership
 
-- Full canonical Task History for all Tasks is required at workspace startup. The
-  former bounded critical-vs-modal-full distinction is transitional and must be
-  collapsed; modal History is not a more authoritative state read.
+- Phase 1E supersedes the former full canonical Task History startup authority
+  for current Active Status, current streaks, and Task readiness. Normal
+  startup targets canonical Task/entity rows, valid current projections, and
+  profile context; full History is lazy, bounded, or explicit-repair work.
+- The current full-History source path remains transitional until projection
+  shadow parity, command dual-write, consumer cutover, and old-read retirement
+  gates pass. Modal History is not a more authoritative state read.
 - Query changes should reuse stable workspace facts and avoid invalidating canonical entities, status authority, Archive/Trash sets, or unrelated page data.
 - Workspace performance diagnostics are development-only. Browser evidence for commit counts, inactive-page CPU, cross-tab/BFCache behavior, and Safari paint behavior remains unverified.
-- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) is a qualified source diagnostic, not canonical runtime proof; its browser, deployment, and performance questions remain unresolved.
+- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) is a qualified transitional source diagnostic, not canonical runtime proof; [`Phase 1E`](architecture/task-state-phase-1e-current-task-read-projection-contract.md) is the target current-read authority.
 
 ### Task History and Readiness
 
-- Startup readiness includes the full canonical Task History snapshot. A failed
-  or incomplete History load must expose error/retry and must not become an empty
-  successful snapshot or a legacy fallback.
+- Current-projection readiness is separate from historical History readiness. A
+  failed or incomplete historical load must expose error/retry to its consumer
+  and must not become an empty successful snapshot, but it does not block a
+  valid current projection.
 - History consumers must expose loading and retry states until the requested task's data is ready.
-- History readiness must not widen unrelated startup work or replace canonical current-state facts with partial detail payloads.
+- Current Task consumers must use valid, revision-fenced projections and must
+  not replace them with raw Task fields, partial History detail, or a second
+  calculator. Realtime, logical-day, and policy changes target affected
+  entities/domains rather than broad workspace reload.
 - Existing task/History contradictions are not repaired by this runtime correction; they require a separate preview-first data-repair ticket after runtime QA.
 
 ### 7.7.11 Task State Engine Authority Hardening
