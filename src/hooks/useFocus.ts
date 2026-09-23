@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { subscribeToBrowserAuth } from "@/lib/supabase";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, FocusReallocationMode, PendingFocusDailySurplus } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
@@ -42,6 +43,10 @@ import { normalizeFocusReallocationMode, readFocusReallocationMode, writeFocusRe
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 type FocusRuntimeRpcResult = { runtime?: FocusRuntimeRow | null; deleted_session_id?: string; completed_session?: DbFocusSession; was_replayed?: boolean };
+
+export function isFocusCounterAuthReady(confirmedUserId: string | null, userId: string | null) {
+  return Boolean(confirmedUserId && userId && confirmedUserId === userId);
+}
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
 
@@ -287,12 +292,16 @@ export function useFocus(
     ownerUserId: userId,
   }));
   const [focusCounterState, setFocusCounterState] = useState<FocusCounterState>({ counters: [], history: [], ownerUserId: null });
+  const [confirmedAuthUserId, setConfirmedAuthUserId] = useState<string | null>(null);
+  const [authConfirmationVersion, setAuthConfirmationVersion] = useState(0);
   const suppressCategoryReload = useRef(false);
   const activeSessionsRef = useRef(activeSessions);
   const runtimeRequestGenerationRef = useRef(0);
   const runtimeClosedRevisionsRef = useRef(new Map<string, number>());
   const counterRequestGenerationRef = useRef(0);
   const focusCounterStateRef = useRef(focusCounterState);
+  const confirmedAuthUserIdRef = useRef<string | null>(null);
+  const currentUserIdRef = useRef(userId);
   const runtimeOperationIdsRef = useRef(new Map<string, string>());
   const runtimeCreateSessionIdsRef = useRef(new Map<string, string>());
   const completingRuntimeIdsRef = useRef(new Set<string>());
@@ -302,8 +311,9 @@ export function useFocus(
   const runtimeChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const counterChannelRef = useRef<RealtimeChannel | null>(null);
   const counterChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
-  const focusCounters = focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
-  const focusCounterHistory = focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
+  const isFocusCounterSyncReady = isFocusCounterAuthReady(confirmedAuthUserId, userId);
+  const focusCounters = isFocusCounterSyncReady && focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
+  const focusCounterHistory = isFocusCounterSyncReady && focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
   const pendingDailyGoalSurplus = pendingDailyGoalSurplusState.ownerUserId === userId
     ? pendingDailyGoalSurplusState.pending
     : null;
@@ -320,6 +330,22 @@ export function useFocus(
   }, [focusCounterState]);
 
   useEffect(() => {
+    if (!client) {
+      confirmedAuthUserIdRef.current = null;
+      return;
+    }
+
+    return subscribeToBrowserAuth((_event, session) => {
+      const nextUserId = session?.user?.id ?? null;
+      confirmedAuthUserIdRef.current = nextUserId;
+      counterRequestGenerationRef.current += 1;
+      setConfirmedAuthUserId(nextUserId);
+      setAuthConfirmationVersion((current) => current + 1);
+    });
+  }, [client]);
+
+  useEffect(() => {
+    currentUserIdRef.current = userId;
     counterRequestGenerationRef.current += 1;
     const nextState = { counters: [], history: [], ownerUserId: userId };
     focusCounterStateRef.current = nextState;
@@ -568,7 +594,7 @@ export function useFocus(
   }, []);
 
   const hydrateFocusCounters = useCallback(async () => {
-    if (!client || !userId) return;
+    if (!client || !userId || !isFocusCounterAuthReady(confirmedAuthUserIdRef.current, userId)) return;
     const generation = ++counterRequestGenerationRef.current;
     const [counterResponse, eventResponse] = await Promise.all([
       client
@@ -584,6 +610,11 @@ export function useFocus(
         .eq("user_id", userId)
         .order("created_at", { ascending: false }),
     ]);
+    if (
+      currentUserIdRef.current !== userId ||
+      !isFocusCounterAuthReady(confirmedAuthUserIdRef.current, userId) ||
+      !isCurrentFocusCounterSnapshotRequest(generation, counterRequestGenerationRef.current)
+    ) return;
     const error = counterResponse.error ?? eventResponse.error;
     if (error) {
       if (!/does not exist|schema cache/i.test(error.message)) {
@@ -591,7 +622,6 @@ export function useFocus(
       }
       return;
     }
-    if (!isCurrentFocusCounterSnapshotRequest(generation, counterRequestGenerationRef.current)) return;
     replaceFocusCounterState(
       userId,
       reconcileFocusCounterSnapshot((counterResponse.data ?? []) as FocusCounterRow[]),
@@ -616,7 +646,7 @@ export function useFocus(
   }, [userId]);
 
   useEffect(() => {
-    if (!client || !userId) return;
+    if (!client || !userId || !isFocusCounterSyncReady) return;
     const currentClient = client;
     let cancelled = false;
     async function subscribeToCounterChannel() {
@@ -629,7 +659,7 @@ export function useFocus(
 
       await removalPromise;
 
-      if (cancelled) return;
+      if (cancelled || currentUserIdRef.current !== userId || !isFocusCounterAuthReady(confirmedAuthUserIdRef.current, userId)) return;
 
       void hydrateFocusCounters();
 
@@ -679,6 +709,7 @@ export function useFocus(
     if (broadcast) broadcast.onmessage = refetch;
     return () => {
       cancelled = true;
+      counterRequestGenerationRef.current += 1;
       document.removeEventListener("visibilitychange", refetchWhenVisible);
       window.removeEventListener("pageshow", refetch);
       window.removeEventListener("online", refetch);
@@ -689,7 +720,7 @@ export function useFocus(
         counterChannelRemovalPromiseRef.current = removeRealtimeChannel(channel);
       }
     };
-  }, [client, hydrateFocusCounters, removeRealtimeChannel, replaceFocusCounterState, setMessage, userId]);
+  }, [authConfirmationVersion, client, hydrateFocusCounters, isFocusCounterSyncReady, removeRealtimeChannel, replaceFocusCounterState, setMessage, userId]);
 
   async function transitionFocusRuntime(categoryId: string, action: string, args: Record<string, unknown> = {}) {
     if (!client || !userId) return null;
