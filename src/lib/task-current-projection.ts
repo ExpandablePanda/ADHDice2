@@ -427,9 +427,11 @@ function validateInputs(
       diagnostics.repairRequired.push("History frontier row revision is malformed");
     }
   }
-  if (readModel.historyFacts.length > 0 && fence.sourceRevision === 0) {
-    diagnostics.repairRequired.push("History facts exist without an entity History frontier");
-  }
+  // The 7.15.6 ledger intentionally starts at revision zero without
+  // backfilling pre-ledger History. Old canonical facts therefore form a
+  // valid sync-epoch baseline even when this entity has no ledger frontier.
+  // Once this entity has a ledger event, the positive revision must carry its
+  // matching frontier above.
   const scopedRows = [
     ...readModel.scheduleBoundaries,
     ...readModel.occurrences,

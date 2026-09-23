@@ -141,12 +141,14 @@ gap into a saved outcome.
 ## Mutation and trusted persistence boundary
 
 Status changes from Table, List, Home, Calendar, editor, and batch actions use
-the same canonical command infrastructure. A successful command reconciles
-Task State, canonical History, recurrence/cursor, Calendar, streaks, rewards,
-and the current read projection from the returned authoritative result in the
-same trusted persistence boundary. A projection repair may write only the
-rebuildable projection and its validity metadata; it cannot create canonical
-History or reward evidence.
+the same canonical command infrastructure. A successful semantic command
+atomically invalidates any existing affected current projection, then commits
+Task State, canonical History, recurrence/cursor, Calendar, streaks, and
+rewards. A trusted post-commit TypeScript rebuild materializes the projection
+through a revision-fenced service-role writer; projection availability never
+blocks canonical commit. A projection repair may write only the rebuildable
+projection and its validity metadata; it cannot create canonical History or
+reward evidence.
 
 The browser supplies intent only. Trusted server/Edge code derives privileged
 outcome date, occurrence, provenance, timestamps, replay identity, and reward

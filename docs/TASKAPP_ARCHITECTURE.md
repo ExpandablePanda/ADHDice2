@@ -61,12 +61,13 @@ command planner/trusted boundary owns the authoritative result.
 The important seams are the existing `useTaskActions` façade and extracted
 action hooks, `useTaskHistoryActions`, editor/batch action hooks,
 `src/lib/task-state-canonical/command-service.ts`, and
-`supabase/functions/task-state-command/*`. A successful mutation must reconcile
-Task State, canonical History, recurrence/cursor, Calendar, streaks, rewards,
-and the current read projection together. The projection write is part of the
-same trusted persistence boundary; projection repair alone cannot write
-canonical facts or reward evidence. Calendar editing is a command route, not a
-second Task State system.
+`supabase/functions/task-state-command/*`. A successful semantic mutation must
+atomically invalidate an existing affected projection while reconciling Task
+State, canonical History, recurrence/cursor, Calendar, streaks, and rewards.
+The immediate post-commit projection write is a separate trusted,
+revision-fenced operation; projection repair alone cannot write canonical facts
+or reward evidence. Calendar editing is a command route, not a second Task
+State system.
 
 Permanent Complete may retain its guarded task/History execution exception, but
 it still uses the same authority and cannot be used to justify surface-local

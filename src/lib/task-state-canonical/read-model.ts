@@ -1,4 +1,10 @@
-import type { Task, TaskBehaviorSelection, TaskTypeBehaviorProfile } from "../database.types.ts";
+import type {
+  Task,
+  TaskBehaviorSelection,
+  TaskHistoryChange,
+  TaskHistorySyncState,
+  TaskTypeBehaviorProfile,
+} from "../database.types.ts";
 import type {
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
@@ -35,6 +41,7 @@ type CanonicalReadQuery<T> = {
   eq(column: string, value: string): CanonicalReadQuery<T>;
   is(column: string, value: null): CanonicalReadQuery<T>;
   order(column: string, options: { ascending: boolean }): CanonicalReadQuery<T>;
+  limit(count: number): CanonicalReadQuery<T>;
   maybeSingle(): Promise<CanonicalReadResult<T | null>>;
   then<TResult1 = CanonicalReadResult<T[]>, TResult2 = never>(
     onfulfilled?: ((value: CanonicalReadResult<T[]>) => TResult1 | PromiseLike<TResult1>) | null,
@@ -56,6 +63,8 @@ type CanonicalReadTableRows = {
   adhdice_task_reward_claim_consumptions: CanonicalTaskRewardClaimConsumption;
   adhdice_task_type_behavior_profiles: TaskTypeBehaviorProfile;
   adhdice_task_behavior_selections: TaskBehaviorSelection;
+  adhdice_task_history_sync_state: TaskHistorySyncState;
+  adhdice_task_history_changes: TaskHistoryChange;
 };
 
 /**

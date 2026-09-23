@@ -14,6 +14,34 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-23 7.15.14 Projection Freshness Correction + Durable Rebuild Protocol
+
+The 7.15.13 calculator now accepts old canonical History as a valid
+revision-zero `task-history-sync-v1` baseline when no entity ledger frontier
+exists. A positive entity History revision still requires its matching
+frontier; unrelated entity ledger changes do not invalidate a baseline Task.
+
+The Phase 1E persistence rule is corrected to atomic invalidation plus
+revision-fenced immediate post-commit materialization. A semantic canonical
+command marks only an existing affected projection `repair_required` in its
+transaction, then commits canonical Task/History facts without waiting for a
+fully calculated projection. The new source-only trusted writer accepts only
+valid service-role candidates and proves owner/Task identity, canonical Task
+revision, History sync epoch and entity frontier, logical-day settings/date,
+supported versions, fingerprint shape, and monotonic candidate time. A stale
+or failed rebuild is retryable and never becomes a reason to roll back or
+weaken canonical facts.
+
+`rebuildCurrentTaskProjection()` is authored and tested as an entity-scoped
+trusted TypeScript helper but is not wired into live command orchestration. It
+uses existing canonical reads, the TypeScript calculator, and the trusted
+writer; it does not load whole-workspace History or whole-user command
+operations, write canonical facts, or fall back to raw Task status.
+
+The invalidation/writer SQL is source-only: it has not been applied, no
+projection backfill or Edge deployment occurred, no UI/workspace read cutover
+occurred, and runtime behavior remains unchanged at `7.15.10`.
+
 ## 2026-09-23 7.15.13 Current Task Projection Calculator + Parity Harness
 
 The pure `buildCurrentTaskProjection()` calculator now composes the canonical
@@ -69,18 +97,18 @@ state, last handled/last Done values, and current positive/Missed streaks.
 Projection validity is fenced by canonical Task revision, entity-scoped
 History revision/fingerprint plus the existing History sync epoch, schedule
 boundary revision, behavior-policy revision, logical-day settings revision,
-projected logical date, and projection schema/algorithm version. Canonical Task
-commands must update canonical facts and the current projection in the same
-trusted persistence boundary. Projection repair writes no History, occurrence,
-reward, or achievement evidence.
+projected logical date, and projection schema/algorithm version. The prior
+strict atomic-projection-write rule is superseded by atomic invalidation plus
+revision-fenced immediate post-commit materialization. Projection repair writes
+no History, occurrence, reward, or achievement evidence.
 
 The previous full canonical History startup requirement for current Active
 Status, current streaks, and Task readiness is superseded. History, old
 boundaries, command ledgers, and detailed occurrences become lazy/bounded
 historical or explicit repair reads. Realtime and logical-day changes target
 the affected entity/domain rather than broad workspace reload. The current
-full-History source path remains transitional until shadow parity, command
-dual-write, consumer cutover, and retirement gates pass.
+full-History source path remains transitional until shadow parity,
+invalidation/materialization, consumer cutover, and retirement gates pass.
 
 This was documentation/architecture only. The 7.15.12 foundation below adds
 source SQL/schema/types/tests without changing runtime behavior. No live

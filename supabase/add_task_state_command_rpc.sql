@@ -67,6 +67,7 @@ declare
   v_achievement_evaluation jsonb;
   v_achievement_operation_id uuid;
   v_operation_is_new boolean := false;
+  v_projection_inputs_changed boolean := false;
 begin
   -- Only the trusted Edge Function's secret-key backend role may invoke this
   -- invoker function.  User ownership is established by the Edge Function
@@ -784,6 +785,34 @@ begin
   if v_command_type in ('set_outcome', 'complete_task', 'start_in_progress', 'clear_in_progress') then
     v_task_patch := jsonb_set(v_task_patch, '{workflow_revision}', to_jsonb(coalesce(v_task.workflow_revision, 0) + 1), true);
   end if;
+
+  -- A successful canonical mutation must make a prior current projection
+  -- unavailable before the canonical facts become visible. The existing row
+  -- is marked only; this transaction never fabricates a projection row. A
+  -- replay returns above, and a semantic no-op rollover is handled by the
+  -- trusted TypeScript boundary before this RPC, so neither causes needless
+  -- invalidation.
+  v_projection_inputs_changed := v_command_type <> 'reconcile_rollover'
+    or v_history <> '{}'::jsonb
+    or v_automatic_history_facts <> '[]'::jsonb
+    or v_automatic_history_delete_ids <> '[]'::jsonb
+    or v_occurrence <> '{}'::jsonb
+    or v_schedule <> '{}'::jsonb
+    or v_effective_override <> '{}'::jsonb
+    or v_calendar_override <> '{}'::jsonb
+    or exists (
+      select 1
+        from jsonb_object_keys(v_task_patch) as patch_key(key)
+       where patch_key.key <> 'canonicalization_status'
+    );
+  if v_projection_inputs_changed then
+    update public.adhdice_task_current_projections
+       set validity = 'repair_required',
+           updated_at = now()
+     where user_id = p_user_id
+       and entity_id = v_entity_id;
+  end if;
+
   update public.adhdice_clean_tasks
      set canonicalization_status = case
        when v_task.canonicalization_status = 'canonical_proven' then 'canonical_runtime'

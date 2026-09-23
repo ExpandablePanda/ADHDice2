@@ -502,6 +502,52 @@ test("entity History changes only its own History and source fences", () => {
   );
 });
 
+test("pre-ledger History is a valid revision-zero baseline", () => {
+  const baseline = structuredClone(scenarios.find((item) => item.name === "prior Missed followed by later success")!.input);
+  baseline.historyFence = { syncEpoch: "00000000-0000-4000-8000-000000000001", sourceRevision: 0, frontier: null };
+  const projection = buildCurrentTaskProjection(baseline);
+  assert.equal(projection.validity, "valid");
+  assert.equal(projection.history_source_revision, 0);
+});
+
+test("empty History is also a valid revision-zero baseline", () => {
+  const baseline = structuredClone(scenarios.find((item) => item.name === "one-off pending")!.input);
+  baseline.readModel.historyFacts = [];
+  baseline.historyFence = { syncEpoch: "00000000-0000-4000-8000-000000000001", sourceRevision: 0, frontier: null };
+  assert.equal(buildCurrentTaskProjection(baseline).validity, "valid");
+});
+
+test("a later entity History change requires a positive matching frontier", () => {
+  const baseline = structuredClone(scenarios.find((item) => item.name === "one-off pending")!.input);
+  baseline.historyFence = { syncEpoch: "00000000-0000-4000-8000-000000000001", sourceRevision: 1, frontier: null };
+  assert.equal(buildCurrentTaskProjection(baseline).validity, "unavailable");
+  baseline.historyFence.frontier = {
+    sequence: 1,
+    historyFactId: "history-frontier-1",
+    logicalDate: "2026-09-22",
+    operation: "upsert",
+    rowRevision: 1,
+  };
+  assert.equal(buildCurrentTaskProjection(baseline).validity, "valid");
+});
+
+test("an unrelated Task ledger change does not invalidate a revision-zero baseline", () => {
+  const baseline = structuredClone(scenarios.find((item) => item.name === "prior Missed followed by later success")!.input);
+  baseline.historyFence = {
+    syncEpoch: "00000000-0000-4000-8000-000000000001",
+    sourceRevision: 0,
+    frontier: null,
+  };
+  const unrelatedChange = structuredClone(baseline);
+  (unrelatedChange.historyFence as BuildCurrentTaskProjectionInput["historyFence"] & { globalRevision?: number }).globalRevision = 99;
+  assert.equal(buildCurrentTaskProjection(baseline).validity, "valid");
+  assert.equal(buildCurrentTaskProjection(unrelatedChange).validity, "valid");
+  assert.equal(
+    buildCurrentTaskProjection(baseline).source_fingerprint,
+    buildCurrentTaskProjection(unrelatedChange).source_fingerprint,
+  );
+});
+
 test("schedule, behavior, logical-day, and authoritative timestamp changes fence the source", () => {
   const base = scenarios.find((item) => item.name === "one-off pending")!.input;
   const scheduleChanged = structuredClone(base);

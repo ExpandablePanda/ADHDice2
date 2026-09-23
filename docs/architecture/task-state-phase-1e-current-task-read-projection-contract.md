@@ -1,11 +1,12 @@
 # Phase 1E: Current Task Read Projection Architecture
 
-Status: locked architecture direction; 7.15.13 pure calculator and parity harness authored
-Ticket: ADHDice 7.15.11 architecture / ADHDice 7.15.12 schema foundation
+Status: locked architecture direction; 7.15.14 persistence protocol authored
+Ticket: ADHDice 7.15.14 projection freshness correction and durable rebuild protocol
 Scope: ordinary current Task reads, projection persistence, freshness, invalidation,
 repair, and migration sequencing
-Implementation status: physical source contract only; no runtime read/write
-cutover, backfill, Edge Function, or live SQL application is authorized here
+Implementation status: source-only persistence protocol and un wired rebuild
+helper; no runtime read/write cutover, backfill, Edge Function deployment, or
+live SQL application is authorized here
 
 Required inputs: [`TASK_STATE_ENGINE.md`](../TASK_STATE_ENGINE.md),
 [`WORKSPACE_LOADING_ARCHITECTURE.md`](../WORKSPACE_LOADING_ARCHITECTURE.md),
@@ -33,6 +34,31 @@ names, generated types, or deployment mechanics.
 
 This decision does not change product semantics. It changes which already
 defined result is transported and read during normal workspace use.
+
+## 7.15.14 persistence correction
+
+The earlier strict rule that a canonical command must calculate and write a
+fully valid current projection inside the canonical command transaction is
+superseded. The safe protocol is:
+
+1. A semantic canonical command atomically marks an existing affected
+   projection `repair_required`; it never fabricates a row.
+2. Canonical Task/History and related facts commit normally. Projection
+   availability never decides whether valid canonical facts may commit.
+3. A trusted server immediately rebuilds the one affected entity with the
+   TypeScript canonical calculator.
+4. A service-role-only writer stores only a `valid` candidate after proving
+   Task, entity History, sync epoch, logical-day, version, identity, and
+   monotonic candidate fences.
+5. A rebuild failure leaves canonical truth committed and the projection stale,
+   `repair_required`, or absent. Consumers must not accept that row as current;
+   entity-scoped retry/repair is the recovery path.
+
+This separation is required because the projection calculator is TypeScript
+canonical-engine composition, while SQL is the authority for final History
+ledger sequence/identity/timestamps. Duplicating Task State, recurrence, or
+streak calculation in PL/pgSQL is prohibited. The projection is a rebuildable
+read model and must never become a canonical write-availability dependency.
 
 ## Current problem
 
@@ -385,24 +411,23 @@ rebuildable.
 
 ## Command and update model
 
-Every successful canonical Task command returns the authoritative after-state
-and a deterministic current-projection write plan. In the target persistence
-boundary, the trusted command transaction:
+Every successful canonical Task command returns the authoritative after-state.
+For a semantic mutation, the trusted command transaction:
 
 1. validates the command identity and expected canonical/fact revisions;
-2. writes the canonical Task, History, occurrence, boundary, override,
-   lifecycle, workflow, and command facts required by the command;
-3. evaluates the after-state with the same canonical engine contract;
-4. writes the corresponding `task_current_projection` record with the source
-   fences from that after-state; and
-5. commits both canonical facts and the projection atomically.
+2. marks the existing owner/entity projection `repair_required` without
+   creating a row;
+3. writes the canonical Task, History, occurrence, boundary, override,
+   lifecycle, workflow, and command facts required by the command; and
+4. commits canonical truth without waiting for projection reconstruction.
 
-The projection write is allow-listed, idempotent, and guarded by the expected
-source revisions. Either the canonical transition and its projection become
-visible together, or the command does not report a successful canonical commit.
-This prevents a newly accepted command from deliberately exposing a known
-stale current read. A repairable pre-existing stale projection never permits a
-projection writer to alter canonical facts.
+The immediate post-commit rebuild is a separate trusted server operation. It
+loads one entity, composes the existing TypeScript canonical engine, and calls
+the revision-fenced writer. The writer is allow-listed, valid-only,
+idempotent, service-role-only, and rejects a stale candidate rather than
+overwriting a newer row. A semantic no-op and a replay do not create needless
+invalidation. Projection failure is retryable and cannot roll back canonical
+facts or modify them during repair.
 
 Reward and achievement intents remain downstream of the canonical commit.
 Projection persistence does not grant rewards, remove rewards, create History,
@@ -444,13 +469,18 @@ A rebuild:
 
 - reads the canonical Task entity and the smallest canonical source range that
   can prove the current result;
-- may read the complete History and boundary chain for one entity when the
-  current checkpoint is missing or ambiguous;
+- reads the owner's History sync epoch and only the affected entity's latest
+  History ledger frontier; the current helper loads one entity's canonical
+  History and boundary/occurrence chain through the existing scoped read path;
 - runs the canonical evaluator and writes only the current projection, its
   source fences, and diagnostic metadata;
-- is fenced by the Task/fact revisions and retries only when the source is still
-  the expected version; and
+- is fenced by the Task/fact revisions and treats a stale writer rejection as
+  retryable; and
 - is safe to repeat and safe to abandon without changing canonical truth.
+
+The 7.15.14 TypeScript helper is authored but not imported by live command
+orchestration. It never requests whole-workspace History or an unfiltered
+whole-user command-operation read, and it never falls back to raw Task status.
 
 Repair must never create, delete, rewrite, or reclassify canonical History;
 create or remove occurrence facts; change schedule boundaries; alter command
@@ -517,9 +547,11 @@ read as a shadow/reference path until parity gates pass. The phases are:
    existing full canonical read across normal, recurring, delayed, lifecycle,
    behavior-boundary, logical-day, and legacy-provenance fixtures. Classify
    every mismatch; do not silently normalize it.
-4. **Command dual write.** Update the trusted canonical command boundary to
-   write canonical facts and the projection atomically. Backfill existing
-   entities through explicit, revision-fenced repair operations. Legacy direct
+4. **Atomic invalidation and post-commit materialization.** Update the trusted
+   canonical command boundary to invalidate an existing affected projection in
+   the canonical transaction, then rebuild it immediately after commit through
+   the TypeScript calculator and revision-fenced trusted writer. Backfill
+   existing entities only through explicit repair operations. Legacy direct
    writers remain compatibility paths and are instrumented until retired.
 5. **Consumer cutover.** Move ordinary Task surfaces and current readiness to
    valid current projections. Keep History, Calendar detail, repair, and
@@ -575,8 +607,10 @@ must not be extended with new current-surface dependencies.
 4. Projection freshness is proven by Task, History, schedule, behavior-policy,
    logical-day, projected-date, and algorithm/schema fences.
 5. The user-wide History sync revision is not treated as an entity revision.
-6. Successful canonical commands and their current projection commit
-   atomically, or the command does not report success.
+6. Successful canonical commands atomically invalidate any existing affected
+   projection, while projection materialization is an immediate,
+   revision-fenced, retryable post-commit operation that cannot block canonical
+   commit.
 7. Projection repair cannot write canonical History or reward evidence.
 8. Time passage can invalidate and reconcile projections, but cannot by itself
    create History, resolve recurrence, or grant rewards.
@@ -606,9 +640,13 @@ must not be extended with new current-surface dependencies.
 
 ## Scope record
 
-- Production runtime code: untouched.
-- Source SQL/schema/types/tests: physical 7.15.12 foundation authored.
-- Edge Functions: untouched.
+- Production runtime code: untouched; the rebuild helper is authored but not
+  wired into command orchestration.
+- Source SQL/schema/types/tests: 7.15.12 physical foundation plus 7.15.14
+  invalidation/writer protocol authored.
+- Edge Functions: not deployed or cut over.
 - UI and browser behavior: untouched and unverified.
 - SQL remains unapplied. No backfill, deployment, live Supabase proof, or
-  runtime cutover occurred; those require later tickets.
+  runtime cutover occurred; those require later tickets. The old strict
+  atomic-projection-write rule is superseded by atomic invalidation plus
+  revision-fenced immediate post-commit materialization.
