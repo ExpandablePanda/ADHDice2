@@ -1,6 +1,6 @@
 # Phase 1E: Current Task Read Projection Architecture
 
-Status: locked architecture direction; 7.15.12 physical foundation authored
+Status: locked architecture direction; 7.15.13 pure calculator and parity harness authored
 Ticket: ADHDice 7.15.11 architecture / ADHDice 7.15.12 schema foundation
 Scope: ordinary current Task reads, projection persistence, freshness, invalidation,
 repair, and migration sequencing
@@ -209,6 +209,49 @@ alone:
 The projection may carry additional explanation or aggregate fields later, but
 no consumer may require a full History array to render an ordinary current Task
 row after cutover.
+
+## 7.15.13 pure calculator seam
+
+`src/lib/task-current-projection.ts` is the write-free calculator seam for the
+physical 7.15.12 row contract. `buildCurrentTaskProjection()` accepts one
+canonical `CanonicalTaskStateReadModel`, the existing behavior-policy context,
+an entity-scoped History ledger frontier, the projected timestamp, and an
+optional effective tracking-exclusion result for child entities. It maps the
+read model through `buildCanonicalTaskStateEngineInput()` and the existing
+`evaluateTaskState()` evaluator; it does not call Supabase, write rows, create
+History, or mutate its inputs.
+
+Field authorities remain explicit:
+
+- `display_status`, current effective due, next due, and current-day handled
+  state come from canonical lifecycle plus the existing Task State evaluator.
+- Last Handled uses `buildTaskHistoryLastHandledSummaryMap()` over this entity's
+  canonical History, active Calendar overrides, and command operations. Last
+  Done and both streaks use the existing History/timeline summary authority;
+  effective tracking exclusion still zeros both streaks.
+- An occurrence ID is emitted only from a matching materialized canonical
+  occurrence row. Date-derived engine identities are never persisted as IDs.
+  `none` means no materialized current row; `open` means unresolved/current,
+  `overdue` means an active Missed obligation, `delayed` means a delayed
+  current obligation, `handled` means a resolved handled occurrence, and
+  `terminated` means terminal/lifecycle completion.
+
+Schedule, behavior, and History fences are semantic SHA-256 digests in the
+exact `sha256:<64 lowercase hex>` form. Boundary/occurrence/override arrays
+and effective behavior selections are stably ordered before hashing. Source
+fingerprints include authoritative result values, so a timestamp changes the
+source only when that timestamp is itself exposed as the current Last Handled
+or Last Done result. Invalid authority, malformed fences, ambiguous occurrence
+state, and unproven child tracking exclusion fail closed as `unavailable` or
+`repair_required`.
+
+`test/task-current-projection-7-15-13.test.ts` is the shadow parity harness. It
+compares the calculator with the current canonical Active Status, effective
+timeline, Last Handled/Last Done, and streak authorities across lifecycle,
+recurrence, occurrence, History correction, Calendar override, policy-boundary,
+Custom, hierarchy, exclusion, and logical-day fixtures. The harness is source
+only: no projection rows are written and `add_task_current_projection_7_15_12.sql`
+is not applied.
 
 ## Physical storage contract (7.15.12 foundation)
 

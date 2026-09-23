@@ -14,6 +14,25 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-23 7.15.13 Current Task Projection Calculator + Parity Harness
+
+The pure `buildCurrentTaskProjection()` calculator now composes the canonical
+Task State read-model adapter, existing evaluator, Last Handled/Last Done
+semantics, effective-timeline streak authority, and entity-scoped freshness
+fences into a complete in-memory `TaskCurrentProjection` row. It emits only
+materialized canonical occurrence IDs, uses deterministic colon-prefixed
+SHA-256 schedule/behavior/History/source fingerprints, and fails closed for
+missing authority, malformed fences, contradictory occurrence state, or
+unproven child tracking exclusion.
+
+Focused parity and fingerprint tests cover current status/due/handled fields,
+last handled/Done, positive/Missed streaks, recurrence and lifecycle cases,
+occurrence identity, History/Calendar/policy boundaries, Custom, hierarchy,
+tracking exclusion, logical-day handling, semantic ordering, and timestamp
+churn. This remains a source-only shadow path: no projection rows were written,
+`supabase/add_task_current_projection_7_15_12.sql` was not applied, no runtime
+consumer or startup path changed, and the runtime baseline remains `7.15.10`.
+
 ## 2026-09-23 7.15.12 Current Task Projection Physical Schema Foundation
 
 Phase 1E physical storage is now authored as a source-only additive contract.
