@@ -477,6 +477,26 @@ test("projection fences use colon-prefixed SHA-256 and normalize semantic orderi
   assert.equal(firstProjection.source_fingerprint, secondProjection.source_fingerprint);
 });
 
+test("production rebuild source fences override local diagnostic serializers", () => {
+  const input = structuredClone(scenarios.find((item) => item.name === "one-off pending")!.input);
+  input.sourceFences = {
+    scheduleBoundaryRevision: "sha256:" + "1".repeat(64),
+    behaviorPolicyRevision: "sha256:" + "2".repeat(64),
+  };
+  const baseline = buildCurrentTaskProjection(input);
+  const changed = structuredClone(input);
+  changed.readModel.scheduleBoundaries[0]!.one_time_due_on = "2026-10-01";
+  changed.behaviorContext = {
+    behaviorPolicyRevisions: {
+      task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-01-01", unresolvedOccurrence: "blank" }],
+    },
+  };
+  assert.equal(baseline.schedule_boundary_revision, input.sourceFences.scheduleBoundaryRevision);
+  assert.equal(baseline.behavior_policy_revision, input.sourceFences.behaviorPolicyRevision);
+  assert.equal(buildCurrentTaskProjection(changed).schedule_boundary_revision, input.sourceFences.scheduleBoundaryRevision);
+  assert.equal(buildCurrentTaskProjection(changed).behavior_policy_revision, input.sourceFences.behaviorPolicyRevision);
+});
+
 test("entity History changes only its own History and source fences", () => {
   const first = scenarios.find((item) => item.name === "one-off pending")!.input;
   const second = structuredClone(first);

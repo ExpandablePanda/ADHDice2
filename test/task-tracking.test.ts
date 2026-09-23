@@ -8,6 +8,7 @@ import {
   buildEffectiveTrackingExclusionSet,
   filterTrackedTaskHistory,
   isTaskEffectivelyExcludedFromTracking,
+  resolveTaskTrackingExclusion,
 } from "../src/lib/task-tracking.ts";
 
 function task(id: string, parent_task_id: string | null = null, exclude_from_tracking = false): Task {
@@ -29,6 +30,21 @@ test("tracking exclusion inherits downward without changing siblings or ancestor
 test("malformed parent cycles terminate and still honor a direct exclusion", () => {
   const tasks = [task("a", "b"), task("b", "a", true), task("c", "a")];
   assert.deepEqual([...buildEffectiveTrackingExclusionSet(tasks)].sort(), ["a", "b", "c"]);
+});
+
+test("bounded projection tracking resolution inherits excluded parents and grandparents", () => {
+  const parent = task("parent", null, true);
+  const step = task("step", "parent");
+  const substep = task("substep", "step");
+  const tasks = [parent, step, substep];
+  assert.deepEqual(resolveTaskTrackingExclusion(step, [step, parent]), { status: "resolved", excluded: true });
+  assert.deepEqual(resolveTaskTrackingExclusion(substep, tasks), { status: "resolved", excluded: true });
+  assert.deepEqual(resolveTaskTrackingExclusion(task("ordinary", null), [task("ordinary")]), { status: "resolved", excluded: false });
+});
+
+test("bounded projection tracking resolution fails closed on missing ancestors and cycles", () => {
+  assert.equal(resolveTaskTrackingExclusion(task("child", "missing"), [task("child", "missing")]).status, "unavailable");
+  assert.equal(resolveTaskTrackingExclusion(task("a", "b"), [task("a", "b"), task("b", "a")]).status, "unavailable");
 });
 
 test("Records collapse filters effective exclusion while retaining History input", () => {

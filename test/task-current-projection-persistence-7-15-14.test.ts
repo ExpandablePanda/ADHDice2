@@ -6,6 +6,7 @@ import {
   type CurrentTaskProjectionRebuildDependencies,
   type TrustedCurrentTaskProjectionClient,
 } from "../src/lib/task-current-projection-rebuild.ts";
+import type { BuildCurrentTaskProjectionInput } from "../src/lib/task-current-projection.ts";
 import type { TaskCurrentProjection } from "../src/lib/database.types.ts";
 
 const commandSql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
@@ -53,6 +54,10 @@ const dependencies = (writeProjection: CurrentTaskProjectionRebuildDependencies[
     frontier: null,
   }),
   loadBehaviorContext: async () => ({ context: {}, error: null }),
+  loadSourceFences: async () => ({
+    scheduleBoundaryRevision: projection.schedule_boundary_revision,
+    behaviorPolicyRevision: projection.behavior_policy_revision,
+  }),
   buildProjection: () => projection,
   writeProjection,
 });
@@ -129,6 +134,45 @@ test("stale writer fences are retryable and do not become a canonical failure", 
     reason: "stale_projection_fence",
     message: "Current Task projection entity History frontier is stale.",
   });
+});
+
+test("schedule and behavior source-fence races reject the old calculated candidate", async () => {
+  for (const field of ["schedule_boundary_revision", "behavior_policy_revision"] as const) {
+    const calculatedFences = {
+      scheduleBoundaryRevision: projection.schedule_boundary_revision,
+      behaviorPolicyRevision: projection.behavior_policy_revision,
+    };
+    const currentFences = {
+      ...calculatedFences,
+      ...(field === "schedule_boundary_revision"
+        ? { scheduleBoundaryRevision: "sha256:" + "e".repeat(64) }
+        : { behaviorPolicyRevision: "sha256:" + "f".repeat(64) }),
+    };
+    const expectedCurrentFence = field === "schedule_boundary_revision"
+      ? currentFences.scheduleBoundaryRevision
+      : currentFences.behaviorPolicyRevision;
+    const result = await rebuildCurrentTaskProjection({
+      adminClient,
+      userId: "owner-1",
+      taskId: "task-1",
+      dependencies: {
+        ...dependencies(async (_client, _userId, candidate) => candidate[field] === expectedCurrentFence
+          ? { data: { state: "written" }, error: null }
+          : { data: null, error: { code: "40001", message: `${field} source fence is stale.` } }),
+        loadSourceFences: async () => calculatedFences,
+        buildProjection: (input: BuildCurrentTaskProjectionInput) => ({
+          ...projection,
+          schedule_boundary_revision: input.sourceFences!.scheduleBoundaryRevision,
+          behavior_policy_revision: input.sourceFences!.behaviorPolicyRevision,
+        }),
+      },
+    });
+    assert.deepEqual(result, {
+      status: "retryable",
+      reason: "stale_projection_fence",
+      message: `${field} source fence is stale.`,
+    });
+  }
 });
 
 test("a post-commit rebuild failure leaves the canonical command boundary untouched", async () => {

@@ -1,7 +1,7 @@
 # Phase 1E: Current Task Read Projection Architecture
 
-Status: locked architecture direction; 7.15.14 persistence protocol authored
-Ticket: ADHDice 7.15.14 projection freshness correction and durable rebuild protocol
+Status: locked architecture direction; 7.15.15 source-fence and narrow-rebuild protocol authored
+Ticket: ADHDice 7.15.15 hardened Current Task projection source fences and rebuild inputs
 Scope: ordinary current Task reads, projection persistence, freshness, invalidation,
 repair, and migration sequencing
 Implementation status: source-only persistence protocol and un wired rebuild
@@ -59,6 +59,37 @@ canonical-engine composition, while SQL is the authority for final History
 ledger sequence/identity/timestamps. Duplicating Task State, recurrence, or
 streak calculation in PL/pgSQL is prohibited. The projection is a rebuildable
 read model and must never become a canonical write-availability dependency.
+
+## 7.15.15 source fences and rebuild inputs
+
+Projection persistence now has one trusted PostgreSQL source-fence authority:
+`public.adhdice_get_task_current_projection_source_fences(user_id, entity_id,
+projected_logical_date)`. It hashes stable, owner/entity-scoped canonical
+schedule rows (boundaries, active materialized occurrences, effective
+occurrence overrides, and active Calendar overrides) and the applicable
+behavior source rows (effective Task behavior selections, TaskType profile
+revisions, and named Custom identity/revisions). Semantic ordering is explicit;
+`created_at` and `updated_at` are excluded from source identity. Behavior rows
+that are effective only after the projected logical date do not invalidate the
+current projection unless they are the source's required baseline.
+
+The trusted TypeScript rebuild obtains that database snapshot before calculating
+the projection and carries the exact returned tokens into the candidate. Local
+TypeScript fingerprint helpers remain useful for parity diagnostics only. The
+service-role-only writer invokes the same helper immediately before upsert and
+rejects any schedule or behavior mismatch with retryable `40001` stale-fence
+error semantics. SQL still does not evaluate Active Status, recurrence,
+streaks, rewards, or behavior meaning.
+
+Rebuilds use `loadCanonicalTaskProjectionSource()` instead of the broad
+`loadCanonicalTaskState()` loader. The narrow path reads one Task, logical-day
+profile, entity-scoped command operations, schedule/occurrence/override rows,
+entity-scoped History, Calendar overrides, and the Task's behavior selections;
+reward grants, reward claim consumptions, unrelated Tasks, unrelated History,
+and unrelated command operations are not loaded. It fetches only the bounded
+ancestor chain required to prove inherited tracking exclusion and fails closed
+on missing, cyclic, or cross-owner hierarchy evidence. The existing broad
+loader remains unchanged for command paths that require its full contract.
 
 ## Current problem
 

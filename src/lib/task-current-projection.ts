@@ -56,11 +56,18 @@ export type CurrentTaskProjectionHistoryFence = {
   frontier?: CurrentTaskProjectionHistoryFrontier | null;
 };
 
+export type CurrentTaskProjectionSourceFences = {
+  scheduleBoundaryRevision: string;
+  behaviorPolicyRevision: string;
+};
+
 export type BuildCurrentTaskProjectionInput = {
   readModel: CanonicalTaskStateReadModel;
   behaviorContext?: TaskBehaviorPolicyResolutionContext;
   historyFence: CurrentTaskProjectionHistoryFence;
   projectedAt: string | Date;
+  /** Trusted database snapshot used by the production persistence path. */
+  sourceFences?: CurrentTaskProjectionSourceFences;
   /** Required for a child whose exclusion is inherited from an ancestor. */
   effectiveTrackingExclusion?: boolean;
 };
@@ -427,6 +434,12 @@ function validateInputs(
       diagnostics.repairRequired.push("History frontier row revision is malformed");
     }
   }
+  if (input.sourceFences && (
+    !SHA256_PREFIX.test(input.sourceFences.scheduleBoundaryRevision)
+    || !SHA256_PREFIX.test(input.sourceFences.behaviorPolicyRevision)
+  )) {
+    diagnostics.unavailable.push("trusted projection source fences are malformed");
+  }
   // The 7.15.6 ledger intentionally starts at revision zero without
   // backfilling pre-ledger History. Old canonical facts therefore form a
   // valid sync-epoch baseline even when this entity has no ledger frontier.
@@ -487,8 +500,9 @@ function invalidProjection(
   diagnostics: ProjectionBuildDiagnostics,
 ): TaskCurrentProjection {
   const task = input.readModel.task as CanonicalTask;
-  const scheduleBoundaryRevision = scheduleFence(input.readModel);
-  const behaviorPolicyRevision = sha256Digest({ unavailable: "behavior-policy-fence" });
+  const scheduleBoundaryRevision = input.sourceFences?.scheduleBoundaryRevision ?? scheduleFence(input.readModel);
+  const behaviorPolicyRevision = input.sourceFences?.behaviorPolicyRevision
+    ?? sha256Digest({ unavailable: "behavior-policy-fence" });
   const historySourceFingerprint = historyFence(input.readModel, input.historyFence);
   const safeIdentity = isTaskKind(task.entity_kind) ? task.entity_kind : "parent";
   const sourceFingerprint = sha256Digest({
@@ -661,8 +675,10 @@ export function buildCurrentTaskProjection(input: BuildCurrentTaskProjectionInpu
     ? "repair_required"
     : validity;
   const historySourceFingerprint = historyFence(readModel, input.historyFence);
-  const scheduleBoundaryRevision = scheduleFence(readModel);
-  const behaviorPolicyRevision = behaviorFence(readModel, context, logicalDate);
+  const scheduleBoundaryRevision = input.sourceFences?.scheduleBoundaryRevision
+    ?? scheduleFence(readModel);
+  const behaviorPolicyRevision = input.sourceFences?.behaviorPolicyRevision
+    ?? behaviorFence(readModel, context, logicalDate);
   const lastDone = getTaskHistoryLastDone(
     mapCanonicalTaskHistoryFacts(readModel.historyFacts),
     logicalDate,

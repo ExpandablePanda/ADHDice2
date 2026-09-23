@@ -1,4 +1,4 @@
-import type { Task, TaskHistory } from "@/lib/database.types";
+import type { Task, TaskHistory } from "./database.types.ts";
 
 /**
  * Tracking exclusion is a direct Task attribute. Descendants inherit the
@@ -61,6 +61,45 @@ export function isTaskEffectivelyExcludedFromTracking(
   tasks: readonly Pick<Task, "id" | "parent_task_id" | "exclude_from_tracking">[],
 ) {
   return buildEffectiveTrackingExclusionSet(tasks).has(task.id);
+}
+
+export type TaskTrackingExclusionResolution =
+  | { status: "resolved"; excluded: boolean }
+  | { status: "unavailable"; message: string };
+
+/**
+ * Resolve one Task only after its supplied ancestor evidence is complete and
+ * acyclic. The existing exclusion-set helper remains the semantic authority;
+ * this wrapper prevents a bounded source loader from treating ambiguous
+ * hierarchy evidence as included in tracking.
+ */
+export function resolveTaskTrackingExclusion(
+  task: Pick<Task, "id">,
+  tasks: readonly Pick<Task, "id" | "parent_task_id" | "exclude_from_tracking">[],
+): TaskTrackingExclusionResolution {
+  const taskById = new Map(tasks.map((candidate) => [candidate.id, candidate]));
+  if (!taskById.has(task.id)) {
+    return { status: "unavailable", message: "Canonical Task hierarchy evidence is missing." };
+  }
+
+  const seen = new Set<string>();
+  let currentTaskId: string | null = task.id;
+  while (currentTaskId !== null) {
+    if (seen.has(currentTaskId)) {
+      return { status: "unavailable", message: "Canonical Task hierarchy contains a parent cycle." };
+    }
+    seen.add(currentTaskId);
+    const currentTask = taskById.get(currentTaskId);
+    if (!currentTask) {
+      return { status: "unavailable", message: "Canonical Task hierarchy evidence is incomplete." };
+    }
+    currentTaskId = currentTask.parent_task_id;
+  }
+
+  return {
+    status: "resolved",
+    excluded: isTaskEffectivelyExcludedFromTracking(task, tasks),
+  };
 }
 
 export function filterTrackedTaskHistory(

@@ -14,6 +14,31 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-23 7.15.15 Harden Current Projection Source Fences and Rebuild Inputs
+
+The source-only 7.15.15 projection patch adds one trusted PostgreSQL
+`adhdice_get_task_current_projection_source_fences` authority for deterministic
+schedule and behavior freshness tokens. The service-role writer recomputes that
+same snapshot immediately before upsert and rejects stale candidates when
+schedule boundaries, occurrences/overrides, effective behavior selections,
+TaskType policy revisions, or named Custom ruleset sources changed. Future
+policy rows that cannot affect the projected logical date are excluded from the
+token unless they are the source's required baseline. TypeScript-local fence
+serializers remain diagnostic/parity helpers; production persistence consumes
+the DB-issued tokens.
+
+Projection rebuilds now use a narrow entity-scoped canonical loader. It reads
+only the target Task and required logical-day, command, schedule, occurrence,
+override, History, Calendar, and behavior-selection inputs; it does not issue
+unfiltered command/History reads or load reward grants/claim consumptions. A
+bounded ancestor chain proves inherited tracking exclusion for Steps/Substeps,
+and missing, cyclic, or cross-owner hierarchy evidence fails closed. The broad
+canonical loader remains unchanged for other command paths.
+
+This is source-only: 7.15.12, 7.15.14, and 7.15.15 SQL were not applied, the
+task-state-command Edge Function was not deployed, no rebuild orchestration or
+runtime read cutover occurred, and the runtime baseline remains `7.15.10`.
+
 ## 2026-09-23 7.15.14 Projection Freshness Correction + Durable Rebuild Protocol
 
 The 7.15.13 calculator now accepts old canonical History as a valid

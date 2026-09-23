@@ -2,23 +2,27 @@ import type { TaskCurrentProjection } from "./database.types.ts";
 import {
   buildCurrentTaskProjection,
   type BuildCurrentTaskProjectionInput,
+  type CurrentTaskProjectionSourceFences,
 } from "./task-current-projection.ts";
 import {
-  loadCanonicalTaskState,
+  loadCanonicalTaskProjectionSource,
   type CanonicalReadClient,
   type CanonicalTaskStateReadModel,
 } from "./task-state-canonical/read-model.ts";
 import {
   isMissingTaskTypeBehaviorProfilesAdditiveSchemaError,
-  loadTaskTypeBehaviorProfiles,
-  type TaskTypeBehaviorProfileClient,
 } from "./task-type-behavior-profiles.ts";
 import {
   isMissingCustomBehaviorRulesetsAdditiveSchemaError,
-  loadCustomBehaviorRulesets,
-  type CustomBehaviorRulesetClient,
 } from "./custom-behavior-rulesets.ts";
-import type { TaskBehaviorPolicyResolutionContext } from "./task-state-engine/behavior-policy.ts";
+import {
+  normalizeTaskBehaviorPolicyRevisions,
+  normalizeTaskBehaviorProfiles,
+  normalizeTaskBehaviorProfile,
+  type TaskBehaviorPolicyResolutionContext,
+  type TaskBehaviorPolicyRevisions,
+} from "./task-state-engine/behavior-policy.ts";
+import { logicalDateForTimestamp } from "./task-state-engine/calendar.ts";
 
 export type TrustedCurrentTaskProjectionClient = CanonicalReadClient & {
   rpc(
@@ -45,9 +49,10 @@ export type CurrentTaskProjectionRebuildResult =
   };
 
 export type CurrentTaskProjectionRebuildDependencies = {
-  loadCanonicalState: typeof loadCanonicalTaskState;
+  loadCanonicalState: typeof loadCanonicalTaskProjectionSource;
   loadHistoryFence: typeof loadHistoryFence;
   loadBehaviorContext: typeof loadBehaviorContext;
+  loadSourceFences: typeof loadSourceFences;
   buildProjection: typeof buildCurrentTaskProjection;
   writeProjection: (
     adminClient: TrustedCurrentTaskProjectionClient,
@@ -57,9 +62,10 @@ export type CurrentTaskProjectionRebuildDependencies = {
 };
 
 const defaultDependencies: CurrentTaskProjectionRebuildDependencies = {
-  loadCanonicalState: loadCanonicalTaskState,
+  loadCanonicalState: loadCanonicalTaskProjectionSource,
   loadHistoryFence,
   loadBehaviorContext,
+  loadSourceFences,
   buildProjection: buildCurrentTaskProjection,
   writeProjection: async (adminClient, userId, projection) => adminClient.rpc(
     "adhdice_upsert_task_current_projection",
@@ -75,6 +81,48 @@ function staleFenceError(error: { code?: string | null; message?: string } | nul
   if (!error) return false;
   return error.code === "40001"
     || /stale|older than the stored projection|revision|frontier|sync epoch|logical date/i.test(error.message ?? "");
+}
+
+function projectionLogicalDate(readModel: CanonicalTaskStateReadModel, projectedAt: string | Date) {
+  const date = projectedAt instanceof Date ? projectedAt : new Date(projectedAt);
+  if (Number.isNaN(date.getTime())) throw new Error("Projection timestamp is malformed.");
+  return logicalDateForTimestamp(
+    date,
+    readModel.logicalDayProfile.timezone,
+    readModel.logicalDayProfile.day_start_time,
+  );
+}
+
+async function loadSourceFences(
+  adminClient: TrustedCurrentTaskProjectionClient,
+  userId: string,
+  readModel: CanonicalTaskStateReadModel,
+  projectedAt: string | Date,
+): Promise<CurrentTaskProjectionSourceFences> {
+  const result = await adminClient.rpc(
+    "adhdice_get_task_current_projection_source_fences",
+    {
+      p_user_id: userId,
+      p_entity_id: readModel.task.id,
+      p_projected_logical_date: projectionLogicalDate(readModel, projectedAt),
+    },
+  );
+  if (result.error) throw new Error(result.error.message ?? "Trusted projection source fences are unavailable.");
+  const candidate = Array.isArray(result.data) ? result.data[0] : result.data;
+  if (!candidate || typeof candidate !== "object") {
+    throw new Error("Trusted projection source fence snapshot is malformed.");
+  }
+  const source = candidate as { schedule_boundary_revision?: unknown; behavior_policy_revision?: unknown };
+  if (typeof source.schedule_boundary_revision !== "string"
+    || typeof source.behavior_policy_revision !== "string"
+    || !/^sha256:[0-9a-f]{64}$/.test(source.schedule_boundary_revision)
+    || !/^sha256:[0-9a-f]{64}$/.test(source.behavior_policy_revision)) {
+    throw new Error("Trusted projection source fence snapshot is malformed.");
+  }
+  return {
+    scheduleBoundaryRevision: source.schedule_boundary_revision,
+    behaviorPolicyRevision: source.behavior_policy_revision,
+  };
 }
 
 async function loadHistoryFence(
@@ -141,31 +189,82 @@ async function loadBehaviorContext(
   userId: string,
   readModel: CanonicalTaskStateReadModel,
 ): Promise<{ context: TaskBehaviorPolicyResolutionContext; error: string | null }> {
-  const [profilesResult, customResult] = await Promise.all([
-    loadTaskTypeBehaviorProfiles(adminClient as unknown as TaskTypeBehaviorProfileClient, userId),
-    loadCustomBehaviorRulesets(adminClient as unknown as CustomBehaviorRulesetClient, userId),
-  ]);
-  if (profilesResult.error && !isMissingTaskTypeBehaviorProfilesAdditiveSchemaError(profilesResult.error)) {
-    return { context: {}, error: profilesResult.error.message ?? "Task behavior profile authority is unavailable." };
-  }
-  if (customResult.error && !isMissingCustomBehaviorRulesetsAdditiveSchemaError(customResult.error)) {
-    return { context: {}, error: customResult.error.message ?? "Custom behavior authority is unavailable." };
-  }
-  if (customResult.behaviorSelectionError
-    && !isMissingCustomBehaviorRulesetsAdditiveSchemaError(customResult.behaviorSelectionError)) {
-    return { context: {}, error: customResult.behaviorSelectionError.message ?? "Task behavior selection authority is unavailable." };
-  }
-
   const taskSelections = (readModel.behaviorSelections ?? []).map((selection) => ({
     effectiveFromLogicalDate: selection.effective_from_logical_date,
     taskType: selection.task_type,
     customRulesetId: selection.custom_ruleset_id,
   }));
+
+  const needsTaskProfile = readModel.task.task_type === "task"
+    || taskSelections.some((selection) => selection.taskType === "task");
+  let profileRows: unknown[] = [];
+  if (needsTaskProfile) {
+    const profilesResult = await adminClient
+      .from("adhdice_task_type_behavior_profiles")
+      .select("*")
+      .eq("user_id", userId)
+      .eq("task_type", "task");
+    if (profilesResult.error && !isMissingTaskTypeBehaviorProfilesAdditiveSchemaError(profilesResult.error)) {
+      return { context: {}, error: profilesResult.error.message ?? "Task behavior profile authority is unavailable." };
+    }
+    profileRows = profilesResult.error ? [] : profilesResult.data ?? [];
+  }
+
+  const rulesetIds = new Set<string>();
+  if (readModel.task.task_type === "custom" && readModel.task.custom_ruleset_id) {
+    rulesetIds.add(readModel.task.custom_ruleset_id);
+  }
+  for (const selection of taskSelections) {
+    if (selection.taskType === "custom" && selection.customRulesetId) rulesetIds.add(selection.customRulesetId);
+  }
+
+  const customResults = await Promise.all([...rulesetIds].map(async (rulesetId) => {
+    const [identityResult, revisionsResult] = await Promise.all([
+      adminClient.from("adhdice_custom_behavior_rulesets").select("id,user_id,task_type,deleted_at").eq("user_id", userId).eq("id", rulesetId).maybeSingle(),
+      adminClient.from("adhdice_custom_behavior_ruleset_revisions").select("*").eq("ruleset_id", rulesetId),
+    ]);
+    return { rulesetId, identityResult, revisionsResult };
+  }));
+
+  const customRevisions: Record<string, TaskBehaviorPolicyRevisions> = {};
+  for (const result of customResults) {
+    if (result.identityResult.error && !isMissingCustomBehaviorRulesetsAdditiveSchemaError(result.identityResult.error)) {
+      return { context: {}, error: result.identityResult.error.message ?? "Custom behavior authority is unavailable." };
+    }
+    if (result.revisionsResult.error && !isMissingCustomBehaviorRulesetsAdditiveSchemaError(result.revisionsResult.error)) {
+      return { context: {}, error: result.revisionsResult.error.message ?? "Custom behavior authority is unavailable." };
+    }
+    if (result.identityResult.error || result.revisionsResult.error) continue;
+    const identity = result.identityResult.data;
+    if (!identity || identity.user_id !== userId || identity.id !== result.rulesetId || identity.task_type !== "custom") {
+      return { context: {}, error: "Named Custom behavior identity is missing, cross-owner, or malformed." };
+    }
+    customRevisions[result.rulesetId] = (result.revisionsResult.data ?? []).map((row) => {
+      const policy = normalizeTaskBehaviorProfile({
+        id: `custom-ruleset:${row.ruleset_id}`,
+        unresolvedOccurrence: row.unresolved_occurrence,
+        positiveStreakOnUnhandled: row.positive_streak_on_unhandled,
+        missedStreakOnUnhandled: row.missed_streak_on_unhandled,
+        rewards: row.rewards,
+        availableActions: row.available_actions,
+        needsActionTriggers: row.needs_action_triggers,
+        successOutcomes: row.success_outcomes,
+      }, "custom");
+      return { ...policy, effectiveFromLogicalDate: row.effective_from_logical_date };
+    }).sort((left, right) => left.effectiveFromLogicalDate.localeCompare(right.effectiveFromLogicalDate));
+  }
+
+  const normalizedProfiles = normalizeTaskBehaviorPolicyRevisions(profileRows);
+  const behaviorPolicyRevisions: Record<string, TaskBehaviorPolicyRevisions> = {};
+  for (const revision of normalizedProfiles) {
+    const { taskType, ...policyRevision } = revision;
+    behaviorPolicyRevisions[taskType] = [...(behaviorPolicyRevisions[taskType] ?? []), policyRevision];
+  }
   return {
     context: {
-      behaviorProfiles: profilesResult.data,
-      behaviorPolicyRevisions: profilesResult.revisions,
-      namedCustomRulesetBehaviorPolicyRevisions: customResult.revisions,
+      behaviorProfiles: normalizeTaskBehaviorProfiles(profileRows),
+      behaviorPolicyRevisions,
+      namedCustomRulesetBehaviorPolicyRevisions: customRevisions,
       behaviorSelectionsByTaskId: { [readModel.task.id]: taskSelections },
     },
     error: null,
@@ -192,7 +291,7 @@ export async function rebuildCurrentTaskProjection(input: {
   }
   const dependencies = { ...defaultDependencies, ...input.dependencies };
 
-  let readResult: Awaited<ReturnType<typeof loadCanonicalTaskState>>;
+  let readResult: Awaited<ReturnType<typeof loadCanonicalTaskProjectionSource>>;
   try {
     readResult = await dependencies.loadCanonicalState(input.adminClient, {
       userId: input.userId,
@@ -222,13 +321,28 @@ export async function rebuildCurrentTaskProjection(input: {
     return { status: "failed", reason: "behavior_authority_unavailable", message: behavior.error };
   }
 
+  const projectedAt = input.projectedAt ?? new Date().toISOString();
+  let sourceFences: CurrentTaskProjectionSourceFences;
+  try {
+    sourceFences = await dependencies.loadSourceFences(
+      input.adminClient,
+      input.userId,
+      readResult.data,
+      projectedAt,
+    );
+  } catch (error) {
+    return { status: "failed", reason: "source_fence_unavailable", message: errorMessage(error, "Trusted projection source fences are unavailable.") };
+  }
+
   let projection: TaskCurrentProjection;
   try {
     projection = dependencies.buildProjection({
       readModel: readResult.data,
       behaviorContext: behavior.context,
       historyFence,
-      projectedAt: input.projectedAt ?? new Date().toISOString(),
+      projectedAt,
+      sourceFences,
+      effectiveTrackingExclusion: readResult.data.effectiveTrackingExclusion,
     });
   } catch (error) {
     return { status: "repair_required", reason: "projection_calculation_failed", message: errorMessage(error, "Canonical projection calculation failed safely.") };
