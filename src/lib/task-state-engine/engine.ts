@@ -317,6 +317,12 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && task.activeStatusLogicalDate < today;
   const staleInProgressForRollover = staleWorkflowForRollover
     && !recurrenceByDate.has(task.activeStatusLogicalDate);
+  // A prior no-occurrence Missed fact may retain historical scheduled_due_on
+  // metadata, but it cannot bind the current stale workflow to an occurrence.
+  // A canonical workflow occurrence, when present, is carried explicitly by
+  // the rollover action and remains authoritative.
+  const staleWorkflowWithoutOccurrence = staleInProgressForRollover
+    && !input.workflow?.occurrenceId;
   const action = input.action?.type === "record_outcome"
     ? input.action
     : staleInProgressForRollover
@@ -370,7 +376,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     // Each independent Daily success belongs to its action day. Do not reuse
     // an older unresolved Missed identity when the historical chain is mixed.
     ?? independentDailySuccessIdentity
-    ?? unresolvedMissedBeforeAction.identity
+    ?? (staleWorkflowWithoutOccurrence ? null : unresolvedMissedBeforeAction.identity)
     ?? (action
       && (action.outcome === "missed" || action.outcome === "delayed" || action.outcome === "complete")
       && task.dueOn
@@ -625,7 +631,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     recurrenceAnchor = result.anchor;
     nextDue = result.nextDue;
     satisfied = result.satisfied;
-    if (result.satisfied && !row.occurrenceIdentity) {
+    if (result.satisfied && !row.occurrenceIdentity && !staleWorkflowWithoutOccurrence) {
       row.occurrenceIdentity = occurrenceIdentity(task.id, result.satisfied);
     }
     if (

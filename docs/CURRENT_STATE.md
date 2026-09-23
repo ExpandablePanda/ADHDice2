@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.21`.
+- Current working app version: `7.15.22`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.22 Stale Workflow Rollover Without Occurrence
+
+This release corrects the 7.15.21 QA failure where a stale in-progress Task
+without `workflow_occurrence_id` was planned with a non-null History
+`scheduled_due_on`. The planner/Edge path now keeps the stale-workflow History
+fact occurrence-unbound while preserving the stale logical date, workflow
+clearing, rewards, Achievement capture, compatibility projection, and
+projection shadow maintenance. A canonical workflow occurrence still supplies
+its own canonical ID and scheduled due date.
+
+The 7.15.21 busy guard worked: Settings blocked backfill while the rollover
+sweep was genuinely active. That sweep processed 44 commands, deferred child
+Achievement evaluation, and completed one final Achievement evaluation
+successfully. One no-occurrence stale-workflow Task was rejected because the
+planner supplied occurrence metadata that the canonical validator correctly
+refused. The root cause was planner occurrence metadata, not projection or
+backfill. The correction is planner/Edge-only; no SQL was applied, no live
+projection backfill ran, and the projection migration remains paused.
 
 ## 2026-09-23 7.15.21 Rollover Achievement Deferral + Backfill Count Correction
 

@@ -84,7 +84,7 @@ export function buildCanonicalTaskStateEngineInput(
     ...readModel.task,
     canonical_schedule_boundary: boundary,
     active_occurrence_due_on: readModel.task.workflow_state === "in_progress"
-      ? workflowOccurrence?.scheduled_due_on ?? readModel.task.active_occurrence_due_on
+      ? workflowOccurrence?.scheduled_due_on ?? null
       : readModel.task.active_occurrence_due_on,
   } as CanonicalProjectedTaskState;
   const engineContext = readModel.behaviorSelections
