@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.18`.
+- Current working app version: `7.15.19`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.19 Controlled Current Projection Backfill Pilot
+
+An authenticated `task-current-projection-backfill` Edge Function and one
+development-only Settings control now provide a resumable owner-scoped pilot
+backfill. Each request accepts a maximum batch of 10, uses deterministic
+`id` keyset pagination, selects only missing non-deleted canonical-runtime
+parent/step/substep projections, and rebuilds Tasks serially through the
+existing `rebuildCurrentTaskProjection()` authority. A retryable stale fence
+gets one immediate retry; failures do not abort the remaining batch.
+
+The first live pilot has **not** been run at commit time. The control is
+production-gated and never runs on startup. Browser projection consumers,
+History startup, and projection Realtime remain unchanged; the expected live
+projection count before Andrew's manual click remains 5.
 
 ## 2026-09-23 7.15.18 Contain Runaway Task Hierarchy RPCs
 

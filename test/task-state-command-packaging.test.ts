@@ -7,6 +7,8 @@ import test from "node:test";
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const functionRoot = resolve(repoRoot, "supabase/functions/task-state-command");
 const entrypoint = resolve(functionRoot, "index.ts");
+const backfillFunctionRoot = resolve(repoRoot, "supabase/functions/task-current-projection-backfill");
+const backfillEntrypoint = resolve(backfillFunctionRoot, "index.ts");
 const activeStatusProjectionEntrypoint = resolve(repoRoot, "src/lib/task-state-canonical/active-status-read.ts");
 
 function localImportSpecifiers(source: string) {
@@ -117,4 +119,20 @@ test("compact Active Status projection has a Deno-resolvable server-safe local g
     assert.doesNotMatch(path, /^src\/(app|components|hooks)\//);
     assert.doesNotMatch(path, /(?:task-history|stable-task-projection)/i);
   }
+});
+
+test("current projection backfill has a Deno-resolvable local graph with no broad alias", () => {
+  const config = JSON.parse(readFileSync(resolve(backfillFunctionRoot, "deno.json"), "utf8")) as {
+    imports?: Record<string, string>;
+  };
+  assert.deepEqual(config.imports ?? {}, {});
+
+  const graphPaths = new Set([...collectLocalGraph(backfillEntrypoint)].map((file) => relative(repoRoot, file)));
+  for (const path of graphPaths) {
+    assert.doesNotMatch(path, /^src\/(app|components|hooks)\//);
+  }
+  assert.equal(graphPaths.has("supabase/functions/task-current-projection-backfill/index.ts"), true);
+  assert.equal(graphPaths.has("supabase/functions/task-current-projection-backfill/domain.ts"), true);
+  assert.equal(graphPaths.has("supabase/functions/task-state-command/auth.ts"), true);
+  assert.equal(graphPaths.has("src/lib/task-current-projection-rebuild.ts"), true);
 });

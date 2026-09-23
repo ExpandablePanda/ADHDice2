@@ -8230,6 +8230,7 @@ export function TaskApp() {
         ) : activePage === "Settings" ? (
           <TaskSettingsPage
             accentColor={accentColor}
+            client={supabase}
             dayStartTime={dayStartTime}
             timeZone={userTimeZone}
             onAccentColorChange={setAccentColor}
