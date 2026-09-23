@@ -1,11 +1,11 @@
 # Phase 1E: Current Task Read Projection Architecture
 
-Status: locked architecture direction; documentation only
-Ticket: ADHDice 7.15.11
+Status: locked architecture direction; 7.15.12 physical foundation authored
+Ticket: ADHDice 7.15.11 architecture / ADHDice 7.15.12 schema foundation
 Scope: ordinary current Task reads, projection persistence, freshness, invalidation,
 repair, and migration sequencing
-Implementation status: not implemented by this ticket; no runtime, SQL, schema,
-generated type, Edge Function, or UI change is authorized here
+Implementation status: physical source contract only; no runtime read/write
+cutover, backfill, Edge Function, or live SQL application is authorized here
 
 Required inputs: [`TASK_STATE_ENGINE.md`](../TASK_STATE_ENGINE.md),
 [`WORKSPACE_LOADING_ARCHITECTURE.md`](../WORKSPACE_LOADING_ARCHITECTURE.md),
@@ -141,7 +141,7 @@ type CurrentTaskProjection = {
   entityKind: "parent" | "step" | "substep";
 
   displayStatus: "pending" | "in_progress" | "done" | "did_my_best"
-    | "missed" | "delayed" | "upcoming" | "unscheduled" | "complete"
+    | "missed" | "delayed" | "upcoming" | "not_due" | "unscheduled" | "complete"
     | "archived" | "trashed";
   currentEffectiveDueOn: string | null;
   nextDueOn: string | null;
@@ -209,6 +209,72 @@ alone:
 The projection may carry additional explanation or aggregate fields later, but
 no consumer may require a full History array to render an ordinary current Task
 row after cutover.
+
+## Physical storage contract (7.15.12 foundation)
+
+The additive source contract is `public.adhdice_task_current_projections` in
+`supabase/add_task_current_projection_7_15_12.sql`. It has one row per
+owner/entity, keyed by `(user_id, entity_id)`, with the following exact groups:
+
+- Identity: `user_id uuid`, `entity_id uuid`, and `entity_kind text` constrained
+  to `parent`, `step`, or `substep`.
+- Current result: `display_status text`, `current_effective_due_on date`,
+  `next_due_on date`, `active_occurrence_id uuid`,
+  `active_occurrence_status text`, `handled_current_logical_day boolean`,
+  last-handled/last-Done logical dates and timestamps, and non-negative integer
+  positive/Missed streaks.
+- Freshness: `canonical_task_revision bigint`, `history_sync_epoch uuid`,
+  `history_source_revision bigint`, SHA-256 `history_source_fingerprint`,
+  SHA-256 `schedule_boundary_revision`, SHA-256
+  `behavior_policy_revision`, `logical_day_settings_revision bigint`,
+  `projected_logical_date date`, fixed schema/algorithm version strings, and
+  SHA-256 `source_fingerprint`.
+- State: `validity text` constrained to `valid`, `repair_required`, or
+  `unavailable`, plus `created_at` and `updated_at`. Detailed diagnostics stay
+  in rebuild/operator logs; no canonical fact is mutated to carry diagnostics.
+
+### Physical fence decisions
+
+- **History:** reuse `adhdice_task_history_changes`. Its existing global
+  `sequence` remains the transport watermark and `sync_epoch` remains the
+  user-wide transport fence. The new `(user_id, entity_id, sequence DESC)`
+  index makes the latest affected sequence for one entity a bounded lookup.
+  `history_source_revision` stores that sequence, or zero when the entity has
+  no ledger row. `history_source_fingerprint` is a deterministic SHA-256 hash
+  of the latest ledger frontier tuple (owner, entity, sequence, fact identity,
+  logical date, operation, and row revision), with a deterministic empty tuple
+  for zero-history entities. No per-entity History table is needed.
+- **Schedule:** `schedule_boundary_revision` is a deterministic SHA-256
+  fingerprint of the applicable existing schedule-boundary chain, built from
+  boundary IDs/sequences/revisions and recurrence source fingerprints. It does
+  not create a schedule authority or use timestamps as a revision.
+- **Behavior:** `behavior_policy_revision` is a deterministic SHA-256
+  fingerprint of the effective-dated Task behavior selections, applicable
+  default/custom profile revisions, and named Custom ruleset identity/policy
+  fields for the projected logical date. Semantic values and effective dates,
+  not `updated_at`, define the fence.
+- **Logical day:** `logical_day_settings_revision` reuses the authoritative
+  monotonic `adhdice_user_profiles.settings_revision`, which advances only
+  when timezone or day-start changes.
+
+The projection has an owner-safe composite foreign key to
+`adhdice_clean_tasks(user_id, id)` with `ON DELETE CASCADE`: deleting a
+canonical Task removes its dependent read row, while deleting a projection can
+never delete the Task. The entity-kind check is a projection contract; trusted
+writers must also verify it against the canonical Task row.
+
+RLS enables authenticated owner-scoped `SELECT` using
+`((select auth.uid()) = user_id)`. `public`, `anon`, and `authenticated` have
+no direct write grants; `service_role` is the reserved trusted-writer grant
+for a future command/rebuild boundary. The only foundation indexes are the
+owner/entity primary key, the reconciliation candidate index on
+`(user_id, validity, projected_logical_date, entity_id)`, and the History
+ledger entity-frontier index described above. Due/frontier indexes are deferred
+until a reconciler query proves they are needed.
+
+This foundation does not create rows, backfill data, change command or
+Realtime writes, alter workspace loading, remove full History loading, or
+change any current consumer.
 
 ## Revision and freshness contract
 
@@ -497,9 +563,9 @@ must not be extended with new current-surface dependencies.
 
 ## Scope record
 
-- Production code: untouched.
-- Tests: untouched.
-- SQL, schema, generated database types, and Edge Functions: untouched.
+- Production runtime code: untouched.
+- Source SQL/schema/types/tests: physical 7.15.12 foundation authored.
+- Edge Functions: untouched.
 - UI and browser behavior: untouched and unverified.
-- This document locks architecture and migration order only; implementation,
-  deployment, and live Supabase proof require later tickets.
+- SQL remains unapplied. No backfill, deployment, live Supabase proof, or
+  runtime cutover occurred; those require later tickets.

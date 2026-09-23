@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.8`.
+- Current working app version: `7.15.10`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.12 Current Task Projection Physical Schema Foundation
+
+Phase 1E physical storage is now authored as a source-only additive contract.
+`public.adhdice_task_current_projections` is owner-scoped and keyed by
+`(user_id, entity_id)`, carries current status/due/occurrence/handled/streak
+values, and is fenced by canonical Task revision, entity-scoped History
+frontier plus the existing History sync epoch, schedule and behavior semantic
+fingerprints, profile `settings_revision`, projected logical date, and fixed
+projection schema/algorithm versions. Validity is explicitly `valid`,
+`repair_required`, or `unavailable`.
+
+The existing `adhdice_task_history_changes` ledger is reused for entity-scoped
+History freshness through a new `(user_id, entity_id, sequence DESC)` index;
+no second per-entity History authority was introduced. RLS permits only
+authenticated owner-scoped reads, while direct browser writes remain revoked
+for the future trusted command/rebuild boundary. No projection rows were
+created or backfilled, and no command, Realtime, startup, consumer, Edge
+Function, or live Supabase path changed.
+
+The runtime baseline remains `7.15.10`. The 7.15.11 entry was
+documentation-only and did not replace the runtime version.
 
 ## 2026-09-23 7.15.11 Lock Current Task Read Projection Architecture
 
@@ -41,10 +63,10 @@ the affected entity/domain rather than broad workspace reload. The current
 full-History source path remains transitional until shadow parity, command
 dual-write, consumer cutover, and retirement gates pass.
 
-This is documentation/architecture only. No runtime code, SQL, schema,
-generated types, Edge Functions, UI, or live Supabase state changed. The
-working app version remains `7.15.8`; no runtime version bump is required for a
-documentation-only architecture ticket.
+This was documentation/architecture only. The 7.15.12 foundation below adds
+source SQL/schema/types/tests without changing runtime behavior. No live
+Supabase state changed. The working runtime version remains `7.15.10`; no
+runtime version bump is required for either source-only ticket.
 
 ## 2026-09-22 7.15.8 Retire Obsolete Task Grid Runtime
 

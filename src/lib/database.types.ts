@@ -2,6 +2,7 @@ import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/per
 import type { TaskType } from "./task-type-domain.ts";
 import type { TaskManualAction, TaskNeedsActionTrigger, TaskSuccessOutcome } from "./task-state-engine/behavior-policy.ts";
 import type {
+  CanonicalEntityKind,
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
   CanonicalTaskHistoryFact,
@@ -657,6 +658,59 @@ export type TaskHistoryChange = {
   operation: "upsert" | "delete";
   row_revision: number | null;
   changed_at: string;
+};
+
+export type CurrentTaskProjectionDisplayStatus = TaskStatus | "unscheduled";
+export type CurrentTaskProjectionActiveOccurrenceStatus =
+  | "none"
+  | "open"
+  | "overdue"
+  | "delayed"
+  | "handled"
+  | "terminated";
+export type CurrentTaskProjectionValidity = "valid" | "repair_required" | "unavailable";
+
+export type TaskCurrentProjection = {
+  user_id: string;
+  entity_id: string;
+  entity_kind: CanonicalEntityKind;
+  display_status: CurrentTaskProjectionDisplayStatus;
+  current_effective_due_on: string | null;
+  next_due_on: string | null;
+  active_occurrence_id: string | null;
+  active_occurrence_status: CurrentTaskProjectionActiveOccurrenceStatus;
+  handled_current_logical_day: boolean;
+  last_handled_logical_date: string | null;
+  last_handled_at: string | null;
+  last_done_logical_date: string | null;
+  last_done_at: string | null;
+  current_positive_streak: number;
+  current_missed_streak: number;
+  canonical_task_revision: number;
+  history_sync_epoch: string;
+  history_source_revision: number;
+  history_source_fingerprint: string;
+  schedule_boundary_revision: string;
+  behavior_policy_revision: string;
+  logical_day_settings_revision: number;
+  projected_logical_date: string;
+  projection_schema_version: "task-current-projection-schema-v1";
+  projection_algorithm_version: "task-current-projection-algorithm-v1";
+  source_fingerprint: string;
+  validity: CurrentTaskProjectionValidity;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskCurrentProjectionInsert = Omit<TaskCurrentProjection, "created_at" | "updated_at"> & {
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TaskCurrentProjectionUpdate = Partial<
+  Omit<TaskCurrentProjection, "user_id" | "entity_id" | "created_at" | "updated_at">
+> & {
+  updated_at?: string;
 };
 
 export type TaskHistoryActionInput = {
@@ -2816,6 +2870,12 @@ export type Database = {
         Row: TaskHistoryChange;
         Insert: Partial<TaskHistoryChange>;
         Update: Partial<TaskHistoryChange>;
+        Relationships: [];
+      };
+      adhdice_task_current_projections: {
+        Row: TaskCurrentProjection;
+        Insert: TaskCurrentProjectionInsert;
+        Update: TaskCurrentProjectionUpdate;
         Relationships: [];
       };
       adhdice_task_calendar_overrides: {
