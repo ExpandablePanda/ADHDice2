@@ -1,4 +1,5 @@
 import type { CurrentTaskProjectionParityField } from "./task-current-projection-read.ts";
+import type { TaskHistoryStreakSummary } from "./task-history-streak-summaries.ts";
 
 export type CurrentTaskProjectionScopedVerificationIdentity = {
   logicalDate: string;
@@ -12,6 +13,18 @@ export type CurrentTaskProjectionScopedVerificationResult<T> =
   | { status: "completed"; value: T }
   | { status: "stale"; value: null };
 
+export type CurrentTaskProjectionScopedVerificationCacheEntry<T> = {
+  identity: CurrentTaskProjectionScopedVerificationIdentity;
+  value: T;
+};
+
+export type CurrentTaskProjectionScopedVerificationProof = {
+  authoritativeLastHandled: Pick<TaskHistoryStreakSummary, "lastHandledAt" | "lastHandledDate">;
+  identity: CurrentTaskProjectionScopedVerificationIdentity;
+  resolved: true;
+  taskId: string;
+};
+
 export type CurrentTaskProjectionScopedVerificationRequest<T> = {
   promise: Promise<CurrentTaskProjectionScopedVerificationResult<T>>;
   status: "already_verified" | "coalesced" | "started";
@@ -19,6 +32,7 @@ export type CurrentTaskProjectionScopedVerificationRequest<T> = {
 
 export type CurrentTaskProjectionScopedVerificationCoordinator<T> = {
   clear: () => void;
+  getVerified: (identity: CurrentTaskProjectionScopedVerificationIdentity) => CurrentTaskProjectionScopedVerificationCacheEntry<T> | null;
   request: (
     identity: CurrentTaskProjectionScopedVerificationIdentity,
     verify: () => Promise<T>,
@@ -47,15 +61,21 @@ function verificationIdentityKey(identity: CurrentTaskProjectionScopedVerificati
 }
 
 export function createCurrentTaskProjectionScopedVerificationCoordinator<T>(options: {
+  cacheCompletedResult?: (value: T) => boolean;
   isCurrent?: (identity: CurrentTaskProjectionScopedVerificationIdentity) => boolean;
 } = {}): CurrentTaskProjectionScopedVerificationCoordinator<T> {
   const inFlight = new Map<string, Promise<CurrentTaskProjectionScopedVerificationResult<T>>>();
   const verified = new Set<string>();
+  const verifiedResults = new Map<string, CurrentTaskProjectionScopedVerificationCacheEntry<T>>();
 
   return {
     clear() {
       inFlight.clear();
       verified.clear();
+      verifiedResults.clear();
+    },
+    getVerified(identity) {
+      return verifiedResults.get(verificationIdentityKey(identity)) ?? null;
     },
     request(identity, verify) {
       const key = verificationIdentityKey(identity);
@@ -75,6 +95,9 @@ export function createCurrentTaskProjectionScopedVerificationCoordinator<T>(opti
           return { status: "stale", value: null } satisfies CurrentTaskProjectionScopedVerificationResult<T>;
         }
         verified.add(key);
+        if (!options.cacheCompletedResult || options.cacheCompletedResult(value)) {
+          verifiedResults.set(key, { identity, value });
+        }
         return { status: "completed", value } satisfies CurrentTaskProjectionScopedVerificationResult<T>;
       }).finally(() => {
         if (inFlight.get(key) === promise) inFlight.delete(key);

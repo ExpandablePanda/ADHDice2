@@ -3,6 +3,7 @@ import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-fres
 import { isCanonicalInactiveTask } from "@/lib/task-state-engine/direct-input";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
+import type { CurrentTaskProjectionScopedVerificationProof } from "@/lib/task-current-projection-parity-verifier";
 import { logicalDateForTimestamp } from "@/lib/task-state-engine/calendar";
 
 export const CURRENT_TASK_PROJECTION_READ_COLUMNS = [
@@ -381,18 +382,24 @@ export function compareCurrentTaskProjectionParity({
   legacyCurrentRead,
   legacySummaries,
   projectionsByTaskId,
+  scopedLastHandledVerificationProofs,
   tasks,
   logicalDayStart = "00:00",
+  logicalDate,
   sampleLimitPerField = 32,
   timezone = "UTC",
+  workspaceGeneration,
 }: {
   legacyCurrentRead: Required<LegacyCurrentTaskRead>;
   legacySummaries: TaskHistoryStreakSummaryMap;
   projectionsByTaskId: CurrentTaskProjectionReadMap;
+  scopedLastHandledVerificationProofs?: Readonly<Record<string, CurrentTaskProjectionScopedVerificationProof>>;
   tasks: readonly Task[];
   logicalDayStart?: string;
+  logicalDate?: string;
   sampleLimitPerField?: number;
   timezone?: string;
+  workspaceGeneration?: number;
 }): CurrentTaskProjectionParityResult {
   const mismatchedFields: CurrentTaskProjectionParityMismatch[] = [];
   const mismatchDiagnostics: CurrentTaskProjectionParityMismatchDiagnostic[] = [];
@@ -423,6 +430,22 @@ export function compareCurrentTaskProjectionParity({
     eligibleFreshCount += 1;
     const projectionSummary = projectionToTaskHistoryStreakSummary(projection);
     const legacySummary = legacySummaries[task.id];
+    const scopedLastHandledVerificationProof = scopedLastHandledVerificationProofs?.[task.id];
+    const hasExactScopedLastHandledVerificationProof = Boolean(
+      scopedLastHandledVerificationProof
+      && scopedLastHandledVerificationProof.resolved
+      && scopedLastHandledVerificationProof.taskId === task.id
+      && scopedLastHandledVerificationProof.identity.taskId === task.id
+      && logicalDate !== undefined
+      && scopedLastHandledVerificationProof.identity.logicalDate === logicalDate
+      && workspaceGeneration !== undefined
+      && scopedLastHandledVerificationProof.identity.workspaceGeneration === workspaceGeneration
+      && scopedLastHandledVerificationProof.identity.projectionUpdatedAt === projection.updated_at
+      && scopedLastHandledVerificationProof.identity.taskCanonicalRevision === (task.canonical_revision ?? null),
+    );
+    const scopedLastHandledSummary = hasExactScopedLastHandledVerificationProof
+      ? scopedLastHandledVerificationProof!.authoritativeLastHandled
+      : null;
     const legacyValues = {
       displayDueOn: hasOwn(legacyCurrentRead.dueOnByTaskId, task.id)
         ? legacyCurrentRead.dueOnByTaskId[task.id]
@@ -434,8 +457,12 @@ export function compareCurrentTaskProjectionParity({
         : task.status,
       lastDoneAt: legacySummary?.lastDoneAt ?? null,
       lastDoneDate: legacySummary?.lastDoneDate ?? null,
-      lastHandledAt: legacySummary?.lastHandledAt ?? null,
-      lastHandledDate: legacySummary?.lastHandledDate ?? null,
+      lastHandledAt: scopedLastHandledSummary
+        ? scopedLastHandledSummary.lastHandledAt
+        : legacySummary?.lastHandledAt ?? null,
+      lastHandledDate: scopedLastHandledSummary
+        ? scopedLastHandledSummary.lastHandledDate
+        : legacySummary?.lastHandledDate ?? null,
     };
     const comparisons: Array<[CurrentTaskProjectionParityField, unknown, unknown]> = [
       ["displayStatus", projection.display_status, legacyValues.displayStatus],

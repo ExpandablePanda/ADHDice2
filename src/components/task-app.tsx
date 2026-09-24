@@ -336,6 +336,7 @@ import {
 import {
   createCurrentTaskProjectionScopedVerificationCoordinator,
   isLastHandledOnlyCurrentTaskProjectionParityMismatch,
+  type CurrentTaskProjectionScopedVerificationProof,
   type CurrentTaskProjectionScopedVerificationCoordinator,
   type CurrentTaskProjectionScopedVerificationIdentity,
 } from "@/lib/task-current-projection-parity-verifier";
@@ -643,6 +644,7 @@ type AppUpdateAttempt = {
 type CurrentTaskProjectionScopedVerificationWork = {
   postLegacySummary: TaskHistoryStreakSummary | null;
   refreshed: boolean;
+  resolved: boolean;
 };
 
 function lastHandledDiagnosticValue(summary: Pick<TaskHistoryStreakSummary, "lastHandledAt" | "lastHandledDate"> | null | undefined) {
@@ -3149,6 +3151,62 @@ export function TaskApp() {
     ),
     [effectiveTaskHistoryStreakSummaries, tasks],
   );
+  const currentTaskProjectionParityWorkspaceGeneration = workspaceGenerationRef.current;
+  const currentTaskProjectionScopedVerificationStateRef = useRef({
+    logicalDate: todayKey,
+    projectionsByTaskId: currentTaskProjectionsByTaskId,
+    tasks,
+    workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
+  });
+  currentTaskProjectionScopedVerificationStateRef.current = {
+    logicalDate: todayKey,
+    projectionsByTaskId: currentTaskProjectionsByTaskId,
+    tasks,
+    workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
+  };
+  const currentTaskProjectionScopedVerificationCoordinatorRef = useRef<CurrentTaskProjectionScopedVerificationCoordinator<CurrentTaskProjectionScopedVerificationWork> | null>(null);
+  if (process.env.NODE_ENV === "development" && !currentTaskProjectionScopedVerificationCoordinatorRef.current) {
+    currentTaskProjectionScopedVerificationCoordinatorRef.current = createCurrentTaskProjectionScopedVerificationCoordinator<CurrentTaskProjectionScopedVerificationWork>({
+      cacheCompletedResult: (value) => value.resolved,
+      isCurrent: (identity) => {
+        const current = currentTaskProjectionScopedVerificationStateRef.current;
+        const task = current.tasks.find((candidate) => candidate.id === identity.taskId);
+        const projection = current.projectionsByTaskId[identity.taskId];
+        return current.logicalDate === identity.logicalDate
+          && current.workspaceGeneration === identity.workspaceGeneration
+          && (task?.canonical_revision ?? null) === identity.taskCanonicalRevision
+          && (projection?.updated_at ?? null) === identity.projectionUpdatedAt;
+      },
+    });
+  }
+  const currentTaskProjectionScopedVerificationProofs = useMemo(() => {
+    if (process.env.NODE_ENV !== "development") return {} as Record<string, CurrentTaskProjectionScopedVerificationProof>;
+    const coordinator = currentTaskProjectionScopedVerificationCoordinatorRef.current;
+    if (!coordinator) return {} as Record<string, CurrentTaskProjectionScopedVerificationProof>;
+    const proofs = tasks.flatMap((task) => {
+      const projection = currentTaskProjectionReadResolution.freshProjectionByTaskId[task.id];
+      if (!projection) return [];
+      const identity: CurrentTaskProjectionScopedVerificationIdentity = {
+        logicalDate: todayKey,
+        projectionUpdatedAt: projection.updated_at,
+        taskCanonicalRevision: task.canonical_revision ?? null,
+        taskId: task.id,
+        workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
+      };
+      const verified = coordinator.getVerified(identity);
+      if (!verified?.value.resolved || !verified.value.postLegacySummary) return [];
+      return [[task.id, {
+        authoritativeLastHandled: {
+          lastHandledAt: verified.value.postLegacySummary.lastHandledAt,
+          lastHandledDate: verified.value.postLegacySummary.lastHandledDate,
+        },
+        identity: verified.identity,
+        resolved: true,
+        taskId: task.id,
+      } satisfies CurrentTaskProjectionScopedVerificationProof]] as const;
+    });
+    return Object.fromEntries(proofs) as Record<string, CurrentTaskProjectionScopedVerificationProof>;
+  }, [currentTaskProjectionParityWorkspaceGeneration, currentTaskProjectionReadResolution.freshProjectionByTaskId, taskHistoryStreakSummaries, tasks, todayKey]);
   const currentTaskProjectionParityTaskIds = useMemo(() => {
     const eligibleTaskIds = new Set(
       tasks.filter(isCurrentTaskProjectionParityEligibleTask).map((task) => task.id),
@@ -3176,43 +3234,19 @@ export function TaskApp() {
         legacySummaries: taskHistoryStreakSummaries,
         logicalDayStart: dayStartTime,
         projectionsByTaskId: currentTaskProjectionReadResolution.freshProjectionByTaskId,
+        scopedLastHandledVerificationProofs: currentTaskProjectionScopedVerificationProofs,
         tasks,
+        logicalDate: todayKey,
         timezone: userTimeZone,
+        workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
       })
       : null,
-    [activeStatusRead, currentTaskProjectionParityReady, currentTaskProjectionReadResolution.freshProjectionByTaskId, dayStartTime, taskHistoryStreakSummaries, tasks, userTimeZone],
+    [activeStatusRead, currentTaskProjectionParityReady, currentTaskProjectionParityWorkspaceGeneration, currentTaskProjectionReadResolution.freshProjectionByTaskId, currentTaskProjectionScopedVerificationProofs, dayStartTime, taskHistoryStreakSummaries, tasks, todayKey, userTimeZone],
   );
   const currentTaskProjectionParityRevision = useMemo(
     () => createProjectionDomainRevision("current-task-projection-parity", currentTaskProjectionParity),
     [currentTaskProjectionParity],
   );
-  const currentTaskProjectionParityWorkspaceGeneration = workspaceGenerationRef.current;
-  const currentTaskProjectionScopedVerificationStateRef = useRef({
-    logicalDate: todayKey,
-    projectionsByTaskId: currentTaskProjectionsByTaskId,
-    tasks,
-    workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
-  });
-  currentTaskProjectionScopedVerificationStateRef.current = {
-    logicalDate: todayKey,
-    projectionsByTaskId: currentTaskProjectionsByTaskId,
-    tasks,
-    workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
-  };
-  const currentTaskProjectionScopedVerificationCoordinatorRef = useRef<CurrentTaskProjectionScopedVerificationCoordinator<CurrentTaskProjectionScopedVerificationWork> | null>(null);
-  if (!currentTaskProjectionScopedVerificationCoordinatorRef.current) {
-    currentTaskProjectionScopedVerificationCoordinatorRef.current = createCurrentTaskProjectionScopedVerificationCoordinator<CurrentTaskProjectionScopedVerificationWork>({
-      isCurrent: (identity) => {
-        const current = currentTaskProjectionScopedVerificationStateRef.current;
-        const task = current.tasks.find((candidate) => candidate.id === identity.taskId);
-        const projection = current.projectionsByTaskId[identity.taskId];
-        return current.logicalDate === identity.logicalDate
-          && current.workspaceGeneration === identity.workspaceGeneration
-          && (task?.canonical_revision ?? null) === identity.taskCanonicalRevision
-          && (projection?.updated_at ?? null) === identity.projectionUpdatedAt;
-      },
-    });
-  }
   const loggedCurrentTaskProjectionParityRevisionRef = useRef<string | null>(null);
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
@@ -3331,7 +3365,18 @@ export function TaskApp() {
         const refreshed = await refreshTaskHistoryStreakSummary(taskId, undefined, undefined, (summary) => {
           postLegacySummary = summary;
         });
-        return { postLegacySummary, refreshed };
+        const resolved = Boolean(
+          refreshed
+          && postLegacySummary
+          && areCurrentTaskProjectionLastHandledValuesEqual({
+            legacySummary: postLegacySummary,
+            logicalDayStart: dayStartTime,
+            projectionSummary: projectedSummary,
+            projectedAtKind: projection.last_handled_at_kind,
+            timezone: userTimeZone,
+          }),
+        );
+        return { postLegacySummary, refreshed, resolved };
       });
       recordAdhdiceRealtimeDiagnostic({
         channel: "workspace",
@@ -3351,17 +3396,7 @@ export function TaskApp() {
         if (result.status !== "completed") return;
         const postLegacySummary = result.value.postLegacySummary;
         const postVerificationLegacyLastHandled = lastHandledDiagnosticValue(postLegacySummary);
-        const resolved = Boolean(
-          result.value.refreshed
-          && postLegacySummary
-          && areCurrentTaskProjectionLastHandledValuesEqual({
-            legacySummary: postLegacySummary,
-            logicalDayStart: dayStartTime,
-            projectionSummary: projectedSummary,
-            projectedAtKind: projection.last_handled_at_kind,
-            timezone: userTimeZone,
-          }),
-        );
+        const resolved = result.value.resolved;
         recordAdhdiceRealtimeDiagnostic({
           channel: "workspace",
           kind: "projection_parity_scoped_verification_completed",

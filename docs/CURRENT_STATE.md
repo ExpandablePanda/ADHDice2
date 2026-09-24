@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.33`.
+- Current working app version: `7.15.34`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -67,9 +67,31 @@ then the broader controlled campaign.
 
 Focused semantic tests and the webpack production build pass. Full typecheck
 still has unrelated repository baseline errors. History startup remains
-active and 7.15.34 retirement is not unlocked until the four-task rebuild,
+active and 7.15.35 retirement is not unlocked until the four-task rebuild,
 519-row V3 freshness/fence audit, and settled browser parity all reach zero
 active semantic mismatches.
+
+## 2026-09-24 7.15.34 Durable Scoped Last Handled Parity Proof
+
+The 7.15.34 QA checkpoint records the confirmed Current Projection population
+as `fresh=47` and `fallback=472`. Status and due semantic mismatches were zero
+in the fresh population. The scoped Last Handled verifier reached zero for the
+reported mismatches, but a later bulk streak-summary refresh overwrote the
+mutable `taskHistoryStreakSummaries` entry and made the same stable identity
+appear mismatched again.
+
+The development-only parity coordinator now retains a successful scoped
+Last Handled verification proof separately, keyed by the exact existing
+identity of Task ID, canonical revision, projection `updated_at`, logical
+date, and workspace generation. Parity uses that proof only for
+`lastHandledDate` and `lastHandledAt`; ordinary application summaries remain
+the mutable default and status, due, streak, Last Done, and History UI state
+remain unchanged. Resolved-false scoped checks are not cached as equivalent
+and remain blocking. Identity changes ignore the old proof and permit one new
+verification.
+
+No SQL, Edge deployment, or projection rebuild was performed. History startup
+remains active; History retirement moves to 7.15.35.
 
 ## 2026-09-24 7.15.32 Scoped Last Handled Parity Oracle + V2 Campaign Resume Gate
 
