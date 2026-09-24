@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { StyleLabPanel } from "./style-lab-panel";
+import { StyleLabPanel, type StyleLabMode } from "./style-lab-panel";
 import {
   getStyleLabDesignSpec,
   getStyleLabMatchCount,
@@ -90,6 +90,7 @@ function createStyleLabInstanceOverride(element: HTMLElement, roleId: StyleLabRo
 export function StyleLabDevRoot() {
   const [enabled, setEnabled] = useState(false);
   const [inspectionActive, setInspectionActive] = useState(false);
+  const [mode, setMode] = useState<StyleLabMode>("inspect");
   const [selectedRoleId, setSelectedRoleId] = useState<StyleLabRoleId | null>(null);
   const [scope, setScope] = useState<StyleLabScope>("role");
   const [overrides, setOverrides] = useState<StyleLabOverrides>({});
@@ -279,9 +280,19 @@ export function StyleLabDevRoot() {
     for (const element of sessionStructuralElementsRef.current) element.removeAttribute(STYLE_LAB_SESSION_TARGET_ATTRIBUTE);
     sessionStructuralElementsRef.current.clear();
     setInspectionActive(false);
+    setMode("inspect");
     setEnabled(false);
     setSelectedStructuralTarget(null);
     setSelectedMockHost(null);
+  }, []);
+
+  const handleModeChange = useCallback((nextMode: StyleLabMode) => {
+    if (nextMode === "build") {
+      hoveredElementRef.current?.removeAttribute("data-style-lab-hovered");
+      hoveredElementRef.current = null;
+      setInspectionActive(false);
+    }
+    setMode(nextMode);
   }, []);
 
   const handleScopeChange = useCallback((nextScope: StyleLabScope) => {
@@ -543,6 +554,7 @@ export function StyleLabDevRoot() {
     <div data-style-lab-ui>
       <StyleLabMockRuntime draft={mockDraft} />
       <StyleLabPanel
+        mode={mode}
         copyStatus={copyStatus}
         inspectionActive={inspectionActive}
         instanceOverride={selectedInstance}
@@ -569,6 +581,7 @@ export function StyleLabDevRoot() {
         onSetIcon={handleSetIcon}
         onSetPreviewText={handleSetPreviewText}
         onPanelPositionChange={handlePanelPositionChange}
+        onModeChange={handleModeChange}
         onScopeChange={handleScopeChange}
         onToggleInspection={() => setInspectionActive((current) => !current)}
         overrides={overrides}

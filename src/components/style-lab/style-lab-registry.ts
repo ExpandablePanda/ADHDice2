@@ -51,6 +51,55 @@ export const STYLE_LAB_ICON_OPTIONS = TASK_TYPE_ICON_OPTIONS.filter((option) => 
 
 export type StyleLabIconName = (typeof STYLE_LAB_ICON_OPTIONS)[number]["key"];
 
+export const STYLE_LAB_BUILDER_LAYOUTS = ["column", "row", "grid"] as const;
+export type StyleLabBuilderLayout = (typeof STYLE_LAB_BUILDER_LAYOUTS)[number];
+
+export const STYLE_LAB_BUILDER_GRID_COLUMNS = [1, 2, 3, 4] as const;
+export type StyleLabBuilderGridColumns = (typeof STYLE_LAB_BUILDER_GRID_COLUMNS)[number];
+
+export const STYLE_LAB_BUILDER_CANVAS_WIDTHS = ["320", "390", "430", "fit"] as const;
+export type StyleLabBuilderCanvasWidth = (typeof STYLE_LAB_BUILDER_CANVAS_WIDTHS)[number];
+
+export const STYLE_LAB_BUILDER_CHIP_TONES = ["default", "purple", "pending", "progress", "delayed", "done", "best", "missed", "upcoming", "notDue", "complete", "archived", "danger"] as const;
+export type StyleLabBuilderChipTone = (typeof STYLE_LAB_BUILDER_CHIP_TONES)[number];
+
+export const STYLE_LAB_BUILDER_ICON_BUTTON_SIZES = ["sm", "md", "lg"] as const;
+export type StyleLabBuilderIconButtonSize = (typeof STYLE_LAB_BUILDER_ICON_BUTTON_SIZES)[number];
+
+export const STYLE_LAB_BUILDER_ICON_BUTTON_TONES = ["default", "purple", "success", "warning", "danger", "ghost"] as const;
+export type StyleLabBuilderIconButtonTone = (typeof STYLE_LAB_BUILDER_ICON_BUTTON_TONES)[number];
+
+export const STYLE_LAB_BUILDER_DIVIDER_ORIENTATIONS = ["horizontal", "vertical"] as const;
+export type StyleLabBuilderDividerOrientation = (typeof STYLE_LAB_BUILDER_DIVIDER_ORIENTATIONS)[number];
+
+export const STYLE_LAB_BUILDER_DIVIDER_WIDTHS = ["25%", "50%", "75%", "100%"] as const;
+export type StyleLabBuilderDividerWidth = (typeof STYLE_LAB_BUILDER_DIVIDER_WIDTHS)[number];
+
+export const STYLE_LAB_BUILDER_RADIUS_OPTIONS = [
+  { label: "None", value: "none", cssValue: "0" },
+  { label: "Small", value: "small", cssValue: "0.5rem" },
+  { label: "Medium", value: "medium", cssValue: "0.75rem" },
+  { label: "Large", value: "large", cssValue: "1rem" },
+  { label: "XL", value: "xl", cssValue: "1.5rem" },
+  { label: "2XL", value: "2xl", cssValue: "2rem" },
+  { label: "Pill", value: "pill", cssValue: "9999px" },
+] as const;
+export type StyleLabBuilderRadius = (typeof STYLE_LAB_BUILDER_RADIUS_OPTIONS)[number]["value"];
+
+export const STYLE_LAB_BUILDER_BORDER_OPTIONS = [
+  { label: "None", value: "none", cssValue: "none" },
+  { label: "Subtle", value: "subtle", cssValue: "1px solid var(--border-soft)" },
+] as const;
+export type StyleLabBuilderBorder = (typeof STYLE_LAB_BUILDER_BORDER_OPTIONS)[number]["value"];
+
+export const STYLE_LAB_BUILDER_SHADOW_OPTIONS = [
+  { label: "None", value: "none", cssValue: "none" },
+  { label: "Subtle", value: "subtle", cssValue: "0 4px 12px color-mix(in srgb, var(--accent) 8%, transparent)" },
+  { label: "Card", value: "card", cssValue: "0 8px 24px color-mix(in srgb, var(--accent) 10%, transparent)" },
+  { label: "Floating", value: "floating", cssValue: "0 20px 60px color-mix(in srgb, var(--accent) 18%, transparent)" },
+] as const;
+export type StyleLabBuilderShadow = (typeof STYLE_LAB_BUILDER_SHADOW_OPTIONS)[number]["value"];
+
 export const STYLE_LAB_PROPERTY_IDS = [
   "fontSize",
   "fontWeight",

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.35`.
+- Current working app version: `7.15.36`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.36 Side Style Lab Builder Phase 1
+
+Style Lab now has explicit Inspect and Build modes. Build is a development-only,
+local-only scratch module workbench with a normalized Container/Text/Chip/Icon
+Button/Divider tree, approved ADHDice controls and style values, live preview,
+local draft persistence, and deterministic Module Spec/Reference Code exports.
+Exports are reference artifacts only; the browser never edits source files.
+Inspect overrides, role selection, mock structure, and existing Style Lab
+behavior remain separate and intact. Browser QA remains manual and this shared
+developer infrastructure should remain Side-only until that UX passes review.
 
 ## 2026-09-24 7.15.35 Side Test iOS Task Detail Typography Pass
 
