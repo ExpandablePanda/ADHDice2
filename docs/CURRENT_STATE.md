@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.34`.
+- Current working app version: `7.15.35`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.35 Side Test iOS Task Detail Typography Pass
+
+The isolated Side Test iOS Task Detail concept now uses quiet sentence-case
+tile labels, centered semibold values, minimal optional status text, and a
+lighter Call UGI hero hierarchy. Long-press Arrange behavior, row-major
+reordering, local tile-order persistence, Reset Layout, and all production
+boundaries remain unchanged. Browser/device QA remains manual.
 
 ## 2026-09-24 7.15.34 Side Test iOS Task Detail Concept
 

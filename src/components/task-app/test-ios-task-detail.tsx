@@ -23,23 +23,23 @@ export type TestIosTaskDetailTileId = typeof TEST_IOS_TASK_DETAIL_CANONICAL_TILE
 const TEST_IOS_TASK_DETAIL_TILE_ID_SET = new Set<string>(TEST_IOS_TASK_DETAIL_CANONICAL_TILE_ORDER);
 
 type TestIosTaskDetailTile = {
-  detail: string;
   id: TestIosTaskDetailTileId;
   label: string;
+  status?: string;
   value: string;
   valueClassName?: string;
 };
 
 const TEST_IOS_TASK_DETAIL_TILES: readonly TestIosTaskDetailTile[] = [
-  { detail: "High attention", id: "priority", label: "Priority", value: "Urgent", valueClassName: "text-[#c86635] dark:text-[#ffbf9b]" },
-  { detail: "Every week", id: "repeat", label: "Repeat", value: "Weekly" },
-  { detail: "Planned effort", id: "estimate", label: "Estimate", value: "15 min" },
-  { detail: "Current run", id: "streak", label: "Streak", value: "4 days" },
-  { detail: "Most recent", id: "last-done", label: "Last Done", value: "Sep 17" },
-  { detail: "Subtasks", id: "steps", label: "Steps", value: "3 / 5" },
-  { detail: "Life Admin", id: "pursuit", label: "Pursuit", value: "Life Admin" },
-  { detail: "Attached labels", id: "tags", label: "Tags", value: "3" },
-  { detail: "Completed events", id: "history", label: "History", value: "12 entries" },
+  { id: "priority", label: "Priority", status: "High", value: "Urgent", valueClassName: "text-[#bd6539] dark:text-[#ffbf9b]" },
+  { id: "repeat", label: "Repeat", value: "Weekly" },
+  { id: "estimate", label: "Estimate", value: "15 min" },
+  { id: "streak", label: "Streak", value: "4 days" },
+  { id: "last-done", label: "Last Done", value: "Sep 17" },
+  { id: "steps", label: "Steps", value: "3 / 5" },
+  { id: "pursuit", label: "Pursuit", value: "Life Admin" },
+  { id: "tags", label: "Tags", value: "3" },
+  { id: "history", label: "History", value: "12 entries" },
 ];
 
 const TEST_IOS_TASK_DETAIL_TILE_BY_ID = new Map(TEST_IOS_TASK_DETAIL_TILES.map((tile) => [tile.id, tile]));
@@ -311,36 +311,31 @@ export function TestIosTaskDetail() {
         <section className="rounded-[1.7rem] bg-[#ebe7ff] px-5 py-5 dark:bg-[#2a2146]" aria-labelledby="test-ios-task-detail-title">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.24em] text-[#7669ac] dark:text-white/55">Today</p>
-              <h2 className="mt-2 text-[clamp(1.75rem,8vw,2.35rem)] font-black tracking-[-0.05em] text-[#302752] dark:text-white" id="test-ios-task-detail-title">Call UGI</h2>
-              <p className="mt-2 flex items-center gap-1.5 text-sm font-medium text-[#71668f] dark:text-white/65"><Clock3 aria-hidden="true" className="h-3.5 w-3.5" />Today · 2:00 PM</p>
+              <p className="text-xs font-medium text-[#7669ac] dark:text-white/55">Today</p>
+              <h2 className="mt-2 text-[clamp(1.75rem,8vw,2.35rem)] font-semibold tracking-[-0.035em] text-[#302752] dark:text-white" id="test-ios-task-detail-title">Call UGI</h2>
+              <p className="mt-2 flex items-center gap-1.5 text-[13px] font-normal text-[#71668f] dark:text-white/65"><Clock3 aria-hidden="true" className="h-3.5 w-3.5" />Today · 2:00 PM</p>
             </div>
             <AdhdChip onClick={arrangeMode ? exitArrangeMode : () => setArrangeMode(true)} selected={arrangeMode} type="button">
               {arrangeMode ? "Done" : "Arrange"}
             </AdhdChip>
           </div>
-          <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-medium text-[#796da1] dark:text-white/55">Task detail concept</p>
+          <div className="mt-5 flex justify-end">
             <AdhdChip tone="progress" type="button">In Progress</AdhdChip>
           </div>
         </section>
 
-        <section className="mt-2 rounded-[1.7rem] bg-white px-3.5 py-4 shadow-[0_16px_36px_rgba(92,70,172,0.08)] dark:bg-[#1d1830]" aria-label="Task metadata">
-          <div className="flex items-start justify-between gap-3 px-1">
-            <div>
-              <p className="text-[10px] font-semibold uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/40">Details</p>
-              <p className="mt-1 text-xs text-[#847b9c] dark:text-white/55">{arrangeMode ? "Hold and move tiles to shape your view." : "A compact view of the task context."}</p>
-            </div>
-            {arrangeMode ? (
+        <section className="mt-2 rounded-[1.7rem] bg-white px-3.5 py-3.5 shadow-[0_16px_36px_rgba(92,70,172,0.08)] dark:bg-[#1d1830]" aria-label="Task metadata">
+          {arrangeMode ? (
+            <div className="mb-3 flex justify-end">
               <AdhdChip icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={resetLayout} tone="purple" type="button">
                 Reset Layout
               </AdhdChip>
-            ) : null}
-          </div>
+            </div>
+          ) : null}
 
           <div
             aria-label={arrangeMode ? "Arrange task metadata" : "Task metadata tiles"}
-            className={`mt-4 grid grid-cols-3 gap-2 ${arrangeMode ? "rounded-[1.25rem] bg-[#f7f3ff] p-1.5 dark:bg-white/[0.04]" : ""}`}
+            className={`grid grid-cols-3 gap-2 ${arrangeMode ? "rounded-[1.25rem] bg-[#f7f3ff] p-1.5 dark:bg-white/[0.04]" : ""}`}
             data-ios-task-detail-arrange-mode={arrangeMode ? "true" : "false"}
             onClickCapture={(event) => {
               if (suppressClickRef.current) {
@@ -359,7 +354,7 @@ export function TestIosTaskDetail() {
                 <button
                   aria-grabbed={isDragging}
                   aria-label={`${tile.label}: ${tile.value}${arrangeMode ? ". Hold and move to reorder." : ""}`}
-                  className={`group relative flex min-h-[5.8rem] min-w-0 flex-col justify-between rounded-[1.05rem] bg-[#f8f7fb] p-2.5 text-left transition duration-150 dark:bg-[#27223a] ${arrangeMode ? "ring-1 ring-dashed ring-[#d8cff7] dark:ring-white/15" : ""} ${isDragging ? "-translate-y-0.5 scale-[1.02] shadow-[0_12px_24px_rgba(99,74,188,0.18)] ring-2 ring-[#a894f5] dark:ring-[#9c8be7]" : ""}`}
+                  className={`group relative flex min-h-[5.8rem] min-w-0 flex-col items-center justify-center rounded-[1.05rem] bg-[#f8f7fb] px-2 py-3 text-center transition duration-150 dark:bg-[#27223a] ${arrangeMode ? "ring-1 ring-dashed ring-[#d8cff7] dark:ring-white/15" : ""} ${isDragging ? "-translate-y-0.5 scale-[1.02] shadow-[0_12px_24px_rgba(99,74,188,0.18)] ring-2 ring-[#a894f5] dark:ring-[#9c8be7]" : ""}`}
                   data-ios-task-detail-tile-id={tile.id}
                   key={tile.id}
                   onLostPointerCapture={() => {
@@ -370,12 +365,10 @@ export function TestIosTaskDetail() {
                   style={{ touchAction: isDragging ? "none" : "pan-y" }}
                   type="button"
                 >
-                  <span className="flex min-w-0 items-start justify-between gap-1.5">
-                    <span className="truncate text-[9px] font-semibold uppercase tracking-[0.11em] text-[#9188a9] dark:text-white/45">{tile.label}</span>
-                    {arrangeMode ? <GripVertical aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#a49abf] dark:text-white/40" /> : null}
-                  </span>
-                  <span className={`mt-2 block break-words text-sm font-bold leading-tight text-[#3f385c] dark:text-white/90 ${tile.valueClassName ?? ""}`}>{tile.value}</span>
-                  <span className="mt-1 block text-[10px] leading-tight text-[#938aa8] dark:text-white/45">{tile.detail}</span>
+                  {arrangeMode ? <GripVertical aria-hidden="true" className="pointer-events-none absolute right-2 top-2 h-3.5 w-3.5 text-[#a49abf] dark:text-white/40" /> : null}
+                  <span className="max-w-full break-words text-[12px] font-normal leading-tight text-[#7d7593] dark:text-white/55">{tile.label}</span>
+                  <span className={`mt-1.5 max-w-full break-words text-[18px] font-semibold leading-[1.1] text-[#3f385c] dark:text-white/90 ${tile.valueClassName ?? ""}`}>{tile.value}</span>
+                  {tile.status ? <span className="mt-1 rounded-full bg-[#fff0e8] px-1.5 py-0.5 text-[10px] font-medium leading-none text-[#b86033] dark:bg-[#7f422e]/30 dark:text-[#ffc4a2]">{tile.status}</span> : null}
                 </button>
               );
             })}

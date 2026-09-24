@@ -52,7 +52,7 @@ test("prototype keeps the hero outside the reorderable grid and includes the lon
   assert.match(source, />Call UGI</);
   assert.match(source, /Today · 2:00 PM/);
   assert.match(source, />In Progress</);
-  assert.match(source, /className=\{`mt-4 grid grid-cols-3 gap-2/);
+  assert.match(source, /className=\{`grid grid-cols-3 gap-2/);
   assert.match(source, /LONG_PRESS_DELAY_MS = 350/);
   assert.match(source, /PRE_ACTIVATION_MOVE_THRESHOLD_PX = 8/);
   assert.match(source, /setPointerCapture/);
@@ -60,4 +60,8 @@ test("prototype keeps the hero outside the reorderable grid and includes the lon
   assert.match(source, /event\.key !== "Escape"/);
   assert.match(source, /TEST_IOS_TASK_DETAIL_TILE_ORDER_STORAGE_KEY/);
   assert.match(source, /Reset Layout/);
+  assert.doesNotMatch(source, /uppercase/);
+  assert.doesNotMatch(source, /High attention|Every week|Planned effort|Current run|Most recent|Attached labels|Completed events/);
+  assert.match(source, /items-center justify-center/);
+  assert.match(source, /text-center/);
 });
