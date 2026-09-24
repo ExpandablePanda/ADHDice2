@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.25`.
+- Current working app version: `7.15.27`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,43 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.27 Projection Cutover Runtime Diagnostics
+
+7.15.26 browser QA established the current cutover baseline:
+
+- History modal opens: PASS.
+- History mutation works: PASS.
+- Next-due presentation semantics: PASS.
+- Startup projection reads: PASS.
+- Normal same-tab current presentation: PASS.
+- Two-tab Task synchronization: FAIL; Address Sorter and Pills (AM) stayed stale in tab B until refresh.
+- Settled parity remains approximately 225–226 Tasks: `displayStatus` 2, `displayDueOn` 5–6, `currentPositiveStreak` 3, `lastHandledDate` 126, `lastHandledAt` 195, and `lastDoneAt` 101. `lastDoneDate` does not dominate the mismatch count.
+
+The 7.15.27 runtime diagnostics ticket is diagnosis-only. It does not retire History startup, change Task State semantics, change projection builder/writer semantics, restructure Realtime channels, change Last Done/Last Handled persistence, add SQL, deploy Edge, backfill, or change publication membership.
+
+The browser now has a bounded development-only `window.copyAdhdiceRealtimeDiagnostics()` / `window.clearAdhdiceRealtimeDiagnostics()` trace buffer. It records task-channel creation/generation, every subscribe status, Task Postgres events, skip decisions, reload queue/start/completion/error states, triggering Task revision fences, shared-channel projection events, projection buffer enqueue/flush/merge decisions, event-scoped authority selection, parity samples, and cleanup. It excludes access tokens, email, titles, notes, and other private content.
+
+### Current live Realtime channel/publication matrix
+
+| Runtime channel | Client handlers | Live publication evidence |
+| --- | --- | --- |
+| Dedicated `adhdice_tasks:<userId>` | `adhdice_clean_tasks` | Published; separate from the shared workspace channel |
+| Shared `adhdice_workspace:<userId>` | `adhdice_task_list_folders`, `adhdice_task_content_folders`, `adhdice_task_list_containers`, `adhdice_task_list_rail_items`, `adhdice_focus_categories`, `adhdice_task_focus_days`, `adhdice_task_lists`, `adhdice_task_list_manual_memberships`, `adhdice_notes`, `adhdice_task_history_facts`, `adhdice_task_current_projections` | Projection table is published; `adhdice_notes`, `adhdice_task_focus_days`, and `adhdice_task_history_facts` currently have handlers but are not in `supabase_realtime` |
+
+No publication membership or channel topology change is part of 7.15.27. Source tests make the two-channel shape and all shared bindings explicit for the next behavioral ticket.
+
+### Timestamp diagnosis
+
+The parity trace now preserves raw projected/legacy values, Task `canonical_revision`, projection `canonical_task_revision`, `history_source_revision`, and `updated_at`. Timestamp mismatches are classified as exact, same instant/different serialization, same logical date but floating-time versus timestamptz, different instant, or different logical date using the configured timezone and logical-day start.
+
+The focused reproduction confirms that in `America/New_York`, `new Date("2026-09-18T00:00:00").toLocaleString(...)` displays September 18 while the equivalent persisted timestamptz readback `2026-09-18T00:00:00+00:00` displays September 17. That shape is synthesized logical-day presentation time versus an absolute event instant; it is not yet a schema/representation decision. Absolute event timestamps retain their instant when represented with an explicit offset.
+
+### Small true parity groups
+
+Development parity samples now emit a bounded event-scoped report for each sampled Task in the `displayStatus`, `displayDueOn`, and `currentPositiveStreak` groups. The report includes persisted Task status/due, projection status/next due/streak, legacy status/due/streak, safe latest History-fact metadata, behavior type/ruleset ID, direct/effective tracking exclusion, source-fence metadata, and whether the projection or legacy values agree with the canonical Active Status evaluator output. The actual Task-by-Task classification remains a runtime/browser evidence step; no production semantic change is made here.
+
+History retirement remains blocked. 7.15.27 is diagnostics-only.
 
 ## 2026-09-23 7.15.26 Current Projection Cutover QA Corrections
 

@@ -45,6 +45,7 @@ function projection(overrides: Partial<CurrentTaskProjectionReadRow> = {}): Curr
     current_missed_streak: 0,
     canonical_task_revision: 12,
     history_sync_epoch: HISTORY_EPOCH,
+    history_source_revision: 24,
     logical_day_settings_revision: 7,
     projected_logical_date: TODAY,
     projection_schema_version: CURRENT_TASK_PROJECTION_SCHEMA_VERSION,

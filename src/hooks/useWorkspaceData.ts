@@ -74,6 +74,12 @@ import {
   type CurrentTaskProjectionReadMap,
   type CurrentTaskProjectionReadRow,
 } from "@/lib/task-current-projection-read";
+import {
+  createAdhdiceRealtimeChannelDebugId,
+  markAdhdiceRealtimeAuthorityPending,
+  recordAdhdiceRealtimeDiagnostic,
+  recordAdhdiceTaskPostgresEventDiagnostic,
+} from "@/lib/adhdice-realtime-diagnostics";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
@@ -367,7 +373,9 @@ export function useWorkspaceData({
   const taskReloadInFlightRef = useRef(false);
   const queuedTaskReloadRef = useRef(false);
   const taskReloadPromiseRef = useRef<Promise<void> | null>(null);
+  const taskReloadTriggerTaskIdRef = useRef<string | null>(null);
   const taskChannelRef = useRef<RealtimeChannel | null>(null);
+  const taskChannelDebugIdsRef = useRef(new Map<RealtimeChannel, string>());
   const taskChannelStatusRef = useRef<string>("CLOSED");
   const taskChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const taskResumeSyncTimeoutRef = useRef<number | null>(null);
@@ -859,18 +867,56 @@ export function useWorkspaceData({
       );
     }
 
-    async function reloadTaskRows({ silent = false, source = "realtime" }: { silent?: boolean; source?: string } = {}) {
+    async function reloadTaskRows({
+      silent = false,
+      source = "realtime",
+    }: { silent?: boolean; source?: string } = {}) {
+      const triggerTaskId = taskReloadTriggerTaskIdRef.current;
+      taskReloadTriggerTaskIdRef.current = null;
+      const channelDebugId = taskChannelRef.current
+        ? taskChannelDebugIdsRef.current.get(taskChannelRef.current)
+        : undefined;
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        channelDebugId,
+        kind: "task_reload_requested",
+        source,
+        taskId: triggerTaskId,
+      });
       if (!isActive) {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "task_reload_early_return",
+          reason: "inactive",
+          source,
+          taskId: triggerTaskId,
+        });
         return;
       }
 
       if (taskReloadInFlightRef.current) {
         queuedTaskReloadRef.current = true;
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "task_reload_queued",
+          reason: "in_flight",
+          source,
+          taskId: triggerTaskId,
+        });
         await taskReloadPromiseRef.current;
         return;
       }
 
       taskReloadInFlightRef.current = true;
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        channelDebugId,
+        kind: "task_reload_started",
+        source,
+        taskId: triggerTaskId,
+      });
       const taskReloadPromise = (async () => {
         try {
         do {
@@ -881,11 +927,27 @@ export function useWorkspaceData({
           );
 
           if (!isActive) {
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "task",
+              channelDebugId,
+              kind: "task_reload_early_return",
+              reason: "inactive_after_fetch",
+              source,
+              taskId: triggerTaskId,
+            });
             return;
           }
 
           if (taskResult.error || boundaryResult?.error) {
             const snapshotError = taskResult.error ?? boundaryResult?.error;
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "task",
+              channelDebugId,
+              kind: "task_reload_error",
+              reason: snapshotError?.code ?? "snapshot_error",
+              source,
+              taskId: triggerTaskId,
+            });
             if (!silent || snapshotError?.code === "CANONICAL_TASK_SNAPSHOT_INCOMPLETE") {
               setMessage({ tone: "warn", text: snapshotError?.message ?? "Could not refresh your tasks." });
             }
@@ -896,6 +958,20 @@ export function useWorkspaceData({
             taskResult.data ?? [],
             (boundaryResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
           );
+          const fetchedTriggerTask = triggerTaskId
+            ? nextTasks.find((task) => task.id === triggerTaskId)
+            : undefined;
+          if (fetchedTriggerTask) {
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "task",
+              channelDebugId,
+              kind: "task_reload_fetched_trigger_task",
+              newCanonicalRevision: fetchedTriggerTask.canonical_revision,
+              newRevision: fetchedTriggerTask.revision,
+              taskId: fetchedTriggerTask.id,
+              updatedAt: fetchedTriggerTask.updated_at,
+            });
+          }
           tasksRef.current = nextTasks;
           startTransition(() => {
             setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
@@ -905,6 +981,13 @@ export function useWorkspaceData({
           }
         } while (queuedTaskReloadRef.current && isActive);
         } finally {
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "task",
+            channelDebugId,
+            kind: "task_reload_completed",
+            source,
+            taskId: triggerTaskId,
+          });
           taskReloadInFlightRef.current = false;
           taskReloadPromiseRef.current = null;
         }
@@ -923,13 +1006,30 @@ export function useWorkspaceData({
     }
 
     async function removeTaskChannel(channel: RealtimeChannel) {
+      const channelDebugId = taskChannelDebugIdsRef.current.get(channel);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        channelDebugId,
+        kind: "channel_cleanup_requested",
+      });
       try {
         await client.removeChannel(channel);
+        taskChannelDebugIdsRef.current.delete(channel);
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "channel_cleanup_completed",
+        });
         taskChannelCleanupCountRef.current += 1;
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
           console.info(`[workspace] Task realtime cleanup count=${taskChannelCleanupCountRef.current} userId=${userId}.`);
         }
       } catch {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "channel_cleanup_ignored_error",
+        });
         // Ignore cleanup races when visibility/focus events overlap.
       }
     }
@@ -944,8 +1044,15 @@ export function useWorkspaceData({
       }
 
       taskChannelStatusRef.current = "SUBSCRIBING";
-      const nextTaskChannel = client
-        .channel(`adhdice_tasks:${userId}`)
+      const channelDebugId = createAdhdiceRealtimeChannelDebugId("task");
+      const nextTaskChannel = client.channel(`adhdice_tasks:${userId}`);
+      taskChannelDebugIdsRef.current.set(nextTaskChannel, channelDebugId);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        channelDebugId,
+        kind: "channel_created",
+      });
+      nextTaskChannel
         .on(
           "postgres_changes",
           {
@@ -956,13 +1063,31 @@ export function useWorkspaceData({
           },
           (payload) => {
             const taskId = ((payload.new as { id?: string } | null)?.id ?? (payload.old as { id?: string } | null)?.id ?? null);
-            if (shouldSkipTaskReloadRef.current?.({ eventType: payload.eventType, taskId })) {
+            recordAdhdiceTaskPostgresEventDiagnostic({ channelDebugId, eventType: payload.eventType, taskId, newRow: payload.new });
+            if (taskId) markAdhdiceRealtimeAuthorityPending(taskId);
+            const shouldSkip = shouldSkipTaskReloadRef.current?.({ eventType: payload.eventType, taskId }) ?? false;
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "task",
+              channelDebugId,
+              eventType: payload.eventType,
+              kind: "task_should_skip_reload",
+              shouldSkip,
+              taskId,
+            });
+            if (shouldSkip) {
               return;
             }
+            taskReloadTriggerTaskIdRef.current = taskId;
             void reloadTaskRows({ silent: true });
           },
         )
         .subscribe((status) => {
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "task",
+            channelDebugId,
+            kind: "channel_subscribe_status",
+            status,
+          });
           taskChannelStatusRef.current = status;
           if (status === "SUBSCRIBED") {
             logWorkspaceTiming("Task realtime subscribed", subscribeStartedAt, {
@@ -1898,10 +2023,34 @@ export function useWorkspaceData({
     window.addEventListener("online", handleWindowOnline);
     window.addEventListener("offline", handleWindowOffline);
 
+    const workspaceChannelDebugId = createAdhdiceRealtimeChannelDebugId("workspace");
     const projectionEventBuffer = createCurrentTaskProjectionEventBuffer(
       (rows) => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          channelDebugId: workspaceChannelDebugId,
+          count: rows.length,
+          entityIds: rows.map((row) => row.entity_id),
+          kind: "projection_event_buffer_flush",
+        });
         if (!isActive) return;
-        setCurrentTaskProjectionsByTaskId((current) => mergeCurrentTaskProjectionRows(current, rows));
+        setCurrentTaskProjectionsByTaskId((current) => {
+          const next = mergeCurrentTaskProjectionRows(current, rows);
+          for (const row of rows) {
+            const previous = current[row.entity_id];
+            recordAdhdiceRealtimeDiagnostic({
+              accepted: next[row.entity_id] === row,
+              channel: "workspace",
+              channelDebugId: workspaceChannelDebugId,
+              entityId: row.entity_id,
+              incomingUpdatedAt: row.updated_at,
+              kind: "projection_merge_decision",
+              previousUpdatedAt: previous?.updated_at ?? null,
+            });
+            markAdhdiceRealtimeAuthorityPending(row.entity_id);
+          }
+          return next;
+        });
       },
       {
         cancel: (handle) => window.clearTimeout(handle as number),
@@ -1913,11 +2062,23 @@ export function useWorkspaceData({
       if (!value || typeof value !== "object" || Array.isArray(value)) return;
       const row = value as Partial<CurrentTaskProjectionReadRow>;
       if (row.user_id !== userId || typeof row.entity_id !== "string" || typeof row.updated_at !== "string") return;
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "workspace",
+        channelDebugId: workspaceChannelDebugId,
+        entityId: row.entity_id,
+        kind: "projection_event_buffer_enqueue",
+        incomingUpdatedAt: row.updated_at,
+      });
       projectionEventBuffer.enqueue(row as CurrentTaskProjectionReadRow);
     }
 
-    const workspaceChannel = client
-      .channel(`adhdice_workspace:${userId}`)
+    const workspaceChannel = client.channel(`adhdice_workspace:${userId}`);
+    recordAdhdiceRealtimeDiagnostic({
+      channel: "workspace",
+      channelDebugId: workspaceChannelDebugId,
+      kind: "channel_created",
+    });
+    workspaceChannel
       .on(
         "postgres_changes",
         {
@@ -2069,7 +2230,21 @@ export function useWorkspaceData({
           table: "adhdice_task_current_projections",
           filter: `user_id=eq.${userId}`,
         },
-        (payload) => enqueueProjectionRealtimePayload(payload.new),
+        (payload) => {
+          const row = payload.new as Partial<CurrentTaskProjectionReadRow>;
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "workspace",
+            channelDebugId: workspaceChannelDebugId,
+            canonicalTaskRevision: row.canonical_task_revision ?? null,
+            currentPositiveStreak: row.current_positive_streak ?? null,
+            entityId: row.entity_id ?? null,
+            eventType: payload.eventType,
+            kind: "projection_postgres_event_received",
+            updatedAt: row.updated_at ?? null,
+            validity: row.validity ?? null,
+          });
+          enqueueProjectionRealtimePayload(payload.new);
+        },
       )
       .on(
         "postgres_changes",
@@ -2079,9 +2254,29 @@ export function useWorkspaceData({
           table: "adhdice_task_current_projections",
           filter: `user_id=eq.${userId}`,
         },
-        (payload) => enqueueProjectionRealtimePayload(payload.new),
+        (payload) => {
+          const row = payload.new as Partial<CurrentTaskProjectionReadRow>;
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "workspace",
+            channelDebugId: workspaceChannelDebugId,
+            canonicalTaskRevision: row.canonical_task_revision ?? null,
+            currentPositiveStreak: row.current_positive_streak ?? null,
+            entityId: row.entity_id ?? null,
+            eventType: payload.eventType,
+            kind: "projection_postgres_event_received",
+            updatedAt: row.updated_at ?? null,
+            validity: row.validity ?? null,
+          });
+          enqueueProjectionRealtimePayload(payload.new);
+        },
       )
       .subscribe((status) => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          channelDebugId: workspaceChannelDebugId,
+          kind: "channel_subscribe_status",
+          status,
+        });
         if (status === "SUBSCRIBED") {
           workspaceChannelSubscriptionCountRef.current += 1;
           if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -2120,11 +2315,22 @@ export function useWorkspaceData({
         taskChannelRemovalPromiseRef.current = removeTaskChannel(taskChannel);
       }
       projectionEventBuffer.dispose();
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "workspace",
+        channelDebugId: workspaceChannelDebugId,
+        kind: "channel_cleanup_requested",
+      });
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         workspaceChannelCleanupCountRef.current += 1;
         console.info(`[workspace] Workspace realtime cleanup count=${workspaceChannelCleanupCountRef.current} userId=${userId}.`);
       }
-      void client.removeChannel(workspaceChannel);
+      void client.removeChannel(workspaceChannel).then(() => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          channelDebugId: workspaceChannelDebugId,
+          kind: "channel_cleanup_completed",
+        });
+      });
     };
   }, [currentUser?.id, behaviorSelectionStateRef, supabase, suppressCategoryReload]);
 

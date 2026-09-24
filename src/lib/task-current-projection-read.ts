@@ -2,6 +2,7 @@ import type { Task, TaskCurrentProjection } from "@/lib/database.types";
 import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-freshness";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
+import { logicalDateForTimestamp } from "@/lib/task-state-engine/calendar";
 
 export const CURRENT_TASK_PROJECTION_READ_COLUMNS = [
   "user_id",
@@ -18,6 +19,7 @@ export const CURRENT_TASK_PROJECTION_READ_COLUMNS = [
   "current_missed_streak",
   "canonical_task_revision",
   "history_sync_epoch",
+  "history_source_revision",
   "logical_day_settings_revision",
   "projected_logical_date",
   "projection_schema_version",
@@ -42,6 +44,7 @@ export type CurrentTaskProjectionReadRow = Pick<
   | "current_missed_streak"
   | "canonical_task_revision"
   | "history_sync_epoch"
+  | "history_source_revision"
   | "logical_day_settings_revision"
   | "projected_logical_date"
   | "projection_schema_version"
@@ -85,11 +88,38 @@ export type CurrentTaskProjectionParityMismatch = {
   taskId: string;
 };
 
+export type CurrentTaskProjectionTimestampMismatchClassification =
+  | "exact"
+  | "same instant / different serialization"
+  | "same logical date but floating-time vs timestamptz"
+  | "different instant"
+  | "different logical date";
+
+export type CurrentTaskProjectionTimestampContract =
+  | "actual event time"
+  | "synthesized logical-day presentation time"
+  | "logical date";
+
+export type CurrentTaskProjectionParityMismatchDiagnostic = CurrentTaskProjectionParityMismatch & {
+  projectedRawValue: string | number | boolean | null;
+  legacyRawValue: string | number | boolean | null;
+  taskCanonicalRevision: number | null;
+  projectionCanonicalTaskRevision: number | null;
+  projectionHistorySourceRevision: number | null;
+  projectionUpdatedAt: string | null;
+  timestampClassification?: CurrentTaskProjectionTimestampMismatchClassification;
+  timestampContract?: {
+    projected: CurrentTaskProjectionTimestampContract;
+    legacy: CurrentTaskProjectionTimestampContract;
+  };
+};
+
 export type CurrentTaskProjectionParityResult = {
   fallbackCount: number;
   freshCount: number;
   mismatchedFields: CurrentTaskProjectionParityMismatch[];
   mismatchedTaskIds: string[];
+  mismatchDiagnostics: CurrentTaskProjectionParityMismatchDiagnostic[];
 };
 
 export type CurrentTaskProjectionParityDiagnostics = {
@@ -97,6 +127,7 @@ export type CurrentTaskProjectionParityDiagnostics = {
   mismatchedTaskCount: number;
   mismatchCounts: Record<CurrentTaskProjectionParityField, number>;
   sampleTaskIdsByField: Record<CurrentTaskProjectionParityField, string[]>;
+  sampleMismatchDiagnostics: CurrentTaskProjectionParityMismatchDiagnostic[];
 };
 
 export function indexCurrentTaskProjectionRows(rows: readonly CurrentTaskProjectionReadRow[]) {
@@ -279,13 +310,21 @@ export function compareCurrentTaskProjectionParity({
   legacySummaries,
   projectionsByTaskId,
   tasks,
+  logicalDayStart = "00:00",
+  sampleLimitPerField = 32,
+  timezone = "UTC",
 }: {
   legacyCurrentRead: Required<LegacyCurrentTaskRead>;
   legacySummaries: TaskHistoryStreakSummaryMap;
   projectionsByTaskId: CurrentTaskProjectionReadMap;
   tasks: readonly Task[];
+  logicalDayStart?: string;
+  sampleLimitPerField?: number;
+  timezone?: string;
 }): CurrentTaskProjectionParityResult {
   const mismatchedFields: CurrentTaskProjectionParityMismatch[] = [];
+  const mismatchDiagnostics: CurrentTaskProjectionParityMismatchDiagnostic[] = [];
+  const diagnosticCounts = new Map<CurrentTaskProjectionParityField, number>();
   let freshCount = 0;
 
   for (const task of tasks) {
@@ -318,7 +357,51 @@ export function compareCurrentTaskProjectionParity({
       ["lastDoneAt", projection.last_done_at, legacyValues.lastDoneAt],
     ];
     for (const [field, projected, legacy] of comparisons) {
-      if (projected !== legacy) mismatchedFields.push({ field, taskId: task.id });
+      if (projected !== legacy) {
+        mismatchedFields.push({ field, taskId: task.id });
+        const existingCount = diagnosticCounts.get(field) ?? 0;
+        if (existingCount < sampleLimitPerField) {
+          const isTimestampField = field === "lastHandledAt" || field === "lastDoneAt";
+          const logicalDate = field === "lastHandledAt" || field === "lastHandledDate"
+            ? projection.last_handled_logical_date ?? legacyValues.lastHandledDate
+            : projection.last_done_logical_date ?? legacyValues.lastDoneDate;
+          const diagnostic: CurrentTaskProjectionParityMismatchDiagnostic = {
+              field,
+              legacyRawValue: normalizeDiagnosticValue(legacy),
+            projectionCanonicalTaskRevision: projection.canonical_task_revision,
+            projectionHistorySourceRevision: projection.history_source_revision,
+            projectionUpdatedAt: projection.updated_at,
+              projectedRawValue: normalizeDiagnosticValue(projected),
+              taskCanonicalRevision: typeof task.canonical_revision === "number" ? task.canonical_revision : null,
+              taskId: task.id,
+            };
+          if (isTimestampField) {
+            diagnostic.timestampClassification = classifyCurrentTaskProjectionTimestampMismatch(projected, legacy, {
+              logicalDayStart,
+              timezone,
+            });
+            diagnostic.timestampContract = {
+              legacy: classifyCurrentTaskProjectionTimestampContract(field, legacy, {
+                logicalDate,
+                timezone,
+                logicalDayStart,
+              }),
+              projected: classifyCurrentTaskProjectionTimestampContract(field, projected, {
+                logicalDate,
+                timezone,
+                logicalDayStart,
+              }),
+            };
+          } else if (field === "lastHandledDate" || field === "lastDoneDate") {
+            diagnostic.timestampContract = {
+              legacy: "logical date",
+              projected: "logical date",
+            };
+          }
+          mismatchDiagnostics.push(diagnostic);
+          diagnosticCounts.set(field, existingCount + 1);
+        }
+      }
     }
   }
 
@@ -327,6 +410,7 @@ export function compareCurrentTaskProjectionParity({
     freshCount,
     mismatchedFields,
     mismatchedTaskIds: [...new Set(mismatchedFields.map((mismatch) => mismatch.taskId))],
+    mismatchDiagnostics,
   };
 }
 
@@ -339,7 +423,7 @@ export function summarizeCurrentTaskProjectionParity(
   ) as Record<CurrentTaskProjectionParityField, number>;
   const sampleTaskIdsByField = Object.fromEntries(
     CURRENT_TASK_PROJECTION_PARITY_FIELDS.map((field) => [field, []]),
-  ) as Record<CurrentTaskProjectionParityField, string[]>;
+  ) as unknown as Record<CurrentTaskProjectionParityField, string[]>;
 
   for (const mismatch of parity.mismatchedFields) {
     mismatchCounts[mismatch.field] += 1;
@@ -353,7 +437,79 @@ export function summarizeCurrentTaskProjectionParity(
     mismatchedTaskCount: parity.mismatchedTaskIds.length,
     mismatchCounts,
     sampleTaskIdsByField,
+    sampleMismatchDiagnostics: parity.mismatchDiagnostics.filter((mismatch) => {
+      const fieldSamples = sampleTaskIdsByField[mismatch.field];
+      return fieldSamples.includes(mismatch.taskId);
+    }),
   };
+}
+
+function normalizeDiagnosticValue(value: unknown): string | number | boolean | null {
+  if (value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+    return value;
+  }
+  return value === undefined ? null : String(value);
+}
+
+function hasExplicitTimestampZone(value: string) {
+  return /(?:Z|[+-]\d{2}:?\d{2})$/i.test(value.trim());
+}
+
+export function classifyCurrentTaskProjectionTimestampContract(
+  field: CurrentTaskProjectionParityField,
+  rawValue: unknown,
+  settings: { logicalDate: string | null; logicalDayStart: string; timezone: string },
+): CurrentTaskProjectionTimestampContract {
+  if (field === "lastHandledDate" || field === "lastDoneDate") return "logical date";
+  if (typeof rawValue !== "string") return "actual event time";
+
+  const trimmedValue = rawValue.trim();
+  const rawCalendarDate = trimmedValue.slice(0, 10);
+  const isMidnight = /T00:00(?::00(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:?\d{2})?$/i.test(trimmedValue);
+  if (settings.logicalDate && rawCalendarDate === settings.logicalDate && isMidnight) {
+    return "synthesized logical-day presentation time";
+  }
+
+  try {
+    logicalDateForTimestamp(trimmedValue, settings.timezone, settings.logicalDayStart);
+  } catch {
+    // Preserve a malformed timestamp as an event-time diagnostic rather than throwing from parity reporting.
+  }
+  return "actual event time";
+}
+
+export function classifyCurrentTaskProjectionTimestampMismatch(
+  projectedRawValue: unknown,
+  legacyRawValue: unknown,
+  settings: { logicalDayStart: string; timezone: string },
+): CurrentTaskProjectionTimestampMismatchClassification {
+  if (projectedRawValue === legacyRawValue) return "exact";
+  if (typeof projectedRawValue !== "string" || typeof legacyRawValue !== "string") return "different logical date";
+
+  const projectedTimestamp = Date.parse(projectedRawValue);
+  const legacyTimestamp = Date.parse(legacyRawValue);
+  if (Number.isFinite(projectedTimestamp) && Number.isFinite(legacyTimestamp) && projectedTimestamp === legacyTimestamp) {
+    return "same instant / different serialization";
+  }
+
+  let projectedLogicalDate: string | null = null;
+  let legacyLogicalDate: string | null = null;
+  try {
+    projectedLogicalDate = logicalDateForTimestamp(projectedRawValue, settings.timezone, settings.logicalDayStart);
+    legacyLogicalDate = logicalDateForTimestamp(legacyRawValue, settings.timezone, settings.logicalDayStart);
+  } catch {
+    // Keep malformed or unsupported timezone values in the generic instant bucket.
+  }
+
+  if (
+    projectedLogicalDate
+    && projectedLogicalDate === legacyLogicalDate
+    && hasExplicitTimestampZone(projectedRawValue) !== hasExplicitTimestampZone(legacyRawValue)
+  ) {
+    return "same logical date but floating-time vs timestamptz";
+  }
+  if (projectedLogicalDate !== legacyLogicalDate) return "different logical date";
+  return "different instant";
 }
 
 export function createCurrentTaskProjectionEventBuffer(
