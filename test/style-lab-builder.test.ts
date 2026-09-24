@@ -164,16 +164,15 @@ test("module spec and reference code preserve hierarchy, order, text, styles, an
   assert.notEqual(STYLE_LAB_BUILDER_STORAGE_KEY, "adhdice-style-lab:mock-structure");
 });
 
-test("Builder is wired as a separate development workbench and suspends Inspect selection", () => {
-  assert.match(panelSource, /export type StyleLabMode = "inspect" \| "build"/);
-  assert.match(panelSource, /onModeChange\("build"\)/);
-  assert.match(panelSource, /<StyleLabBuilder \/>/);
-  assert.match(panelSource, /disabled=\{mode === "build"\}/);
+test("Builder is a separate development-only Test workspace and the panel stays Inspect-only", () => {
+  assert.doesNotMatch(panelSource, /StyleLabBuilder|StyleLabMode|onModeChange|Build mode|Builder active|Local draft only/);
+  assert.doesNotMatch(devRootSource, /StyleLabMode|handleModeChange|onModeChange|setMode\(/);
   assert.match(devRootSource, /setInspectionActive\(false\)/);
-  assert.match(devRootSource, /onModeChange=\{handleModeChange\}/);
+  assert.match(builderSource, /if \(process\.env\.NODE_ENV !== "development"\) return null;/);
   assert.match(builderSource, /<AdhdChip/);
   assert.match(builderSource, /<AdhdIconButton/);
   assert.match(builderSource, /data-style-lab-builder/);
+  assert.match(builderSource, /lg:grid-cols-\[minmax\(20rem,1\.15fr\)_minmax\(24rem,0\.85fr\)\]/);
   assert.match(builderSource, /buildStyleLabModuleSpec/);
   assert.match(builderSource, /buildStyleLabReferenceCode/);
 });

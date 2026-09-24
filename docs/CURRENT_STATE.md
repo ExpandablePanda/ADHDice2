@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.36`.
+- Current working app version: `7.15.37`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,16 +14,16 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
-## 2026-09-24 7.15.36 Side Style Lab Builder Phase 1
+## 2026-09-24 7.15.37 Side Style Lab Builder Test Workspace
 
-Style Lab now has explicit Inspect and Build modes. Build is a development-only,
-local-only scratch module workbench with a normalized Container/Text/Chip/Icon
-Button/Divider tree, approved ADHDice controls and style values, live preview,
-local draft persistence, and deterministic Module Spec/Reference Code exports.
-Exports are reference artifacts only; the browser never edits source files.
-Inspect overrides, role selection, mock structure, and existing Style Lab
-behavior remain separate and intact. Browser QA remains manual and this shared
-developer infrastructure should remain Side-only until that UX passes review.
+The Style Lab Builder now lives as the dedicated `test-style-builder` Test
+concept instead of inside the floating Style Lab panel. The floating panel is
+Inspect-only again. Builder storage and its normalized data model are unchanged,
+including the `adhdice-style-lab:builder-draft` key. The Builder remains
+development-only and local-only; Module Spec and Reference Code exports remain
+reference artifacts only and never write source files. Browser QA remains
+manual and this shared developer infrastructure should remain Side-only until
+that UX passes review.
 
 ## 2026-09-24 7.15.35 Side Test iOS Task Detail Typography Pass
 

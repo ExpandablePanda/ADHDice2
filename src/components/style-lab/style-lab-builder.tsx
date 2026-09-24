@@ -48,7 +48,7 @@ import {
 
 const SELECT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
 const INPUT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
-const SUBPANEL_CLASS = "rounded-lg border border-[#e4dcfb] bg-[#fbfaff] px-2.5 py-2.5 dark:border-white/10 dark:bg-white/[0.04]";
+const SUBPANEL_CLASS = "rounded-[1.25rem] border border-[#e4dcfb] bg-[#fbfaff] px-4 py-4 dark:border-white/10 dark:bg-white/[0.04]";
 
 type BuilderOption = { label: string; value: string };
 
@@ -246,6 +246,11 @@ async function copyBuilderText(value: string): Promise<boolean> {
 }
 
 export function StyleLabBuilder() {
+  if (process.env.NODE_ENV !== "development") return null;
+  return <StyleLabBuilderWorkspace />;
+}
+
+function StyleLabBuilderWorkspace() {
   const [draft, setDraft] = useState<StyleLabBuilderDraft>(createDefaultStyleLabBuilderDraft);
   const [selectedId, setSelectedId] = useState(STYLE_LAB_BUILDER_ROOT_ID);
   const [hydrated, setHydrated] = useState(false);
@@ -317,7 +322,7 @@ export function StyleLabBuilder() {
   }
 
   return (
-    <div className="mt-3 grid gap-3" data-style-lab-builder>
+    <div className="mt-5 grid w-full min-w-0 gap-4" data-style-lab-builder>
       <section className={SUBPANEL_CLASS}>
         <div className="flex flex-wrap items-end gap-2">
           <label className="min-w-[12rem] flex-1">
@@ -334,8 +339,8 @@ export function StyleLabBuilder() {
         </div>
       </section>
 
-      <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.1fr)_minmax(18rem,0.9fr)]">
-        <section className={SUBPANEL_CLASS}>
+      <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(20rem,1.15fr)_minmax(24rem,0.85fr)] xl:grid-cols-[minmax(24rem,1.2fr)_minmax(28rem,0.8fr)]">
+        <section className={`${SUBPANEL_CLASS} min-w-0`}>
           <div className="flex items-center justify-between gap-2">
             <div>
               <SectionHeading>Live canvas</SectionHeading>
@@ -343,15 +348,15 @@ export function StyleLabBuilder() {
             </div>
             <span className="text-[10px] text-[#9a91b1] dark:text-white/35">{draft.nodes.length}/60 nodes</span>
           </div>
-          <div className="mt-2 min-w-0 overflow-x-auto rounded-lg border border-dashed border-[#dcd3f2] bg-[#f7f4ff] p-2 dark:border-white/15 dark:bg-white/[0.03]">
-            <div className="mx-auto min-h-[15rem] max-w-full" style={{ width: draft.canvasWidth === "fit" ? "100%" : `${draft.canvasWidth}px` }}>
+          <div className="mt-3 min-w-0 overflow-x-auto rounded-[1rem] border border-dashed border-[#dcd3f2] bg-[#f7f4ff] p-4 sm:p-6 dark:border-white/15 dark:bg-white/[0.03]">
+            <div className="mx-auto min-h-[20rem] max-w-full" style={{ width: draft.canvasWidth === "fit" ? "100%" : `${draft.canvasWidth}px` }}>
               <BuilderPreviewNode draft={draft} node={getStyleLabBuilderNode(draft, STYLE_LAB_BUILDER_ROOT_ID)!} onSelect={setSelectedId} selectedId={activeSelectedId} />
             </div>
           </div>
           {copyStatus ? <p className="mt-2 text-[11px] text-[#4d8c68] dark:text-[#a5d7b8]" role="status">{copyStatus}</p> : null}
         </section>
 
-        <div className="grid min-w-0 gap-3">
+        <div className="grid min-w-0 gap-4 xl:sticky xl:top-4 xl:self-start">
           <section className={SUBPANEL_CLASS}>
             <div className="flex items-center justify-between gap-2">
               <SectionHeading>Structure</SectionHeading>

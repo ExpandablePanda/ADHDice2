@@ -5,7 +5,6 @@ import { useLayoutEffect, useMemo, useRef, useState, type PointerEvent } from "r
 import { AdhdChip, AdhdIconButton, AdhdPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import { StyleLabColorPalette } from "./style-lab-color-palette";
-import { StyleLabBuilder } from "./style-lab-builder";
 import {
   getStyleLabProperty,
   STYLE_LAB_ICON_OPTIONS,
@@ -26,10 +25,7 @@ const SELECT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-w
 const INPUT_CLASS = "h-8 min-w-0 flex-1 rounded-lg border border-[#e6e0f4] bg-white px-2 text-xs text-[#3f3856] outline-none focus:border-[#c9bcff] disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/10 dark:bg-white/[0.06] dark:text-white";
 const MOCK_TYPE_LABELS: Record<StyleLabMockNodeType, string> = { chip: "Add Chip", item: "Add Item", section: "Add Section" };
 
-export type StyleLabMode = "inspect" | "build";
-
 export function StyleLabPanel({
-  mode,
   inspectionActive,
   instanceOverride,
   matchCount,
@@ -55,7 +51,6 @@ export function StyleLabPanel({
   onSetIcon,
   onSetPreviewText,
   onPanelPositionChange,
-  onModeChange,
   onScopeChange,
   onToggleInspection,
   role,
@@ -64,7 +59,6 @@ export function StyleLabPanel({
   panelPosition,
   scope,
 }: {
-  mode: StyleLabMode;
   copyStatus: string | null;
   inspectionActive: boolean;
   instanceOverride: StyleLabInstanceOverride | null;
@@ -91,7 +85,6 @@ export function StyleLabPanel({
   onSetIcon: (value: string) => void;
   onSetPreviewText: (value: string) => void;
   onPanelPositionChange: (position: StyleLabPanelPosition) => void;
-  onModeChange: (mode: StyleLabMode) => void;
   onScopeChange: (scope: StyleLabScope) => void;
   onToggleInspection: () => void;
   overrides: StyleLabOverrides;
@@ -152,7 +145,7 @@ export function StyleLabPanel({
       window.visualViewport?.removeEventListener("resize", normalizeCurrentPosition);
       resizeObserver?.disconnect();
     };
-  }, [mode, onPanelPositionChange, panelPosition, role?.id, scope, matchCount, instanceOverride?.iconPreviewEligible, instanceOverride?.previewTextEligible, filteredIconOptions.length]);
+  }, [onPanelPositionChange, panelPosition, role?.id, scope, matchCount, instanceOverride?.iconPreviewEligible, instanceOverride?.previewTextEligible, filteredIconOptions.length]);
 
   const fallbackPanelTop = Math.max(16, panelPosition?.top ?? 16);
   const panelMaxHeight = availablePanelHeight === null
@@ -209,7 +202,7 @@ export function StyleLabPanel({
 
   return (
     <div
-      className={`fixed z-[1000] ${mode === "build" ? "w-[min(58rem,calc(100vw-1rem))]" : "w-[min(25rem,calc(100vw-2rem))]"} ${panelPosition ? "" : "right-4 top-4"}`}
+      className={`fixed z-[1000] w-[min(25rem,calc(100vw-2rem))] ${panelPosition ? "" : "right-4 top-4"}`}
       data-style-lab-ui
       ref={panelRef}
       style={panelPosition ? { left: panelPosition.left, top: panelPosition.top } : undefined}
@@ -237,7 +230,7 @@ export function StyleLabPanel({
           <h2 className="mt-1 text-sm font-bold text-[#2f2944] dark:text-white">ADHDice Style Lab</h2>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <AdhdIconButton aria-label={mode === "build" ? "Style Lab inspection suspended in Build mode" : inspectionActive ? "Stop Style Lab inspection" : "Start Style Lab inspection"} data-style-role={undefined} disabled={mode === "build"} onClick={onToggleInspection} selected={inspectionActive} size="sm" tone="purple">
+            <AdhdIconButton aria-label={inspectionActive ? "Stop Style Lab inspection" : "Start Style Lab inspection"} data-style-role={undefined} onClick={onToggleInspection} selected={inspectionActive} size="sm" tone="purple">
               {inspectionActive ? <Eye aria-hidden="true" /> : <EyeOff aria-hidden="true" />}
             </AdhdIconButton>
             <button className="rounded-lg px-2 py-1 text-[10px] font-semibold text-[#8075a3] transition hover:bg-[#f3efff] hover:text-[#5d4bb6] dark:text-white/55 dark:hover:bg-white/10 dark:hover:text-white" onClick={onDisable} type="button">
@@ -247,22 +240,15 @@ export function StyleLabPanel({
         </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5" ref={panelBodyRef}>
-      <div className="mt-2 flex rounded-lg border border-[#e4dcfb] bg-[#f8f5ff] p-1 dark:border-white/10 dark:bg-white/[0.04]" role="tablist" aria-label="Style Lab mode">
-        <AdhdChip className="flex-1 justify-center" onClick={() => onModeChange("inspect")} selected={mode === "inspect"} type="button">Inspect</AdhdChip>
-        <AdhdChip className="flex-1 justify-center" onClick={() => onModeChange("build")} selected={mode === "build"} type="button">Build</AdhdChip>
-      </div>
-
       <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-[#ece8f8] bg-[#faf9ff] px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
         <span className="flex min-w-0 items-center gap-2">
-          <span className={`h-2 w-2 shrink-0 rounded-full ${mode === "build" ? "bg-[#6f57f6]" : inspectionActive ? "bg-[#12a876]" : "bg-[#a8a0bd]"}`} />
-          <span>{mode === "build" ? "Builder active" : inspectionActive ? "Inspection active" : "Inspection inactive"}</span>
+          <span className={`h-2 w-2 shrink-0 rounded-full ${inspectionActive ? "bg-[#12a876]" : "bg-[#a8a0bd]"}`} />
+          <span>{inspectionActive ? "Inspection active" : "Inspection inactive"}</span>
         </span>
-        <span className="shrink-0 text-[11px] text-[#8d82a7] dark:text-white/45">{mode === "build" ? "Local draft only" : "Click a registered role"}</span>
+        <span className="shrink-0 text-[11px] text-[#8d82a7] dark:text-white/45">Click a registered role</span>
       </div>
 
-      {mode === "build" ? (
-        <StyleLabBuilder />
-      ) : role ? (
+      {role ? (
         <>
           <div className="mt-3 rounded-lg border border-[#e4dcfb] bg-[#f8f5ff] px-2.5 py-2.5 dark:border-[#44376c] dark:bg-[#251d3e]">
             <div className="flex items-start justify-between gap-2">
@@ -389,7 +375,7 @@ export function StyleLabPanel({
         </p>
       )}
 
-      {mode === "inspect" ? <div className="mt-3 rounded-lg border border-[#e4dcfb] bg-[#fbfaff] px-2.5 py-2.5 dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="mt-3 rounded-lg border border-[#e4dcfb] bg-[#fbfaff] px-2.5 py-2.5 dark:border-white/10 dark:bg-white/[0.04]">
         <div className="flex items-start justify-between gap-2">
           <div>
             <p className="text-xs font-bold text-[#4f4471] dark:text-[#d8ceff]">Structure Preview</p>
@@ -454,7 +440,7 @@ export function StyleLabPanel({
         ) : null}
 
         <AdhdChip data-style-role={undefined} className="mt-2" onClick={onClearMockStructure} tone="danger" type="button">Clear Mock Structure</AdhdChip>
-      </div> : null}
+      </div>
 
       <div className="mt-3 flex items-center justify-between gap-2 border-t border-[#eeeaf6] pt-2.5 dark:border-white/10">
         <span className="text-[10px] text-[#948bab] dark:text-white/40">Drafts stay in this browser only.</span>

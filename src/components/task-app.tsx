@@ -433,6 +433,7 @@ const TestDiceFaceMapper = dynamic(() => import("./task-app/test-dice-face-mappe
 const TestDiceMaterialLab = dynamic(() => import("./task-app/test-dice-material-lab").then((module) => module.TestDiceMaterialLab), { loading: PageLoadingFallback });
 const TestTaskTablePrototype = dynamic(() => import("./task-app/test-task-table-prototype").then((module) => module.TestTaskTablePrototype), { loading: PageLoadingFallback });
 const TestIosTaskDetail = dynamic(() => import("./task-app/test-ios-task-detail").then((module) => module.TestIosTaskDetail), { loading: PageLoadingFallback, ssr: false });
+const TestStyleLabBuilder = dynamic(() => import("./style-lab/style-lab-builder").then((module) => module.StyleLabBuilder), { loading: PageLoadingFallback, ssr: false });
 
 type Message = {
   tone: "neutral" | "good" | "warn";
@@ -10313,7 +10314,8 @@ type TestConceptId =
   | "test-task-table-prototype"
   | "test-bucket-tray"
   | "test-rule-builder"
-  | "test-ios-task-detail";
+  | "test-ios-task-detail"
+  | "test-style-builder";
 
 type TestConceptRenderProps = {
   isDark: boolean;
@@ -10334,6 +10336,24 @@ function TestConceptSurface({ children, padded = false }: { children: ReactNode;
     <div className={`flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85${padded ? " p-5" : ""}`}>
       {children}
     </div>
+  );
+}
+
+function TestStyleBuilderWorkspace() {
+  if (process.env.NODE_ENV !== "development") return null;
+
+  return (
+    <section className="w-full min-w-0 rounded-[2rem] border border-[#e9e1ff] bg-white/90 p-4 text-left shadow-[0_18px_50px_rgba(109,82,237,0.08)] sm:p-6 lg:p-8 dark:border-white/10 dark:bg-[#120f1d]/85">
+      <div className="flex flex-wrap items-start justify-between gap-4 border-b border-[#eeeaf8] pb-5 dark:border-white/10">
+        <div className="min-w-0">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#8e84b7] dark:text-white/40">Standalone module workspace</p>
+          <h2 className="mt-2 text-2xl font-semibold tracking-tight text-[#2a3250] dark:text-white">Style Builder</h2>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-[#727a93] dark:text-white/60">Compose a reusable ADHDice module with a live canvas, structure tree, and selected-element controls.</p>
+        </div>
+        <span className="shrink-0 rounded-full border border-[#e4dcfb] bg-[#f8f5ff] px-2.5 py-1 text-[10px] font-semibold text-[#756c91] dark:border-white/10 dark:bg-white/[0.05] dark:text-white/55">Development-only · local draft</span>
+      </div>
+      <TestStyleLabBuilder />
+    </section>
   );
 }
 
@@ -10427,6 +10447,11 @@ const TEST_CONCEPTS = [
         <TestIosTaskDetail />
       </TestConceptSurface>
     ),
+  },
+  {
+    id: "test-style-builder",
+    label: "Style Builder",
+    render: () => <TestStyleBuilderWorkspace />,
   },
 ] as const satisfies readonly TestConceptConfig[];
 
