@@ -6,9 +6,11 @@ import {
   CURRENT_TASK_PROJECTION_READ_COLUMNS,
   compareCurrentTaskProjectionParity,
   createCurrentTaskProjectionEventBuffer,
+  isCurrentTaskProjectionParityReady,
   mergeCurrentTaskProjectionRows,
   projectionToTaskHistoryStreakSummary,
   resolveCurrentTaskProjectionReads,
+  summarizeCurrentTaskProjectionParity,
   type CurrentTaskProjectionReadRow,
 } from "../src/lib/task-current-projection-read.ts";
 import {
@@ -38,7 +40,7 @@ function projection(overrides: Partial<CurrentTaskProjectionReadRow> = {}): Curr
     entity_id: "task-1",
     entity_kind: "parent",
     display_status: "in_progress",
-    current_effective_due_on: "2026-09-24",
+    next_due_on: "2026-09-24",
     handled_current_logical_day: true,
     last_handled_logical_date: "2026-09-22",
     last_handled_at: "2026-09-22T15:00:00.000Z",
@@ -61,6 +63,7 @@ function projection(overrides: Partial<CurrentTaskProjectionReadRow> = {}): Curr
 function resolve(overrides: Partial<CurrentTaskProjectionReadRow> = {}, options: {
   historySyncEpoch?: string | null;
   logicalDaySettingsRevision?: number | null;
+  projectionRow?: CurrentTaskProjectionReadRow;
   legacyCurrentRead?: {
     dueOnByTaskId?: Record<string, string | null>;
     statusesByTaskId?: Record<string, "pending" | "in_progress" | "done" | "did_my_best" | "complete" | "missed" | "upcoming" | "not_due" | "delayed" | "archived" | "trashed" | "unscheduled">;
@@ -71,7 +74,7 @@ function resolve(overrides: Partial<CurrentTaskProjectionReadRow> = {}, options:
     historySyncEpoch: options.historySyncEpoch === undefined ? HISTORY_EPOCH : options.historySyncEpoch,
     legacyCurrentRead: options.legacyCurrentRead,
     logicalDaySettingsRevision: options.logicalDaySettingsRevision === undefined ? 7 : options.logicalDaySettingsRevision,
-    projectionsByTaskId: { [currentTask.id]: projection(overrides) },
+    projectionsByTaskId: { [currentTask.id]: options.projectionRow ?? projection(overrides) },
     taskHistoryStreakSummaries: {
       [currentTask.id]: {
         currentStreak: 2,
@@ -93,7 +96,7 @@ test("the read contract selects only the narrow current projection columns", () 
     "entity_id",
     "entity_kind",
     "display_status",
-    "current_effective_due_on",
+    "next_due_on",
     "handled_current_logical_day",
     "last_handled_logical_date",
     "last_handled_at",
@@ -127,6 +130,19 @@ test("a fresh projection supplies current status, due, streak, Last Handled, and
     lastDoneDate: "2026-09-21",
     lastDoneAt: "2026-09-21T16:00:00.000Z",
   });
+});
+
+test("next_due_on drives display due without substituting current_effective_due_on semantics", () => {
+  const result = resolve({}, {
+    projectionRow: {
+      ...projection({ next_due_on: "2026-09-24" }),
+      current_effective_due_on: "2026-09-23",
+    } as unknown as CurrentTaskProjectionReadRow,
+  });
+
+  assert.equal(result.dueOnByTaskId["task-1"], "2026-09-24");
+  assert.deepEqual(CURRENT_TASK_PROJECTION_READ_COLUMNS.split(",").includes("next_due_on"), true);
+  assert.equal(CURRENT_TASK_PROJECTION_READ_COLUMNS.split(",").includes("current_effective_due_on"), false);
 });
 
 test("repair, unavailable, stale, and missing projections use legacy or persisted fallback per Task", () => {
@@ -276,6 +292,7 @@ test("matching parity is clean and field mismatches identify the Task and field"
   });
   assert.equal(matching.freshCount, 1);
   assert.equal(matching.mismatchedFields.length, 0);
+  assert.equal(summarizeCurrentTaskProjectionParity(matching).mismatchedTaskCount, 0);
 
   const mismatch = compareCurrentTaskProjectionParity({
     legacyCurrentRead: {
@@ -297,4 +314,91 @@ test("matching parity is clean and field mismatches identify the Task and field"
   });
   assert.deepEqual(mismatch.mismatchedTaskIds, ["task-1"]);
   assert.deepEqual(mismatch.mismatchedFields.map(({ field }) => field), ["currentPositiveStreak"]);
+
+  const dueMismatch = compareCurrentTaskProjectionParity({
+    legacyCurrentRead: {
+      dueOnByTaskId: { "task-1": "2026-09-24" },
+      statusesByTaskId: { "task-1": "in_progress" },
+    },
+    legacySummaries: {
+      "task-1": {
+        currentStreak: 4,
+        missedStreak: 0,
+        lastHandledDate: "2026-09-22",
+        lastHandledAt: "2026-09-22T15:00:00.000Z",
+        lastDoneDate: "2026-09-21",
+        lastDoneAt: "2026-09-21T16:00:00.000Z",
+      },
+    },
+    projectionsByTaskId: { "task-1": projection({ next_due_on: "2026-09-23" }) },
+    tasks: [currentTask],
+  });
+  assert.deepEqual(dueMismatch.mismatchedFields.map(({ field }) => field), ["displayDueOn"]);
+});
+
+test("parity readiness waits for settled Active Status and complete legacy summaries", () => {
+  const base = {
+    activeStatusRead: { statusesByTaskId: { "task-1": "in_progress" as const } },
+    behaviorAuthorityLoading: false,
+    behaviorAuthorityReady: true,
+    comparisonTaskIds: ["task-1"],
+    isTaskHistoryLoaded: true,
+    legacySummaries: {
+      "task-1": {
+        currentStreak: 4,
+        missedStreak: 0,
+        lastHandledDate: "2026-09-22",
+        lastHandledAt: "2026-09-22T15:00:00.000Z",
+        lastDoneDate: "2026-09-21",
+        lastDoneAt: "2026-09-21T16:00:00.000Z",
+      },
+    },
+    projectionReadReady: true,
+  };
+
+  assert.equal(isCurrentTaskProjectionParityReady(base), true);
+  assert.equal(isCurrentTaskProjectionParityReady({ ...base, activeStatusRead: null }), false);
+  assert.equal(isCurrentTaskProjectionParityReady({ ...base, legacySummaries: {} }), false);
+  assert.equal(isCurrentTaskProjectionParityReady({
+    ...base,
+    legacySummaries: {
+      "task-1": {
+        currentStreak: 4,
+        missedStreak: 0,
+        lastDoneDate: null,
+        lastDoneAt: null,
+      } as never,
+    },
+  }), false);
+  assert.equal(isCurrentTaskProjectionParityReady({ ...base, behaviorAuthorityLoading: true }), false);
+  assert.equal(isCurrentTaskProjectionParityReady({ ...base, projectionReadReady: false }), false);
+});
+
+test("settled parity diagnostics report zero or bounded per-field samples", () => {
+  const parity = compareCurrentTaskProjectionParity({
+    legacyCurrentRead: {
+      dueOnByTaskId: { "task-1": "2026-09-24" },
+      statusesByTaskId: { "task-1": "in_progress" },
+    },
+    legacySummaries: {
+      "task-1": {
+        currentStreak: 3,
+        missedStreak: 1,
+        lastHandledDate: "2026-09-22",
+        lastHandledAt: "2026-09-22T15:00:00.000Z",
+        lastDoneDate: "2026-09-21",
+        lastDoneAt: "2026-09-21T16:00:00.000Z",
+      },
+    },
+    projectionsByTaskId: { "task-1": projection() },
+    tasks: [task()],
+  });
+  const diagnostics = summarizeCurrentTaskProjectionParity(parity, 1);
+
+  assert.equal(diagnostics.mismatchedTaskCount, 1);
+  assert.equal(diagnostics.mismatchCounts.displayDueOn, 0);
+  assert.equal(diagnostics.mismatchCounts.currentPositiveStreak, 1);
+  assert.equal(diagnostics.mismatchCounts.currentMissedStreak, 1);
+  assert.deepEqual(diagnostics.sampleTaskIdsByField.currentPositiveStreak, ["task-1"]);
+  assert.deepEqual(diagnostics.sampleTaskIdsByField.currentMissedStreak, ["task-1"]);
 });

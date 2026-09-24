@@ -15,6 +15,7 @@ import {
 import { AdhdIconButton, EditableEntityHeaderTitle } from "@/components/ui-system";
 import {
   buildTaskHistoryRowProjections,
+  computeTaskSpecificHistoryStats,
   deduplicateTaskHistoryByLogicalDate,
   getTaskHistoryLastDone,
 } from "@/lib/task-history";

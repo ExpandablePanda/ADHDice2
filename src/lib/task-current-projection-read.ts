@@ -8,7 +8,7 @@ export const CURRENT_TASK_PROJECTION_READ_COLUMNS = [
   "entity_id",
   "entity_kind",
   "display_status",
-  "current_effective_due_on",
+  "next_due_on",
   "handled_current_logical_day",
   "last_handled_logical_date",
   "last_handled_at",
@@ -32,7 +32,7 @@ export type CurrentTaskProjectionReadRow = Pick<
   | "entity_id"
   | "entity_kind"
   | "display_status"
-  | "current_effective_due_on"
+  | "next_due_on"
   | "handled_current_logical_day"
   | "last_handled_logical_date"
   | "last_handled_at"
@@ -52,6 +52,19 @@ export type CurrentTaskProjectionReadRow = Pick<
 
 export type CurrentTaskProjectionReadMap = Record<string, CurrentTaskProjectionReadRow>;
 
+export const CURRENT_TASK_PROJECTION_PARITY_FIELDS = [
+  "displayStatus",
+  "displayDueOn",
+  "currentPositiveStreak",
+  "currentMissedStreak",
+  "lastHandledDate",
+  "lastHandledAt",
+  "lastDoneDate",
+  "lastDoneAt",
+] as const;
+
+export type CurrentTaskProjectionParityField = (typeof CURRENT_TASK_PROJECTION_PARITY_FIELDS)[number];
+
 export type LegacyCurrentTaskRead = {
   dueOnByTaskId?: Readonly<Record<string, string | null>>;
   statusesByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
@@ -68,7 +81,7 @@ export type CurrentTaskProjectionReadResolution = {
 };
 
 export type CurrentTaskProjectionParityMismatch = {
-  field: "displayStatus" | "currentEffectiveDueOn" | "currentPositiveStreak" | "currentMissedStreak" | "lastHandledDate" | "lastHandledAt" | "lastDoneDate" | "lastDoneAt";
+  field: CurrentTaskProjectionParityField;
   taskId: string;
 };
 
@@ -77,6 +90,13 @@ export type CurrentTaskProjectionParityResult = {
   freshCount: number;
   mismatchedFields: CurrentTaskProjectionParityMismatch[];
   mismatchedTaskIds: string[];
+};
+
+export type CurrentTaskProjectionParityDiagnostics = {
+  mismatchedTaskIds: string[];
+  mismatchedTaskCount: number;
+  mismatchCounts: Record<CurrentTaskProjectionParityField, number>;
+  sampleTaskIdsByField: Record<CurrentTaskProjectionParityField, string[]>;
 };
 
 export function indexCurrentTaskProjectionRows(rows: readonly CurrentTaskProjectionReadRow[]) {
@@ -130,8 +150,47 @@ export function projectionToTaskHistoryStreakSummary(
   };
 }
 
+export function isCurrentTaskProjectionParityReady({
+  activeStatusRead,
+  behaviorAuthorityLoading,
+  behaviorAuthorityReady,
+  comparisonTaskIds,
+  isTaskHistoryLoaded,
+  legacySummaries,
+  projectionReadReady,
+}: {
+  activeStatusRead: Pick<LegacyCurrentTaskRead, "statusesByTaskId"> | null;
+  behaviorAuthorityLoading: boolean;
+  behaviorAuthorityReady: boolean;
+  comparisonTaskIds: readonly string[];
+  isTaskHistoryLoaded: boolean;
+  legacySummaries: TaskHistoryStreakSummaryMap;
+  projectionReadReady: boolean;
+}) {
+  if (!isTaskHistoryLoaded || !activeStatusRead || !behaviorAuthorityReady || behaviorAuthorityLoading || !projectionReadReady) {
+    return false;
+  }
+  if (comparisonTaskIds.length === 0) return false;
+  return comparisonTaskIds.every((taskId) => (
+    hasOwn(activeStatusRead.statusesByTaskId, taskId)
+    && hasCompleteTaskHistoryStreakSummary(legacySummaries[taskId])
+  ));
+}
+
 function hasOwn<T extends object>(value: T | undefined, key: PropertyKey): boolean {
   return value !== undefined && Object.hasOwn(value, key);
+}
+
+function hasCompleteTaskHistoryStreakSummary(summary: TaskHistoryStreakSummary | undefined) {
+  return Boolean(
+    summary
+    && typeof summary.currentStreak === "number"
+    && typeof summary.missedStreak === "number"
+    && Object.hasOwn(summary, "lastHandledDate")
+    && Object.hasOwn(summary, "lastHandledAt")
+    && Object.hasOwn(summary, "lastDoneDate")
+    && Object.hasOwn(summary, "lastDoneAt"),
+  );
 }
 
 export function resolveCurrentTaskProjectionReads({
@@ -182,7 +241,7 @@ export function resolveCurrentTaskProjectionReads({
       freshProjectionByTaskId[task.id] = projection;
       freshProjectionTaskIds.push(task.id);
       displayStatusByTaskId[task.id] = projection.display_status;
-      dueOnByTaskId[task.id] = projection.current_effective_due_on;
+      dueOnByTaskId[task.id] = projection.next_due_on;
       effectiveTaskHistoryStreakSummaries[task.id] = projectionToTaskHistoryStreakSummary(projection);
       continue;
     }
@@ -235,7 +294,7 @@ export function compareCurrentTaskProjectionParity({
     freshCount += 1;
     const legacySummary = legacySummaries[task.id];
     const legacyValues = {
-      currentEffectiveDueOn: hasOwn(legacyCurrentRead.dueOnByTaskId, task.id)
+      displayDueOn: hasOwn(legacyCurrentRead.dueOnByTaskId, task.id)
         ? legacyCurrentRead.dueOnByTaskId[task.id]
         : task.due_on,
       currentMissedStreak: legacySummary?.missedStreak ?? 0,
@@ -248,9 +307,9 @@ export function compareCurrentTaskProjectionParity({
       lastHandledAt: legacySummary?.lastHandledAt ?? null,
       lastHandledDate: legacySummary?.lastHandledDate ?? null,
     };
-    const comparisons: Array<[CurrentTaskProjectionParityMismatch["field"], unknown, unknown]> = [
+    const comparisons: Array<[CurrentTaskProjectionParityField, unknown, unknown]> = [
       ["displayStatus", projection.display_status, legacyValues.displayStatus],
-      ["currentEffectiveDueOn", projection.current_effective_due_on, legacyValues.currentEffectiveDueOn],
+      ["displayDueOn", projection.next_due_on, legacyValues.displayDueOn],
       ["currentPositiveStreak", projection.current_positive_streak, legacyValues.currentPositiveStreak],
       ["currentMissedStreak", projection.current_missed_streak, legacyValues.currentMissedStreak],
       ["lastHandledDate", projection.last_handled_logical_date, legacyValues.lastHandledDate],
@@ -268,6 +327,32 @@ export function compareCurrentTaskProjectionParity({
     freshCount,
     mismatchedFields,
     mismatchedTaskIds: [...new Set(mismatchedFields.map((mismatch) => mismatch.taskId))],
+  };
+}
+
+export function summarizeCurrentTaskProjectionParity(
+  parity: CurrentTaskProjectionParityResult,
+  sampleLimit = 3,
+): CurrentTaskProjectionParityDiagnostics {
+  const mismatchCounts = Object.fromEntries(
+    CURRENT_TASK_PROJECTION_PARITY_FIELDS.map((field) => [field, 0]),
+  ) as Record<CurrentTaskProjectionParityField, number>;
+  const sampleTaskIdsByField = Object.fromEntries(
+    CURRENT_TASK_PROJECTION_PARITY_FIELDS.map((field) => [field, []]),
+  ) as Record<CurrentTaskProjectionParityField, string[]>;
+
+  for (const mismatch of parity.mismatchedFields) {
+    mismatchCounts[mismatch.field] += 1;
+    if (sampleTaskIdsByField[mismatch.field].length < sampleLimit && !sampleTaskIdsByField[mismatch.field].includes(mismatch.taskId)) {
+      sampleTaskIdsByField[mismatch.field].push(mismatch.taskId);
+    }
+  }
+
+  return {
+    mismatchedTaskIds: parity.mismatchedTaskIds,
+    mismatchedTaskCount: parity.mismatchedTaskIds.length,
+    mismatchCounts,
+    sampleTaskIdsByField,
   };
 }
 

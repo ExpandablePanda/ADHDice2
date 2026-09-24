@@ -324,7 +324,9 @@ import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
 import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import {
   compareCurrentTaskProjectionParity,
+  isCurrentTaskProjectionParityReady,
   resolveCurrentTaskProjectionReads,
+  summarizeCurrentTaskProjectionParity,
 } from "@/lib/task-current-projection-read";
 import {
   buildManualMembershipMap,
@@ -3111,29 +3113,58 @@ export function TaskApp() {
   const calendarTaskDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
   const calendarCurrentStreakByTaskId = useMemo(
     () => Object.fromEntries(
-      tasks.map((task) => [task.id, taskHistoryStreakSummaries[task.id]?.currentStreak ?? 0]),
+      tasks.map((task) => [task.id, effectiveTaskHistoryStreakSummaries[task.id]?.currentStreak ?? 0]),
     ),
-    [taskHistoryStreakSummaries, tasks],
+    [effectiveTaskHistoryStreakSummaries, tasks],
   );
+  const currentTaskProjectionParityReady = isCurrentTaskProjectionParityReady({
+    activeStatusRead: activeStatusRead
+      ? { statusesByTaskId: activeStatusRead.statusesByTaskId }
+      : null,
+    behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
+    behaviorAuthorityReady: isBehaviorAuthorityReady,
+    comparisonTaskIds: currentTaskProjectionReadResolution.freshProjectionTaskIds,
+    isTaskHistoryLoaded,
+    legacySummaries: taskHistoryStreakSummaries,
+    projectionReadReady: isCurrentTaskProjectionReadReady,
+  });
+  const currentTaskProjectionParity = useMemo(
+    () => currentTaskProjectionParityReady
+      ? compareCurrentTaskProjectionParity({
+        legacyCurrentRead: {
+          dueOnByTaskId: activeStatusRead!.dueOnByTaskId,
+          statusesByTaskId: activeStatusRead!.statusesByTaskId,
+        },
+        legacySummaries: taskHistoryStreakSummaries,
+        projectionsByTaskId: currentTaskProjectionReadResolution.freshProjectionByTaskId,
+        tasks,
+      })
+      : null,
+    [activeStatusRead, currentTaskProjectionParityReady, currentTaskProjectionReadResolution.freshProjectionByTaskId, taskHistoryStreakSummaries, tasks],
+  );
+  const currentTaskProjectionParityRevision = useMemo(
+    () => createProjectionDomainRevision("current-task-projection-parity", currentTaskProjectionParity),
+    [currentTaskProjectionParity],
+  );
+  const loggedCurrentTaskProjectionParityRevisionRef = useRef<string | null>(null);
   useEffect(() => {
-    if (process.env.NODE_ENV !== "development" || !isTaskHistoryLoaded || !activeStatusRead) return;
-    const parity = compareCurrentTaskProjectionParity({
-      legacyCurrentRead: {
-        dueOnByTaskId: activeStatusRead.dueOnByTaskId,
-        statusesByTaskId: activeStatusRead.statusesByTaskId,
-      },
-      legacySummaries: taskHistoryStreakSummaries,
-      projectionsByTaskId: currentTaskProjectionReadResolution.freshProjectionByTaskId,
-      tasks,
-    });
-    const mismatchedFields = [...new Set(parity.mismatchedFields.map(({ field }) => field))];
+    if (process.env.NODE_ENV !== "development") return;
+    if (!currentTaskProjectionParityReady || !currentTaskProjectionParity) {
+      loggedCurrentTaskProjectionParityRevisionRef.current = null;
+      return;
+    }
+    if (loggedCurrentTaskProjectionParityRevisionRef.current === currentTaskProjectionParityRevision) return;
+    loggedCurrentTaskProjectionParityRevisionRef.current = currentTaskProjectionParityRevision;
+    const diagnostics = summarizeCurrentTaskProjectionParity(currentTaskProjectionParity);
+    const mismatchedFields = Object.entries(diagnostics.mismatchCounts)
+      .filter(([, count]) => count > 0)
+      .map(([field, count]) => `${field}=${count} sample=${diagnostics.sampleTaskIdsByField[field as keyof typeof diagnostics.sampleTaskIdsByField].join("|")}`);
     console.info(
-      `[workspace:current-projection-parity] fresh=${parity.freshCount}`
-        + ` fallback=${parity.fallbackCount}`
-        + ` mismatchedTasks=${parity.mismatchedTaskIds.length}`
-        + ` fields=${mismatchedFields.join(",") || "none"}`,
+      mismatchedFields.length === 0
+        ? `[workspace:current-projection-parity] fresh=${currentTaskProjectionParity.freshCount} fallback=${currentTaskProjectionParity.fallbackCount} mismatchedTasks=0`
+        : `[workspace:current-projection-parity] fresh=${currentTaskProjectionParity.freshCount} fallback=${currentTaskProjectionParity.fallbackCount} mismatchedTasks=${diagnostics.mismatchedTaskCount} fields=${mismatchedFields.join(",")}`,
     );
-  }, [activeStatusRead, currentTaskProjectionReadResolution.freshProjectionByTaskId, isTaskHistoryLoaded, taskHistoryStreakSummaries, tasks]);
+  }, [currentTaskProjectionParity, currentTaskProjectionParityReady, currentTaskProjectionParityRevision]);
   const activeStatusRevision = useMemo(
     () => createProjectionDomainRevision("active-task-read", {
       dueOnByTaskId: taskDisplayDueOnByTaskId,

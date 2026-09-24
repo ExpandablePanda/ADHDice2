@@ -14,6 +14,39 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-23 7.15.26 Current Projection Cutover QA Corrections
+
+The 7.15.25 browser QA pass was partial: fresh-launch projection reads,
+current-field parity across visible views, and resume/auth lifecycle passed;
+cross-tab status updated, but the visible cross-tab streak badge did not update
+to `1-hot`. History mutation and historical-surfaces checks failed because the
+History modal path referenced `computeTaskSpecificHistoryStats` without importing
+it from `@/lib/task-history`.
+
+The same QA pass found a display-due semantic mismatch: the current projection
+read adapter used `current_effective_due_on`, which represents the current
+occurrence, instead of `next_due_on`, the durable equivalent of legacy
+`evaluated.nextDueDate`. The NBA 2K27 live example had Task `due_on`
+`2026-09-24`, projection display `upcoming`, `current_effective_due_on`
+`2026-09-23`, and `next_due_on` `2026-09-24`.
+
+The NBA 2K27 durable projection correctly rebuilt to `current_positive_streak =
+1`, `current_missed_streak = 0`, and valid freshness with the canonical revision
+matching the Task. The shadow rebuild occurred about four seconds after the
+canonical Task commit. The cross-tab correction therefore covers the visible
+consumer/state propagation seam; it does not change projection-writer or
+canonical Task State semantics.
+
+Development parity diagnostics previously ran when `isTaskHistoryLoaded` was
+true before Active Status and the bulk legacy streak-summary oracle had settled.
+7.15.26 adds an explicit parity-ready gate and bounded per-field mismatch
+diagnostics after due values are compared as `next_due_on` / display due.
+
+History retirement remains blocked pending 7.15.26 browser QA. History startup,
+History-backed Calendar/History detail, Records, Stats, Achievements, rollover,
+projection writer semantics, SQL, and Edge deployment are unchanged by this
+correction ticket.
+
 ## 2026-09-23 7.15.25 First Current Projection Consumer Cutover
 
 The first browser current-read consumer cutover is active. For each Task, a
