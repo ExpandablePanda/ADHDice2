@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.30`.
+- Current working app version: `7.15.31`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.31 Projection V2 Parity Gate Correction
+
+The first-10 7.15.30 V2 pilot passed its read-only database audit: 10 valid
+V2 rows, 509 valid V1 rows, zero `repair_required`, unavailable, or missing
+rows, with all canonical revision, History frontier/epoch, logical-day,
+projected-date, schedule, behavior, and timestamp-kind fences passing.
+
+The initial settled browser parity report showed three false blockers: two
+trashed/inactive Tasks and one active Task whose V2 `null` timestamp plus
+`logical_day_presentation` kind reconstructed the same floating logical-day
+midnight that legacy displayed. The comparator now excludes canonical
+`trashed`, `archived`, and `permanently_complete` Tasks from ordinary semantic
+parity while reporting them separately, and compares the reconstructed V2
+History summary rather than raw persisted `last_*_at` storage. Raw storage,
+kind, logical date, reconstructed presentation, and legacy values remain in
+timestamp diagnostics. Projection calculator semantics, stored V2 rows,
+History startup, SQL, and Edge deployment are unchanged.
+
+The corrected first-10 parity gate is a manual reload-and-settle check. The
+campaign remains manual and must continue only in controlled 50-row operations
+after that gate passes. History retirement moves to 7.15.32.
 
 ## 2026-09-24 7.15.29 Current Projection Parity Root-Cause Lock
 
@@ -149,8 +171,9 @@ Deployment order and result:
 The manual UI operator is labeled “Rebuild V2 Projections”, retains the
 shared busy/rollover guard, serial 10-row primitives, five-call/50-row maximum,
 keyset cursor, one retryable fence retry, failure stop, and authoritative
-remaining count. Automatic execution is disabled. The first-10 pilot has not
-been run: current progress is written 0, failed 0, retries 0, remaining 519.
+remaining count. Automatic execution is disabled. At the 7.15.30 release
+boundary, the first-10 pilot had not been run: progress was written 0, failed
+0, retries 0, remaining 519.
 The verified first candidate page was read-only and contained 10 Task IDs.
 
 The final all-row fence audit and settled V2 parity report are pending the

@@ -1,5 +1,6 @@
-import type { Task, TaskCurrentProjection } from "@/lib/database.types";
+import type { CurrentTaskProjectionTimestampKind, Task, TaskCurrentProjection } from "@/lib/database.types";
 import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-freshness";
+import { isCanonicalInactiveTask } from "@/lib/task-state-engine/direct-input";
 import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import { logicalDateForTimestamp } from "@/lib/task-state-engine/calendar";
@@ -138,9 +139,20 @@ export type CurrentTaskProjectionParityMismatchDiagnostic = CurrentTaskProjectio
     projected: CurrentTaskProjectionTimestampContract;
     legacy: CurrentTaskProjectionTimestampContract;
   };
+  projectedStoredAt?: string | null;
+  projectedAtKind?: CurrentTaskProjectionTimestampKind | null;
+  projectedLogicalDate?: string | null;
+  projectedPresentationValue?: string | null;
+  legacyValue?: string | number | boolean | null;
 };
 
 export type CurrentTaskProjectionParityResult = {
+  eligibleFallbackCount: number;
+  eligibleFreshCount: number;
+  eligibleTaskIds: string[];
+  excludedInactiveFallbackCount: number;
+  excludedInactiveFreshCount: number;
+  excludedInactiveTaskIds: string[];
   fallbackCount: number;
   freshCount: number;
   mismatchedFields: CurrentTaskProjectionParityMismatch[];
@@ -211,6 +223,10 @@ export function projectionToTaskHistoryStreakSummary(
       ? projection.last_done_logical_date ? `${projection.last_done_logical_date}T00:00:00` : null
       : projection.last_done_at,
   };
+}
+
+export function isCurrentTaskProjectionParityEligibleTask(task: Task) {
+  return !isCanonicalInactiveTask(task);
 }
 
 export function isCurrentTaskProjectionParityReady({
@@ -357,12 +373,31 @@ export function compareCurrentTaskProjectionParity({
   const mismatchedFields: CurrentTaskProjectionParityMismatch[] = [];
   const mismatchDiagnostics: CurrentTaskProjectionParityMismatchDiagnostic[] = [];
   const diagnosticCounts = new Map<CurrentTaskProjectionParityField, number>();
+  const eligibleTaskIds: string[] = [];
+  const excludedInactiveTaskIds: string[] = [];
+  let eligibleFreshCount = 0;
+  let excludedInactiveFreshCount = 0;
+  let eligibleFallbackCount = 0;
+  let excludedInactiveFallbackCount = 0;
   let freshCount = 0;
 
   for (const task of tasks) {
+    const isEligibleTask = isCurrentTaskProjectionParityEligibleTask(task);
+    if (isEligibleTask) eligibleTaskIds.push(task.id);
+    else excludedInactiveTaskIds.push(task.id);
     const projection = projectionsByTaskId[task.id];
-    if (!projection) continue;
+    if (!projection) {
+      if (isEligibleTask) eligibleFallbackCount += 1;
+      else excludedInactiveFallbackCount += 1;
+      continue;
+    }
     freshCount += 1;
+    if (!isEligibleTask) {
+      excludedInactiveFreshCount += 1;
+      continue;
+    }
+    eligibleFreshCount += 1;
+    const projectionSummary = projectionToTaskHistoryStreakSummary(projection);
     const legacySummary = legacySummaries[task.id];
     const legacyValues = {
       displayDueOn: hasOwn(legacyCurrentRead.dueOnByTaskId, task.id)
@@ -383,43 +418,63 @@ export function compareCurrentTaskProjectionParity({
       ["displayDueOn", projection.next_due_on, legacyValues.displayDueOn],
       ["currentPositiveStreak", projection.current_positive_streak, legacyValues.currentPositiveStreak],
       ["currentMissedStreak", projection.current_missed_streak, legacyValues.currentMissedStreak],
-      ["lastHandledDate", projection.last_handled_logical_date, legacyValues.lastHandledDate],
-      ["lastHandledAt", projection.last_handled_at, legacyValues.lastHandledAt],
-      ["lastDoneDate", projection.last_done_logical_date, legacyValues.lastDoneDate],
-      ["lastDoneAt", projection.last_done_at, legacyValues.lastDoneAt],
+      ["lastHandledDate", projectionSummary.lastHandledDate, legacyValues.lastHandledDate],
+      ["lastHandledAt", projectionSummary.lastHandledAt, legacyValues.lastHandledAt],
+      ["lastDoneDate", projectionSummary.lastDoneDate, legacyValues.lastDoneDate],
+      ["lastDoneAt", projectionSummary.lastDoneAt, legacyValues.lastDoneAt],
     ];
     for (const [field, projected, legacy] of comparisons) {
-      if (projected !== legacy) {
+      const isTimestampField = field === "lastHandledAt" || field === "lastDoneAt";
+      const projectedLogicalDate = field === "lastHandledAt" || field === "lastHandledDate"
+        ? projectionSummary.lastHandledDate
+        : projectionSummary.lastDoneDate;
+      const projectedAtKind = field === "lastHandledAt"
+        ? projection.last_handled_at_kind
+        : field === "lastDoneAt"
+          ? projection.last_done_at_kind
+          : null;
+      const valuesMatch = isTimestampField
+        ? areCurrentTaskProjectionTimestampValuesEqual({
+          legacy,
+          logicalDayStart,
+          projected,
+          projectedAtKind,
+          projectedLogicalDate,
+          timezone,
+        })
+        : projected === legacy;
+      if (!valuesMatch) {
         mismatchedFields.push({ field, taskId: task.id });
         const existingCount = diagnosticCounts.get(field) ?? 0;
         if (existingCount < sampleLimitPerField) {
-          const isTimestampField = field === "lastHandledAt" || field === "lastDoneAt";
-          const logicalDate = field === "lastHandledAt" || field === "lastHandledDate"
-            ? projection.last_handled_logical_date ?? legacyValues.lastHandledDate
-            : projection.last_done_logical_date ?? legacyValues.lastDoneDate;
           const diagnostic: CurrentTaskProjectionParityMismatchDiagnostic = {
-              field,
-              legacyRawValue: normalizeDiagnosticValue(legacy),
+            field,
+            legacyRawValue: normalizeDiagnosticValue(legacy),
             projectionCanonicalTaskRevision: projection.canonical_task_revision,
             projectionHistorySourceRevision: projection.history_source_revision,
             projectionUpdatedAt: projection.updated_at,
-              projectedRawValue: normalizeDiagnosticValue(projected),
-              taskCanonicalRevision: typeof task.canonical_revision === "number" ? task.canonical_revision : null,
-              taskId: task.id,
-            };
+            projectedRawValue: normalizeDiagnosticValue(projected),
+            taskCanonicalRevision: typeof task.canonical_revision === "number" ? task.canonical_revision : null,
+            taskId: task.id,
+          };
           if (isTimestampField) {
             diagnostic.timestampClassification = classifyCurrentTaskProjectionTimestampMismatch(projected, legacy, {
               logicalDayStart,
               timezone,
             });
+            diagnostic.projectedStoredAt = field === "lastHandledAt" ? projection.last_handled_at : projection.last_done_at;
+            diagnostic.projectedAtKind = projectedAtKind;
+            diagnostic.projectedLogicalDate = projectedLogicalDate;
+            diagnostic.projectedPresentationValue = typeof projected === "string" ? projected : null;
+            diagnostic.legacyValue = normalizeDiagnosticValue(legacy);
             diagnostic.timestampContract = {
               legacy: classifyCurrentTaskProjectionTimestampContract(field, legacy, {
-                logicalDate,
+                logicalDate: projectedLogicalDate,
                 timezone,
                 logicalDayStart,
               }),
               projected: classifyCurrentTaskProjectionTimestampContract(field, projected, {
-                logicalDate,
+                logicalDate: projectedLogicalDate,
                 timezone,
                 logicalDayStart,
               }),
@@ -438,6 +493,12 @@ export function compareCurrentTaskProjectionParity({
   }
 
   return {
+    eligibleFallbackCount,
+    eligibleFreshCount,
+    eligibleTaskIds,
+    excludedInactiveFallbackCount,
+    excludedInactiveFreshCount,
+    excludedInactiveTaskIds,
     fallbackCount: Math.max(0, tasks.length - freshCount),
     freshCount,
     mismatchedFields,
@@ -474,6 +535,48 @@ export function summarizeCurrentTaskProjectionParity(
       return fieldSamples.includes(mismatch.taskId);
     }),
   };
+}
+
+function areCurrentTaskProjectionTimestampValuesEqual({
+  legacy,
+  logicalDayStart,
+  projected,
+  projectedAtKind,
+  projectedLogicalDate,
+  timezone,
+}: {
+  legacy: unknown;
+  logicalDayStart: string;
+  projected: unknown;
+  projectedAtKind: CurrentTaskProjectionTimestampKind | null;
+  projectedLogicalDate: string | null;
+  timezone: string;
+}) {
+  if (projected === legacy) return true;
+  if (typeof projected !== "string" || typeof legacy !== "string") return false;
+
+  if (projectedAtKind === "event_instant") {
+    if (!hasExplicitTimestampZone(projected) || !hasExplicitTimestampZone(legacy)) return false;
+    const projectedTimestamp = Date.parse(projected);
+    const legacyTimestamp = Date.parse(legacy);
+    return Number.isFinite(projectedTimestamp)
+      && Number.isFinite(legacyTimestamp)
+      && projectedTimestamp === legacyTimestamp;
+  }
+
+  if (projectedAtKind !== "logical_day_presentation" || !projectedLogicalDate) return false;
+  if (classifyCurrentTaskProjectionTimestampContract("lastDoneAt", legacy, {
+    logicalDate: projectedLogicalDate,
+    logicalDayStart,
+    timezone,
+  }) !== "synthesized logical-day presentation time") {
+    return false;
+  }
+  try {
+    return logicalDateForTimestamp(legacy, timezone, logicalDayStart) === projectedLogicalDate;
+  } catch {
+    return false;
+  }
 }
 
 function normalizeDiagnosticValue(value: unknown): string | number | boolean | null {

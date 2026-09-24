@@ -84,6 +84,10 @@ export function isCanonicalArchivedOrTrashed(task: CanonicalProjectedTaskState) 
   return task.status === "archived" || task.status === "trashed";
 }
 
+export function isCanonicalInactiveTask(task: CanonicalProjectedTaskState) {
+  return task.terminal_state === "permanently_complete" || isCanonicalArchivedOrTrashed(task);
+}
+
 export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
   if (boundary.schedule_model === "unscheduled" || boundary.schedule_model === "one_time") return { kind: "none" };
   if (boundary.schedule_model === "rolling") {

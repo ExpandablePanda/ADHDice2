@@ -325,6 +325,7 @@ import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, type TaskAtt
 import {
   compareCurrentTaskProjectionParity,
   type CurrentTaskProjectionParityMismatchDiagnostic,
+  isCurrentTaskProjectionParityEligibleTask,
   isCurrentTaskProjectionParityReady,
   resolveCurrentTaskProjectionReads,
   summarizeCurrentTaskProjectionParity,
@@ -3126,13 +3127,19 @@ export function TaskApp() {
     ),
     [effectiveTaskHistoryStreakSummaries, tasks],
   );
+  const currentTaskProjectionParityTaskIds = useMemo(() => {
+    const eligibleTaskIds = new Set(
+      tasks.filter(isCurrentTaskProjectionParityEligibleTask).map((task) => task.id),
+    );
+    return currentTaskProjectionReadResolution.freshProjectionTaskIds.filter((taskId) => eligibleTaskIds.has(taskId));
+  }, [currentTaskProjectionReadResolution.freshProjectionTaskIds, tasks]);
   const currentTaskProjectionParityReady = isCurrentTaskProjectionParityReady({
     activeStatusRead: activeStatusRead
       ? { statusesByTaskId: activeStatusRead.statusesByTaskId }
       : null,
     behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
     behaviorAuthorityReady: isBehaviorAuthorityReady,
-    comparisonTaskIds: currentTaskProjectionReadResolution.freshProjectionTaskIds,
+    comparisonTaskIds: currentTaskProjectionParityTaskIds,
     isTaskHistoryLoaded,
     legacySummaries: taskHistoryStreakSummaries,
     projectionReadReady: isCurrentTaskProjectionReadReady,
@@ -3222,10 +3229,12 @@ export function TaskApp() {
         projectionStatus: projection.display_status,
       });
     }
+    const scope = `fresh=${currentTaskProjectionParity.freshCount} fallback=${currentTaskProjectionParity.fallbackCount} eligible=${currentTaskProjectionParity.eligibleTaskIds.length} eligibleFresh=${currentTaskProjectionParity.eligibleFreshCount} eligibleFallback=${currentTaskProjectionParity.eligibleFallbackCount} excludedInactive=${currentTaskProjectionParity.excludedInactiveTaskIds.length} excludedFresh=${currentTaskProjectionParity.excludedInactiveFreshCount} excludedFallback=${currentTaskProjectionParity.excludedInactiveFallbackCount}`;
+    const excludedSample = currentTaskProjectionParity.excludedInactiveTaskIds.slice(0, 32).join("|");
     console.info(
       mismatchedFields.length === 0
-        ? `[workspace:current-projection-parity] fresh=${currentTaskProjectionParity.freshCount} fallback=${currentTaskProjectionParity.fallbackCount} mismatchedTasks=0`
-        : `[workspace:current-projection-parity] fresh=${currentTaskProjectionParity.freshCount} fallback=${currentTaskProjectionParity.fallbackCount} mismatchedTasks=${diagnostics.mismatchedTaskCount} fields=${mismatchedFields.join(",")}`,
+        ? `[workspace:current-projection-parity] ${scope} excludedSample=${excludedSample || "none"} mismatchedTasks=0`
+        : `[workspace:current-projection-parity] ${scope} excludedSample=${excludedSample || "none"} mismatchedTasks=${diagnostics.mismatchedTaskCount} fields=${mismatchedFields.join(",")}`,
     );
   }, [activeStatusRead, currentTaskProjectionParity, currentTaskProjectionParityReady, currentTaskProjectionParityRevision, currentTaskProjectionReadResolution.freshProjectionByTaskId, taskHistoryByTaskId, taskHistoryStreakSummaries, tasks]);
   useEffect(() => {
