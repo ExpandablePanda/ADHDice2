@@ -890,6 +890,7 @@ export type UserProfile = {
   accent_color: string | null;
   day_start_time: string;
   timezone: string;
+  settings_revision: number;
   focus_alarm_enabled: boolean;
   focus_alarm_interval_minutes: number;
   level: number;

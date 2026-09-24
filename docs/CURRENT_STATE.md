@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.24`.
+- Current working app version: `7.15.25`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,42 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-23 7.15.25 First Current Projection Consumer Cutover
+
+The first browser current-read consumer cutover is active. For each Task, a
+projection is preferred only when `isCurrentTaskProjectionFresh()` accepts the
+row against the current owner, entity identity/kind, canonical Task revision,
+History sync epoch, profile `settings_revision`, logical date, projection
+schema, algorithm, and `valid` state. Fresh rows now provide the current
+display status, current effective due date, positive streak, missed streak,
+Last Handled logical date/time, and Last Done logical date/time.
+
+Stale, `repair_required`, `unavailable`, or missing rows fall back per entity
+to the existing legacy Active Status/History result. Until that legacy result
+is ready, the existing persisted Task snapshot remains the fallback. Projection
+values are never written into `clean_tasks`, and no canonical mutation source
+changed. The `unscheduled` presentation behavior remains owned by
+`projectTasksForActiveStatusRead()`.
+
+The startup critical-core request now loads the narrow projection column list
+and the owner's History sync-state fence alongside the existing Task/profile
+request. Projection reads do not wait for full History hydration, and a
+projection query failure remains non-blocking. Projection Realtime is now
+published through the existing `supabase_realtime` publication and subscribed
+owner-scoped for `INSERT` and `UPDATE`; events are buffered/coalesced into
+bounded in-memory state updates, with no per-row refetch or workspace reload.
+
+The legacy History hydration/cache/delta path, active-status engine, streak
+summary calculation, rollover History readiness, Calendar and History detail,
+Records, Stats, and Achievements remain intact. Historical/window Smart List
+facts remain History-backed and History-gated. Full History still hydrates in
+the background for this release. Eager History retirement is deferred until a
+post-browser-QA ticket.
+
+Live projection state remains 519 eligible, 519 valid, 0 `repair_required`, 0
+unavailable, and 0 missing after the publication-only SQL change. The runtime
+projection remains rebuildable derived state; no canonical authority changed.
 
 ## 2026-09-23 7.15.24 Close Current Projection Freshness / Invalidation Matrix
 

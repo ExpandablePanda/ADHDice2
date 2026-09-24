@@ -66,6 +66,14 @@ import {
   TASK_HISTORY_SYNC_PROTOCOL_VERSION,
   type TaskHistoryCacheSnapshot,
 } from "@/lib/task-history-sync-cache";
+import {
+  CURRENT_TASK_PROJECTION_READ_COLUMNS,
+  createCurrentTaskProjectionEventBuffer,
+  indexCurrentTaskProjectionRows,
+  mergeCurrentTaskProjectionRows,
+  type CurrentTaskProjectionReadMap,
+  type CurrentTaskProjectionReadRow,
+} from "@/lib/task-current-projection-read";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
@@ -147,6 +155,11 @@ type TaskHistorySyncLoadResult = {
   fromRevision?: number;
   toRevision?: number;
   serverFactsReceived: number;
+};
+
+export type CurrentTaskProjectionReadContext = {
+  historySyncEpoch: string | null;
+  logicalDaySettingsRevision: number | null;
 };
 
 function keepCurrentIfStructurallyEqual<T>(current: T, next: T) {
@@ -329,6 +342,12 @@ export function useWorkspaceData({
   const [taskHistoryByTaskId, setTaskHistoryByTaskId] = useState<Record<string, DbTaskHistory[]>>({});
   const [taskHistoryLoadStateByTaskId, setTaskHistoryLoadStateByTaskId] = useState<Record<string, TaskHistoryTaskLoadState>>({});
   const [taskHistoryStreakSummaries, setTaskHistoryStreakSummaries] = useState<TaskHistoryStreakSummaryMap>({});
+  const [currentTaskProjectionsByTaskId, setCurrentTaskProjectionsByTaskId] = useState<CurrentTaskProjectionReadMap>({});
+  const [currentTaskProjectionReadContext, setCurrentTaskProjectionReadContext] = useState<CurrentTaskProjectionReadContext>({
+    historySyncEpoch: null,
+    logicalDaySettingsRevision: null,
+  });
+  const [isCurrentTaskProjectionReadReady, setIsCurrentTaskProjectionReadReady] = useState(false);
   const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
   const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
   const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
@@ -496,6 +515,9 @@ export function useWorkspaceData({
       clearTaskHistoryTaskCache();
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped display cache on sign-out.
       setTaskHistoryStreakSummaries({});
+      setCurrentTaskProjectionsByTaskId({});
+      setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
+      setIsCurrentTaskProjectionReadReady(false);
       setTaskHistoryLoadedUserId(null);
       taskHistoryLoadPromiseRef.current = null;
       loadTaskHistoryStreakSummariesRef.current = null;
@@ -540,6 +562,9 @@ export function useWorkspaceData({
     }
     clearTaskHistoryTaskCache();
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
+    setCurrentTaskProjectionsByTaskId({});
+    setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
+    setIsCurrentTaskProjectionReadReady(false);
     fullTaskHistoryRowsRef.current = [];
     taskHistoryLoadPromiseRef.current = null;
     loadTaskHistoryStreakSummariesRef.current = null;
@@ -1387,6 +1412,15 @@ export function useWorkspaceData({
         .select(WORKSPACE_PROFILE_COLUMNS)
         .eq("user_id", userId)
         .maybeSingle();
+      const currentTaskProjectionRequest = client
+        .from("adhdice_task_current_projections")
+        .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
+        .eq("user_id", userId);
+      const historySyncStateRequest = client
+        .from("adhdice_task_history_sync_state")
+        .select("sync_epoch,protocol_version")
+        .eq("user_id", userId)
+        .maybeSingle();
       const canonicalTaskSnapshotRequest = loadCanonicalTaskSnapshot(
         () => createTaskRowsRequest(),
         (taskIds) => loadTaskScheduleBoundaries(taskIds),
@@ -1394,6 +1428,8 @@ export function useWorkspaceData({
       const criticalCoreRequest = Promise.all([
         canonicalTaskSnapshotRequest,
         profileRequest,
+        currentTaskProjectionRequest,
+        historySyncStateRequest,
       ]);
       // Focus History is owned by the page-gated Focus hook, never core startup.
       const shouldLoadFocusHistory = false;
@@ -1437,7 +1473,12 @@ export function useWorkspaceData({
           .eq("user_id", userId)
           .order("created_at", { ascending: true }),
       ]);
-      const [{ taskResult, boundaryResult: taskScheduleBoundariesResult }, profileResult] = await criticalCoreRequest;
+      const [
+        { taskResult, boundaryResult: taskScheduleBoundariesResult },
+        profileResult,
+        currentTaskProjectionResult,
+        historySyncStateResult,
+      ] = await criticalCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -1451,6 +1492,23 @@ export function useWorkspaceData({
         taskScheduleBoundariesResult?.error,
         profileResult.error,
       ].filter(Boolean);
+
+      const projectionRows = currentTaskProjectionResult.error
+        ? []
+        : (currentTaskProjectionResult.data ?? []) as unknown as CurrentTaskProjectionReadRow[];
+      const historySyncEpoch = historySyncStateResult.error
+        || historySyncStateResult.data?.protocol_version !== TASK_HISTORY_SYNC_PROTOCOL_VERSION
+        ? null
+        : historySyncStateResult.data.sync_epoch;
+      const logicalDaySettingsRevision = profileResult.data && Number.isInteger(profileResult.data.settings_revision)
+        ? profileResult.data.settings_revision
+        : null;
+      if (currentTaskProjectionResult.error && isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[workspace:current-projection] read failed: ${currentTaskProjectionResult.error.message}`);
+      }
+      if ((historySyncStateResult.error || !historySyncEpoch) && isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[workspace:current-projection] History sync fence unavailable: ${historySyncStateResult.error?.message ?? "unsupported or missing sync state"}`);
+      }
 
       if (criticalErrors.length > 0) {
         setMessage({ tone: "warn", text: criticalErrors[0]?.message ?? "Could not load your tasks." });
@@ -1469,6 +1527,12 @@ export function useWorkspaceData({
       tasksRef.current = nextTasks;
       startTransition(() => {
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
+        setCurrentTaskProjectionsByTaskId((current) => mergeCurrentTaskProjectionRows(
+          indexCurrentTaskProjectionRows(projectionRows),
+          Object.values(current),
+        ));
+        setCurrentTaskProjectionReadContext({ historySyncEpoch, logicalDaySettingsRevision });
+        setIsCurrentTaskProjectionReadReady(true);
         onProfileLoaded(profileResult.data ?? null, user);
         if (profileResult.data) {
           const nextEconomy = {
@@ -1834,6 +1898,24 @@ export function useWorkspaceData({
     window.addEventListener("online", handleWindowOnline);
     window.addEventListener("offline", handleWindowOffline);
 
+    const projectionEventBuffer = createCurrentTaskProjectionEventBuffer(
+      (rows) => {
+        if (!isActive) return;
+        setCurrentTaskProjectionsByTaskId((current) => mergeCurrentTaskProjectionRows(current, rows));
+      },
+      {
+        cancel: (handle) => window.clearTimeout(handle as number),
+        schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      },
+    );
+
+    function enqueueProjectionRealtimePayload(value: unknown) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      const row = value as Partial<CurrentTaskProjectionReadRow>;
+      if (row.user_id !== userId || typeof row.entity_id !== "string" || typeof row.updated_at !== "string") return;
+      projectionEventBuffer.enqueue(row as CurrentTaskProjectionReadRow);
+    }
+
     const workspaceChannel = client
       .channel(`adhdice_workspace:${userId}`)
       .on(
@@ -1979,6 +2061,26 @@ export function useWorkspaceData({
           void loadTaskHistoryStreakSummaries();
         },
       )
+      .on(
+        "postgres_changes",
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "adhdice_task_current_projections",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => enqueueProjectionRealtimePayload(payload.new),
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "UPDATE",
+          schema: "public",
+          table: "adhdice_task_current_projections",
+          filter: `user_id=eq.${userId}`,
+        },
+        (payload) => enqueueProjectionRealtimePayload(payload.new),
+      )
       .subscribe((status) => {
         if (status === "SUBSCRIBED") {
           workspaceChannelSubscriptionCountRef.current += 1;
@@ -2017,6 +2119,7 @@ export function useWorkspaceData({
       if (taskChannel) {
         taskChannelRemovalPromiseRef.current = removeTaskChannel(taskChannel);
       }
+      projectionEventBuffer.dispose();
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         workspaceChannelCleanupCountRef.current += 1;
         console.info(`[workspace] Workspace realtime cleanup count=${workspaceChannelCleanupCountRef.current} userId=${userId}.`);
@@ -2107,6 +2210,9 @@ export function useWorkspaceData({
     taskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
     taskHistoryStreakSummaries,
+    currentTaskProjectionReadContext,
+    currentTaskProjectionsByTaskId,
+    isCurrentTaskProjectionReadReady,
     updateTaskHistoryForTask,
   };
 }

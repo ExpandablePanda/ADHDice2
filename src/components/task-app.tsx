@@ -323,6 +323,10 @@ import {
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
 import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import {
+  compareCurrentTaskProjectionParity,
+  resolveCurrentTaskProjectionReads,
+} from "@/lib/task-current-projection-read";
+import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
   isBuiltInTaskListId,
@@ -1848,6 +1852,9 @@ export function TaskApp() {
     taskHistoryByTaskId: sharedTaskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
     taskHistoryStreakSummaries,
+    currentTaskProjectionReadContext,
+    currentTaskProjectionsByTaskId,
+    isCurrentTaskProjectionReadReady,
     updateTaskHistoryForTask,
     workspaceGenerationRef,
   } = useWorkspaceData({
@@ -2926,32 +2933,6 @@ export function TaskApp() {
     () => buildHomeRecordChases(homeDailyProgress.recordLiveValues, homeRecordTargets.targets),
     [homeDailyProgress.recordLiveValues, homeRecordTargets.targets],
   );
-  const taskHistoryFactsByTaskId = useMemo(
-    () => Object.fromEntries(
-      tasks.map((task) => [
-        task.id,
-        (() => {
-          const facts = buildTaskHistoryFacts(taskHistoryByTaskId[task.id] ?? [], todayKey);
-          const summary = taskHistoryStreakSummaries[task.id];
-          return {
-            ...facts,
-            currentCompletedStreak: summary?.currentStreak ?? 0,
-            currentMissedStreak: summary?.missedStreak ?? 0,
-          };
-        })(),
-      ]),
-    ),
-    [taskHistoryByTaskId, taskHistoryStreakSummaries, tasks, todayKey],
-  );
-  const currentStreakByTaskId = useMemo(
-    () => Object.fromEntries(
-      tasks.map((task) => [
-        task.id,
-        taskHistoryStreakSummaries[task.id]?.currentStreak ?? 0,
-      ]),
-    ),
-    [taskHistoryStreakSummaries, tasks],
-  );
   const taskDomainRevision = useMemo(
     () => createProjectionDomainRevision("tasks", tasks),
     [tasks],
@@ -2959,14 +2940,6 @@ export function TaskApp() {
   const taskHistoryRevision = useMemo(
     () => createProjectionDomainRevision("task-history-authoritative", taskHistoryByTaskId),
     [taskHistoryByTaskId],
-  );
-  const taskHistoryStreakSummaryRevision = useMemo(
-    () => createProjectionDomainRevision("task-history-streak-summary", taskHistoryStreakSummaries),
-    [taskHistoryStreakSummaries],
-  );
-  const persistedTaskDisplayStatusByTaskId = useMemo(
-    () => Object.fromEntries(tasks.map((task) => [task.id, task.status])),
-    [tasks],
   );
   const taskHistoryReadinessRevision = useMemo(
     () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
@@ -3082,8 +3055,85 @@ export function TaskApp() {
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeStatusInputRevision, isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, projectionCache, taskActiveStatusBehaviorRevision]);
-  const taskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId ?? persistedTaskDisplayStatusByTaskId;
-  const taskDisplayDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
+  const currentTaskProjectionReadResolution = useMemo(
+    () => resolveCurrentTaskProjectionReads({
+      historySyncEpoch: currentTaskProjectionReadContext.historySyncEpoch,
+      legacyCurrentRead: activeStatusRead
+        ? {
+          dueOnByTaskId: activeStatusRead.dueOnByTaskId,
+          statusesByTaskId: activeStatusRead.statusesByTaskId,
+        }
+        : undefined,
+      logicalDaySettingsRevision: currentTaskProjectionReadContext.logicalDaySettingsRevision,
+      projectionsByTaskId: currentTaskProjectionsByTaskId,
+      taskHistoryStreakSummaries,
+      tasks,
+      todayKey,
+    }),
+    [
+      activeStatusRead,
+      currentTaskProjectionReadContext,
+      currentTaskProjectionsByTaskId,
+      taskHistoryStreakSummaries,
+      tasks,
+      todayKey,
+    ],
+  );
+  const taskDisplayStatusByTaskId = currentTaskProjectionReadResolution.displayStatusByTaskId;
+  const taskDisplayDueOnByTaskId = currentTaskProjectionReadResolution.dueOnByTaskId;
+  const effectiveTaskHistoryStreakSummaries = currentTaskProjectionReadResolution.effectiveTaskHistoryStreakSummaries;
+  const taskHistoryStreakSummaryRevision = useMemo(
+    () => createProjectionDomainRevision("task-history-streak-summary", effectiveTaskHistoryStreakSummaries),
+    [effectiveTaskHistoryStreakSummaries],
+  );
+  const taskHistoryFactsByTaskId = useMemo(
+    () => Object.fromEntries(
+      tasks.map((task) => {
+        const facts = buildTaskHistoryFacts(taskHistoryByTaskId[task.id] ?? [], todayKey);
+        const summary = effectiveTaskHistoryStreakSummaries[task.id];
+        return [task.id, {
+          ...facts,
+          currentCompletedStreak: summary?.currentStreak ?? 0,
+          currentMissedStreak: summary?.missedStreak ?? 0,
+        }];
+      }),
+    ),
+    [effectiveTaskHistoryStreakSummaries, taskHistoryByTaskId, tasks, todayKey],
+  );
+  const currentStreakByTaskId = useMemo(
+    () => Object.fromEntries(
+      tasks.map((task) => [task.id, effectiveTaskHistoryStreakSummaries[task.id]?.currentStreak ?? 0]),
+    ),
+    [effectiveTaskHistoryStreakSummaries, tasks],
+  );
+  const calendarTaskDisplayStatusByTaskId = activeStatusRead?.statusesByTaskId
+    ?? Object.fromEntries(tasks.map((task) => [task.id, task.status]));
+  const calendarTaskDueOnByTaskId = activeStatusRead?.dueOnByTaskId ?? {};
+  const calendarCurrentStreakByTaskId = useMemo(
+    () => Object.fromEntries(
+      tasks.map((task) => [task.id, taskHistoryStreakSummaries[task.id]?.currentStreak ?? 0]),
+    ),
+    [taskHistoryStreakSummaries, tasks],
+  );
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development" || !isTaskHistoryLoaded || !activeStatusRead) return;
+    const parity = compareCurrentTaskProjectionParity({
+      legacyCurrentRead: {
+        dueOnByTaskId: activeStatusRead.dueOnByTaskId,
+        statusesByTaskId: activeStatusRead.statusesByTaskId,
+      },
+      legacySummaries: taskHistoryStreakSummaries,
+      projectionsByTaskId: currentTaskProjectionReadResolution.freshProjectionByTaskId,
+      tasks,
+    });
+    const mismatchedFields = [...new Set(parity.mismatchedFields.map(({ field }) => field))];
+    console.info(
+      `[workspace:current-projection-parity] fresh=${parity.freshCount}`
+        + ` fallback=${parity.fallbackCount}`
+        + ` mismatchedTasks=${parity.mismatchedTaskIds.length}`
+        + ` fields=${mismatchedFields.join(",") || "none"}`,
+    );
+  }, [activeStatusRead, currentTaskProjectionReadResolution.freshProjectionByTaskId, isTaskHistoryLoaded, taskHistoryStreakSummaries, tasks]);
   const activeStatusRevision = useMemo(
     () => createProjectionDomainRevision("active-task-read", {
       dueOnByTaskId: taskDisplayDueOnByTaskId,
@@ -3353,7 +3403,7 @@ export function TaskApp() {
         diagnosticDetails: diagnostic,
         focusedTaskIds,
         taskHistoryByTaskId,
-        taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
+        taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
         taskDisplayStatusByTaskId,
         tasks: tasksForActiveStatusRead,
         todayDateKey: todayKey,
@@ -3502,7 +3552,7 @@ export function TaskApp() {
     [taskUiState.visibleColumnsByView.table],
   );
   const taskDerivationRevision = createTaskDerivationRevisionKey({
-    historyRevision: taskHistoryRevision,
+    historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision),
     listRevision: workspaceFactsRevision,
     settingsRevision: derivationSettingsRevision,
     taskRevision: taskDomainRevision,
@@ -3555,7 +3605,7 @@ export function TaskApp() {
       milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
       milestoneTaskIds: milestoneData.milestoneTaskIds,
       taskHistoryByTaskId,
-      taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
+      taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
       taskContentFolders,
       todayDateKey: todayKey,
       taskListEvaluationContext,
@@ -3642,7 +3692,7 @@ export function TaskApp() {
         listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
         subtasks: taskSubtasksByTaskId[task.id] ?? [],
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
-        taskHistoryStreakSummary: taskHistoryStreakSummaries[task.id],
+        taskHistoryStreakSummary: effectiveTaskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
         directlyExcludedFromTracking: task.exclude_from_tracking === true,
         effectivelyExcludedFromTracking: trackingExclusionTaskIds.has(task.id),
@@ -3655,7 +3705,7 @@ export function TaskApp() {
       sharedEditorRowModelCache,
       sharedTaskEditorOverlayTaskId,
       taskHistoryByTaskId,
-      taskHistoryStreakSummaries,
+      effectiveTaskHistoryStreakSummaries,
       taskDisplayStatusByTaskId,
       taskAttentionReasonByTaskId,
       trackingExclusionTaskIds,
@@ -3781,6 +3831,15 @@ export function TaskApp() {
     urgentTasks,
   }, momentumView);
   const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
+  const calendarSelectedTaskIds = useMemo(() => new Set(selectedBucketTasks.map((task) => task.id)), [selectedBucketTasks]);
+  const calendarSelectedTasks = useMemo(
+    () => tasks.filter((task) => calendarSelectedTaskIds.has(task.id)),
+    [calendarSelectedTaskIds, tasks],
+  );
+  const tasksForCalendarRead = useMemo(
+    () => projectTasksForActiveStatusRead(tasks, calendarTaskDisplayStatusByTaskId, calendarTaskDueOnByTaskId),
+    [calendarTaskDisplayStatusByTaskId, calendarTaskDueOnByTaskId, tasks],
+  );
   const calendarSearchMatchingEntityIds = effectiveSearchQuery.length > 0
     ? taskSearchSelection?.matchingEntityIds
     : null;
@@ -3790,10 +3849,10 @@ export function TaskApp() {
       includeSteps: taskUiState.includeStepsByView.calendar,
       matchingSearchEntityIds: calendarSearchMatchingEntityIds,
       searchIsActive: effectiveSearchQuery.length > 0,
-      selectedTasks: selectedBucketTasks,
-      tasks: tasksForActiveStatusRead,
+      selectedTasks: calendarSelectedTasks,
+      tasks: tasksForCalendarRead,
     });
-  }, [calendarSearchMatchingEntityIds, childTaskPreviewByParentTaskId, effectiveSearchQuery, selectedBucketTasks, taskUiState.includeStepsByView.calendar, tasksForActiveStatusRead]);
+  }, [calendarSearchMatchingEntityIds, calendarSelectedTasks, childTaskPreviewByParentTaskId, effectiveSearchQuery, taskUiState.includeStepsByView.calendar, tasksForCalendarRead]);
   const searchMatchedChildTaskIds = taskSearchSelection
     ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
       .flatMap((descendantIds) => Array.from(descendantIds))
@@ -3845,14 +3904,14 @@ export function TaskApp() {
     subtasksByTaskId: taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
-    taskHistoryStreakSummaryByTaskId: taskHistoryStreakSummaries,
+    taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
     todayDateKey: todayKey,
   }), [
     availableTaskLists,
     focusedTaskIdSet,
     manualMembershipsByTaskId,
     taskHistoryByTaskId,
-    taskHistoryStreakSummaries,
+    effectiveTaskHistoryStreakSummaries,
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
@@ -4979,7 +5038,7 @@ export function TaskApp() {
   }, [runningTaskTimers.length]);
 
   const shouldDeferPageRender = isRestoringPersistedUiState;
-  const isInitialTaskStateProjectionReady = isTaskHistoryLoaded && isBehaviorAuthorityReady && activeStatusRead !== null;
+  const isInitialTaskStateProjectionReady = isCurrentTaskProjectionReadReady && isBehaviorAuthorityReady;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
@@ -5637,8 +5696,8 @@ export function TaskApp() {
     <TaskCalendarView
       onAddTask={openCalendarDateTaskEditor}
       onOpenTask={(task) => openExistingTaskEditor(task, calendarTasks.map((entry) => entry.id))}
-      currentStreakByTaskId={currentStreakByTaskId}
-      taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+      currentStreakByTaskId={calendarCurrentStreakByTaskId}
+      taskDisplayStatusByTaskId={calendarTaskDisplayStatusByTaskId}
       tasks={calendarTasks}
     />
   );
@@ -7486,7 +7545,7 @@ export function TaskApp() {
             recordTargetsRecalculatedAt={homeRecordTargets.recalculatedAt}
             recordTargetsSettingsMismatch={homeRecordTargets.settingsMismatch}
             taskAttentionReasonByTaskId={taskAttentionReasonByTaskId}
-            taskHistoryStreakSummaries={taskHistoryStreakSummaries}
+            taskHistoryStreakSummaries={effectiveTaskHistoryStreakSummaries}
             behaviorProfiles={taskTypeBehaviorProfiles}
             behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
             namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
