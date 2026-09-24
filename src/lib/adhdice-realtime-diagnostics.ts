@@ -3,7 +3,7 @@ const PRIVATE_KEY_PATTERN = /access.?token|authorization|email|password|secret|t
 
 export type AdhdiceRealtimeDiagnosticInput = {
   kind: string;
-  channel?: "task" | "workspace";
+  channel?: "task" | "workspace" | "projection";
   channelDebugId?: string;
   [key: string]: unknown;
 };
@@ -12,7 +12,7 @@ export type AdhdiceRealtimeDiagnosticRecord = {
   sequence: number;
   timestamp: string;
   kind: string;
-  channel?: "task" | "workspace";
+  channel?: "task" | "workspace" | "projection";
   channelDebugId?: string;
   [key: string]: unknown;
 };
@@ -76,7 +76,7 @@ const realtimeDiagnosticBuffer = createAdhdiceRealtimeDiagnosticBuffer();
 let channelDebugSequence = 0;
 const pendingAuthorityTaskIds = new Set<string>();
 
-export function createAdhdiceRealtimeChannelDebugId(channel: "task" | "workspace") {
+export function createAdhdiceRealtimeChannelDebugId(channel: "task" | "workspace" | "projection") {
   return `${channel}-${++channelDebugSequence}`;
 }
 

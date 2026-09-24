@@ -74,6 +74,8 @@ import {
   type CurrentTaskProjectionReadMap,
   type CurrentTaskProjectionReadRow,
 } from "@/lib/task-current-projection-read";
+import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-freshness";
+import { createBoundedTaskProjectionReconciler } from "@/lib/task-current-projection-reconciliation";
 import {
   createAdhdiceRealtimeChannelDebugId,
   markAdhdiceRealtimeAuthorityPending,
@@ -378,6 +380,11 @@ export function useWorkspaceData({
   const taskChannelDebugIdsRef = useRef(new Map<RealtimeChannel, string>());
   const taskChannelStatusRef = useRef<string>("CLOSED");
   const taskChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
+  const projectionChannelRef = useRef<RealtimeChannel | null>(null);
+  const projectionChannelDebugIdsRef = useRef(new Map<RealtimeChannel, string>());
+  const projectionChannelStatusRef = useRef<string>("CLOSED");
+  const projectionChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
+  const projectionChannelSubscriptionPromiseRef = useRef<Promise<void> | null>(null);
   const taskResumeSyncTimeoutRef = useRef<number | null>(null);
   const taskResumeSyncQueuedRef = useRef(false);
   const lastTaskResumeSyncAtRef = useRef(0);
@@ -398,6 +405,12 @@ export function useWorkspaceData({
   const workspaceChannelSubscriptionCountRef = useRef(0);
   const taskChannelCleanupCountRef = useRef(0);
   const workspaceChannelCleanupCountRef = useRef(0);
+  const projectionChannelSubscriptionCountRef = useRef(0);
+  const projectionChannelCleanupCountRef = useRef(0);
+  const currentTaskProjectionReadContextRef = useRef<CurrentTaskProjectionReadContext>({
+    historySyncEpoch: null,
+    logicalDaySettingsRevision: null,
+  });
   const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const rolloverWorkspaceReconciliationRef = useRef<(() => Promise<void>) | null>(null);
   const prepareTaskMutationRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -525,6 +538,7 @@ export function useWorkspaceData({
       setTaskHistoryStreakSummaries({});
       setCurrentTaskProjectionsByTaskId({});
       setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
+      currentTaskProjectionReadContextRef.current = { historySyncEpoch: null, logicalDaySettingsRevision: null };
       setIsCurrentTaskProjectionReadReady(false);
       setTaskHistoryLoadedUserId(null);
       taskHistoryLoadPromiseRef.current = null;
@@ -538,6 +552,8 @@ export function useWorkspaceData({
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       taskChannelRemovalPromiseRef.current = null;
+      projectionChannelRef.current = null;
+      projectionChannelStatusRef.current = "CLOSED";
       taskResumeSyncQueuedRef.current = false;
       lastTaskResumeSyncAtRef.current = 0;
       taskResumeSyncInFlightRef.current = false;
@@ -572,6 +588,7 @@ export function useWorkspaceData({
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
     setCurrentTaskProjectionsByTaskId({});
     setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
+    currentTaskProjectionReadContextRef.current = { historySyncEpoch: null, logicalDaySettingsRevision: null };
     setIsCurrentTaskProjectionReadReady(false);
     fullTaskHistoryRowsRef.current = [];
     taskHistoryLoadPromiseRef.current = null;
@@ -588,12 +605,15 @@ export function useWorkspaceData({
     liveWorkspaceUserIdRef.current = userId;
     let isActive = true;
     let taskChannel: RealtimeChannel | null = null;
+    let projectionChannel: RealtimeChannel | null = null;
     const taskHistoryRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
     let taskHistoryRevisionReconciliationScheduled = false;
     taskChannelSubscriptionCountRef.current = 0;
     workspaceChannelSubscriptionCountRef.current = 0;
     taskChannelCleanupCountRef.current = 0;
     workspaceChannelCleanupCountRef.current = 0;
+    projectionChannelSubscriptionCountRef.current = 0;
+    projectionChannelCleanupCountRef.current = 0;
 
     function canonicalHistoryQuery(taskId?: string) {
       let query = client
@@ -1063,6 +1083,10 @@ export function useWorkspaceData({
           },
           (payload) => {
             const taskId = ((payload.new as { id?: string } | null)?.id ?? (payload.old as { id?: string } | null)?.id ?? null);
+            const remoteCanonicalRevision = (payload.new as { canonical_revision?: number | null } | null)?.canonical_revision ?? null;
+            const previousTaskCanonicalRevision = taskId
+              ? tasksRef.current.find((task) => task.id === taskId)?.canonical_revision ?? null
+              : null;
             recordAdhdiceTaskPostgresEventDiagnostic({ channelDebugId, eventType: payload.eventType, taskId, newRow: payload.new });
             if (taskId) markAdhdiceRealtimeAuthorityPending(taskId);
             const shouldSkip = shouldSkipTaskReloadRef.current?.({ eventType: payload.eventType, taskId }) ?? false;
@@ -1078,7 +1102,19 @@ export function useWorkspaceData({
               return;
             }
             taskReloadTriggerTaskIdRef.current = taskId;
-            void reloadTaskRows({ silent: true });
+            void reloadTaskRows({ silent: true }).then(() => {
+              const reloadedTask = taskId ? tasksRef.current.find((task) => task.id === taskId) : undefined;
+              if (
+                !reloadedTask
+                || typeof remoteCanonicalRevision !== "number"
+                || typeof reloadedTask.canonical_revision !== "number"
+                || reloadedTask.canonical_revision < remoteCanonicalRevision
+                || (typeof previousTaskCanonicalRevision === "number" && remoteCanonicalRevision <= previousTaskCanonicalRevision)
+              ) {
+                return;
+              }
+              void requestTaskProjectionReconciliation(taskId!);
+            });
           },
         )
         .subscribe((status) => {
@@ -1628,6 +1664,7 @@ export function useWorkspaceData({
       const logicalDaySettingsRevision = profileResult.data && Number.isInteger(profileResult.data.settings_revision)
         ? profileResult.data.settings_revision
         : null;
+      const nextCurrentTaskProjectionReadContext = { historySyncEpoch, logicalDaySettingsRevision };
       if (currentTaskProjectionResult.error && isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[workspace:current-projection] read failed: ${currentTaskProjectionResult.error.message}`);
       }
@@ -1656,7 +1693,8 @@ export function useWorkspaceData({
           indexCurrentTaskProjectionRows(projectionRows),
           Object.values(current),
         ));
-        setCurrentTaskProjectionReadContext({ historySyncEpoch, logicalDaySettingsRevision });
+        currentTaskProjectionReadContextRef.current = nextCurrentTaskProjectionReadContext;
+        setCurrentTaskProjectionReadContext(nextCurrentTaskProjectionReadContext);
         setIsCurrentTaskProjectionReadReady(true);
         onProfileLoaded(profileResult.data ?? null, user);
         if (profileResult.data) {
@@ -1882,6 +1920,7 @@ export function useWorkspaceData({
 
       try {
         await ensureTaskChannelSubscribed();
+        await ensureProjectionChannelSubscribed();
         await requestCoreWorkspaceRefresh({ silent: true, source });
 
         if (includeSecondaryIfLoaded) {
@@ -1968,8 +2007,6 @@ export function useWorkspaceData({
     ).finally(() => {
       initialCoreLoadActiveRef.current = false;
     });
-    void subscribeTaskChannel();
-
     const resumeRefreshCoordinator = createWorkspaceResumeRefreshCoordinator({
       isInitialLoadActive: () => initialCoreLoadActiveRef.current,
       isRecentCoreLoad: () => Date.now() - lastCoreRefreshCompletedAtRef.current < TASK_RESUME_SYNC_COOLDOWN_MS,
@@ -1997,19 +2034,23 @@ export function useWorkspaceData({
       if (document.visibilityState === "hidden") {
         resumeRefreshCoordinator.documentHidden();
       } else if (document.visibilityState === "visible") {
+        void ensureProjectionChannelSubscribed();
         resumeRefreshCoordinator.documentVisible();
       }
     }
 
     function handlePageShow(event: PageTransitionEvent) {
+      void ensureProjectionChannelSubscribed();
       resumeRefreshCoordinator.pageShow(event.persisted);
     }
 
     function handleWindowFocus() {
+      void ensureProjectionChannelSubscribed();
       resumeRefreshCoordinator.focus();
     }
 
     function handleWindowOnline() {
+      void ensureProjectionChannelSubscribed();
       resumeRefreshCoordinator.online();
     }
 
@@ -2024,52 +2065,344 @@ export function useWorkspaceData({
     window.addEventListener("offline", handleWindowOffline);
 
     const workspaceChannelDebugId = createAdhdiceRealtimeChannelDebugId("workspace");
-    const projectionEventBuffer = createCurrentTaskProjectionEventBuffer(
-      (rows) => {
+
+    function projectionChannelDebugId() {
+      return projectionChannelRef.current
+        ? projectionChannelDebugIdsRef.current.get(projectionChannelRef.current)
+        : undefined;
+    }
+
+    function isFreshProjectionForTask(row: CurrentTaskProjectionReadRow | null, taskId: string) {
+      const task = tasksRef.current.find((candidate) => candidate.id === taskId);
+      const context = currentTaskProjectionReadContextRef.current;
+      return Boolean(
+        row
+        && task
+        && typeof task.canonical_revision === "number"
+        && typeof context.logicalDaySettingsRevision === "number"
+        && context.historySyncEpoch
+        && typeof todayKeyRef.current === "string"
+        && isCurrentTaskProjectionFresh(row, {
+          userId,
+          entityId: task.id,
+          entityKind: task.entity_kind as CurrentTaskProjectionReadRow["entity_kind"],
+          canonicalTaskRevision: task.canonical_revision,
+          historySyncEpoch: context.historySyncEpoch,
+          logicalDaySettingsRevision: context.logicalDaySettingsRevision,
+          projectedLogicalDate: todayKeyRef.current,
+        }),
+      );
+    }
+
+    function mergeProjectionRows(
+      rows: readonly CurrentTaskProjectionReadRow[],
+      source: "event" | "reconcile",
+      channelDebugId = projectionChannelDebugId(),
+    ) {
+      if (source === "event") {
         recordAdhdiceRealtimeDiagnostic({
-          channel: "workspace",
-          channelDebugId: workspaceChannelDebugId,
+          channel: "projection",
+          channelDebugId,
           count: rows.length,
           entityIds: rows.map((row) => row.entity_id),
           kind: "projection_event_buffer_flush",
         });
-        if (!isActive) return;
-        setCurrentTaskProjectionsByTaskId((current) => {
-          const next = mergeCurrentTaskProjectionRows(current, rows);
-          for (const row of rows) {
-            const previous = current[row.entity_id];
-            recordAdhdiceRealtimeDiagnostic({
-              accepted: next[row.entity_id] === row,
-              channel: "workspace",
-              channelDebugId: workspaceChannelDebugId,
-              entityId: row.entity_id,
-              incomingUpdatedAt: row.updated_at,
-              kind: "projection_merge_decision",
-              previousUpdatedAt: previous?.updated_at ?? null,
-            });
-            markAdhdiceRealtimeAuthorityPending(row.entity_id);
+      }
+      if (!isActive) return;
+      setCurrentTaskProjectionsByTaskId((current) => {
+        const next = mergeCurrentTaskProjectionRows(current, rows);
+        for (const row of rows) {
+          const previous = current[row.entity_id];
+          recordAdhdiceRealtimeDiagnostic({
+            accepted: next[row.entity_id] === row,
+            channel: "projection",
+            channelDebugId,
+            entityId: row.entity_id,
+            incomingCanonicalTaskRevision: row.canonical_task_revision,
+            incomingUpdatedAt: row.updated_at,
+            kind: "projection_merge_decision",
+            previousCanonicalTaskRevision: previous?.canonical_task_revision ?? null,
+            previousUpdatedAt: previous?.updated_at ?? null,
+            source,
+          });
+          markAdhdiceRealtimeAuthorityPending(row.entity_id);
+          if (source === "event" && isFreshProjectionForTask(row, row.entity_id)) {
+            projectionReconciler.cancel(row.entity_id);
           }
-          return next;
+        }
+        return next;
+      });
+    }
+
+    async function loadCurrentTaskProjectionForTask(entityId: string) {
+      const result = await client
+        .from("adhdice_task_current_projections")
+        .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
+        .eq("user_id", userId)
+        .eq("entity_id", entityId)
+        .maybeSingle();
+      if (result.error) return null;
+      return (result.data ?? null) as unknown as CurrentTaskProjectionReadRow | null;
+    }
+
+    const projectionReconciler = createBoundedTaskProjectionReconciler<CurrentTaskProjectionReadRow>({
+      isCurrentGeneration: (generation) => isActive && workspaceGenerationRef.current === generation,
+      isFresh: (projection, entityId) => isFreshProjectionForTask(projection, entityId),
+      load: loadCurrentTaskProjectionForTask,
+      onCancelled: (entityId, generation) => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "projection",
+          channelDebugId: projectionChannelDebugId(),
+          entityId,
+          generation,
+          kind: "projection_reconcile_cancelled",
         });
       },
+      onCompleted: (entityId, generation) => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "projection",
+          channelDebugId: projectionChannelDebugId(),
+          entityId,
+          generation,
+          kind: "projection_reconcile_completed",
+        });
+      },
+      onReconcileStarted: (entityId, generation) => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "projection",
+          channelDebugId: projectionChannelDebugId(),
+          entityId,
+          generation,
+          kind: "projection_reconcile_started",
+        });
+      },
+      onResult: ({ attempt, entityId, fresh, projection }, generation) => {
+        if (projection) mergeProjectionRows([projection], "reconcile");
+        recordAdhdiceRealtimeDiagnostic({
+          attempt,
+          channel: "projection",
+          channelDebugId: projectionChannelDebugId(),
+          entityId,
+          freshness: fresh,
+          generation,
+          kind: "projection_reconcile_result",
+          returnedCanonicalRevision: projection?.canonical_task_revision ?? null,
+          validity: projection?.validity ?? null,
+        });
+      },
+      onRetryScheduled: (entityId, generation, delayMs) => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "projection",
+          channelDebugId: projectionChannelDebugId(),
+          delayMs,
+          entityId,
+          generation,
+          kind: "projection_reconcile_retry_scheduled",
+        });
+      },
+      retryDelayMs: 4500,
+      schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
+      cancel: (handle) => window.clearTimeout(handle as number),
+    });
+
+    function requestTaskProjectionReconciliation(entityId: string) {
+      if (!isActive || !tasksRef.current.some((task) => task.id === entityId)) return Promise.resolve();
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "projection",
+        channelDebugId: projectionChannelDebugId(),
+        entityId,
+        generation: workspaceGeneration,
+        kind: "projection_reconcile_requested",
+      });
+      return projectionReconciler.request(entityId, workspaceGeneration);
+    }
+
+    const projectionEventBuffer = createCurrentTaskProjectionEventBuffer(
+      (rows) => mergeProjectionRows(rows, "event"),
       {
         cancel: (handle) => window.clearTimeout(handle as number),
         schedule: (callback, delayMs) => window.setTimeout(callback, delayMs),
       },
     );
 
-    function enqueueProjectionRealtimePayload(value: unknown) {
+    function enqueueProjectionRealtimePayload(value: unknown, channelDebugId?: string) {
       if (!value || typeof value !== "object" || Array.isArray(value)) return;
       const row = value as Partial<CurrentTaskProjectionReadRow>;
       if (row.user_id !== userId || typeof row.entity_id !== "string" || typeof row.updated_at !== "string") return;
       recordAdhdiceRealtimeDiagnostic({
-        channel: "workspace",
-        channelDebugId: workspaceChannelDebugId,
+        channel: "projection",
+        channelDebugId,
         entityId: row.entity_id,
         kind: "projection_event_buffer_enqueue",
+        incomingCanonicalTaskRevision: row.canonical_task_revision ?? null,
         incomingUpdatedAt: row.updated_at,
       });
       projectionEventBuffer.enqueue(row as CurrentTaskProjectionReadRow);
+    }
+
+    function shouldReconnectProjectionChannel() {
+      return (
+        projectionChannelRef.current === null
+        || projectionChannelStatusRef.current === "CLOSED"
+        || projectionChannelStatusRef.current === "TIMED_OUT"
+        || projectionChannelStatusRef.current === "CHANNEL_ERROR"
+      );
+    }
+
+    async function removeProjectionChannel(channel: RealtimeChannel) {
+      const channelDebugId = projectionChannelDebugIdsRef.current.get(channel);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "projection",
+        channelDebugId,
+        kind: "channel_cleanup_requested",
+      });
+      try {
+        await client.removeChannel(channel);
+        projectionChannelDebugIdsRef.current.delete(channel);
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "projection",
+          channelDebugId,
+          kind: "channel_cleanup_completed",
+        });
+        projectionChannelCleanupCountRef.current += 1;
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(`[workspace] Projection realtime cleanup count=${projectionChannelCleanupCountRef.current} userId=${userId}.`);
+        }
+      } catch {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "projection",
+          channelDebugId,
+          kind: "channel_cleanup_ignored_error",
+        });
+      }
+    }
+
+    async function subscribeProjectionChannel() {
+      const previousRemoval = projectionChannelRemovalPromiseRef.current ?? Promise.resolve();
+      await previousRemoval;
+      if (!isActive || workspaceGenerationRef.current !== workspaceGeneration || !shouldReconnectProjectionChannel()) return;
+
+      projectionChannelStatusRef.current = "SUBSCRIBING";
+      const subscribeStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
+      const channelDebugId = createAdhdiceRealtimeChannelDebugId("projection");
+      const nextProjectionChannel = client.channel(`adhdice_task_current_projections:${userId}`);
+      projectionChannel = nextProjectionChannel;
+      projectionChannelRef.current = nextProjectionChannel;
+      projectionChannelDebugIdsRef.current.set(nextProjectionChannel, channelDebugId);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "projection",
+        channelDebugId,
+        generation: workspaceGeneration,
+        kind: "channel_created",
+      });
+      const isCurrentProjectionChannel = () => (
+        isActive
+        && workspaceGenerationRef.current === workspaceGeneration
+        && projectionChannelRef.current === nextProjectionChannel
+      );
+      nextProjectionChannel
+        .on(
+          "postgres_changes",
+          {
+            event: "INSERT",
+            schema: "public",
+            table: "adhdice_task_current_projections",
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            if (!isCurrentProjectionChannel()) return;
+            const row = payload.new as Partial<CurrentTaskProjectionReadRow>;
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "projection",
+              channelDebugId,
+              canonicalTaskRevision: row.canonical_task_revision ?? null,
+              currentPositiveStreak: row.current_positive_streak ?? null,
+              entityId: row.entity_id ?? null,
+              eventType: payload.eventType,
+              kind: "projection_postgres_event_received",
+              updatedAt: row.updated_at ?? null,
+              validity: row.validity ?? null,
+            });
+            enqueueProjectionRealtimePayload(payload.new, channelDebugId);
+          },
+        )
+        .on(
+          "postgres_changes",
+          {
+            event: "UPDATE",
+            schema: "public",
+            table: "adhdice_task_current_projections",
+            filter: `user_id=eq.${userId}`,
+          },
+          (payload) => {
+            if (!isCurrentProjectionChannel()) return;
+            const row = payload.new as Partial<CurrentTaskProjectionReadRow>;
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "projection",
+              channelDebugId,
+              canonicalTaskRevision: row.canonical_task_revision ?? null,
+              currentPositiveStreak: row.current_positive_streak ?? null,
+              entityId: row.entity_id ?? null,
+              eventType: payload.eventType,
+              kind: "projection_postgres_event_received",
+              updatedAt: row.updated_at ?? null,
+              validity: row.validity ?? null,
+            });
+            enqueueProjectionRealtimePayload(payload.new, channelDebugId);
+          },
+        )
+        .subscribe((status) => {
+          if (!isCurrentProjectionChannel()) return;
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "projection",
+            channelDebugId,
+            generation: workspaceGeneration,
+            kind: "channel_subscribe_status",
+            status,
+          });
+          projectionChannelStatusRef.current = status;
+          if (status === "SUBSCRIBED") {
+            projectionChannelSubscriptionCountRef.current += 1;
+            logWorkspaceTiming("Projection realtime subscribed", subscribeStartedAt, { userId });
+            if (isWorkspacePerformanceDiagnosticsEnabled()) {
+              console.info(`[workspace] Projection realtime subscribe count=${projectionChannelSubscriptionCountRef.current} userId=${userId}.`);
+            }
+          }
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+            console.warn("[workspace] Projection realtime subscription failed; bounded Task reconciliation remains available.");
+          }
+        });
+    }
+
+    async function ensureProjectionChannelSubscribed() {
+      if (!shouldReconnectProjectionChannel()) return;
+      const existingSubscription = projectionChannelSubscriptionPromiseRef.current;
+      if (existingSubscription) {
+        await existingSubscription;
+        if (projectionChannelSubscriptionPromiseRef.current === existingSubscription) {
+          projectionChannelSubscriptionPromiseRef.current = null;
+        }
+        if (isActive && shouldReconnectProjectionChannel()) await ensureProjectionChannelSubscribed();
+        return;
+      }
+
+      const previousChannel = projectionChannelRef.current;
+      projectionChannelRef.current = null;
+      projectionChannelStatusRef.current = "CLOSED";
+      if (previousChannel) {
+        projectionChannelRemovalPromiseRef.current = removeProjectionChannel(previousChannel);
+        if (projectionChannel === previousChannel) projectionChannel = null;
+      }
+
+      const subscription = subscribeProjectionChannel();
+      projectionChannelSubscriptionPromiseRef.current = subscription;
+      try {
+        await subscription;
+      } finally {
+        if (projectionChannelSubscriptionPromiseRef.current === subscription) {
+          projectionChannelSubscriptionPromiseRef.current = null;
+        }
+      }
     }
 
     const workspaceChannel = client.channel(`adhdice_workspace:${userId}`);
@@ -2222,54 +2555,6 @@ export function useWorkspaceData({
           void loadTaskHistoryStreakSummaries();
         },
       )
-      .on(
-        "postgres_changes",
-        {
-          event: "INSERT",
-          schema: "public",
-          table: "adhdice_task_current_projections",
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          const row = payload.new as Partial<CurrentTaskProjectionReadRow>;
-          recordAdhdiceRealtimeDiagnostic({
-            channel: "workspace",
-            channelDebugId: workspaceChannelDebugId,
-            canonicalTaskRevision: row.canonical_task_revision ?? null,
-            currentPositiveStreak: row.current_positive_streak ?? null,
-            entityId: row.entity_id ?? null,
-            eventType: payload.eventType,
-            kind: "projection_postgres_event_received",
-            updatedAt: row.updated_at ?? null,
-            validity: row.validity ?? null,
-          });
-          enqueueProjectionRealtimePayload(payload.new);
-        },
-      )
-      .on(
-        "postgres_changes",
-        {
-          event: "UPDATE",
-          schema: "public",
-          table: "adhdice_task_current_projections",
-          filter: `user_id=eq.${userId}`,
-        },
-        (payload) => {
-          const row = payload.new as Partial<CurrentTaskProjectionReadRow>;
-          recordAdhdiceRealtimeDiagnostic({
-            channel: "workspace",
-            channelDebugId: workspaceChannelDebugId,
-            canonicalTaskRevision: row.canonical_task_revision ?? null,
-            currentPositiveStreak: row.current_positive_streak ?? null,
-            entityId: row.entity_id ?? null,
-            eventType: payload.eventType,
-            kind: "projection_postgres_event_received",
-            updatedAt: row.updated_at ?? null,
-            validity: row.validity ?? null,
-          });
-          enqueueProjectionRealtimePayload(payload.new);
-        },
-      )
       .subscribe((status) => {
         recordAdhdiceRealtimeDiagnostic({
           channel: "workspace",
@@ -2284,6 +2569,9 @@ export function useWorkspaceData({
           }
         }
       });
+
+    void subscribeTaskChannel();
+    void ensureProjectionChannelSubscribed();
 
     return () => {
       isActive = false;
@@ -2313,6 +2601,13 @@ export function useWorkspaceData({
       taskChannelRemovalPromiseRef.current = null;
       if (taskChannel) {
         taskChannelRemovalPromiseRef.current = removeTaskChannel(taskChannel);
+      }
+      projectionReconciler.dispose();
+      projectionChannelRef.current = null;
+      projectionChannelStatusRef.current = "CLOSED";
+      if (projectionChannel) {
+        projectionChannelRemovalPromiseRef.current = removeProjectionChannel(projectionChannel);
+        projectionChannel = null;
       }
       projectionEventBuffer.dispose();
       recordAdhdiceRealtimeDiagnostic({

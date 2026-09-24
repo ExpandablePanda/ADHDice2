@@ -603,7 +603,7 @@ test("Task Realtime skips only the locally owned Task echo and resumes after the
   const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const realtime = workspaceSource.slice(
     workspaceSource.indexOf('table: "adhdice_clean_tasks"'),
-    workspaceSource.indexOf('table: "adhdice_clean_tasks"') + 1000,
+    workspaceSource.indexOf('        .subscribe((status)', workspaceSource.indexOf('table: "adhdice_clean_tasks"')),
   );
 
   assert.match(appSource, /return pendingTaskMutationTrackerRef\.current\.shouldSkipTaskReload\(change\)/);

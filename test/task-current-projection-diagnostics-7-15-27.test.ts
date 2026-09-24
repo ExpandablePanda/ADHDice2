@@ -82,6 +82,12 @@ test("Task and workspace Realtime traces cover channel generation, statuses, eve
     "projection_event_buffer_enqueue",
     "projection_event_buffer_flush",
     "projection_merge_decision",
+    "projection_reconcile_requested",
+    "projection_reconcile_started",
+    "projection_reconcile_result",
+    "projection_reconcile_retry_scheduled",
+    "projection_reconcile_completed",
+    "projection_reconcile_cancelled",
     "projection_authority_trace",
     "channel_cleanup_completed",
   ]) {
@@ -100,6 +106,10 @@ test("the source-level shared workspace channel shape remains explicit", () => {
     workspaceSource.indexOf("const workspaceChannel = client.channel"),
     workspaceSource.indexOf("return () => {", workspaceSource.indexOf("const workspaceChannel = client.channel")),
   );
+  const projectionChannelSource = workspaceSource.slice(
+    workspaceSource.indexOf("const nextProjectionChannel"),
+    workspaceSource.indexOf("const workspaceChannel = client.channel"),
+  );
   const tables = (source: string) => [...source.matchAll(/table: "([^"]+)"/g)].map((match) => match[1]);
   assert.deepEqual(tables(taskChannelSource), ["adhdice_clean_tasks"]);
   assert.deepEqual([...new Set(tables(workspaceChannelSource))], [
@@ -113,9 +123,18 @@ test("the source-level shared workspace channel shape remains explicit", () => {
     "adhdice_task_list_manual_memberships",
     "adhdice_notes",
     "adhdice_task_history_facts",
-    "adhdice_task_current_projections",
   ]);
   assert.doesNotMatch(workspaceChannelSource, /table: "adhdice_clean_tasks"/);
+  assert.deepEqual(tables(projectionChannelSource), [
+    "adhdice_task_current_projections",
+    "adhdice_task_current_projections",
+  ]);
+  assert.match(projectionChannelSource, /client\.channel\(`adhdice_task_current_projections:\$\{userId\}`\)/);
+  assert.match(projectionChannelSource, /status === "SUBSCRIBED"/);
+  assert.match(projectionChannelSource, /status === "CHANNEL_ERROR" \|\| status === "TIMED_OUT"/);
+  assert.match(projectionChannelSource, /projectionChannelStatusRef\.current = status/);
+  assert.match(workspaceSource, /projectionChannelSubscriptionCountRef/);
+  assert.match(workspaceSource, /projectionChannelCleanupCountRef/);
 });
 
 test("the diagnostics ring buffer is bounded and filters token, email, title, and notes", () => {

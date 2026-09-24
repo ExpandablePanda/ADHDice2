@@ -46,11 +46,12 @@ test("7.15.25 verification remains read-only and checks publication, validity, a
   assert.match(verification, /missing_count/);
 });
 
-test("workspace startup and Realtime use the owner-scoped projection lifecycle without row refetches", () => {
+test("workspace startup and the dedicated projection Realtime channel use the owner-scoped lifecycle", () => {
   assert.match(workspaceSource, /from\("adhdice_task_current_projections"\)[\s\S]*select\(CURRENT_TASK_PROJECTION_READ_COLUMNS\)[\s\S]*eq\("user_id", userId\)/);
   assert.match(workspaceSource, /from\("adhdice_task_history_sync_state"\)[\s\S]*select\("sync_epoch,protocol_version"\)/);
   assert.match(workspaceSource, /Promise\.all\(\[[\s\S]*currentTaskProjectionRequest[\s\S]*historySyncStateRequest/);
   assert.match(workspaceSource, /setIsCurrentTaskProjectionReadReady\(true\)/);
+  assert.match(workspaceSource, /client\.channel\(`adhdice_task_current_projections:\$\{userId\}`\)/);
   assert.match(workspaceSource, /event: "INSERT"[\s\S]*table: "adhdice_task_current_projections"[\s\S]*filter: `user_id=eq\.\$\{userId\}`/);
   assert.match(workspaceSource, /event: "UPDATE"[\s\S]*table: "adhdice_task_current_projections"[\s\S]*filter: `user_id=eq\.\$\{userId\}`/);
   assert.match(workspaceSource, /createCurrentTaskProjectionEventBuffer/);
@@ -58,6 +59,13 @@ test("workspace startup and Realtime use the owner-scoped projection lifecycle w
   assert.match(workspaceSource, /projectionEventBuffer\.dispose\(\)/);
   const projectionLifecycleSource = workspaceSource.match(/const projectionEventBuffer[\s\S]*?const workspaceChannel/)?.[0] ?? "";
   assert.doesNotMatch(projectionLifecycleSource, /requestCoreWorkspaceRefresh/);
+  assert.match(projectionLifecycleSource, /shouldReconnectProjectionChannel/);
+  assert.match(projectionLifecycleSource, /projectionChannelRemovalPromiseRef/);
+  const workspaceChannelSource = workspaceSource.slice(
+    workspaceSource.indexOf("const workspaceChannel = client.channel"),
+    workspaceSource.indexOf("return () => {", workspaceSource.indexOf("const workspaceChannel = client.channel")),
+  );
+  assert.doesNotMatch(workspaceChannelSource, /table: "adhdice_task_current_projections"/);
   assert.match(taskAppSource, /const isInitialTaskStateProjectionReady = isCurrentTaskProjectionReadReady && isBehaviorAuthorityReady/);
   assert.doesNotMatch(taskAppSource, /const isInitialTaskStateProjectionReady = isTaskHistoryLoaded/);
 });

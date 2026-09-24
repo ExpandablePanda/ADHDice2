@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.27`.
+- Current working app version: `7.15.28`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,42 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.28 Projection Realtime Reliability + Bounded Self-Healing
+
+The 7.15.27 capture isolated the cross-tab current-projection break. The
+`clean_tasks` Realtime event succeeded, the remote Task reload completed with
+the advanced canonical revision, and the fresh durable projection already
+existed server-side before Tab B received the Task event. Tab B nevertheless
+retained the prior projection revision; the capture contained no projection
+Postgres callback, buffer enqueue/flush, or merge, so authority safely fell
+back to legacy and the positive streak remained stale.
+
+7.15.28 moves current-projection `INSERT` and `UPDATE` listeners out of the
+general workspace channel and into the dedicated owner-scoped
+`adhdice_task_current_projections:<userId>` channel. The dedicated lifecycle
+tracks its ref, status, removal promise, generation/debug ID, subscribe count,
+cleanup count, and late-callback guards. Visibility, focus, pageshow, and
+online resume paths independently ensure that channel is healthy without
+creating duplicates. The table remains in `supabase_realtime`; no publication
+or SQL change is part of this release.
+
+After a remote Task Realtime mutation advances `canonical_revision`, the
+normal Task reload remains unchanged and then performs at most one narrow
+owner/entity projection read using `CURRENT_TASK_PROJECTION_READ_COLUMNS` when
+the in-memory projection is stale or missing. A stale or missing immediate
+result may schedule one approximately 4.5-second retry; duplicate requests
+coalesce, obsolete owner/generation work is ignored, and no polling loop is
+introduced. Returned rows still pass `isCurrentTaskProjectionFresh()` before
+they can become preferred authority. Local `shouldSkipTaskReload=true`
+suppression remains intact, while projection events continue to merge for the
+eventual fresh local projection.
+
+The 7.15.27 diagnostics remain active and now include reconciliation request,
+start, result (entity, canonical revision, validity, freshness), retry,
+completion, and cancellation records. Projection parity and timestamp repair
+are explicitly deferred to 7.15.29. History startup remains active and
+History retirement remains blocked.
 
 ## 2026-09-23 7.15.27 Projection Cutover Runtime Diagnostics
 
