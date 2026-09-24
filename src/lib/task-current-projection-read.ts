@@ -100,6 +100,28 @@ export type CurrentTaskProjectionTimestampContract =
   | "synthesized logical-day presentation time"
   | "logical date";
 
+export type CurrentTaskProjectionParityClassification = "representation-only" | "semantic";
+
+/**
+ * Classify one already-observed parity difference without changing authority.
+ * Timestamp equivalence is only representation-only when the logical dates
+ * also agree; a different logical date remains a semantic mismatch.
+ */
+export function classifyCurrentTaskProjectionParityMismatch(input: {
+  field: CurrentTaskProjectionParityField;
+  projectedLogicalDate?: string | null;
+  legacyLogicalDate?: string | null;
+  timestampClassification?: CurrentTaskProjectionTimestampMismatchClassification;
+}): CurrentTaskProjectionParityClassification {
+  if (input.field !== "lastHandledAt" && input.field !== "lastDoneAt") return "semantic";
+  if (input.projectedLogicalDate !== input.legacyLogicalDate) return "semantic";
+  if (input.timestampClassification === "same instant / different serialization"
+    || input.timestampClassification === "same logical date but floating-time vs timestamptz") {
+    return "representation-only";
+  }
+  return "semantic";
+}
+
 export type CurrentTaskProjectionParityMismatchDiagnostic = CurrentTaskProjectionParityMismatch & {
   projectedRawValue: string | number | boolean | null;
   legacyRawValue: string | number | boolean | null;

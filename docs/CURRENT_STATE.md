@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-23
+Last reviewed: 2026-09-24
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.28`.
+- Current working app version: `7.15.29`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,124 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.29 Current Projection Parity Root-Cause Lock
+
+7.15.28 browser QA is recorded as PASS. The dedicated projection reconciliation
+restored fresh projection authority across the cross-tab mutation and restored
+the visible positive streak to `1`. History startup remains active; History
+retirement is blocked only by settled projection parity correctness.
+
+### Stable parity baseline
+
+The recorded settled 7.15.28 parity capture had approximately 225–226 fresh,
+comparable projections after History and authority-pending state settled. Its
+field counts were: `displayStatus=2`, `displayDueOn=5–6`,
+`currentPositiveStreak=3`, `currentMissedStreak` had no separately recorded
+non-zero group, `lastHandledDate=126`, `lastHandledAt=195`, and
+`lastDoneAt=101`; `lastDoneDate` did not dominate the recorded mismatch count.
+The earlier runtime log did not persist the unique Task-ID union or separate
+zero-count fields, so the exact live unique mismatch total cannot be
+reconstructed from checked-in source alone; the deterministic fixture lock
+below has an exact 5-Task sample with 2 representation-only and 3 semantic
+mismatches. The just-mutated 7.15.28 QA Task is excluded from this baseline.
+
+### Timestamp root cause and contract
+
+The legacy Last Done and Last Handled helpers return a real event timestamp
+when the source event timestamp is authoritative. For an older logical date,
+they intentionally synthesize `${logicalDate}T00:00:00` when the source
+timestamp cannot be exposed as the logical-day presentation time. That value
+is a floating logical-day presentation timestamp, not an absolute instant.
+The v1 `timestamptz` columns cannot preserve that distinction: PostgreSQL
+readback of `2026-09-18T00:00:00+00:00` is an absolute instant and can render
+as September 17 at 8:00 PM in `America/New_York`, while the floating value
+renders as September 18 at midnight. A real event instant such as
+`2026-09-18T14:30:00.000Z` remains an instant; a different offset string for
+the same instant is representation-only noise.
+
+Projection V2 therefore keeps `last_handled_logical_date` and
+`last_done_logical_date` as the logical-date authorities, keeps
+`last_handled_at`/`last_done_at` nullable and reserved for true absolute event
+instants, and adds explicit nullable kind fields:
+`last_handled_at_kind` and `last_done_at_kind`, each
+`event_instant | logical_day_presentation`. A synthetic result stores a null
+`last_*_at`, the logical date, and `logical_day_presentation`; it is never
+silently reinterpreted from a v1 timestamptz row. The kind is derived from
+canonical event/provenance evidence during rebuild, not from timestamp text.
+
+### Semantic mismatch classes
+
+The existing canonical evaluator remains semantic authority. The source audit
+and focused fixtures did not reproduce a projection-builder divergence on the
+current canonical read-model path; live row-specific proof still requires a
+fresh settled capture. The locked classes are:
+
+- `displayStatus`: `upcoming` versus `pending` is a genuine semantic mismatch;
+  first classification is stale-but-valid v1 when a fresh rebuild matches the
+  evaluator, otherwise projection input/read-model or behavior-policy context
+  must be corrected. Blindly copying `clean_tasks.status` is not valid.
+- `displayDueOn`: a later evaluator `nextDueDate` versus an older projection
+  `next_due_on` is semantic. It is a schedule-boundary discrepancy when the
+  current boundary/occurrence source differs, stale-but-valid v1 when the
+  current rebuild matches, and input/read-model when the scoped source is
+  incomplete. `next_due_on`, not `current_effective_due_on`, is the display
+  due authority.
+- `currentPositiveStreak`/`currentMissedStreak`: non-zero legacy versus zero
+  projection is semantic. The locked Custom fixture records exact History
+  facts, effective exclusion, ruleset revision, empty Calendar overrides,
+  schedule boundary, active lifecycle, and the resulting effective timeline.
+  A matching scoped source with a zero v1 row is stale-but-valid; a differing
+  scoped source is an input/read-model or behavior-policy discrepancy.
+- `lastHandledDate`: date differences are semantic and are classified against
+  entity-scoped History, active Calendar overrides, eligible committed runtime
+  command operations, lifecycle, logical-day calculation, compatibility
+  evidence, and the current row version. An omitted entity operation is an
+  input/read-model defect; migration/legacy-only evidence is not equivalent to
+  canonical manual action evidence; inactive Tasks are excluded from ordinary
+  parity rather than repaired by copying a legacy date.
+- `lastHandledAt`/`lastDoneAt`: same instant with different serialization, or
+  synthetic logical-day versus timestamptz with the same logical date, is
+  representation-only. A different logical date or real event instant is
+  semantic.
+
+`history_source_revision=0` with existing canonical History is an expected
+pre-ledger baseline when no entity frontier exists; it is not proof that the
+History input was empty and is not, by itself, a freshness-fence gap. A
+positive entity revision still requires its matching frontier. No freshness-
+fence gap was proven by the deterministic fixtures; a live row can only be
+called a fence gap after its current entity frontier and source snapshot are
+captured.
+
+### Projection V2 / 7.15.30 rollout plan (not executed here)
+
+1. Add the two timestamp-kind columns and widen the projection contract with
+   explicit v2 schema/algorithm allow-list values. Keep v1 columns readable,
+   but do not reinterpret existing v1 timestamp values.
+2. Ship the v2 calculator and trusted writer behind a v2-only validity gate.
+   v1 and v2 rows may coexist by entity; consumers accept only a row whose
+   schema and algorithm are both v2 and whose all source fences are fresh.
+   Old v1 rows fall back to legacy History/current evaluator.
+3. Extend the backfill operator to select missing, outdated, invalid, and
+   `repair_required` rows, including all 519 existing rows, with owner/entity
+   fencing, bounded batches, idempotent writes, and post-batch counts. It must
+   rebuild from current canonical sources rather than copy compatibility Task
+   status/due or reinterpret v1 timestamps.
+4. Verify every rebuilt row is v2, valid, current, and timestamp-kind
+   consistent; stop on unexpected owner/count/fence changes. No backfill or
+   live mutation is part of 7.15.29.
+5. Keep the v2 consumer gate reversible. On any v2 read/build/write defect,
+   reject the v2 row and use the existing legacy History/evaluator fallback;
+   retain v1 rows for rollback evidence until the parity gate closes.
+6. Retire History startup only in a later ticket after all eligible rows are
+   v2-valid, representation-only differences are excluded, every semantic
+   mismatch is zero or explicitly accepted with owner/evidence, mutation,
+   Realtime, logical-day, lifecycle, and restart checks pass, and Andrew's
+   browser QA confirms the final current-surface and historical-surface gate.
+
+No SQL, Edge deployment, live projection mutation, backfill, consumer change,
+or projection version bump was executed by this ticket beyond the app version
+bump to `7.15.29`.
 
 ## 2026-09-24 7.15.28 Projection Realtime Reliability + Bounded Self-Healing
 
