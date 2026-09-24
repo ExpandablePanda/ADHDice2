@@ -191,7 +191,8 @@ export function createSingleFlightRefreshCoordinator<T>() {
     { refreshAfterCurrent = false }: SingleFlightRefreshRequestOptions = {},
   ) {
     if (inFlight) {
-      if (refreshAfterCurrent && !trailingRunner) {
+      // Keep the latest trailing request so its caller's generation can apply.
+      if (refreshAfterCurrent) {
         trailingRunner = runner;
       }
       return inFlight;

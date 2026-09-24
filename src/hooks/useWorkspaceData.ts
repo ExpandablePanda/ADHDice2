@@ -395,6 +395,8 @@ export function useWorkspaceData({
   const activePageRef = useRef(activePage);
   const todayKeyRef = useRef(todayKey);
   const shouldSkipTaskReloadRef = useRef(shouldSkipTaskReload);
+  const taskContentFolderDataGenerationRef = useRef(0);
+  const focusDataGenerationRef = useRef(0);
   const coreRefreshCoordinatorRef = useRef<{
     isRunning: () => boolean;
     request: (request: { silent: boolean; source: WorkspaceCoreRefreshSource }) => Promise<void>;
@@ -612,6 +614,9 @@ export function useWorkspaceData({
     let projectionChannel: RealtimeChannel | null = null;
     let broadManualActionCommandOperationReads = 0;
     const taskHistoryRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
+    const taskListDomainRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
+    const taskContentFolderDomainRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
+    const focusDomainRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
     let taskHistoryRevisionReconciliationScheduled = false;
     taskChannelSubscriptionCountRef.current = 0;
     workspaceChannelSubscriptionCountRef.current = 0;
@@ -1545,7 +1550,8 @@ export function useWorkspaceData({
 
     function canApplyCoreWorkspaceResult() {
       return (
-        liveWorkspaceUserIdRef.current === userId
+        isActive
+        && liveWorkspaceUserIdRef.current === userId
         && workspaceGenerationRef.current === workspaceGeneration
       );
     }
@@ -1554,9 +1560,248 @@ export function useWorkspaceData({
       return behaviorAuthorityReadyRef.current && !behaviorAuthorityLoadingRef.current;
     }
 
+    function recordWorkspaceScopedRefreshDiagnostic(
+      kind: string,
+      domain: "task-list" | "task-content-folder" | "focus",
+      sourceTable: string,
+      details: Record<string, unknown> = {},
+    ) {
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "workspace",
+        channelDebugId: workspaceChannelDebugId,
+        domain,
+        kind,
+        sourceTable,
+        ...details,
+      });
+    }
+
+    async function refreshTaskListDomain(sourceTable: string, generation: number) {
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_started", "task-list", sourceTable, { generation });
+      if (!canApplyCoreWorkspaceResult() || generation !== taskListDataGeneration.current) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_stale", "task-list", sourceTable, { generation });
+        return false;
+      }
+
+      const [taskListsResult, manualMembershipResult, folderStructureResult] = await Promise.all([
+        client
+          .from("adhdice_task_lists")
+          .select("*")
+          .eq("user_id", userId)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true }),
+        client
+          .from("adhdice_task_list_manual_memberships")
+          .select("*")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: true }),
+        loadTaskListFolders(client, userId)
+          .then((data) => ({ data, error: null }))
+          .catch((error: { message?: string }) => ({ data: null, error })),
+      ]);
+
+      if (!canApplyCoreWorkspaceResult() || generation !== taskListDataGeneration.current) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_stale", "task-list", sourceTable, {
+          generation,
+          phase: "after_fetch",
+        });
+        return false;
+      }
+
+      const unexpectedErrors = [
+        taskListsResult.error && !isMissingTaskListsTableError(taskListsResult.error.message) ? taskListsResult.error : null,
+        manualMembershipResult.error && !isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message)
+          ? manualMembershipResult.error
+          : null,
+        folderStructureResult.error,
+      ].filter(Boolean);
+      if (unexpectedErrors.length > 0) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_error", "task-list", sourceTable, {
+          generation,
+          reason: unexpectedErrors[0]?.message ?? "read_error",
+        });
+        setMessage({ tone: "warn", text: unexpectedErrors[0]?.message ?? "Could not refresh task lists." });
+        return false;
+      }
+
+      const nextTaskLists = (taskListsResult.error && isMissingTaskListsTableError(taskListsResult.error.message))
+        ? []
+        : reconcileTaskListRows(taskListsResult.data ?? [], mapTaskListRow);
+      const nextTaskListManualMemberships = (manualMembershipResult.error && isMissingTaskListManualMembershipsTableError(manualMembershipResult.error.message))
+        ? []
+        : (manualMembershipResult.data ?? []).map(mapTaskListManualMembershipRow);
+      const nextTaskListFolders = folderStructureResult.data?.folders ?? [];
+      const nextTaskListContainers = folderStructureResult.data?.containers ?? [];
+      const nextTaskListRailItems = folderStructureResult.data?.railItems ?? [];
+
+      setTaskLists((current) => keepCurrentIfStructurallyEqual(current, nextTaskLists));
+      setTaskListFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskListFolders));
+      setTaskListContainers((current) => keepCurrentIfStructurallyEqual(current, nextTaskListContainers));
+      setTaskListRailItems((current) => keepCurrentIfStructurallyEqual(current, nextTaskListRailItems));
+      setTaskListManualMemberships((current) => keepCurrentIfStructurallyEqual(current, nextTaskListManualMemberships));
+      setTaskListMembershipDataReadyUserId(userId);
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_completed", "task-list", sourceTable, {
+        generation,
+        lists: nextTaskLists.length,
+        manualMemberships: nextTaskListManualMemberships.length,
+        folders: nextTaskListFolders.length,
+        containers: nextTaskListContainers.length,
+        railItems: nextTaskListRailItems.length,
+      });
+      return true;
+    }
+
+    function requestTaskListDomainRefresh(sourceTable: string) {
+      const generation = taskListDataGeneration.current + 1;
+      taskListDataGeneration.current = generation;
+      const joined = taskListDomainRefreshCoordinator.isRunning();
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_requested", "task-list", sourceTable, { generation });
+      if (joined) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_joined", "task-list", sourceTable, {
+          generation,
+          refreshAfterCurrent: true,
+        });
+      }
+      void taskListDomainRefreshCoordinator.request(
+        () => refreshTaskListDomain(sourceTable, generation),
+        { refreshAfterCurrent: joined },
+      );
+    }
+
+    async function refreshTaskContentFolderDomain(sourceTable: string, generation: number) {
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_started", "task-content-folder", sourceTable, { generation });
+      if (!canApplyCoreWorkspaceResult() || generation !== taskContentFolderDataGenerationRef.current) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_stale", "task-content-folder", sourceTable, { generation });
+        return false;
+      }
+
+      const result = await client
+        .from("adhdice_task_content_folders")
+        .select("*")
+        .eq("user_id", userId)
+        .order("created_at", { ascending: true });
+
+      if (!canApplyCoreWorkspaceResult() || generation !== taskContentFolderDataGenerationRef.current) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_stale", "task-content-folder", sourceTable, {
+          generation,
+          phase: "after_fetch",
+        });
+        return false;
+      }
+      if (result.error) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_error", "task-content-folder", sourceTable, {
+          generation,
+          reason: result.error.message ?? "read_error",
+        });
+        setMessage({ tone: "warn", text: result.error.message ?? "Could not refresh Task Content Folders." });
+        return false;
+      }
+
+      const nextTaskContentFolders = (result.data ?? [])
+        .map((row) => normalizeTaskContentFolderRow(row))
+        .filter((row): row is TaskContentFolder => row !== null);
+      setTaskContentFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskContentFolders));
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_completed", "task-content-folder", sourceTable, {
+        generation,
+        rows: nextTaskContentFolders.length,
+      });
+      return true;
+    }
+
+    function requestTaskContentFolderDomainRefresh(sourceTable: string) {
+      const generation = taskContentFolderDataGenerationRef.current + 1;
+      taskContentFolderDataGenerationRef.current = generation;
+      const joined = taskContentFolderDomainRefreshCoordinator.isRunning();
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_requested", "task-content-folder", sourceTable, { generation });
+      if (joined) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_joined", "task-content-folder", sourceTable, {
+          generation,
+          refreshAfterCurrent: true,
+        });
+      }
+      void taskContentFolderDomainRefreshCoordinator.request(
+        () => refreshTaskContentFolderDomain(sourceTable, generation),
+        { refreshAfterCurrent: joined },
+      );
+    }
+
+    async function refreshFocusDomain(sourceTable: string, generation: number) {
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_started", "focus", sourceTable, { generation });
+      if (!canApplyCoreWorkspaceResult() || generation !== focusDataGenerationRef.current) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_stale", "focus", sourceTable, { generation });
+        return false;
+      }
+
+      const [categoryResult, focusDayResult] = await Promise.all([
+        client
+          .from("adhdice_focus_categories")
+          .select("*")
+          .eq("user_id", userId)
+          .order("sort_order", { ascending: true })
+          .order("created_at", { ascending: true }),
+        client
+          .from("adhdice_task_focus_days")
+          .select("*")
+          .eq("user_id", userId)
+          .order("focus_date", { ascending: false }),
+      ]);
+
+      if (!canApplyCoreWorkspaceResult() || generation !== focusDataGenerationRef.current) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_stale", "focus", sourceTable, {
+          generation,
+          phase: "after_fetch",
+        });
+        return false;
+      }
+      const focusError = categoryResult.error ?? focusDayResult.error;
+      if (focusError) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_error", "focus", sourceTable, {
+          generation,
+          reason: focusError.message ?? "read_error",
+        });
+        setMessage({ tone: "warn", text: focusError.message ?? "Could not refresh Focus data." });
+        return false;
+      }
+
+      const nextCategories = mergeStoredFocusCategories((categoryResult.data ?? []).map(mapFocusCategoryRow));
+      const currentTasks = tasksRef.current;
+      const nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], currentTasks);
+      setFocusCategories((current) => keepCurrentIfStructurallyEqual(current, nextCategories));
+      setFocusedTaskIdsByDate((current) => keepCurrentIfStructurallyEqual(current, nextFocusedTaskIdsByDate));
+      saveFocusCategories(nextCategories);
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_completed", "focus", sourceTable, {
+        generation,
+        categories: nextCategories.length,
+        focusDays: Object.keys(nextFocusedTaskIdsByDate).length,
+        taskReferences: currentTasks.length,
+      });
+      return true;
+    }
+
+    function requestFocusDomainRefresh(sourceTable: string) {
+      const generation = focusDataGenerationRef.current + 1;
+      focusDataGenerationRef.current = generation;
+      const joined = focusDomainRefreshCoordinator.isRunning();
+      recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_requested", "focus", sourceTable, { generation });
+      if (joined) {
+        recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_joined", "focus", sourceTable, {
+          generation,
+          refreshAfterCurrent: true,
+        });
+      }
+      void focusDomainRefreshCoordinator.request(
+        () => refreshFocusDomain(sourceTable, generation),
+        { refreshAfterCurrent: joined },
+      );
+    }
+
     async function loadCoreWorkspaceData({ silent = false, source = "initial" }: { silent?: boolean; source?: WorkspaceCoreRefreshSource } = {}) {
       const taskListLoadGeneration = taskListDataGeneration.current + 1;
       taskListDataGeneration.current = taskListLoadGeneration;
+      const taskContentFolderLoadGeneration = taskContentFolderDataGenerationRef.current + 1;
+      taskContentFolderDataGenerationRef.current = taskContentFolderLoadGeneration;
+      const focusLoadGeneration = focusDataGenerationRef.current + 1;
+      focusDataGenerationRef.current = focusLoadGeneration;
       if (!silent) {
         setIsWorkspaceLoading(true);
       }
@@ -1740,7 +1985,7 @@ export function useWorkspaceData({
       let nextFocusHistory = shouldLoadFocusHistory
         ? mergeStoredFocusHistory((historyResult.data ?? []).map((row) => mapFocusSessionRow(row)))
         : [];
-      let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], taskResult.data ?? []);
+      let nextFocusedTaskIdsByDate = mapTaskFocusDayRows(focusDayResult.data ?? [], nextTasks);
       const nextTaskLists = (taskListsResult.error && isMissingTaskListsTableError(taskListsResult.error.message))
         ? []
         : reconcileTaskListRows(taskListsResult.data ?? [], mapTaskListRow);
@@ -1800,7 +2045,7 @@ export function useWorkspaceData({
             .order("focus_date", { ascending: false });
 
           if (!freshFocusDays.error) {
-            nextFocusedTaskIdsByDate = mapTaskFocusDayRows(freshFocusDays.data ?? [], taskResult.data ?? []);
+            nextFocusedTaskIdsByDate = mapTaskFocusDayRows(freshFocusDays.data ?? [], nextTasks);
             setMessage((previous) => previous ?? {
               tone: "good",
               text: "Imported your saved Focus Today selections into your account.",
@@ -1809,21 +2054,25 @@ export function useWorkspaceData({
         }
       }
 
-      setFocusCategories((current) => keepCurrentIfStructurallyEqual(current, nextCategories));
+      if (focusLoadGeneration === focusDataGenerationRef.current) {
+        setFocusCategories((current) => keepCurrentIfStructurallyEqual(current, nextCategories));
+        setFocusedTaskIdsByDate((current) => keepCurrentIfStructurallyEqual(current, nextFocusedTaskIdsByDate));
+        saveFocusCategories(nextCategories);
+      }
       if (shouldLoadFocusHistory) {
         setFocusHistory((current) => keepCurrentIfStructurallyEqual(current, nextFocusHistory));
       }
-      setFocusedTaskIdsByDate((current) => keepCurrentIfStructurallyEqual(current, nextFocusedTaskIdsByDate));
       if (taskListLoadGeneration === taskListDataGeneration.current) {
         setTaskLists((current) => keepCurrentIfStructurallyEqual(current, nextTaskLists));
         setTaskListFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskListFolders));
-        setTaskContentFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskContentFolders));
         setTaskListContainers((current) => keepCurrentIfStructurallyEqual(current, nextTaskListContainers));
         setTaskListRailItems((current) => keepCurrentIfStructurallyEqual(current, nextTaskListRailItems));
+        setTaskListManualMemberships((current) => keepCurrentIfStructurallyEqual(current, nextTaskListManualMemberships));
+        setTaskListMembershipDataReadyUserId(userId);
       }
-      setTaskListManualMemberships((current) => keepCurrentIfStructurallyEqual(current, nextTaskListManualMemberships));
-      setTaskListMembershipDataReadyUserId(userId);
-      saveFocusCategories(nextCategories);
+      if (taskContentFolderLoadGeneration === taskContentFolderDataGenerationRef.current) {
+        setTaskContentFolders((current) => keepCurrentIfStructurallyEqual(current, nextTaskContentFolders));
+      }
       if (shouldLoadFocusHistory) saveFocusHistory(nextFocusHistory);
       logWorkspaceTiming("Secondary workspace core ready", secondaryCoreStartedAt, {
         categories: nextCategories.length,
@@ -2401,7 +2650,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+          requestTaskListDomainRefresh("adhdice_task_list_folders");
         },
       )
       .on(
@@ -2413,7 +2662,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+          requestTaskContentFolderDomainRefresh("adhdice_task_content_folders");
         },
       )
       .on(
@@ -2425,7 +2674,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+          requestTaskListDomainRefresh("adhdice_task_list_containers");
         },
       )
       .on(
@@ -2437,7 +2686,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+          requestTaskListDomainRefresh("adhdice_task_list_rail_items");
         },
       )
       .on(
@@ -2450,7 +2699,7 @@ export function useWorkspaceData({
         },
         () => {
           if (!suppressCategoryReload.current) {
-            void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+            requestFocusDomainRefresh("adhdice_focus_categories");
           }
         },
       )
@@ -2463,7 +2712,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+          requestFocusDomainRefresh("adhdice_task_focus_days");
         },
       )
       .on(
@@ -2475,7 +2724,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+          requestTaskListDomainRefresh("adhdice_task_lists");
         },
       )
       .on(
@@ -2487,7 +2736,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         () => {
-          void requestCoreWorkspaceRefresh({ silent: true, source: "realtime" });
+          requestTaskListDomainRefresh("adhdice_task_list_manual_memberships");
         },
       )
       .on(

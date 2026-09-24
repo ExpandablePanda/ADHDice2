@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.35`.
+- Current working app version: `7.15.36`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,37 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.36 Domain-Scoped Workspace Realtime Refresh
+
+7.15.36 replaces the broad workspace refresh previously used by the eight
+non-Task workspace Realtime handlers with bounded domain snapshots. Task List
+events now refresh the grouped Task List domain: `adhdice_task_lists`,
+`adhdice_task_list_manual_memberships`, and the authoritative
+`loadTaskListFolders()` read of `adhdice_task_list_folders`,
+`adhdice_task_list_containers`, and `adhdice_task_list_rail_items`. Task
+Content Folder events refresh only `adhdice_task_content_folders`. Focus
+category and Task Focus Day events share a Focus snapshot of
+`adhdice_focus_categories` and `adhdice_task_focus_days`, using the current
+Task reference set for Focus-day mapping.
+
+Each scoped domain has bounded single-flight/coalescing behavior with one
+latest trailing refresh for an event burst. Owner, mounted-workspace, and
+domain-generation checks prevent stale results from applying. Task List
+missing-table compatibility, `taskListDataGeneration`, list/membership
+readiness, folder/list ordering and identity, mapper/reconciliation authority,
+Content Folder normalization, category merging and local persistence, and
+`suppressCategoryReload` remain intact.
+
+The broad paths retired here are only the eight handlers for those List,
+Content Folder, and Focus tables. Task Realtime still reloads the broad
+canonical Task snapshot and is explicitly deferred to the next ticket because
+its Task-row and schedule-boundary correctness surface is larger. Manual,
+resume, and mutation refreshes remain intentional workspace refreshes. Notes,
+History, and Current Projection Realtime remain scoped as before; ordinary
+startup remains Current Projection-led with lazy History from 7.15.35.
+
+No SQL/schema/RLS or Edge deployment was performed for 7.15.36.
 
 ## 2026-09-24 7.15.35 Current Projection Certification + Lazy History Startup
 
