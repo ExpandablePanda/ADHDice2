@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.32`.
+- Current working app version: `7.15.34`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.34 Side Test iOS Task Detail Concept
+
+The Side Test page now includes an isolated `test-ios-task-detail` concept for
+evaluating a future iOS-oriented task-detail hierarchy: a fixed Call UGI hero,
+compact 3-column metadata tiles, and local-only long-press Arrange mode with
+validated tile-order persistence and Reset Layout. It uses mock presentation
+data only and does not change production Task UI, native iOS code, Task State,
+History, Supabase, or shared PageShell behavior. Browser/device QA remains
+manual and the concept is intended to remain Side-only until separately
+approved.
 
 ## 2026-09-24 7.15.32 Scoped Last Handled Parity Oracle + V2 Campaign Resume Gate
 

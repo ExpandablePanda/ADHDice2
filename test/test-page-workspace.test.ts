@@ -13,10 +13,12 @@ const concepts = [
   ["test-task-table-prototype", "Task Table Prototype"],
   ["test-bucket-tray", "Bucket Tray"],
   ["test-rule-builder", "Rule Builder"],
+  ["test-ios-task-detail", "iOS Task Detail"],
 ] as const;
 
-test("Test workspace keeps the seven stable concept IDs and labels in one registry", () => {
+test("Test workspace keeps the existing and new stable concept IDs and labels in one registry", () => {
   assert.match(workspace, /const TEST_CONCEPTS = \[/);
+  assert.equal((workspace.match(/id: "/g) ?? []).length, 8);
   for (const [id, label] of concepts) {
     assert.match(workspace, new RegExp(`id: "${id}",\\s*label: "${label}"`));
   }
@@ -32,7 +34,7 @@ test("Test workspace switches one selected render and persists only validated lo
   assert.match(workspace, /\{selectedConcept\.render\(\{ isDark, userId \}\)\}/);
   assert.doesNotMatch(workspace, /usePageShellLayout|ReorderablePageShells|PageShellLayoutControls/);
 
-  for (const component of ["TaskManagementTableV2", "TestD20FaceMapper", "TestDiceFaceMapper", "TestDiceMaterialLab", "TestTaskTablePrototype", "TestBucketTrayPreview", "TestRuleBuilderPreview"]) {
+  for (const component of ["TaskManagementTableV2", "TestD20FaceMapper", "TestDiceFaceMapper", "TestDiceMaterialLab", "TestTaskTablePrototype", "TestBucketTrayPreview", "TestRuleBuilderPreview", "TestIosTaskDetail"]) {
     assert.equal((workspace.match(new RegExp(`<${component}`, "g")) ?? []).length, 1, `${component} should have one registry render path`);
   }
 });

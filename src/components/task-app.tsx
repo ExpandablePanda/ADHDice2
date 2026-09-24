@@ -432,6 +432,7 @@ const TestD20FaceMapper = dynamic(() => import("./task-app/test-d20-face-mapper"
 const TestDiceFaceMapper = dynamic(() => import("./task-app/test-dice-face-mapper").then((module) => module.TestDiceFaceMapper), { loading: PageLoadingFallback });
 const TestDiceMaterialLab = dynamic(() => import("./task-app/test-dice-material-lab").then((module) => module.TestDiceMaterialLab), { loading: PageLoadingFallback });
 const TestTaskTablePrototype = dynamic(() => import("./task-app/test-task-table-prototype").then((module) => module.TestTaskTablePrototype), { loading: PageLoadingFallback });
+const TestIosTaskDetail = dynamic(() => import("./task-app/test-ios-task-detail").then((module) => module.TestIosTaskDetail), { loading: PageLoadingFallback, ssr: false });
 
 type Message = {
   tone: "neutral" | "good" | "warn";
@@ -10311,7 +10312,8 @@ type TestConceptId =
   | "test-dice-material"
   | "test-task-table-prototype"
   | "test-bucket-tray"
-  | "test-rule-builder";
+  | "test-rule-builder"
+  | "test-ios-task-detail";
 
 type TestConceptRenderProps = {
   isDark: boolean;
@@ -10414,6 +10416,15 @@ const TEST_CONCEPTS = [
     render: () => (
       <TestConceptSurface>
         <TestRuleBuilderPreview />
+      </TestConceptSurface>
+    ),
+  },
+  {
+    id: "test-ios-task-detail",
+    label: "iOS Task Detail",
+    render: () => (
+      <TestConceptSurface>
+        <TestIosTaskDetail />
       </TestConceptSurface>
     ),
   },
