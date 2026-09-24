@@ -348,7 +348,7 @@ test("parity readiness waits for settled Active Status and complete legacy summa
     behaviorAuthorityLoading: false,
     behaviorAuthorityReady: true,
     comparisonTaskIds: ["task-1"],
-    isTaskHistoryLoaded: true,
+    isFullTaskHistoryLoaded: true,
     legacySummaries: {
       "task-1": {
         currentStreak: 4,

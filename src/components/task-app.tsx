@@ -1871,7 +1871,7 @@ export function TaskApp() {
 
   const {
     isSoftWorkspaceRefreshing,
-    isTaskHistoryLoaded,
+    isFullTaskHistoryLoaded,
     isTaskListMembershipDataReady,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
@@ -2019,7 +2019,7 @@ export function TaskApp() {
       behaviorAuthorityProjectionReadyRef.current = false;
       return;
     }
-    if (!isTaskHistoryLoaded || tasks.length === 0) return;
+    if (!isFullTaskHistoryLoaded || tasks.length === 0) return;
     const authorityWasPreviouslyReady = behaviorAuthorityProjectionReadyRef.current;
     const behaviorPolicyChanged = refreshedBehaviorProfilesRevisionRef.current !== taskTypeBehaviorProfilesRevision;
     behaviorAuthorityProjectionReadyRef.current = true;
@@ -2029,7 +2029,7 @@ export function TaskApp() {
       console.info(`[workspace:streak-summary] mode=bulk reason=behavior-policy tasks=${tasks.length}`);
     }
     void refreshTaskHistoryStreakSummaries(tasks, { supersede: true });
-  }, [isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
+  }, [isBehaviorAuthorityReady, isFullTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, refreshTaskHistoryStreakSummaries, taskTypeBehaviorProfilesRevision, tasks]);
   const actionWorkspaceGeneration = workspaceGenerationRef.current;
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
@@ -2478,7 +2478,7 @@ export function TaskApp() {
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     behaviorSelectionsByTaskId,
     dayStartTime,
-    isTaskHistoryLoaded,
+    isFullTaskHistoryLoaded,
     isTasksReady: !isWorkspaceLoading,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     taskHistory: taskStateHistory,
@@ -2493,7 +2493,7 @@ export function TaskApp() {
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     behaviorSelectionsByTaskId,
     dayStartTime,
-    isTaskHistoryLoaded,
+    isFullTaskHistoryLoaded,
     isTasksReady: !isWorkspaceLoading,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
     taskHistory: taskStateHistory,
@@ -2513,7 +2513,7 @@ export function TaskApp() {
     const userId = session?.user?.id;
     if (!client || !userId) return;
     // The canonical plan is authoritative only after every independent input exists.
-    if (!inputs.isTasksReady || !inputs.isTaskHistoryLoaded || !inputs.behaviorAuthorityReady || inputs.behaviorAuthorityLoading) return;
+    if (!inputs.isTasksReady || !inputs.behaviorAuthorityReady || inputs.behaviorAuthorityLoading) return;
     if (source !== "initial_load") await prepareTaskMutation();
     const rolloverSettingsKey = createTaskRolloverSettingsKey({
       logicalDayKey: inputs.todayKey,
@@ -2670,7 +2670,7 @@ export function TaskApp() {
       window.removeEventListener("pageshow", handlePageShow);
       window.clearInterval(intervalId);
     };
-  }, [isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session?.user?.id, supabase]);
+  }, [isBehaviorAuthorityReady, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session?.user?.id, supabase]);
   const taskSubtasksByTaskId = useMemo(() => groupTaskSubtasksByTaskId(tasks), [tasks]);
   const hasStepsByTaskId = useMemo(
     () => {
@@ -2978,8 +2978,8 @@ export function TaskApp() {
     [taskHistoryByTaskId],
   );
   const taskHistoryReadinessRevision = useMemo(
-    () => createProjectionDomainRevision("task-history-readiness", isTaskHistoryLoaded),
-    [isTaskHistoryLoaded],
+    () => createProjectionDomainRevision("full-task-history-readiness", isFullTaskHistoryLoaded),
+    [isFullTaskHistoryLoaded],
   );
   const taskActiveStatusAuthorityReadinessRevision = useMemo(
     () => createProjectionDomainRevision("task-status-authority-readiness", {
@@ -3030,18 +3030,71 @@ export function TaskApp() {
   const latestActiveStatusBehaviorRevisionRef = useRef(taskActiveStatusBehaviorRevision);
   latestActiveStatusInputRevisionRef.current = activeStatusInputRevision;
   latestActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+  const currentTaskProjectionFallbackResolution = useMemo(
+    () => resolveCurrentTaskProjectionReads({
+      historySyncEpoch: currentTaskProjectionReadContext.historySyncEpoch,
+      logicalDaySettingsRevision: currentTaskProjectionReadContext.logicalDaySettingsRevision,
+      projectionsByTaskId: currentTaskProjectionsByTaskId,
+      taskHistoryStreakSummaries,
+      tasks,
+      todayKey,
+    }),
+    [currentTaskProjectionReadContext, currentTaskProjectionsByTaskId, taskHistoryStreakSummaries, tasks, todayKey],
+  );
+  const currentTaskProjectionFallbackTaskIds = useMemo(
+    () => [...new Set([
+      ...currentTaskProjectionFallbackResolution.staleProjectionTaskIds,
+      ...currentTaskProjectionFallbackResolution.missingProjectionTaskIds,
+    ])],
+    [currentTaskProjectionFallbackResolution.missingProjectionTaskIds, currentTaskProjectionFallbackResolution.staleProjectionTaskIds],
+  );
+  const projectionFallbackHistoryRequestedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    projectionFallbackHistoryRequestedRef.current.clear();
+  }, [currentUserId]);
+  useEffect(() => {
+    if (!isCurrentTaskProjectionReadReady || !isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) return;
+    const taskIdsToLoad = currentTaskProjectionFallbackTaskIds.filter((taskId) => (
+      !Object.hasOwn(taskHistoryLoadStateByTaskId, taskId)
+      && !projectionFallbackHistoryRequestedRef.current.has(taskId)
+    ));
+    if (taskIdsToLoad.length === 0) return;
+    for (const taskId of taskIdsToLoad) projectionFallbackHistoryRequestedRef.current.add(taskId);
+    void loadTaskHistoryForTasks(taskIdsToLoad, { silent: true }).then((results) => {
+      void Promise.all(taskIdsToLoad.map((taskId) => {
+        const result = results[taskId];
+        return result?.status === "ready"
+          ? refreshTaskHistoryStreakSummary(taskId, result.history ?? undefined)
+          : false;
+      }));
+    });
+  }, [currentTaskProjectionFallbackTaskIds, isBehaviorAuthorityReady, isCurrentTaskProjectionReadReady, isTaskTypeBehaviorProfilesLoading, loadTaskHistoryForTasks, refreshTaskHistoryStreakSummary, taskHistoryLoadStateByTaskId]);
   useEffect(() => {
     const calculationToken = activeStatusCalculationTokenRef.current + 1;
     activeStatusCalculationTokenRef.current = calculationToken;
-    if (!isTaskHistoryLoaded) {
+    if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
+      return () => {
+        if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+      };
+    }
+
+    if (currentTaskProjectionFallbackTaskIds.length === 0) {
       committedActiveStatusBehaviorRevisionRef.current = null;
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped projection when History is unavailable.
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the legacy evaluator while projections are authoritative.
       setActiveStatusRead(null);
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
     }
-    if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
+
+    const fallbackHistoryPending = currentTaskProjectionFallbackTaskIds.some((taskId) => (
+      taskHistoryLoadStateByTaskId[taskId]?.status === "loading"
+      || !Object.hasOwn(taskHistoryLoadStateByTaskId, taskId)
+    ));
+    if (fallbackHistoryPending) {
+      committedActiveStatusBehaviorRevisionRef.current = null;
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the legacy evaluator until scoped fallback History is ready.
+      setActiveStatusRead(null);
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
@@ -3055,13 +3108,13 @@ export function TaskApp() {
       historyByTaskId: taskHistoryByTaskId,
       logicalDayRollover: dayStartTime,
       now: new Date(logicalDayNow),
-      tasks,
+      tasks: tasks.filter((task) => currentTaskProjectionFallbackTaskIds.includes(task.id)),
       timezone: userTimeZone,
     };
-    const isGlobalBehaviorChange = committedActiveStatusBehaviorRevisionRef.current !== null
+    const isBehaviorRevisionChange = committedActiveStatusBehaviorRevisionRef.current !== null
       && committedActiveStatusBehaviorRevisionRef.current !== taskActiveStatusBehaviorRevision;
 
-    if (isGlobalBehaviorChange) {
+    if (isBehaviorRevisionChange) {
       void resolveActiveTaskStatusesIncrementallyChunked(activeStatusInput, projectionCache, {
         budgetMs: 10,
         isCurrent: () => activeStatusCalculationTokenRef.current === calculationToken
@@ -3071,7 +3124,7 @@ export function TaskApp() {
         if (!result.completed || activeStatusCalculationTokenRef.current !== calculationToken) return;
         committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
-          console.info(`[workspace:active-status] mode=global-chunked tasks=${tasks.length} chunks=${result.chunks}`);
+          console.info(`[workspace:active-status] mode=fallback-chunked tasks=${activeStatusInput.tasks.length} chunks=${result.chunks}`);
         }
         setActiveStatusRead(result);
       });
@@ -3090,7 +3143,7 @@ export function TaskApp() {
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeStatusInputRevision, isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, projectionCache, taskActiveStatusBehaviorRevision]);
+  }, [activeStatusInputRevision, currentTaskProjectionFallbackTaskIds, isBehaviorAuthorityReady, isTaskTypeBehaviorProfilesLoading, projectionCache, taskActiveStatusBehaviorRevision, taskHistoryLoadStateByTaskId]);
   const currentTaskProjectionReadResolution = useMemo(
     () => resolveCurrentTaskProjectionReads({
       historySyncEpoch: currentTaskProjectionReadContext.historySyncEpoch,
@@ -3220,7 +3273,7 @@ export function TaskApp() {
     behaviorAuthorityLoading: isTaskTypeBehaviorProfilesLoading,
     behaviorAuthorityReady: isBehaviorAuthorityReady,
     comparisonTaskIds: currentTaskProjectionParityTaskIds,
-    isTaskHistoryLoaded,
+    isFullTaskHistoryLoaded,
     legacySummaries: taskHistoryStreakSummaries,
     projectionReadReady: isCurrentTaskProjectionReadReady,
   });
@@ -3512,10 +3565,10 @@ export function TaskApp() {
     [attentionBehaviorPoliciesByTaskId, taskDisplayStatusByTaskId, tasksForActiveStatusRead],
   );
   useEffect(() => {
-    if (isTaskHistoryLoaded && activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
+    if (activeStatusRead && process.env.NODE_ENV === "development" && typeof window !== "undefined") {
       window.__ADHDICE_TASK_STATE_ACTIVE_STATUS_AUTHORITY__ = activeStatusRead.authority;
     }
-  }, [activeStatusRead, isTaskHistoryLoaded]);
+  }, [activeStatusRead]);
   const client = supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   const updateTaskTrackingExclusion = useCallback(async (taskId: string, excluded: boolean) => {
     const result = await setTaskTrackingExclusionRpc(client, taskId, excluded);
@@ -3529,13 +3582,13 @@ export function TaskApp() {
       invalidateRecordsSessionSnapshotsForUser(currentUserId);
       markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
     }
-    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    if (isFullTaskHistoryLoaded) void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
     setMessage({
       tone: "good",
       text: excluded ? "Task excluded from tracking." : "Task included in tracking.",
     });
     return true;
-  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks, userTimeZone]);
+  }, [client, currentUserId, dayStartTime, isFullTaskHistoryLoaded, refreshTaskHistoryStreakSummaries, setMessage, sortTasksForUi, tasks, userTimeZone]);
   const excludeTasksFromTracking = useCallback(async (taskIds: readonly string[]) => {
     const result = await excludeTasksFromTrackingRpc(client, taskIds);
     if (result.error || !result.data) {
@@ -3553,9 +3606,9 @@ export function TaskApp() {
       invalidateRecordsSessionSnapshotsForUser(currentUserId);
       markRecordsInvalidated(getRecordsLocalStorage(), buildRecordsSessionCacheKey({ logicalDayStart: dayStartTime, timezone: userTimeZone, userId: currentUserId }));
     }
-    void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
+    if (isFullTaskHistoryLoaded) void refreshTaskHistoryStreakSummaries(nextTasks, { supersede: true });
     return { error: null, success: true };
-  }, [client, currentUserId, dayStartTime, refreshTaskHistoryStreakSummaries, sortTasksForUi, userTimeZone]);
+  }, [client, currentUserId, dayStartTime, isFullTaskHistoryLoaded, refreshTaskHistoryStreakSummaries, sortTasksForUi, userTimeZone]);
   const runGuardedTaskRowUpdate = useCallback(async (
     taskId: string,
     values: TaskUpdate,
@@ -3639,14 +3692,14 @@ export function TaskApp() {
     isLater: (date) => Boolean(date && date > shiftDateKey(todayKey, 1)),
     isOpen: isTaskOpen,
     isOverdue: (date) => Boolean(date && date < todayKey),
-    isTaskHistoryLoaded,
+    isFullTaskHistoryLoaded,
     historyFactsByTaskId: taskHistoryFactsByTaskId,
     manualMembershipsByTaskId,
     attentionEligibleTaskIds: taskAttentionProjection.attentionEligibleTaskIds,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     todayDateKey: todayKey,
-  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.attentionEligibleTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
+  }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isFullTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.attentionEligibleTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
   const parsedTaskSearch = useMemo(
     () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
     [taskUiState.duplicateTitleMode, taskUiState.search],
@@ -7870,7 +7923,7 @@ export function TaskApp() {
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
             dailyProgress={homeDailyProgress}
             homeRecordChases={homeRecordChases}
-            isTaskHistoryLoaded={isTaskHistoryLoaded}
+            isFullTaskHistoryLoaded={isFullTaskHistoryLoaded}
             onOpenRecord={openHomeRecord}
             recordTargetsError={homeRecordTargets.error}
             recordTargetsLoading={homeRecordTargets.loading}

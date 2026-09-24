@@ -21,36 +21,33 @@ async function flushMicrotasks() {
 
 const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
-test("A: each core refresh captures exactly one full History hydration Promise", () => {
+test("A: ordinary core refreshes do not capture a full History hydration Promise", () => {
   const coreLoader = workspaceSource.slice(
     workspaceSource.indexOf("async function loadCoreWorkspaceData"),
     workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
   );
 
-  assert.equal((coreLoader.match(/loadTaskHistory\(\{/g) ?? []).length, 1);
-  assert.match(coreLoader, /const canonicalHistoryHydration = loadTaskHistory\(\{ silent, source \}\);/);
-  assert.match(coreLoader, /startBackgroundTaskHistoryHydration\(\s*\(\) => canonicalHistoryHydration/);
+  assert.equal((coreLoader.match(/loadTaskHistory\(\{/g) ?? []).length, 0);
+  assert.doesNotMatch(coreLoader, /canonicalHistoryHydration/);
+  assert.doesNotMatch(coreLoader, /startBackgroundTaskHistoryHydration\(/);
+  assert.doesNotMatch(coreLoader, /loadTaskHistoryStreakSummaries\(/);
+  assert.match(coreLoader, /currentProjectionsLoaded: projectionRows\.length/);
   assert.doesNotMatch(coreLoader, /source: "startup"/);
 });
 
-test("B: manual soft refresh waits for its captured History hydration", () => {
-  const coreLoader = workspaceSource.slice(
-    workspaceSource.indexOf("async function loadCoreWorkspaceData"),
-    workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
-  );
+test("B: manual soft refresh uses the core refresh without a History wait", () => {
   const softRefresh = workspaceSource.slice(
     workspaceSource.indexOf("async function runSoftWorkspaceRefresh"),
     workspaceSource.indexOf("softWorkspaceRefreshRef.current =", workspaceSource.indexOf("async function runSoftWorkspaceRefresh")),
   );
 
-  assert.match(coreLoader, /if \(source !== "initial"\) \{\s*await canonicalHistoryHydration;\s*\}/);
   assert.match(softRefresh, /await requestCoreWorkspaceRefresh\(\{ silent: true, source \}\)/);
   assert.match(softRefresh, /if \(includeSecondaryIfLoaded\)/);
   assert.match(softRefresh, /loadNotes\(\{ silent: true \}\)/);
   assert.doesNotMatch(softRefresh, /loadTaskHistory\(/);
 });
 
-test("C: resume refresh uses one core History hydration and waits for it", () => {
+test("C: resume refresh uses the projection-backed core refresh", () => {
   assert.match(workspaceSource, /runSoftWorkspaceRefresh\(\{ includeSecondaryIfLoaded: true, source: "resume" \}\)/);
   const coreLoader = workspaceSource.slice(
     workspaceSource.indexOf("async function loadCoreWorkspaceData"),
@@ -60,8 +57,7 @@ test("C: resume refresh uses one core History hydration and waits for it", () =>
     workspaceSource.indexOf("async function runSoftWorkspaceRefresh"),
     workspaceSource.indexOf("softWorkspaceRefreshRef.current =", workspaceSource.indexOf("async function runSoftWorkspaceRefresh")),
   );
-  assert.equal((coreLoader.match(/loadTaskHistory\(\{/g) ?? []).length, 1);
-  assert.match(coreLoader, /source !== "initial"/);
+  assert.equal((coreLoader.match(/loadTaskHistory\(\{/g) ?? []).length, 0);
   assert.match(softRefresh, /await requestCoreWorkspaceRefresh\(\{ silent: true, source \}\)/);
   assert.doesNotMatch(softRefresh, /hasLoadedFullTaskHistoryRef\.current\) await loadTaskHistory/);
 });
@@ -78,7 +74,7 @@ test("D: resume and mutation lifecycle state clears only after core refresh comp
   assert.match(workspaceSource, /prepareTaskMutationRef\.current = async \(\) => \{[\s\S]*runSoftWorkspaceRefresh\(\{ includeSecondaryIfLoaded: false, source: "mutation" \}\)/);
 });
 
-test("E: mutation preflight joins the same canonical core refresh barrier", () => {
+test("E: mutation preflight joins the same projection-backed core refresh barrier", () => {
   const coreLoader = workspaceSource.slice(
     workspaceSource.indexOf("async function loadCoreWorkspaceData"),
     workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
@@ -87,13 +83,13 @@ test("E: mutation preflight joins the same canonical core refresh barrier", () =
     workspaceSource.indexOf("prepareTaskMutationRef.current = async () =>"),
     workspaceSource.indexOf("initialCoreLoadActiveRef.current = true"),
   );
-  assert.match(coreLoader, /const canonicalHistoryHydration = loadTaskHistory\(\{ silent, source \}\);/);
-  assert.match(coreLoader, /await canonicalHistoryHydration/);
+  assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{/);
+  assert.doesNotMatch(coreLoader, /canonicalHistoryHydration/);
   assert.match(mutationPreflight, /await runSoftWorkspaceRefresh\(\{ includeSecondaryIfLoaded: false, source: "mutation" \}\)/);
   assert.doesNotMatch(mutationPreflight, /loadTaskHistory\(/);
 });
 
-test("F: waiting for History does not create a second full History read", () => {
+test("F: core refresh does not create a full History read", () => {
   const coreLoader = workspaceSource.slice(
     workspaceSource.indexOf("async function loadCoreWorkspaceData"),
     workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
@@ -102,20 +98,21 @@ test("F: waiting for History does not create a second full History read", () => 
     workspaceSource.indexOf("async function runSoftWorkspaceRefresh"),
     workspaceSource.indexOf("softWorkspaceRefreshRef.current =", workspaceSource.indexOf("async function runSoftWorkspaceRefresh")),
   );
-  assert.equal((coreLoader.match(/loadTaskHistory\(\{/g) ?? []).length, 1);
-  assert.equal((coreLoader.match(/canonicalHistoryHydration/g) ?? []).length, 3);
+  assert.equal((coreLoader.match(/loadTaskHistory\(\{/g) ?? []).length, 0);
+  assert.equal((coreLoader.match(/canonicalHistoryHydration/g) ?? []).length, 0);
   assert.doesNotMatch(softRefresh, /loadTaskHistory\(/);
 });
 
-test("G: initial startup retains background History sequencing and authoritative gating", () => {
+test("G: initial startup retains projection readiness and explicit page-gated History loading", () => {
   const coreLoader = workspaceSource.slice(
     workspaceSource.indexOf("async function loadCoreWorkspaceData"),
     workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
   );
   const criticalCommitIndex = coreLoader.indexOf("startTransition(() => {");
-  const historyHydrationIndex = coreLoader.indexOf("const canonicalHistoryHydration = loadTaskHistory({ silent, source });");
-  assert.ok(criticalCommitIndex >= 0 && historyHydrationIndex > criticalCommitIndex);
-  assert.match(coreLoader, /if \(source !== "initial"\) \{\s*await canonicalHistoryHydration;/);
+  assert.ok(criticalCommitIndex >= 0);
+  assert.doesNotMatch(coreLoader, /canonicalHistoryHydration/);
+  assert.match(coreLoader, /currentProjectionsLoaded: projectionRows\.length/);
+  assert.match(coreLoader, /loadFullTaskHistoryRef\.current\?\.\(\)/);
   assert.match(workspaceSource, /initialCoreLoadActiveRef\.current = true/);
   assert.match(workspaceSource, /workspaceStartupRequestRegistry\.request\(userId, \(\) => requestCoreWorkspaceRefresh\(\{ silent: false, source: "initial" \}\)\)/);
 });

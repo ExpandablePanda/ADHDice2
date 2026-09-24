@@ -214,13 +214,14 @@ test("initial boot guards lifecycle refreshes and only persisted pageshow is eli
   assert.match(source, /resumeRefreshCoordinator\.focus\(\)/);
 });
 
-test("startup commits critical workspace state without awaiting full canonical Task History", async () => {
+test("startup commits critical workspace state without requesting full canonical Task History", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const coreLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
 
   const criticalCommitIndex = coreLoader.indexOf("startTransition(() => {");
-  const historyHydrationIndex = coreLoader.indexOf("startBackgroundTaskHistoryHydration(");
-  assert.ok(criticalCommitIndex >= 0 && historyHydrationIndex > criticalCommitIndex);
+  assert.ok(criticalCommitIndex >= 0);
+  assert.doesNotMatch(coreLoader, /startBackgroundTaskHistoryHydration\(/);
+  assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{/);
   assert.match(coreLoader, /tasksRef\.current = nextTasks/);
   assert.match(coreLoader, /setTasks\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextTasks\)\)/);
   assert.match(coreLoader, /onProfileLoaded\(profileResult\.data \?\? null, user\)/);
@@ -320,7 +321,7 @@ test("rollover reconciliation refreshes the shared full History snapshot", async
     source.indexOf("prepareTaskMutationRef.current", source.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>")),
   );
 
-  assert.match(reconciliation, /refreshing the shared canonical snapshot/);
+  assert.match(reconciliation, /refreshing the explicitly loaded canonical snapshot/);
   assert.match(reconciliation, /await loadTaskHistory\(\{ silent: true, source: "rollover", refreshAfterCurrent: true \}\)/);
 });
 
@@ -347,7 +348,8 @@ test("streak-summary resolution is rejected after the owning effect unmounts", a
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
   assert.match(summaryLoader, /if \(!isActive \|\| !canApplyCoreWorkspaceResult\(\)\)/);
-  assert.match(summaryLoader, /await fetchAllPagedRows<CanonicalTaskHistoryFact>/);
+  assert.match(summaryLoader, /if \(!hasLoadedFullTaskHistoryRef\.current\) \{\s*return false;/);
+  assert.doesNotMatch(summaryLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
   assert.match(summaryLoader, /if \(!canApplySummaryCalculation\(\)\)[\s\S]*buildTaskHistoryStreakSummaryMapCooperatively/);
 });
 
@@ -429,7 +431,7 @@ test("a stale in-flight summary promise is neither joined nor allowed to clear a
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
   assert.match(summaryLoader, /existingSummaryLoad\?\.generation === workspaceGeneration/);
-  assert.match(summaryLoader, /fullHistoryLoad\?\.generation === workspaceGeneration/);
+  assert.doesNotMatch(summaryLoader, /fullHistoryLoad\?\.generation === workspaceGeneration/);
   assert.match(summaryLoader, /taskHistoryStreakSummaryLoadPromiseRef\.current === summaryLoadOwner/);
 });
 
@@ -460,17 +462,17 @@ test("task-scoped streak-summary reload stores its Promise without invoking it",
   assert.doesNotMatch(reload, /reloadPromise\(\)/);
 });
 
-test("summary failure clears only its owned promise so a later retry can start", async () => {
+test("summary calculation clears only its owned promise so a later retry can start", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
-  assert.match(summaryLoader, /if \(result\.error\) return false;/);
+  assert.match(summaryLoader, /if \(!hasLoadedFullTaskHistoryRef\.current\) \{\s*return false;/);
   assert.match(summaryLoader, /if \(taskHistoryStreakSummaryLoadPromiseRef\.current === summaryLoadOwner\) \{\s*taskHistoryStreakSummaryLoadPromiseRef\.current = null/);
 });
 
 test("a logical-day transition supersedes the shared streak summary and uses the new day", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
-  assert.match(source, /if \(todayKeyRef\.current === todayKey\) return;\s*todayKeyRef\.current = todayKey;\s*void loadTaskHistoryStreakSummariesRef\.current\?\.\(tasksRef\.current, \{ supersede: true \}\);/);
+  assert.match(source, /if \(todayKeyRef\.current === todayKey\) return;\s*todayKeyRef\.current = todayKey;\s*if \(!hasLoadedFullTaskHistoryRef\.current\) return;\s*void loadTaskHistoryStreakSummariesRef\.current\?\.\(tasksRef\.current, \{ supersede: true \}\);/);
 });
 
 test("rollover refreshes streak summaries after the canonical History snapshot, including zero Task mutations", async () => {
@@ -490,38 +492,42 @@ test("rollover refreshes streak summaries after the canonical History snapshot, 
   assert.match(rolloverLifecycle, /Rollover completed; requesting targeted workspace reconciliation/);
 });
 
-test("the full-History summary branch rechecks ownership after waiting for the full load", async () => {
+test("the bulk History summary builder is explicit-full-only and never fetches a fallback snapshot", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
-  assert.match(summaryLoader, /const fullHistoryLoaded = await fullHistoryLoad\.promise;\s*if \(!fullHistoryLoaded\) return false;[\s\S]*?catch \{\s*return false;\s*\}[\s\S]*?\}\s*if \(!canApplySummaryCalculation\(\)\)/);
-  assert.match(summaryLoader, /catch \{\s*return false;\s*\}/);
+  assert.match(summaryLoader, /if \(!hasLoadedFullTaskHistoryRef\.current\) \{\s*return false;\s*\}/);
+  assert.match(summaryLoader, /const compactHistory: TaskHistoryStreakEntry\[\] = fullTaskHistoryRowsRef\.current/);
+  assert.doesNotMatch(summaryLoader, /taskHistoryLoadPromiseRef\.current/);
+  assert.doesNotMatch(summaryLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
 });
 
-test("startup History completion keeps the existing full canonical caches and readiness authority", async () => {
+test("explicit full History loading keeps the canonical caches and readiness authority without startup coupling", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const historyLoader = source.slice(source.indexOf("async function loadTaskHistory"), source.indexOf("async function fetchTaskHistoryForRollover"));
   const startupLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
 
-  assert.match(startupLoader, /const canonicalHistoryHydration = loadTaskHistory\(\{ silent, source \}\);[\s\S]*startBackgroundTaskHistoryHydration\([\s\S]*canonicalHistoryHydration/);
+  assert.doesNotMatch(startupLoader, /loadTaskHistory\(\{/);
+  assert.doesNotMatch(startupLoader, /startBackgroundTaskHistoryHydration\(/);
+  assert.match(startupLoader, /currentProjectionsLoaded: projectionRows\.length/);
+  assert.match(startupLoader, /fullHistoryLoaded: hasLoadedFullTaskHistoryRef\.current/);
   assert.match(historyLoader, /setTaskHistory\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextTaskHistory\)\)/);
   assert.match(historyLoader, /setTaskHistoryByTaskId\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextByTaskId\)\)/);
   assert.match(historyLoader, /hasLoadedFullTaskHistoryRef\.current = true/);
-  assert.match(historyLoader, /setTaskHistoryLoadedUserId\(userId\)/);
-  assert.doesNotMatch(startupLoader, /onLoaded:[\s\S]*setIsWorkspaceLoading/);
+  assert.match(historyLoader, /setFullTaskHistoryLoadedUserId\(userId\)/);
+  assert.match(source, /loadFullTaskHistoryRef\.current = \(\) => loadTaskHistory/);
 });
 
-test("startup full History and streak summaries share one in-flight paged scan", async () => {
+test("ordinary startup does not invoke the bulk History summary path or broad command-operation read", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const startupLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
   const summaryLoader = source.slice(source.indexOf("async function loadTaskHistoryStreakSummaries"), source.indexOf("async function reloadTaskHistoryStreakSummaryForTask"));
 
-  assert.ok(startupLoader.indexOf("startBackgroundTaskHistoryHydration(") < startupLoader.indexOf("void loadTaskHistoryStreakSummaries(nextTasks)"));
-  assert.match(summaryLoader, /const fullHistoryLoad = taskHistoryLoadPromiseRef\.current/);
-  assert.match(summaryLoader, /await fullHistoryLoad\.promise/);
-  assert.match(summaryLoader, /if \(!fullHistoryLoaded\) return false/);
-  assert.match(summaryLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
-  assert.match(source, /const fullHistoryLoad = taskHistoryLoadPromiseRef\.current/);
+  assert.doesNotMatch(startupLoader, /loadTaskHistory\(\{/);
+  assert.doesNotMatch(startupLoader, /loadTaskHistoryStreakSummaries\(nextTasks/);
+  assert.match(summaryLoader, /if \(!hasLoadedFullTaskHistoryRef\.current\)/);
+  assert.doesNotMatch(startupLoader, /loadManualActionCommandOperations\(\)/);
+  assert.match(source, /if \(!taskId\) broadManualActionCommandOperationReads \+= 1/);
 });
 
 test("opening Task History refreshes the shared canonical History snapshot", async () => {
@@ -620,8 +626,8 @@ test("known-task History Realtime uses targeted refresh and unknown-ID events ke
   assert.match(realtime, /result\.status === "ready"[\s\S]*reloadTaskHistoryStreakSummaryForTask\(taskId, result\.history \?\? undefined\)/);
   const knownTaskBranch = realtime.slice(realtime.indexOf("if (taskId)"), realtime.indexOf("if (hasLoadedFullTaskHistoryRef.current)"));
   assert.doesNotMatch(knownTaskBranch, /loadTaskHistory\(/);
-  assert.match(realtime, /if \(hasLoadedFullTaskHistoryRef\.current\) \{[\s\S]*loadTaskHistory\(\{ silent: true, source: "realtime", refreshAfterCurrent: true \}\)/);
-  assert.match(realtime, /void loadTaskHistoryStreakSummaries\(\);/);
+  assert.match(realtime, /if \(hasLoadedFullTaskHistoryRef\.current\) \{\s*scheduleTaskHistoryRevisionReconciliation\(\)/);
+  assert.match(source, /function scheduleTaskHistoryRevisionReconciliation\(\) \{[\s\S]*if \(!hasLoadedFullTaskHistoryRef\.current\) return;/);
 });
 
 test("targeted History refresh merges the task into both per-task and full History caches", async () => {

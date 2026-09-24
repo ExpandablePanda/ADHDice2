@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.34`.
+- Current working app version: `7.15.35`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,7 +14,34 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-09-24 7.15.35 Current Projection Certification + Lazy History Startup
+
+The Current Projection rollout is certified complete. Read-only live
+verification found `519/519` valid rows, all using schema
+`task-current-projection-schema-v2` and algorithm
+`task-current-projection-algorithm-v3`. Settled browser parity has zero active
+semantic mismatches. No canonical Task or History data was rewritten, and no
+Current Projection rows were rewritten by this ticket.
+
+7.15.35 retires the automatic broad History and current-summary bootstrap from
+ordinary workspace startup. Current Tasks/Home/Table/List state now boots from
+fresh Current Projections and projection-specific readiness. History remains
+lazy and on demand for historical consumers. Stale or missing projections
+retain task-scoped History, Calendar override, and command-operation fallback
+paths; one stale Task does not trigger a full-user History or broad
+command-operation load. Full History synchronization, cache, delta, and fence
+infrastructure remains available when a historical consumer explicitly asks
+for it.
+
+The completed certification supersedes the earlier `7.15.34` intermediate
+checkpoint (`fresh=47`, `fallback=472`), which remains below as historical
+rollout evidence only.
+
 ## 2026-09-24 7.15.33 Final Current Projection Semantic Convergence
+
+This section records the pre-certification implementation checkpoint. Its
+rollout gate was subsequently completed and is superseded by the 7.15.35
+certification above.
 
 The four live-derived semantic shapes are locked in deterministic source
 fixtures. The shared canonical input path now preserves `scheduled_due_on` as
@@ -66,12 +93,16 @@ authenticated operator session is required before the four-task rebuild,
 then the broader controlled campaign.
 
 Focused semantic tests and the webpack production build pass. Full typecheck
-still has unrelated repository baseline errors. History startup remains
-active and 7.15.35 retirement is not unlocked until the four-task rebuild,
-519-row V3 freshness/fence audit, and settled browser parity all reach zero
-active semantic mismatches.
+still has unrelated repository baseline errors. At this checkpoint History
+startup remained active and the 7.15.35 retirement gate was still pending the
+four-task rebuild, the 519-row V3 freshness/fence audit, and settled browser
+parity.
 
 ## 2026-09-24 7.15.34 Durable Scoped Last Handled Parity Proof
+
+This was an intermediate rollout checkpoint, not the final certified
+population. The later 7.15.35 certification above supersedes its
+`fresh=47`/`fallback=472` snapshot.
 
 The 7.15.34 QA checkpoint records the confirmed Current Projection population
 as `fresh=47` and `fallback=472`. Status and due semantic mismatches were zero
@@ -90,8 +121,9 @@ remain unchanged. Resolved-false scoped checks are not cached as equivalent
 and remain blocking. Identity changes ignore the old proof and permit one new
 verification.
 
-No SQL, Edge deployment, or projection rebuild was performed. History startup
-remains active; History retirement moves to 7.15.35.
+No SQL, Edge deployment, or projection rebuild was performed by that
+checkpoint. History startup was still active there; 7.15.35 now retires the
+automatic startup bootstrap while preserving on-demand History.
 
 ## 2026-09-24 7.15.32 Scoped Last Handled Parity Oracle + V2 Campaign Resume Gate
 
@@ -278,7 +310,8 @@ Deployment order and result:
 - `task-current-projection-backfill`: ACTIVE v5, hash
   `545e9b9a8e95d51a232965724f08bd67a4ea585746e2c345058885108c208648`.
 
-The manual UI operator is labeled “Rebuild V2 Projections”, retains the
+The manual UI operator is labeled “Rebuild Current Projections”; nearby
+developer copy identifies the current algorithm as V3. It retains the
 shared busy/rollover guard, serial 10-row primitives, five-call/50-row maximum,
 keyset cursor, one retryable fence retry, failure stop, and authoritative
 remaining count. Automatic execution is disabled. At the 7.15.30 release
@@ -386,8 +419,9 @@ canonical Task commit. The cross-tab correction therefore covers the visible
 consumer/state propagation seam; it does not change projection-writer or
 canonical Task State semantics.
 
-Development parity diagnostics previously ran when `isTaskHistoryLoaded` was
-true before Active Status and the bulk legacy streak-summary oracle had settled.
+Before 7.15.35, development parity diagnostics ran when the legacy full
+History readiness state was true before Active Status and the bulk legacy
+streak-summary oracle had settled.
 7.15.26 adds an explicit parity-ready gate and bounded per-field mismatch
 diagnostics after due values are compared as `next_due_on` / display due.
 

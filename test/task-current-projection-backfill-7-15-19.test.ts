@@ -232,7 +232,7 @@ test("the manual trigger is production-gated, uses the existing client, and is c
   assert.match(settingsSource, /process\.env\.NODE_ENV !== "production"/);
   assert.match(operatorSource, /task-current-projection-backfill/);
   assert.match(operatorSource, /CURRENT_PROJECTION_BACKFILL_BATCH_SIZE = 10/);
-  assert.match(settingsSource, /Rebuild V2 Projections · 10/);
+  assert.match(settingsSource, /Rebuild Current Projections · 10/);
   assert.match(settingsSource, /disabled=\{isBackfillingProjections \|\| isRolloverActive\}/);
   assert.match(taskAppSource, /client=\{supabase\}/);
   assert.match(settingsSource, /onClick=\{\(\) => \{ void handleProjectionBackfill\(1\); \}\}/);

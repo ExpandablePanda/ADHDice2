@@ -349,7 +349,7 @@ export function useWorkspaceData({
   timezone,
 }: UseWorkspaceDataOptions) {
   const [isWorkspaceLoading, setIsWorkspaceLoading] = useState(false);
-  const [taskHistoryLoadedUserId, setTaskHistoryLoadedUserId] = useState<string | null>(null);
+  const [fullTaskHistoryLoadedUserId, setFullTaskHistoryLoadedUserId] = useState<string | null>(null);
   const [taskHistoryByTaskId, setTaskHistoryByTaskId] = useState<Record<string, DbTaskHistory[]>>({});
   const [taskHistoryLoadStateByTaskId, setTaskHistoryLoadStateByTaskId] = useState<Record<string, TaskHistoryTaskLoadState>>({});
   const [taskHistoryStreakSummaries, setTaskHistoryStreakSummaries] = useState<TaskHistoryStreakSummaryMap>({});
@@ -364,7 +364,6 @@ export function useWorkspaceData({
   const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
   const hasLoadedNotesRef = useRef(false);
   const hasLoadedFullTaskHistoryRef = useRef(false);
-  const hasLoadedTaskHistoryRef = useRef(false);
   const fullTaskHistoryRowsRef = useRef<DbTaskHistory[]>([]);
   const taskHistoryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
   const taskHistoryByTaskIdRef = useRef<Record<string, DbTaskHistory[]>>({});
@@ -493,6 +492,7 @@ export function useWorkspaceData({
   useEffect(() => {
     if (todayKeyRef.current === todayKey) return;
     todayKeyRef.current = todayKey;
+    if (!hasLoadedFullTaskHistoryRef.current) return;
     void loadTaskHistoryStreakSummariesRef.current?.(tasksRef.current, { supersede: true });
   }, [todayKey]);
 
@@ -533,7 +533,6 @@ export function useWorkspaceData({
       liveWorkspaceUserIdRef.current = null;
       hasLoadedNotesRef.current = false;
       hasLoadedFullTaskHistoryRef.current = false;
-      hasLoadedTaskHistoryRef.current = false;
       fullTaskHistoryRowsRef.current = [];
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped History modal cache on sign-out.
       clearTaskHistoryTaskCache();
@@ -543,7 +542,7 @@ export function useWorkspaceData({
       setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
       currentTaskProjectionReadContextRef.current = { historySyncEpoch: null, logicalDaySettingsRevision: null };
       setIsCurrentTaskProjectionReadReady(false);
-      setTaskHistoryLoadedUserId(null);
+      setFullTaskHistoryLoadedUserId(null);
       taskHistoryLoadPromiseRef.current = null;
       loadTaskHistoryStreakSummariesRef.current = null;
       taskHistoryStreakSummaryLoadPromiseRef.current = null;
@@ -593,7 +592,9 @@ export function useWorkspaceData({
     setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
     currentTaskProjectionReadContextRef.current = { historySyncEpoch: null, logicalDaySettingsRevision: null };
     setIsCurrentTaskProjectionReadReady(false);
+    hasLoadedFullTaskHistoryRef.current = false;
     fullTaskHistoryRowsRef.current = [];
+    setFullTaskHistoryLoadedUserId(null);
     taskHistoryLoadPromiseRef.current = null;
     loadTaskHistoryStreakSummariesRef.current = null;
     taskHistoryStreakSummaryLoadPromiseRef.current = null;
@@ -609,6 +610,7 @@ export function useWorkspaceData({
     let isActive = true;
     let taskChannel: RealtimeChannel | null = null;
     let projectionChannel: RealtimeChannel | null = null;
+    let broadManualActionCommandOperationReads = 0;
     const taskHistoryRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
     let taskHistoryRevisionReconciliationScheduled = false;
     taskChannelSubscriptionCountRef.current = 0;
@@ -843,6 +845,7 @@ export function useWorkspaceData({
     }
 
     async function loadManualActionCommandOperations(taskId?: string) {
+      if (!taskId) broadManualActionCommandOperationReads += 1;
       let query = client
         .from("adhdice_task_command_operations")
         .select("id,user_id,entity_id,command_type,requested_logical_date,state,result_references,source_kind,created_at,completed_at")
@@ -1224,9 +1227,8 @@ export function useWorkspaceData({
             current,
             nextTaskHistoryLoadStateByTaskId,
           ));
-          hasLoadedTaskHistoryRef.current = true;
           hasLoadedFullTaskHistoryRef.current = true;
-          setTaskHistoryLoadedUserId(userId);
+          setFullTaskHistoryLoadedUserId(userId);
           logTaskHistorySync(synchronizedHistory);
           return true;
         },
@@ -1245,6 +1247,7 @@ export function useWorkspaceData({
 
     function scheduleTaskHistoryRevisionReconciliation() {
       if (taskHistoryRevisionReconciliationScheduled) return;
+      if (!hasLoadedFullTaskHistoryRef.current) return;
       taskHistoryRevisionReconciliationScheduled = true;
       void loadTaskHistory({ silent: true, source: "realtime", refreshAfterCurrent: true })
         .then((loaded) => loaded ? loadTaskHistoryStreakSummaries() : false)
@@ -1342,6 +1345,9 @@ export function useWorkspaceData({
       if (!canApplyBehaviorAuthorityProjection()) {
         return false;
       }
+      if (!hasLoadedFullTaskHistoryRef.current) {
+        return false;
+      }
 
       if (options.supersede) {
         taskHistoryStreakSummaryCalculationTokenRef.current += 1;
@@ -1370,27 +1376,11 @@ export function useWorkspaceData({
       );
       const summaryLoadPromise = Promise.resolve().then(async () => {
         try {
-          const fullHistoryLoad = taskHistoryLoadPromiseRef.current;
-          if (fullHistoryLoad?.generation === workspaceGeneration && !hasLoadedFullTaskHistoryRef.current) {
-            try {
-              const fullHistoryLoaded = await fullHistoryLoad.promise;
-              if (!fullHistoryLoaded) return false;
-            } catch {
-              return false;
-            }
-          }
           if (!canApplySummaryCalculation()) {
             return false;
           }
 
-          let compactHistory: TaskHistoryStreakEntry[];
-          if (hasLoadedFullTaskHistoryRef.current) {
-            compactHistory = fullTaskHistoryRowsRef.current;
-          } else {
-            const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery().range(from, to));
-            if (result.error) return false;
-            compactHistory = mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]);
-          }
+          const compactHistory: TaskHistoryStreakEntry[] = fullTaskHistoryRowsRef.current;
 
           if (!canApplySummaryCalculation()) {
             return false;
@@ -1713,21 +1703,6 @@ export function useWorkspaceData({
         }
         setIsWorkspaceLoading(false);
       });
-      const canonicalHistoryHydration = loadTaskHistory({ silent, source });
-      startBackgroundTaskHistoryHydration(
-        () => canonicalHistoryHydration,
-        {
-          onFailure: (error: unknown) => {
-            if (silent || !canApplyCoreWorkspaceResult()) return;
-            const errorMessage = error instanceof Error
-              ? error.message
-              : typeof error === "object" && error !== null && "message" in error && typeof error.message === "string"
-                ? error.message
-                : "Could not load canonical task history.";
-            setMessage((current) => current ?? { tone: "warn", text: errorMessage });
-          },
-        },
-      );
       if (isWorkspacePerformanceDiagnosticsEnabled() && source === "initial") {
         console.info(`[workspace] Live owner applied shared initial result userId=${userId}.`);
       }
@@ -1736,14 +1711,8 @@ export function useWorkspaceData({
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[workspace] Tasks ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
       }
-      void loadTaskHistoryStreakSummaries(nextTasks);
-
       const secondaryCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
       const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, folderStructureResult, taskContentFolderResult] = await secondaryCoreRequest;
-
-      if (source !== "initial") {
-        await canonicalHistoryHydration;
-      }
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -1866,7 +1835,11 @@ export function useWorkspaceData({
         taskLists: nextTaskLists.length,
       });
       logWorkspaceTiming("Startup summary", loadStartedAt, {
-        canonicalHistoryFacts: fullTaskHistoryRowsRef.current.length,
+        currentProjectionsLoaded: projectionRows.length,
+        fullHistoryLoaded: hasLoadedFullTaskHistoryRef.current,
+        fullHistoryFacts: hasLoadedFullTaskHistoryRef.current ? fullTaskHistoryRowsRef.current.length : 0,
+        scopedHistoryTasks: Object.values(taskHistoryLoadStateByTaskIdRef.current).filter((state) => state.status === "ready").length,
+        broadManualActionCommandOperationReads,
         focusHistory: shouldLoadFocusHistory ? nextFocusHistory.length : 0,
         tasks: nextTasks.length,
       });
@@ -1961,12 +1934,14 @@ export function useWorkspaceData({
       }
       await reloadTaskRows({ silent: true, source: "rollover" });
 
-      if (isWorkspacePerformanceDiagnosticsEnabled()) {
-        console.info("[workspace] Rollover history reconciliation refreshing the shared canonical snapshot.");
-      }
-      const didRefreshHistory = await loadTaskHistory({ silent: true, source: "rollover", refreshAfterCurrent: true });
-      if (didRefreshHistory) {
-        await loadTaskHistoryStreakSummaries(tasksRef.current, { supersede: true });
+      if (hasLoadedFullTaskHistoryRef.current) {
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info("[workspace] Rollover history reconciliation refreshing the explicitly loaded canonical snapshot.");
+        }
+        const didRefreshHistory = await loadTaskHistory({ silent: true, source: "rollover", refreshAfterCurrent: true });
+        if (didRefreshHistory) {
+          await loadTaskHistoryStreakSummaries(tasksRef.current, { supersede: true });
+        }
       }
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info("[workspace] Rollover targeted task reconciliation completed.");
@@ -2550,14 +2525,12 @@ export function useWorkspaceData({
             ));
           }
           if (hasLoadedFullTaskHistoryRef.current) {
-            void loadTaskHistory({ silent: true, source: "realtime", refreshAfterCurrent: true })
-              .then(() => loadTaskHistoryStreakSummaries());
+            scheduleTaskHistoryRevisionReconciliation();
             return;
           }
-          // Realtime is an immediate-read hint only. Persistent completeness
-          // advances through the fenced watermark/delta path.
-          scheduleTaskHistoryRevisionReconciliation();
-          void loadTaskHistoryStreakSummaries();
+          // A task-scoped refresh above is sufficient when no historical
+          // consumer has requested the full snapshot. Do not turn a History
+          // notification into a workspace-wide bootstrap.
         },
       )
       .subscribe((status) => {
@@ -2698,7 +2671,7 @@ export function useWorkspaceData({
 
   return {
     isSoftWorkspaceRefreshing,
-    isTaskHistoryLoaded: Boolean(currentUser && taskHistoryLoadedUserId === currentUser.id),
+    isFullTaskHistoryLoaded: Boolean(currentUser && fullTaskHistoryLoadedUserId === currentUser.id),
     isTaskListMembershipDataReady: !currentUser || taskListMembershipDataReadyUserId === currentUser.id,
     isTaskResumeSyncPending,
     isWorkspaceLoading,

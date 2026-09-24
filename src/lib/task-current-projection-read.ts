@@ -259,7 +259,7 @@ export function isCurrentTaskProjectionParityReady({
   behaviorAuthorityLoading,
   behaviorAuthorityReady,
   comparisonTaskIds,
-  isTaskHistoryLoaded,
+  isFullTaskHistoryLoaded,
   legacySummaries,
   projectionReadReady,
 }: {
@@ -267,11 +267,11 @@ export function isCurrentTaskProjectionParityReady({
   behaviorAuthorityLoading: boolean;
   behaviorAuthorityReady: boolean;
   comparisonTaskIds: readonly string[];
-  isTaskHistoryLoaded: boolean;
+  isFullTaskHistoryLoaded: boolean;
   legacySummaries: TaskHistoryStreakSummaryMap;
   projectionReadReady: boolean;
 }) {
-  if (!isTaskHistoryLoaded || !activeStatusRead || !behaviorAuthorityReady || behaviorAuthorityLoading || !projectionReadReady) {
+  if (!isFullTaskHistoryLoaded || !activeStatusRead || !behaviorAuthorityReady || behaviorAuthorityLoading || !projectionReadReady) {
     return false;
   }
   if (comparisonTaskIds.length === 0) return false;

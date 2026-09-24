@@ -181,7 +181,7 @@ function HomeTodoTaskSignals({
 function HomeProgressDashboard({
   dailyProgress,
   homeRecordChases,
-  isTaskHistoryLoaded,
+  isFullTaskHistoryLoaded,
   onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
@@ -190,7 +190,7 @@ function HomeProgressDashboard({
 }: {
   dailyProgress: HomeDailyProgress;
   homeRecordChases: HomeRecordChase[];
-  isTaskHistoryLoaded: boolean;
+  isFullTaskHistoryLoaded: boolean;
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
@@ -203,7 +203,7 @@ function HomeProgressDashboard({
     <div className="mb-4 grid min-w-0 gap-3 sm:grid-cols-2" data-home-progress-dashboard>
       <AdhdPanel aria-labelledby="home-finished-today" padding="sm">
         <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-finished-today">Finished Today</h2>
-        {!isTaskHistoryLoaded ? (
+        {!isFullTaskHistoryLoaded ? (
           <div aria-live="polite" className="mt-3 flex items-center gap-2 text-sm text-[#817990] dark:text-white/55" role="status">
             <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin text-[#7d6cf5]" />
             <span>Loading today&apos;s completions…</span>
@@ -301,7 +301,7 @@ export function HomePage({
   taskDisplayStatusByTaskId,
   dailyProgress,
   homeRecordChases,
-  isTaskHistoryLoaded,
+  isFullTaskHistoryLoaded,
   onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
@@ -332,7 +332,7 @@ export function HomePage({
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
   dailyProgress: HomeDailyProgress;
   homeRecordChases: HomeRecordChase[];
-  isTaskHistoryLoaded: boolean;
+  isFullTaskHistoryLoaded: boolean;
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
@@ -1344,7 +1344,7 @@ export function HomePage({
       <HomeProgressDashboard
         dailyProgress={dailyProgress}
         homeRecordChases={homeRecordChases}
-        isTaskHistoryLoaded={isTaskHistoryLoaded}
+        isFullTaskHistoryLoaded={isFullTaskHistoryLoaded}
         onOpenRecord={onOpenRecord}
         recordTargetsError={recordTargetsError}
         recordTargetsLoading={recordTargetsLoading}

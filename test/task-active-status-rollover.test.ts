@@ -134,11 +134,11 @@ test("engine rollover waits for loaded Tasks and History, then reads current inp
   const end = source.indexOf('const visibleTaskSubtasks', start);
   const lifecycle = source.slice(start, end);
   assert.match(lifecycle, /const inputs = rolloverInputsRef\.current/);
-  assert.match(lifecycle, /if \(!inputs\.isTasksReady \|\| !inputs\.isTaskHistoryLoaded \|\| !inputs\.behaviorAuthorityReady \|\| inputs\.behaviorAuthorityLoading\) return/);
+  assert.match(lifecycle, /if \(!inputs\.isTasksReady \|\| !inputs\.behaviorAuthorityReady \|\| inputs\.behaviorAuthorityLoading\) return/);
   assert.match(lifecycle, /behaviorProfiles: inputs\.behaviorProfiles/);
   assert.match(lifecycle, /behaviorSelectionsByTaskId: inputs\.behaviorSelectionsByTaskId/);
   assert.match(lifecycle, /history: rolloverHistory[\s\S]*tasks: rolloverTasks/);
-  assert.match(lifecycle, /\}, \[isBehaviorAuthorityReady, isTaskHistoryLoaded, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session\?\.user\?\.id, supabase\]\);/);
+  assert.match(lifecycle, /\}, \[isBehaviorAuthorityReady, isTaskTypeBehaviorProfilesLoading, isWorkspaceLoading, runDayReset, session\?\.user\?\.id, supabase\]\);/);
   assert.match(lifecycle, /plannedTaskPatches = mutationCandidates\.length/);
   assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
 });

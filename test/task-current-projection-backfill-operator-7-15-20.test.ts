@@ -181,15 +181,15 @@ test("operator uses Edge remainingCount, not a browser count query", () => {
 
 test("both controls are development-only, share the rollover busy guard, and preserve ten-row behavior", () => {
   assert.match(settingsSource, /process\.env\.NODE_ENV !== "production"/);
-  assert.match(settingsSource, /Rebuild V2 Projections · 10/);
-  assert.match(settingsSource, /Rebuild V2 Projections · 50/);
+  assert.match(settingsSource, /Rebuild Current Projections · 10/);
+  assert.match(settingsSource, /Rebuild Current Projections · 50/);
   assert.equal((settingsSource.match(/disabled=\{isBackfillingProjections \|\| isRolloverActive\}/g) ?? []).length, 2);
   assert.match(settingsSource, /isRolloverActive/);
-  assert.match(settingsSource, /Wait for Task rollover to finish before rebuilding V2 projections\./);
+  assert.match(settingsSource, /Wait for Task rollover to finish before rebuilding current projections\./);
   assert.match(settingsSource, /handleProjectionBackfill\(1\)/);
   assert.match(settingsSource, /handleProjectionBackfill\(5\)/);
   assert.match(settingsSource, /shouldContinue: \(\) => isMountedRef\.current && isBackfillRunActiveRef\.current/);
-  assert.match(settingsSource, /Rebuilding V2 projections · \$\{progress\.processedCount\} \/ \$\{progress\.totalCount\}/);
+  assert.match(settingsSource, /Rebuilding current projections · \$\{progress\.processedCount\} \/ \$\{progress\.totalCount\}/);
   assert.match(taskAppSource, /client=\{supabase\}/);
 });
 
