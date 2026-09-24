@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.31`.
+- Current working app version: `7.15.32`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,37 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.32 Scoped Last Handled Parity Oracle + V2 Campaign Resume Gate
+
+The first-50 V2 expansion passed its structural checks. The reported live
+campaign state is 519 eligible projections, 60 valid V2, 459 valid V1, zero
+`repair_required`, unavailable, or missing rows. The two active parity
+blockers were false Last Handled blockers: the temporary bulk legacy
+`loadManualActionCommandOperations()` oracle queried the user's entire
+command-operation history without Task scope or paging, so older manual
+commands could be omitted and an older History fact could win.
+
+The runtime now uses the existing task-scoped
+`refreshTaskHistoryStreakSummary(taskId)` seam as a temporary development
+parity oracle only when a fresh active Task's mismatch is limited to
+`lastHandledDate` and/or `lastHandledAt`. It loads entity-scoped History,
+active calendar overrides, and command operations; it does not add a second
+Last Handled implementation, change V2 calculator semantics, or alter V2
+rows. Identity-fenced coordination coalesces duplicates, runs once per Task
+canonical revision/projection `updated_at`/logical date/workspace generation,
+ignores stale results, and permits re-verification when that identity
+changes. Genuine mismatches remain blockers. Dev diagnostics are emitted for
+request, start, and completion, with only Task ID, identity, and Last Handled
+values.
+
+All-user command pagination was intentionally not added. History startup,
+automatic migration, SQL, Edge deployment, and backfill behavior are
+unchanged. The local isolated QA account available during this source turn
+did not contain the reported 519-row production state, so the 60-row live
+parity gate, manual 50-row campaign, all-row fence audit, and settled final
+parity report were not run and no fixtures were restored. History retirement
+is not unlocked; after a verified 519-row completion it moves to 7.15.33.
 
 ## 2026-09-24 7.15.31 Projection V2 Parity Gate Correction
 
@@ -34,7 +65,7 @@ History startup, SQL, and Edge deployment are unchanged.
 
 The corrected first-10 parity gate is a manual reload-and-settle check. The
 campaign remains manual and must continue only in controlled 50-row operations
-after that gate passes. History retirement moves to 7.15.32.
+after that gate passes. History retirement moves to 7.15.33.
 
 ## 2026-09-24 7.15.29 Current Projection Parity Root-Cause Lock
 
