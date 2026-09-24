@@ -108,7 +108,7 @@ import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
 import { buildEffectiveTrackingExclusionSet, filterTrackedTaskHistory } from "@/lib/task-tracking";
-import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
@@ -149,7 +149,6 @@ import { useTaskPlannerActions } from "@/hooks/useTaskPlannerActions";
 import { useFocusSelectionPersistence } from "@/hooks/useFocusSelectionPersistence";
 import { useTaskPriorityRoutingController } from "@/hooks/useTaskPriorityRoutingController";
 import { useTaskEditorImportController } from "@/hooks/useTaskEditorImportController";
-import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { useTaskTimers } from "@/hooks/useTaskTimers";
 import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useHomeRecordTargets } from "@/hooks/useHomeRecordTargets";
@@ -190,7 +189,7 @@ import {
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import { appendTaskListRuleRow, removeTaskListRuleRow, summarizeTaskListRules, updateTaskListRuleRow, updateTaskListRuleRowConnector } from "@/lib/task-list-rule-editor";
 import { shiftDateKey } from "@/lib/date-key";
-import { isPageShellLayoutReady, subscribeToPageShellLayoutReadiness, TEST_PAGE_SHELL_CANONICAL_LAYOUT, TEST_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
+import { isPageShellLayoutReady, subscribeToPageShellLayoutReadiness } from "@/lib/page-shell-layout";
 import { arePageShellNavigationRectsStable, getPageShellNavigationScrollTop, isPageShellNavigationRectUsable, PAGE_SHELL_NAVIGATION_GAP_PX, PAGE_SHELL_NAVIGATION_RECT_TOLERANCE_PX, type PageShellNavigationRect } from "@/lib/page-shell-navigation";
 import {
   isDueToday,
@@ -10305,91 +10304,213 @@ function TestRuleBuilderPreview() {
   );
 }
 
+type TestConceptId =
+  | "test-task-table"
+  | "test-d20"
+  | "test-dice-face"
+  | "test-dice-material"
+  | "test-task-table-prototype"
+  | "test-bucket-tray"
+  | "test-rule-builder";
+
+type TestConceptRenderProps = {
+  isDark: boolean;
+  userId: string | null;
+};
+
+type TestConceptConfig = {
+  id: TestConceptId;
+  label: string;
+  render: (props: TestConceptRenderProps) => ReactNode;
+};
+
+const TEST_CONCEPT_STORAGE_KEY = "adhdice:test-selected-concept";
+const TEST_DEFAULT_CONCEPT_ID: TestConceptId = "test-task-table";
+
+function TestConceptSurface({ children, padded = false }: { children: ReactNode; padded?: boolean }) {
+  return (
+    <div className={`flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85${padded ? " p-5" : ""}`}>
+      {children}
+    </div>
+  );
+}
+
+const TEST_CONCEPTS = [
+  {
+    id: "test-task-table",
+    label: "Task Table #2",
+    render: () => (
+      <TestConceptSurface padded>
+        <div className="rounded-[1.75rem] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
+          <div className="flex flex-wrap items-center justify-between gap-3 px-3 pb-3">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#8e84b7] dark:text-white/45">Table #2 Test</p>
+              <h2 className="mt-2 text-2xl font-semibold text-[#2a3250] dark:text-white">Server-style task management table</h2>
+              <p className="mt-2 max-w-2xl text-sm leading-6 text-[#727a93] dark:text-white/60">
+                Prototype sandbox for the richer task table treatment. This stays isolated to the Test page so we can
+                tune layout, chips, and row actions without disrupting the real Tasks view.
+              </p>
+            </div>
+          </div>
+          <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
+        </div>
+      </TestConceptSurface>
+    ),
+  },
+  {
+    id: "test-d20",
+    label: "D20 Face Mapper",
+    render: ({ isDark, userId }) => (
+      <TestConceptSurface>
+        <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">D20 tools failed to load.</div>}>
+          <TestD20FaceMapper dark={isDark} userId={userId} />
+        </ErrorBoundary>
+      </TestConceptSurface>
+    ),
+  },
+  {
+    id: "test-dice-face",
+    label: "Dice Face Mapper",
+    render: ({ isDark }) => (
+      <TestConceptSurface>
+        <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice face tools failed to load.</div>}>
+          <TestDiceFaceMapper dark={isDark} />
+        </ErrorBoundary>
+      </TestConceptSurface>
+    ),
+  },
+  {
+    id: "test-dice-material",
+    label: "Dice Material Lab",
+    render: ({ isDark }) => (
+      <TestConceptSurface>
+        <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice material tools failed to load.</div>}>
+          <TestDiceMaterialLab dark={isDark} />
+        </ErrorBoundary>
+      </TestConceptSurface>
+    ),
+  },
+  {
+    id: "test-task-table-prototype",
+    label: "Task Table Prototype",
+    render: () => (
+      <TestConceptSurface>
+        <TestTaskTablePrototype />
+      </TestConceptSurface>
+    ),
+  },
+  {
+    id: "test-bucket-tray",
+    label: "Bucket Tray",
+    render: () => (
+      <TestConceptSurface>
+        <TestBucketTrayPreview />
+      </TestConceptSurface>
+    ),
+  },
+  {
+    id: "test-rule-builder",
+    label: "Rule Builder",
+    render: () => (
+      <TestConceptSurface>
+        <TestRuleBuilderPreview />
+      </TestConceptSurface>
+    ),
+  },
+] as const satisfies readonly TestConceptConfig[];
+
+function isTestConceptId(value: string | null): value is TestConceptId {
+  return TEST_CONCEPTS.some((concept) => concept.id === value);
+}
+
+function readPersistedTestConceptId(): TestConceptId {
+  if (typeof window === "undefined") return TEST_DEFAULT_CONCEPT_ID;
+
+  try {
+    const storedValue = window.localStorage.getItem(TEST_CONCEPT_STORAGE_KEY);
+    return isTestConceptId(storedValue) ? storedValue : TEST_DEFAULT_CONCEPT_ID;
+  } catch {
+    return TEST_DEFAULT_CONCEPT_ID;
+  }
+}
+
+const TEST_CONCEPT_SELECTION_LISTENERS = new Set<() => void>();
+let testConceptSelectionSnapshot: TestConceptId = TEST_DEFAULT_CONCEPT_ID;
+
+function subscribeToTestConceptSelection(listener: () => void) {
+  TEST_CONCEPT_SELECTION_LISTENERS.add(listener);
+  return () => TEST_CONCEPT_SELECTION_LISTENERS.delete(listener);
+}
+
+function getTestConceptSelectionSnapshot() {
+  return testConceptSelectionSnapshot;
+}
+
+function getServerTestConceptSelectionSnapshot() {
+  return TEST_DEFAULT_CONCEPT_ID;
+}
+
+function setTestConceptSelection(nextConceptId: TestConceptId) {
+  if (testConceptSelectionSnapshot === nextConceptId) return;
+
+  testConceptSelectionSnapshot = nextConceptId;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(TEST_CONCEPT_STORAGE_KEY, nextConceptId);
+    } catch {
+      // Local persistence is best-effort; Test remains usable if storage is unavailable.
+    }
+  }
+  TEST_CONCEPT_SELECTION_LISTENERS.forEach((listener) => listener());
+}
+
+function hydrateTestConceptSelection() {
+  setTestConceptSelection(readPersistedTestConceptId());
+}
+
 function TestPageWorkspace({ isDark, userId }: { isDark: boolean; userId: string | null }) {
-  const layout = usePageShellLayout(userId, "test", TEST_PAGE_SHELL_IDS, TEST_PAGE_SHELL_CANONICAL_LAYOUT.sizes, TEST_PAGE_SHELL_CANONICAL_LAYOUT);
+  const selectedConceptId = useSyncExternalStore(
+    subscribeToTestConceptSelection,
+    getTestConceptSelectionSnapshot,
+    getServerTestConceptSelectionSnapshot,
+  );
+
+  useEffect(() => {
+    hydrateTestConceptSelection();
+  }, []);
+
+  const selectedConcept = TEST_CONCEPTS.find((concept) => concept.id === selectedConceptId) ?? TEST_CONCEPTS[0];
 
   return (
     <div className="w-full space-y-5 text-left">
       <div className="flex flex-wrap items-center justify-between gap-3 px-1">
         <div>
           <p className="text-[11px] font-semibold uppercase tracking-[0.24em] text-[#9b92be] dark:text-white/35">Test workspace</p>
-          <p className="mt-1 text-sm text-[#726a96] dark:text-white/60">Outer tools can be arranged independently; the D20 mapper has its own inner layout.</p>
+          <p className="mt-1 text-sm text-[#726a96] dark:text-white/60">Select one experiment to keep the Test workspace focused. The D20 mapper retains its own inner layout.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          <StyleLabLauncher />
-          <PageShellLayoutControls layout={layout} />
+        <StyleLabLauncher />
+      </div>
+
+      <div aria-label="Test concepts" className="-mx-1 overflow-x-auto px-1 pb-1" role="group">
+        <div className="flex min-w-max gap-2">
+          {TEST_CONCEPTS.map((concept) => (
+            <AdhdChip
+              aria-pressed={selectedConceptId === concept.id}
+              className="whitespace-nowrap"
+              key={concept.id}
+              onClick={() => setTestConceptSelection(concept.id)}
+              selected={selectedConceptId === concept.id}
+              type="button"
+            >
+              {concept.label}
+            </AdhdChip>
+          ))}
         </div>
       </div>
 
-      <ReorderablePageShells layout={layout} shellsClassName="grid min-w-0 gap-5 xl:grid-cols-12">
-        <PageShell id="test-task-table" label="Task Table #2">
-          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <PageShellBody>
-              <div className="rounded-[1.75rem] border border-[#e9e1ff] bg-white/90 p-5 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-                <div className="flex flex-wrap items-center justify-between gap-3 px-3 pb-3">
-                  <div>
-                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-[#8e84b7] dark:text-white/45">Table #2 Test</p>
-                    <h2 className="mt-2 text-2xl font-semibold text-[#2a3250] dark:text-white">Server-style task management table</h2>
-                    <p className="mt-2 max-w-2xl text-sm leading-6 text-[#727a93] dark:text-white/60">
-                      Prototype sandbox for the richer task table treatment. This stays isolated to the Test page so we can
-                      tune layout, chips, and row actions without disrupting the real Tasks view.
-                    </p>
-                  </div>
-                </div>
-                <TaskManagementTableV2 className="max-w-none p-0" title="Task Table #2" />
-              </div>
-            </PageShellBody>
-          </PageShellSurface>
-        </PageShell>
-
-        <PageShell id="test-d20" label="D20 Face Mapper">
-          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <PageShellBody>
-              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">D20 tools failed to load.</div>}>
-                <TestD20FaceMapper dark={isDark} userId={userId} />
-              </ErrorBoundary>
-            </PageShellBody>
-          </PageShellSurface>
-        </PageShell>
-
-        <PageShell id="test-dice-face" label="Dice Face Mapper">
-          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <PageShellBody>
-              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice face tools failed to load.</div>}>
-                <TestDiceFaceMapper dark={isDark} />
-              </ErrorBoundary>
-            </PageShellBody>
-          </PageShellSurface>
-        </PageShell>
-
-        <PageShell id="test-dice-material" label="Dice Material Lab">
-          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <PageShellBody>
-              <ErrorBoundary fallback={<div className="p-5 text-sm font-medium text-[#7d88a1] dark:text-white/60">Dice material tools failed to load.</div>}>
-                <TestDiceMaterialLab dark={isDark} />
-              </ErrorBoundary>
-            </PageShellBody>
-          </PageShellSurface>
-        </PageShell>
-
-        <PageShell id="test-task-table-prototype" label="Task Table Prototype">
-          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <PageShellBody><TestTaskTablePrototype /></PageShellBody>
-          </PageShellSurface>
-        </PageShell>
-
-        <PageShell id="test-bucket-tray" label="Bucket Tray">
-          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <PageShellBody><TestBucketTrayPreview /></PageShellBody>
-          </PageShellSurface>
-        </PageShell>
-
-        <PageShell id="test-rule-builder" label="Rule Builder">
-          <PageShellSurface className="rounded-[2rem] border border-[#e9e1ff] bg-white/90 shadow-[0_18px_50px_rgba(109,82,237,0.08)] dark:border-white/10 dark:bg-[#120f1d]/85">
-            <PageShellBody><TestRuleBuilderPreview /></PageShellBody>
-          </PageShellSurface>
-        </PageShell>
-      </ReorderablePageShells>
+      <div data-test-selected-concept={selectedConcept.id}>
+        {selectedConcept.render({ isDark, userId })}
+      </div>
     </div>
   );
 }
