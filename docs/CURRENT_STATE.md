@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.37`.
+- Current working app version: `7.15.38`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,45 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.38 Workspace Realtime Publication Contract Repair
+
+The 7.15.37 mutation-race browser QA is recorded as PASS: the initiating tab
+kept the renamed Content Folder, reload preserved the new value, and a remote
+tab saw the correct value after reload. Cross-tab Realtime remained broken
+through the bundled shared workspace channel. A clean Tab B session kept the
+workspace, Task, and Current Projection channels `SUBSCRIBED` without a
+`CHANNEL_ERROR`; a manually-created dedicated Content Folder channel using the
+same client, user, table, wildcard event, and `user_id` filter received the next
+`UPDATE`, while the bundled workspace channel emitted no Content Folder event,
+scoped refresh request, or scoped refresh start.
+
+The live publication audit found the exact contract defect: the workspace
+channel subscribed to `adhdice_task_focus_days`, but that table was missing
+from `supabase_realtime`. The same audit found the existing Notes and canonical
+History handlers were also absent from the live publication, so those two
+demonstrated active subscription mismatches are repaired in the same additive
+source migration. No table was removed or silently published only because it
+appeared in source; all ten entries are active shared workspace callbacks and
+are now the explicit publication-contract list.
+
+`supabase/patch_workspace_realtime_publication_7_15_38.sql` was applied to the
+authorized live ADHDice project and is recorded in live migration history. Its
+postcondition audit now reports all ten shared workspace tables published. The
+SQL checks publication membership before adding any missing table, tolerates
+already-published memberships, never recreates the publication, and does not
+change data, RLS, or domain behavior. Shared workspace callbacks now emit a
+bounded development diagnostic identifying the source table and event type
+before refresh logic; workspace `CHANNEL_ERROR` and `TIMED_OUT` status
+callbacks also retain the Supabase error argument in diagnostics without
+ordinary production-console noise.
+
+The shared multi-table workspace channel remains in place. Broad workspace
+refreshes were not restored, polling/timer fallback was not introduced, and
+the 7.15.37 Content Folder, Task List, Focus, core, owner, and trailing-refresh
+generation fences remain intact. The earlier simultaneous shared `CHANNEL_ERROR`
+observation remains a separate reliability issue. Task Realtime narrowing moves
+to `7.15.39`.
 
 ## 2026-09-24 7.15.37 Scoped Realtime Local-Mutation Freshness Boundary
 

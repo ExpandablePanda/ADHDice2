@@ -1587,6 +1587,32 @@ export function useWorkspaceData({
       });
     }
 
+    function recordWorkspacePostgresEvent(sourceTable: string, eventType: string) {
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "workspace",
+        channelDebugId: workspaceChannelDebugId,
+        eventType,
+        kind: "workspace_postgres_event_received",
+        sourceTable,
+      });
+    }
+
+    function describeRealtimeSubscriptionError(error: unknown) {
+      if (error instanceof Error) {
+        return { name: error.name, message: error.message };
+      }
+      if (typeof error === "string") return error;
+      if (error && typeof error === "object") {
+        const candidate = error as { code?: unknown; message?: unknown; name?: unknown };
+        return {
+          code: typeof candidate.code === "string" ? candidate.code : undefined,
+          message: typeof candidate.message === "string" ? candidate.message : undefined,
+          name: typeof candidate.name === "string" ? candidate.name : undefined,
+        };
+      }
+      return error == null ? null : String(error);
+    }
+
     async function refreshTaskListDomain(sourceTable: string, generation: number) {
       recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_started", "task-list", sourceTable, { generation });
       if (!canApplyCoreWorkspaceResult() || generation !== taskListDataGeneration.current) {
@@ -2663,7 +2689,8 @@ export function useWorkspaceData({
           table: "adhdice_task_list_folders",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_list_folders", payload.eventType);
           requestTaskListDomainRefresh("adhdice_task_list_folders");
         },
       )
@@ -2675,7 +2702,8 @@ export function useWorkspaceData({
           table: "adhdice_task_content_folders",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_content_folders", payload.eventType);
           requestTaskContentFolderDomainRefresh("adhdice_task_content_folders");
         },
       )
@@ -2687,7 +2715,8 @@ export function useWorkspaceData({
           table: "adhdice_task_list_containers",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_list_containers", payload.eventType);
           requestTaskListDomainRefresh("adhdice_task_list_containers");
         },
       )
@@ -2699,7 +2728,8 @@ export function useWorkspaceData({
           table: "adhdice_task_list_rail_items",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_list_rail_items", payload.eventType);
           requestTaskListDomainRefresh("adhdice_task_list_rail_items");
         },
       )
@@ -2711,7 +2741,8 @@ export function useWorkspaceData({
           table: "adhdice_focus_categories",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_focus_categories", payload.eventType);
           if (!suppressCategoryReload.current) {
             requestFocusDomainRefresh("adhdice_focus_categories");
           }
@@ -2725,7 +2756,8 @@ export function useWorkspaceData({
           table: "adhdice_task_focus_days",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_focus_days", payload.eventType);
           requestFocusDomainRefresh("adhdice_task_focus_days");
         },
       )
@@ -2737,7 +2769,8 @@ export function useWorkspaceData({
           table: "adhdice_task_lists",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_lists", payload.eventType);
           requestTaskListDomainRefresh("adhdice_task_lists");
         },
       )
@@ -2749,7 +2782,8 @@ export function useWorkspaceData({
           table: "adhdice_task_list_manual_memberships",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_list_manual_memberships", payload.eventType);
           requestTaskListDomainRefresh("adhdice_task_list_manual_memberships");
         },
       )
@@ -2761,7 +2795,8 @@ export function useWorkspaceData({
           table: "adhdice_notes",
           filter: `user_id=eq.${userId}`,
         },
-        () => {
+        (payload) => {
+          recordWorkspacePostgresEvent("adhdice_notes", payload.eventType);
           if (!hasLoadedNotesRef.current) return;
           hasLoadedNotesRef.current = false;
           void loadNotes({ silent: true });
@@ -2776,6 +2811,7 @@ export function useWorkspaceData({
           filter: `user_id=eq.${userId}`,
         },
         (payload) => {
+          recordWorkspacePostgresEvent("adhdice_task_history_facts", payload.eventType);
           const taskId = ((payload.new as { task_id?: string; entity_id?: string } | null)?.task_id
             ?? (payload.new as { entity_id?: string } | null)?.entity_id
             ?? (payload.old as { task_id?: string; entity_id?: string } | null)?.task_id
@@ -2796,13 +2832,22 @@ export function useWorkspaceData({
           // notification into a workspace-wide bootstrap.
         },
       )
-      .subscribe((status) => {
+      .subscribe((status, error) => {
         recordAdhdiceRealtimeDiagnostic({
           channel: "workspace",
           channelDebugId: workspaceChannelDebugId,
           kind: "channel_subscribe_status",
           status,
         });
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "workspace",
+            channelDebugId: workspaceChannelDebugId,
+            kind: "workspace_channel_subscription_error",
+            status,
+            subscriptionError: describeRealtimeSubscriptionError(error),
+          });
+        }
         if (status === "SUBSCRIBED") {
           workspaceChannelSubscriptionCountRef.current += 1;
           if (isWorkspacePerformanceDiagnosticsEnabled()) {
