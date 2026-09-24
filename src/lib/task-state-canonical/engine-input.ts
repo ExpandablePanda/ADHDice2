@@ -1,6 +1,6 @@
 import { buildDirectTaskStateEngineInput, type CanonicalProjectedTaskState } from "../task-state-engine/direct-input.ts";
 import type { TaskCalendarOverride, TaskStateEngineInput } from "../task-state-engine/types.ts";
-import type { CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskScheduleBoundary } from "./types.ts";
+import type { CanonicalTaskCalendarOverride, CanonicalTaskOccurrence } from "./types.ts";
 import type { CanonicalTaskStateReadModel } from "./read-model.ts";
 import { mapCanonicalTaskHistoryFacts } from "./history-projection.ts";
 import { latestCanonicalScheduleBoundary } from "./schedule-projection.ts";
@@ -30,15 +30,26 @@ export function resolveCanonicalWorkflowOccurrence(
 
 function historyRows(readModel: CanonicalTaskStateReadModel) {
   const occurrences = new Map(readModel.occurrences.map((occurrence) => [occurrence.id, occurrence]));
+  const occurrenceEffectiveOverrides = readModel.occurrenceEffectiveOverrides ?? [];
+  const effectiveOverrides = new Map<string, CanonicalTaskStateReadModel["occurrenceEffectiveOverrides"][number]>();
+  for (const override of [...occurrenceEffectiveOverrides].sort((left, right) => (
+    left.override_sequence - right.override_sequence
+      || left.action_logical_date.localeCompare(right.action_logical_date)
+      || left.id.localeCompare(right.id)
+  ))) {
+    effectiveOverrides.set(override.occurrence_id, override);
+  }
   return readModel.historyFacts.map((fact) => {
     const projected = mapCanonicalTaskHistoryFacts([fact])[0]!;
     const occurrence = fact.occurrence_id ? occurrences.get(fact.occurrence_id) : null;
+    const effectiveOverride = fact.occurrence_id ? effectiveOverrides.get(fact.occurrence_id) : null;
     return {
       ...projected,
       // A scheduled_due_on is historical metadata, not proof that a
       // canonical occurrence row was materialized for this fact.
       occurrence_key: occurrence?.occurrence_key ?? null,
       occurrence_due_on: fact.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null,
+      effective_due_on: effectiveOverride?.effective_due_on ?? projected.effective_due_on,
     };
   });
 }

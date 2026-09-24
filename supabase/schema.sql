@@ -234,7 +234,7 @@ create table if not exists public.adhdice_task_current_projections (
     projection_schema_version in ('task-current-projection-schema-v1', 'task-current-projection-schema-v2')
   ),
   projection_algorithm_version text not null check (
-    projection_algorithm_version in ('task-current-projection-algorithm-v1', 'task-current-projection-algorithm-v2')
+    projection_algorithm_version in ('task-current-projection-algorithm-v1', 'task-current-projection-algorithm-v2', 'task-current-projection-algorithm-v3')
   ),
   constraint adhdice_task_current_projection_version_pair_check
     check (
@@ -243,7 +243,7 @@ create table if not exists public.adhdice_task_current_projections (
         and last_handled_at_kind is null
         and last_done_at_kind is null)
       or (projection_schema_version = 'task-current-projection-schema-v2'
-        and projection_algorithm_version = 'task-current-projection-algorithm-v2'
+        and projection_algorithm_version in ('task-current-projection-algorithm-v2', 'task-current-projection-algorithm-v3')
         and (
           (last_handled_logical_date is null and last_handled_at is null and last_handled_at_kind is null)
           or (last_handled_logical_date is not null and last_handled_at is not null and last_handled_at_kind = 'event_instant')

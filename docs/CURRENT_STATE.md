@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.32`.
+- Current working app version: `7.15.33`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,63 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.33 Final Current Projection Semantic Convergence
+
+The four live-derived semantic shapes are locked in deterministic source
+fixtures. The shared canonical input path now preserves `scheduled_due_on` as
+date metadata and supplies occurrence identity only from actual canonical
+occurrence provenance. The ordinary History presentation mapper remains
+unchanged; the narrower Active Status adapter strips synthesized occurrence
+identity from canonical facts whose `occurrence_id` is null. Actual
+occurrence-backed facts retain their canonical identity. Canonical occurrence
+effective overrides are read into the same engine input, so the Current
+Projection builder and Active Status read use equivalent semantic evidence.
+
+The four root causes are now covered as follows:
+
+- The `efc9690e...` and `e1ab421e...` rolling Custom shapes exposed that an
+  explicitly supplied empty Calendar override array selected the replay
+  timeline while an omitted option did not. Empty `calendarOverrides: []` is
+  now neutral; a non-empty active override still has Calendar authority.
+- The `34559ec3...` fixed-weekday shape exposed metadata-only automatic Missed
+  facts being able to look occurrence-backed in the legacy transport. Their
+  scheduled dates remain historical metadata and cannot consume a canonical
+  occurrence cursor without provenance.
+- The `233e433a...` delayed shape exposed the authoritative effective cursor
+  being dropped when the delayed fact predated the latest schedule boundary.
+  An occurrence-backed canonical Delay/effective override now keeps the
+  current effective cursor at `2026-12-29` until superseded by canonical
+  evidence.
+
+Because these changes alter durable projection output, the schema remains V2
+but `CURRENT_TASK_PROJECTION_ALGORITHM_VERSION` is now V3. The source
+migration `patch_task_current_projection_v3_7_15_33` was applied without
+direct projection-row writes. The initial read-only baseline was 519 valid V2
+rows. During the rollout, an unrelated live canonical revision advanced and
+its existing invalidation trigger marked one row `repair_required`; no direct
+repair was performed. The current live pre-rebuild state is therefore 518
+valid V2 rows and one repair-required V2 row, all stale under V3 by contract.
+
+Trusted Edge deployment completed in dependency order:
+
+- `task-state-command`: ACTIVE v43,
+  `78f2482824b1bc51ccffc50e74e22e2a8a7d017f2504c1a31cd61f5195552490`.
+- `task-current-projection-backfill`: ACTIVE v7,
+  `97bb0c951a494eda1c4fcf75e0768aacb9b882c103c3c57ee57a5cf235f0a30b`.
+
+The existing authenticated backfill endpoint verified all four target IDs as
+V3 rebuild candidates and safe single-row cursors, but no row was rebuilt:
+the stored user JWT was rejected as `UNAUTHORIZED_ASYMMETRIC_JWT`. No owner-wide
+rebuild was attempted and no projection row was mutated directly. A fresh
+authenticated operator session is required before the four-task rebuild,
+then the broader controlled campaign.
+
+Focused semantic tests and the webpack production build pass. Full typecheck
+still has unrelated repository baseline errors. History startup remains
+active and 7.15.34 retirement is not unlocked until the four-task rebuild,
+519-row V3 freshness/fence audit, and settled browser parity all reach zero
+active semantic mismatches.
 
 ## 2026-09-24 7.15.32 Scoped Last Handled Parity Oracle + V2 Campaign Resume Gate
 

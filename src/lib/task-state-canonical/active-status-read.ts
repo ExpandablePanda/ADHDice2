@@ -6,6 +6,7 @@ import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput
 import { evaluateTaskState } from "../task-state-engine/engine.ts";
 import type { TaskBehaviorPolicyResolutionContext } from "../task-state-engine/behavior-policy.ts";
 import { logicalDateForTimestamp } from "../task-state-engine/calendar.ts";
+import { normalizeCanonicalActiveStatusHistoryRows } from "./history-projection.ts";
 
 export const ACTIVE_STATUS_READ_PROJECTION_VERSION = "active-status-read-v1" as const;
 /** Compatibility export retained for callers that gate Task State integration. */
@@ -44,7 +45,9 @@ function resolveTaskStatuses(input: ActiveStatusReadInput, compatibilityOnly: bo
   const statusesByTaskId: CanonicalActiveStatusByTaskId = {};
   const dueOnByTaskId: Record<string, string | null> = {};
   for (const task of input.tasks) {
-    const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.historyByTaskId[task.id] ?? []);
+    const normalizedHistory = deduplicateTaskHistoryByLogicalDate(
+      normalizeCanonicalActiveStatusHistoryRows(input.historyByTaskId[task.id] ?? []),
+    );
     if (isCanonicalArchivedOrTrashed(task)) {
       statusesByTaskId[task.id] = task.container_state === "trashed" || task.status === "trashed" ? "trashed" : "archived";
       continue;
@@ -73,7 +76,9 @@ export function resolveActiveTaskStatuses(input: ActiveStatusReadInput): ActiveS
 
 /** Resolve one Task through the same production engine boundary as the collection read. */
 export function resolveActiveTaskStatus(input: ActiveStatusTaskReadInput) {
-  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(input.history);
+  const normalizedHistory = deduplicateTaskHistoryByLogicalDate(
+    normalizeCanonicalActiveStatusHistoryRows(input.history),
+  );
   if (isCanonicalArchivedOrTrashed(input.task)) {
     return {
       status: input.task.container_state === "trashed" || input.task.status === "trashed" ? "trashed" : "archived",

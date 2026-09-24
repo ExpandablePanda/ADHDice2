@@ -671,7 +671,7 @@ export type CurrentTaskProjectionActiveOccurrenceStatus =
 export type CurrentTaskProjectionValidity = "valid" | "repair_required" | "unavailable";
 export type CurrentTaskProjectionTimestampKind = "event_instant" | "logical_day_presentation";
 export type CurrentTaskProjectionSchemaVersion = "task-current-projection-schema-v1" | "task-current-projection-schema-v2";
-export type CurrentTaskProjectionAlgorithmVersion = "task-current-projection-algorithm-v1" | "task-current-projection-algorithm-v2";
+export type CurrentTaskProjectionAlgorithmVersion = "task-current-projection-algorithm-v1" | "task-current-projection-algorithm-v2" | "task-current-projection-algorithm-v3";
 
 export type TaskCurrentProjection = {
   user_id: string;

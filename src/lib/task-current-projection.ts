@@ -15,7 +15,10 @@ import {
   buildCanonicalTaskStateEngineInput,
   taskCalendarOverrideFromCanonical,
 } from "./task-state-canonical/engine-input.ts";
-import { mapCanonicalTaskHistoryFacts } from "./task-state-canonical/history-projection.ts";
+import {
+  mapCanonicalTaskHistoryFacts,
+  normalizeCanonicalActiveStatusHistoryRows,
+} from "./task-state-canonical/history-projection.ts";
 import type { CanonicalTaskStateReadModel } from "./task-state-canonical/read-model.ts";
 import {
   latestCanonicalScheduleBoundary,
@@ -41,7 +44,7 @@ import { normalizeTaskType } from "./task-type-domain.ts";
 export const LEGACY_TASK_PROJECTION_SCHEMA_VERSION = "task-current-projection-schema-v1" as const;
 export const LEGACY_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v1" as const;
 export const CURRENT_TASK_PROJECTION_SCHEMA_VERSION = "task-current-projection-schema-v2" as const;
-export const CURRENT_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v2" as const;
+export const CURRENT_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v3" as const;
 
 type CanonicalTask = Task & Partial<CanonicalTaskStateColumns>;
 
@@ -581,7 +584,7 @@ function resultSummary(
   effectiveTrackingExclusion: boolean,
   projectedAt: string,
 ): { summary: TaskHistoryStreakSummary; lastHandled: ReturnType<typeof buildTaskHistoryLastHandledPresentationSummaryMap>[string] | undefined } {
-  const history = mapCanonicalTaskHistoryFacts(readModel.historyFacts);
+  const history = normalizeCanonicalActiveStatusHistoryRows(mapCanonicalTaskHistoryFacts(readModel.historyFacts));
   const lastHandledMap = buildTaskHistoryLastHandledPresentationSummaryMap(
     [readModel.task],
     history,
@@ -707,7 +710,7 @@ export function buildCurrentTaskProjection(input: BuildCurrentTaskProjectionInpu
   const behaviorPolicyRevision = input.sourceFences?.behaviorPolicyRevision
     ?? behaviorFence(readModel, context, logicalDate);
   const lastDone = getTaskHistoryLastDonePresentation(
-    mapCanonicalTaskHistoryFacts(readModel.historyFacts),
+    normalizeCanonicalActiveStatusHistoryRows(mapCanonicalTaskHistoryFacts(readModel.historyFacts)),
     logicalDate,
   );
   const lastHandledPresentation = projectionTimestampPresentation(lastHandled);

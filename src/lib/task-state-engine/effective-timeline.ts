@@ -179,11 +179,11 @@ function currentCanonicalDelayEffectiveDueOn(
   task: TaskStateSnapshot,
   rows: TaskStateHistoryRow[],
 ) {
-  if (task.activeStatus !== "delayed" || !task.dueOn) return null;
   return rows
     .filter((row) => row.outcome === "delayed")
     .filter((row) => row.recurrenceAuthoritative === true)
-    .filter((row) => row.effectiveDueOn === task.dueOn)
+    .filter((row) => task.activeStatus === "delayed" || Boolean(row.occurrenceIdentity))
+    .filter((row) => row.effectiveDueOn !== undefined && row.effectiveDueOn !== null)
     .sort((left, right) => left.logicalDate.localeCompare(right.logicalDate)
       || left.occurredAt.localeCompare(right.occurredAt)
       || left.id.localeCompare(right.id))
@@ -490,7 +490,12 @@ export function buildTaskEffectiveTimeline(
       && activeDueOn
       && row.logicalDate < activeDueOn,
     );
-    if (predatesActiveCursor) return;
+    const hasCanonicalEffectiveCursor = row.outcome === "delayed"
+      && row.recurrenceAuthoritative === true
+      && (input.task.activeStatus === "delayed" || Boolean(row.occurrenceIdentity))
+      && row.effectiveDueOn !== undefined
+      && row.effectiveDueOn !== null;
+    if (predatesActiveCursor && !hasCanonicalEffectiveCursor) return;
     if (row.outcome === "done" || row.outcome === "did_my_best") {
       advanceAfterSuccess(row);
       return;
@@ -509,9 +514,6 @@ export function buildTaskEffectiveTimeline(
       // due-date/recurrence replay retains the established effective-date
       // behavior for translated rows, while legacy identity-less rows must
       // not be treated as canonical during ordinary projection.
-      const hasCanonicalEffectiveCursor = row.recurrenceAuthoritative === true
-        && row.effectiveDueOn !== undefined
-        && row.effectiveDueOn !== null;
       const hasScheduleReplayEffectiveCursor = Boolean(
         input.replay
         && (input.replay.kind === "due_date" || input.replay.kind === "recurrence")

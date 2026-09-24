@@ -5,6 +5,10 @@ import {
   isCurrentTaskProjectionFresh,
   type CurrentTaskProjectionFreshnessContext,
 } from "../src/lib/task-current-projection-freshness.ts";
+import {
+  CURRENT_TASK_PROJECTION_ALGORITHM_VERSION,
+  CURRENT_TASK_PROJECTION_SCHEMA_VERSION,
+} from "../src/lib/task-current-projection.ts";
 import type { TaskCurrentProjection } from "../src/lib/database.types.ts";
 
 const sql = readFileSync(
@@ -110,8 +114,8 @@ const projection = {
   history_sync_epoch: "epoch-1",
   logical_day_settings_revision: 4,
   projected_logical_date: "2026-09-23",
-  projection_schema_version: "task-current-projection-schema-v2",
-  projection_algorithm_version: "task-current-projection-algorithm-v2",
+  projection_schema_version: CURRENT_TASK_PROJECTION_SCHEMA_VERSION,
+  projection_algorithm_version: CURRENT_TASK_PROJECTION_ALGORITHM_VERSION,
   last_handled_logical_date: null,
   last_handled_at: null,
   last_handled_at_kind: null,
