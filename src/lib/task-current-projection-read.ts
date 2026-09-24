@@ -225,6 +225,30 @@ export function projectionToTaskHistoryStreakSummary(
   };
 }
 
+export function areCurrentTaskProjectionLastHandledValuesEqual({
+  legacySummary,
+  logicalDayStart,
+  projectionSummary,
+  projectedAtKind,
+  timezone,
+}: {
+  legacySummary: Pick<TaskHistoryStreakSummary, "lastHandledAt" | "lastHandledDate">;
+  logicalDayStart: string;
+  projectionSummary: Pick<TaskHistoryStreakSummary, "lastHandledAt" | "lastHandledDate">;
+  projectedAtKind: CurrentTaskProjectionTimestampKind | null;
+  timezone: string;
+}) {
+  return projectionSummary.lastHandledDate === legacySummary.lastHandledDate
+    && areCurrentTaskProjectionTimestampValuesEqual({
+      legacy: legacySummary.lastHandledAt ?? null,
+      logicalDayStart,
+      projected: projectionSummary.lastHandledAt ?? null,
+      projectedAtKind,
+      projectedLogicalDate: projectionSummary.lastHandledDate ?? null,
+      timezone,
+    });
+}
+
 export function isCurrentTaskProjectionParityEligibleTask(task: Task) {
   return !isCanonicalInactiveTask(task);
 }

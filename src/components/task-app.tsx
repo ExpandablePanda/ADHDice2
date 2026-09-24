@@ -323,19 +323,29 @@ import {
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
 import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import {
+  areCurrentTaskProjectionLastHandledValuesEqual,
   compareCurrentTaskProjectionParity,
+  projectionToTaskHistoryStreakSummary,
   type CurrentTaskProjectionParityMismatchDiagnostic,
+  type CurrentTaskProjectionParityField,
   isCurrentTaskProjectionParityEligibleTask,
   isCurrentTaskProjectionParityReady,
   resolveCurrentTaskProjectionReads,
   summarizeCurrentTaskProjectionParity,
 } from "@/lib/task-current-projection-read";
 import {
+  createCurrentTaskProjectionScopedVerificationCoordinator,
+  isLastHandledOnlyCurrentTaskProjectionParityMismatch,
+  type CurrentTaskProjectionScopedVerificationCoordinator,
+  type CurrentTaskProjectionScopedVerificationIdentity,
+} from "@/lib/task-current-projection-parity-verifier";
+import {
   consumeAdhdiceRealtimeAuthorityPending,
   installAdhdiceRealtimeDiagnostics,
   recordAdhdiceRealtimeDiagnostic,
 } from "@/lib/adhdice-realtime-diagnostics";
 import { isTaskEffectivelyExcludedFromTracking } from "@/lib/task-tracking";
+import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import {
   buildManualMembershipMap,
   getBuiltInTaskLists,
@@ -629,6 +639,18 @@ type AppUpdateAttempt = {
   attemptedAt: number;
   version: string;
 };
+
+type CurrentTaskProjectionScopedVerificationWork = {
+  postLegacySummary: TaskHistoryStreakSummary | null;
+  refreshed: boolean;
+};
+
+function lastHandledDiagnosticValue(summary: Pick<TaskHistoryStreakSummary, "lastHandledAt" | "lastHandledDate"> | null | undefined) {
+  return {
+    at: summary?.lastHandledAt ?? null,
+    date: summary?.lastHandledDate ?? null,
+  };
+}
 
 type RefreshStatus = "idle" | "syncing" | "updating";
 
@@ -3164,6 +3186,33 @@ export function TaskApp() {
     () => createProjectionDomainRevision("current-task-projection-parity", currentTaskProjectionParity),
     [currentTaskProjectionParity],
   );
+  const currentTaskProjectionParityWorkspaceGeneration = workspaceGenerationRef.current;
+  const currentTaskProjectionScopedVerificationStateRef = useRef({
+    logicalDate: todayKey,
+    projectionsByTaskId: currentTaskProjectionsByTaskId,
+    tasks,
+    workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
+  });
+  currentTaskProjectionScopedVerificationStateRef.current = {
+    logicalDate: todayKey,
+    projectionsByTaskId: currentTaskProjectionsByTaskId,
+    tasks,
+    workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
+  };
+  const currentTaskProjectionScopedVerificationCoordinatorRef = useRef<CurrentTaskProjectionScopedVerificationCoordinator<CurrentTaskProjectionScopedVerificationWork> | null>(null);
+  if (!currentTaskProjectionScopedVerificationCoordinatorRef.current) {
+    currentTaskProjectionScopedVerificationCoordinatorRef.current = createCurrentTaskProjectionScopedVerificationCoordinator<CurrentTaskProjectionScopedVerificationWork>({
+      isCurrent: (identity) => {
+        const current = currentTaskProjectionScopedVerificationStateRef.current;
+        const task = current.tasks.find((candidate) => candidate.id === identity.taskId);
+        const projection = current.projectionsByTaskId[identity.taskId];
+        return current.logicalDate === identity.logicalDate
+          && current.workspaceGeneration === identity.workspaceGeneration
+          && (task?.canonical_revision ?? null) === identity.taskCanonicalRevision
+          && (projection?.updated_at ?? null) === identity.projectionUpdatedAt;
+      },
+    });
+  }
   const loggedCurrentTaskProjectionParityRevisionRef = useRef<string | null>(null);
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
@@ -3237,6 +3286,112 @@ export function TaskApp() {
         : `[workspace:current-projection-parity] ${scope} excludedSample=${excludedSample || "none"} mismatchedTasks=${diagnostics.mismatchedTaskCount} fields=${mismatchedFields.join(",")}`,
     );
   }, [activeStatusRead, currentTaskProjectionParity, currentTaskProjectionParityReady, currentTaskProjectionParityRevision, currentTaskProjectionReadResolution.freshProjectionByTaskId, taskHistoryByTaskId, taskHistoryStreakSummaries, tasks]);
+  useEffect(() => {
+    if (process.env.NODE_ENV !== "development") return;
+    if (!currentTaskProjectionParityReady || !currentTaskProjectionParity) return;
+
+    const mismatchFieldsByTaskId = new Map<string, CurrentTaskProjectionParityField[]>();
+    for (const mismatch of currentTaskProjectionParity.mismatchedFields) {
+      const fields = mismatchFieldsByTaskId.get(mismatch.taskId) ?? [];
+      fields.push(mismatch.field);
+      mismatchFieldsByTaskId.set(mismatch.taskId, fields);
+    }
+
+    for (const [taskId, fields] of mismatchFieldsByTaskId) {
+      if (!isLastHandledOnlyCurrentTaskProjectionParityMismatch(fields)) continue;
+      const task = tasks.find((candidate) => candidate.id === taskId);
+      const projection = currentTaskProjectionReadResolution.freshProjectionByTaskId[taskId];
+      if (!task || !projection || !isCurrentTaskProjectionParityEligibleTask(task)) continue;
+
+      const projectedSummary = projectionToTaskHistoryStreakSummary(projection);
+      const legacySummary = taskHistoryStreakSummaries[taskId] ?? null;
+      const identity: CurrentTaskProjectionScopedVerificationIdentity = {
+        logicalDate: todayKey,
+        projectionUpdatedAt: projection.updated_at,
+        taskCanonicalRevision: task.canonical_revision ?? null,
+        taskId,
+        workspaceGeneration: currentTaskProjectionParityWorkspaceGeneration,
+      };
+      const preProjectedLastHandled = lastHandledDiagnosticValue(projectedSummary);
+      const preLegacyLastHandled = lastHandledDiagnosticValue(legacySummary);
+      const request = currentTaskProjectionScopedVerificationCoordinatorRef.current!.request(identity, async () => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          kind: "projection_parity_scoped_verification_started",
+          postVerificationLegacyLastHandled: null,
+          preVerificationLegacyLastHandled: preLegacyLastHandled,
+          preVerificationProjectedLastHandled: preProjectedLastHandled,
+          taskCanonicalRevision: identity.taskCanonicalRevision,
+          taskId,
+          logicalDate: identity.logicalDate,
+          projectionUpdatedAt: identity.projectionUpdatedAt,
+          workspaceGeneration: identity.workspaceGeneration,
+        });
+        let postLegacySummary: TaskHistoryStreakSummary | null = null;
+        const refreshed = await refreshTaskHistoryStreakSummary(taskId, undefined, undefined, (summary) => {
+          postLegacySummary = summary;
+        });
+        return { postLegacySummary, refreshed };
+      });
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "workspace",
+        kind: "projection_parity_scoped_verification_requested",
+        preVerificationLegacyLastHandled: preLegacyLastHandled,
+        preVerificationProjectedLastHandled: preProjectedLastHandled,
+        requestStatus: request.status,
+        taskCanonicalRevision: identity.taskCanonicalRevision,
+        taskId,
+        logicalDate: identity.logicalDate,
+        projectionUpdatedAt: identity.projectionUpdatedAt,
+        workspaceGeneration: identity.workspaceGeneration,
+      });
+      if (request.status !== "started") continue;
+
+      void request.promise.then((result) => {
+        if (result.status !== "completed") return;
+        const postLegacySummary = result.value.postLegacySummary;
+        const postVerificationLegacyLastHandled = lastHandledDiagnosticValue(postLegacySummary);
+        const resolved = Boolean(
+          result.value.refreshed
+          && postLegacySummary
+          && areCurrentTaskProjectionLastHandledValuesEqual({
+            legacySummary: postLegacySummary,
+            logicalDayStart: dayStartTime,
+            projectionSummary: projectedSummary,
+            projectedAtKind: projection.last_handled_at_kind,
+            timezone: userTimeZone,
+          }),
+        );
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          kind: "projection_parity_scoped_verification_completed",
+          postVerificationLegacyLastHandled,
+          preVerificationLegacyLastHandled: preLegacyLastHandled,
+          preVerificationProjectedLastHandled: preProjectedLastHandled,
+          resolved,
+          taskCanonicalRevision: identity.taskCanonicalRevision,
+          taskId,
+          logicalDate: identity.logicalDate,
+          projectionUpdatedAt: identity.projectionUpdatedAt,
+          workspaceGeneration: identity.workspaceGeneration,
+        });
+      }).catch(() => {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          kind: "projection_parity_scoped_verification_completed",
+          postVerificationLegacyLastHandled: null,
+          preVerificationLegacyLastHandled: preLegacyLastHandled,
+          preVerificationProjectedLastHandled: preProjectedLastHandled,
+          resolved: false,
+          taskCanonicalRevision: identity.taskCanonicalRevision,
+          taskId,
+          logicalDate: identity.logicalDate,
+          projectionUpdatedAt: identity.projectionUpdatedAt,
+          workspaceGeneration: identity.workspaceGeneration,
+        });
+      });
+    }
+  }, [currentTaskProjectionParity, currentTaskProjectionParityReady, currentTaskProjectionParityWorkspaceGeneration, currentTaskProjectionReadResolution.freshProjectionByTaskId, dayStartTime, refreshTaskHistoryStreakSummary, taskHistoryStreakSummaries, tasks, todayKey, userTimeZone]);
   useEffect(() => {
     if (process.env.NODE_ENV !== "development") return;
     const pendingTaskIds = consumeAdhdiceRealtimeAuthorityPending();

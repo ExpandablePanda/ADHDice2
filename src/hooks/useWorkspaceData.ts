@@ -48,6 +48,7 @@ import {
   buildTaskHistoryStreakSummary,
   buildTaskHistoryStreakSummaryMapCooperatively,
   updateTaskHistoryStreakSummaryMap,
+  type TaskHistoryStreakSummary,
   type TaskHistoryStreakSummaryMap,
 } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
@@ -96,6 +97,8 @@ type TaskHistoryFullLoadSource = WorkspaceCoreRefreshSource | "rollover" | "seco
 type TaskHistoryStreakSummaryRefreshOptions = {
   supersede?: boolean;
 };
+
+type TaskHistoryStreakSummaryObserver = (summary: TaskHistoryStreakSummary) => void;
 
 type Message = {
   text: string;
@@ -417,7 +420,7 @@ export function useWorkspaceData({
   const loadFullTaskHistoryRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadNotesRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadTaskHistoryForTaskRef = useRef<((taskId: string, options?: TaskHistoryLoadOptions) => Promise<boolean>) | null>(null);
-  const refreshTaskHistoryStreakSummaryRef = useRef<((taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task) => Promise<boolean>) | null>(null);
+  const refreshTaskHistoryStreakSummaryRef = useRef<((taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task, onSummary?: TaskHistoryStreakSummaryObserver) => Promise<boolean>) | null>(null);
   const retryTaskHistoryForTaskRef = useRef<((taskId: string) => Promise<boolean>) | null>(null);
   const fetchTaskHistoryForRolloverRef = useRef<((taskIds: string[]) => Promise<TaskHistoryLoadMap>) | null>(null);
   const tasksRef = useRef(tasks);
@@ -1433,7 +1436,7 @@ export function useWorkspaceData({
       return await summaryLoadPromise;
     }
 
-    async function reloadTaskHistoryStreakSummaryForTask(taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task) {
+    async function reloadTaskHistoryStreakSummaryForTask(taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task, onSummary?: TaskHistoryStreakSummaryObserver) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return false;
       }
@@ -1483,6 +1486,7 @@ export function useWorkspaceData({
               setTaskHistoryCacheForTask(taskId, taskHistory);
             }
             const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, summaryContext);
+            onSummary?.(nextSummary);
             setTaskHistoryStreakSummaries((current) => (
               JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
                 ? current
@@ -1509,6 +1513,7 @@ export function useWorkspaceData({
             ]);
           }
           const nextSummary = buildTaskHistoryStreakSummary(task, taskHistory, todayKeyRef.current, summaryContext);
+          onSummary?.(nextSummary);
           setTaskHistoryStreakSummaries((current) => (
             JSON.stringify(current[taskId]) === JSON.stringify(nextSummary)
               ? current
@@ -2681,8 +2686,8 @@ export function useWorkspaceData({
     [],
   );
   const refreshTaskHistoryStreakSummary = useCallback(
-    async (taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task) => (
-      await refreshTaskHistoryStreakSummaryRef.current?.(taskId, nextTaskHistory, nextTask) ?? false
+    async (taskId: string, nextTaskHistory?: DbTaskHistory[], nextTask?: Task, onSummary?: TaskHistoryStreakSummaryObserver) => (
+      await refreshTaskHistoryStreakSummaryRef.current?.(taskId, nextTaskHistory, nextTask, onSummary) ?? false
     ),
     [],
   );
