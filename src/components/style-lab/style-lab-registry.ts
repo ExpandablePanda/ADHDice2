@@ -27,6 +27,39 @@ export type StyleLabBackgroundColor = (typeof STYLE_LAB_BACKGROUND_COLORS)[numbe
 
 export const STYLE_LAB_CUSTOM_COLOR_DEFAULT = "#8f6cff";
 
+export const STYLE_LAB_BUILDER_FONT_OPTIONS = [
+  {
+    id: "adhdice",
+    label: "ADHDice Default",
+    cssFamily: '"Avenir Next", Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    googleFamily: null,
+  },
+  {
+    id: "system",
+    label: "System / SF Pro",
+    cssFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
+    googleFamily: null,
+  },
+  { id: "inter", label: "Inter", cssFamily: '"Inter", sans-serif', googleFamily: "Inter" },
+  { id: "roboto", label: "Roboto", cssFamily: '"Roboto", sans-serif', googleFamily: "Roboto" },
+  { id: "open-sans", label: "Open Sans", cssFamily: '"Open Sans", sans-serif', googleFamily: "Open+Sans" },
+  { id: "poppins", label: "Poppins", cssFamily: '"Poppins", sans-serif', googleFamily: "Poppins" },
+  { id: "montserrat", label: "Montserrat", cssFamily: '"Montserrat", sans-serif', googleFamily: "Montserrat" },
+  { id: "lato", label: "Lato", cssFamily: '"Lato", sans-serif', googleFamily: "Lato" },
+] as const;
+
+export type StyleLabBuilderFontFamily = (typeof STYLE_LAB_BUILDER_FONT_OPTIONS)[number]["id"];
+
+export const STYLE_LAB_BUILDER_WEB_FONT_STYLESHEET = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lato:wght@400;700;900&family=Montserrat:wght@400;500;600;700&family=Open+Sans:wght@400;500;600;700&family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap";
+
+export function isStyleLabBuilderFontFamily(value: unknown): value is StyleLabBuilderFontFamily {
+  return typeof value === "string" && STYLE_LAB_BUILDER_FONT_OPTIONS.some((option) => option.id === value);
+}
+
+export function getStyleLabBuilderFontOption(value: unknown) {
+  return STYLE_LAB_BUILDER_FONT_OPTIONS.find((option) => option.id === value) ?? STYLE_LAB_BUILDER_FONT_OPTIONS[0]!;
+}
+
 export const STYLE_LAB_BACKGROUND_PALETTE = [
   { label: "Surface", token: "--surface", value: "Surface" },
   { label: "Subtle", token: "--surface-muted", value: "Subtle" },
@@ -302,7 +335,9 @@ export function isStyleLabIconName(value: unknown): value is StyleLabIconName {
   return typeof value === "string" && STYLE_LAB_ICON_OPTIONS.some((option) => option.key === value);
 }
 
-export function getStyleLabTextColorCssValue(value: StyleLabTextColor): string {
+export function getStyleLabTextColorCssValue(value: string): string {
+  const customColor = normalizeStyleLabCustomColor(value);
+  if (customColor) return customColor;
   const tokenByColor: Record<StyleLabTextColor, string> = {
     Primary: "var(--text-primary)",
     Secondary: "var(--text-secondary)",
@@ -312,7 +347,7 @@ export function getStyleLabTextColorCssValue(value: StyleLabTextColor): string {
     Warning: "var(--warning)",
     Danger: "var(--danger)",
   };
-  return tokenByColor[value];
+  return tokenByColor[value as StyleLabTextColor] ?? tokenByColor.Primary;
 }
 
 export function getStyleLabBackgroundColorCssValue(value: string): string {

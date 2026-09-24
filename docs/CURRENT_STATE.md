@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.37`.
+- Current working app version: `7.15.38`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.38 Side Style Lab Builder Phase 2
+
+Style Builder Phase 2 keeps the dedicated Test concept and adds a sticky live
+canvas with a normally scrolling editor, direct Container resize and inline
+Text/Chip editing, visual custom HEX color controls, a curated development-only
+font library, and curated ADHDice-style starter templates. Builder drafts remain
+backward-compatible and use the unchanged `adhdice-style-lab:builder-draft`
+storage key. The Builder remains development-only and local-only; exports remain
+reference artifacts and never write source files.
 
 ## 2026-09-24 7.15.37 Side Style Lab Builder Test Workspace
 

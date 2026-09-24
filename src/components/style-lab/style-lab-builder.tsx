@@ -1,14 +1,16 @@
 "use client";
 
 import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useState, type CSSProperties, type MouseEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { AdhdChip, AdhdIconButton } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
+import { StyleLabBuilderColorControl } from "./style-lab-builder-color-control";
+import { createStyleLabBuilderTemplate, STYLE_LAB_BUILDER_TEMPLATES, type StyleLabBuilderTemplateId } from "./style-lab-builder-templates";
 import {
   getStyleLabBackgroundColorCssValue,
+  getStyleLabBuilderFontOption,
   getStyleLabProperty,
   getStyleLabTextColorCssValue,
-  STYLE_LAB_BACKGROUND_COLORS,
   STYLE_LAB_BUILDER_BORDER_OPTIONS,
   STYLE_LAB_BUILDER_CANVAS_WIDTHS,
   STYLE_LAB_BUILDER_CHIP_TONES,
@@ -20,8 +22,9 @@ import {
   STYLE_LAB_BUILDER_LAYOUTS,
   STYLE_LAB_BUILDER_RADIUS_OPTIONS,
   STYLE_LAB_BUILDER_SHADOW_OPTIONS,
+  STYLE_LAB_BUILDER_WEB_FONT_STYLESHEET,
+  STYLE_LAB_BUILDER_FONT_OPTIONS,
   STYLE_LAB_ICON_OPTIONS,
-  STYLE_LAB_TEXT_COLORS,
   type StyleLabBuilderCanvasWidth,
 } from "./style-lab-registry";
 import { buildStyleLabModuleSpec, buildStyleLabReferenceCode } from "./style-lab-builder-export";
@@ -33,10 +36,12 @@ import {
   getStyleLabBuilderChildren,
   getStyleLabBuilderNode,
   isStyleLabBuilderBlank,
+  resizeStyleLabBuilderDimensions,
   moveStyleLabBuilderNode,
   normalizeStyleLabBuilderDraft,
   readStyleLabBuilderDraft,
   STYLE_LAB_BUILDER_ROOT_ID,
+  type StyleLabBuilderResizeAxis,
   type StyleLabBuilderNodeType,
   updateStyleLabBuilderNode,
   writeStyleLabBuilderDraft,
@@ -71,11 +76,33 @@ function BuilderSelect({ label, onChange, options: optionValues, value }: { labe
   );
 }
 
+function BuilderFontSelect({ onChange, value }: { onChange: (value: string) => void; value: string }) {
+  return (
+    <label className="flex min-w-0 items-center gap-2">
+      <span className="w-24 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">Font family</span>
+      <select aria-label="Font family" className={SELECT_CLASS} onChange={(event) => onChange(event.target.value)} value={value}>
+        {STYLE_LAB_BUILDER_FONT_OPTIONS.map((option) => <option key={option.id} style={{ fontFamily: option.cssFamily }} value={option.id}>{option.label}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function BuilderTextInput({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {
   return (
     <label className="flex min-w-0 items-center gap-2">
       <span className="w-24 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">{label}</span>
       <input aria-label={label} className={INPUT_CLASS} onChange={(event) => onChange(event.target.value)} type="text" value={value} />
+    </label>
+  );
+}
+
+function BuilderDimensionInput({ label, onChange, value }: { label: string; onChange: (value: string) => void; value: string }) {
+  const [draft, setDraft] = useState(value);
+  return (
+    <label className="flex min-w-0 items-center gap-2">
+      <span className="w-24 shrink-0 text-[11px] font-medium text-[#6f6785] dark:text-white/60">{label}</span>
+      <input aria-label={label} className={INPUT_CLASS} onBlur={() => onChange(draft)} onChange={(event) => setDraft(event.target.value)} type="text" value={draft} />
+      <span className="shrink-0 text-[10px] text-[#8d82a7] dark:text-white/45">px / approved</span>
     </label>
   );
 }
@@ -99,6 +126,7 @@ function styleLabShadowCss(value: StyleLabBuilderContainerNode["styles"]["shadow
 function textStyle(styles: StyleLabBuilderTextStyles): CSSProperties {
   return {
     color: getStyleLabTextColorCssValue(styles.textColor),
+    fontFamily: getStyleLabBuilderFontOption(styles.fontFamily).cssFamily,
     fontSize: styles.fontSize,
     fontWeight: styles.fontWeight,
     letterSpacing: styles.letterSpacing,
@@ -121,12 +149,14 @@ function containerStyle(node: StyleLabBuilderContainerNode): CSSProperties {
     gridTemplateColumns: styles.layout === "grid" ? `repeat(${styles.gridColumns}, minmax(0, 1fr))` : undefined,
     justifyContent: styles.justifyContent,
     maxWidth: styles.maxWidth,
+    height: styles.height,
     minWidth: styles.minWidth,
     paddingBottom: styles.paddingY,
     paddingLeft: styles.paddingX,
     paddingRight: styles.paddingX,
     paddingTop: styles.paddingY,
     width: styles.width,
+    position: "relative",
   };
 }
 
@@ -134,7 +164,41 @@ function selectedPreviewStyle(selected: boolean): CSSProperties {
   return selected ? { outline: "2px solid var(--accent)", outlineOffset: "2px" } : {};
 }
 
-function BuilderPreviewNode({ draft, node, onSelect, selectedId }: { draft: StyleLabBuilderDraft; node: StyleLabBuilderNode; onSelect: (id: string) => void; selectedId: string }) {
+type BuilderPreviewProps = {
+  draft: StyleLabBuilderDraft;
+  editingNodeId: string | null;
+  editingValue: string;
+  node: StyleLabBuilderNode;
+  onBeginTextEdit: (id: string) => void;
+  onCancelTextEdit: () => void;
+  onCommitTextEdit: () => void;
+  onInlineValueChange: (value: string) => void;
+  onResizeCancel: (event: PointerEvent<HTMLButtonElement>) => void;
+  onResizeEnd: (event: PointerEvent<HTMLButtonElement>) => void;
+  onResizeLostCapture: (event: PointerEvent<HTMLButtonElement>) => void;
+  onResizeMove: (event: PointerEvent<HTMLButtonElement>) => void;
+  onResizeStart: (event: PointerEvent<HTMLButtonElement>, nodeId: string, axis: StyleLabBuilderResizeAxis) => void;
+  onSelect: (id: string) => void;
+  selectedId: string;
+};
+
+function BuilderPreviewNode({
+  draft,
+  editingNodeId,
+  editingValue,
+  node,
+  onBeginTextEdit,
+  onCancelTextEdit,
+  onCommitTextEdit,
+  onInlineValueChange,
+  onResizeCancel,
+  onResizeEnd,
+  onResizeLostCapture,
+  onResizeMove,
+  onResizeStart,
+  onSelect,
+  selectedId,
+}: BuilderPreviewProps) {
   const selected = node.id === selectedId;
   const select = (event: MouseEvent) => {
     event.preventDefault();
@@ -142,18 +206,68 @@ function BuilderPreviewNode({ draft, node, onSelect, selectedId }: { draft: Styl
     onSelect(node.id);
   };
   const children = node.type === "container"
-    ? getStyleLabBuilderChildren(draft, node.id).map((child) => <BuilderPreviewNode draft={draft} key={child.id} node={child} onSelect={onSelect} selectedId={selectedId} />)
+    ? getStyleLabBuilderChildren(draft, node.id).map((child) => <BuilderPreviewNode draft={draft} editingNodeId={editingNodeId} editingValue={editingValue} key={child.id} node={child} onBeginTextEdit={onBeginTextEdit} onCancelTextEdit={onCancelTextEdit} onCommitTextEdit={onCommitTextEdit} onInlineValueChange={onInlineValueChange} onResizeCancel={onResizeCancel} onResizeEnd={onResizeEnd} onResizeLostCapture={onResizeLostCapture} onResizeMove={onResizeMove} onResizeStart={onResizeStart} onSelect={onSelect} selectedId={selectedId} />)
     : null;
 
+  const inlineInput = (ariaLabel: string) => (
+    <input
+      aria-label={ariaLabel}
+      autoFocus
+      className="min-w-[2rem] border-0 bg-transparent p-0 text-inherit outline-none focus:ring-2 focus:ring-[#b9a9ff]"
+      data-builder-inline-editor
+      onBlur={onCommitTextEdit}
+      onChange={(event) => onInlineValueChange(event.target.value)}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+      onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
+        event.stopPropagation();
+        if (event.key === "Enter") {
+          event.preventDefault();
+          onCommitTextEdit();
+        } else if (event.key === "Escape") {
+          event.preventDefault();
+          onCancelTextEdit();
+        }
+      }}
+      type="text"
+      value={editingValue}
+    />
+  );
+
   if (node.type === "container") {
-    return <div aria-label={`Select ${node.id === STYLE_LAB_BUILDER_ROOT_ID ? "root container" : "container"}`} data-builder-node-id={node.id} onClick={select} role="group" style={{ ...containerStyle(node), ...selectedPreviewStyle(selected) }}>{children}</div>;
+    const handleProps = (axis: StyleLabBuilderResizeAxis, label: string, className: string) => ({
+      "aria-label": label,
+      className,
+      onClick: (event: MouseEvent<HTMLButtonElement>) => event.stopPropagation(),
+      onLostPointerCapture: onResizeLostCapture,
+      onPointerCancel: onResizeCancel,
+      onPointerDown: (event: PointerEvent<HTMLButtonElement>) => onResizeStart(event, node.id, axis),
+      onPointerMove: onResizeMove,
+      onPointerUp: onResizeEnd,
+      type: "button" as const,
+    });
+    return (
+      <div aria-label={`Select ${node.id === STYLE_LAB_BUILDER_ROOT_ID ? "root container" : "container"}`} data-builder-node-id={node.id} onClick={select} role="group" style={{ ...containerStyle(node), ...selectedPreviewStyle(selected) }}>
+        {children}
+        {selected ? (
+          <>
+            <button {...handleProps("width", "Resize container width", "absolute right-[-0.25rem] top-1/2 z-10 h-10 w-2 -translate-y-1/2 cursor-ew-resize select-none touch-none rounded-full bg-[#8f7cf8]/70 opacity-80 transition hover:opacity-100")} />
+            <button {...handleProps("height", "Resize container height", "absolute bottom-[-0.25rem] left-1/2 z-10 h-2 w-10 -translate-x-1/2 cursor-ns-resize select-none touch-none rounded-full bg-[#8f7cf8]/70 opacity-80 transition hover:opacity-100")} />
+            <button {...handleProps("both", "Resize container width and height", "absolute bottom-[-0.3rem] right-[-0.3rem] z-10 h-4 w-4 cursor-nwse-resize select-none touch-none rounded-sm border-2 border-white bg-[#6f57f6] shadow-sm dark:border-[#17132a]")} />
+          </>
+        ) : null}
+      </div>
+    );
   }
   if (node.type === "text") {
-    return <span data-builder-node-id={node.id} onClick={select} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }}>{node.text}</span>;
+    const editing = editingNodeId === node.id;
+    return editing
+      ? <span data-builder-node-id={node.id} onClick={select} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }}>{inlineInput(`Edit ${nodeTitle(node)}`)}</span>
+      : <span data-builder-node-id={node.id} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }}>{node.text}</span>;
   }
   if (node.type === "chip") {
     const icon = node.styles.iconName ? <TaskTypeIcon aria-hidden="true" className="h-3.5 w-3.5" iconKey={node.styles.iconName} /> : undefined;
-    return <AdhdChip data-builder-node-id={node.id} icon={icon} iconName={node.styles.iconName ?? undefined} onClick={select} selected={node.styles.selected} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }} tone={node.styles.tone} type="button">{node.text}</AdhdChip>;
+    return <AdhdChip data-builder-node-id={node.id} icon={icon} iconName={node.styles.iconName ?? undefined} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} selected={node.styles.selected} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }} tone={node.styles.tone} type="button">{editingNodeId === node.id ? inlineInput("Edit Chip label") : node.text}</AdhdChip>;
   }
   if (node.type === "icon-button") {
     return <AdhdIconButton aria-label={node.ariaLabel} data-builder-node-id={node.id} onClick={select} size={node.styles.size} style={selectedPreviewStyle(selected)} tone={node.styles.tone} type="button"><TaskTypeIcon aria-hidden="true" iconKey={node.styles.iconName} /></AdhdIconButton>;
@@ -187,13 +301,23 @@ function BuilderTreeNode({ depth, draft, node, onSelect, selectedId }: { depth: 
   );
 }
 
+function BuilderColorField({ kind, label, onChange, value }: { kind: "background" | "divider" | "text"; label: string; onChange: (value: string) => void; value: string }) {
+  return (
+    <div className="flex min-w-0 items-start gap-2">
+      <span className="w-24 shrink-0 pt-1 text-[11px] font-medium text-[#6f6785] dark:text-white/60">{label}</span>
+      <StyleLabBuilderColorControl key={`${label}:${value}`} kind={kind} label={label} onChange={onChange} value={value} />
+    </div>
+  );
+}
+
 function TypographyControls({ onStyleChange, styles }: { onStyleChange: (key: keyof StyleLabBuilderTextStyles, value: string) => void; styles: StyleLabBuilderTextStyles }) {
   return (
     <div className="grid gap-2">
       <SectionHeading>Typography</SectionHeading>
+      <BuilderFontSelect onChange={(value) => onStyleChange("fontFamily", value)} value={styles.fontFamily} />
       <BuilderSelect label="Font size" onChange={(value) => onStyleChange("fontSize", value)} options={options(getStyleLabProperty("fontSize")?.values ?? [])} value={styles.fontSize} />
       <BuilderSelect label="Font weight" onChange={(value) => onStyleChange("fontWeight", value)} options={options(getStyleLabProperty("fontWeight")?.values ?? [])} value={styles.fontWeight} />
-      <BuilderSelect label="Text color" onChange={(value) => onStyleChange("textColor", value)} options={options(STYLE_LAB_TEXT_COLORS)} value={styles.textColor} />
+      <BuilderColorField kind="text" label="Text color" onChange={(value) => onStyleChange("textColor", value)} value={styles.textColor} />
       <BuilderSelect label="Line height" onChange={(value) => onStyleChange("lineHeight", value)} options={options(getStyleLabProperty("lineHeight")?.values ?? [])} value={styles.lineHeight} />
       <BuilderSelect label="Letter spacing" onChange={(value) => onStyleChange("letterSpacing", value)} options={options(getStyleLabProperty("letterSpacing")?.values ?? [])} value={styles.letterSpacing} />
       <BuilderSelect label="Text alignment" onChange={(value) => onStyleChange("textAlign", value)} options={options(getStyleLabProperty("textAlign")?.values ?? [])} value={styles.textAlign} />
@@ -201,7 +325,7 @@ function TypographyControls({ onStyleChange, styles }: { onStyleChange: (key: ke
   );
 }
 
-function ContainerControls({ node, onStyleChange }: { node: StyleLabBuilderContainerNode; onStyleChange: (key: string, value: string) => void }) {
+function ContainerControls({ node, onResetSize, onStyleChange }: { node: StyleLabBuilderContainerNode; onResetSize: () => void; onStyleChange: (key: string, value: string) => void }) {
   return (
     <div className="grid gap-2">
       <SectionHeading>Layout</SectionHeading>
@@ -212,11 +336,15 @@ function ContainerControls({ node, onStyleChange }: { node: StyleLabBuilderConta
       <BuilderSelect label="Padding Y" onChange={(value) => onStyleChange("paddingY", value)} options={options(getStyleLabProperty("paddingY")?.values ?? [])} value={node.styles.paddingY} />
       <BuilderSelect label="Align items" onChange={(value) => onStyleChange("alignItems", value)} options={options(getStyleLabProperty("alignItems")?.values ?? [])} value={node.styles.alignItems} />
       <BuilderSelect label="Justify content" onChange={(value) => onStyleChange("justifyContent", value)} options={options(getStyleLabProperty("justifyContent")?.values ?? [])} value={node.styles.justifyContent} />
-      <BuilderSelect label="Width" onChange={(value) => onStyleChange("width", value)} options={options(getStyleLabProperty("width")?.values ?? [])} value={node.styles.width} />
+      <BuilderDimensionInput key={`width-${node.id}-${node.styles.width}`} label="Width" onChange={(value) => onStyleChange("width", value)} value={node.styles.width} />
+      <BuilderDimensionInput key={`height-${node.id}-${node.styles.height}`} label="Height" onChange={(value) => onStyleChange("height", value)} value={node.styles.height} />
+      <div className="flex justify-end">
+        <AdhdChip onClick={onResetSize} type="button">Reset size</AdhdChip>
+      </div>
       <BuilderSelect label="Min width" onChange={(value) => onStyleChange("minWidth", value)} options={options(getStyleLabProperty("minWidth")?.values ?? [])} value={node.styles.minWidth} />
-      <BuilderSelect label="Max width" onChange={(value) => onStyleChange("maxWidth", value)} options={options(getStyleLabProperty("maxWidth")?.values ?? [])} value={node.styles.maxWidth} />
+      <BuilderSelect label="Max width" onChange={(value) => onStyleChange("maxWidth", value)} options={options([...(getStyleLabProperty("maxWidth")?.values ?? []), "none"])} value={node.styles.maxWidth} />
       <SectionHeading>Surface</SectionHeading>
-      <BuilderSelect label="Background" onChange={(value) => onStyleChange("backgroundColor", value)} options={options(STYLE_LAB_BACKGROUND_COLORS)} value={node.styles.backgroundColor} />
+      <BuilderColorField kind="background" label="Background" onChange={(value) => onStyleChange("backgroundColor", value)} value={node.styles.backgroundColor} />
       <BuilderSelect label="Radius" onChange={(value) => onStyleChange("radius", value)} options={labeledOptions(STYLE_LAB_BUILDER_RADIUS_OPTIONS)} value={node.styles.radius} />
       <BuilderSelect label="Border" onChange={(value) => onStyleChange("border", value)} options={labeledOptions(STYLE_LAB_BUILDER_BORDER_OPTIONS)} value={node.styles.border} />
       <BuilderSelect label="Shadow" onChange={(value) => onStyleChange("shadow", value)} options={labeledOptions(STYLE_LAB_BUILDER_SHADOW_OPTIONS)} value={node.styles.shadow} />
@@ -245,6 +373,19 @@ async function copyBuilderText(value: string): Promise<boolean> {
   }
 }
 
+type BuilderResizeInteraction = {
+  axis: StyleLabBuilderResizeAxis;
+  captureElement: HTMLButtonElement;
+  completed: boolean;
+  nodeId: string;
+  pointerId: number;
+  startDraft: StyleLabBuilderDraft;
+  startHeight: number;
+  startWidth: number;
+  startX: number;
+  startY: number;
+};
+
 export function StyleLabBuilder() {
   if (process.env.NODE_ENV !== "development") return null;
   return <StyleLabBuilderWorkspace />;
@@ -255,6 +396,30 @@ function StyleLabBuilderWorkspace() {
   const [selectedId, setSelectedId] = useState(STYLE_LAB_BUILDER_ROOT_ID);
   const [hydrated, setHydrated] = useState(false);
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [editingValue, setEditingValue] = useState("");
+  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [fontLoadStatus, setFontLoadStatus] = useState<"loading" | "loaded" | "fallback">("loading");
+  const textEditCancelledRef = useRef(false);
+  const textEditOriginalRef = useRef<string | null>(null);
+  const resizeInteractionRef = useRef<BuilderResizeInteraction | null>(null);
+
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.dataset.styleLabBuilderFonts = "true";
+    link.href = STYLE_LAB_BUILDER_WEB_FONT_STYLESHEET;
+    link.rel = "stylesheet";
+    const handleLoad = () => setFontLoadStatus("loaded");
+    const handleError = () => setFontLoadStatus("fallback");
+    link.addEventListener("load", handleLoad);
+    link.addEventListener("error", handleError);
+    document.head.appendChild(link);
+    return () => {
+      link.removeEventListener("load", handleLoad);
+      link.removeEventListener("error", handleError);
+      link.remove();
+    };
+  }, []);
 
   useEffect(() => {
     const timeoutId = window.setTimeout(() => {
@@ -277,6 +442,116 @@ function StyleLabBuilderWorkspace() {
     setCopyStatus(null);
   }
 
+  function beginTextEdit(nodeId: string) {
+    const node = getStyleLabBuilderNode(draft, nodeId);
+    if (!node || (node.type !== "text" && node.type !== "chip")) return;
+    textEditCancelledRef.current = false;
+    textEditOriginalRef.current = node.text;
+    setSelectedId(nodeId);
+    setEditingNodeId(nodeId);
+    setEditingValue(node.text);
+  }
+
+  function commitTextEdit() {
+    if (!editingNodeId) return;
+    if (textEditCancelledRef.current) {
+      textEditCancelledRef.current = false;
+      textEditOriginalRef.current = null;
+      setEditingNodeId(null);
+      return;
+    }
+    textEditOriginalRef.current = null;
+    setEditingNodeId(null);
+  }
+
+  function cancelTextEdit() {
+    textEditCancelledRef.current = true;
+    const originalText = textEditOriginalRef.current;
+    if (editingNodeId && originalText !== null) {
+      setDraft((current) => updateStyleLabBuilderNode(current, editingNodeId, { text: originalText }));
+    }
+    textEditOriginalRef.current = null;
+    setEditingNodeId(null);
+  }
+
+  function handleInlineValueChange(value: string) {
+    setEditingValue(value);
+    if (editingNodeId) setDraft((current) => updateStyleLabBuilderNode(current, editingNodeId, { text: value }));
+  }
+
+  function handleResizeStart(event: PointerEvent<HTMLButtonElement>, nodeId: string, axis: StyleLabBuilderResizeAxis) {
+    if (event.button !== 0 || resizeInteractionRef.current) return;
+    const container = event.currentTarget.parentElement;
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    event.preventDefault();
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    resizeInteractionRef.current = {
+      axis,
+      captureElement: event.currentTarget,
+      completed: false,
+      nodeId,
+      pointerId: event.pointerId,
+      startDraft: draft,
+      startHeight: rect.height,
+      startWidth: rect.width,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    setSelectedId(nodeId);
+  }
+
+  function handleResizeMove(event: PointerEvent<HTMLButtonElement>) {
+    const interaction = resizeInteractionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const nextSize = resizeStyleLabBuilderDimensions(
+      interaction.startWidth,
+      interaction.startHeight,
+      event.clientX - interaction.startX,
+      event.clientY - interaction.startY,
+      interaction.axis,
+    );
+    const styles: Record<string, unknown> = { maxWidth: "none" };
+    if (interaction.axis !== "height") styles.width = nextSize.width;
+    if (interaction.axis !== "width") styles.height = nextSize.height;
+    setDraft((current) => updateStyleLabBuilderNode(current, interaction.nodeId, { styles }));
+  }
+
+  function releaseResizePointer(event: PointerEvent<HTMLButtonElement>) {
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+
+  function handleResizeEnd(event: PointerEvent<HTMLButtonElement>) {
+    const interaction = resizeInteractionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    interaction.completed = true;
+    releaseResizePointer(event);
+    resizeInteractionRef.current = null;
+  }
+
+  function handleResizeCancel(event: PointerEvent<HTMLButtonElement>) {
+    const interaction = resizeInteractionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    event.preventDefault();
+    event.stopPropagation();
+    interaction.completed = true;
+    setDraft(interaction.startDraft);
+    releaseResizePointer(event);
+    resizeInteractionRef.current = null;
+  }
+
+  function handleResizeLostCapture(event: PointerEvent<HTMLButtonElement>) {
+    const interaction = resizeInteractionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId || interaction.completed) return;
+    setDraft(interaction.startDraft);
+    resizeInteractionRef.current = null;
+  }
+
   function handleAdd(type: StyleLabBuilderNodeType) {
     const nextDraft = addStyleLabBuilderNode(draft, type, activeSelectedId);
     const currentIds = new Set(draft.nodes.map((node) => node.id));
@@ -289,6 +564,15 @@ function StyleLabBuilderWorkspace() {
     if (!isStyleLabBuilderBlank(draft) && !window.confirm("Clear the current Builder module?")) return;
     commit(createDefaultStyleLabBuilderDraft());
     setSelectedId(STYLE_LAB_BUILDER_ROOT_ID);
+    setTemplateMenuOpen(false);
+  }
+
+  function handleTemplateLoad(templateId: StyleLabBuilderTemplateId) {
+    if (!isStyleLabBuilderBlank(draft) && !window.confirm("Replace the current Builder module with this template?")) return;
+    commit(createStyleLabBuilderTemplate(templateId));
+    setSelectedId(STYLE_LAB_BUILDER_ROOT_ID);
+    setEditingNodeId(null);
+    setTemplateMenuOpen(false);
   }
 
   function handleDelete() {
@@ -312,6 +596,10 @@ function StyleLabBuilderWorkspace() {
     commit(updateStyleLabBuilderNode(draft, selectedNode.id, { styles: { [key]: key === "gridColumns" ? Number(value) : value } }));
   }
 
+  function handleResetSize() {
+    commit(updateStyleLabBuilderNode(draft, selectedNode.id, { styles: { height: "auto", maxWidth: "100%", width: "100%" } }));
+  }
+
   function handleTextStyleChange(key: keyof StyleLabBuilderTextStyles, value: string) {
     handleStyleChange(key, value);
   }
@@ -320,6 +608,19 @@ function StyleLabBuilderWorkspace() {
     const copied = await copyBuilderText(value);
     setCopyStatus(copied ? status : "Clipboard unavailable; reference logged to the browser console.");
   }
+
+  useEffect(() => {
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || !resizeInteractionRef.current) return;
+      const interaction = resizeInteractionRef.current;
+      interaction.completed = true;
+      setDraft(interaction.startDraft);
+      if (interaction.captureElement.hasPointerCapture(interaction.pointerId)) interaction.captureElement.releasePointerCapture(interaction.pointerId);
+      resizeInteractionRef.current = null;
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   return (
     <div className="mt-5 grid w-full min-w-0 gap-4" data-style-lab-builder>
@@ -334,13 +635,26 @@ function StyleLabBuilderWorkspace() {
         <div className="mt-2 flex flex-wrap gap-1.5">
           <AdhdChip onClick={handleNewModule} type="button">New</AdhdChip>
           <AdhdChip onClick={handleNewModule} type="button">Clear Module</AdhdChip>
+          <div className="relative">
+            <AdhdChip onClick={() => setTemplateMenuOpen((current) => !current)} type="button">Start from template</AdhdChip>
+            {templateMenuOpen ? (
+              <div className="absolute left-0 top-full z-30 mt-1 grid min-w-52 gap-1 rounded-xl border border-[#e4dcfb] bg-white p-2 shadow-[0_16px_38px_rgba(81,61,168,0.14)] dark:border-white/10 dark:bg-[#1b1530]" role="menu">
+                {STYLE_LAB_BUILDER_TEMPLATES.map((template) => (
+                  <button className="rounded-lg px-2.5 py-2 text-left text-[11px] font-medium text-[#5f5876] hover:bg-[#f3efff] dark:text-white/75 dark:hover:bg-white/10" key={template.id} onClick={() => handleTemplateLoad(template.id)} role="menuitem" type="button">
+                    {template.label}
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <AdhdChip icon={<Copy aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void handleCopy(buildStyleLabModuleSpec(draft), "Module Spec copied."); }} tone="purple" type="button">Copy Module Spec</AdhdChip>
           <AdhdChip icon={<Copy aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void handleCopy(buildStyleLabReferenceCode(draft), "Reference Code copied."); }} tone="purple" type="button">Copy Reference Code</AdhdChip>
+          <span className="self-center text-[10px] text-[#8d82a7] dark:text-white/45">{fontLoadStatus === "loaded" ? "Web fonts ready" : fontLoadStatus === "fallback" ? "Web fonts unavailable; using fallbacks" : "Loading web fonts…"}</span>
         </div>
       </section>
 
       <div className="grid min-w-0 gap-4 lg:grid-cols-[minmax(20rem,1.15fr)_minmax(24rem,0.85fr)] xl:grid-cols-[minmax(24rem,1.2fr)_minmax(28rem,0.8fr)]">
-        <section className={`${SUBPANEL_CLASS} min-w-0`}>
+        <section className={`${SUBPANEL_CLASS} min-w-0 lg:sticky lg:top-4 lg:self-start`}>
           <div className="flex items-center justify-between gap-2">
             <div>
               <SectionHeading>Live canvas</SectionHeading>
@@ -348,15 +662,31 @@ function StyleLabBuilderWorkspace() {
             </div>
             <span className="text-[10px] text-[#9a91b1] dark:text-white/35">{draft.nodes.length}/60 nodes</span>
           </div>
-          <div className="mt-3 min-w-0 overflow-x-auto rounded-[1rem] border border-dashed border-[#dcd3f2] bg-[#f7f4ff] p-4 sm:p-6 dark:border-white/15 dark:bg-white/[0.03]">
-            <div className="mx-auto min-h-[20rem] max-w-full" style={{ width: draft.canvasWidth === "fit" ? "100%" : `${draft.canvasWidth}px` }}>
-              <BuilderPreviewNode draft={draft} node={getStyleLabBuilderNode(draft, STYLE_LAB_BUILDER_ROOT_ID)!} onSelect={setSelectedId} selectedId={activeSelectedId} />
+          <div className="mt-3 min-w-0 overflow-x-auto rounded-[1rem] border border-dashed border-[#dcd3f2] bg-[#f7f4ff] p-4 sm:p-6 dark:border-white/15 dark:bg-white/[0.03]" onClick={(event) => { if (event.target === event.currentTarget) setSelectedId(STYLE_LAB_BUILDER_ROOT_ID); }}>
+            <div className="mx-auto min-h-[20rem] max-w-full" onClick={(event) => { if (event.target === event.currentTarget) setSelectedId(STYLE_LAB_BUILDER_ROOT_ID); }} style={{ width: draft.canvasWidth === "fit" ? "100%" : `${draft.canvasWidth}px` }}>
+              <BuilderPreviewNode
+                draft={draft}
+                editingNodeId={editingNodeId}
+                editingValue={editingValue}
+                node={getStyleLabBuilderNode(draft, STYLE_LAB_BUILDER_ROOT_ID)!}
+                onBeginTextEdit={beginTextEdit}
+                onCancelTextEdit={cancelTextEdit}
+                onCommitTextEdit={commitTextEdit}
+                onInlineValueChange={handleInlineValueChange}
+                onResizeCancel={handleResizeCancel}
+                onResizeEnd={handleResizeEnd}
+                onResizeLostCapture={handleResizeLostCapture}
+                onResizeMove={handleResizeMove}
+                onResizeStart={handleResizeStart}
+                onSelect={setSelectedId}
+                selectedId={activeSelectedId}
+              />
             </div>
           </div>
           {copyStatus ? <p className="mt-2 text-[11px] text-[#4d8c68] dark:text-[#a5d7b8]" role="status">{copyStatus}</p> : null}
         </section>
 
-        <div className="grid min-w-0 gap-4 xl:sticky xl:top-4 xl:self-start">
+        <div className="grid min-w-0 gap-4">
           <section className={SUBPANEL_CLASS}>
             <div className="flex items-center justify-between gap-2">
               <SectionHeading>Structure</SectionHeading>
@@ -379,7 +709,7 @@ function StyleLabBuilderWorkspace() {
 
           <section className={SUBPANEL_CLASS}>
             <SectionHeading>Selected element</SectionHeading>
-            {selectedNode.type === "container" ? <ContainerControls node={selectedNode} onStyleChange={handleStyleChange} /> : null}
+            {selectedNode.type === "container" ? <ContainerControls node={selectedNode} onResetSize={handleResetSize} onStyleChange={handleStyleChange} /> : null}
             {selectedNode.type === "text" ? (
               <div className="grid gap-3">
                 <BuilderTextInput label="Text" onChange={(value) => commit(updateStyleLabBuilderNode(draft, selectedNode.id, { text: value }))} value={selectedNode.text} />
@@ -406,7 +736,7 @@ function StyleLabBuilderWorkspace() {
             {selectedNode.type === "divider" ? (
               <div className="grid gap-2">
                 <BuilderSelect label="Orientation" onChange={(value) => handleStyleChange("orientation", value)} options={options(STYLE_LAB_BUILDER_DIVIDER_ORIENTATIONS)} value={selectedNode.styles.orientation} />
-                <BuilderSelect label="Color" onChange={(value) => handleStyleChange("color", value)} options={options(STYLE_LAB_TEXT_COLORS)} value={selectedNode.styles.color} />
+                <BuilderColorField kind="divider" label="Color" onChange={(value) => handleStyleChange("color", value)} value={selectedNode.styles.color} />
                 <BuilderSelect label="Width" onChange={(value) => handleStyleChange("width", value)} options={options(STYLE_LAB_BUILDER_DIVIDER_WIDTHS)} value={selectedNode.styles.width} />
               </div>
             ) : null}

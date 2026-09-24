@@ -13,6 +13,8 @@ import {
   STYLE_LAB_BUILDER_LAYOUTS,
   STYLE_LAB_BUILDER_RADIUS_OPTIONS,
   STYLE_LAB_BUILDER_SHADOW_OPTIONS,
+  isStyleLabBuilderFontFamily,
+  normalizeStyleLabCustomColor,
   STYLE_LAB_TEXT_COLORS,
   STYLE_LAB_ICON_OPTIONS,
   type StyleLabBackgroundColor,
@@ -27,6 +29,7 @@ import {
   type StyleLabBuilderLayout,
   type StyleLabBuilderRadius,
   type StyleLabBuilderShadow,
+  type StyleLabBuilderFontFamily,
   type StyleLabIconName,
   type StyleLabTextColor,
 } from "./style-lab-registry";
@@ -36,6 +39,10 @@ export const STYLE_LAB_BUILDER_MAX_NODES = 60;
 export const STYLE_LAB_BUILDER_MAX_DEPTH = 6;
 export const STYLE_LAB_BUILDER_ROOT_ID = "root";
 export const STYLE_LAB_BUILDER_DEFAULT_MODULE_NAME = "Untitled Module";
+export const STYLE_LAB_BUILDER_MIN_WIDTH_PX = 40;
+export const STYLE_LAB_BUILDER_MAX_WIDTH_PX = 1600;
+export const STYLE_LAB_BUILDER_MIN_HEIGHT_PX = 24;
+export const STYLE_LAB_BUILDER_MAX_HEIGHT_PX = 1600;
 
 export const STYLE_LAB_BUILDER_NODE_TYPES = ["container", "text", "chip", "icon-button", "divider"] as const;
 export type StyleLabBuilderNodeType = (typeof STYLE_LAB_BUILDER_NODE_TYPES)[number];
@@ -44,9 +51,10 @@ export const STYLE_LAB_BUILDER_TEXT_ALIGNMENTS = ["left", "center", "right"] as 
 export type StyleLabBuilderTextAlign = (typeof STYLE_LAB_BUILDER_TEXT_ALIGNMENTS)[number];
 
 export type StyleLabBuilderTextStyles = {
+  fontFamily: StyleLabBuilderFontFamily;
   fontSize: string;
   fontWeight: string;
-  textColor: StyleLabTextColor;
+  textColor: StyleLabTextColor | `#${string}`;
   lineHeight: string;
   letterSpacing: string;
   textAlign: StyleLabBuilderTextAlign;
@@ -61,9 +69,10 @@ export type StyleLabBuilderContainerStyles = {
   alignItems: string;
   justifyContent: string;
   width: string;
+  height: string;
   minWidth: string;
   maxWidth: string;
-  backgroundColor: StyleLabBackgroundColor;
+  backgroundColor: StyleLabBackgroundColor | `#${string}`;
   radius: StyleLabBuilderRadius;
   border: StyleLabBuilderBorder;
   shadow: StyleLabBuilderShadow;
@@ -110,7 +119,7 @@ export type StyleLabBuilderDividerNode = StyleLabBuilderBaseNode & {
   type: "divider";
   styles: {
     orientation: StyleLabBuilderDividerOrientation;
-    color: StyleLabTextColor;
+    color: StyleLabTextColor | `#${string}`;
     width: StyleLabBuilderDividerWidth;
   };
 };
@@ -173,12 +182,65 @@ function normalizedOrder(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
 }
 
+export type StyleLabBuilderDimensionOptions = {
+  allowAuto?: boolean;
+  fallback: string;
+  max: number;
+  min: number;
+};
+
+export function normalizeStyleLabBuilderDimension(value: unknown, options: StyleLabBuilderDimensionOptions): string {
+  if (options.allowAuto && value === "auto") return "auto";
+  const raw = typeof value === "number" && Number.isFinite(value)
+    ? value
+    : typeof value === "string" && /^\d+(?:\.\d+)?(?:px)?$/.test(value.trim())
+      ? Number.parseFloat(value)
+      : Number.NaN;
+  if (!Number.isFinite(raw)) return options.fallback;
+  const normalized = Math.min(options.max, Math.max(options.min, Math.round(raw)));
+  return `${normalized}px`;
+}
+
+function normalizeBuilderWidth(value: unknown): string {
+  if (typeof value === "string" && sizeValues.includes(value as (typeof sizeValues)[number])) return value;
+  return normalizeStyleLabBuilderDimension(value, {
+    fallback: "100%",
+    max: STYLE_LAB_BUILDER_MAX_WIDTH_PX,
+    min: STYLE_LAB_BUILDER_MIN_WIDTH_PX,
+  });
+}
+
+function normalizeBuilderColor<T extends string>(value: unknown, semanticValues: readonly T[], fallback: T): T | `#${string}` {
+  const customColor = normalizeStyleLabCustomColor(value);
+  return customColor ? customColor as `#${string}` : allowedValue(value, semanticValues, fallback);
+}
+
+export type StyleLabBuilderResizeAxis = "width" | "height" | "both";
+
+export function resizeStyleLabBuilderDimensions(
+  startWidth: number,
+  startHeight: number,
+  deltaX: number,
+  deltaY: number,
+  axis: StyleLabBuilderResizeAxis,
+) {
+  return {
+    height: axis === "width"
+      ? normalizeStyleLabBuilderDimension(startHeight, { fallback: "auto", max: STYLE_LAB_BUILDER_MAX_HEIGHT_PX, min: STYLE_LAB_BUILDER_MIN_HEIGHT_PX })
+      : normalizeStyleLabBuilderDimension(startHeight + deltaY, { fallback: "24px", max: STYLE_LAB_BUILDER_MAX_HEIGHT_PX, min: STYLE_LAB_BUILDER_MIN_HEIGHT_PX }),
+    width: axis === "height"
+      ? normalizeStyleLabBuilderDimension(startWidth, { fallback: "100%", max: STYLE_LAB_BUILDER_MAX_WIDTH_PX, min: STYLE_LAB_BUILDER_MIN_WIDTH_PX })
+      : normalizeStyleLabBuilderDimension(startWidth + deltaX, { fallback: "40px", max: STYLE_LAB_BUILDER_MAX_WIDTH_PX, min: STYLE_LAB_BUILDER_MIN_WIDTH_PX }),
+  };
+}
+
 function normalizeTextStyles(value: unknown): StyleLabBuilderTextStyles {
   const source = isRecord(value) ? value : {};
   return {
     fontSize: allowedValue(source.fontSize, fontSizeValues, "14px"),
     fontWeight: allowedValue(source.fontWeight, fontWeightValues, "400"),
-    textColor: allowedValue(source.textColor, STYLE_LAB_TEXT_COLORS, "Primary"),
+    fontFamily: isStyleLabBuilderFontFamily(source.fontFamily) ? source.fontFamily : "adhdice",
+    textColor: normalizeBuilderColor(source.textColor, STYLE_LAB_TEXT_COLORS, "Primary"),
     lineHeight: allowedValue(source.lineHeight, lineHeightValues, "1.4"),
     letterSpacing: allowedValue(source.letterSpacing, letterSpacingValues, "0"),
     textAlign: allowedValue(source.textAlign, textAlignValues as readonly StyleLabBuilderTextAlign[], "left"),
@@ -195,10 +257,16 @@ function normalizeContainerStyles(value: unknown): StyleLabBuilderContainerStyle
     paddingY: allowedValue(source.paddingY, spacingValues, "0.75rem"),
     alignItems: allowedValue(source.alignItems, alignItemsValues, "stretch"),
     justifyContent: allowedValue(source.justifyContent, justifyContentValues, "start"),
-    width: allowedValue(source.width, sizeValues, "100%"),
+    width: normalizeBuilderWidth(source.width),
+    height: normalizeStyleLabBuilderDimension(source.height, {
+      allowAuto: true,
+      fallback: "auto",
+      max: STYLE_LAB_BUILDER_MAX_HEIGHT_PX,
+      min: STYLE_LAB_BUILDER_MIN_HEIGHT_PX,
+    }),
     minWidth: allowedValue(source.minWidth, sizeValues, "auto"),
-    maxWidth: allowedValue(source.maxWidth, sizeValues, "100%"),
-    backgroundColor: allowedValue(source.backgroundColor, STYLE_LAB_BACKGROUND_COLORS, "Surface"),
+    maxWidth: allowedValue(source.maxWidth, [...sizeValues, "none"], "100%"),
+    backgroundColor: normalizeBuilderColor(source.backgroundColor, STYLE_LAB_BACKGROUND_COLORS, "Surface"),
     radius: allowedValue(source.radius, STYLE_LAB_BUILDER_RADIUS_OPTIONS.map((option) => option.value), "large"),
     border: allowedValue(source.border, STYLE_LAB_BUILDER_BORDER_OPTIONS.map((option) => option.value), "none"),
     shadow: allowedValue(source.shadow, STYLE_LAB_BUILDER_SHADOW_OPTIONS.map((option) => option.value), "none"),
@@ -245,7 +313,7 @@ function normalizeNode(raw: UnknownRecord, id: string, parentId: string | null, 
       type,
       styles: {
         orientation: allowedValue(styles.orientation, STYLE_LAB_BUILDER_DIVIDER_ORIENTATIONS, "horizontal"),
-        color: allowedValue(styles.color, STYLE_LAB_TEXT_COLORS, "Muted"),
+        color: normalizeBuilderColor(styles.color, STYLE_LAB_TEXT_COLORS, "Muted"),
         width: allowedValue(styles.width, STYLE_LAB_BUILDER_DIVIDER_WIDTHS, "100%"),
       },
     };

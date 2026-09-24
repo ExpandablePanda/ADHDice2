@@ -1,5 +1,6 @@
 import {
   getStyleLabBackgroundColorCssValue,
+  getStyleLabBuilderFontOption,
   getStyleLabTextColorCssValue,
   STYLE_LAB_BUILDER_BORDER_OPTIONS,
   STYLE_LAB_BUILDER_RADIUS_OPTIONS,
@@ -36,6 +37,7 @@ function nodeLabel(node: StyleLabBuilderNode): string {
 
 function textStyleSpec(styles: StyleLabBuilderTextStyles, indent: string): string[] {
   return [
+    `${indent}- Font family: ${getStyleLabBuilderFontOption(styles.fontFamily).label}`,
     `${indent}- Font size: ${styles.fontSize}`,
     `${indent}- Font weight: ${styles.fontWeight}`,
     `${indent}- Text color: ${styles.textColor}`,
@@ -56,6 +58,7 @@ function nodeSpecLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode, d
       `${propertyIndent}- Align items: ${titleCase(node.styles.alignItems)}`,
       `${propertyIndent}- Justify content: ${titleCase(node.styles.justifyContent)}`,
       `${propertyIndent}- Width: ${node.styles.width}`,
+      `${propertyIndent}- Height: ${node.styles.height}`,
       `${propertyIndent}- Min width: ${node.styles.minWidth}`,
       `${propertyIndent}- Max width: ${node.styles.maxWidth}`,
       `${propertyIndent}- Padding X: ${node.styles.paddingX}`,
@@ -135,6 +138,7 @@ function styleObject(entries: Array<[string, string | number]>): string[] {
 
 function textStyleObject(styles: StyleLabBuilderTextStyles): string[] {
   return styleObject([
+    ["fontFamily", getStyleLabBuilderFontOption(styles.fontFamily).cssFamily],
     ["fontSize", styles.fontSize],
     ["fontWeight", styles.fontWeight],
     ["color", getStyleLabTextColorCssValue(styles.textColor)],
@@ -159,6 +163,7 @@ function containerStyleObject(node: StyleLabBuilderContainerNode): string[] {
     ["alignItems", flexAlignValue(styles.alignItems)],
     ["justifyContent", styles.justifyContent],
     ["width", styles.width],
+    ["height", styles.height],
     ["minWidth", styles.minWidth],
     ["maxWidth", styles.maxWidth],
     ["background", getStyleLabBackgroundColorCssValue(styles.backgroundColor)],

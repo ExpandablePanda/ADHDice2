@@ -11,16 +11,24 @@ import {
   moveStyleLabBuilderNode,
   normalizeStyleLabBuilderDraft,
   STYLE_LAB_BUILDER_MAX_DEPTH,
+  STYLE_LAB_BUILDER_MAX_HEIGHT_PX,
+  STYLE_LAB_BUILDER_MAX_WIDTH_PX,
+  STYLE_LAB_BUILDER_MIN_HEIGHT_PX,
+  STYLE_LAB_BUILDER_MIN_WIDTH_PX,
   STYLE_LAB_BUILDER_ROOT_ID,
   STYLE_LAB_BUILDER_STORAGE_KEY,
+  normalizeStyleLabBuilderDimension,
+  resizeStyleLabBuilderDimensions,
   updateStyleLabBuilderNode,
   readStyleLabBuilderDraft,
   type StyleLabBuilderDraft,
 } from "@/components/style-lab/style-lab-builder-model";
 import { buildStyleLabModuleSpec, buildStyleLabReferenceCode } from "@/components/style-lab/style-lab-builder-export";
-import { getStyleLabBackgroundColorCssValue, getStyleLabTextColorCssValue } from "@/components/style-lab/style-lab-registry";
+import { createStyleLabBuilderTemplate, STYLE_LAB_BUILDER_TEMPLATES } from "@/components/style-lab/style-lab-builder-templates";
+import { getStyleLabBackgroundColorCssValue, getStyleLabBuilderFontOption, getStyleLabTextColorCssValue, isStyleLabBuilderFontFamily, normalizeStyleLabCustomColor } from "@/components/style-lab/style-lab-registry";
 
 const builderSource = readFileSync(new URL("../src/components/style-lab/style-lab-builder.tsx", import.meta.url), "utf8");
+const colorControlSource = readFileSync(new URL("../src/components/style-lab/style-lab-builder-color-control.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../src/components/style-lab/style-lab-panel.tsx", import.meta.url), "utf8");
 const devRootSource = readFileSync(new URL("../src/components/style-lab/style-lab-dev-root.tsx", import.meta.url), "utf8");
 
@@ -141,6 +149,64 @@ test("approved properties survive while arbitrary values and grid columns are re
   assert.equal(rejectedRoot.type === "container" ? rejectedRoot.styles.radius : "", "large");
 });
 
+test("legacy text nodes default to ADHDice font and known font IDs normalize safely", () => {
+  const legacy = normalizeStyleLabBuilderDraft({ nodes: [{ id: "legacy", type: "text", parentId: "root", text: "Legacy", styles: {} }] });
+  const known = normalizeStyleLabBuilderDraft({ nodes: [{ id: "known", type: "text", parentId: "root", text: "Inter", styles: { fontFamily: "inter" } }] });
+  const unknown = normalizeStyleLabBuilderDraft({ nodes: [{ id: "unknown", type: "text", parentId: "root", text: "Fallback", styles: { fontFamily: "comic-sans" } }] });
+  assert.equal(legacy.nodes.find((node) => node.id === "legacy")?.type === "text" ? legacy.nodes.find((node) => node.id === "legacy")?.styles.fontFamily : "", "adhdice");
+  assert.equal(known.nodes.find((node) => node.id === "known")?.type === "text" ? known.nodes.find((node) => node.id === "known")?.styles.fontFamily : "", "inter");
+  assert.equal(unknown.nodes.find((node) => node.id === "unknown")?.type === "text" ? unknown.nodes.find((node) => node.id === "unknown")?.styles.fontFamily : "", "adhdice");
+  assert.equal(isStyleLabBuilderFontFamily("roboto"), true);
+  assert.equal(isStyleLabBuilderFontFamily("not-a-font"), false);
+  assert.equal(getStyleLabBuilderFontOption("lato").label, "Lato");
+});
+
+test("Builder colors preserve semantic tokens and normalize safe custom HEX values", () => {
+  const draft = normalizeStyleLabBuilderDraft({
+    nodes: [
+      { id: "root", type: "container", parentId: null, styles: { backgroundColor: "#ABC" } },
+      { id: "text", type: "text", parentId: "root", text: "Color", styles: { textColor: "#372F55" } },
+      { id: "divider", type: "divider", parentId: "root", styles: { color: "#12abef" } },
+    ],
+  });
+  const root = draft.nodes.find((node) => node.id === "root")!;
+  const text = draft.nodes.find((node) => node.id === "text")!;
+  const divider = draft.nodes.find((node) => node.id === "divider")!;
+  assert.equal(root.type === "container" ? root.styles.backgroundColor : "", "#aabbcc");
+  assert.equal(text.type === "text" ? text.styles.textColor : "", "#372f55");
+  assert.equal(divider.type === "divider" ? divider.styles.color : "", "#12abef");
+  assert.equal(normalizeStyleLabCustomColor("#abc"), "#aabbcc");
+  assert.equal(normalizeStyleLabCustomColor("rgb(1, 2, 3)"), null);
+  assert.equal(normalizeStyleLabCustomColor("#12345678"), null);
+  const semantic = normalizeStyleLabBuilderDraft({ nodes: [{ id: "root", type: "container", parentId: null, styles: { backgroundColor: "Subtle" } }] });
+  assert.equal(semantic.nodes[0]?.type === "container" ? semantic.nodes[0].styles.backgroundColor : "", "Subtle");
+});
+
+test("direct Builder dimensions normalize to bounded pixels and resize deltas", () => {
+  assert.equal(normalizeStyleLabBuilderDimension("286", { fallback: "100%", min: STYLE_LAB_BUILDER_MIN_WIDTH_PX, max: STYLE_LAB_BUILDER_MAX_WIDTH_PX }), "286px");
+  assert.equal(normalizeStyleLabBuilderDimension("94px", { fallback: "auto", min: STYLE_LAB_BUILDER_MIN_HEIGHT_PX, max: STYLE_LAB_BUILDER_MAX_HEIGHT_PX }), "94px");
+  assert.equal(normalizeStyleLabBuilderDimension("2px", { fallback: "100%", min: STYLE_LAB_BUILDER_MIN_WIDTH_PX, max: STYLE_LAB_BUILDER_MAX_WIDTH_PX }), `${STYLE_LAB_BUILDER_MIN_WIDTH_PX}px`);
+  assert.equal(normalizeStyleLabBuilderDimension("2000px", { fallback: "auto", min: STYLE_LAB_BUILDER_MIN_HEIGHT_PX, max: STYLE_LAB_BUILDER_MAX_HEIGHT_PX }), `${STYLE_LAB_BUILDER_MAX_HEIGHT_PX}px`);
+  assert.equal(normalizeStyleLabBuilderDimension("url(javascript:bad)", { allowAuto: true, fallback: "auto", min: STYLE_LAB_BUILDER_MIN_HEIGHT_PX, max: STYLE_LAB_BUILDER_MAX_HEIGHT_PX }), "auto");
+  assert.deepEqual(resizeStyleLabBuilderDimensions(260, 80, 26, 14, "both"), { width: "286px", height: "94px" });
+  assert.equal(resizeStyleLabBuilderDimensions(260, 80, -400, 0, "width").width, `${STYLE_LAB_BUILDER_MIN_WIDTH_PX}px`);
+  assert.equal(resizeStyleLabBuilderDimensions(260, 80, 0, 2000, "height").height, `${STYLE_LAB_BUILDER_MAX_HEIGHT_PX}px`);
+});
+
+test("curated starter templates normalize into bounded unique editable trees", () => {
+  assert.deepEqual(STYLE_LAB_BUILDER_TEMPLATES.map((template) => template.label), ["Blank", "Page Shell", "ADHDice Card", "ADHDice Panel", "Metric Tile", "3-Column Metric Grid", "Task Detail Hero"]);
+  for (const template of STYLE_LAB_BUILDER_TEMPLATES) {
+    const draft = createStyleLabBuilderTemplate(template.id);
+    const ids = draft.nodes.map((node) => node.id);
+    const depths = depthMap(draft);
+    assert.equal(new Set(ids).size, ids.length, `${template.id} IDs should be unique`);
+    assert.ok(ids.length <= 60, `${template.id} should respect the node limit`);
+    assert.ok(Math.max(...depths.values()) <= STYLE_LAB_BUILDER_MAX_DEPTH, `${template.id} should respect the depth limit`);
+    assert.equal(draft.nodes[0]?.id, STYLE_LAB_BUILDER_ROOT_ID);
+  }
+  assert.equal(STYLE_LAB_BUILDER_STORAGE_KEY, "adhdice-style-lab:builder-draft");
+});
+
 test("module spec and reference code preserve hierarchy, order, text, styles, and semantic tokens", () => {
   let draft = createDefaultStyleLabBuilderDraft("Metric Tile");
   draft = addStyleLabBuilderNode(draft, "text", "root");
@@ -164,6 +230,26 @@ test("module spec and reference code preserve hierarchy, order, text, styles, an
   assert.notEqual(STYLE_LAB_BUILDER_STORAGE_KEY, "adhdice-style-lab:mock-structure");
 });
 
+test("exports include custom colors, exact dimensions, and font family", () => {
+  const draft = normalizeStyleLabBuilderDraft({
+    moduleName: "Exact module",
+    nodes: [
+      { id: "root", type: "container", parentId: null, styles: { width: "286px", height: "94px", maxWidth: "none", backgroundColor: "#f1ecff" } },
+      { id: "text", type: "text", parentId: "root", text: "Urgent", styles: { fontFamily: "inter", fontSize: "18px", fontWeight: "600", textColor: "#372f55", textAlign: "center" } },
+    ],
+  });
+  const spec = buildStyleLabModuleSpec(draft);
+  const code = buildStyleLabReferenceCode(draft);
+  assert.match(spec, /Font family: Inter/);
+  assert.match(spec, /Text color: #372f55/);
+  assert.match(spec, /Width: 286px/);
+  assert.match(spec, /Height: 94px/);
+  assert.match(code, /fontFamily: "\\"Inter\\", sans-serif"/);
+  assert.match(code, /color: "#372f55"/);
+  assert.match(code, /width: "286px"/);
+  assert.match(code, /height: "94px"/);
+});
+
 test("Builder is a separate development-only Test workspace and the panel stays Inspect-only", () => {
   assert.doesNotMatch(panelSource, /StyleLabBuilder|StyleLabMode|onModeChange|Build mode|Builder active|Local draft only/);
   assert.doesNotMatch(devRootSource, /StyleLabMode|handleModeChange|onModeChange|setMode\(/);
@@ -173,6 +259,19 @@ test("Builder is a separate development-only Test workspace and the panel stays 
   assert.match(builderSource, /<AdhdIconButton/);
   assert.match(builderSource, /data-style-lab-builder/);
   assert.match(builderSource, /lg:grid-cols-\[minmax\(20rem,1\.15fr\)_minmax\(24rem,0\.85fr\)\]/);
+  assert.match(builderSource, /lg:sticky lg:top-4 lg:self-start/);
+  assert.doesNotMatch(builderSource, /xl:sticky xl:top-4 xl:self-start/);
+  assert.match(builderSource, /<StyleLabBuilderColorControl/);
+  assert.match(colorControlSource, /type="color"/);
+  assert.match(builderSource, /STYLE_LAB_BUILDER_WEB_FONT_STYLESHEET/);
+  assert.match(builderSource, /Start from template/);
+  assert.match(builderSource, /onDoubleClick/);
+  assert.match(builderSource, /data-builder-inline-editor/);
+  assert.match(builderSource, /updateStyleLabBuilderNode\(current, editingNodeId, \{ text: value \}\)/);
+  assert.match(builderSource, /onPointerCancel/);
+  assert.match(builderSource, /onLostPointerCapture/);
+  assert.match(builderSource, /event.key !== "Escape"/);
+  assert.match(builderSource, /maxWidth: "none"/);
   assert.match(builderSource, /buildStyleLabModuleSpec/);
   assert.match(builderSource, /buildStyleLabReferenceCode/);
 });
