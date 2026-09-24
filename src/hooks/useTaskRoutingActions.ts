@@ -5,6 +5,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskListManualMembership as DbTaskListManualMembership } from "@/lib/database.types";
 import { canSetRoutineTaskMembership, getTaskListCapabilities, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 
 type Message = {
   text: string;
@@ -22,6 +23,7 @@ type UseTaskRoutingActionsOptions = {
   setTaskRouting: Dispatch<SetStateAction<Record<string, TaskRoutingBucket>>>;
   taskListDefinitions: ReadonlyArray<TaskListDefinition>;
   taskListManualMemberships: TaskListManualMembership[];
+  invalidateTaskListDomainGeneration?: WorkspaceDomainMutationBarrier;
 };
 
 export function useTaskRoutingActions({
@@ -35,6 +37,7 @@ export function useTaskRoutingActions({
   setTaskRouting,
   taskListDefinitions,
   taskListManualMemberships,
+  invalidateTaskListDomainGeneration = () => {},
 }: UseTaskRoutingActionsOptions) {
   function routeTask(taskId: string, bucket: TaskRoutingBucket | null) {
     setTaskRouting((current) => {
@@ -64,6 +67,12 @@ export function useTaskRoutingActions({
     }
     const isCompatibilityList = listId === "today" || listId === "later" || listId === "quick_wins" || listId === "waiting";
     const existingMembership = taskListManualMemberships.find((membership) => membership.task_id === taskId && membership.list_id === listId);
+    const isNoOp = (included && Boolean(existingMembership) && !existingMembership.id.startsWith("temp:"))
+      || (!included && !existingMembership);
+
+    if (!isNoOp) {
+      invalidateTaskListDomainGeneration();
+    }
 
     setTaskListManualMemberships((current) => {
       const alreadyIncluded = current.some((membership) => membership.task_id === taskId && membership.list_id === listId);
@@ -90,11 +99,7 @@ export function useTaskRoutingActions({
       routeTask(taskId, included ? listId : null);
     }
 
-    if (included && existingMembership && !existingMembership.id.startsWith("temp:")) {
-      return true;
-    }
-
-    if (!included && !existingMembership) {
+    if (isNoOp) {
       return true;
     }
 

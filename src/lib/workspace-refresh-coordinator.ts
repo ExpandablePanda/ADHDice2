@@ -2,6 +2,13 @@ export type WorkspaceRefreshRequest = {
   source: string;
 };
 
+export type WorkspaceDomainMutationBarrier = () => void;
+
+export function advanceWorkspaceDomainGeneration(generation: { current: number }) {
+  generation.current += 1;
+  return generation.current;
+}
+
 export type SingleFlightRefreshRequestOptions = {
   refreshAfterCurrent?: boolean;
 };

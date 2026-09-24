@@ -41,6 +41,8 @@ import {
   createWorkspaceRefreshCoordinator,
   createWorkspaceResumeRefreshCoordinator,
   createSingleFlightRefreshCoordinator,
+  advanceWorkspaceDomainGeneration,
+  type WorkspaceDomainMutationBarrier,
   type WorkspaceResumeRefreshReason,
 } from "@/lib/workspace-refresh-coordinator";
 import { workspaceStartupRequestRegistry } from "@/lib/workspace-startup-request";
@@ -122,8 +124,8 @@ type UseWorkspaceDataOptions = {
   mapTaskListRow: (row: DbTaskList) => TaskListDefinition | null;
   mergeStoredFocusCategories: (categories: FocusCategory[]) => FocusCategory[];
   mergeStoredFocusHistory: (history: HistoricalFocusSession[]) => HistoricalFocusSession[];
-  migrateLocalFocusState: (client: ResolvedSupabaseClient, user: User) => Promise<boolean>;
-  migrateLocalTaskFocusDays: (client: ResolvedSupabaseClient, user: User) => Promise<boolean>;
+  migrateLocalFocusState: (client: ResolvedSupabaseClient, user: User, onMutationStart: WorkspaceDomainMutationBarrier) => Promise<boolean>;
+  migrateLocalTaskFocusDays: (client: ResolvedSupabaseClient, user: User, onMutationStart: WorkspaceDomainMutationBarrier) => Promise<boolean>;
   isMissingTaskListManualMembershipsTableError: (message: string) => boolean;
   isMissingTaskListsTableError: (message: string) => boolean;
   onProfileLoaded: (profileRow: WorkspaceProfileRow | null, user: User) => void;
@@ -397,6 +399,15 @@ export function useWorkspaceData({
   const shouldSkipTaskReloadRef = useRef(shouldSkipTaskReload);
   const taskContentFolderDataGenerationRef = useRef(0);
   const focusDataGenerationRef = useRef(0);
+  const invalidateTaskListDomainGeneration = useCallback(() => {
+    advanceWorkspaceDomainGeneration(taskListDataGeneration);
+  }, [taskListDataGeneration]);
+  const invalidateTaskContentFolderDomainGeneration = useCallback(() => {
+    advanceWorkspaceDomainGeneration(taskContentFolderDataGenerationRef);
+  }, []);
+  const invalidateFocusDomainGeneration = useCallback(() => {
+    advanceWorkspaceDomainGeneration(focusDataGenerationRef);
+  }, []);
   const coreRefreshCoordinatorRef = useRef<{
     isRunning: () => boolean;
     request: (request: { silent: boolean; source: WorkspaceCoreRefreshSource }) => Promise<void>;
@@ -1652,8 +1663,7 @@ export function useWorkspaceData({
     }
 
     function requestTaskListDomainRefresh(sourceTable: string) {
-      const generation = taskListDataGeneration.current + 1;
-      taskListDataGeneration.current = generation;
+      const generation = advanceWorkspaceDomainGeneration(taskListDataGeneration);
       const joined = taskListDomainRefreshCoordinator.isRunning();
       recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_requested", "task-list", sourceTable, { generation });
       if (joined) {
@@ -1709,8 +1719,7 @@ export function useWorkspaceData({
     }
 
     function requestTaskContentFolderDomainRefresh(sourceTable: string) {
-      const generation = taskContentFolderDataGenerationRef.current + 1;
-      taskContentFolderDataGenerationRef.current = generation;
+      const generation = advanceWorkspaceDomainGeneration(taskContentFolderDataGenerationRef);
       const joined = taskContentFolderDomainRefreshCoordinator.isRunning();
       recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_requested", "task-content-folder", sourceTable, { generation });
       if (joined) {
@@ -1779,8 +1788,7 @@ export function useWorkspaceData({
     }
 
     function requestFocusDomainRefresh(sourceTable: string) {
-      const generation = focusDataGenerationRef.current + 1;
-      focusDataGenerationRef.current = generation;
+      const generation = advanceWorkspaceDomainGeneration(focusDataGenerationRef);
       const joined = focusDomainRefreshCoordinator.isRunning();
       recordWorkspaceScopedRefreshDiagnostic("workspace_scoped_refresh_requested", "focus", sourceTable, { generation });
       if (joined) {
@@ -1796,12 +1804,9 @@ export function useWorkspaceData({
     }
 
     async function loadCoreWorkspaceData({ silent = false, source = "initial" }: { silent?: boolean; source?: WorkspaceCoreRefreshSource } = {}) {
-      const taskListLoadGeneration = taskListDataGeneration.current + 1;
-      taskListDataGeneration.current = taskListLoadGeneration;
-      const taskContentFolderLoadGeneration = taskContentFolderDataGenerationRef.current + 1;
-      taskContentFolderDataGenerationRef.current = taskContentFolderLoadGeneration;
-      const focusLoadGeneration = focusDataGenerationRef.current + 1;
-      focusDataGenerationRef.current = focusLoadGeneration;
+      const taskListLoadGeneration = advanceWorkspaceDomainGeneration(taskListDataGeneration);
+      const taskContentFolderLoadGeneration = advanceWorkspaceDomainGeneration(taskContentFolderDataGenerationRef);
+      const focusLoadGeneration = advanceWorkspaceDomainGeneration(focusDataGenerationRef);
       if (!silent) {
         setIsWorkspaceLoading(true);
       }
@@ -1998,12 +2003,17 @@ export function useWorkspaceData({
       const nextTaskContentFolders = (taskContentFolderResult.data ?? [])
         .map((row) => normalizeTaskContentFolderRow(row))
         .filter((row): row is TaskContentFolder => row !== null);
+      let focusMigrationInvalidatedGeneration = false;
+      const onFocusMigrationStart = () => {
+        focusMigrationInvalidatedGeneration = true;
+        invalidateFocusDomainGeneration();
+      };
 
       if (
         nextCategories.length === 0 &&
         shouldLoadFocusHistory && nextFocusHistory.length === 0
       ) {
-        const migrated = await migrateLocalFocusState(client, user);
+        const migrated = await migrateLocalFocusState(client, user, onFocusMigrationStart);
         if (migrated) {
           const [freshCategories, freshHistory] = await Promise.all([
             client
@@ -2036,7 +2046,7 @@ export function useWorkspaceData({
       }
 
       if (Object.keys(nextFocusedTaskIdsByDate).length === 0) {
-        const migratedTaskFocusDays = await migrateLocalTaskFocusDays(client, user);
+        const migratedTaskFocusDays = await migrateLocalTaskFocusDays(client, user, onFocusMigrationStart);
         if (migratedTaskFocusDays) {
           const freshFocusDays = await client
             .from("adhdice_task_focus_days")
@@ -2052,6 +2062,10 @@ export function useWorkspaceData({
             });
           }
         }
+      }
+
+      if (focusMigrationInvalidatedGeneration) {
+        requestFocusDomainRefresh("local_focus_migration");
       }
 
       if (focusLoadGeneration === focusDataGenerationRef.current) {
@@ -2924,6 +2938,9 @@ export function useWorkspaceData({
     isTaskListMembershipDataReady: !currentUser || taskListMembershipDataReadyUserId === currentUser.id,
     isTaskResumeSyncPending,
     isWorkspaceLoading,
+    invalidateTaskListDomainGeneration,
+    invalidateTaskContentFolderDomainGeneration,
+    invalidateFocusDomainGeneration,
     workspaceGenerationRef,
     prepareTaskMutation,
     reconcileRolloverWorkspace,

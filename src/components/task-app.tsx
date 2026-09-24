@@ -139,6 +139,7 @@ import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
 import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
@@ -1209,6 +1210,10 @@ export function TaskApp() {
     userId: session?.user?.id,
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
+  const focusDomainMutationBarrierRef = useRef<WorkspaceDomainMutationBarrier>(() => {});
+  const invalidateFocusDomainGeneration = useCallback(() => {
+    focusDomainMutationBarrierRef.current();
+  }, []);
   const {
     focusCategories, setFocusCategories,
     focusCounters,
@@ -1225,7 +1230,13 @@ export function TaskApp() {
     handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
     handleAdjustFocusCounter, handleCreateFocusCounter, handleDeleteFocusCounter, handleUpdateFocusCounter,
-  } = useFocus(supabase, session?.user?.id ?? null, setMessage, activePage === "Focus" || activePage === "Stats" || activePage === "Health");
+  } = useFocus(
+    supabase,
+    session?.user?.id ?? null,
+    setMessage,
+    activePage === "Focus" || activePage === "Stats" || activePage === "Health",
+    invalidateFocusDomainGeneration,
+  );
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
@@ -1891,6 +1902,9 @@ export function TaskApp() {
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
     isCurrentTaskProjectionReadReady,
+    invalidateTaskListDomainGeneration,
+    invalidateTaskContentFolderDomainGeneration,
+    invalidateFocusDomainGeneration: invalidateFocusDomainGenerationFromWorkspace,
     updateTaskHistoryForTask,
     workspaceGenerationRef,
   } = useWorkspaceData({
@@ -1974,6 +1988,7 @@ export function TaskApp() {
     todayKey,
     timezone: userTimeZone,
   });
+  focusDomainMutationBarrierRef.current = invalidateFocusDomainGenerationFromWorkspace;
   const taskTypeBehaviorProjectionSemantics = useMemo(() => ({
     task: selectTaskBehaviorProjectionSemantics({
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
@@ -2688,6 +2703,7 @@ export function TaskApp() {
   const { saveFocusSelection } = useFocusSelectionPersistence({
     currentUserId,
     defaultValidTaskIds: tasks,
+    invalidateFocusDomainGeneration: invalidateFocusDomainGenerationFromWorkspace,
     setFocusedTaskIdsByDate,
     setMessage,
     supabase,
@@ -2739,6 +2755,7 @@ export function TaskApp() {
     const userId = session?.user?.id;
     if (!supabase || !userId || reconciledTaskListRailManifestRef.current === taskListRailManifestFingerprint) return;
     reconciledTaskListRailManifestRef.current = taskListRailManifestFingerprint;
+    invalidateTaskListDomainGeneration();
     void reconcileTaskListRailPlacements(supabase, taskListRailManifest).then(
       (items) => setTaskListRailItems(items),
       (error) => {
@@ -2746,7 +2763,7 @@ export function TaskApp() {
         setMessage({ tone: "warn", text: error instanceof Error ? error.message : "List organization could not be loaded." });
       },
     );
-  }, [session?.user?.id, supabase, taskListRailManifest, taskListRailManifestFingerprint]);
+  }, [invalidateTaskListDomainGeneration, session?.user?.id, supabase, taskListRailManifest, taskListRailManifestFingerprint]);
   const canonicalTaskListRailTree = useMemo(
     () => buildCanonicalTaskListRailTree(
       availableTaskLists,
@@ -2779,6 +2796,7 @@ export function TaskApp() {
     client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
     containers: taskListContainers,
     folders: taskListFolders,
+    invalidateTaskListDomainGeneration,
     lists: availableTaskLists,
     placements: taskListRailItems,
     refresh: softRefreshWorkspace,
@@ -2912,6 +2930,7 @@ export function TaskApp() {
   const taskContentFolderActions = useTaskContentFolderActions({
     client: supabase as NonNullable<ReturnType<typeof createBrowserSupabaseClient>> | null,
     folders: taskContentFolders,
+    invalidateTaskContentFolderDomainGeneration,
     setFolders: setTaskContentFolders,
     setMessage,
     setTasks,
@@ -4680,7 +4699,7 @@ export function TaskApp() {
       setMessage,
       setTaskListManualMemberships,
       setTaskLists,
-      taskListDataGeneration,
+      invalidateTaskListDomainGeneration,
       taskLists,
     },
     editorSave: {
@@ -4737,6 +4756,7 @@ export function TaskApp() {
       setTaskRouting,
       taskListDefinitions: availableTaskLists,
       taskListManualMemberships,
+      invalidateTaskListDomainGeneration,
     },
     subtask: {
       canonicalTaskCreator: (payload, source) => insertTaskRowWithCanonicalCreation(client, payload, source),
@@ -10593,6 +10613,7 @@ async function readFileAsDataUrl(file: File) {
 async function migrateLocalFocusState(
   supabase: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>,
   user: User,
+  onMutationStart: WorkspaceDomainMutationBarrier,
 ) {
   const storedCategories = parseStoredJson<FocusCategory[]>(FOCUS_CATEGORIES_STORAGE_KEY, []);
   const storedActiveSessions = parseStoredJson<Record<string, ActiveFocusSession>>(FOCUS_ACTIVE_STORAGE_KEY, {});
@@ -10605,6 +10626,8 @@ async function migrateLocalFocusState(
   if (!hasLocalData) {
     return false;
   }
+
+  onMutationStart();
 
   const fallbackCategories = storedCategories.length > 0
     ? storedCategories
@@ -10722,6 +10745,7 @@ async function migrateLocalFocusState(
 async function migrateLocalTaskFocusDays(
   supabase: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>,
   user: User,
+  onMutationStart: WorkspaceDomainMutationBarrier,
 ) {
   const storedSelections = parseStoredJson<Record<string, string[]>>(
     getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, user.id),
@@ -10751,6 +10775,8 @@ async function migrateLocalTaskFocusDays(
   if (payload.length === 0) {
     return false;
   }
+
+  onMutationStart();
 
   const { error } = await supabase
     .from("adhdice_task_focus_days")

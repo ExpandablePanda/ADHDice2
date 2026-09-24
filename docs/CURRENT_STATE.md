@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.36`.
+- Current working app version: `7.15.37`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,48 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.37 Scoped Realtime Local-Mutation Freshness Boundary
+
+Browser QA found a local Tab A regression after a Task Content Folder rename:
+Tab B received the committed name through Realtime, while an older Content
+Folder snapshot already in flight in Tab A later applied and restored the old
+name. The same source shape was present for Task List/membership/structure and
+Focus category/Task Focus Day snapshots: local mutations did not advance the
+domain generation captured by scoped or core secondary reads.
+
+The mutation-generation contract is now explicit. A local mutation advances its
+domain generation before its remote write or optimistic local state change.
+Every scoped and core domain snapshot captures that generation and may apply
+only while it is still current. A committed local result therefore remains
+authoritative against any read that began before the mutation. Create-and-move
+Folder rollback advances the same boundary before its compensating delete.
+Later Realtime events still advance the generation and schedule a newer scoped
+read, so post-commit server reconciliation remains enabled without arbitrary
+delays, broad refreshes, or a Realtime loop.
+
+The boundary covers Task Content Folder create, rename, icon update, move,
+delete, and create-and-move rollback; Task List definition and manual
+membership writes; Task List Folder/container/rail mutations and rail-placement
+reconciliation; and Focus category plus Task Focus Day writes and local
+migration writes. Core/manual/resume refreshes retain their domain generation
+checks, so a secondary result started before a local mutation cannot overwrite
+the committed mutation. Missing-table compatibility, optimistic/non-optimistic
+behavior, list/container/rail revisions, Focus category suppression and local
+persistence, and rollback behavior remain unchanged.
+
+The 7.15.36 domain-scoped Realtime architecture is preserved. The eight
+non-Task Realtime handlers still use grouped Task List, Content Folder, and
+Focus scoped refreshers; broad workspace Realtime refreshes were not restored.
+Task Realtime remains broad and its narrowing is deferred to `7.15.38`.
+
+Browser QA also observed simultaneous `CHANNEL_ERROR` transitions on workspace,
+Task, and Current Projection channels followed by successful reconnection. That
+connection-reliability observation is separate from this stale local overwrite
+fix and remains unresolved/deferred; no general WebSocket or Supabase
+publication change was made here.
+
+No SQL/schema/RLS or Edge deployment was performed for 7.15.37.
 
 ## 2026-09-24 7.15.36 Domain-Scoped Workspace Realtime Refresh
 

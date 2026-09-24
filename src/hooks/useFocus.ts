@@ -4,6 +4,7 @@ import { subscribeToBrowserAuth } from "@/lib/supabase";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, FocusReallocationMode, PendingFocusDailySurplus } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 import { buildFocusGoalPlan, getMondayWeekRange, getPromptedDailySurplusSeconds, normalizeCarryoverMode, normalizeDistributionMode, normalizePriorityLevel } from "@/lib/focus-goals";
 import {
   dedupeCategoriesByName,
@@ -281,6 +282,7 @@ export function useFocus(
   userId: string | null,
   setMessage: SetMessage,
   historyActive = true,
+  invalidateFocusDomainGeneration: WorkspaceDomainMutationBarrier = () => {},
 ) {
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
@@ -1079,12 +1081,14 @@ export function useFocus(
     );
 
     if (uniqueCategories.length === 0) {
+      invalidateFocusDomainGeneration();
       setFocusCategories([]);
       saveFocusCategories([]);
       setMessage({ tone: "good", text: "Focus categories updated." });
       return true;
     }
 
+    invalidateFocusDomainGeneration();
     setFocusCategories(uniqueCategories);
     saveFocusCategories(uniqueCategories);
     suppressCategoryReload.current = true;
@@ -1156,6 +1160,7 @@ export function useFocus(
     );
     if (!confirmed) return false;
 
+    invalidateFocusDomainGeneration();
     const { error } = await client
       .from("adhdice_focus_categories")
       .delete()

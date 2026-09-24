@@ -12,6 +12,7 @@ import {
   validateTaskContentFolderParent,
 } from "@/lib/task-content-folders";
 import { isTaskTypeIconKey } from "@/lib/task-type-presentation";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 
 type Client = NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
 type Message = { text: string; tone: "neutral" | "good" | "warn" };
@@ -23,6 +24,7 @@ type Options = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTasks: Dispatch<SetStateAction<Task[]>>;
   moveTaskHierarchy: (task: Task, newParentTaskId: string | null, newTaskContentFolderId: string | null) => Promise<boolean>;
+  invalidateTaskContentFolderDomainGeneration?: WorkspaceDomainMutationBarrier;
   userId: string | null | undefined;
 };
 
@@ -33,6 +35,7 @@ export function useTaskContentFolderActions({
   setMessage,
   setTasks,
   moveTaskHierarchy,
+  invalidateTaskContentFolderDomainGeneration = () => {},
   userId,
 }: Options) {
   const createFolder = useCallback(async (rawName: string, parentFolderId: string | null = null) => {
@@ -44,6 +47,7 @@ export function useTaskContentFolderActions({
       return false;
     }
 
+    invalidateTaskContentFolderDomainGeneration();
     const result = parentFolderId
       ? await client
         .from("adhdice_task_content_folders")
@@ -63,7 +67,7 @@ export function useTaskContentFolderActions({
     setFolders((current) => [...current, folder]);
     setMessage({ tone: "good", text: `Folder "${folder.name}" created.` });
     return true;
-  }, [client, folders, setFolders, setMessage, userId]);
+  }, [client, folders, invalidateTaskContentFolderDomainGeneration, setFolders, setMessage, userId]);
 
   const createFolderAndMoveTask = useCallback(async (task: Task, rawName: string) => {
     const name = normalizeTaskContentFolderName(rawName);
@@ -75,6 +79,7 @@ export function useTaskContentFolderActions({
       return false;
     }
 
+    invalidateTaskContentFolderDomainGeneration();
     const result = parentFolderId
       ? await client
         .from("adhdice_task_content_folders")
@@ -94,6 +99,7 @@ export function useTaskContentFolderActions({
     setFolders((current) => [...current, folder]);
 
     const rollbackCreatedFolder = async () => {
+      invalidateTaskContentFolderDomainGeneration();
       const rollback = await client
         .from("adhdice_task_content_folders")
         .delete()
@@ -125,7 +131,7 @@ export function useTaskContentFolderActions({
 
     setMessage({ tone: "good", text: `Folder "${folder.name}" created and "${task.title}" moved into it.` });
     return true;
-  }, [client, folders, moveTaskHierarchy, setFolders, setMessage, userId]);
+  }, [client, folders, invalidateTaskContentFolderDomainGeneration, moveTaskHierarchy, setFolders, setMessage, userId]);
 
   const renameFolder = useCallback(async (folderId: string, rawName: string) => {
     const name = normalizeTaskContentFolderName(rawName);
@@ -135,6 +141,7 @@ export function useTaskContentFolderActions({
       setMessage({ tone: "warn", text: validationError ?? "Folder could not be found." });
       return false;
     }
+    invalidateTaskContentFolderDomainGeneration();
     const { data, error } = await client
       .from("adhdice_task_content_folders")
       .update({ name })
@@ -150,7 +157,7 @@ export function useTaskContentFolderActions({
     setFolders((current) => current.map((entry) => entry.id === folderId ? nextFolder : entry));
     setMessage({ tone: "good", text: `Folder "${nextFolder.name}" renamed.` });
     return true;
-  }, [client, folders, setFolders, setMessage, userId]);
+  }, [client, folders, invalidateTaskContentFolderDomainGeneration, setFolders, setMessage, userId]);
 
   const updateFolderIcon = useCallback(async (folderId: string, iconKey: string) => {
     const folder = folders.find((entry) => entry.id === folderId);
@@ -162,6 +169,7 @@ export function useTaskContentFolderActions({
       setMessage({ tone: "warn", text: "Folder could not be found." });
       return false;
     }
+    invalidateTaskContentFolderDomainGeneration();
     const { data, error } = await client
       .from("adhdice_task_content_folders")
       .update({ icon_key: iconKey })
@@ -177,7 +185,7 @@ export function useTaskContentFolderActions({
     setFolders((current) => current.map((entry) => entry.id === folderId ? nextFolder : entry));
     setMessage({ tone: "good", text: `Folder "${nextFolder.name}" icon updated.` });
     return true;
-  }, [client, folders, setFolders, setMessage, userId]);
+  }, [client, folders, invalidateTaskContentFolderDomainGeneration, setFolders, setMessage, userId]);
 
   const moveFolder = useCallback(async (folderId: string, destinationFolderId: string | null) => {
     const folder = folders.find((entry) => entry.id === folderId);
@@ -190,6 +198,7 @@ export function useTaskContentFolderActions({
       setMessage({ tone: "warn", text: validationError });
       return false;
     }
+    invalidateTaskContentFolderDomainGeneration();
     const { data, error } = await client
       .from("adhdice_task_content_folders")
       .update({ parent_folder_id: destinationFolderId })
@@ -205,7 +214,7 @@ export function useTaskContentFolderActions({
     setFolders((current) => current.map((entry) => entry.id === folderId ? nextFolder : entry));
     setMessage({ tone: "good", text: `Folder "${nextFolder.name}" moved.` });
     return true;
-  }, [client, folders, setFolders, setMessage, userId]);
+  }, [client, folders, invalidateTaskContentFolderDomainGeneration, setFolders, setMessage, userId]);
 
   const deleteFolder = useCallback(async (folderId: string) => {
     const folder = folders.find((entry) => entry.id === folderId);
@@ -213,6 +222,7 @@ export function useTaskContentFolderActions({
       setMessage({ tone: "warn", text: "Folder could not be found." });
       return false;
     }
+    invalidateTaskContentFolderDomainGeneration();
     const { error } = await client.rpc("adhdice_delete_task_content_folder", { p_folder_id: folderId });
     if (error) {
       setMessage({ tone: "warn", text: error.message });
@@ -232,7 +242,7 @@ export function useTaskContentFolderActions({
         : `Folder "${folder.name}" deleted. Its direct Tasks are now ungrouped.`,
     });
     return true;
-  }, [client, folders, setFolders, setMessage, setTasks, userId]);
+  }, [client, folders, invalidateTaskContentFolderDomainGeneration, setFolders, setMessage, setTasks, userId]);
 
   const moveTaskToFolder = useCallback(async (task: Task, folderId: string | null) => {
     if (folderId !== null && !folders.some((folder) => folder.id === folderId && folder.user_id === userId)) {

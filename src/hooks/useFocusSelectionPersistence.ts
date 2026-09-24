@@ -3,6 +3,7 @@ import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { Task } from "@/lib/database.types";
 import { normalizeTaskFocusIds } from "@/lib/task-focus-days";
 import { updateFocusedTaskIdsByDate } from "@/lib/task-momentum";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 
 type Message = {
   tone: "neutral" | "good" | "warn";
@@ -16,6 +17,7 @@ type UseFocusSelectionPersistenceInput = {
   setMessage: Dispatch<SetStateAction<Message | null>>;
   supabase: ReturnType<typeof createBrowserSupabaseClient>;
   todayKey: string;
+  invalidateFocusDomainGeneration?: WorkspaceDomainMutationBarrier;
 };
 
 export function useFocusSelectionPersistence({
@@ -25,6 +27,7 @@ export function useFocusSelectionPersistence({
   setMessage,
   supabase,
   todayKey,
+  invalidateFocusDomainGeneration = () => {},
 }: UseFocusSelectionPersistenceInput) {
   async function saveFocusSelection(nextTaskIds: string[], validTaskIds: Set<string> | Task[] = defaultValidTaskIds) {
     if (!supabase || !currentUserId) {
@@ -33,6 +36,7 @@ export function useFocusSelectionPersistence({
 
     const normalizedTaskIds = normalizeTaskFocusIds(nextTaskIds, validTaskIds);
 
+    invalidateFocusDomainGeneration();
     setFocusedTaskIdsByDate((prev) => updateFocusedTaskIdsByDate(prev, todayKey, normalizedTaskIds));
 
     if (normalizedTaskIds.length === 0) {
