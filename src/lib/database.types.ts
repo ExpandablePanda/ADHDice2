@@ -669,6 +669,9 @@ export type CurrentTaskProjectionActiveOccurrenceStatus =
   | "handled"
   | "terminated";
 export type CurrentTaskProjectionValidity = "valid" | "repair_required" | "unavailable";
+export type CurrentTaskProjectionTimestampKind = "event_instant" | "logical_day_presentation";
+export type CurrentTaskProjectionSchemaVersion = "task-current-projection-schema-v1" | "task-current-projection-schema-v2";
+export type CurrentTaskProjectionAlgorithmVersion = "task-current-projection-algorithm-v1" | "task-current-projection-algorithm-v2";
 
 export type TaskCurrentProjection = {
   user_id: string;
@@ -682,8 +685,10 @@ export type TaskCurrentProjection = {
   handled_current_logical_day: boolean;
   last_handled_logical_date: string | null;
   last_handled_at: string | null;
+  last_handled_at_kind: CurrentTaskProjectionTimestampKind | null;
   last_done_logical_date: string | null;
   last_done_at: string | null;
+  last_done_at_kind: CurrentTaskProjectionTimestampKind | null;
   current_positive_streak: number;
   current_missed_streak: number;
   canonical_task_revision: number;
@@ -694,8 +699,8 @@ export type TaskCurrentProjection = {
   behavior_policy_revision: string;
   logical_day_settings_revision: number;
   projected_logical_date: string;
-  projection_schema_version: "task-current-projection-schema-v1";
-  projection_algorithm_version: "task-current-projection-algorithm-v1";
+  projection_schema_version: CurrentTaskProjectionSchemaVersion;
+  projection_algorithm_version: CurrentTaskProjectionAlgorithmVersion;
   source_fingerprint: string;
   validity: CurrentTaskProjectionValidity;
   created_at: string;

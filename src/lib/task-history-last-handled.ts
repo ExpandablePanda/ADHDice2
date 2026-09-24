@@ -1,5 +1,6 @@
 import type { Task, TaskHistory } from "./database.types.ts";
 import { shouldExposeHistoryEventTimestamp } from "./task-history-cutover.ts";
+import type { TaskHistoryTimestampKind } from "./task-history.ts";
 import type { CanonicalTaskCalendarOverride, CanonicalTaskCommandOperation } from "./task-state-canonical/types.ts";
 
 export type TaskManualActionRecord = {
@@ -16,7 +17,12 @@ export type TaskHistoryLastHandledSummary = {
   timestamp: string | null;
 };
 
+export type TaskHistoryLastHandledPresentationSummary = TaskHistoryLastHandledSummary & {
+  timestampKind: TaskHistoryTimestampKind | null;
+};
+
 export type TaskHistoryLastHandledSummaryMap = Record<string, TaskHistoryLastHandledSummary>;
+export type TaskHistoryLastHandledPresentationSummaryMap = Record<string, TaskHistoryLastHandledPresentationSummary>;
 
 const MANUAL_COMMAND_TYPES = new Set<CanonicalTaskCommandOperation["command_type"]>([
   "set_outcome",
@@ -72,14 +78,26 @@ function compareActionRecords(left: TaskManualActionRecord, right: TaskManualAct
   return left.identity.localeCompare(right.identity);
 }
 
-function getPresentationTimestamp(record: TaskManualActionRecord, currentLogicalDateKey?: string) {
+function getPresentationTimestampResult(record: TaskManualActionRecord, currentLogicalDateKey?: string): TaskHistoryLastHandledPresentationSummary {
   if (!record.occurredAt || !currentLogicalDateKey || record.logicalDate >= currentLogicalDateKey) {
-    return record.occurredAt;
+    return {
+      dateKey: record.logicalDate,
+      timestamp: record.occurredAt,
+      timestampKind: record.occurredAt ? "event_instant" : null,
+    };
   }
   if (record.timestampIsAuthoritative && record.occurredAt.slice(0, 10) === record.logicalDate) {
-    return record.occurredAt;
+    return {
+      dateKey: record.logicalDate,
+      timestamp: record.occurredAt,
+      timestampKind: "event_instant",
+    };
   }
-  return `${record.logicalDate}T00:00:00`;
+  return {
+    dateKey: record.logicalDate,
+    timestamp: `${record.logicalDate}T00:00:00`,
+    timestampKind: "logical_day_presentation",
+  };
 }
 
 function indexLatestManualActionByTaskId(
@@ -142,12 +160,29 @@ export function buildTaskHistoryLastHandledSummaryMap(
   commandOperations: readonly CanonicalTaskCommandOperation[] = [],
   currentLogicalDateKey?: string,
 ): TaskHistoryLastHandledSummaryMap {
+  const presentation = buildTaskHistoryLastHandledPresentationSummaryMap(
+    tasks,
+    history,
+    calendarOverrides,
+    commandOperations,
+    currentLogicalDateKey,
+  );
+  return Object.fromEntries(Object.entries(presentation).map(([taskId, summary]) => [taskId, {
+    dateKey: summary.dateKey,
+    timestamp: summary.timestamp,
+  }]));
+}
+
+export function buildTaskHistoryLastHandledPresentationSummaryMap(
+  tasks: readonly Task[],
+  history: readonly TaskHistory[],
+  calendarOverrides: readonly CanonicalTaskCalendarOverride[] = [],
+  commandOperations: readonly CanonicalTaskCommandOperation[] = [],
+  currentLogicalDateKey?: string,
+): TaskHistoryLastHandledPresentationSummaryMap {
   const latestByTaskId = indexLatestManualActionByTaskId(tasks, history, calendarOverrides, commandOperations);
   return Object.fromEntries(tasks.map((task) => {
     const latest = latestByTaskId.get(task.id);
-    return [task.id, latest ? {
-      dateKey: latest.logicalDate,
-      timestamp: getPresentationTimestamp(latest, currentLogicalDateKey),
-    } : null];
-  }).filter((entry): entry is [string, TaskHistoryLastHandledSummary] => entry[1] !== null));
+    return [task.id, latest ? getPresentationTimestampResult(latest, currentLogicalDateKey) : null];
+  }).filter((entry): entry is [string, TaskHistoryLastHandledPresentationSummary] => entry[1] !== null));
 }

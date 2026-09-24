@@ -110,8 +110,14 @@ const projection = {
   history_sync_epoch: "epoch-1",
   logical_day_settings_revision: 4,
   projected_logical_date: "2026-09-23",
-  projection_schema_version: "task-current-projection-schema-v1",
-  projection_algorithm_version: "task-current-projection-algorithm-v1",
+  projection_schema_version: "task-current-projection-schema-v2",
+  projection_algorithm_version: "task-current-projection-algorithm-v2",
+  last_handled_logical_date: null,
+  last_handled_at: null,
+  last_handled_at_kind: null,
+  last_done_logical_date: null,
+  last_done_at: null,
+  last_done_at_kind: null,
 } as TaskCurrentProjection;
 
 const current: CurrentTaskProjectionFreshnessContext = {

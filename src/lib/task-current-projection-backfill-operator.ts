@@ -1,12 +1,14 @@
 export const CURRENT_PROJECTION_BACKFILL_BATCH_SIZE = 10;
 export const CURRENT_PROJECTION_BACKFILL_MAX_BATCHES = 5;
+export const CURRENT_PROJECTION_REBUILD_BATCH_SIZE = CURRENT_PROJECTION_BACKFILL_BATCH_SIZE;
+export const CURRENT_PROJECTION_REBUILD_MAX_BATCHES = CURRENT_PROJECTION_BACKFILL_MAX_BATCHES;
 const CURRENT_PROJECTION_BACKFILL_FUNCTION = "task-current-projection-backfill";
 
 export type ProjectionBackfillOperatorClient = {
   functions: {
     invoke<T>(
       functionName: string,
-      options: { body: { limit: number } },
+      options: { body: { limit: number; afterTaskId?: string | null } },
     ): Promise<{ data: T | null; error: { message?: string | null } | null }>;
   };
 };
@@ -16,6 +18,7 @@ export type ProjectionBackfillBatchResponse = {
   writtenCount: number;
   failedCount: number;
   remainingCount: number;
+  nextCursor?: string | null;
 };
 
 export type ProjectionBackfillOperatorProgress = {
@@ -54,11 +57,13 @@ function parseBatchResponse(value: unknown): ProjectionBackfillBatchResponse | n
     || value.writtenCount + value.failedCount !== value.candidateCount) {
     return null;
   }
+  if (value.nextCursor !== undefined && value.nextCursor !== null && typeof value.nextCursor !== "string") return null;
   return {
     candidateCount: value.candidateCount,
     writtenCount: value.writtenCount,
     failedCount: value.failedCount,
     remainingCount: value.remainingCount,
+    nextCursor: value.nextCursor === undefined ? null : value.nextCursor,
   };
 }
 
@@ -77,6 +82,7 @@ export async function runCurrentProjectionBackfillOperator(input: {
   let writtenCount = 0;
   let failedCount = 0;
   let remainingCount: number | null = null;
+  let afterTaskId: string | null = null;
   let stoppedReason: ProjectionBackfillOperatorResult["stoppedReason"] = "completed";
   let errorMessage: string | null = null;
 
@@ -94,7 +100,7 @@ export async function runCurrentProjectionBackfillOperator(input: {
     let data: unknown;
     try {
       const response = await input.client.functions.invoke<unknown>(CURRENT_PROJECTION_BACKFILL_FUNCTION, {
-        body: { limit: CURRENT_PROJECTION_BACKFILL_BATCH_SIZE },
+        body: { limit: CURRENT_PROJECTION_REBUILD_BATCH_SIZE, afterTaskId },
       });
       if (response.error) throw new Error(response.error.message ?? "Backfill request failed.");
       data = response.data;
@@ -127,6 +133,7 @@ export async function runCurrentProjectionBackfillOperator(input: {
     }
 
     remainingCount = batch.remainingCount;
+    afterTaskId = batch.nextCursor ?? null;
 
     input.onProgress?.({ processedCount, totalCount: maxBatches * CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, writtenCount, failedCount, remainingCount });
 
@@ -138,7 +145,7 @@ export async function runCurrentProjectionBackfillOperator(input: {
       stoppedReason = "candidate_count_zero";
       break;
     }
-    if (batch.candidateCount < CURRENT_PROJECTION_BACKFILL_BATCH_SIZE) {
+    if (batch.candidateCount < CURRENT_PROJECTION_REBUILD_BATCH_SIZE) {
       stoppedReason = "partial_batch";
       break;
     }

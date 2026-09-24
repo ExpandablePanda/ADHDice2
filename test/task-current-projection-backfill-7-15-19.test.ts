@@ -12,6 +12,7 @@ const backfillSource = readFileSync(new URL("../supabase/functions/task-current-
 const domainSource = readFileSync(new URL("../supabase/functions/task-current-projection-backfill/domain.ts", import.meta.url), "utf8");
 const remainingCountMigration = readFileSync(new URL("../supabase/patch_task_current_projection_backfill_remaining_count_7_15_21.sql", import.meta.url), "utf8");
 const candidateMigration = readFileSync(new URL("../supabase/patch_task_current_projection_backfill_candidates_7_15_23.sql", import.meta.url), "utf8");
+const v2Migration = readFileSync(new URL("../supabase/patch_task_current_projection_v2_7_15_30.sql", import.meta.url), "utf8");
 const operatorSource = readFileSync(new URL("../src/lib/task-current-projection-backfill-operator.ts", import.meta.url), "utf8");
 const settingsSource = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
@@ -33,10 +34,12 @@ function adminClient(input: {
   return {
     rpc: async (functionName, args) => {
       input.rpcCalls?.push({ functionName, args });
-      if (functionName === "adhdice_list_missing_task_current_projection_candidates") {
+      if (functionName === "adhdice_list_missing_task_current_projection_candidates"
+        || functionName === "adhdice_list_task_current_projection_rebuild_candidates") {
         return { data: input.candidateRows ?? taskIds.map((id) => ({ id })), error: null };
       }
-      assert.equal(functionName, "adhdice_count_missing_task_current_projections");
+      assert.ok(functionName === "adhdice_count_missing_task_current_projections"
+        || functionName === "adhdice_count_task_current_projection_rebuild_candidates");
       return { data: input.remainingCount ?? 0, error: null };
     },
   };
@@ -210,23 +213,26 @@ test("backfill reuses the trusted rebuild only and does not add canonical mutati
   assert.doesNotMatch(backfillSource, /\.insert\(|\.update\(|\.delete\(/);
 });
 
-test("remaining count is a narrow owner-scoped missing-projection contract", () => {
-  assert.match(domainSource, /adhdice_count_missing_task_current_projections/);
+test("remaining count is a narrow owner-scoped V2 rebuild contract", () => {
+  assert.match(domainSource, /adhdice_count_task_current_projection_rebuild_candidates/);
   assert.match(domainSource, /remainingCount/);
-  assert.match(remainingCountMigration, /task\.user_id = p_user_id/);
-  assert.match(remainingCountMigration, /task\.permanently_deleted_at is null/);
-  assert.match(remainingCountMigration, /task\.canonicalization_status = 'canonical_runtime'/);
-  assert.match(remainingCountMigration, /task\.entity_kind in \('parent', 'step', 'substep'\)/);
-  assert.match(remainingCountMigration, /not exists\s*\(\s*select 1[\s\S]*adhdice_task_current_projections/);
-  assert.doesNotMatch(remainingCountMigration, /adhdice_task_history_facts|adhdice_task_command_operations/);
-  assert.match(remainingCountMigration, /grant execute on function public\.adhdice_count_missing_task_current_projections\(uuid\) to service_role/);
+  assert.match(v2Migration, /task\.user_id = p_user_id/);
+  assert.match(v2Migration, /task\.permanently_deleted_at is null/);
+  assert.match(v2Migration, /task\.canonicalization_status = 'canonical_runtime'/);
+  assert.match(v2Migration, /task\.entity_kind in \('parent', 'step', 'substep'\)/);
+  assert.match(v2Migration, /projection\.validity <> 'valid'/);
+  assert.match(v2Migration, /projection_schema_version <> 'task-current-projection-schema-v2'/);
+  assert.match(v2Migration, /adhdice_count_task_current_projection_rebuild_candidates/);
+  assert.doesNotMatch(v2Migration, /adhdice_task_history_facts|adhdice_task_command_operations/);
+  assert.match(v2Migration, /grant execute on function public\.adhdice_count_task_current_projection_rebuild_candidates\(uuid\)[\s\S]*to service_role/);
+  assert.match(remainingCountMigration, /adhdice_count_missing_task_current_projections/);
 });
 
 test("the manual trigger is production-gated, uses the existing client, and is click-only", () => {
   assert.match(settingsSource, /process\.env\.NODE_ENV !== "production"/);
   assert.match(operatorSource, /task-current-projection-backfill/);
   assert.match(operatorSource, /CURRENT_PROJECTION_BACKFILL_BATCH_SIZE = 10/);
-  assert.match(settingsSource, /Backfill 10 Projections/);
+  assert.match(settingsSource, /Rebuild V2 Projections · 10/);
   assert.match(settingsSource, /disabled=\{isBackfillingProjections \|\| isRolloverActive\}/);
   assert.match(taskAppSource, /client=\{supabase\}/);
   assert.match(settingsSource, /onClick=\{\(\) => \{ void handleProjectionBackfill\(1\); \}\}/);

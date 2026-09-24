@@ -167,12 +167,12 @@ export function SettingsPage({
     }
     if (isBackfillRunActiveRef.current) return;
     if (taskRolloverCoordinator.isBusy()) {
-      setBackfillStatus("Wait for Task rollover to finish before backfilling projections.");
+      setBackfillStatus("Wait for Task rollover to finish before rebuilding V2 projections.");
       return;
     }
     isBackfillRunActiveRef.current = true;
     setIsBackfillingProjections(true);
-    setBackfillStatus(`Backfilling projections · 0 / ${maxBatches * CURRENT_PROJECTION_BACKFILL_BATCH_SIZE}`);
+    setBackfillStatus(`Rebuilding V2 projections · 0 / ${maxBatches * CURRENT_PROJECTION_BACKFILL_BATCH_SIZE}`);
     try {
       const result = await runCurrentProjectionBackfillOperator({
         client: client as unknown as ProjectionBackfillOperatorClient,
@@ -181,20 +181,20 @@ export function SettingsPage({
         isRolloverActive: () => taskRolloverCoordinator.isBusy(),
         onProgress: (progress) => {
           if (!isMountedRef.current) return;
-          setBackfillStatus(`Backfilling projections · ${progress.processedCount} / ${progress.totalCount}`);
+          setBackfillStatus(`Rebuilding V2 projections · ${progress.processedCount} / ${progress.totalCount}`);
         },
       });
       if (!isMountedRef.current || result.stoppedReason === "unmounted") return;
       if (result.stoppedReason === "rollover_active") {
-        setBackfillStatus("Wait for Task rollover to finish before backfilling projections.");
+        setBackfillStatus("Wait for Task rollover to finish before rebuilding V2 projections.");
       } else if (result.errorMessage) {
-        setBackfillStatus("Backfill failed.");
+        setBackfillStatus("V2 rebuild failed.");
       } else if (maxBatches === 1) {
         setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed`);
       } else if (result.remainingCount !== null) {
         setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed · ${result.remainingCount} remaining`);
       } else {
-        setBackfillStatus("Backfill failed.");
+        setBackfillStatus("V2 rebuild failed.");
       }
     } finally {
       isBackfillRunActiveRef.current = false;
@@ -233,7 +233,7 @@ export function SettingsPage({
             <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Inspect registered UI roles and preview semantic styling locally.</p>
             <div className="mt-3"><StyleLabLauncher /></div>
             <div className="mt-4 border-t border-[#e5e0f5] pt-4 dark:border-white/10">
-              <p className="text-xs text-[#7d88a1] dark:text-white/55">Temporary Current Task Projection pilot.</p>
+              <p className="text-xs text-[#7d88a1] dark:text-white/55">Temporary Current Task Projection V2 operator.</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
@@ -241,7 +241,7 @@ export function SettingsPage({
                   onClick={() => { void handleProjectionBackfill(1); }}
                   type="button"
                 >
-                  {isBackfillingProjections ? "Backfilling..." : "Backfill 10 Projections"}
+                  {isBackfillingProjections ? "Rebuilding..." : "Rebuild V2 Projections · 10"}
                 </button>
                 <button
                   className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
@@ -249,11 +249,11 @@ export function SettingsPage({
                   onClick={() => { void handleProjectionBackfill(5); }}
                   type="button"
                 >
-                  {isBackfillingProjections ? "Backfilling..." : "Backfill 50 Projections"}
+                  {isBackfillingProjections ? "Rebuilding..." : "Rebuild V2 Projections · 50"}
                 </button>
               </div>
               {isRolloverActive
-                ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">Wait for Task rollover to finish before backfilling projections.</p>
+                ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">Wait for Task rollover to finish before rebuilding V2 projections.</p>
                 : backfillStatus ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">{backfillStatus}</p> : null}
             </div>
           </div>

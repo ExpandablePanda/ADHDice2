@@ -1,11 +1,12 @@
 import type {
   CurrentTaskProjectionActiveOccurrenceStatus,
+  CurrentTaskProjectionTimestampKind,
   CurrentTaskProjectionValidity,
   Task,
   TaskCurrentProjection,
 } from "./database.types.ts";
-import { getTaskHistoryLastDone } from "./task-history.ts";
-import { buildTaskHistoryLastHandledSummaryMap } from "./task-history-last-handled.ts";
+import { getTaskHistoryLastDonePresentation, type TaskHistoryTimestampKind } from "./task-history.ts";
+import { buildTaskHistoryLastHandledPresentationSummaryMap } from "./task-history-last-handled.ts";
 import {
   buildTaskHistoryStreakSummary,
   type TaskHistoryStreakSummary,
@@ -37,8 +38,10 @@ import {
 import type { TaskCalendarOverride } from "./task-state-engine/types.ts";
 import { normalizeTaskType } from "./task-type-domain.ts";
 
-export const CURRENT_TASK_PROJECTION_SCHEMA_VERSION = "task-current-projection-schema-v1" as const;
-export const CURRENT_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v1" as const;
+export const LEGACY_TASK_PROJECTION_SCHEMA_VERSION = "task-current-projection-schema-v1" as const;
+export const LEGACY_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v1" as const;
+export const CURRENT_TASK_PROJECTION_SCHEMA_VERSION = "task-current-projection-schema-v2" as const;
+export const CURRENT_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v2" as const;
 
 type CanonicalTask = Task & Partial<CanonicalTaskStateColumns>;
 
@@ -577,9 +580,9 @@ function resultSummary(
   context: TaskBehaviorPolicyResolutionContext,
   effectiveTrackingExclusion: boolean,
   projectedAt: string,
-): { summary: TaskHistoryStreakSummary; lastHandled: ReturnType<typeof buildTaskHistoryLastHandledSummaryMap>[string] | undefined } {
+): { summary: TaskHistoryStreakSummary; lastHandled: ReturnType<typeof buildTaskHistoryLastHandledPresentationSummaryMap>[string] | undefined } {
   const history = mapCanonicalTaskHistoryFacts(readModel.historyFacts);
-  const lastHandledMap = buildTaskHistoryLastHandledSummaryMap(
+  const lastHandledMap = buildTaskHistoryLastHandledPresentationSummaryMap(
     [readModel.task],
     history,
     readModel.calendarOverrides,
@@ -608,6 +611,30 @@ function resultSummary(
     timezone: readModel.logicalDayProfile.timezone,
   });
   return { lastHandled: lastHandledMap[readModel.task.id], summary };
+}
+
+type ProjectionTimestampPresentation = {
+  dateKey: string | null;
+  timestamp: string | null;
+  timestampKind: CurrentTaskProjectionTimestampKind | null;
+};
+
+function projectionTimestampPresentation(value: {
+  dateKey: string;
+  timestamp: string | null;
+  timestampKind: TaskHistoryTimestampKind | null;
+} | null | undefined): ProjectionTimestampPresentation {
+  if (!value || !value.timestampKind) {
+    return { dateKey: null, timestamp: null, timestampKind: null };
+  }
+  if (value.timestampKind === "event_instant" && !value.timestamp) {
+    return { dateKey: null, timestamp: null, timestampKind: null };
+  }
+  return {
+    dateKey: value.dateKey,
+    timestamp: value.timestampKind === "event_instant" ? value.timestamp : null,
+    timestampKind: value.timestampKind,
+  };
 }
 
 /** Build one deterministic, write-free current Task projection from canonical facts. */
@@ -679,10 +706,12 @@ export function buildCurrentTaskProjection(input: BuildCurrentTaskProjectionInpu
     ?? scheduleFence(readModel);
   const behaviorPolicyRevision = input.sourceFences?.behaviorPolicyRevision
     ?? behaviorFence(readModel, context, logicalDate);
-  const lastDone = getTaskHistoryLastDone(
+  const lastDone = getTaskHistoryLastDonePresentation(
     mapCanonicalTaskHistoryFacts(readModel.historyFacts),
     logicalDate,
   );
+  const lastHandledPresentation = projectionTimestampPresentation(lastHandled);
+  const lastDonePresentation = projectionTimestampPresentation(lastDone);
   const sourceFingerprint = sha256Digest({
     version: CURRENT_TASK_PROJECTION_ALGORITHM_VERSION,
     task: taskSourceSemantics(task),
@@ -700,10 +729,12 @@ export function buildCurrentTaskProjection(input: BuildCurrentTaskProjectionInpu
       active_occurrence_id: activeOccurrence?.id ?? null,
       active_occurrence_status: activeOccurrenceStatus,
       handled_current_logical_day: evaluated.handledCurrentDay,
-      last_handled_logical_date: lastHandled?.dateKey ?? null,
-      last_handled_at: lastHandled?.timestamp ?? null,
-      last_done_logical_date: lastDone?.dateKey ?? summary.lastDoneDate,
-      last_done_at: lastDone?.timestamp ?? summary.lastDoneAt,
+      last_handled_logical_date: lastHandledPresentation.dateKey,
+      last_handled_at: lastHandledPresentation.timestamp,
+      last_handled_at_kind: lastHandledPresentation.timestampKind,
+      last_done_logical_date: lastDonePresentation.dateKey,
+      last_done_at: lastDonePresentation.timestamp,
+      last_done_at_kind: lastDonePresentation.timestampKind,
       current_positive_streak: summary.currentStreak,
       current_missed_streak: summary.missedStreak,
     },
@@ -719,10 +750,12 @@ export function buildCurrentTaskProjection(input: BuildCurrentTaskProjectionInpu
     active_occurrence_id: activeOccurrence?.id ?? null,
     active_occurrence_status: activeOccurrenceStatus,
     handled_current_logical_day: evaluated.handledCurrentDay,
-    last_handled_logical_date: lastHandled?.dateKey ?? null,
-    last_handled_at: lastHandled?.timestamp ?? null,
-    last_done_logical_date: lastDone?.dateKey ?? summary.lastDoneDate,
-    last_done_at: lastDone?.timestamp ?? summary.lastDoneAt,
+    last_handled_logical_date: lastHandledPresentation.dateKey,
+    last_handled_at: lastHandledPresentation.timestamp,
+    last_handled_at_kind: lastHandledPresentation.timestampKind,
+    last_done_logical_date: lastDonePresentation.dateKey,
+    last_done_at: lastDonePresentation.timestamp,
+    last_done_at_kind: lastDonePresentation.timestampKind,
     current_positive_streak: summary.currentStreak,
     current_missed_streak: summary.missedStreak,
     canonical_task_revision: task.canonical_revision as number,

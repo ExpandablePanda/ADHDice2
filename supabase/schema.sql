@@ -210,8 +210,10 @@ create table if not exists public.adhdice_task_current_projections (
   handled_current_logical_day boolean not null,
   last_handled_logical_date date,
   last_handled_at timestamptz,
+  last_handled_at_kind text,
   last_done_logical_date date,
   last_done_at timestamptz,
+  last_done_at_kind text,
   current_positive_streak integer not null default 0 check (current_positive_streak >= 0),
   current_missed_streak integer not null default 0 check (current_missed_streak >= 0),
   canonical_task_revision bigint not null check (canonical_task_revision >= 1),
@@ -229,11 +231,35 @@ create table if not exists public.adhdice_task_current_projections (
   logical_day_settings_revision bigint not null check (logical_day_settings_revision >= 1),
   projected_logical_date date not null,
   projection_schema_version text not null check (
-    projection_schema_version = 'task-current-projection-schema-v1'
+    projection_schema_version in ('task-current-projection-schema-v1', 'task-current-projection-schema-v2')
   ),
   projection_algorithm_version text not null check (
-    projection_algorithm_version = 'task-current-projection-algorithm-v1'
+    projection_algorithm_version in ('task-current-projection-algorithm-v1', 'task-current-projection-algorithm-v2')
   ),
+  constraint adhdice_task_current_projection_version_pair_check
+    check (
+      (projection_schema_version = 'task-current-projection-schema-v1'
+        and projection_algorithm_version = 'task-current-projection-algorithm-v1'
+        and last_handled_at_kind is null
+        and last_done_at_kind is null)
+      or (projection_schema_version = 'task-current-projection-schema-v2'
+        and projection_algorithm_version = 'task-current-projection-algorithm-v2'
+        and (
+          (last_handled_logical_date is null and last_handled_at is null and last_handled_at_kind is null)
+          or (last_handled_logical_date is not null and last_handled_at is not null and last_handled_at_kind = 'event_instant')
+          or (last_handled_logical_date is not null and last_handled_at is null and last_handled_at_kind = 'logical_day_presentation')
+        )
+        and (
+          (last_done_logical_date is null and last_done_at is null and last_done_at_kind is null)
+          or (last_done_logical_date is not null and last_done_at is not null and last_done_at_kind = 'event_instant')
+          or (last_done_logical_date is not null and last_done_at is null and last_done_at_kind = 'logical_day_presentation')
+        ))
+    ),
+  constraint adhdice_task_current_projection_timestamp_kind_check
+    check (
+      (last_handled_at_kind is null or last_handled_at_kind in ('event_instant', 'logical_day_presentation'))
+      and (last_done_at_kind is null or last_done_at_kind in ('event_instant', 'logical_day_presentation'))
+    ),
   source_fingerprint text not null check (
     source_fingerprint ~ '^sha256:[0-9a-f]{64}$'
   ),

@@ -13,8 +13,10 @@ export const CURRENT_TASK_PROJECTION_READ_COLUMNS = [
   "handled_current_logical_day",
   "last_handled_logical_date",
   "last_handled_at",
+  "last_handled_at_kind",
   "last_done_logical_date",
   "last_done_at",
+  "last_done_at_kind",
   "current_positive_streak",
   "current_missed_streak",
   "canonical_task_revision",
@@ -38,8 +40,10 @@ export type CurrentTaskProjectionReadRow = Pick<
   | "handled_current_logical_day"
   | "last_handled_logical_date"
   | "last_handled_at"
+  | "last_handled_at_kind"
   | "last_done_logical_date"
   | "last_done_at"
+  | "last_done_at_kind"
   | "current_positive_streak"
   | "current_missed_streak"
   | "canonical_task_revision"
@@ -189,17 +193,23 @@ export function projectionToTaskHistoryStreakSummary(
     | "current_missed_streak"
     | "last_handled_logical_date"
     | "last_handled_at"
+    | "last_handled_at_kind"
     | "last_done_logical_date"
     | "last_done_at"
+    | "last_done_at_kind"
   >,
 ): TaskHistoryStreakSummary {
   return {
     currentStreak: projection.current_positive_streak,
     missedStreak: projection.current_missed_streak,
     lastHandledDate: projection.last_handled_logical_date,
-    lastHandledAt: projection.last_handled_at,
+    lastHandledAt: projection.last_handled_at_kind === "logical_day_presentation"
+      ? projection.last_handled_logical_date ? `${projection.last_handled_logical_date}T00:00:00` : null
+      : projection.last_handled_at,
     lastDoneDate: projection.last_done_logical_date,
-    lastDoneAt: projection.last_done_at,
+    lastDoneAt: projection.last_done_at_kind === "logical_day_presentation"
+      ? projection.last_done_logical_date ? `${projection.last_done_logical_date}T00:00:00` : null
+      : projection.last_done_at,
   };
 }
 

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.29`.
+- Current working app version: `7.15.30`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -102,35 +102,60 @@ fence gap was proven by the deterministic fixtures; a live row can only be
 called a fence gap after its current entity frontier and source snapshot are
 captured.
 
-### Projection V2 / 7.15.30 rollout plan (not executed here)
+### Projection V2 / 7.15.30 controlled rollout status
 
-1. Add the two timestamp-kind columns and widen the projection contract with
-   explicit v2 schema/algorithm allow-list values. Keep v1 columns readable,
-   but do not reinterpret existing v1 timestamp values.
-2. Ship the v2 calculator and trusted writer behind a v2-only validity gate.
-   v1 and v2 rows may coexist by entity; consumers accept only a row whose
-   schema and algorithm are both v2 and whose all source fences are fresh.
-   Old v1 rows fall back to legacy History/current evaluator.
-3. Extend the backfill operator to select missing, outdated, invalid, and
-   `repair_required` rows, including all 519 existing rows, with owner/entity
-   fencing, bounded batches, idempotent writes, and post-batch counts. It must
-   rebuild from current canonical sources rather than copy compatibility Task
-   status/due or reinterpret v1 timestamps.
-4. Verify every rebuilt row is v2, valid, current, and timestamp-kind
-   consistent; stop on unexpected owner/count/fence changes. No backfill or
-   live mutation is part of 7.15.29.
-5. Keep the v2 consumer gate reversible. On any v2 read/build/write defect,
-   reject the v2 row and use the existing legacy History/evaluator fallback;
-   retain v1 rows for rollback evidence until the parity gate closes.
-6. Retire History startup only in a later ticket after all eligible rows are
-   v2-valid, representation-only differences are excluded, every semantic
-   mismatch is zero or explicitly accepted with owner/evidence, mutation,
-   Realtime, logical-day, lifecycle, and restart checks pass, and Andrew's
-   browser QA confirms the final current-surface and historical-surface gate.
+The additive migration `patch_task_current_projection_v2_7_15_30` is applied.
+The pre-deploy live baseline was 519 eligible canonical-runtime parent/step/
+substep Tasks, 519 existing valid projections, all 519 exact V1 rows, zero
+missing, zero `repair_required`, and zero `unavailable`. After SQL, the same
+519 rows remain valid V1, both new kind columns are null, and V2 candidates
+read as 519. No Task or History canonical data was mutated.
 
-No SQL, Edge deployment, live projection mutation, backfill, consumer change,
-or projection version bump was executed by this ticket beyond the app version
-bump to `7.15.29`.
+The pre-deploy Edge baseline was `task-state-command` ACTIVE v40,
+`114cfc1def1c21cb07d4f18cd23d81fb4309fa7af9f6be58d5685afd189e7609`, and
+`task-current-projection-backfill` ACTIVE v3,
+`5420f22eac4a392c10261cca95fe3a3835af08812699d94675747ce8ed2a42c9`.
+
+The physical contract now has nullable `last_handled_at_kind` and
+`last_done_at_kind` values `event_instant | logical_day_presentation`, exact
+V1/V1 or V2/V2 version pairs, and strict V2 no-value, real-event, and
+synthetic-logical-day consistency checks. V1 timestamp values remain
+untouched. There is one projection row per `(user_id, entity_id)`; no same-
+entity V1/V2 duplicate storage exists.
+
+The V2 calculator returns explicit Last Handled and Last Done timestamp kind,
+includes logical date plus persisted timestamp/null choice in its source
+fingerprint, and continues to use the canonical evaluator for status, due,
+occurrence, streak, handled-day, and source-fence semantics. The V2 consumer
+gate accepts only fresh V2 rows. V1 rows are stale/unsupported for preferred
+projection reads and fall back to the existing History/evaluator path. A V2
+logical-day presentation is reconstructed as `${logicalDate}T00:00:00` without
+timezone conversion.
+
+The trusted writer accepts the exact V1 pair during transition and exact V2
+pair thereafter, validates timestamp consistency, retains all existing owner,
+revision, History, logical-day, schedule, behavior, fingerprint, and timestamp
+race fences, and fails closed if a V1 candidate would downgrade a stored V2
+row. Backend-only keyset candidate/count RPCs select missing, invalid,
+non-valid, and non-V2 rows, ordered by Task ID with a maximum batch of 10.
+
+Deployment order and result:
+
+- `task-state-command`: ACTIVE v41, hash
+  `0d0a5f8add2b6f3d7f683d98f984cbd3d4b4e284edc05d36c3cfd14bc38d20d3`.
+- `task-current-projection-backfill`: ACTIVE v5, hash
+  `545e9b9a8e95d51a232965724f08bd67a4ea585746e2c345058885108c208648`.
+
+The manual UI operator is labeled “Rebuild V2 Projections”, retains the
+shared busy/rollover guard, serial 10-row primitives, five-call/50-row maximum,
+keyset cursor, one retryable fence retry, failure stop, and authoritative
+remaining count. Automatic execution is disabled. The first-10 pilot has not
+been run: current progress is written 0, failed 0, retries 0, remaining 519.
+The verified first candidate page was read-only and contained 10 Task IDs.
+
+The final all-row fence audit and settled V2 parity report are pending the
+manual pilot and campaign. History startup remains active; History retirement
+is not unlocked for 7.15.31.
 
 ## 2026-09-24 7.15.28 Projection Realtime Reliability + Bounded Self-Healing
 

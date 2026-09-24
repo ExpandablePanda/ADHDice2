@@ -173,23 +173,23 @@ test("unmount stops the loop before launching another request", async () => {
 
 test("operator uses Edge remainingCount, not a browser count query", () => {
   assert.match(operatorSource, /remainingCount/);
-  assert.match(operatorSource, /body: \{ limit: CURRENT_PROJECTION_BACKFILL_BATCH_SIZE \}/);
+  assert.match(operatorSource, /body: \{ limit: CURRENT_PROJECTION_REBUILD_BATCH_SIZE, afterTaskId \}/);
   assert.doesNotMatch(operatorSource, /from\(|adhdice_clean_tasks|count: "exact"|select\(/);
-  assert.doesNotMatch(operatorSource, /afterTaskId|nextCursor/);
+  assert.match(operatorSource, /afterTaskId|nextCursor/);
   assert.doesNotMatch(operatorSource, /adhdice_execute_task_state_command|adhdice_task_history_facts|adhdice_task_command_operations/);
 });
 
 test("both controls are development-only, share the rollover busy guard, and preserve ten-row behavior", () => {
   assert.match(settingsSource, /process\.env\.NODE_ENV !== "production"/);
-  assert.match(settingsSource, /Backfill 10 Projections/);
-  assert.match(settingsSource, /Backfill 50 Projections/);
+  assert.match(settingsSource, /Rebuild V2 Projections · 10/);
+  assert.match(settingsSource, /Rebuild V2 Projections · 50/);
   assert.equal((settingsSource.match(/disabled=\{isBackfillingProjections \|\| isRolloverActive\}/g) ?? []).length, 2);
   assert.match(settingsSource, /isRolloverActive/);
-  assert.match(settingsSource, /Wait for Task rollover to finish before backfilling projections\./);
+  assert.match(settingsSource, /Wait for Task rollover to finish before rebuilding V2 projections\./);
   assert.match(settingsSource, /handleProjectionBackfill\(1\)/);
   assert.match(settingsSource, /handleProjectionBackfill\(5\)/);
   assert.match(settingsSource, /shouldContinue: \(\) => isMountedRef\.current && isBackfillRunActiveRef\.current/);
-  assert.match(settingsSource, /Backfilling projections · \$\{progress\.processedCount\} \/ \$\{progress\.totalCount\}/);
+  assert.match(settingsSource, /Rebuilding V2 projections · \$\{progress\.processedCount\} \/ \$\{progress\.totalCount\}/);
   assert.match(taskAppSource, /client=\{supabase\}/);
 });
 

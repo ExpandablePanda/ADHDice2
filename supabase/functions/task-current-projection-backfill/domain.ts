@@ -91,6 +91,27 @@ function rowId(row: unknown, field: string, operation: string) {
   return row[field];
 }
 
+export async function loadCurrentProjectionRebuildCandidates(
+  adminClient: BackfillAdminClient,
+  userId: string,
+  request: CurrentProjectionBackfillRequest,
+): Promise<string[]> {
+  const result = await adminClient.rpc(
+    "adhdice_list_task_current_projection_rebuild_candidates",
+    {
+      p_user_id: userId,
+      p_limit: request.limit,
+      p_after_task_id: request.afterTaskId,
+    },
+  );
+  rpcError(result, "Current projection candidate query failed");
+  if (!Array.isArray(result.data) || result.data.length > request.limit) {
+    throw new Error("Current projection candidate query returned malformed data.");
+  }
+  return result.data.map((row) => rowId(row, "id", "Current projection candidate query"));
+}
+
+/** Legacy missing-only helper retained for the original backfill regression contract. */
 export async function loadMissingCurrentProjectionCandidates(
   adminClient: BackfillAdminClient,
   userId: string,
@@ -104,11 +125,11 @@ export async function loadMissingCurrentProjectionCandidates(
       p_after_task_id: request.afterTaskId,
     },
   );
-  rpcError(result, "Current projection candidate query failed");
+  rpcError(result, "Legacy current projection candidate query failed");
   if (!Array.isArray(result.data) || result.data.length > request.limit) {
-    throw new Error("Current projection candidate query returned malformed data.");
+    throw new Error("Legacy current projection candidate query returned malformed data.");
   }
-  return result.data.map((row) => rowId(row, "id", "Current projection candidate query"));
+  return result.data.map((row) => rowId(row, "id", "Legacy current projection candidate query"));
 }
 
 const defaultRebuildCurrentTaskProjection: RebuildCurrentTaskProjection = async ({ adminClient, userId, taskId }) => (
@@ -129,7 +150,7 @@ export async function runCurrentProjectionBackfill(input: {
 }): Promise<ProjectionBackfillResponse> {
   const now = input.now ?? Date.now;
   const startedAt = now();
-  const candidateIds = await loadMissingCurrentProjectionCandidates(input.adminClient, input.userId, input.request);
+  const candidateIds = await loadCurrentProjectionRebuildCandidates(input.adminClient, input.userId, input.request);
   const results: ProjectionBackfillTaskResult[] = [];
   let writtenCount = 0;
   let failedCount = 0;
@@ -168,9 +189,9 @@ export async function runCurrentProjectionBackfill(input: {
     writtenCount,
     failedCount,
     retryCount,
-    remainingCount: await loadMissingCurrentProjectionCount(input.adminClient, input.userId),
+    remainingCount: await loadCurrentProjectionRebuildCount(input.adminClient, input.userId),
     results,
-    nextCursor: candidateIds.length > 0 ? candidateIds[candidateIds.length - 1]! : null,
+    nextCursor: candidateIds.length > 0 ? candidateIds[candidateIds.length - 1]! : input.request.afterTaskId,
     elapsedMs: Math.max(0, now() - startedAt),
   };
   const summary = {
@@ -184,8 +205,8 @@ export async function runCurrentProjectionBackfill(input: {
   return response;
 }
 
-async function loadMissingCurrentProjectionCount(adminClient: BackfillAdminClient, userId: string) {
-  const result = await adminClient.rpc("adhdice_count_missing_task_current_projections", {
+async function loadCurrentProjectionRebuildCount(adminClient: BackfillAdminClient, userId: string) {
+  const result = await adminClient.rpc("adhdice_count_task_current_projection_rebuild_candidates", {
     p_user_id: userId,
   });
   if (result.error) {
