@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-24
+Last reviewed: 2026-09-25
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.42`.
+- Current working app version: `7.15.43`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-25 7.15.43 History Summary Label Correction
+
+Task History uses the normal `Best streak` and `Logged days` labels when
+complete semantic History is ready or when the bounded detail window is ready
+and `canLoadOlderTaskHistory` is false. A ready window that can still load
+older History remains explicitly labeled `Window best streak` and `Window
+logged days`. This is a presentation-only completeness decision; it does not
+trigger a complete semantic History fetch or change the existing statistics,
+cache, mutation, or bounded-read paths.
 
 ## 2026-09-25 7.15.42 Historical Task History Fact Preservation
 
@@ -144,13 +154,15 @@ on-demand in immediately preceding bounded chunks of about 140 days; chunks
 merge without duplicate logical dates, preserve the selected date/month, and
 do not reread loaded ranges.
 
-When only a bounded window is available, Best streak and Logged days are
-presented as `Window best streak` and `Window logged days`. Last Done and
+When a bounded detail window can still load older History, Best streak and
+Logged days are presented as `Window best streak` and `Window logged days`.
+When that ready window proves there is no older History, it uses the normal
+all-time labels without initializing complete semantic History. Last Done and
 Current streak prefer fresh Current Projection/current-summary authority, and
-complete semantic History preserves the existing all-time labels. A History
-mutation explicitly prepares the complete semantic Task History snapshot when
-needed, then keeps the existing canonical command, clear/Not Due ordering,
-reconciliation, and detail-window refresh behavior unchanged.
+complete semantic History preserves the existing all-time calculation path. A
+History mutation explicitly prepares the complete semantic Task History
+snapshot when needed, then keeps the existing canonical command, clear/Not Due
+ordering, reconciliation, and detail-window refresh behavior unchanged.
 
 History Realtime is cache-aware: an event does not bootstrap History when no
 matching cache is loaded; a loaded detail window refreshes only when the event

@@ -75,8 +75,7 @@ test("detail windows are independently reusable per Task and never reuse semanti
 });
 
 test("partial summaries are explicitly window-scoped while fresh current authority is preferred", () => {
-  assert.match(modalSource, /const bestStreakLabel = hasCompleteSemanticHistory \? "Best streak" : "Window best streak"/);
-  assert.match(modalSource, /const loggedDaysLabel = hasCompleteSemanticHistory \? "Logged days" : "Window logged days"/);
+  assert.match(modalSource, /resolveTaskHistorySummaryLabels\(\{\s*canLoadOlderTaskHistory,\s*hasCompleteSemanticHistory,\s*taskHistoryLoadStatus,/);
   assert.match(modalSource, /currentTaskProjection\?\.current_positive_streak/);
   assert.match(modalSource, /currentTaskProjection\?\.last_done_logical_date/);
 });

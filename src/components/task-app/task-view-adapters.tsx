@@ -29,6 +29,7 @@ import {
   buildTaskHistoryCalendarDateKeysForRange,
   getTaskHistoryInitialFocusDateKey,
 } from "@/lib/task-history-calendar-focus";
+import { resolveTaskHistorySummaryLabels } from "@/lib/task-history-summary-labels";
 import {
   getTaskCalendarMonth,
   shiftTaskCalendarMonth,
@@ -552,8 +553,11 @@ export function TaskHistoryModal({
     ?? stats.currentStreak;
   const currentStreakLabel = hasAuthoritativeCurrentSummary ? "Current streak" : "Window current streak";
   const lastDoneLabel = currentTaskProjection || fullHistoryLastDone ? "Last done" : "Window last done";
-  const bestStreakLabel = hasCompleteSemanticHistory ? "Best streak" : "Window best streak";
-  const loggedDaysLabel = hasCompleteSemanticHistory ? "Logged days" : "Window logged days";
+  const { bestStreakLabel, loggedDaysLabel } = resolveTaskHistorySummaryLabels({
+    canLoadOlderTaskHistory,
+    hasCompleteSemanticHistory,
+    taskHistoryLoadStatus,
+  });
   const historyRows = buildTaskHistoryRowProjections(
     normalizedTaskHistory,
     calendarRead?.timeline?.days,
