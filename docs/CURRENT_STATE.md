@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.39`.
+- Current working app version: `7.15.40`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-25 7.15.40 Side Style Builder Phase 4A
+
+Style Builder Phase 4A establishes the development/local-only ADHDice UI
+Library as the single catalog for Builder starters and insertable visual trees.
+It adds searchable categories, separate Start From UI and Insert UI operations,
+fresh-ID subtree insertion under the existing Builder normalization and limits,
+shared UI-system primitive and meaningful variant coverage, Style Lab production
+role mapping, and a deterministic wider-app visual inventory with explicit
+`ready`, `adapter-needed`, `intentionally-nonvisual`, and
+`unsupported-for-builder` statuses. The seven Phase 1–3 starters remain
+available through compatibility IDs backed by the catalog. This phase does not
+adapt every Task, Health, Journal, HUD, planning, navigation, or larger feature
+module; those remain visible future inventory work. No production feature
+behavior, runtime data fetching, Supabase, persistence, or Inspector-to-Builder
+capture was added.
 
 ## 2026-09-24 7.15.39 Side Style Lab Builder Phase 3
 

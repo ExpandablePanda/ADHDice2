@@ -1,12 +1,17 @@
 "use client";
 
-import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Copy, Plus, Search, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { AdhdChip, AdhdIconButton } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import { getPageShellDragAutoScrollDelta } from "@/lib/page-shell-layout";
 import { StyleLabBuilderColorControl } from "./style-lab-builder-color-control";
-import { createStyleLabBuilderTemplate, STYLE_LAB_BUILDER_TEMPLATES, type StyleLabBuilderTemplateId } from "./style-lab-builder-templates";
+import {
+  searchStyleLabBuilderLibrary,
+  STYLE_LAB_BUILDER_LIBRARY_CATEGORIES,
+  type StyleLabBuilderLibraryCategory,
+  type StyleLabBuilderLibraryEntry,
+} from "./style-lab-builder-library";
 import {
   applyStyleLabBuilderDrop,
   canStyleLabBuilderMoveNode,
@@ -46,6 +51,7 @@ import {
   duplicateStyleLabBuilderNode,
   getStyleLabBuilderChildren,
   getStyleLabBuilderNode,
+  insertStyleLabBuilderDraft,
   isStyleLabBuilderBlank,
   resizeStyleLabBuilderDimensions,
   moveStyleLabBuilderNode,
@@ -482,6 +488,77 @@ function BuilderDragOverlay({ visual }: { visual: BuilderDragVisual }) {
   );
 }
 
+function BuilderLibraryPreviewNode({ draft, node }: { draft: StyleLabBuilderDraft; node: StyleLabBuilderNode }): ReactNode {
+  if (node.type === "container") {
+    return (
+      <div className="grid min-w-0 gap-1 rounded-md border border-[#e3dcf5] bg-white/70 p-1.5 dark:border-white/10 dark:bg-white/[0.05]">
+        {getStyleLabBuilderChildren(draft, node.id).slice(0, 4).map((child) => <BuilderLibraryPreviewNode draft={draft} key={child.id} node={child} />)}
+      </div>
+    );
+  }
+  if (node.type === "chip") return <span className="inline-flex max-w-full truncate rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-2 py-1 text-[9px] font-semibold text-[#6f57f6]">{node.text}</span>;
+  if (node.type === "icon-button") return <span className="inline-flex h-6 w-6 items-center justify-center rounded-full border border-[#ddd2ff] bg-[#f7f3ff] text-[9px] text-[#6f57f6]">＋</span>;
+  if (node.type === "divider") return <span className="block h-px w-full bg-[#d8d0ec]" />;
+  return <span className="truncate text-[10px] text-[#5f5876] dark:text-white/70">{node.text}</span>;
+}
+
+function BuilderLibraryPanel({
+  mode,
+  onClose,
+  onInsert,
+  onStart,
+}: {
+  mode: "start" | "insert";
+  onClose: () => void;
+  onInsert: (entry: StyleLabBuilderLibraryEntry) => void;
+  onStart: (entry: StyleLabBuilderLibraryEntry) => void;
+}) {
+  // The former "Start from template" chooser now resolves through this catalog.
+  const [query, setQuery] = useState("");
+  const [category, setCategory] = useState<StyleLabBuilderLibraryCategory>("All");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const results = useMemo(() => searchStyleLabBuilderLibrary(query, category), [category, query]);
+  const selectedEntry = results.find((entry) => entry.id === selectedId) ?? results[0] ?? null;
+  const selectedDraft = selectedEntry?.createDraft() ?? null;
+
+  return (
+    <div aria-label={`${mode === "start" ? "Start From" : "Insert"} UI Library`} className="absolute left-0 top-full z-40 mt-2 w-[min(46rem,calc(100vw-2rem))] rounded-[1.25rem] border border-[#e4dcfb] bg-white p-3 shadow-[0_20px_60px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#1b1530]" role="dialog">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="text-[11px] font-semibold text-[#5f5876] dark:text-white/80">ADHDice UI Library</p>
+          <p className="mt-0.5 text-[10px] text-[#8d82a7] dark:text-white/45">{mode === "start" ? "Choose a visual starting point for this module." : "Insert a Builder-safe UI tree at the current selection."}</p>
+        </div>
+        <button aria-label="Close UI Library" className="rounded-full p-1 text-[#8d82a7] hover:bg-[#f3efff] dark:hover:bg-white/10" onClick={onClose} type="button"><X aria-hidden="true" className="h-3.5 w-3.5" /></button>
+      </div>
+      <label className="mt-3 flex items-center gap-2 rounded-lg border border-[#e6e0f4] bg-[#fbfaff] px-2.5 dark:border-white/10 dark:bg-white/[0.04]">
+        <Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#9a91b1]" />
+        <input aria-label="Search UI Library" className="h-8 min-w-0 flex-1 bg-transparent text-xs text-[#3f3856] outline-none dark:text-white" onChange={(event) => setQuery(event.target.value)} placeholder="Search label, source, tags, or category" type="search" value={query} />
+      </label>
+      <div aria-label="UI Library categories" className="mt-2 flex gap-1 overflow-x-auto pb-1" role="tablist">
+        {STYLE_LAB_BUILDER_LIBRARY_CATEGORIES.map((item) => <button aria-selected={category === item} className={`shrink-0 rounded-full px-2 py-1 text-[10px] font-semibold ${category === item ? "bg-[#6f57f6] text-white" : "bg-[#f3efff] text-[#6f57f6] dark:bg-white/[0.08] dark:text-[#cabfff]"}`} key={item} onClick={() => setCategory(item)} role="tab" type="button">{item}</button>)}
+      </div>
+      <div className="mt-2 grid max-h-64 min-w-0 gap-1 overflow-y-auto pr-1 sm:grid-cols-2" role="listbox">
+        {results.map((entry) => {
+          const entryDraft = entry.createDraft();
+          const root = getStyleLabBuilderNode(entryDraft, STYLE_LAB_BUILDER_ROOT_ID)!;
+          return <button aria-selected={selectedEntry?.id === entry.id} className={`grid min-w-0 gap-1 rounded-lg border p-2 text-left ${selectedEntry?.id === entry.id ? "border-[#b9a9ff] bg-[#f7f3ff] dark:border-[#6f57f6] dark:bg-white/[0.08]" : "border-[#eeeaf8] hover:border-[#d9cffb] dark:border-white/10 dark:hover:border-white/20"}`} key={entry.id} onClick={() => setSelectedId(entry.id)} role="option" type="button">
+            <span className="flex min-w-0 items-center justify-between gap-2"><span className="truncate text-[11px] font-semibold text-[#4c4565] dark:text-white/80">{entry.label}</span><span className="shrink-0 text-[9px] text-[#9a91b1]">{entry.category}</span></span>
+            <span className="truncate text-[9px] text-[#8d82a7] dark:text-white/45">{entry.sourceComponent}</span>
+            {root ? <BuilderLibraryPreviewNode draft={entryDraft} node={root} /> : null}
+          </button>;
+        })}
+        {results.length === 0 ? <p className="col-span-full rounded-lg border border-dashed border-[#e4dcfb] p-4 text-center text-[11px] text-[#8d82a7]">No UI Library items match this search.</p> : null}
+      </div>
+      {selectedEntry && selectedDraft ? (
+        <div className="mt-2 grid gap-2 rounded-lg border border-[#e4dcfb] bg-[#fbfaff] p-2.5 dark:border-white/10 dark:bg-white/[0.04]">
+          <div className="grid gap-0.5"><p className="text-[11px] font-semibold text-[#4c4565] dark:text-white/80">{selectedEntry.label}</p><p className="text-[10px] text-[#8d82a7]">{selectedEntry.description}</p><p className="text-[9px] text-[#8d82a7] dark:text-white/45">Source: {selectedEntry.sourceComponent} · {selectedEntry.sourcePath}</p></div>
+          <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[9px] text-[#8d82a7]">Tags: {selectedEntry.tags.join(", ")}</span><span className="flex gap-1.5"><AdhdChip onClick={() => onStart(selectedEntry)} tone="purple" type="button">Start From</AdhdChip><AdhdChip onClick={() => onInsert(selectedEntry)} type="button">Insert</AdhdChip></span></div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function StyleLabBuilder() {
   if (process.env.NODE_ENV !== "development") return null;
   return <StyleLabBuilderWorkspace />;
@@ -494,7 +571,7 @@ function StyleLabBuilderWorkspace() {
   const [copyStatus, setCopyStatus] = useState<string | null>(null);
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editingValue, setEditingValue] = useState("");
-  const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
+  const [libraryMode, setLibraryMode] = useState<"start" | "insert" | null>(null);
   const [fontLoadStatus, setFontLoadStatus] = useState<"loading" | "loaded" | "fallback">("loading");
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [dragVisual, setDragVisual] = useState<BuilderDragVisual | null>(null);
@@ -963,15 +1040,27 @@ function StyleLabBuilderWorkspace() {
     if (!isStyleLabBuilderBlank(draft) && !window.confirm("Clear the current Builder module?")) return;
     commit(createDefaultStyleLabBuilderDraft());
     setSelectedId(STYLE_LAB_BUILDER_ROOT_ID);
-    setTemplateMenuOpen(false);
+    setLibraryMode(null);
   }
 
-  function handleTemplateLoad(templateId: StyleLabBuilderTemplateId) {
+  function handleLibraryStart(entry: StyleLabBuilderLibraryEntry) {
     if (!isStyleLabBuilderBlank(draft) && !window.confirm("Replace the current Builder module with this template?")) return;
-    commit(createStyleLabBuilderTemplate(templateId));
+    commit(entry.createDraft());
     setSelectedId(STYLE_LAB_BUILDER_ROOT_ID);
     setEditingNodeId(null);
-    setTemplateMenuOpen(false);
+    setLibraryMode(null);
+  }
+
+  function handleLibraryInsert(entry: StyleLabBuilderLibraryEntry) {
+    const result = insertStyleLabBuilderDraft(draft, entry.createDraft(), activeSelectedId);
+    if (!result.insertedRootId) {
+      setCopyStatus("This UI cannot be inserted here without exceeding Builder limits.");
+      return;
+    }
+    commit(result.draft);
+    setSelectedId(result.insertedRootId);
+    setEditingNodeId(null);
+    setLibraryMode(null);
   }
 
   function handleDelete() {
@@ -1065,16 +1154,11 @@ function StyleLabBuilderWorkspace() {
           <AdhdChip onClick={handleNewModule} type="button">New</AdhdChip>
           <AdhdChip onClick={handleNewModule} type="button">Clear Module</AdhdChip>
           <div className="relative">
-            <AdhdChip onClick={() => setTemplateMenuOpen((current) => !current)} type="button">Start from template</AdhdChip>
-            {templateMenuOpen ? (
-              <div className="absolute left-0 top-full z-30 mt-1 grid min-w-52 gap-1 rounded-xl border border-[#e4dcfb] bg-white p-2 shadow-[0_16px_38px_rgba(81,61,168,0.14)] dark:border-white/10 dark:bg-[#1b1530]" role="menu">
-                {STYLE_LAB_BUILDER_TEMPLATES.map((template) => (
-                  <button className="rounded-lg px-2.5 py-2 text-left text-[11px] font-medium text-[#5f5876] hover:bg-[#f3efff] dark:text-white/75 dark:hover:bg-white/10" key={template.id} onClick={() => handleTemplateLoad(template.id)} role="menuitem" type="button">
-                    {template.label}
-                  </button>
-                ))}
-              </div>
-            ) : null}
+            <div className="flex flex-wrap gap-1.5">
+              <AdhdChip onClick={() => setLibraryMode((current) => current === "start" ? null : "start")} tone="purple" type="button">Start From UI</AdhdChip>
+              <AdhdChip onClick={() => setLibraryMode((current) => current === "insert" ? null : "insert")} type="button">Insert UI</AdhdChip>
+            </div>
+            {libraryMode ? <BuilderLibraryPanel mode={libraryMode} onClose={() => setLibraryMode(null)} onInsert={handleLibraryInsert} onStart={handleLibraryStart} /> : null}
           </div>
           <AdhdChip icon={<Copy aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void handleCopy(buildStyleLabModuleSpec(draft), "Module Spec copied."); }} tone="purple" type="button">Copy Module Spec</AdhdChip>
           <AdhdChip icon={<Copy aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { void handleCopy(buildStyleLabReferenceCode(draft), "Reference Code copied."); }} tone="purple" type="button">Copy Reference Code</AdhdChip>

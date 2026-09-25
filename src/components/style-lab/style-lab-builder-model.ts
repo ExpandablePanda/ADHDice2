@@ -532,6 +532,73 @@ export function addStyleLabBuilderNode(draft: StyleLabBuilderDraft, type: StyleL
   return next;
 }
 
+export type StyleLabBuilderInsertResult = {
+  draft: StyleLabBuilderDraft;
+  insertedRootId: string | null;
+};
+
+function styleLabBuilderNodeDepth(draft: StyleLabBuilderDraft, id: string): number {
+  let depth = 0;
+  let current = getStyleLabBuilderNode(draft, id);
+  const visited = new Set<string>();
+  while (current && current.parentId && !visited.has(current.id)) {
+    visited.add(current.id);
+    depth += 1;
+    current = getStyleLabBuilderNode(draft, current.parentId);
+  }
+  return depth;
+}
+
+/** Clone a catalog draft into the current draft without ever reusing node IDs. */
+export function insertStyleLabBuilderDraft(
+  draft: StyleLabBuilderDraft,
+  sourceDraft: StyleLabBuilderDraft,
+  selectedId: string | null | undefined,
+): StyleLabBuilderInsertResult {
+  const normalized = normalizeStyleLabBuilderDraft(draft);
+  const source = normalizeStyleLabBuilderDraft(sourceDraft);
+  const selected = getStyleLabBuilderNode(normalized, selectedId);
+  const parentId = selected?.type === "container" ? selected.id : selected?.parentId ?? STYLE_LAB_BUILDER_ROOT_ID;
+  const siblings = getStyleLabBuilderChildren(normalized, parentId);
+  const insertAt = selected && selected.type !== "container"
+    ? Math.max(0, siblings.findIndex((node) => node.id === selected.id) + 1)
+    : siblings.length;
+  const sourceRoot = getStyleLabBuilderNode(source, STYLE_LAB_BUILDER_ROOT_ID);
+  if (!sourceRoot || normalized.nodes.length + source.nodes.length > STYLE_LAB_BUILDER_MAX_NODES) {
+    return { draft: normalized, insertedRootId: null };
+  }
+
+  const sourceMaxDepth = Math.max(...source.nodes.map((node) => styleLabBuilderNodeDepth(source, node.id)), 0);
+  const destinationDepth = styleLabBuilderNodeDepth(normalized, parentId);
+  if (destinationDepth + 1 + sourceMaxDepth > STYLE_LAB_BUILDER_MAX_DEPTH) {
+    return { draft: normalized, insertedRootId: null };
+  }
+
+  const usedIds = new Set(normalized.nodes.map((node) => node.id));
+  const idMap = new Map<string, string>();
+  for (const sourceNode of source.nodes) {
+    idMap.set(sourceNode.id, nextUniqueId(usedIds, `${sourceNode.id}-inserted`));
+  }
+
+  const insertedRootId = idMap.get(sourceRoot.id) ?? null;
+  if (!insertedRootId) return { draft: normalized, insertedRootId: null };
+
+  const nextSiblingIds = siblings.map((node) => node.id);
+  nextSiblingIds.splice(insertAt, 0, insertedRootId);
+  const orderById = new Map(nextSiblingIds.map((id, index) => [id, index]));
+  const existingNodes = normalized.nodes.map((node) => orderById.has(node.id) ? { ...node, order: orderById.get(node.id)! } : node);
+  const insertedNodes = source.nodes.map((sourceNode) => ({
+    ...sourceNode,
+    id: idMap.get(sourceNode.id)!,
+    parentId: sourceNode.id === sourceRoot.id ? parentId : idMap.get(sourceNode.parentId ?? sourceRoot.id) ?? parentId,
+    order: sourceNode.id === sourceRoot.id ? insertAt : sourceNode.order,
+  }));
+  return {
+    draft: normalizeStyleLabBuilderDraft({ ...normalized, nodes: [...existingNodes, ...insertedNodes] }),
+    insertedRootId,
+  };
+}
+
 export function moveStyleLabBuilderNode(draft: StyleLabBuilderDraft, id: string, direction: "earlier" | "later"): StyleLabBuilderDraft {
   const normalized = normalizeStyleLabBuilderDraft(draft);
   const node = getStyleLabBuilderNode(normalized, id);
