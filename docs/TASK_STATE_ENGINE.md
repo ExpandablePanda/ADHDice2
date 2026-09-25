@@ -36,10 +36,13 @@ production parity.
   row and Calendar displays the recorded outcome on exactly that date.
 - Manual History changes only through another manual action. Automatic Missed
   and automatic Did My Best are also real canonical History and count normally.
-- Editing one History date does not rewrite unrelated saved dates.
-- An automatic row may be removed or recalculated only when a manual correction
-  proves that its underlying occurrence was not actually due. Independent daily
-  obligations are not removed by correcting another date.
+- Editing one History date does not rewrite unrelated saved dates. A true
+  historical replacement preserves every later persisted canonical fact unless
+  that later date is explicitly selected.
+- A current/live replacement may apply the existing dependent automatic-row
+  cleanup where recurrence semantics require it. That cleanup must not run for
+  a true historical override; independent later obligations remain canonical
+  evidence until their own dates are explicitly changed.
 - History without modern occurrence metadata remains valid for its recorded
   date, Calendar, statistics, and streaks. It must not consume an arbitrary
   current or future recurrence occurrence.
@@ -106,10 +109,11 @@ History. Automatic behavior follows obligation identity:
 
 - Daily obligations are independent. Correcting 8/14 Auto Missed to Done does
   not remove valid Auto Missed rows on 8/15 or later.
-- Rolling overdue continuation may create dependent automatic rows. For Every 3
-  Days, an 8/16 Auto Missed can make 8/17 dependent; correcting 8/16 to Done
-  moves the next due date to 8/19, so the dependent 8/17 automatic row may be
-  removed or recomputed to Not Due.
+- Rolling overdue continuation may create dependent automatic rows. A current
+  or live Every 3 Days success can retain the existing cleanup that removes a
+  dependent automatic row. A historical correction of 8/16 to Done must not
+  remove a persisted 8/17 or later fact; the full preserved chain is used to
+  recompute current state.
 - A manually entered 8/17 Missed is a manual fact and remains until manually
   changed.
 

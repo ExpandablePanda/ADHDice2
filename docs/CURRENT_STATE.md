@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.41`.
+- Current working app version: `7.15.42`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,45 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-25 7.15.42 Historical Task History Fact Preservation
+
+Manual QA reproduced a canonical History mutation regression: changing one
+past rolling-schedule date from Missed to Done explicitly deleted later
+persisted automatic Missed facts. The later dates then disappeared from
+Logged days and appeared Not Due, and the compatibility/current projection
+changed as though those historical facts had never existed.
+
+The root cause was the Task State Engine's dependent rolling automatic-Missed
+cleanup. A successful replacement on a rolling interval greater than one ran
+that cleanup even when the command planner had correctly marked the action as
+`historicalOverride: true`. `command-service.ts` converted those engine delete
+changes into `automaticHistoryDeleteIds`, and the canonical command persisted
+the deletes.
+
+The corrected invariant is local historical fact mutation: a historical
+replacement updates only the selected logical date; every later persisted
+canonical History fact remains authoritative, with its existing identity and
+revision, unless that later date is explicitly selected. Current Task state
+and Current Projection are recomputed from the full preserved canonical
+History. Current/live replacements retain the existing dependent cleanup
+semantics where they apply.
+
+The 7.15.41 bounded History architecture remains intact. Complete semantic
+History is still loaded for mutation preparation and correctness/fallback;
+bounded detail-window reads, independent cache state, Load Older, bounded
+Calendar override reads, Realtime cache-aware refresh, gap recovery, and
+projection fallback remain unchanged. No SQL, schema, index, RPC, or
+publication change was made.
+
+The known QA-affected Task's eight deleted facts (2026-09-16 through
+2026-09-23) were not repaired automatically. Existing replay is not safe for
+this case because the committed rollover identities are already recorded and
+the change ledger retains tombstones rather than the complete deleted row
+payload. No broad or direct repair SQL was run. A narrowly scoped canonical
+repair transaction is still required to restore the original fact identities,
+row revisions, provenance, recurrence metadata, and audit linkage after those
+original row values are recovered and independently reviewed.
 
 ## 2026-09-24 7.15.39 Targeted Task Realtime Reconciliation
 

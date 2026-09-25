@@ -443,6 +443,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   }
 
   if (action?.replaceExisting
+    && !historicalOverride
     && SUCCESS.has(action.outcome)
     && action.provenance !== "rollover"
     && task.recurrence.kind === "rolling"

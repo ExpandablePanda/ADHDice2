@@ -237,6 +237,7 @@ test("clear_outcome RPC serialization preserves its clear date without side effe
   assert.equal(payload.clear_logical_date, "2026-08-09");
   assert.equal(plan.normalizedResult.historyFact, null);
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
   assert.equal(payload.history_fact, undefined);
   assert.equal(payload.reward_program_version, undefined);
   assert.equal(payload.schedule_boundary, undefined);
@@ -261,6 +262,7 @@ test("clearing today's explicit Missed recomputes Pending from the remaining sch
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
   assert.equal(plan.normalizedResult.historyFact, null);
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
 test("clearing an overdue explicit Missed preserves calculated Missed when still warranted", () => {
@@ -279,6 +281,7 @@ test("clearing an overdue explicit Missed preserves calculated Missed when still
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "missed");
   assert.equal(plan.normalizedResult.historyFact, null);
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
 test("reusing an idempotence identity with a different intent produces a different accepted digest", () => {
@@ -1175,7 +1178,7 @@ test("trusted historical replacement derives replaceExisting and previous outcom
   assert.equal(plan.command.payload.occurrenceKey, null);
 });
 
-test("trusted Every-3-Days success replacement atomically removes dependent automatic Missed facts", () => {
+test("historical Every-3-Days success replacement preserves dependent automatic Missed facts", () => {
   for (const outcome of ["done", "did_my_best"] as const) {
     const planningState = state({ due_on: "2026-08-17", repeat_frequency: "daily", repeat_interval: 3 });
     planningState.engineInput = {
@@ -1203,18 +1206,94 @@ test("trusted Every-3-Days success replacement atomically removes dependent auto
     const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
 
     assert.equal(plan.normalizedResult.historyFact?.outcome, outcome);
-    assert.deepEqual([...plan.normalizedResult.automaticHistoryDeleteIds].sort(), [
-      "automatic-missed-2026-08-18",
-      "automatic-missed-2026-08-19",
-    ].sort(), outcome);
-    assert.deepEqual(
-      [...(payload.automatic_history_delete_ids as string[])].sort(),
-      [...plan.normalizedResult.automaticHistoryDeleteIds].sort(),
-      outcome,
-    );
+    assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, [], outcome);
+    assert.equal(payload.automatic_history_delete_ids, undefined, outcome);
     assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20", outcome);
     assert.equal(plan.normalizedResult.rewardEntitlement?.logicalDate, "2026-08-17", outcome);
   }
+});
+
+test("same-day Every-3-Days success retains live dependent automatic Missed cleanup", () => {
+  const planningState = state({ due_on: "2026-08-17", repeat_frequency: "daily", repeat_interval: 3 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-08-17T12:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-17",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [
+      automaticMissedHistory("2026-08-17", "2026-08-17"),
+      automaticMissedHistory("2026-08-18", "2026-08-17"),
+    ],
+  };
+  const plan = planTaskStateCommand(planningState, trustedCommand({
+    type: "set_outcome",
+    task_id: "task-1",
+    replay_identity: "calendar:every-3-days:live-done",
+    outcome: "done",
+    logical_date: "2026-08-17",
+  }, planningState.task, { ...boundary("rolling"), repeat_interval: 3, anchor_date: "2026-08-17" }, {
+    ...logicalDay,
+    logicalDate: "2026-08-17",
+    identity: "user-1:2026-08-17:America/New_York:06:00:3",
+  }));
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, ["automatic-missed-2026-08-18"]);
+  assert.deepEqual(payload.automatic_history_delete_ids, ["automatic-missed-2026-08-18"]);
+});
+
+test("multi-date historical replacements preserve unselected later facts between canonical plans", () => {
+  const planningState = state({ due_on: "2026-09-15", repeat_frequency: "daily", repeat_interval: 3 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-09-24T12:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "missed",
+      dueOn: "2026-09-15",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [
+      ...["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"]
+        .map((logicalDate) => automaticMissedHistory(logicalDate, "2026-09-15")),
+    ],
+  };
+  const originalLaterIds = planningState.engineInput.history
+    .filter((row) => row.logicalDate > "2026-09-15")
+    .map((row) => row.id);
+
+  for (const [index, logicalDate] of ["2026-09-15", "2026-09-17"].entries()) {
+    const plan = planTaskStateCommand(planningState, trustedCommand({
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: `calendar:multi-date:${logicalDate}`,
+      outcome: "done",
+      logical_date: logicalDate,
+    }, planningState.task, { ...boundary("rolling"), repeat_interval: 3, anchor_date: "2026-09-15" }, {
+      ...logicalDay,
+      logicalDate: "2026-09-24",
+      identity: `user-1:2026-09-24:America/New_York:06:00:3:${index}`,
+    }));
+
+    assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, [], logicalDate);
+    planningState.engineInput.history = planningState.engineInput.history.map((row) => (
+      row.logicalDate === logicalDate
+        ? { ...row, outcome: "done" as const, provenance: "manual" as const }
+        : row
+    ));
+  }
+
+  assert.deepEqual(
+    planningState.engineInput.history.filter((row) => row.logicalDate > "2026-09-15").map((row) => row.id),
+    originalLaterIds,
+  );
+  assert.deepEqual(
+    planningState.engineInput.history.filter((row) => ["2026-09-15", "2026-09-17"].includes(row.logicalDate)).map((row) => row.outcome),
+    ["done", "done"],
+  );
 });
 
 test("canonical Daily success projection derives its own date after ambiguous old Missed rows", () => {
@@ -1590,6 +1669,7 @@ test("trusted Calendar override planner evaluates the proposed override before c
   assert.equal(plan.normalizedResult.calendarOverride?.override_state, "not_due");
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-11");
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
 test("trusted planner accepts the Appanda 8/8-8/12 replacement range without occurrences", () => {
@@ -1720,6 +1800,7 @@ test("canonical Delay carries the effective due cursor through replay and RPC pr
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "delayed");
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, effectiveDueOn);
   assert.equal(plan.normalizedResult.scheduleBoundary, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
   assert.equal(payload.compatibility_projection.due_on, effectiveDueOn);
   assert.equal(payload.history_fact.effective_due_on, effectiveDueOn);
   assert.equal(payload.occurrence_effective_override.effective_due_on, effectiveDueOn);
