@@ -174,7 +174,10 @@ test("gap recovery keeps Notes and History lazy and refreshes only loaded consum
   assert.match(recovery, /loadNotes\(\{ force: true, silent: true \}\)/);
   assert.match(recovery, /if \(hasLoadedFullTaskHistoryRef\.current\)/);
   assert.match(recovery, /loadTaskHistory\([\s\S]*source: "realtime"/);
-  assert.match(recovery, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)/);
+  assert.match(recovery, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true, source: "realtime" \}\)/);
+  assert.match(recovery, /loadTaskHistoryDetailWindow\(taskId, \{[\s\S]*source: "gap_recovery"/);
+  assert.match(recovery, /taskHistoryDetailByTaskIdRef/);
+  assert.doesNotMatch(recovery, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)/);
   assert.doesNotMatch(recovery, /loadTaskHistory\(\{[\s\S]*source: "initial"/);
   assert.doesNotMatch(recovery, /requestCoreWorkspaceRefresh/);
 });

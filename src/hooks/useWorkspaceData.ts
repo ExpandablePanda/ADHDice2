@@ -60,6 +60,14 @@ import {
 } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
+import {
+  getTaskHistoryInitialDetailRange,
+  getTaskHistoryOlderDetailRange,
+  mergeTaskHistoryDetailRows,
+  taskHistoryDetailCanLoadOlder,
+  type TaskHistoryDetailRange,
+  type TaskHistoryDetailWindow,
+} from "@/lib/task-history-detail-window";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import {
@@ -264,6 +272,12 @@ export type TaskHistoryTaskLoadState = {
   status: "error" | "loading" | "ready";
 };
 
+export type TaskHistoryDetailLoadOptions = {
+  force?: boolean;
+  source?: "gap_recovery" | "mutation" | "older" | "open" | "realtime";
+  range?: TaskHistoryDetailRange;
+};
+
 type TaskHistoryCacheUpdate = DbTaskHistory[] | ((current: DbTaskHistory[]) => DbTaskHistory[]);
 
 export async function fetchAllPagedRows<T>(
@@ -349,6 +363,7 @@ export function useWorkspaceData({
   const [fullTaskHistoryLoadedUserId, setFullTaskHistoryLoadedUserId] = useState<string | null>(null);
   const [taskHistoryByTaskId, setTaskHistoryByTaskId] = useState<Record<string, DbTaskHistory[]>>({});
   const [taskHistoryLoadStateByTaskId, setTaskHistoryLoadStateByTaskId] = useState<Record<string, TaskHistoryTaskLoadState>>({});
+  const [taskHistoryDetailByTaskId, setTaskHistoryDetailByTaskId] = useState<Record<string, TaskHistoryDetailWindow>>({});
   const [taskHistoryStreakSummaries, setTaskHistoryStreakSummaries] = useState<TaskHistoryStreakSummaryMap>({});
   const [currentTaskProjectionsByTaskId, setCurrentTaskProjectionsByTaskId] = useState<CurrentTaskProjectionReadMap>({});
   const [currentTaskProjectionReadContext, setCurrentTaskProjectionReadContext] = useState<CurrentTaskProjectionReadContext>({
@@ -366,7 +381,13 @@ export function useWorkspaceData({
   const taskHistoryByTaskIdRef = useRef<Record<string, DbTaskHistory[]>>({});
   const taskHistoryLoadStateByTaskIdRef = useRef<Record<string, TaskHistoryTaskLoadState>>({});
   const taskHistoryTaskLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<TaskHistoryLoadResult>>());
+  const taskHistoryDetailByTaskIdRef = useRef<Record<string, TaskHistoryDetailWindow>>({});
+  const taskHistoryDetailLoadPromisesRef = useRef(new Map<string, OwnedWorkspacePromise<TaskHistoryDetailWindow | null>>());
+  const taskHistoryDetailTrailingRefreshRef = useRef(new Map<string, TaskHistoryDetailLoadOptions>());
+  const taskHistoryDetailRequestSequenceRef = useRef(0);
   const loadTaskHistoryForTasksRef = useRef<((taskIds: string[], options?: TaskHistoryLoadOptions) => Promise<TaskHistoryLoadMap>) | null>(null);
+  const loadTaskHistoryDetailWindowRef = useRef<((taskId: string, options?: TaskHistoryDetailLoadOptions) => Promise<TaskHistoryDetailWindow | null>) | null>(null);
+  const loadOlderTaskHistoryDetailRef = useRef<((taskId: string) => Promise<TaskHistoryDetailWindow | null>) | null>(null);
   const loadTaskHistoryStreakSummariesRef = useRef<((nextTasks?: Task[], options?: TaskHistoryStreakSummaryRefreshOptions) => Promise<boolean>) | null>(null);
   const taskHistoryStreakSummaryLoadPromiseRef = useRef<OwnedWorkspacePromise<boolean> | null>(null);
   const taskHistoryStreakSummaryCalculationTokenRef = useRef(0);
@@ -450,6 +471,20 @@ export function useWorkspaceData({
     ));
   }, []);
 
+  const setTaskHistoryDetailWindow = useCallback((taskId: string, update: TaskHistoryDetailWindow | ((current: TaskHistoryDetailWindow | undefined) => TaskHistoryDetailWindow)) => {
+    const current = taskHistoryDetailByTaskIdRef.current[taskId];
+    const next = typeof update === "function" ? update(current) : update;
+    taskHistoryDetailByTaskIdRef.current = {
+      ...taskHistoryDetailByTaskIdRef.current,
+      [taskId]: next,
+    };
+    setTaskHistoryDetailByTaskId((currentState) => (
+      JSON.stringify(currentState[taskId]) === JSON.stringify(next)
+        ? currentState
+        : { ...currentState, [taskId]: next }
+    ));
+  }, []);
+
   const setTaskHistoryCacheForTask = useCallback((taskId: string, rows: DbTaskHistory[]) => {
     const nextRows = deduplicateTaskHistoryByLogicalDate(rows.filter((entry) => entry.task_id === taskId));
     const nextSnapshot = deduplicateTaskHistoryByLogicalDate([
@@ -467,6 +502,20 @@ export function useWorkspaceData({
     taskHistoryByTaskIdRef.current = nextByTaskId;
     setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextSnapshot));
     setTaskHistoryByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextByTaskId));
+    const detailWindow = taskHistoryDetailByTaskIdRef.current[taskId];
+    if (detailWindow && detailWindow.status !== "loading") {
+      const visibleRows = nextRows.filter((entry) => (
+        entry.entry_date >= detailWindow.loadedStartDate
+        && entry.entry_date <= detailWindow.loadedEndDate
+      ));
+      setTaskHistoryDetailWindow(taskId, {
+        ...detailWindow,
+        error: null,
+        generation: workspaceGenerationRef.current,
+        history: mergeTaskHistoryDetailRows([], visibleRows),
+        status: "ready",
+      });
+    }
   }, []);
 
   const updateTaskHistoryForTask = useCallback((taskId: string, update: TaskHistoryCacheUpdate) => {
@@ -481,8 +530,13 @@ export function useWorkspaceData({
     taskHistoryByTaskIdRef.current = {};
     taskHistoryLoadStateByTaskIdRef.current = {};
     taskHistoryTaskLoadPromisesRef.current.clear();
+    taskHistoryDetailByTaskIdRef.current = {};
+    taskHistoryDetailLoadPromisesRef.current.clear();
+    taskHistoryDetailTrailingRefreshRef.current.clear();
+    taskHistoryDetailRequestSequenceRef.current += 1;
     setTaskHistoryByTaskId({});
     setTaskHistoryLoadStateByTaskId({});
+    setTaskHistoryDetailByTaskId({});
   }, []);
 
   useEffect(() => {
@@ -576,6 +630,8 @@ export function useWorkspaceData({
       loadFullTaskHistoryRef.current = null;
       loadNotesRef.current = null;
       loadTaskHistoryForTaskRef.current = null;
+      loadTaskHistoryDetailWindowRef.current = null;
+      loadOlderTaskHistoryDetailRef.current = null;
       fetchTaskHistoryForRolloverRef.current = null;
       refreshTaskHistoryStreakSummaryRef.current = null;
       retryTaskHistoryForTaskRef.current = null;
@@ -1497,6 +1553,20 @@ export function useWorkspaceData({
           taskHistoryByTaskIdRef.current = nextByTaskId;
           setTaskHistory((current) => keepCurrentIfStructurallyEqual(current, nextTaskHistory));
           setTaskHistoryByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextByTaskId));
+          Object.entries(taskHistoryDetailByTaskIdRef.current).forEach(([taskId, detailWindow]) => {
+            if (detailWindow.status === "loading") return;
+            const visibleRows = (nextByTaskId[taskId] ?? []).filter((entry) => (
+              entry.entry_date >= detailWindow.loadedStartDate
+              && entry.entry_date <= detailWindow.loadedEndDate
+            ));
+            setTaskHistoryDetailWindow(taskId, {
+              ...detailWindow,
+              error: null,
+              generation: workspaceGeneration,
+              history: mergeTaskHistoryDetailRows([], visibleRows),
+              status: "ready",
+            });
+          });
           const nextTaskHistoryLoadStateByTaskId = Object.fromEntries(
             Object.keys(nextByTaskId).map((taskId) => [taskId, { error: null, status: "ready" }]),
           ) as Record<string, TaskHistoryTaskLoadState>;
@@ -1554,7 +1624,7 @@ export function useWorkspaceData({
       }, TASK_HISTORY_ROLLOVER_BATCH_SIZE);
     }
 
-    async function loadTaskHistoryForTask(taskId: string, { force = false, silent = false }: TaskHistoryLoadOptions = {}) {
+    async function loadTaskHistoryForTask(taskId: string, { force = false, silent = false, source }: TaskHistoryLoadOptions = {}) {
       if (!isActive || !canApplyCoreWorkspaceResult()) {
         return { status: "error", history: null, error: "Task History is not available for this workspace." } satisfies TaskHistoryLoadResult;
       }
@@ -1579,6 +1649,12 @@ export function useWorkspaceData({
       };
       const taskLoadPromise = (async () => {
         try {
+          if (source === "mutation") {
+            logTaskHistoryDetailDiagnostic("history_semantic_full_read_for_mutation", {
+              generation: workspaceGeneration,
+              taskId,
+            });
+          }
           const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery(taskId).range(from, to));
           if (!isActive || !canApplyCoreWorkspaceResult()) {
             return { status: "error", history: null, error: "Task History is not available for this workspace." } satisfies TaskHistoryLoadResult;
@@ -1602,6 +1678,233 @@ export function useWorkspaceData({
       taskLoadPromiseOwner.promise = taskLoadPromise;
       taskHistoryTaskLoadPromisesRef.current.set(taskId, { generation: workspaceGeneration, promise: taskLoadPromise });
       return await taskLoadPromise;
+    }
+
+    function logTaskHistoryDetailDiagnostic(kind: string, details: Record<string, unknown> = {}) {
+      if (!isWorkspacePerformanceDiagnosticsEnabled()) return;
+      const detailString = Object.entries(details)
+        .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`)
+        .join(" ");
+      console.info(`[workspace:${kind}]${detailString ? ` ${detailString}` : ""}`);
+    }
+
+    function taskHistoryDetailRangeContains(range: TaskHistoryDetailWindow, requested: TaskHistoryDetailRange) {
+      return range.status === "ready"
+        && range.loadedStartDate <= requested.startDate
+        && range.loadedEndDate >= requested.endDate;
+    }
+
+    function taskHistoryDetailCanLoadOlderForTask(taskId: string, loadedStartDate: string) {
+      const task = tasksRef.current.find((candidate) => candidate.id === taskId);
+      return taskHistoryDetailCanLoadOlder(task, loadedStartDate);
+    }
+
+    async function loadTaskHistoryDetailWindow(taskId: string, {
+      force = false,
+      range = getTaskHistoryInitialDetailRange(todayKeyRef.current),
+      source = "open",
+    }: TaskHistoryDetailLoadOptions = {}) {
+      if (!isActive || !canApplyCoreWorkspaceResult()) return null;
+      const current = taskHistoryDetailByTaskIdRef.current[taskId];
+      const existingLoad = taskHistoryDetailLoadPromisesRef.current.get(taskId);
+      if (existingLoad?.generation === workspaceGeneration) {
+        if (!force) return await existingLoad.promise;
+        taskHistoryDetailTrailingRefreshRef.current.set(taskId, { force: true, range, source });
+        const joinedResult = await existingLoad.promise;
+        const trailingRequest = taskHistoryDetailTrailingRefreshRef.current.get(taskId);
+        taskHistoryDetailTrailingRefreshRef.current.delete(taskId);
+        if (trailingRequest && isActive && canApplyCoreWorkspaceResult()) {
+          return await loadTaskHistoryDetailWindow(taskId, trailingRequest);
+        }
+        return joinedResult;
+      }
+      if (existingLoad) taskHistoryDetailLoadPromisesRef.current.delete(taskId);
+
+      if (!force && current && taskHistoryDetailRangeContains(current, range)) {
+        logTaskHistoryDetailDiagnostic("history_detail_window_cache_hit", {
+          end: range.endDate,
+          generation: workspaceGeneration,
+          start: range.startDate,
+          taskId,
+        });
+        return current;
+      }
+
+      const completeSemanticHistory = taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready"
+        && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId);
+      if (!force && !current && completeSemanticHistory) {
+        const seededHistory = (taskHistoryByTaskIdRef.current[taskId] ?? [])
+          .filter((entry) => entry.entry_date >= range.startDate && entry.entry_date <= range.endDate);
+        const seededWindow: TaskHistoryDetailWindow = {
+          canLoadOlder: taskHistoryDetailCanLoadOlderForTask(taskId, range.startDate),
+          error: null,
+          generation: workspaceGeneration,
+          history: mergeTaskHistoryDetailRows([], seededHistory),
+          inFlightRequestId: null,
+          loadedEndDate: range.endDate,
+          loadedStartDate: range.startDate,
+          status: "ready",
+          taskId,
+        };
+        setTaskHistoryDetailWindow(taskId, seededWindow);
+        logTaskHistoryDetailDiagnostic("history_detail_window_cache_hit", {
+          end: range.endDate,
+          generation: workspaceGeneration,
+          mode: "semantic_intersection",
+          rows: seededWindow.history.length,
+          start: range.startDate,
+          taskId,
+        });
+        return seededWindow;
+      }
+
+      const requestId = `history-detail-${workspaceGeneration}-${++taskHistoryDetailRequestSequenceRef.current}`;
+      logTaskHistoryDetailDiagnostic("history_detail_window_requested", {
+        end: range.endDate,
+        generation: workspaceGeneration,
+        source,
+        start: range.startDate,
+        taskId,
+      });
+      logTaskHistoryDetailDiagnostic("history_detail_window_started", {
+        end: range.endDate,
+        generation: workspaceGeneration,
+        requestId,
+        source,
+        start: range.startDate,
+        taskId,
+      });
+      setTaskHistoryDetailWindow(taskId, {
+        canLoadOlder: current?.canLoadOlder ?? taskHistoryDetailCanLoadOlderForTask(taskId, current?.loadedStartDate ?? range.startDate),
+        error: null,
+        generation: workspaceGeneration,
+        history: current?.history ?? [],
+        inFlightRequestId: requestId,
+        loadedEndDate: current?.loadedEndDate ?? range.endDate,
+        loadedStartDate: current?.loadedStartDate ?? range.startDate,
+        status: "loading",
+        taskId,
+      });
+
+      const detailLoadOwner: OwnedWorkspacePromise<TaskHistoryDetailWindow | null> = {
+        generation: workspaceGeneration,
+        promise: Promise.resolve(null),
+      };
+      const detailLoadPromise = (async () => {
+        try {
+          const result = await canonicalHistoryQuery(taskId)
+            .gte("logical_date", range.startDate)
+            .lte("logical_date", range.endDate);
+          if (!isActive || !canApplyCoreWorkspaceResult()) return null;
+          const latest = taskHistoryDetailByTaskIdRef.current[taskId];
+          if (latest?.inFlightRequestId !== requestId) return latest ?? null;
+          if (result.error) {
+            const error = result.error.message ?? "Could not load task history details.";
+            const errorWindow = {
+              ...latest,
+              error,
+              inFlightRequestId: null,
+              status: "error" as const,
+            } satisfies TaskHistoryDetailWindow;
+            setTaskHistoryDetailWindow(taskId, errorWindow);
+            logTaskHistoryDetailDiagnostic("history_detail_window_error", {
+              end: range.endDate,
+              generation: workspaceGeneration,
+              source,
+              start: range.startDate,
+              taskId,
+            });
+            return errorWindow;
+          }
+          const nextStartDate = latest?.loadedStartDate && latest.loadedStartDate < range.startDate
+            ? latest.loadedStartDate
+            : range.startDate;
+          const nextEndDate = latest?.loadedEndDate && latest.loadedEndDate > range.endDate
+            ? latest.loadedEndDate
+            : range.endDate;
+          const nextWindow: TaskHistoryDetailWindow = {
+            canLoadOlder: taskHistoryDetailCanLoadOlderForTask(taskId, nextStartDate),
+            error: null,
+            generation: workspaceGeneration,
+            history: mergeTaskHistoryDetailRows(
+              latest?.history ?? [],
+              mapCanonicalHistoryRows((result.data ?? []) as CanonicalTaskHistoryFact[]),
+            ),
+            inFlightRequestId: null,
+            loadedEndDate: nextEndDate,
+            loadedStartDate: nextStartDate,
+            status: "ready",
+            taskId,
+          };
+          setTaskHistoryDetailWindow(taskId, nextWindow);
+          logTaskHistoryDetailDiagnostic("history_detail_window_completed", {
+            end: range.endDate,
+            generation: workspaceGeneration,
+            returnedRows: result.data?.length ?? 0,
+            rows: nextWindow.history.length,
+            source,
+            start: range.startDate,
+            taskId,
+          });
+          return nextWindow;
+        } finally {
+          if (taskHistoryDetailLoadPromisesRef.current.get(taskId)?.promise === detailLoadOwner.promise) {
+            taskHistoryDetailLoadPromisesRef.current.delete(taskId);
+          }
+        }
+      })();
+      detailLoadOwner.promise = detailLoadPromise;
+      taskHistoryDetailLoadPromisesRef.current.set(taskId, detailLoadOwner);
+      return await detailLoadPromise;
+    }
+
+    async function loadOlderTaskHistoryDetail(taskId: string) {
+      const current = taskHistoryDetailByTaskIdRef.current[taskId];
+      if (!current) return await loadTaskHistoryDetailWindow(taskId, { source: "older" });
+      if (current.status === "loading") {
+        const inFlight = taskHistoryDetailLoadPromisesRef.current.get(taskId);
+        return inFlight?.generation === workspaceGeneration ? await inFlight.promise : current;
+      }
+      if (!current.canLoadOlder) return current;
+      const range = getTaskHistoryOlderDetailRange(current.loadedStartDate);
+      logTaskHistoryDetailDiagnostic("history_detail_older_requested", {
+        end: range.endDate,
+        generation: workspaceGeneration,
+        start: range.startDate,
+        taskId,
+      });
+      const completeSemanticHistory = taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready"
+        && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId);
+      if (completeSemanticHistory) {
+        const olderRows = (taskHistoryByTaskIdRef.current[taskId] ?? [])
+          .filter((entry) => entry.entry_date >= range.startDate && entry.entry_date <= range.endDate);
+        const nextWindow: TaskHistoryDetailWindow = {
+          ...current,
+          canLoadOlder: taskHistoryDetailCanLoadOlderForTask(taskId, range.startDate),
+          error: null,
+          generation: workspaceGeneration,
+          history: mergeTaskHistoryDetailRows(current.history, olderRows),
+          loadedStartDate: range.startDate,
+          status: "ready",
+        };
+        setTaskHistoryDetailWindow(taskId, nextWindow);
+        logTaskHistoryDetailDiagnostic("history_detail_older_merged", {
+          generation: workspaceGeneration,
+          mode: "semantic_intersection",
+          rows: olderRows.length,
+          taskId,
+        });
+        return nextWindow;
+      }
+      const nextWindow = await loadTaskHistoryDetailWindow(taskId, { force: true, range, source: "older" });
+      if (nextWindow) {
+        logTaskHistoryDetailDiagnostic("history_detail_older_merged", {
+          generation: workspaceGeneration,
+          rows: nextWindow.history.length,
+          taskId,
+        });
+      }
+      return nextWindow;
     }
 
     async function loadTaskHistoryForTasks(taskIds: string[], options: TaskHistoryLoadOptions = {}) {
@@ -1817,6 +2120,8 @@ export function useWorkspaceData({
     loadNotesRef.current = () => loadNotes({ silent: true });
     loadTaskHistoryForTaskRef.current = (taskId, options) => loadTaskHistoryForTask(taskId, { ...options, silent: true }).then((result) => result.status === "ready");
     loadTaskHistoryForTasksRef.current = loadTaskHistoryForTasks;
+    loadTaskHistoryDetailWindowRef.current = loadTaskHistoryDetailWindow;
+    loadOlderTaskHistoryDetailRef.current = loadOlderTaskHistoryDetail;
     loadTaskHistoryStreakSummariesRef.current = loadTaskHistoryStreakSummaries;
     fetchTaskHistoryForRolloverRef.current = fetchTaskHistoryForRollover;
     refreshTaskHistoryStreakSummaryRef.current = reloadTaskHistoryStreakSummaryForTask;
@@ -2855,21 +3160,46 @@ export function useWorkspaceData({
           refreshed,
         });
       } else {
-        const loadedTaskIds = Object.entries(taskHistoryLoadStateByTaskIdRef.current)
+        const loadedSemanticTaskIds = Object.entries(taskHistoryLoadStateByTaskIdRef.current)
           .filter(([taskId, state]) => state.status === "ready" && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId))
           .map(([taskId]) => taskId);
-        if (loadedTaskIds.length > 0) {
-          const results = await Promise.all(loadedTaskIds.map(async (taskId) => [
+        if (loadedSemanticTaskIds.length > 0) {
+          const results = await Promise.all(loadedSemanticTaskIds.map(async (taskId) => [
             taskId,
-            await loadTaskHistoryForTask(taskId, { force: true, silent: true }),
+            await loadTaskHistoryForTask(taskId, { force: true, silent: true, source: "realtime" }),
           ] as const));
           recordAdhdiceRealtimeDiagnostic({
             channel: "workspace",
             generation: incident.generation,
             kind: "realtime_gap_loaded_history_reconciled",
-            mode: "task-scoped",
+            mode: "task-scoped-full",
             tasks: results.filter(([, result]) => result.status === "ready").length,
-            taskIds: loadedTaskIds,
+            taskIds: loadedSemanticTaskIds,
+          });
+        }
+        const detailOnlyTaskIds = Object.entries(taskHistoryDetailByTaskIdRef.current)
+          .filter(([taskId, window]) => window.status === "ready" && !loadedSemanticTaskIds.includes(taskId))
+          .map(([taskId]) => taskId);
+        if (detailOnlyTaskIds.length > 0) {
+          const results = await Promise.all(detailOnlyTaskIds.map(async (taskId) => {
+            const window = taskHistoryDetailByTaskIdRef.current[taskId];
+            if (!window) return null;
+            return await loadTaskHistoryDetailWindow(taskId, {
+              force: true,
+              range: {
+                endDate: window.loadedEndDate,
+                startDate: window.loadedStartDate,
+              },
+              source: "gap_recovery",
+            });
+          }));
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "workspace",
+            generation: incident.generation,
+            kind: "history_detail_gap_refresh",
+            mode: "bounded",
+            taskIds: detailOnlyTaskIds,
+            tasks: results.filter(Boolean).length,
           });
         }
       }
@@ -3267,19 +3597,48 @@ export function useWorkspaceData({
             ?? (payload.old as { task_id?: string; entity_id?: string } | null)?.task_id
             ?? (payload.old as { entity_id?: string } | null)?.entity_id);
           if (taskId) {
-            void loadTaskHistoryForTask(taskId, { force: true, silent: true }).then((result) => (
-              result.status === "ready"
-                ? reloadTaskHistoryStreakSummaryForTask(taskId, result.history ?? undefined)
-                : false
-            ));
+            const hasCompleteSemanticHistory = hasLoadedFullTaskHistoryRef.current
+              || (taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready"
+                && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId));
+            if (hasCompleteSemanticHistory) {
+              void loadTaskHistoryForTask(taskId, { force: true, silent: true, source: "realtime" }).then((result) => (
+                result.status === "ready"
+                  ? reloadTaskHistoryStreakSummaryForTask(taskId, result.history ?? undefined)
+                  : false
+              ));
+            } else {
+              const detailWindow = taskHistoryDetailByTaskIdRef.current[taskId];
+              const eventLogicalDate = ((payload.new as { logical_date?: string } | null)?.logical_date
+                ?? (payload.old as { logical_date?: string } | null)?.logical_date);
+              const isInsideLoadedWindow = Boolean(
+                detailWindow
+                && eventLogicalDate
+                && eventLogicalDate >= detailWindow.loadedStartDate
+                && eventLogicalDate <= detailWindow.loadedEndDate,
+              );
+              if (detailWindow && isInsideLoadedWindow) {
+                logTaskHistoryDetailDiagnostic("history_detail_realtime_refresh", {
+                  end: detailWindow.loadedEndDate,
+                  generation: workspaceGeneration,
+                  start: detailWindow.loadedStartDate,
+                  taskId,
+                });
+                void loadTaskHistoryDetailWindow(taskId, {
+                  force: true,
+                  range: {
+                    endDate: detailWindow.loadedEndDate,
+                    startDate: detailWindow.loadedStartDate,
+                  },
+                  source: "realtime",
+                });
+              }
+            }
+            if (hasLoadedFullTaskHistoryRef.current) {
+              scheduleTaskHistoryRevisionReconciliation();
+            }
           }
-          if (hasLoadedFullTaskHistoryRef.current) {
-            scheduleTaskHistoryRevisionReconciliation();
-            return;
-          }
-          // A task-scoped refresh above is sufficient when no historical
-          // consumer has requested the full snapshot. Do not turn a History
-          // notification into a workspace-wide bootstrap.
+          // History notifications do not bootstrap either a complete semantic
+          // cache or an unopened detail window.
         },
       )
       .subscribe((status, error) => {
@@ -3337,6 +3696,8 @@ export function useWorkspaceData({
       rolloverWorkspaceReconciliationRef.current = null;
       prepareTaskMutationRef.current = null;
       fetchTaskHistoryForRolloverRef.current = null;
+      loadTaskHistoryDetailWindowRef.current = null;
+      loadOlderTaskHistoryDetailRef.current = null;
       loadTaskHistoryStreakSummariesRef.current = null;
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
@@ -3344,6 +3705,7 @@ export function useWorkspaceData({
       realtimeGapCoordinator?.dispose();
       realtimeGapCoordinator = null;
       realtimeGapRecoveryPromise = null;
+      taskHistoryDetailTrailingRefreshRef.current.clear();
       taskEntityReconciliationCoordinator.dispose();
       taskEntityReconcileSources.clear();
       if (taskChannel) {
@@ -3415,6 +3777,14 @@ export function useWorkspaceData({
     async (taskIds: string[], options?: TaskHistoryLoadOptions) => await loadTaskHistoryForTasksRef.current?.(taskIds, options) ?? {},
     [],
   );
+  const loadTaskHistoryDetailWindow = useCallback(
+    async (taskId: string, options?: TaskHistoryDetailLoadOptions) => await loadTaskHistoryDetailWindowRef.current?.(taskId, options) ?? null,
+    [],
+  );
+  const loadOlderTaskHistoryDetail = useCallback(
+    async (taskId: string) => await loadOlderTaskHistoryDetailRef.current?.(taskId) ?? null,
+    [],
+  );
   const refreshTaskHistoryStreakSummaries = useCallback(
     async (nextTasks?: Task[], options?: TaskHistoryStreakSummaryRefreshOptions) => await loadTaskHistoryStreakSummariesRef.current?.(nextTasks, options) ?? false,
     [],
@@ -3453,6 +3823,8 @@ export function useWorkspaceData({
     softRefreshWorkspace,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
+    loadTaskHistoryDetailWindow,
+    loadOlderTaskHistoryDetail,
     refreshTaskHistoryStreakSummaries,
     fetchTaskHistoryForRollover,
     retryTaskHistoryForTask,
@@ -3460,6 +3832,7 @@ export function useWorkspaceData({
     refreshTaskHistoryStreakSummary,
     taskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
+    taskHistoryDetailByTaskId,
     taskHistoryStreakSummaries,
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,

@@ -16,6 +16,7 @@ export type TaskHistoryLoadMap = Record<string, TaskHistoryLoadResult>;
 export type TaskHistoryLoadOptions = {
   force?: boolean;
   silent?: boolean;
+  source?: "fallback" | "mutation" | "realtime" | "rollover" | "secondary";
 };
 
 export const TASK_HISTORY_ROLLOVER_BATCH_SIZE = 100;

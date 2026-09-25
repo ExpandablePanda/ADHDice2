@@ -26,6 +26,7 @@ import {
 import { formatTaskHistoryCalendarDay, formatTaskHistoryCalendarMonth, getTaskHistoryCalendarMonthDays, TaskHistoryCalendarDay, TaskHistoryCalendarPresentation } from "./task-history-calendar-presentation";
 import {
   buildTaskHistoryCalendarDateKeys,
+  buildTaskHistoryCalendarDateKeysForRange,
   getTaskHistoryInitialFocusDateKey,
 } from "@/lib/task-history-calendar-focus";
 import {
@@ -46,10 +47,12 @@ import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-perfor
 import type {
   CustomBehaviorRuleset,
   Task,
+  TaskCurrentProjection,
   TaskHistory as DbTaskHistory,
   TaskStatus,
 } from "@/lib/database.types";
 import { formatTaskTypeLabel } from "@/lib/task-type";
+import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 
 type Message = {
   text: string;
@@ -336,6 +339,7 @@ export function TaskHistoryModal({
   onClose,
   onRenameTaskTitle,
   onRetryTaskHistoryLoad,
+  onLoadOlderTaskHistory,
   onSetDelayedStatus,
   onSetCalendarOverride,
   onSetStatuses,
@@ -354,10 +358,18 @@ export function TaskHistoryModal({
   behaviorPolicyLoading = false,
   customBehaviorRulesets = [],
   calendarOverrides,
+  canLoadOlderTaskHistory = false,
+  currentTaskHistorySummary = null,
+  currentTaskProjection,
+  completeSemanticTaskHistory,
+  hasCompleteSemanticHistory = false,
+  historyWindowEndDate,
+  historyWindowStartDate,
 }: {
   onClose: () => void;
   onRenameTaskTitle: (taskId: string, nextTitle: string) => Promise<boolean | void> | boolean | void;
   onRetryTaskHistoryLoad?: () => Promise<boolean> | void;
+  onLoadOlderTaskHistory?: () => Promise<boolean> | void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<boolean | void>;
   onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
   onSetCalendarOverride?: (logicalDate: string, overrideState: "not_due" | "due_open") => Promise<boolean | void>;
@@ -376,11 +388,22 @@ export function TaskHistoryModal({
   behaviorPolicyLoading?: boolean;
   customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[];
   calendarOverrides?: TaskCalendarOverride[];
+  canLoadOlderTaskHistory?: boolean;
+  currentTaskHistorySummary?: TaskHistoryStreakSummary | null;
+  currentTaskProjection?: Pick<TaskCurrentProjection, "current_positive_streak" | "last_done_logical_date">;
+  completeSemanticTaskHistory?: DbTaskHistory[];
+  hasCompleteSemanticHistory?: boolean;
+  historyWindowEndDate?: string;
+  historyWindowStartDate?: string;
 }) {
   const today = todayDateKey;
   const taskTypeLabel = formatTaskTypeLabel(task.task_type, task.custom_ruleset_id, customBehaviorRulesets);
   const taskHistoryLabel = `${taskTypeLabel} History`;
-  const days = buildTaskHistoryCalendarDateKeys(today);
+  const initialCalendarDays = buildTaskHistoryCalendarDateKeys(today);
+  const days = buildTaskHistoryCalendarDateKeysForRange(
+    historyWindowStartDate ?? initialCalendarDays[0] ?? today,
+    historyWindowEndDate ?? initialCalendarDays.at(-1) ?? today,
+  );
   const normalizedTaskHistory = useMemo(
     () => deduplicateTaskHistoryByLogicalDate(taskHistory),
     [taskHistory],
@@ -483,7 +506,10 @@ export function TaskHistoryModal({
   const dueDates = new Set(Object.entries(calendarRead?.states ?? {})
     .filter(([, state]) => state === "due")
     .map(([dateKey]) => dateKey));
-  const savedHistoryStats = computeTaskSpecificHistoryStats(task, normalizedTaskHistory, today, days[0] ?? today);
+  const summaryHistory = hasCompleteSemanticHistory && completeSemanticTaskHistory
+    ? completeSemanticTaskHistory
+    : normalizedTaskHistory;
+  const savedHistoryStats = computeTaskSpecificHistoryStats(task, summaryHistory, today, days[0] ?? today);
   const resolvedTimelineDays = calendarRead?.timeline?.days
     ?? (calendarRead ? taskEffectiveTimelineDaysFromStates(calendarRead.states) : null);
   const behaviorResolution = resolveTaskBehaviorPolicyForTask({
@@ -513,7 +539,21 @@ export function TaskHistoryModal({
       longestMissedStreak: resolvedStreaks.longestMissedStreak,
     }
     : { ...savedHistoryStats, longestMissedStreak: 0 };
-  const lastDone = getTaskHistoryLastDone(normalizedTaskHistory, today);
+  const windowLastDone = getTaskHistoryLastDone(normalizedTaskHistory, today);
+  const fullHistoryLastDone = hasCompleteSemanticHistory ? getTaskHistoryLastDone(summaryHistory, today) : null;
+  const lastDoneDateKey = currentTaskProjection?.last_done_logical_date
+    ?? fullHistoryLastDone?.dateKey
+    ?? windowLastDone?.dateKey
+    ?? null;
+  const lastDone = lastDoneDateKey ? { dateKey: lastDoneDateKey } : null;
+  const hasAuthoritativeCurrentSummary = Boolean(currentTaskProjection || currentTaskHistorySummary || hasCompleteSemanticHistory);
+  const currentStreakValue = currentTaskProjection?.current_positive_streak
+    ?? currentTaskHistorySummary?.currentStreak
+    ?? stats.currentStreak;
+  const currentStreakLabel = hasAuthoritativeCurrentSummary ? "Current streak" : "Window current streak";
+  const lastDoneLabel = currentTaskProjection || fullHistoryLastDone ? "Last done" : "Window last done";
+  const bestStreakLabel = hasCompleteSemanticHistory ? "Best streak" : "Window best streak";
+  const loggedDaysLabel = hasCompleteSemanticHistory ? "Logged days" : "Window logged days";
   const historyRows = buildTaskHistoryRowProjections(
     normalizedTaskHistory,
     calendarRead?.timeline?.days,
@@ -783,11 +823,21 @@ export function TaskHistoryModal({
         status: <span className={`text-xs font-semibold ${taskHistoryStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : formatTaskStatusLabel(row.status)}</span>,
       }))}
       historySummary={[
-        { label: "Last done", value: lastDone ? formatCalendarDate(lastDone.dateKey) : "None" },
-        { label: "Current streak", value: String(stats.currentStreak) },
-        { label: "Best streak", value: String(stats.bestStreak) },
-        { label: "Logged days", value: String(stats.loggedDays) },
+        { label: lastDoneLabel, value: lastDone ? formatCalendarDate(lastDone.dateKey) : "None" },
+        { label: currentStreakLabel, value: String(currentStreakValue) },
+        { label: bestStreakLabel, value: String(stats.bestStreak) },
+        { label: loggedDaysLabel, value: String(stats.loggedDays) },
       ]}
+      historyFooter={canLoadOlderTaskHistory && onLoadOlderTaskHistory ? (
+        <div className="mt-3 flex justify-end">
+          <button
+            className="rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-3 py-1.5 text-xs font-semibold text-[#6f57f6] disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]"
+            disabled={taskHistoryLoadStatus === "loading"}
+            onClick={() => { void onLoadOlderTaskHistory(); }}
+            type="button"
+          >{taskHistoryLoadStatus === "loading" ? "Loading older…" : "Load older"}</button>
+        </div>
+      ) : null}
       historyTitle={taskHistoryLabel}
       monthDays={taskCalendarMonthDays}
       monthLabel={formatTaskHistoryCalendarMonth(taskCalendarMonthKey, stateEngineContext?.timezone ?? "UTC")}

@@ -321,6 +321,7 @@ import {
   mapTaskHistoryRow,
   type TaskHistoryStats,
 } from "@/lib/task-history";
+import { getTaskHistoryInitialDetailRange, getTaskHistoryOlderDetailRange, type TaskHistoryDetailRange } from "@/lib/task-history-detail-window";
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
 import { buildTaskAttentionProjection, buildTaskAttentionReasonMap, type TaskAttentionBehaviorPolicy } from "@/lib/task-attention";
 import {
@@ -1440,6 +1441,7 @@ export function TaskApp() {
   const [taskListManualMemberships, setTaskListManualMemberships] = useState<TaskListManualMembership[]>([]);
   const [taskHistory, setTaskHistory] = useState<DbTaskHistory[]>([]);
   const [taskCalendarOverridesByTaskId, setTaskCalendarOverridesByTaskId] = useState<Record<string, TaskCalendarOverride[]>>({});
+  const [taskCalendarOverrideLoadedRangesByTaskId, setTaskCalendarOverrideLoadedRangesByTaskId] = useState<Record<string, TaskHistoryDetailRange[]>>({});
   const taskSubtasks = tasks;
   const [availableTaskNotes, setAvailableTaskNotes] = useState<TaskEditorLinkedNote[]>([]);
 
@@ -1889,15 +1891,17 @@ export function TaskApp() {
     fetchTaskHistoryForRollover,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
+    loadTaskHistoryDetailWindow,
+    loadOlderTaskHistoryDetail,
     loadTaskNotes,
     prepareTaskMutation,
     reconcileRolloverWorkspace,
-    retryTaskHistoryForTask,
     refreshTaskHistoryStreakSummary,
     refreshTaskHistoryStreakSummaries,
     softRefreshWorkspace,
     taskHistoryByTaskId: sharedTaskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
+    taskHistoryDetailByTaskId,
     taskHistoryStreakSummaries,
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
@@ -2160,6 +2164,7 @@ export function TaskApp() {
         setFocusHistory([]);
         setTaskHistory([]);
         setTaskCalendarOverridesByTaskId({});
+        setTaskCalendarOverrideLoadedRangesByTaskId({});
         setAvailableTaskNotes([]);
         saveProfile(DEFAULT_PROFILE);
       }
@@ -3672,14 +3677,29 @@ export function TaskApp() {
     );
   }, [client, prepareTaskMutation, refreshCustomBehaviorRulesets, todayKey]);
   const currentUserIdText = session?.user?.id ?? "";
-  const loadTaskCalendarOverridesForTask = useCallback(async (taskId: string) => {
+  const loadTaskCalendarOverridesForTask = useCallback(async (taskId: string, requestedRange?: TaskHistoryDetailRange, options?: { force?: boolean }) => {
     if (!currentUserIdText) return null;
+    const range = requestedRange
+      ?? (taskHistoryDetailByTaskId[taskId]
+        ? {
+            endDate: taskHistoryDetailByTaskId[taskId].loadedEndDate,
+            startDate: taskHistoryDetailByTaskId[taskId].loadedStartDate,
+          }
+        : getTaskHistoryInitialDetailRange(todayKey));
+    const hasLoadedRange = taskCalendarOverrideLoadedRangesByTaskId[taskId]?.some((loadedRange) => (
+      loadedRange.startDate <= range.startDate && loadedRange.endDate >= range.endDate
+    ));
+    if (hasLoadedRange && !options?.force) {
+      return taskCalendarOverridesByTaskId[taskId] ?? [];
+    }
     const result = await client
       .from("adhdice_task_calendar_overrides")
       .select("*")
       .eq("user_id", currentUserIdText)
       .eq("entity_id", taskId)
       .eq("is_active", true)
+      .gte("logical_date", range.startDate)
+      .lte("logical_date", range.endDate)
       .order("logical_date", { ascending: false });
     if (result.error) {
       setMessage({ tone: "warn", text: result.error.message ?? "Could not refresh the task Calendar overrides." });
@@ -3697,9 +3717,28 @@ export function TaskApp() {
         createdAt: override.created_at,
       } satisfies TaskCalendarOverride;
     });
-    setTaskCalendarOverridesByTaskId((current) => ({ ...current, [taskId]: activeOverrides }));
-    return activeOverrides;
-  }, [client, currentUserIdText, setMessage]);
+    const existingOverrides = taskCalendarOverridesByTaskId[taskId] ?? [];
+    const nextOverrides = [
+      ...existingOverrides.filter((override) => override.logicalDate < range.startDate || override.logicalDate > range.endDate),
+      ...activeOverrides,
+    ].sort((left, right) => right.logicalDate.localeCompare(left.logicalDate));
+    setTaskCalendarOverridesByTaskId((current) => {
+      const existing = current[taskId] ?? [];
+      const mergedOverrides = [
+        ...existing.filter((override) => override.logicalDate < range.startDate || override.logicalDate > range.endDate),
+        ...activeOverrides,
+      ].sort((left, right) => right.logicalDate.localeCompare(left.logicalDate));
+      return { ...current, [taskId]: mergedOverrides };
+    });
+    setTaskCalendarOverrideLoadedRangesByTaskId((current) => ({
+      ...current,
+      [taskId]: [
+        ...(current[taskId] ?? []).filter((loadedRange) => loadedRange.startDate !== range.startDate || loadedRange.endDate !== range.endDate),
+        range,
+      ],
+    }));
+    return nextOverrides;
+  }, [client, currentUserIdText, setMessage, taskCalendarOverrideLoadedRangesByTaskId, taskHistoryDetailByTaskId, taskCalendarOverridesByTaskId, todayKey]);
   const taskListEvaluationContext = useMemo<TaskListEvaluationContext>(() => ({
     activeMilestoneTaskIds: milestoneData.activeMilestoneTaskIds,
     milestoneTaskIds: milestoneData.milestoneTaskIds,
@@ -6226,8 +6265,9 @@ export function TaskApp() {
 
   function openTaskHistoryForTask(taskId: string) {
     setTaskHistoryModalTaskId(taskId);
-    void loadTaskHistoryForTask(taskId);
-    void loadTaskCalendarOverridesForTask(taskId);
+    const range = getTaskHistoryInitialDetailRange(todayKey);
+    void loadTaskHistoryDetailWindow(taskId, { range, source: "open" });
+    void loadTaskCalendarOverridesForTask(taskId, range);
   }
 
   function openBatchDeleteModal() {
@@ -7066,6 +7106,35 @@ export function TaskApp() {
     ? tasks.find((task) => task.id === taskHistoryModalTaskId) ?? null
     : null;
   const replaceableTaskHistoryOutcomes = new Set<TaskStatus>(["done", "did_my_best", "missed"]);
+  async function ensureCompleteTaskHistoryForMutation(taskId: string) {
+    if (taskHistoryLoadStateByTaskId[taskId]?.status === "ready" && Object.hasOwn(taskHistoryByTaskId, taskId)) {
+      return taskHistoryByTaskId[taskId] ?? [];
+    }
+    const result = (await loadTaskHistoryForTasks([taskId], { silent: true, source: "mutation" }))[taskId];
+    if (!result || result.status !== "ready") {
+      setMessage({ tone: "warn", text: result?.error ?? "Could not load complete task history for this edit." });
+      return null;
+    }
+    return result.history;
+  }
+
+  async function refreshTaskHistoryDetailAfterMutation(taskId: string) {
+    const currentWindow = taskHistoryDetailByTaskId[taskId];
+    const refreshedWindow = await loadTaskHistoryDetailWindow(taskId, {
+      force: true,
+      range: currentWindow
+        ? { endDate: currentWindow.loadedEndDate, startDate: currentWindow.loadedStartDate }
+        : getTaskHistoryInitialDetailRange(todayKey),
+      source: "mutation",
+    });
+    if (refreshedWindow) {
+      await loadTaskCalendarOverridesForTask(taskId, {
+        endDate: refreshedWindow.loadedEndDate,
+        startDate: refreshedWindow.loadedStartDate,
+      }, { force: true });
+    }
+    return refreshedWindow;
+  }
   type HistoryCalendarClearResult = {
     history: DbTaskHistory[];
     task: TaskStateRuntimeLocalTask | null;
@@ -7076,7 +7145,8 @@ export function TaskApp() {
     replacementLabel: string,
     options?: { clearReplaceableOutcome?: boolean; currentTask?: TaskStateRuntimeLocalTask | null },
   ): Promise<HistoryCalendarClearResult | null> {
-    const historySnapshot = taskHistoryByTaskId[taskId] ?? [];
+    const detailHistorySnapshot = taskHistoryDetailByTaskId[taskId]?.history ?? [];
+    const historySnapshot = taskHistoryByTaskId[taskId] ?? detailHistorySnapshot;
     const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
     const activeOverride = (taskCalendarOverridesByTaskId[taskId] ?? []).some((override) => override.logicalDate === logicalDate);
     const hasReplaceableOutcome = Boolean(
@@ -7096,6 +7166,7 @@ export function TaskApp() {
       setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${replacementLabel}.` });
       return null;
     }
+    if (!await ensureCompleteTaskHistoryForMutation(taskId)) return null;
     let committedTask: TaskStateRuntimeLocalTask | null = null;
     const cleared = await updateTask(taskId, {}, {
       canonicalIntent: {
@@ -7119,13 +7190,14 @@ export function TaskApp() {
       return null;
     }
 
-    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId];
-    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId);
+    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
+    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
     if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
       setMessage({ tone: "warn", text: `Task was saved, but History could not be reconciled while replacing the existing status with ${replacementLabel}.` });
       return null;
     }
     await reconcileTaskHistoryMutation(taskId, refreshedHistory.history, committedTask);
+    await refreshTaskHistoryDetailAfterMutation(taskId);
     if (refreshedOverrides.some((override) => override.logicalDate === logicalDate)) {
       setMessage({ tone: "warn", text: `Task was saved, but the existing Calendar status could not be cleared while replacing it with ${replacementLabel}.` });
       return null;
@@ -7134,7 +7206,7 @@ export function TaskApp() {
   }
 
   async function setTaskHistoryNotDue(taskId: string, logicalDate: string): Promise<boolean> {
-    const historySnapshot = taskHistoryByTaskId[taskId] ?? [];
+    const historySnapshot = taskHistoryByTaskId[taskId] ?? taskHistoryDetailByTaskId[taskId]?.history ?? [];
     const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
     let currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
       ?? tasks.find((candidate) => candidate.id === taskId)
@@ -7163,8 +7235,8 @@ export function TaskApp() {
       return false;
     }
 
-    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId];
-    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId);
+    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
+    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
     if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
       setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });
       return false;
@@ -7198,7 +7270,7 @@ export function TaskApp() {
         replayIdentity: createTaskStateReplayIdentity(),
       });
       if (committed) {
-        const refreshed = await loadTaskCalendarOverridesForTask(taskHistoryModalTaskId);
+        const refreshed = await loadTaskCalendarOverridesForTask(taskHistoryModalTaskId, undefined, { force: true });
         if (refreshed) {
           await refreshTaskHistoryStreakSummary(taskHistoryModalTaskId);
         }
@@ -7216,6 +7288,8 @@ export function TaskApp() {
       const pendingTaskIds = [taskHistoryModalTaskId];
       beginPendingTaskMutationScope(pendingTaskIds);
       try {
+        const completeHistorySnapshot = await ensureCompleteTaskHistoryForMutation(taskHistoryModalTaskId);
+        if (!completeHistorySnapshot) return false;
         if (status !== "clear") {
           const saved = await syncTaskHistoryEntries(
             taskHistoryModalTaskId,
@@ -7223,7 +7297,7 @@ export function TaskApp() {
             entryDates,
             {
               historicalOverride: true,
-              historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+              historySnapshot: completeHistorySnapshot,
               syncLiveTask: true,
             },
           );
@@ -7231,18 +7305,21 @@ export function TaskApp() {
             setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${formatTaskStatusLabel(status)} did not finish correctly.` });
             return false;
           }
+          await refreshTaskHistoryDetailAfterMutation(taskHistoryModalTaskId);
           return true;
         }
-        return await syncTaskHistoryEntries(
+        const saved = await syncTaskHistoryEntries(
           taskHistoryModalTaskId,
           "pending",
           entryDates,
           {
             historicalOverride: status !== "clear",
-            historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+            historySnapshot: completeHistorySnapshot,
             syncLiveTask: true,
           },
         );
+        if (saved) await refreshTaskHistoryDetailAfterMutation(taskHistoryModalTaskId);
+        return saved;
       } finally {
         endPendingTaskMutationScope(pendingTaskIds);
       }
@@ -7258,6 +7335,8 @@ export function TaskApp() {
         }
         return;
       }
+      const completeHistorySnapshot = await ensureCompleteTaskHistoryForMutation(taskHistoryModalTaskId);
+      if (!completeHistorySnapshot) return;
       await syncTaskHistoryEntries(
         taskHistoryModalTaskId,
         "delayed",
@@ -7265,18 +7344,43 @@ export function TaskApp() {
         {
           historicalOverride: true,
           historicalOverrideDelayUntilDate: nextDueOn,
-          historySnapshot: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+          historySnapshot: completeHistorySnapshot,
           syncLiveTask: true,
         },
       );
+      await refreshTaskHistoryDetailAfterMutation(taskHistoryModalTaskId);
     },
     task: taskHistoryModalTask,
-    taskHistory: taskHistoryByTaskId[taskHistoryModalTaskId] ?? [],
+    taskHistory: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.history ?? [],
     calendarOverrides: taskCalendarOverridesByTaskId[taskHistoryModalTaskId] ?? [],
     taskTitle: taskHistoryModalTask.title,
-    taskHistoryLoadError: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.error ?? null,
-    taskHistoryLoadStatus: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.status ?? "loading",
-    onRetryTaskHistoryLoad: () => retryTaskHistoryForTask(taskHistoryModalTaskId),
+    taskHistoryLoadError: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.error ?? null,
+    taskHistoryLoadStatus: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.status ?? "loading",
+    onRetryTaskHistoryLoad: () => loadTaskHistoryDetailWindow(taskHistoryModalTaskId, {
+      force: true,
+      source: "open",
+      range: getTaskHistoryInitialDetailRange(todayKey),
+    }).then(Boolean),
+    canLoadOlderTaskHistory: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.canLoadOlder ?? false,
+    onLoadOlderTaskHistory: async () => {
+      const currentWindow = taskHistoryDetailByTaskId[taskHistoryModalTaskId];
+      const nextWindow = await loadOlderTaskHistoryDetail(taskHistoryModalTaskId);
+      if (!nextWindow) return false;
+      const olderRange = currentWindow ? getTaskHistoryOlderDetailRange(currentWindow.loadedStartDate) : null;
+      if (olderRange && nextWindow.loadedStartDate < currentWindow.loadedStartDate) {
+        await loadTaskCalendarOverridesForTask(taskHistoryModalTaskId, olderRange);
+      }
+      return true;
+    },
+    hasCompleteSemanticHistory: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.status === "ready"
+      && Object.hasOwn(taskHistoryByTaskId, taskHistoryModalTaskId),
+    completeSemanticTaskHistory: taskHistoryLoadStateByTaskId[taskHistoryModalTaskId]?.status === "ready"
+      ? taskHistoryByTaskId[taskHistoryModalTaskId] ?? []
+      : undefined,
+    currentTaskProjection: currentTaskProjectionReadResolution.freshProjectionByTaskId[taskHistoryModalTaskId],
+    currentTaskHistorySummary: taskHistoryStreakSummaries[taskHistoryModalTaskId] ?? null,
+    historyWindowStartDate: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.loadedStartDate,
+    historyWindowEndDate: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.loadedEndDate,
     todayDateKey: todayKey,
     stateEngineContext: { logicalDayRollover: dayStartTime, now: new Date(logicalDayNow), timezone: userTimeZone },
     behaviorProfiles: taskTypeBehaviorProfiles,

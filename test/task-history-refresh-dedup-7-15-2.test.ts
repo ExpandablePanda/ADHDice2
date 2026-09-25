@@ -229,5 +229,5 @@ test("M: 7.15.1 task-scoped cache-first and forced reads remain intact", async (
   assert.match(updateActionSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/);
   assert.match(historyActionsSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/);
   assert.match(appSource, /loadTaskHistoryForTasks\(\[task\.id\], \{ force: true, silent: true \}\)/);
-  assert.match(appSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/);
+  assert.match(appSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true, source: "mutation" \}\)/);
 });

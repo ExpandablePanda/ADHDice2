@@ -530,28 +530,27 @@ test("ordinary startup does not invoke the bulk History summary path or broad co
   assert.match(source, /if \(!taskId\) broadManualActionCommandOperationReads \+= 1/);
 });
 
-test("opening Task History refreshes the shared canonical History snapshot", async () => {
+test("opening Task History reads only the bounded detail window", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
-  const modalLoader = source.slice(source.indexOf("async function loadTaskHistoryForTask"), source.indexOf("async function loadTaskHistoryStreakSummaries"));
+  const detailLoader = source.slice(source.indexOf("async function loadTaskHistoryDetailWindow"), source.indexOf("async function loadOlderTaskHistoryDetail"));
 
-  assert.match(modalLoader, /setTaskHistoryCacheForTask\(taskId, rows\)/);
-  assert.match(source, /setTaskHistory\s*\(/);
-  assert.doesNotMatch(modalLoader, /mergeTaskHistoryCache/);
-  assert.match(modalLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
-  assert.match(modalLoader, /\.range\(from, to\)/);
+  assert.match(detailLoader, /\.gte\("logical_date", range\.startDate\)/);
+  assert.match(detailLoader, /\.lte\("logical_date", range\.endDate\)/);
+  assert.doesNotMatch(detailLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
+  assert.match(source, /async function loadTaskHistoryForTask\(taskId/);
 });
 
-test("modal open uses the authoritative cache first and retains the normal cache-miss fetch", async () => {
+test("modal open uses the independent detail cache first and retains complete semantic loading", async () => {
   const workspaceSource = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const appSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-  const modalLoader = workspaceSource.slice(workspaceSource.indexOf("async function loadTaskHistoryForTask"), workspaceSource.indexOf("async function loadTaskHistoryStreakSummaries"));
+  const detailLoader = workspaceSource.slice(workspaceSource.indexOf("async function loadTaskHistoryDetailWindow"), workspaceSource.indexOf("async function loadOlderTaskHistoryDetail"));
   const openHandler = appSource.slice(appSource.indexOf("function openTaskHistoryForTask"), appSource.indexOf("async function closeActualTimeEntry", appSource.indexOf("function openTaskHistoryForTask")));
 
-  assert.match(modalLoader, /if \(!force && taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"\)/);
-  assert.match(openHandler, /loadTaskHistoryForTask\(taskId\)/);
-  assert.doesNotMatch(openHandler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
-  assert.match(modalLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
-  assert.match(modalLoader, /setTaskHistoryCacheForTask\(taskId, rows\)/);
+  assert.match(detailLoader, /taskHistoryDetailRangeContains/);
+  assert.match(openHandler, /loadTaskHistoryDetailWindow\(taskId/);
+  assert.doesNotMatch(openHandler, /loadTaskHistoryForTask\(taskId/);
+  assert.doesNotMatch(detailLoader, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
+  assert.match(workspaceSource, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
 });
 
 test("rollover History acquisition leaves modal cache and load state untouched", async () => {
@@ -614,19 +613,21 @@ test("Task Realtime skips only the locally owned Task echo and resumes after the
 
   assert.match(appSource, /return pendingTaskMutationTrackerRef\.current\.shouldSkipTaskReload\(change\)/);
   assert.match(realtime, /shouldSkipTaskReloadRef\.current\?\.\(\{ eventType: payload\.eventType, taskId \}\)/);
-  assert.match(realtime, /requestTaskEntityReconciliation\(taskId, payload\.eventType\)/);
-  assert.ok(realtime.indexOf("shouldSkipTaskReloadRef.current") < realtime.indexOf("requestTaskEntityReconciliation"));
+  assert.match(realtime, /requestTaskEntityReconciliationAfterGap\(taskId, payload\.eventType\)/);
+  assert.ok(realtime.indexOf("shouldSkipTaskReloadRef.current") < realtime.indexOf("requestTaskEntityReconciliationAfterGap"));
 });
 
 test("known-task History Realtime uses targeted refresh and unknown-ID events keep the full-load fallback", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const realtimeStart = source.indexOf('table: "adhdice_task_history_facts"');
-  const realtime = source.slice(realtimeStart, realtimeStart + 2100);
+  const realtime = source.slice(realtimeStart, realtimeStart + 4200);
 
-  assert.match(realtime, /if \(taskId\) \{\s*void loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)\.then\(\(result\) =>/);
-  assert.match(realtime, /result\.status === "ready"[\s\S]*reloadTaskHistoryStreakSummaryForTask\(taskId, result\.history \?\? undefined\)/);
-  const knownTaskBranch = realtime.slice(realtime.indexOf("if (taskId)"), realtime.indexOf("if (hasLoadedFullTaskHistoryRef.current)"));
-  assert.doesNotMatch(knownTaskBranch, /loadTaskHistory\(/);
+  assert.match(realtime, /hasCompleteSemanticHistory/);
+  assert.match(realtime, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true, source: "realtime" \}\)/);
+  assert.match(realtime, /loadTaskHistoryDetailWindow\(taskId, \{[\s\S]*source: "realtime"/);
+  assert.match(realtime, /eventLogicalDate/);
+  const detailBranch = realtime.slice(realtime.indexOf("const detailWindow"), realtime.indexOf("if (hasLoadedFullTaskHistoryRef.current)"));
+  assert.doesNotMatch(detailBranch, /fetchAllPagedRows/);
   assert.match(realtime, /if \(hasLoadedFullTaskHistoryRef\.current\) \{\s*scheduleTaskHistoryRevisionReconciliation\(\)/);
   assert.match(source, /function scheduleTaskHistoryRevisionReconciliation\(\) \{[\s\S]*if \(!hasLoadedFullTaskHistoryRef\.current\) return;/);
 });

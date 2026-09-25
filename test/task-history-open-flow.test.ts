@@ -22,15 +22,15 @@ test("rollover History reads use an isolated lifecycle instead of claiming the m
   assert.doesNotMatch(rolloverReader, /setTaskHistoryCacheForTask|setTaskHistoryTaskLoadState|taskHistoryLoadStateByTaskIdRef|taskHistoryByTaskIdRef/);
 });
 
-test("opening Task History stores the requested task ID before using cache-first details", () => {
+test("opening Task History stores the requested task ID before using bounded detail cache", () => {
   const handlerStart = appSource.indexOf("function openTaskHistoryForTask");
   const handlerEnd = appSource.indexOf("\n  async function closeActualTimeEntry", handlerStart);
   const handler = appSource.slice(handlerStart, handlerEnd);
   assert.match(handler, /setTaskHistoryModalTaskId\(taskId\)/);
-  assert.match(handler, /loadTaskHistoryForTask\(taskId\)/);
-  assert.doesNotMatch(handler, /loadTaskHistoryForTask\(taskId, \{ force: true \}\)/);
+  assert.match(handler, /loadTaskHistoryDetailWindow\(taskId/);
+  assert.doesNotMatch(handler, /loadTaskHistoryForTask\(taskId/);
   assert.match(handler, /tasks\.find\(\(entry\) => entry\.id === taskId\)/);
-  assert.match(handler, /loadTaskCalendarOverridesForTask\(taskId\)/);
+  assert.match(handler, /loadTaskCalendarOverridesForTask\(taskId, range\)/);
 });
 
 test("Task History Calendar overrides use the canonical calendar_override intent and refresh the task-scoped read", () => {
@@ -39,7 +39,7 @@ test("Task History Calendar overrides use the canonical calendar_override intent
   const flow = appSource.slice(flowStart, flowEnd);
   assert.match(flow, /type: "calendar_override"/);
   assert.match(flow, /override_state: overrideState/);
-  assert.match(flow, /await loadTaskCalendarOverridesForTask\(taskHistoryModalTaskId\)/);
+  assert.match(flow, /await loadTaskCalendarOverridesForTask\(taskHistoryModalTaskId, undefined, \{ force: true \}\)/);
   assert.match(flow, /if \(refreshed\) \{\s*await refreshTaskHistoryStreakSummary\(taskHistoryModalTaskId\)/);
   assert.doesNotMatch(flow, /syncTaskHistoryEntries\(taskHistoryModalTaskId,.*overrideState/s);
   assert.match(flow, /replayIdentity: createTaskStateReplayIdentity\(\)/);
@@ -52,7 +52,7 @@ test("Task History Not Due replaces handled outcomes through clear then override
   const notDue = appSource.slice(notDueStart, notDueEnd);
   assert.match(notDue, /clearTaskHistoryCalendarDate\(taskId, logicalDate, "Not Due", \{ clearReplaceableOutcome: true \}\)/);
   assert.ok(notDue.indexOf("clearTaskHistoryCalendarDate") < notDue.indexOf('type: "calendar_override"'));
-  assert.match(notDue, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/g);
+  assert.match(notDue, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true, source: "mutation" \}\)/g);
   assert.match(notDue, /activeNotDue/);
   assert.match(notDue, /conflictingEntry/);
   assert.match(notDue, /Task was saved, but the requested History change to Not Due/);
@@ -65,7 +65,7 @@ test("Task History outcome edits use one set_outcome replacement without pre-cle
   assert.doesNotMatch(flow, /clearTaskHistoryCalendarDate/);
   assert.match(flow, /syncTaskHistoryEntries\(\s*taskHistoryModalTaskId,\s*status,\s*entryDates,/);
   assert.match(flow, /status !== "clear"/);
-  assert.match(flow, /historySnapshot: taskHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
+  assert.match(flow, /historySnapshot: completeHistorySnapshot/);
   assert.match(flow, /historicalOverride: true/);
   assert.match(flow, /syncLiveTask: true/);
   assert.doesNotMatch(flow, /for \(const entryDate of entryDates\)/);
@@ -87,7 +87,7 @@ test("Task History Not Due carries the committed canonical Task from clear into 
   assert.match(clear, /return \{ history: refreshedHistory\.history, task: committedTask \};/);
   assert.match(notDue, /currentTask = clearedHistory\.task \?\? currentTask;/);
   assert.doesNotMatch(flow, /clearReplaceableOutcome/);
-  assert.match(flow, /historySnapshot: taskHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
+  assert.match(flow, /historySnapshot: completeHistorySnapshot/);
 });
 
 test("Task History modal passes active Calendar overrides into the Calendar read bridge", () => {
@@ -126,8 +126,8 @@ test("Task History merges active Calendar overrides and presents manual Not Due 
 
 test("Task History stats retain effective timeline streak calculations", () => {
   assert.match(modalSource, /historySummary=\{\[/);
-  assert.match(modalSource, /label: "Current streak"/);
-  assert.match(modalSource, /label: "Best streak"/);
+  assert.match(modalSource, /currentStreakLabel/);
+  assert.match(modalSource, /bestStreakLabel/);
   assert.match(modalSource, /longestMissedStreak: resolvedStreaks\.longestMissedStreak/);
   assert.match(modalSource, /const resolvedTimelineDays = calendarRead\?\.timeline\?\.days/);
   assert.match(modalSource, /computeTaskEffectiveTimelineStreaks\(\s*resolvedTimelineDays,\s*today,/);
@@ -143,9 +143,9 @@ test("parent, Step, Substep, and context-menu History actions preserve their row
 });
 
 test("History modal keeps one full-size shell and overlays loading, saving, and errors", () => {
-  assert.match(appSource, /taskHistory: taskHistoryByTaskId\[taskHistoryModalTaskId\] \?\? \[\]/);
-  assert.match(appSource, /taskHistoryLoadStatus: taskHistoryLoadStateByTaskId\[taskHistoryModalTaskId\]\?\.status \?\? "loading"/);
-  assert.match(appSource, /onRetryTaskHistoryLoad: \(\) => retryTaskHistoryForTask\(taskHistoryModalTaskId\)/);
+  assert.match(appSource, /taskHistory: taskHistoryDetailByTaskId\[taskHistoryModalTaskId\]\?\.history \?\? \[\]/);
+  assert.match(appSource, /taskHistoryLoadStatus: taskHistoryDetailByTaskId\[taskHistoryModalTaskId\]\?\.status \?\? "loading"/);
+  assert.match(appSource, /onRetryTaskHistoryLoad: \(\) => loadTaskHistoryDetailWindow\(taskHistoryModalTaskId/);
   assert.equal((taskHistoryModalSource.match(/<ModalShell/g) ?? []).length, 1);
   assert.match(taskHistoryModalSource, /className="flex h-\[100dvh\] w-full max-w-6xl/);
   assert.doesNotMatch(taskHistoryModalSource, /max-w-xl/);
@@ -169,7 +169,7 @@ test("full History readiness is cached per authenticated task and mutations upda
   assert.match(workspaceSource, /updateTaskHistoryForTask/);
   assert.match(workspaceSource, /deduplicateTaskHistoryByLogicalDate/);
   assert.match(workspaceSource, /fetchAllPagedRows<CanonicalTaskHistoryFact>/);
-  assert.match(workspaceSource, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true \}\)/);
+  assert.match(workspaceSource, /loadTaskHistoryForTask\(taskId, \{ force: true, silent: true, source: "realtime" \}\)/);
   assert.doesNotMatch(workspaceSource, /setTaskHistoryCacheForTask\(taskId, nextTaskHistory\)/);
   assert.match(workspaceSource, /\.eq\("entity_id", taskId\)/);
   assert.doesNotMatch(workspaceSource, /loadTaskHistory\(\{ silent: true, source: "secondary" \}\).*taskId/);

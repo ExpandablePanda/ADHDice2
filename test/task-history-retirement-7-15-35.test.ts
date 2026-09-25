@@ -52,7 +52,7 @@ test("explicit History consumers retain full and task-scoped entry points", () =
   assert.match(workspaceSource, /activePageRef\.current === "Stats"[\s\S]*loadFullTaskHistoryRef\.current\?\.\(\)/);
   assert.match(workspaceSource, /async function loadTaskHistoryForTask\(taskId/);
   assert.match(workspaceSource, /async function loadTaskHistoryForTasks\(taskIds/);
-  assert.match(taskAppSource, /loadTaskHistoryForTask\(taskId\)/);
+  assert.match(taskAppSource, /loadTaskHistoryDetailWindow\(taskId/);
   assert.match(taskAppSource, /fetchTaskHistoryForRollover/);
 });
 
@@ -80,8 +80,8 @@ test("History realtime and ordinary resume/refresh do not recreate a full bootst
   );
 
   assert.doesNotMatch(coreLoader(), /loadTaskHistory\(\{/);
-  assert.match(historyRealtime, /task-scoped refresh above is sufficient/);
-  const noFullBranch = historyRealtime.slice(historyRealtime.indexOf("// A task-scoped refresh above"));
+  assert.match(historyRealtime, /History notifications do not bootstrap either a complete semantic/);
+  const noFullBranch = historyRealtime.slice(historyRealtime.indexOf("// History notifications do not bootstrap"));
   assert.doesNotMatch(noFullBranch, /scheduleTaskHistoryRevisionReconciliation\(\)/);
   assert.match(historyRealtime, /if \(hasLoadedFullTaskHistoryRef\.current\) \{[\s\S]*scheduleTaskHistoryRevisionReconciliation\(\)/);
   assert.match(workspaceSource, /runSoftWorkspaceRefresh\(\{[\s\S]*source: "resume"/);

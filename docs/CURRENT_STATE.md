@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.40`.
+- Current working app version: `7.15.41`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -70,6 +70,70 @@ The next optimization after 7.15.39 is the separate Realtime connection
 reliability investigation observed during 7.15.37/7.15.38, including the
 transient simultaneous `CHANNEL_ERROR` transitions; Task reconciliation is
 not being broadened to compensate for that issue.
+
+## 2026-09-24 7.15.41 Bounded Task History Detail Reads
+
+The 7.15.40 Realtime gap-recovery browser QA is recorded as PASS. Tab B was
+manually disconnected, a Task was renamed in Tab A during the transport gap,
+and Tab B reconciled the Task, Current Projection, scoped workspace domains,
+already-loaded task History, and HUD after one coordinated recovery. Heartbeats
+resumed. Browser QA for this 7.15.41 source change remains Andrew-owned and is
+not claimed here.
+
+The exact bottleneck was the Task History Calendar modal's open path: it loaded
+the selected Task's complete lifetime canonical History with the owner/Task
+scope but no logical-date bounds, and loaded all active Calendar overrides for
+that Task. The ordinary Tasks Calendar was not a History-loading problem: it
+uses the current Task collection and `due_on` and remains untouched.
+
+7.15.41 preserves complete semantic Task History as a separate correctness
+cache and fallback authority for Current Projection fallback, legacy Task-state
+evaluation, rollover, and History mutation preparation. The modal now uses an
+independent task-scoped bounded historical-detail window cache with Task ID,
+loaded date range, canonical rows, status/error, workspace generation,
+in-flight request identity, and older-detail availability. Opening a modal is
+cache-first for an already-loaded range and does not initialize complete
+semantic History.
+
+The initial detail query preserves the existing Calendar envelope: about 140
+days backward and 42 days forward, including the existing week-boundary
+padding. Canonical facts use owner and entity filters plus
+`logical_date >= windowStart` and `logical_date <= windowEnd`, with the
+existing deterministic order. Active Calendar overrides use the same bounded
+owner/entity/`is_active`/logical-date query. Older detail is explicit and
+on-demand in immediately preceding bounded chunks of about 140 days; chunks
+merge without duplicate logical dates, preserve the selected date/month, and
+do not reread loaded ranges.
+
+When only a bounded window is available, Best streak and Logged days are
+presented as `Window best streak` and `Window logged days`. Last Done and
+Current streak prefer fresh Current Projection/current-summary authority, and
+complete semantic History preserves the existing all-time labels. A History
+mutation explicitly prepares the complete semantic Task History snapshot when
+needed, then keeps the existing canonical command, clear/Not Due ordering,
+reconciliation, and detail-window refresh behavior unchanged.
+
+History Realtime is cache-aware: an event does not bootstrap History when no
+matching cache is loaded; a loaded detail window refreshes only when the event
+date is inside that window; a loaded complete semantic cache keeps its
+task-scoped reconciliation; and explicit full History retains its existing
+full synchronization/delta path. 7.15.40 gap recovery applies the same
+contract, refreshing complete semantic caches, bounded detail windows, or the
+full History consumer only when that consumer was already loaded.
+
+The live baseline recorded for this work was approximately 17,715 canonical
+History facts across 724 Tasks, 24.47 rows per Task on average, with a maximum
+of 92 rows for one Task; no Task exceeded 140 rows. There were 59 active
+Calendar overrides, at most 6 for one Task, and the earliest current canonical
+History date was 2026-05-19. Immediate savings are therefore modest; the
+architectural value is bounded future growth rather than a dramatic current
+benchmark claim. Existing indexes already support the bounded queries. No SQL,
+table, index, RPC, view, trigger, RLS, or Realtime publication change was
+made.
+
+The next optimization phase is separate: move Stats, Games, and Achievements
+away from raw complete History using appropriate server-side aggregates or
+projections.
 
 ## 2026-09-24 7.15.40 Realtime Gap Recovery and Transport Diagnostics
 

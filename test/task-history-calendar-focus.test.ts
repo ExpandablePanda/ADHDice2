@@ -93,7 +93,10 @@ test("History Calendar exposes Clear only when every selected persisted entry is
 });
 
 test("TaskHistoryModal keeps the canonical projection range for month rendering", () => {
-  assert.match(taskHistoryModalSource, /const days = buildTaskHistoryCalendarDateKeys\(today\);/);
+  assert.match(taskHistoryModalSource, /const initialCalendarDays = buildTaskHistoryCalendarDateKeys\(today\);/);
+  assert.match(taskHistoryModalSource, /const days = buildTaskHistoryCalendarDateKeysForRange\(/);
+  assert.match(taskHistoryModalSource, /historyWindowStartDate \?\? initialCalendarDays\[0\]/);
+  assert.match(taskHistoryModalSource, /historyWindowEndDate \?\? initialCalendarDays\.at\(-1\)/);
   assert.match(taskHistoryModalSource, /const calendarEnd = days\.at\(-1\) \?\? today/);
   assert.match(taskHistoryModalSource, /const calendarStart = days\[0\] \?\? today/);
   assert.match(taskHistoryModalSource, /const knownDateKeys = new Set\(days\)/);

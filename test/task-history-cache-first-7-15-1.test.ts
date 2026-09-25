@@ -45,14 +45,18 @@ test("C: default batch History loading is cache-first", () => {
   assert.match(taskLoader, /if \(!force && taskHistoryLoadStateByTaskIdRef\.current\[taskId\]\?\.status === "ready"\)/);
 });
 
-test("D: opening Task History uses the cache-first loader", () => {
+test("D: opening Task History uses the bounded detail-window loader", () => {
   const openHandler = appSource.slice(
     appSource.indexOf("function openTaskHistoryForTask"),
     appSource.indexOf("\n  function openBatchDeleteModal", appSource.indexOf("function openTaskHistoryForTask")),
   );
-  assert.match(openHandler, /loadTaskHistoryForTask\(taskId\)/);
+  assert.match(openHandler, /loadTaskHistoryDetailWindow\(taskId/);
+  assert.match(openHandler, /loadTaskCalendarOverridesForTask\(taskId, range\)/);
+  assert.doesNotMatch(openHandler, /loadTaskHistoryForTask\(taskId/);
   assert.doesNotMatch(openHandler, /force: true/);
-  assert.match(taskLoader, /history: \[\.\.\.\(taskHistoryByTaskIdRef\.current\[taskId\] \?\? \[\]\)\]/);
+  assert.match(workspaceSource, /taskHistoryDetailRangeContains/);
+  assert.match(workspaceSource, /\.gte\("logical_date", range\.startDate\)/);
+  assert.match(workspaceSource, /\.lte\("logical_date", range\.endDate\)/);
 });
 
 test("E: a task cache miss still performs the canonical read and stores the result", () => {
@@ -70,7 +74,7 @@ test("G: mutation reconciliation retains explicit forced refreshes", () => {
   assert.match(updateActionSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/);
   assert.match(historyActionsSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/);
   assert.match(appSource, /loadTaskHistoryForTasks\(\[task\.id\], \{ force: true, silent: true \}\)/);
-  assert.match(appSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true \}\)/);
+  assert.match(appSource, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true, source: "mutation" \}\)/);
 });
 
 test("H: streak-summary reload reuses authoritative History before its safe fallback", () => {
