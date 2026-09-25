@@ -39,6 +39,11 @@ import {
   type TaskUiState,
 } from "@/lib/task-ui-state";
 import { createDefaultHudUiState, DEFAULT_HUD_UI_STATE } from "@/lib/task-hud-layout";
+import {
+  createAdhdiceRealtimeChannelDebugId,
+  describeAdhdiceRealtimeSubscriptionError,
+  recordAdhdiceRealtimeDiagnostic,
+} from "@/lib/adhdice-realtime-diagnostics";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type HudStateSource = "local" | "remote" | "restore";
@@ -524,7 +529,7 @@ export function useTaskUiState({
 
   const syncTaskUiSettingsToCloud = useCallback(async ({ allowBeforeReady = false }: { allowBeforeReady?: boolean } = {}) => {
     if (!supabase || !userId || (!allowBeforeReady && (!hudCloudReadyRef.current || !hudCloudSupportedRef.current))) {
-      return;
+      return false;
     }
 
     const requestId = hudCloudSyncRequestRef.current + 1;
@@ -538,7 +543,7 @@ export function useTaskUiState({
       .eq("user_id", currentUserId)
       .maybeSingle();
     if (hudCloudSyncRequestRef.current !== requestId) {
-      return;
+      return false;
     }
 
     const data = result.data as HudSyncRow | null;
@@ -550,11 +555,11 @@ export function useTaskUiState({
           console.warn("[hud] HUD cloud sync table is unavailable. Falling back to local-only HUD persistence until `supabase/add_hud_ui_settings.sql` is applied.");
           hudMissingTableWarnedRef.current = true;
         }
-        return;
+        return false;
       }
       console.warn("[hud] HUD cloud sync load failed. Continuing with local-only HUD persistence.", result.error.message);
       hudCloudReadyRef.current = true;
-      return;
+      return false;
     }
 
     hudCloudSupportedRef.current = true;
@@ -579,7 +584,7 @@ export function useTaskUiState({
       remote: remoteSnapshot,
     });
     if (hudLocalRevisionRef.current !== localRevision) {
-      return;
+      return false;
     }
     const nextHudState = normalizeHudUiState(reconciliation.hudUiStateValue ?? DEFAULT_HUD_UI_STATE);
     const uploadTimestamp = new Date().toISOString();
@@ -608,7 +613,7 @@ export function useTaskUiState({
     hudCloudReadyRef.current = true;
 
     if (!reconciliation.shouldPush) {
-      return;
+      return true;
     }
 
     const payloadTimestamp = nextUpdatedAt ?? uploadTimestamp;
@@ -619,10 +624,10 @@ export function useTaskUiState({
     );
     const signature = `${payloadTimestamp}:${JSON.stringify(payloadState)}`;
     if (hudCloudSignatureRef.current === signature) {
-      return;
+      return true;
     }
     if (hudLocalRevisionRef.current !== localRevision) {
-      return;
+      return false;
     }
 
     const { error } = await client
@@ -633,7 +638,7 @@ export function useTaskUiState({
         user_id: currentUserId,
       });
     if (hudCloudSyncRequestRef.current !== requestId) {
-      return;
+      return false;
     }
 
     if (error) {
@@ -644,13 +649,14 @@ export function useTaskUiState({
           console.warn("[hud] HUD cloud sync table is unavailable. Falling back to local-only HUD persistence until `supabase/add_hud_ui_settings.sql` is applied.");
           hudMissingTableWarnedRef.current = true;
         }
-        return;
+        return false;
       }
       console.warn("[hud] HUD cloud sync write failed. Continuing with local-only HUD persistence.", error.message);
-      return;
+      return false;
     }
 
     hudCloudSignatureRef.current = signature;
+    return true;
   }, [supabase, userId]);
 
   useEffect(() => {
@@ -702,14 +708,65 @@ export function useTaskUiState({
     let isActive = true;
     const client = supabase;
     const currentUserId = userId;
+    let hudChannelEverSubscribed = false;
+    let hudGapGeneration = 0;
+    let hudGapOpen = false;
+    let hudGapRecoveryPromise: Promise<boolean> | null = null;
+
+    function requestHudGapRecovery(channelDebugId: string) {
+      if (hudGapRecoveryPromise) {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "hud",
+          channelDebugId,
+          generation: hudGapGeneration,
+          kind: "realtime_gap_recovery_joined",
+        });
+        return;
+      }
+
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "hud",
+        channelDebugId,
+        generation: hudGapGeneration,
+        kind: "realtime_gap_recovery_requested",
+      });
+      const recovery = syncTaskUiSettingsToCloud();
+      hudGapRecoveryPromise = recovery;
+      void recovery.then(
+        (recovered) => {
+          if (recovered) hudGapOpen = false;
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "hud",
+            channelDebugId,
+            generation: hudGapGeneration,
+            kind: recovered ? "realtime_gap_recovery_completed" : "realtime_gap_recovery_error",
+          });
+        },
+        (error) => {
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "hud",
+            channelDebugId,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            generation: hudGapGeneration,
+            kind: "realtime_gap_recovery_error",
+          });
+        },
+      ).finally(() => {
+        if (hudGapRecoveryPromise === recovery) hudGapRecoveryPromise = null;
+      });
+    }
 
     void syncTaskUiSettingsToCloud({ allowBeforeReady: true }).then(() => {
       if (!isActive || !hudCloudSupportedRef.current || hudCloudChannelRef.current) {
         return;
       }
 
+      const channelDebugId = createAdhdiceRealtimeChannelDebugId("hud");
       const nextChannel = client
-        .channel(`adhdice_hud_ui_settings:${currentUserId}`)
+        .channel(`adhdice_hud_ui_settings:${currentUserId}`);
+      hudCloudChannelRef.current = nextChannel;
+      const isCurrentHudChannel = () => isActive && hudCloudChannelRef.current === nextChannel;
+      nextChannel
         .on(
           "postgres_changes",
           {
@@ -725,13 +782,54 @@ export function useTaskUiState({
             void syncTaskUiSettingsToCloud();
           },
         )
-        .subscribe((status) => {
-          if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && !hudMissingTableWarnedRef.current) {
-            console.warn("[hud] HUD realtime sync subscription failed. Continuing with local HUD state.");
+        .subscribe((status, error) => {
+          if (!isCurrentHudChannel()) return;
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "hud",
+            channelDebugId,
+            kind: "channel_subscribe_status",
+            status,
+          });
+          const unexpectedClosed = status === "CLOSED" && hudChannelEverSubscribed;
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || unexpectedClosed) {
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "hud",
+              channelDebugId,
+              kind: "hud_channel_subscription_error",
+              status,
+              subscriptionError: describeAdhdiceRealtimeSubscriptionError(error),
+            });
+          }
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || unexpectedClosed) {
+            if (hudChannelEverSubscribed && !hudGapOpen) {
+              hudGapOpen = true;
+              hudGapGeneration += 1;
+              recordAdhdiceRealtimeDiagnostic({
+                channel: "hud",
+                channelDebugId,
+                generation: hudGapGeneration,
+                kind: "realtime_gap_opened",
+                status,
+              });
+            }
+            if (!hudMissingTableWarnedRef.current) {
+              console.warn("[hud] HUD realtime sync subscription failed. Continuing with local HUD state.");
+            }
+          }
+          if (status === "SUBSCRIBED") {
+            const wasGapOpen = hudGapOpen;
+            hudChannelEverSubscribed = true;
+            if (wasGapOpen) {
+              recordAdhdiceRealtimeDiagnostic({
+                channel: "hud",
+                channelDebugId,
+                generation: hudGapGeneration,
+                kind: "realtime_gap_channel_resubscribed",
+              });
+              requestHudGapRecovery(channelDebugId);
+            }
           }
         });
-
-      hudCloudChannelRef.current = nextChannel;
     });
 
     return () => {

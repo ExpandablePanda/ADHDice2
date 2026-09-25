@@ -95,7 +95,7 @@ test("Task and workspace Realtime traces cover channel generation, statuses, eve
   ]) {
     assert.match(`${workspaceSource}\n${taskAppSource}\n${diagnosticsSource}`, new RegExp(marker));
   }
-  assert.match(workspaceSource, /\.subscribe\(\(status\) =>[\s\S]*channel_subscribe_status/);
+  assert.match(workspaceSource, /\.subscribe\(\(status(?:, error)?\) =>[\s\S]*channel_subscribe_status/);
   assert.match(taskAppSource, /freshness[\s\S]*authority[\s\S]*selectedDisplayStatus/);
 });
 

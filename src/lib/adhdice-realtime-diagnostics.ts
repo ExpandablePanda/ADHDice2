@@ -3,7 +3,7 @@ const PRIVATE_KEY_PATTERN = /access.?token|authorization|email|password|secret|t
 
 export type AdhdiceRealtimeDiagnosticInput = {
   kind: string;
-  channel?: "task" | "workspace" | "projection";
+  channel?: "task" | "workspace" | "projection" | "hud";
   channelDebugId?: string;
   [key: string]: unknown;
 };
@@ -12,7 +12,7 @@ export type AdhdiceRealtimeDiagnosticRecord = {
   sequence: number;
   timestamp: string;
   kind: string;
-  channel?: "task" | "workspace" | "projection";
+  channel?: "task" | "workspace" | "projection" | "hud";
   channelDebugId?: string;
   [key: string]: unknown;
 };
@@ -36,6 +36,22 @@ function sanitizeValue(key: string, value: unknown, depth = 0): unknown {
     );
   }
   return undefined;
+}
+
+export function describeAdhdiceRealtimeSubscriptionError(error: unknown) {
+  if (error instanceof Error) {
+    return { name: error.name, message: error.message };
+  }
+  if (typeof error === "string") return error;
+  if (error && typeof error === "object") {
+    const candidate = error as { code?: unknown; message?: unknown; name?: unknown };
+    return {
+      code: typeof candidate.code === "string" ? candidate.code : undefined,
+      message: typeof candidate.message === "string" ? candidate.message : undefined,
+      name: typeof candidate.name === "string" ? candidate.name : undefined,
+    };
+  }
+  return error == null ? null : String(error);
 }
 
 export function createAdhdiceRealtimeDiagnosticBuffer(limit = REALTIME_DIAGNOSTIC_LIMIT) {
@@ -76,7 +92,7 @@ const realtimeDiagnosticBuffer = createAdhdiceRealtimeDiagnosticBuffer();
 let channelDebugSequence = 0;
 const pendingAuthorityTaskIds = new Set<string>();
 
-export function createAdhdiceRealtimeChannelDebugId(channel: "task" | "workspace" | "projection") {
+export function createAdhdiceRealtimeChannelDebugId(channel: "task" | "workspace" | "projection" | "hud") {
   return `${channel}-${++channelDebugSequence}`;
 }
 

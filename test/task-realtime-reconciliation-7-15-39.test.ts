@@ -12,7 +12,7 @@ const workspaceSource = readFileSync(new URL("../src/hooks/useWorkspaceData.ts",
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const taskRealtimeSource = workspaceSource.slice(
   workspaceSource.indexOf('table: "adhdice_clean_tasks"'),
-  workspaceSource.indexOf('        .subscribe((status)', workspaceSource.indexOf('table: "adhdice_clean_tasks"')),
+  workspaceSource.indexOf('        .subscribe((status', workspaceSource.indexOf('table: "adhdice_clean_tasks"')),
 );
 const entityReconcileSource = workspaceSource.slice(
   workspaceSource.indexOf("async function loadLatestTaskScheduleBoundaries"),
@@ -200,7 +200,7 @@ test("workspace generation and unmount checks fence stale targeted results", () 
 test("normal Task Realtime uses authoritative entity reconciliation and keeps local echo suppression", () => {
   assert.match(taskRealtimeSource, /shouldSkipTaskReloadRef\.current\?\.\(\{ eventType: payload\.eventType, taskId \}\)/);
   assert.ok(taskRealtimeSource.indexOf("shouldSkipTaskReloadRef.current") < taskRealtimeSource.indexOf("requestTaskEntityReconciliation"));
-  assert.match(taskRealtimeSource, /requestTaskEntityReconciliation\(taskId, payload\.eventType\)/);
+  assert.match(taskRealtimeSource, /requestTaskEntityReconciliationAfterGap\(taskId, payload\.eventType\)/);
   assert.match(taskRealtimeSource, /realtime_missing_task_id/);
   assert.match(taskRealtimeSource, /reloadTaskRows\(\{ silent: true, source: "realtime_missing_task_id" \}\)/);
 });
@@ -265,5 +265,5 @@ test("Task Realtime projection checks remain revision-aware after targeted recon
 test("Task cascade deletes are handled as independent entity events", () => {
   assert.match(schemaSource, /parent_task_id uuid references public\.adhdice_clean_tasks\(id\) on delete cascade/i);
   assert.match(taskRealtimeSource, /payload\.old as \{ id\?: string \} \| null/);
-  assert.match(taskRealtimeSource, /requestTaskEntityReconciliation\(taskId, payload\.eventType\)/);
+  assert.match(taskRealtimeSource, /requestTaskEntityReconciliationAfterGap\(taskId, payload\.eventType\)/);
 });

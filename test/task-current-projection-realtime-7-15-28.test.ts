@@ -54,7 +54,7 @@ test("one-entity reconciliation uses the named read columns and preserves local 
     /loadCurrentTaskProjectionForTask[\s\S]*?from\("adhdice_task_current_projections"\)[\s\S]*?select\(CURRENT_TASK_PROJECTION_READ_COLUMNS\)[\s\S]*?eq\("user_id", userId\)[\s\S]*?eq\("entity_id", entityId\)[\s\S]*?maybeSingle\(\)/,
   );
   assert.doesNotMatch(workspaceSource.slice(workspaceSource.indexOf("loadCurrentTaskProjectionForTask"), workspaceSource.indexOf("const projectionReconciler")), /select\("\*"\)/);
-  assert.match(workspaceSource, /requestTaskEntityReconciliation\(taskId, payload\.eventType\)\.then\([\s\S]*requestTaskProjectionReconciliation/);
+  assert.match(workspaceSource, /requestTaskEntityReconciliationAfterGap\(taskId, payload\.eventType\)\.then\([\s\S]*requestTaskProjectionReconciliation/);
   assert.match(workspaceSource, /if \(shouldSkip\) \{\s*return;\s*\}/);
   assert.doesNotMatch(projectionChannelSource, /shouldSkipTaskReload/);
   for (const marker of [

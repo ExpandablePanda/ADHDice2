@@ -45,6 +45,11 @@ import {
   type WorkspaceDomainMutationBarrier,
   type WorkspaceResumeRefreshReason,
 } from "@/lib/workspace-refresh-coordinator";
+import {
+  createRealtimeGapCoordinator,
+  type RealtimeGapChannel,
+  type RealtimeGapIncident,
+} from "@/lib/realtime-gap-recovery";
 import { workspaceStartupRequestRegistry } from "@/lib/workspace-startup-request";
 import {
   buildTaskHistoryStreakSummary,
@@ -89,6 +94,7 @@ import {
 } from "@/lib/task-realtime-reconciliation";
 import {
   createAdhdiceRealtimeChannelDebugId,
+  describeAdhdiceRealtimeSubscriptionError,
   markAdhdiceRealtimeAuthorityPending,
   recordAdhdiceRealtimeDiagnostic,
   recordAdhdiceTaskPostgresEventDiagnostic,
@@ -612,7 +618,10 @@ export function useWorkspaceData({
     let isActive = true;
     let taskChannel: RealtimeChannel | null = null;
     let projectionChannel: RealtimeChannel | null = null;
+    let workspaceChannelEverSubscribed = false;
     let broadManualActionCommandOperationReads = 0;
+    let realtimeGapCoordinator: ReturnType<typeof createRealtimeGapCoordinator> | null = null;
+    let realtimeGapRecoveryPromise: Promise<void> | null = null;
     const taskHistoryRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
     const taskListDomainRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
     const taskContentFolderDomainRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
@@ -921,6 +930,7 @@ export function useWorkspaceData({
       silent = false,
       source = "realtime",
     }: { silent?: boolean; source?: string } = {}) {
+      const reloadGeneration = workspaceGeneration;
       const triggerTaskId = taskReloadTriggerTaskIdRef.current;
       taskReloadTriggerTaskIdRef.current = null;
       const channelDebugId = taskChannelRef.current
@@ -933,7 +943,7 @@ export function useWorkspaceData({
         source,
         taskId: triggerTaskId,
       });
-      if (!isActive) {
+      if (!canApplyCoreWorkspaceResult()) {
         recordAdhdiceRealtimeDiagnostic({
           channel: "task",
           channelDebugId,
@@ -976,7 +986,7 @@ export function useWorkspaceData({
             (taskIds) => loadTaskScheduleBoundaries(taskIds),
           );
 
-          if (!isActive) {
+          if (!canApplyCoreWorkspaceResult() || workspaceGenerationRef.current !== reloadGeneration) {
             recordAdhdiceRealtimeDiagnostic({
               channel: "task",
               channelDebugId,
@@ -1211,6 +1221,21 @@ export function useWorkspaceData({
       return taskEntityReconciliationCoordinator.request([taskId]);
     }
 
+    function requestTaskEntityReconciliationAfterGap(taskId: string, eventType: string) {
+      const activeRecovery = realtimeGapRecoveryPromise;
+      if (!activeRecovery) return requestTaskEntityReconciliation(taskId, eventType);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        eventType,
+        kind: "realtime_gap_event_deferred",
+        taskId,
+      });
+      return activeRecovery.then(
+        () => requestTaskEntityReconciliation(taskId, eventType),
+        () => requestTaskEntityReconciliation(taskId, eventType),
+      );
+    }
+
     function shouldReconnectTaskChannel() {
       return (
         taskChannelRef.current === null
@@ -1261,12 +1286,20 @@ export function useWorkspaceData({
       taskChannelStatusRef.current = "SUBSCRIBING";
       const channelDebugId = createAdhdiceRealtimeChannelDebugId("task");
       const nextTaskChannel = client.channel(`adhdice_tasks:${userId}`);
+      let taskChannelEverSubscribed = false;
+      taskChannelRef.current = nextTaskChannel;
+      taskChannel = nextTaskChannel;
       taskChannelDebugIdsRef.current.set(nextTaskChannel, channelDebugId);
       recordAdhdiceRealtimeDiagnostic({
         channel: "task",
         channelDebugId,
         kind: "channel_created",
       });
+      const isCurrentTaskChannel = () => (
+        isActive
+        && workspaceGenerationRef.current === workspaceGeneration
+        && taskChannelRef.current === nextTaskChannel
+      );
       nextTaskChannel
         .on(
           "postgres_changes",
@@ -1277,6 +1310,7 @@ export function useWorkspaceData({
             filter: `user_id=eq.${userId}`,
           },
           (payload) => {
+            if (!isCurrentTaskChannel()) return;
             const taskId = ((payload.new as { id?: string } | null)?.id ?? (payload.old as { id?: string } | null)?.id ?? null);
             const remoteCanonicalRevision = (payload.new as { canonical_revision?: number | null } | null)?.canonical_revision ?? null;
             const previousTaskCanonicalRevision = taskId
@@ -1307,7 +1341,7 @@ export function useWorkspaceData({
               return;
             }
 
-            void requestTaskEntityReconciliation(taskId, payload.eventType).then((reconciledResults) => {
+            void requestTaskEntityReconciliationAfterGap(taskId, payload.eventType).then((reconciledResults) => {
               const reconciliation = reconciledResults.get(taskId);
               const reloadedTask = reconciliation?.task ?? tasksRef.current.find((task) => task.id === taskId);
               if (
@@ -1354,15 +1388,30 @@ export function useWorkspaceData({
             });
           },
         )
-        .subscribe((status) => {
+        .subscribe((status, error) => {
+          if (!isCurrentTaskChannel()) return;
+          taskChannelStatusRef.current = status;
           recordAdhdiceRealtimeDiagnostic({
             channel: "task",
             channelDebugId,
             kind: "channel_subscribe_status",
             status,
           });
-          taskChannelStatusRef.current = status;
+          const unexpectedClosed = status === "CLOSED" && taskChannelEverSubscribed;
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || unexpectedClosed) {
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "task",
+              channelDebugId,
+              kind: "task_channel_subscription_error",
+              status,
+              subscriptionError: describeAdhdiceRealtimeSubscriptionError(error),
+            });
+          }
+          realtimeGapCoordinator?.reportStatus("task", status, {
+            error: describeAdhdiceRealtimeSubscriptionError(error),
+          });
           if (status === "SUBSCRIBED") {
+            taskChannelEverSubscribed = true;
             logWorkspaceTiming("Task realtime subscribed", subscribeStartedAt, {
               userId,
             });
@@ -1374,13 +1423,11 @@ export function useWorkspaceData({
           }
         });
 
-      taskChannelRef.current = nextTaskChannel;
       taskChannelSubscriptionCountRef.current += 1;
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[workspace] Task realtime subscribe count=${taskChannelSubscriptionCountRef.current} userId=${userId}.`);
       }
       taskChannelRemovalPromiseRef.current = null;
-      taskChannel = nextTaskChannel;
     }
 
     async function ensureTaskChannelSubscribed() {
@@ -1752,10 +1799,11 @@ export function useWorkspaceData({
       return await reloadPromise;
     }
 
-    async function loadNotes({ silent = false }: { silent?: boolean } = {}) {
-      if (hasLoadedNotesRef.current) return true;
+    async function loadNotes({ silent = false, force = false }: { silent?: boolean; force?: boolean } = {}) {
+      if (hasLoadedNotesRef.current && !force) return true;
       const result = await client.from("adhdice_notes").select("id,title,body,linked_task_ids,updated_at")
         .eq("user_id", userId).order("updated_at", { ascending: false });
+      if (!canApplyCoreWorkspaceResult()) return false;
       if (result.error) {
         if (!silent) setMessage({ tone: "warn", text: result.error.message ?? "Could not load notes." });
         return false;
@@ -1810,22 +1858,6 @@ export function useWorkspaceData({
         kind: "workspace_postgres_event_received",
         sourceTable,
       });
-    }
-
-    function describeRealtimeSubscriptionError(error: unknown) {
-      if (error instanceof Error) {
-        return { name: error.name, message: error.message };
-      }
-      if (typeof error === "string") return error;
-      if (error && typeof error === "object") {
-        const candidate = error as { code?: unknown; message?: unknown; name?: unknown };
-        return {
-          code: typeof candidate.code === "string" ? candidate.code : undefined,
-          message: typeof candidate.message === "string" ? candidate.message : undefined,
-          name: typeof candidate.name === "string" ? candidate.name : undefined,
-        };
-      }
-      return error == null ? null : String(error);
     }
 
     async function refreshTaskListDomain(sourceTable: string, generation: number) {
@@ -1913,7 +1945,7 @@ export function useWorkspaceData({
           refreshAfterCurrent: true,
         });
       }
-      void taskListDomainRefreshCoordinator.request(
+      return taskListDomainRefreshCoordinator.request(
         () => refreshTaskListDomain(sourceTable, generation),
         { refreshAfterCurrent: joined },
       );
@@ -1969,7 +2001,7 @@ export function useWorkspaceData({
           refreshAfterCurrent: true,
         });
       }
-      void taskContentFolderDomainRefreshCoordinator.request(
+      return taskContentFolderDomainRefreshCoordinator.request(
         () => refreshTaskContentFolderDomain(sourceTable, generation),
         { refreshAfterCurrent: joined },
       );
@@ -2038,7 +2070,7 @@ export function useWorkspaceData({
           refreshAfterCurrent: true,
         });
       }
-      void focusDomainRefreshCoordinator.request(
+      return focusDomainRefreshCoordinator.request(
         () => refreshFocusDomain(sourceTable, generation),
         { refreshAfterCurrent: joined },
       );
@@ -2722,7 +2754,195 @@ export function useWorkspaceData({
         incomingUpdatedAt: row.updated_at,
       });
       projectionEventBuffer.enqueue(row as CurrentTaskProjectionReadRow);
+      const activeRecovery = realtimeGapRecoveryPromise;
+      if (activeRecovery) {
+        void activeRecovery.then(
+          () => requestTaskProjectionReconciliation(row.entity_id),
+          () => requestTaskProjectionReconciliation(row.entity_id),
+        );
+      }
     }
+
+    async function reconcileCurrentTaskProjectionSnapshot(incident: RealtimeGapIncident) {
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "projection",
+        affectedChannels: incident.affectedChannels,
+        generation: incident.generation,
+        kind: "realtime_gap_projection_reconcile_started",
+      });
+      if (!canApplyCoreWorkspaceResult()) return false;
+      const result = await client
+        .from("adhdice_task_current_projections")
+        .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
+        .eq("user_id", userId);
+      if (!canApplyCoreWorkspaceResult()) return false;
+      if (result.error) {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "projection",
+          errorCode: result.error.code ?? "projection_snapshot_error",
+          errorMessage: result.error.message ?? "Current Projection snapshot failed.",
+          generation: incident.generation,
+          kind: "realtime_gap_projection_reconcile_error",
+        });
+        return false;
+      }
+
+      const rows = (result.data ?? []) as unknown as CurrentTaskProjectionReadRow[];
+      setCurrentTaskProjectionsByTaskId((current) => keepCurrentIfStructurallyEqual(
+        current,
+        indexCurrentTaskProjectionRows(rows),
+      ));
+      for (const row of rows) markAdhdiceRealtimeAuthorityPending(row.entity_id);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "projection",
+        generation: incident.generation,
+        kind: "realtime_gap_projection_reconcile_completed",
+        rows: rows.length,
+      });
+      return true;
+    }
+
+    async function runRealtimeGapRecovery(incident: RealtimeGapIncident) {
+      // Canonical Task rows come first so projection freshness checks and Focus
+      // day mapping observe the newest authoritative Task set.
+      await reloadTaskRows({ silent: true, source: "realtime_gap_recovery" });
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        generation: incident.generation,
+        kind: "realtime_gap_task_reconciled",
+        source: "realtime_gap_recovery",
+      });
+
+      await reconcileCurrentTaskProjectionSnapshot(incident);
+
+      const [taskListReconciled, contentFolderReconciled, focusReconciled] = await Promise.all([
+        requestTaskListDomainRefresh("realtime_gap_recovery"),
+        requestTaskContentFolderDomainRefresh("realtime_gap_recovery"),
+        requestFocusDomainRefresh("realtime_gap_recovery"),
+      ]);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "workspace",
+        generation: incident.generation,
+        kind: "realtime_gap_workspace_domains_reconciled",
+        taskList: taskListReconciled,
+        contentFolder: contentFolderReconciled,
+        focus: focusReconciled,
+      });
+
+      if (hasLoadedNotesRef.current) {
+        hasLoadedNotesRef.current = false;
+        const refreshed = await loadNotes({ force: true, silent: true });
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          generation: incident.generation,
+          kind: "realtime_gap_notes_reconciled",
+          refreshed,
+        });
+      }
+
+      if (hasLoadedFullTaskHistoryRef.current) {
+        const refreshed = await loadTaskHistory({
+          refreshAfterCurrent: true,
+          silent: true,
+          source: "realtime",
+        });
+        if (refreshed) await loadTaskHistoryStreakSummaries(tasksRef.current, { supersede: true });
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "workspace",
+          generation: incident.generation,
+          kind: "realtime_gap_loaded_history_reconciled",
+          mode: "full",
+          refreshed,
+        });
+      } else {
+        const loadedTaskIds = Object.entries(taskHistoryLoadStateByTaskIdRef.current)
+          .filter(([taskId, state]) => state.status === "ready" && Object.hasOwn(taskHistoryByTaskIdRef.current, taskId))
+          .map(([taskId]) => taskId);
+        if (loadedTaskIds.length > 0) {
+          const results = await Promise.all(loadedTaskIds.map(async (taskId) => [
+            taskId,
+            await loadTaskHistoryForTask(taskId, { force: true, silent: true }),
+          ] as const));
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "workspace",
+            generation: incident.generation,
+            kind: "realtime_gap_loaded_history_reconciled",
+            mode: "task-scoped",
+            tasks: results.filter(([, result]) => result.status === "ready").length,
+            taskIds: loadedTaskIds,
+          });
+        }
+      }
+
+    }
+
+    function recordRealtimeGapDiagnostic(
+      kind: string,
+      incident: RealtimeGapIncident,
+      details: Record<string, unknown> = {},
+      channel?: RealtimeGapChannel,
+    ) {
+      recordAdhdiceRealtimeDiagnostic({
+        ...details,
+        affectedChannels: incident.affectedChannels,
+        channel,
+        generation: incident.generation,
+        kind,
+      });
+    }
+
+    function startRealtimeGapRecovery(incident: RealtimeGapIncident) {
+      const recovery = runRealtimeGapRecovery(incident);
+      realtimeGapRecoveryPromise = recovery;
+      void recovery.then(
+        () => {
+          if (realtimeGapRecoveryPromise === recovery) realtimeGapRecoveryPromise = null;
+        },
+        () => {
+          if (realtimeGapRecoveryPromise === recovery) realtimeGapRecoveryPromise = null;
+        },
+      );
+      return recovery;
+    }
+
+    realtimeGapCoordinator = createRealtimeGapCoordinator({
+      recover: startRealtimeGapRecovery,
+      onChannelResubscribed: (incident, channel) => recordRealtimeGapDiagnostic(
+        "realtime_gap_channel_resubscribed",
+        incident,
+        { resubscribedAt: new Date().toISOString() },
+        channel,
+      ),
+      onChannelUnhealthy: (incident, channel, status, error) => recordRealtimeGapDiagnostic(
+        "realtime_gap_channel_unhealthy",
+        incident,
+        { status, subscriptionError: describeAdhdiceRealtimeSubscriptionError(error) },
+        channel,
+      ),
+      onGapOpened: (incident, channel, status, error) => recordRealtimeGapDiagnostic(
+        "realtime_gap_opened",
+        incident,
+        {
+          firstUnhealthyAt: new Date(incident.firstUnhealthyAt).toISOString(),
+          status,
+          subscriptionError: describeAdhdiceRealtimeSubscriptionError(error),
+        },
+        channel,
+      ),
+      onRecoveryCompleted: (incident) => recordRealtimeGapDiagnostic("realtime_gap_recovery_completed", incident),
+      onRecoveryError: (incident, error) => recordRealtimeGapDiagnostic(
+        "realtime_gap_recovery_error",
+        incident,
+        { errorMessage: error instanceof Error ? error.message : String(error) },
+      ),
+      onRecoveryJoined: (incident) => recordRealtimeGapDiagnostic("realtime_gap_recovery_joined", incident),
+      onRecoveryRequested: (incident) => recordRealtimeGapDiagnostic(
+        "realtime_gap_recovery_requested",
+        incident,
+        { source: "realtime_status" },
+      ),
+      onRecoveryStarted: (incident) => recordRealtimeGapDiagnostic("realtime_gap_recovery_started", incident),
+    });
 
     function shouldReconnectProjectionChannel() {
       return (
@@ -2770,6 +2990,7 @@ export function useWorkspaceData({
       const subscribeStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
       const channelDebugId = createAdhdiceRealtimeChannelDebugId("projection");
       const nextProjectionChannel = client.channel(`adhdice_task_current_projections:${userId}`);
+      let projectionChannelEverSubscribed = false;
       projectionChannel = nextProjectionChannel;
       projectionChannelRef.current = nextProjectionChannel;
       projectionChannelDebugIdsRef.current.set(nextProjectionChannel, channelDebugId);
@@ -2835,8 +3056,9 @@ export function useWorkspaceData({
             enqueueProjectionRealtimePayload(payload.new, channelDebugId);
           },
         )
-        .subscribe((status) => {
+        .subscribe((status, error) => {
           if (!isCurrentProjectionChannel()) return;
+          projectionChannelStatusRef.current = status;
           recordAdhdiceRealtimeDiagnostic({
             channel: "projection",
             channelDebugId,
@@ -2844,8 +3066,21 @@ export function useWorkspaceData({
             kind: "channel_subscribe_status",
             status,
           });
-          projectionChannelStatusRef.current = status;
+          const unexpectedClosed = status === "CLOSED" && projectionChannelEverSubscribed;
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || unexpectedClosed) {
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "projection",
+              channelDebugId,
+              kind: "projection_channel_subscription_error",
+              status,
+              subscriptionError: describeAdhdiceRealtimeSubscriptionError(error),
+            });
+          }
+          realtimeGapCoordinator?.reportStatus("projection", status, {
+            error: describeAdhdiceRealtimeSubscriptionError(error),
+          });
           if (status === "SUBSCRIBED") {
+            projectionChannelEverSubscribed = true;
             projectionChannelSubscriptionCountRef.current += 1;
             logWorkspaceTiming("Projection realtime subscribed", subscribeStartedAt, { userId });
             if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -3048,22 +3283,28 @@ export function useWorkspaceData({
         },
       )
       .subscribe((status, error) => {
+        if (!isActive || workspaceGenerationRef.current !== workspaceGeneration) return;
         recordAdhdiceRealtimeDiagnostic({
           channel: "workspace",
           channelDebugId: workspaceChannelDebugId,
           kind: "channel_subscribe_status",
           status,
         });
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        const unexpectedClosed = status === "CLOSED" && workspaceChannelEverSubscribed;
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || unexpectedClosed) {
           recordAdhdiceRealtimeDiagnostic({
             channel: "workspace",
             channelDebugId: workspaceChannelDebugId,
             kind: "workspace_channel_subscription_error",
             status,
-            subscriptionError: describeRealtimeSubscriptionError(error),
+            subscriptionError: describeAdhdiceRealtimeSubscriptionError(error),
           });
         }
+        realtimeGapCoordinator?.reportStatus("workspace", status, {
+          error: describeAdhdiceRealtimeSubscriptionError(error),
+        });
         if (status === "SUBSCRIBED") {
+          workspaceChannelEverSubscribed = true;
           workspaceChannelSubscriptionCountRef.current += 1;
           if (isWorkspacePerformanceDiagnosticsEnabled()) {
             console.info(`[workspace] Workspace realtime subscribe count=${workspaceChannelSubscriptionCountRef.current} userId=${userId}.`);
@@ -3100,6 +3341,9 @@ export function useWorkspaceData({
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       taskChannelRemovalPromiseRef.current = null;
+      realtimeGapCoordinator?.dispose();
+      realtimeGapCoordinator = null;
+      realtimeGapRecoveryPromise = null;
       taskEntityReconciliationCoordinator.dispose();
       taskEntityReconcileSources.clear();
       if (taskChannel) {

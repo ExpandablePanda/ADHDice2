@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.39`.
+- Current working app version: `7.15.40`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -70,6 +70,62 @@ The next optimization after 7.15.39 is the separate Realtime connection
 reliability investigation observed during 7.15.37/7.15.38, including the
 transient simultaneous `CHANNEL_ERROR` transitions; Task reconciliation is
 not being broadened to compensate for that issue.
+
+## 2026-09-24 7.15.40 Realtime Gap Recovery and Transport Diagnostics
+
+The 7.15.39 browser QA is recorded as PASS for Task metadata, canonical/status,
+hierarchy, INSERT, DELETE, and parent-cascade removal. A separate live Safari
+incident then showed the workspace, Task, and Current Projection channels all
+entering `CHANNEL_ERROR` at essentially the same time, followed about three
+seconds later by `SUBSCRIBED` on all channels. Supabase edge logs showed a new
+Realtime WebSocket with HTTP `101` at `2026-09-24T21:59:00.676Z`, without a
+matching 4xx, 5xx, or obvious quota/rate-limit response.
+
+The exact transport cause remains unproven. The confirmed application defect
+was that a previously healthy channel could resubscribe without treating the
+unavailable interval as an event-loss window, leaving state stale indefinitely
+when a database change occurred during the gap.
+
+7.15.40 adds one shared core gap coordinator for workspace, Task, and Current
+Projection. Initial `SUBSCRIBED` is healthy startup only. A later
+`CHANNEL_ERROR`, `TIMED_OUT`, or unexpected active-session `CLOSED` opens one
+generation with affected channels, timestamps, statuses, and sanitized
+subscription errors. Recovery waits until every affected channel is healthy
+again, deduplicates simultaneous callbacks, and is fenced by the mounted
+workspace/user generation. Expected cleanup, owner changes, and sign-out do not
+open a gap. The actual recovery order is canonical Task rows first, then a
+complete owner-filtered Current Projection snapshot, then the existing scoped
+Task List, Content Folder, and Focus domain coordinators, followed by already
+loaded Notes and History consumers. This order lets Focus mapping and projection
+freshness observe the restored Task authority before their catch-up reads.
+
+Normal healthy Task events remain on the 7.15.39 entity-scoped reconciliation
+path. Only a proven gap uses the existing broad canonical Task snapshot once
+per incident. Projection gap recovery uses the existing named-column,
+owner-filtered projection read/indexing path once; normal projection events
+remain bounded. Workspace recovery does not call the old broad core refresh.
+Notes remain lazy: unloaded Notes are not queried, while loaded Notes refresh
+once. Full History uses its existing cache/delta synchronization once; when
+only task-scoped History is loaded, only those loaded Task IDs refresh; an
+unloaded History consumer remains untouched. Events arriving during catch-up
+join or replay their authoritative scoped path after recovery rather than being
+discarded.
+
+The separate HUD Realtime audit found that its existing remote-event handler
+already re-reads authoritative HUD settings. It now records status/error
+diagnostics and performs that same authoritative read once when a previously
+healthy HUD channel resubscribes after a gap; HUD is not coupled to core
+workspace refreshes.
+
+The singleton browser Supabase client now records installed Realtime heartbeat
+statuses (`sent`, `ok`, `error`, `timeout`, `disconnected`) and optional
+latency in the bounded diagnostic buffer. Task and Projection subscription
+callbacks now retain sanitized `.subscribe(status, error)` details like the
+Workspace callback. Explicit `supabase.realtime.connect()` was not added:
+`realtime-js` 2.105.1 already performs automatic reconnect/rejoin, and a
+manual call could race that built-in backoff. Worker mode remains unchanged
+(`worker` is not enabled), and the `@supabase/supabase-js` dependency remains
+`^2.105.1`. No SQL, schema, RLS, publication, or Edge change was made.
 
 ## 2026-09-24 7.15.38 Workspace Realtime Publication Contract Repair
 

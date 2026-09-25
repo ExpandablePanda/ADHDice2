@@ -85,7 +85,7 @@ test("workspace subscription diagnostics retain CHANNEL_ERROR and TIMED_OUT erro
   assert.match(workspaceChannelSource, /\.subscribe\(\(status, error\) =>/);
   assert.match(workspaceChannelSource, /status === "CHANNEL_ERROR" \|\| status === "TIMED_OUT"/);
   assert.match(workspaceChannelSource, /kind: "workspace_channel_subscription_error"/);
-  assert.match(workspaceChannelSource, /subscriptionError: describeRealtimeSubscriptionError\(error\)/);
+  assert.match(workspaceChannelSource, /subscriptionError: describeAdhdiceRealtimeSubscriptionError\(error\)/);
   assert.doesNotMatch(workspaceChannelSource, /setInterval|setTimeout/);
 });
 

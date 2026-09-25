@@ -1,6 +1,7 @@
 import { processLock } from "@supabase/auth-js";
 import { createClient, type AuthChangeEvent, type Session } from "@supabase/supabase-js";
 import type { Database } from "@/lib/database.types";
+import { recordAdhdiceRealtimeDiagnostic } from "@/lib/adhdice-realtime-diagnostics";
 
 type BrowserSupabaseClient = ReturnType<typeof createClient<Database>>;
 type AuthListener = (event: AuthChangeEvent, session: Session | null) => void;
@@ -32,6 +33,17 @@ export function createBrowserSupabaseClient() {
       auth: {
         // Safari can leave navigator.locks orphaned across reloads in local development.
         lock: processLock,
+      },
+      realtime: {
+        // The installed Realtime client exposes heartbeat lifecycle diagnostics;
+        // application state recovery remains status-gap driven below.
+        heartbeatCallback: (status, latency) => {
+          recordAdhdiceRealtimeDiagnostic({
+            kind: "realtime_heartbeat_status",
+            latency: latency ?? null,
+            status,
+          });
+        },
       },
     });
   }
