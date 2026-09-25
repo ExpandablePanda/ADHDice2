@@ -28,6 +28,7 @@ import { createStyleLabBuilderTemplate, STYLE_LAB_BUILDER_TEMPLATES } from "@/co
 import { getStyleLabBackgroundColorCssValue, getStyleLabBuilderFontOption, getStyleLabTextColorCssValue, isStyleLabBuilderFontFamily, normalizeStyleLabCustomColor } from "@/components/style-lab/style-lab-registry";
 
 const builderSource = readFileSync(new URL("../src/components/style-lab/style-lab-builder.tsx", import.meta.url), "utf8");
+const builderDragSource = readFileSync(new URL("../src/components/style-lab/style-lab-builder-drag.ts", import.meta.url), "utf8");
 const colorControlSource = readFileSync(new URL("../src/components/style-lab/style-lab-builder-color-control.tsx", import.meta.url), "utf8");
 const panelSource = readFileSync(new URL("../src/components/style-lab/style-lab-panel.tsx", import.meta.url), "utf8");
 const devRootSource = readFileSync(new URL("../src/components/style-lab/style-lab-dev-root.tsx", import.meta.url), "utf8");
@@ -141,7 +142,7 @@ test("approved properties survive while arbitrary values and grid columns are re
     assert.equal(root.styles.backgroundColor, "Subtle");
     assert.equal(root.styles.gap, "0.5rem");
   }
-  const rejected = normalizeStyleLabBuilderDraft({ nodes: [{ id: "root", type: "container", parentId: null, styles: { layout: "float", gridColumns: 9, gap: "100vw", radius: "custom" } }] });
+  const rejected = normalizeStyleLabBuilderDraft({ nodes: [{ id: "root", type: "container", parentId: null, styles: { layout: "float", gridColumns: 13, gap: "100vw", radius: "custom" } }] });
   const rejectedRoot = getStyleLabBuilderNode(rejected, "root")!;
   assert.equal(rejectedRoot.type === "container" ? rejectedRoot.styles.layout : "", "column");
   assert.equal(rejectedRoot.type === "container" ? rejectedRoot.styles.gridColumns : 0, 1);
@@ -271,6 +272,20 @@ test("Builder is a separate development-only Test workspace and the panel stays 
   assert.match(builderSource, /onPointerCancel/);
   assert.match(builderSource, /onLostPointerCapture/);
   assert.match(builderSource, /event.key !== "Escape"/);
+  assert.match(builderSource, /data-builder-drag-grid/);
+  assert.match(builderSource, /Drop here/);
+  assert.match(builderSource, /Blocked/);
+  assert.match(builderSource, /Math\.hypot\(event\.clientX - interaction\.startX, event\.clientY - interaction\.startY\) < 6/);
+  assert.match(builderSource, /setPointerCapture\(event\.pointerId\)/);
+  assert.match(builderSource, /window\.addEventListener\("blur"/);
+  assert.match(builderSource, /getPageShellDragAutoScrollDelta/);
+  assert.match(builderSource, /applyStyleLabBuilderDrop/);
+  assert.match(builderSource, /Column span/);
+  assert.match(builderDragSource, /export function getStyleLabBuilderGridDropTarget/);
+  assert.match(builderDragSource, /export function getStyleLabBuilderDropContainer/);
+  assert.match(builderDragSource, /export function canStyleLabBuilderMoveNode/);
+  assert.match(builderDragSource, /export function planStyleLabBuilderDrop/);
+  assert.match(builderDragSource, /STYLE_LAB_BUILDER_MAX_DEPTH/);
   assert.match(builderSource, /maxWidth: "none"/);
   assert.match(builderSource, /buildStyleLabModuleSpec/);
   assert.match(builderSource, /buildStyleLabReferenceCode/);

@@ -43,6 +43,7 @@ export const STYLE_LAB_BUILDER_MIN_WIDTH_PX = 40;
 export const STYLE_LAB_BUILDER_MAX_WIDTH_PX = 1600;
 export const STYLE_LAB_BUILDER_MIN_HEIGHT_PX = 24;
 export const STYLE_LAB_BUILDER_MAX_HEIGHT_PX = 1600;
+export const STYLE_LAB_BUILDER_DEFAULT_GRID_COLUMN_SPAN = 1;
 
 export const STYLE_LAB_BUILDER_NODE_TYPES = ["container", "text", "chip", "icon-button", "divider"] as const;
 export type StyleLabBuilderNodeType = (typeof STYLE_LAB_BUILDER_NODE_TYPES)[number];
@@ -82,6 +83,11 @@ export type StyleLabBuilderBaseNode = {
   id: string;
   parentId: string | null;
   order: number;
+  placement: StyleLabBuilderPlacement;
+};
+
+export type StyleLabBuilderPlacement = {
+  gridColumnSpan: number;
 };
 
 export type StyleLabBuilderContainerNode = StyleLabBuilderBaseNode & {
@@ -139,6 +145,7 @@ export type StyleLabBuilderDraft = {
 
 export type StyleLabBuilderNodePatch = {
   ariaLabel?: string;
+  placement?: Partial<StyleLabBuilderPlacement>;
   styles?: Record<string, unknown>;
   text?: string;
 };
@@ -180,6 +187,12 @@ function normalizedModuleName(value: unknown): string {
 
 function normalizedOrder(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+}
+
+export function normalizeStyleLabBuilderGridColumnSpan(value: unknown, parentColumns: number = STYLE_LAB_BUILDER_GRID_COLUMNS[STYLE_LAB_BUILDER_GRID_COLUMNS.length - 1], fallback = STYLE_LAB_BUILDER_DEFAULT_GRID_COLUMN_SPAN): number {
+  const safeParentColumns = Number.isFinite(parentColumns) ? Math.max(1, Math.min(STYLE_LAB_BUILDER_GRID_COLUMNS[STYLE_LAB_BUILDER_GRID_COLUMNS.length - 1], Math.round(parentColumns))) : STYLE_LAB_BUILDER_GRID_COLUMNS[STYLE_LAB_BUILDER_GRID_COLUMNS.length - 1];
+  const raw = typeof value === "number" && Number.isFinite(value) ? value : typeof value === "string" && /^\d+$/.test(value.trim()) ? Number.parseInt(value, 10) : fallback;
+  return Math.max(1, Math.min(safeParentColumns, Math.round(Number.isFinite(raw) ? raw : fallback)));
 }
 
 export type StyleLabBuilderDimensionOptions = {
@@ -247,6 +260,11 @@ function normalizeTextStyles(value: unknown): StyleLabBuilderTextStyles {
   };
 }
 
+function normalizeBuilderPlacement(value: unknown): StyleLabBuilderPlacement {
+  const source = isRecord(value) ? value : {};
+  return { gridColumnSpan: normalizeStyleLabBuilderGridColumnSpan(source.gridColumnSpan) };
+}
+
 function normalizeContainerStyles(value: unknown): StyleLabBuilderContainerStyles {
   const source = isRecord(value) ? value : {};
   return {
@@ -275,7 +293,7 @@ function normalizeContainerStyles(value: unknown): StyleLabBuilderContainerStyle
 
 function normalizeNode(raw: UnknownRecord, id: string, parentId: string | null, order: number): StyleLabBuilderNode | null {
   const type = raw.type;
-  const base = { id, parentId, order };
+  const base = { id, parentId, order, placement: normalizeBuilderPlacement(raw.placement) };
   if (type === "container") return { ...base, type, styles: normalizeContainerStyles(raw.styles) };
   if (type === "text") return { ...base, type, text: boundedText(raw.text, "New text"), styles: normalizeTextStyles(raw.styles) };
   if (type === "chip") {
@@ -408,6 +426,20 @@ function normalizeSiblingOrder(nodes: StyleLabBuilderNode[]): StyleLabBuilderNod
   return nodes.map((node) => ({ ...node, order: node.id === STYLE_LAB_BUILDER_ROOT_ID ? 0 : normalizedOrders.get(node.id) ?? 0 }));
 }
 
+function normalizeGridChildPlacements(nodes: StyleLabBuilderNode[]): StyleLabBuilderNode[] {
+  const nodeById = new Map(nodes.map((node) => [node.id, node]));
+  return nodes.map((node) => {
+    const parent = node.parentId ? nodeById.get(node.parentId) : undefined;
+    const parentColumns = parent?.type === "container" && parent.styles.layout === "grid" ? parent.styles.gridColumns : undefined;
+    return {
+      ...node,
+      placement: {
+        gridColumnSpan: normalizeStyleLabBuilderGridColumnSpan(node.placement.gridColumnSpan, parentColumns),
+      },
+    };
+  });
+}
+
 export function createDefaultStyleLabBuilderDraft(moduleName = STYLE_LAB_BUILDER_DEFAULT_MODULE_NAME): StyleLabBuilderDraft {
   const root = normalizeNode({ type: "container", styles: {} }, STYLE_LAB_BUILDER_ROOT_ID, null, 0);
   return { moduleName: normalizedModuleName(moduleName), canvasWidth: "390", nodes: root ? [root] : [] };
@@ -436,7 +468,7 @@ export function normalizeStyleLabBuilderDraft(value: unknown): StyleLabBuilderDr
     rawParentById.set(id, rawParentId(rawNode.parentId));
   }
 
-  const withParents = normalizeParentLinks(nodes, new Map([...rawParentById].map(([id, parent]) => [id, parent ? originalIdMap.get(parent) ?? (parent === STYLE_LAB_BUILDER_ROOT_ID ? STYLE_LAB_BUILDER_ROOT_ID : null) : STYLE_LAB_BUILDER_ROOT_ID])));
+  const withParents = normalizeGridChildPlacements(normalizeParentLinks(nodes, new Map([...rawParentById].map(([id, parent]) => [id, parent ? originalIdMap.get(parent) ?? (parent === STYLE_LAB_BUILDER_ROOT_ID ? STYLE_LAB_BUILDER_ROOT_ID : null) : STYLE_LAB_BUILDER_ROOT_ID]))));
   return {
     moduleName: normalizedModuleName(source.moduleName),
     canvasWidth: allowedValue(source.canvasWidth, STYLE_LAB_BUILDER_CANVAS_WIDTHS, "390"),
@@ -561,6 +593,7 @@ export function updateStyleLabBuilderNode(draft: StyleLabBuilderDraft, id: strin
       ...node,
       ...(patch.text === undefined ? {} : { text: patch.text }),
       ...(patch.ariaLabel === undefined ? {} : { ariaLabel: patch.ariaLabel }),
+      ...(patch.placement === undefined ? {} : { placement: { ...node.placement, ...patch.placement } }),
       ...(patch.styles === undefined ? {} : { styles: { ...(node.styles as unknown as UnknownRecord), ...patch.styles } }),
     };
     return normalizeNode(rawNode as UnknownRecord, node.id, node.parentId, node.order) ?? node;

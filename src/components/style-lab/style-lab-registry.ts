@@ -87,7 +87,7 @@ export type StyleLabIconName = (typeof STYLE_LAB_ICON_OPTIONS)[number]["key"];
 export const STYLE_LAB_BUILDER_LAYOUTS = ["column", "row", "grid"] as const;
 export type StyleLabBuilderLayout = (typeof STYLE_LAB_BUILDER_LAYOUTS)[number];
 
-export const STYLE_LAB_BUILDER_GRID_COLUMNS = [1, 2, 3, 4] as const;
+export const STYLE_LAB_BUILDER_GRID_COLUMNS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
 export type StyleLabBuilderGridColumns = (typeof STYLE_LAB_BUILDER_GRID_COLUMNS)[number];
 
 export const STYLE_LAB_BUILDER_CANVAS_WIDTHS = ["320", "390", "430", "fit"] as const;

@@ -4,8 +4,19 @@ import { ArrowDown, ArrowUp, Copy, Plus, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent, type ReactNode } from "react";
 import { AdhdChip, AdhdIconButton } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
+import { getPageShellDragAutoScrollDelta } from "@/lib/page-shell-layout";
 import { StyleLabBuilderColorControl } from "./style-lab-builder-color-control";
 import { createStyleLabBuilderTemplate, STYLE_LAB_BUILDER_TEMPLATES, type StyleLabBuilderTemplateId } from "./style-lab-builder-templates";
+import {
+  applyStyleLabBuilderDrop,
+  canStyleLabBuilderMoveNode,
+  getStyleLabBuilderDescendantIds,
+  getStyleLabBuilderDropContainer,
+  getStyleLabBuilderGridDropTarget,
+  getStyleLabBuilderLinearDropTarget,
+  type StyleLabBuilderDragContainerGeometry,
+  type StyleLabBuilderDragRect,
+} from "./style-lab-builder-drag";
 import {
   getStyleLabBackgroundColorCssValue,
   getStyleLabBuilderFontOption,
@@ -166,6 +177,7 @@ function selectedPreviewStyle(selected: boolean): CSSProperties {
 
 type BuilderPreviewProps = {
   draft: StyleLabBuilderDraft;
+  draggingId: string | null;
   editingNodeId: string | null;
   editingValue: string;
   node: StyleLabBuilderNode;
@@ -178,12 +190,19 @@ type BuilderPreviewProps = {
   onResizeLostCapture: (event: PointerEvent<HTMLButtonElement>) => void;
   onResizeMove: (event: PointerEvent<HTMLButtonElement>) => void;
   onResizeStart: (event: PointerEvent<HTMLButtonElement>, nodeId: string, axis: StyleLabBuilderResizeAxis) => void;
+  onNodePointerCancel: (event: PointerEvent<HTMLElement>) => void;
+  onNodePointerDown: (event: PointerEvent<HTMLElement>, nodeId: string) => void;
+  onNodePointerMove: (event: PointerEvent<HTMLElement>) => void;
+  onNodePointerUp: (event: PointerEvent<HTMLElement>) => void;
+  onNodeLostPointerCapture: (event: PointerEvent<HTMLElement>) => void;
   onSelect: (id: string) => void;
+  shouldSuppressClick: () => boolean;
   selectedId: string;
 };
 
 function BuilderPreviewNode({
   draft,
+  draggingId,
   editingNodeId,
   editingValue,
   node,
@@ -196,17 +215,32 @@ function BuilderPreviewNode({
   onResizeLostCapture,
   onResizeMove,
   onResizeStart,
+  onNodePointerCancel,
+  onNodePointerDown,
+  onNodePointerMove,
+  onNodePointerUp,
+  onNodeLostPointerCapture,
   onSelect,
+  shouldSuppressClick,
   selectedId,
 }: BuilderPreviewProps) {
   const selected = node.id === selectedId;
+  const dragging = node.id === draggingId;
+  const visuallySelected = selected || dragging;
+  const movable = node.id !== STYLE_LAB_BUILDER_ROOT_ID;
+  const nodePointerDown = movable ? (event: PointerEvent<HTMLElement>) => onNodePointerDown(event, node.id) : undefined;
+  const nodePointerMove = movable ? onNodePointerMove : undefined;
+  const nodePointerUp = movable ? onNodePointerUp : undefined;
+  const nodePointerCancel = movable ? onNodePointerCancel : undefined;
+  const nodeLostPointerCapture = movable ? onNodeLostPointerCapture : undefined;
   const select = (event: MouseEvent) => {
     event.preventDefault();
     event.stopPropagation();
+    if (shouldSuppressClick()) return;
     onSelect(node.id);
   };
   const children = node.type === "container"
-    ? getStyleLabBuilderChildren(draft, node.id).map((child) => <BuilderPreviewNode draft={draft} editingNodeId={editingNodeId} editingValue={editingValue} key={child.id} node={child} onBeginTextEdit={onBeginTextEdit} onCancelTextEdit={onCancelTextEdit} onCommitTextEdit={onCommitTextEdit} onInlineValueChange={onInlineValueChange} onResizeCancel={onResizeCancel} onResizeEnd={onResizeEnd} onResizeLostCapture={onResizeLostCapture} onResizeMove={onResizeMove} onResizeStart={onResizeStart} onSelect={onSelect} selectedId={selectedId} />)
+    ? getStyleLabBuilderChildren(draft, node.id).map((child) => <BuilderPreviewNode draft={draft} draggingId={draggingId} editingNodeId={editingNodeId} editingValue={editingValue} key={child.id} node={child} onBeginTextEdit={onBeginTextEdit} onCancelTextEdit={onCancelTextEdit} onCommitTextEdit={onCommitTextEdit} onInlineValueChange={onInlineValueChange} onNodeLostPointerCapture={onNodeLostPointerCapture} onNodePointerCancel={onNodePointerCancel} onNodePointerDown={onNodePointerDown} onNodePointerMove={onNodePointerMove} onNodePointerUp={onNodePointerUp} onResizeCancel={onResizeCancel} onResizeEnd={onResizeEnd} onResizeLostCapture={onResizeLostCapture} onResizeMove={onResizeMove} onResizeStart={onResizeStart} onSelect={onSelect} shouldSuppressClick={shouldSuppressClick} selectedId={selectedId} />)
     : null;
 
   const inlineInput = (ariaLabel: string) => (
@@ -219,6 +253,7 @@ function BuilderPreviewNode({
       onChange={(event) => onInlineValueChange(event.target.value)}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
+      onLostPointerCapture={(event) => event.stopPropagation()}
       onKeyDown={(event: KeyboardEvent<HTMLInputElement>) => {
         event.stopPropagation();
         if (event.key === "Enter") {
@@ -229,6 +264,10 @@ function BuilderPreviewNode({
           onCancelTextEdit();
         }
       }}
+      onPointerCancel={(event) => event.stopPropagation()}
+      onPointerDown={(event) => event.stopPropagation()}
+      onPointerMove={(event) => event.stopPropagation()}
+      onPointerUp={(event) => event.stopPropagation()}
       type="text"
       value={editingValue}
     />
@@ -247,7 +286,7 @@ function BuilderPreviewNode({
       type: "button" as const,
     });
     return (
-      <div aria-label={`Select ${node.id === STYLE_LAB_BUILDER_ROOT_ID ? "root container" : "container"}`} data-builder-node-id={node.id} onClick={select} role="group" style={{ ...containerStyle(node), ...selectedPreviewStyle(selected) }}>
+      <div aria-label={`Select ${node.id === STYLE_LAB_BUILDER_ROOT_ID ? "root container" : "container"}`} className={dragging ? "cursor-grabbing select-none" : movable ? "cursor-grab" : "cursor-default"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} role="group" style={{ ...containerStyle(node), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>
         {children}
         {selected ? (
           <>
@@ -262,17 +301,17 @@ function BuilderPreviewNode({
   if (node.type === "text") {
     const editing = editingNodeId === node.id;
     return editing
-      ? <span data-builder-node-id={node.id} onClick={select} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }}>{inlineInput(`Edit ${nodeTitle(node)}`)}</span>
-      : <span data-builder-node-id={node.id} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }}>{node.text}</span>;
+      ? <span className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>{inlineInput(`Edit ${nodeTitle(node)}`)}</span>
+      : <span className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>{node.text}</span>;
   }
   if (node.type === "chip") {
     const icon = node.styles.iconName ? <TaskTypeIcon aria-hidden="true" className="h-3.5 w-3.5" iconKey={node.styles.iconName} /> : undefined;
-    return <AdhdChip data-builder-node-id={node.id} icon={icon} iconName={node.styles.iconName ?? undefined} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} selected={node.styles.selected} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(selected) }} tone={node.styles.tone} type="button">{editingNodeId === node.id ? inlineInput("Edit Chip label") : node.text}</AdhdChip>;
+    return <AdhdChip className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} icon={icon} iconName={node.styles.iconName ?? undefined} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} selected={node.styles.selected} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} tone={node.styles.tone} type="button">{editingNodeId === node.id ? inlineInput("Edit Chip label") : node.text}</AdhdChip>;
   }
   if (node.type === "icon-button") {
-    return <AdhdIconButton aria-label={node.ariaLabel} data-builder-node-id={node.id} onClick={select} size={node.styles.size} style={selectedPreviewStyle(selected)} tone={node.styles.tone} type="button"><TaskTypeIcon aria-hidden="true" iconKey={node.styles.iconName} /></AdhdIconButton>;
+    return <AdhdIconButton aria-label={node.ariaLabel} className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} size={node.styles.size} style={{ ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} tone={node.styles.tone} type="button"><TaskTypeIcon aria-hidden="true" iconKey={node.styles.iconName} /></AdhdIconButton>;
   }
-  return <div aria-label="Select divider" data-builder-node-id={node.id} onClick={select} role="separator" style={{ background: getStyleLabTextColorCssValue(node.styles.color), height: node.styles.orientation === "horizontal" ? "1px" : node.styles.width, width: node.styles.orientation === "horizontal" ? node.styles.width : "1px", ...selectedPreviewStyle(selected) }} />;
+  return <div aria-label="Select divider" className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} role="separator" style={{ background: getStyleLabTextColorCssValue(node.styles.color), height: node.styles.orientation === "horizontal" ? "1px" : node.styles.width, width: node.styles.orientation === "horizontal" ? node.styles.width : "1px", ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} />;
 }
 
 function nodeTitle(node: StyleLabBuilderNode): string {
@@ -386,6 +425,63 @@ type BuilderResizeInteraction = {
   startY: number;
 };
 
+type BuilderDragVisual = {
+  candidateRect: StyleLabBuilderDragRect | null;
+  columnLines: number[];
+  insertionIndex: number;
+  insertionLine?: { orientation: "horizontal" | "vertical"; position: number };
+  layout: "row" | "column" | "grid";
+  originLeft: number;
+  originTop: number;
+  occupiedRects: StyleLabBuilderDragRect[];
+  rowLines: number[];
+  targetId: string;
+  targetRect: StyleLabBuilderDragRect;
+  valid: boolean;
+};
+
+type BuilderDragInteraction = {
+  active: boolean;
+  captureElement: HTMLElement;
+  completed: boolean;
+  pointerId: number;
+  pointerX: number;
+  pointerY: number;
+  sourceId: string;
+  startDraft: StyleLabBuilderDraft;
+  startX: number;
+  startY: number;
+};
+
+function localRect(rect: StyleLabBuilderDragRect, originLeft: number, originTop: number): CSSProperties {
+  return {
+    height: Math.max(1, rect.height),
+    left: rect.left - originLeft,
+    top: rect.top - originTop,
+    width: Math.max(1, rect.width),
+  };
+}
+
+function BuilderDragOverlay({ visual }: { visual: BuilderDragVisual }) {
+  const { originLeft, originTop } = visual;
+  return (
+    <div aria-hidden="true" className="pointer-events-none absolute inset-0 z-30 overflow-visible" data-builder-drag-grid data-builder-drag-grid-valid={visual.valid ? "true" : "false"}>
+      <div className={`absolute rounded-xl border ${visual.valid ? "border-[#8f7bf6]/25 bg-[#8f7bf6]/[0.045]" : "border-[#d65775]/35 bg-[#d65775]/[0.055]"}`} style={localRect(visual.targetRect, originLeft, originTop)} />
+      {visual.rowLines.map((line, index) => <span className="absolute border-t border-dashed border-[#6f57f6]/35 dark:border-[#cabfff]/30" data-builder-drag-row-guide={index} key={`builder-drag-row-${index}`} style={{ left: visual.targetRect.left - originLeft, top: line - originTop, width: visual.targetRect.width }} />)}
+      {visual.columnLines.map((line, index) => <span className="absolute border-l border-dashed border-[#6f57f6]/30 dark:border-[#cabfff]/25" data-builder-drag-column-guide={index} key={`builder-drag-column-${index}`} style={{ height: visual.targetRect.height, left: line - originLeft, top: visual.targetRect.top - originTop }} />)}
+      {visual.occupiedRects.map((rect) => <div className="absolute rounded-lg border border-slate-400/25 bg-slate-500/[0.035] dark:border-slate-300/20 dark:bg-slate-300/[0.035]" data-builder-drag-occupied={rect.id} key={`builder-drag-occupied-${rect.id}`} style={localRect(rect, originLeft, originTop)} />)}
+      {visual.insertionLine ? <span className={`absolute ${visual.insertionLine.orientation === "horizontal" ? "h-0.5 w-full" : "h-full w-0.5"} rounded-full ${visual.valid ? "bg-[#6f57f6]/75" : "bg-[#d65775]/80"}`} data-builder-drag-insertion-line style={visual.insertionLine.orientation === "horizontal" ? { left: visual.targetRect.left - originLeft, top: visual.insertionLine.position - originTop, width: visual.targetRect.width } : { left: visual.insertionLine.position - originLeft, top: visual.targetRect.top - originTop, height: visual.targetRect.height }} /> : null}
+      {visual.candidateRect ? (
+        <div className={`absolute rounded-xl border-2 ${visual.valid ? "border-[#6f57f6] bg-[#6f57f6]/20 shadow-[0_0_0_3px_rgba(111,87,246,0.16)]" : "border-[#d65775] bg-[#d65775]/18 shadow-[0_0_0_3px_rgba(214,87,117,0.16)]"}`} data-builder-drag-candidate data-builder-drag-candidate-index={visual.insertionIndex} style={localRect(visual.candidateRect, originLeft, originTop)}>
+          <span className={`absolute -top-5 left-1 rounded bg-current px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm ${visual.valid ? "text-[#6f57f6]" : "text-[#d65775]"}`}>{visual.valid ? "Drop here" : "Blocked"}</span>
+        </div>
+      ) : (
+        <span className={`absolute -top-5 rounded px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm ${visual.valid ? "bg-[#6f57f6]" : "bg-[#d65775]"}`} style={{ left: visual.targetRect.left - originLeft, top: visual.targetRect.top - originTop }}>{visual.valid ? "Drop here" : "Blocked"}</span>
+      )}
+    </div>
+  );
+}
+
 export function StyleLabBuilder() {
   if (process.env.NODE_ENV !== "development") return null;
   return <StyleLabBuilderWorkspace />;
@@ -400,9 +496,16 @@ function StyleLabBuilderWorkspace() {
   const [editingValue, setEditingValue] = useState("");
   const [templateMenuOpen, setTemplateMenuOpen] = useState(false);
   const [fontLoadStatus, setFontLoadStatus] = useState<"loading" | "loaded" | "fallback">("loading");
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dragVisual, setDragVisual] = useState<BuilderDragVisual | null>(null);
   const textEditCancelledRef = useRef(false);
   const textEditOriginalRef = useRef<string | null>(null);
   const resizeInteractionRef = useRef<BuilderResizeInteraction | null>(null);
+  const dragInteractionRef = useRef<BuilderDragInteraction | null>(null);
+  const dragVisualRef = useRef<BuilderDragVisual | null>(null);
+  const canvasRef = useRef<HTMLDivElement | null>(null);
+  const autoScrollFrameRef = useRef<number | null>(null);
+  const suppressClickRef = useRef(false);
 
   useEffect(() => {
     const link = document.createElement("link");
@@ -435,6 +538,7 @@ function StyleLabBuilderWorkspace() {
 
   const activeSelectedId = getStyleLabBuilderNode(draft, selectedId) ? selectedId : STYLE_LAB_BUILDER_ROOT_ID;
   const selectedNode = getStyleLabBuilderNode(draft, activeSelectedId)!;
+  const selectedParent = selectedNode.parentId ? getStyleLabBuilderNode(draft, selectedNode.parentId) : null;
   const iconOptions = useMemo(() => [{ label: "None", value: "" }, ...STYLE_LAB_ICON_OPTIONS.map((option) => ({ label: option.label, value: option.key }))], []);
 
   function commit(nextDraft: StyleLabBuilderDraft) {
@@ -552,6 +656,301 @@ function StyleLabBuilderWorkspace() {
     resizeInteractionRef.current = null;
   }
 
+  function getBuilderNodeElement(id: string): HTMLElement | null {
+    const canvas = canvasRef.current;
+    if (!canvas) return null;
+    return Array.from(canvas.querySelectorAll<HTMLElement>("[data-builder-node-id]")).find((element) => element.dataset.builderNodeId === id) ?? null;
+  }
+
+  function getBuilderNodeDepth(sourceDraft: StyleLabBuilderDraft, id: string): number {
+    let depth = 0;
+    let node = getStyleLabBuilderNode(sourceDraft, id);
+    const visited = new Set<string>();
+    while (node?.parentId && !visited.has(node.id)) {
+      visited.add(node.id);
+      depth += 1;
+      node = getStyleLabBuilderNode(sourceDraft, node.parentId);
+    }
+    return depth;
+  }
+
+  function getBuilderRect(id: string): StyleLabBuilderDragRect | null {
+    const element = getBuilderNodeElement(id);
+    if (!element) return null;
+    const rect = element.getBoundingClientRect();
+    return { bottom: rect.bottom, height: rect.height, id, left: rect.left, right: rect.right, top: rect.top, width: rect.width };
+  }
+
+  function getBuilderStyleNumber(element: HTMLElement, property: "paddingLeft" | "paddingRight" | "paddingTop", fallback: number): number {
+    const value = window.getComputedStyle(element)[property];
+    const parsed = Number.parseFloat(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  function updateBuilderDragPreview(interaction: BuilderDragInteraction) {
+    const sourceDraft = interaction.startDraft;
+    const sourceRect = getBuilderRect(interaction.sourceId);
+    const source = getStyleLabBuilderNode(sourceDraft, interaction.sourceId);
+    if (!source || !sourceRect) {
+      dragVisualRef.current = null;
+      setDragVisual(null);
+      return;
+    }
+    const canvasRect = canvasRef.current?.getBoundingClientRect();
+    const originLeft = (canvasRect?.left ?? 0) - (canvasRef.current?.scrollLeft ?? 0);
+    const originTop = (canvasRect?.top ?? 0) - (canvasRef.current?.scrollTop ?? 0);
+    const containerGeometries: StyleLabBuilderDragContainerGeometry[] = sourceDraft.nodes.flatMap((node) => {
+      if (node.type !== "container") return [];
+      const rect = getBuilderRect(node.id);
+      if (!rect) return [];
+      return [{ ...rect, depth: getBuilderNodeDepth(sourceDraft, node.id), gridColumns: node.styles.gridColumns, layout: node.styles.layout, parentId: node.parentId }];
+    });
+    const target = getStyleLabBuilderDropContainer(
+      containerGeometries,
+      interaction.pointerX,
+      interaction.pointerY,
+      interaction.sourceId,
+      getStyleLabBuilderDescendantIds(sourceDraft, interaction.sourceId),
+    );
+    if (!target) {
+      dragVisualRef.current = null;
+      setDragVisual(null);
+      return;
+    }
+    const targetNode = getStyleLabBuilderNode(sourceDraft, target.container.id);
+    const targetElement = getBuilderNodeElement(target.container.id);
+    const moveValidation = targetNode?.type === "container" ? canStyleLabBuilderMoveNode(sourceDraft, interaction.sourceId, target.container.id) : { valid: false as const, reason: "INVALID_TARGET" as const };
+    const valid = target.valid && moveValidation.valid;
+    const childNodes = targetNode?.type === "container" ? getStyleLabBuilderChildren(sourceDraft, targetNode.id) : [];
+    const childRects = childNodes.flatMap((child, index) => {
+      if (child.id === interaction.sourceId) return [];
+      const rect = getBuilderRect(child.id);
+      return rect ? [{ ...rect, index }] : [];
+    });
+    const sourceSpan = source.placement.gridColumnSpan;
+    if (targetNode?.type === "container" && targetNode.styles.layout === "grid" && targetElement) {
+      const computed = window.getComputedStyle(targetElement);
+      const paddingLeft = getBuilderStyleNumber(targetElement, "paddingLeft", 0);
+      const paddingRight = getBuilderStyleNumber(targetElement, "paddingRight", 0);
+      const contentLeft = target.container.left + paddingLeft;
+      const contentTop = target.container.top + getBuilderStyleNumber(targetElement, "paddingTop", 0);
+      const contentWidth = Math.max(1, target.container.width - paddingLeft - paddingRight);
+      const gap = Number.parseFloat(computed.columnGap) || Number.parseFloat(computed.gap) || 12;
+      const rowGap = Number.parseFloat(computed.rowGap) || gap;
+      const gridTarget = getStyleLabBuilderGridDropTarget({
+        children: childNodes.map((child) => ({ gridColumnSpan: child.placement.gridColumnSpan, height: getBuilderRect(child.id)?.height ?? sourceRect.height, id: child.id })),
+        columns: targetNode.styles.gridColumns,
+        contentLeft,
+        contentTop,
+        contentWidth,
+        gap,
+        pointerX: interaction.pointerX,
+        pointerY: interaction.pointerY,
+        rowGap,
+        sourceHeight: sourceRect.height,
+        sourceId: interaction.sourceId,
+        sourceSpan,
+      });
+      const absoluteItem = (item: { bottom: number; height: number; id: string; left: number; top: number; width: number }): StyleLabBuilderDragRect => ({ bottom: item.bottom + contentTop, height: item.height, id: item.id, left: item.left + contentLeft, right: item.left + item.width + contentLeft, top: item.top + contentTop, width: item.width });
+      const columnLines = Array.from({ length: gridTarget.preview.columns }, (_, index) => contentLeft + index * (gridTarget.preview.trackWidth + gap));
+      const rowLines = gridTarget.preview.rows.map((row) => contentTop + row.top);
+      const visual = {
+        candidateRect: absoluteItem(gridTarget.candidate),
+        columnLines,
+        insertionIndex: gridTarget.insertionIndex,
+        layout: "grid",
+        originLeft,
+        originTop,
+        occupiedRects: gridTarget.occupied.items.map(absoluteItem),
+        rowLines,
+        targetId: target.container.id,
+        targetRect: target.container,
+        valid,
+      } satisfies BuilderDragVisual;
+      dragVisualRef.current = visual;
+      setDragVisual(visual);
+      return;
+    }
+    if (targetNode?.type === "container" && (targetNode.styles.layout === "row" || targetNode.styles.layout === "column")) {
+      const linearTarget = getStyleLabBuilderLinearDropTarget({
+        childRects,
+        container: target.container,
+        layout: targetNode.styles.layout,
+        pointerX: interaction.pointerX,
+        pointerY: interaction.pointerY,
+        sourceHeight: sourceRect.height,
+        sourceWidth: sourceRect.width,
+      });
+      const visual = {
+        candidateRect: linearTarget.candidate,
+        columnLines: targetNode.styles.layout === "row" ? [linearTarget.insertionLine] : [],
+        insertionIndex: linearTarget.insertionIndex,
+        insertionLine: { orientation: targetNode.styles.layout === "row" ? "vertical" : "horizontal", position: linearTarget.insertionLine },
+        layout: targetNode.styles.layout,
+        originLeft,
+        originTop,
+        occupiedRects: childRects,
+        rowLines: targetNode.styles.layout === "column" ? [linearTarget.insertionLine] : [],
+        targetId: target.container.id,
+        targetRect: target.container,
+        valid,
+      } satisfies BuilderDragVisual;
+      dragVisualRef.current = visual;
+      setDragVisual(visual);
+      return;
+    }
+    const visual = {
+      candidateRect: null,
+      columnLines: [],
+      insertionIndex: 0,
+      layout: target.container.layout,
+      originLeft,
+      originTop,
+      occupiedRects: [],
+      rowLines: [],
+      targetId: target.container.id,
+      targetRect: target.container,
+      valid,
+    } satisfies BuilderDragVisual;
+    dragVisualRef.current = visual;
+    setDragVisual(visual);
+  }
+
+  function cancelBuilderAutoScroll() {
+    if (autoScrollFrameRef.current !== null && typeof window !== "undefined") window.cancelAnimationFrame(autoScrollFrameRef.current);
+    autoScrollFrameRef.current = null;
+  }
+
+  function runBuilderAutoScroll() {
+    autoScrollFrameRef.current = null;
+    const interaction = dragInteractionRef.current;
+    if (!interaction?.active || typeof window === "undefined" || typeof document === "undefined") return;
+    const scrollingElement = document.scrollingElement ?? document.documentElement;
+    const scrollTop = window.scrollY;
+    const scrollHeight = Math.max(scrollingElement.scrollHeight, document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0);
+    const delta = getPageShellDragAutoScrollDelta(interaction.pointerY, window.innerHeight, scrollTop, scrollHeight);
+    if (!delta) return;
+    window.scrollTo({ behavior: "auto", top: Math.max(0, scrollTop + delta) });
+    updateBuilderDragPreview(interaction);
+    autoScrollFrameRef.current = window.requestAnimationFrame(runBuilderAutoScroll);
+  }
+
+  function scheduleBuilderAutoScroll() {
+    const interaction = dragInteractionRef.current;
+    if (!interaction?.active || typeof window === "undefined" || typeof document === "undefined") return;
+    const scrollingElement = document.scrollingElement ?? document.documentElement;
+    const delta = getPageShellDragAutoScrollDelta(interaction.pointerY, window.innerHeight, window.scrollY, Math.max(scrollingElement.scrollHeight, document.documentElement.scrollHeight, document.body?.scrollHeight ?? 0));
+    if (!delta) {
+      cancelBuilderAutoScroll();
+      return;
+    }
+    if (autoScrollFrameRef.current === null) autoScrollFrameRef.current = window.requestAnimationFrame(runBuilderAutoScroll);
+  }
+
+  function releaseBuilderPointer(interaction: BuilderDragInteraction) {
+    if (interaction.captureElement.hasPointerCapture(interaction.pointerId)) interaction.captureElement.releasePointerCapture(interaction.pointerId);
+  }
+
+  function cleanupBuilderDrag(restore: boolean) {
+    const interaction = dragInteractionRef.current;
+    if (!interaction) return;
+    interaction.completed = true;
+    if (restore && interaction.active) setDraft(interaction.startDraft);
+    cancelBuilderAutoScroll();
+    releaseBuilderPointer(interaction);
+    dragInteractionRef.current = null;
+    dragVisualRef.current = null;
+    setDraggingId(null);
+    setDragVisual(null);
+  }
+
+  function handleNodePointerDown(event: PointerEvent<HTMLElement>, nodeId: string) {
+    if ((event.pointerType === "mouse" && event.button !== 0) || resizeInteractionRef.current || dragInteractionRef.current) return;
+    event.stopPropagation();
+    setSelectedId(nodeId);
+    const interaction: BuilderDragInteraction = {
+      active: false,
+      captureElement: event.currentTarget,
+      completed: false,
+      pointerId: event.pointerId,
+      pointerX: event.clientX,
+      pointerY: event.clientY,
+      sourceId: nodeId,
+      startDraft: draft,
+      startX: event.clientX,
+      startY: event.clientY,
+    };
+    dragInteractionRef.current = interaction;
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      dragInteractionRef.current = null;
+    }
+  }
+
+  function handleNodePointerMove(event: PointerEvent<HTMLElement>) {
+    const interaction = dragInteractionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    interaction.pointerX = event.clientX;
+    interaction.pointerY = event.clientY;
+    if (!interaction.active) {
+      if (Math.hypot(event.clientX - interaction.startX, event.clientY - interaction.startY) < 6) return;
+      interaction.active = true;
+      event.preventDefault();
+      event.stopPropagation();
+      setDraggingId(interaction.sourceId);
+      updateBuilderDragPreview(interaction);
+    } else {
+      event.preventDefault();
+      event.stopPropagation();
+      updateBuilderDragPreview(interaction);
+    }
+    scheduleBuilderAutoScroll();
+  }
+
+  function handleNodePointerUp(event: PointerEvent<HTMLElement>) {
+    const interaction = dragInteractionRef.current;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    if (!interaction.active) {
+      cleanupBuilderDrag(false);
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const visual = dragVisualRef.current;
+    if (visual?.valid) {
+      const plan = applyStyleLabBuilderDrop(interaction.startDraft, interaction.sourceId, visual.targetId, visual.insertionIndex);
+      const validation = canStyleLabBuilderMoveNode(interaction.startDraft, interaction.sourceId, visual.targetId);
+      if (validation.valid) commit(plan);
+    }
+    suppressClickRef.current = true;
+    cleanupBuilderDrag(false);
+  }
+
+  function handleNodePointerCancel() {
+    cleanupBuilderDrag(true);
+  }
+
+  function handleNodeLostPointerCapture() {
+    const interaction = dragInteractionRef.current;
+    if (!interaction || interaction.completed) return;
+    cleanupBuilderDrag(true);
+  }
+
+  function handlePreviewSelect(id: string) {
+    if (suppressClickRef.current) {
+      suppressClickRef.current = false;
+      return;
+    }
+    setSelectedId(id);
+  }
+
+  function shouldSuppressClick() {
+    if (!suppressClickRef.current) return false;
+    suppressClickRef.current = false;
+    return true;
+  }
+
   function handleAdd(type: StyleLabBuilderNodeType) {
     const nextDraft = addStyleLabBuilderNode(draft, type, activeSelectedId);
     const currentIds = new Set(draft.nodes.map((node) => node.id));
@@ -596,6 +995,10 @@ function StyleLabBuilderWorkspace() {
     commit(updateStyleLabBuilderNode(draft, selectedNode.id, { styles: { [key]: key === "gridColumns" ? Number(value) : value } }));
   }
 
+  function handlePlacementChange(key: string, value: string) {
+    commit(updateStyleLabBuilderNode(draft, selectedNode.id, { placement: { [key]: Number(value) } }));
+  }
+
   function handleResetSize() {
     commit(updateStyleLabBuilderNode(draft, selectedNode.id, { styles: { height: "auto", maxWidth: "100%", width: "100%" } }));
   }
@@ -610,16 +1013,42 @@ function StyleLabBuilderWorkspace() {
   }
 
   useEffect(() => {
-    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
-      if (event.key !== "Escape" || !resizeInteractionRef.current) return;
-      const interaction = resizeInteractionRef.current;
+    const cancelDragFromWindow = () => {
+      const interaction = dragInteractionRef.current;
+      if (!interaction) return;
       interaction.completed = true;
-      setDraft(interaction.startDraft);
+      if (interaction.active) setDraft(interaction.startDraft);
+      if (autoScrollFrameRef.current !== null) window.cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
       if (interaction.captureElement.hasPointerCapture(interaction.pointerId)) interaction.captureElement.releasePointerCapture(interaction.pointerId);
-      resizeInteractionRef.current = null;
+      dragInteractionRef.current = null;
+      dragVisualRef.current = null;
+      setDraggingId(null);
+      setDragVisual(null);
+    };
+    const handleKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (resizeInteractionRef.current) {
+        const interaction = resizeInteractionRef.current;
+        interaction.completed = true;
+        setDraft(interaction.startDraft);
+        if (interaction.captureElement.hasPointerCapture(interaction.pointerId)) interaction.captureElement.releasePointerCapture(interaction.pointerId);
+        resizeInteractionRef.current = null;
+        return;
+      }
+      cancelDragFromWindow();
+    };
+    const handleWindowBlur = () => {
+      cancelDragFromWindow();
     };
     window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("blur", handleWindowBlur);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("blur", handleWindowBlur);
+      if (autoScrollFrameRef.current !== null) window.cancelAnimationFrame(autoScrollFrameRef.current);
+      autoScrollFrameRef.current = null;
+    };
   }, []);
 
   return (
@@ -662,26 +1091,34 @@ function StyleLabBuilderWorkspace() {
             </div>
             <span className="text-[10px] text-[#9a91b1] dark:text-white/35">{draft.nodes.length}/60 nodes</span>
           </div>
-          <div className="mt-3 min-w-0 overflow-x-auto rounded-[1rem] border border-dashed border-[#dcd3f2] bg-[#f7f4ff] p-4 sm:p-6 dark:border-white/15 dark:bg-white/[0.03]" onClick={(event) => { if (event.target === event.currentTarget) setSelectedId(STYLE_LAB_BUILDER_ROOT_ID); }}>
+          <div className="relative mt-3 min-w-0 overflow-x-auto rounded-[1rem] border border-dashed border-[#dcd3f2] bg-[#f7f4ff] p-4 sm:p-6 dark:border-white/15 dark:bg-white/[0.03]" onClick={(event) => { if (event.target === event.currentTarget) setSelectedId(STYLE_LAB_BUILDER_ROOT_ID); }} ref={canvasRef}>
             <div className="mx-auto min-h-[20rem] max-w-full" onClick={(event) => { if (event.target === event.currentTarget) setSelectedId(STYLE_LAB_BUILDER_ROOT_ID); }} style={{ width: draft.canvasWidth === "fit" ? "100%" : `${draft.canvasWidth}px` }}>
               <BuilderPreviewNode
                 draft={draft}
+                draggingId={draggingId}
                 editingNodeId={editingNodeId}
                 editingValue={editingValue}
                 node={getStyleLabBuilderNode(draft, STYLE_LAB_BUILDER_ROOT_ID)!}
                 onBeginTextEdit={beginTextEdit}
                 onCancelTextEdit={cancelTextEdit}
                 onCommitTextEdit={commitTextEdit}
+                onNodeLostPointerCapture={handleNodeLostPointerCapture}
+                onNodePointerCancel={handleNodePointerCancel}
+                onNodePointerDown={handleNodePointerDown}
+                onNodePointerMove={handleNodePointerMove}
+                onNodePointerUp={handleNodePointerUp}
                 onInlineValueChange={handleInlineValueChange}
                 onResizeCancel={handleResizeCancel}
                 onResizeEnd={handleResizeEnd}
                 onResizeLostCapture={handleResizeLostCapture}
                 onResizeMove={handleResizeMove}
                 onResizeStart={handleResizeStart}
-                onSelect={setSelectedId}
+                onSelect={handlePreviewSelect}
+                shouldSuppressClick={shouldSuppressClick}
                 selectedId={activeSelectedId}
               />
             </div>
+            {dragVisual ? <BuilderDragOverlay visual={dragVisual} /> : null}
           </div>
           {copyStatus ? <p className="mt-2 text-[11px] text-[#4d8c68] dark:text-[#a5d7b8]" role="status">{copyStatus}</p> : null}
         </section>
@@ -709,6 +1146,7 @@ function StyleLabBuilderWorkspace() {
 
           <section className={SUBPANEL_CLASS}>
             <SectionHeading>Selected element</SectionHeading>
+            {selectedParent?.type === "container" && selectedParent.styles.layout === "grid" ? <BuilderSelect label="Column span" onChange={(value) => handlePlacementChange("gridColumnSpan", value)} options={options(Array.from({ length: selectedParent.styles.gridColumns }, (_, index) => index + 1))} value={String(selectedNode.placement.gridColumnSpan)} /> : null}
             {selectedNode.type === "container" ? <ContainerControls node={selectedNode} onResetSize={handleResetSize} onStyleChange={handleStyleChange} /> : null}
             {selectedNode.type === "text" ? (
               <div className="grid gap-3">

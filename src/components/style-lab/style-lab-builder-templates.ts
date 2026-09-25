@@ -35,7 +35,7 @@ function draft(moduleName: string, nodes: unknown[]) {
 function metricTileNodes(prefix: string, parentId: string, order: number, label: string, value: string) {
   const containerId = `${prefix}-container`;
   return [
-    container(containerId, parentId, order, {
+    { ...container(containerId, parentId, order, {
       backgroundColor: "Surface",
       border: "subtle",
       gap: "0.25rem",
@@ -44,7 +44,7 @@ function metricTileNodes(prefix: string, parentId: string, order: number, label:
       radius: "medium",
       shadow: "subtle",
       width: "100%",
-    }),
+    }), placement: { gridColumnSpan: 4 } },
     text(`${prefix}-label`, containerId, 0, label, { fontSize: "12px", fontWeight: "600", textColor: "Muted" }),
     text(`${prefix}-value`, containerId, 1, value, { fontSize: "20px", fontWeight: "700", textColor: "Primary" }),
   ];
@@ -91,7 +91,7 @@ export function createStyleLabBuilderTemplate(templateId: StyleLabBuilderTemplat
       ]);
     case "metric-grid":
       return draft("3-Column Metric Grid Starter", [
-        root({ backgroundColor: "Transparent", gap: "0.75rem", layout: "grid", gridColumns: 3, width: "100%" }),
+        root({ backgroundColor: "Transparent", gap: "0.75rem", layout: "grid", gridColumns: 12, width: "100%" }),
         ...metricTileNodes("metric-one", "root", 0, "Priority", "Urgent"),
         ...metricTileNodes("metric-two", "root", 1, "Focus", "42 min"),
         ...metricTileNodes("metric-three", "root", 2, "Progress", "72%"),

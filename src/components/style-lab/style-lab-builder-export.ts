@@ -35,6 +35,11 @@ function nodeLabel(node: StyleLabBuilderNode): string {
   return "Divider";
 }
 
+function nodeGridColumnSpan(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode): number | null {
+  const parent = node.parentId ? getStyleLabBuilderNode(draft, node.parentId) : null;
+  return parent?.type === "container" && parent.styles.layout === "grid" ? node.placement.gridColumnSpan : null;
+}
+
 function textStyleSpec(styles: StyleLabBuilderTextStyles, indent: string): string[] {
   return [
     `${indent}- Font family: ${getStyleLabBuilderFontOption(styles.fontFamily).label}`,
@@ -50,7 +55,8 @@ function textStyleSpec(styles: StyleLabBuilderTextStyles, indent: string): strin
 function nodeSpecLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode, depth: number): string[] {
   const indent = "  ".repeat(depth);
   const propertyIndent = "  ".repeat(depth + 1);
-  const lines = [`${indent}${depth === 0 ? "Root Container" : nodeLabel(node)}`];
+  const gridSpan = nodeGridColumnSpan(draft, node);
+  const lines = [`${indent}${depth === 0 ? "Root Container" : nodeLabel(node)}`, ...(gridSpan ? [`${propertyIndent}- Column span: ${gridSpan}`] : [])];
   if (node.type === "container") {
     lines.push(
       `${propertyIndent}- Layout: ${titleCase(node.styles.layout)}`,
@@ -136,7 +142,7 @@ function styleObject(entries: Array<[string, string | number]>): string[] {
   return entries.map(([key, value]) => `    ${key}: ${typeof value === "number" ? value : quote(value)},`);
 }
 
-function textStyleObject(styles: StyleLabBuilderTextStyles): string[] {
+function textStyleObject(styles: StyleLabBuilderTextStyles, additionalEntries: Array<[string, string | number]> = []): string[] {
   return styleObject([
     ["fontFamily", getStyleLabBuilderFontOption(styles.fontFamily).cssFamily],
     ["fontSize", styles.fontSize],
@@ -145,10 +151,11 @@ function textStyleObject(styles: StyleLabBuilderTextStyles): string[] {
     ["lineHeight", styles.lineHeight],
     ["letterSpacing", styles.letterSpacing],
     ["textAlign", styles.textAlign],
+    ...additionalEntries,
   ]);
 }
 
-function containerStyleObject(node: StyleLabBuilderContainerNode): string[] {
+function containerStyleObject(node: StyleLabBuilderContainerNode, additionalEntries: Array<[string, string | number]> = []): string[] {
   const { styles } = node;
   const layoutEntries: Array<[string, string | number]> = styles.layout === "grid"
     ? [["display", "grid"], ["gridTemplateColumns", `repeat(${styles.gridColumns}, minmax(0, 1fr))`]]
@@ -170,6 +177,7 @@ function containerStyleObject(node: StyleLabBuilderContainerNode): string[] {
     ["borderRadius", cssValueForRadius(styles.radius)],
     ["border", cssValueForBorder(styles.border)],
     ["boxShadow", cssValueForShadow(styles.shadow)],
+    ...additionalEntries,
   ]);
 }
 
@@ -180,8 +188,10 @@ function referenceIcon(iconName: string): string {
 function referenceNodeLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode, depth: number): string[] {
   const indent = "  ".repeat(depth);
   const childIndent = "  ".repeat(depth + 1);
+  const gridSpan = nodeGridColumnSpan(draft, node);
+  const gridEntries = gridSpan ? [["gridColumn", `span ${gridSpan}`] as [string, string]] : [];
   if (node.type === "container") {
-    const lines = [`${indent}<div`, `${indent}  style={{`, ...containerStyleObject(node).map((line) => `${indent}${line}`), `${indent}  }}`, `${indent}>`];
+    const lines = [`${indent}<div`, `${indent}  style={{`, ...containerStyleObject(node, gridEntries).map((line) => `${indent}${line}`), `${indent}  }}`, `${indent}>`];
     for (const child of getStyleLabBuilderChildren(draft, node.id)) lines.push(...referenceNodeLines(draft, child, depth + 1));
     lines.push(`${indent}</div>`);
     return lines;
@@ -190,7 +200,7 @@ function referenceNodeLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNo
     return [
       `${indent}<span`,
       `${indent}  style={{`,
-      ...textStyleObject(node.styles).map((line) => `${indent}${line}`),
+      ...textStyleObject(node.styles, gridEntries).map((line) => `${indent}${line}`),
       `${indent}  }}`,
       `${indent}>`,
       `${childIndent}{${quote(node.text)}}`,
@@ -205,7 +215,7 @@ function referenceNodeLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNo
       `${indent}  tone=${quote(node.styles.tone)}`,
       `${indent}  type="button"`,
       `${indent}  style={{`,
-      ...textStyleObject(node.styles).map((line) => `${indent}${line}`),
+      ...textStyleObject(node.styles, gridEntries).map((line) => `${indent}${line}`),
       `${indent}  }}`,
       `${indent}${iconProp}`,
       `${indent}>`,
@@ -220,6 +230,7 @@ function referenceNodeLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNo
       `${indent}  size=${quote(node.styles.size)}`,
       `${indent}  tone=${quote(node.styles.tone)}`,
       `${indent}  type="button"`,
+      ...(gridEntries.length > 0 ? [`${indent}  style={{`, ...styleObject(gridEntries).map((line) => `${indent}${line}`), `${indent}  }}`] : []),
       `${indent}>`,
       `${childIndent}${referenceIcon(node.styles.iconName)}`,
       `${indent}</AdhdIconButton>`,
@@ -230,11 +241,12 @@ function referenceNodeLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNo
     `${indent}  aria-orientation=${quote(node.styles.orientation)}`,
     `${indent}  role="separator"`,
     `${indent}  style={{`,
-    ...styleObject([
-      ["width", node.styles.width],
-      ["height", node.styles.orientation === "horizontal" ? "1px" : "100%"],
-      ["background", getStyleLabTextColorCssValue(node.styles.color)],
-    ]).map((line) => `${indent}${line}`),
+      ...styleObject([
+        ["width", node.styles.width],
+        ["height", node.styles.orientation === "horizontal" ? "1px" : "100%"],
+        ["background", getStyleLabTextColorCssValue(node.styles.color)],
+        ...gridEntries,
+      ]).map((line) => `${indent}${line}`),
     `${indent}  }}`,
     `${indent}/>`,
   ];

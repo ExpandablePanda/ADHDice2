@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.38`.
+- Current working app version: `7.15.39`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.39 Side Style Lab Builder Phase 3
+
+Style Builder Phase 3 adds direct canvas drag/reorder with Page-Shell-inspired
+snapping guides, Row/Column insertion, packed Grid movement, cross-Container
+movement, and Builder-only grid child spans. Existing Builder drafts remain
+backward-compatible under the unchanged `adhdice-style-lab:builder-draft`
+storage key. The Builder remains development-only and local-only; exports remain
+reference artifacts and never write source files.
 
 ## 2026-09-24 7.15.38 Side Style Lab Builder Phase 2
 
