@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.38`.
+- Current working app version: `7.15.39`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,63 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-24 7.15.39 Targeted Task Realtime Reconciliation
+
+The 7.15.38 browser QA is recorded as PASS: cross-tab Task Content Folder
+updates arrived instantly after the workspace Realtime publication contract
+repair. Task Realtime then had one remaining normal inefficiency: an
+`adhdice_clean_tasks` event called `reloadTaskRows()`, which loaded every
+visible Task, every schedule boundary for those Tasks, and replaced the full
+local Task array before considering projection reconciliation.
+
+Normal identified Task events now use an entity-scoped canonical reconciliation
+path. The client reads only the owner-filtered affected IDs from
+`adhdice_clean_tasks` with `permanently_deleted_at is null`, then reads the
+latest boundary for each affected active canonical Task using
+`boundary_sequence desc, id asc limit 1`. The event payload remains an
+invalidation signal; it is never merged as authoritative state. Existing
+canonical schedule projection and active-Task boundary completeness rules are
+preserved.
+
+Successful reads replace, insert, or remove only the affected Task entities,
+retain unrelated Task object identity and existing array positions, and let
+the existing derived hierarchy recompute from an updated `parent_task_id`.
+INSERT, metadata/status/canonical-revision updates, hierarchy moves, permanent
+deletion updates, and hard DELETE events all use this path. The source schema's
+parent foreign key remains `ON DELETE CASCADE`, so descendant DELETE events are
+handled independently as they arrive; the client does not guess descendants
+from a parent event. DEFAULT replica identity still means DELETE identity is
+recovered from `payload.old.id` when available.
+
+A bounded microtask coordinator deduplicates Task IDs, caps each batch at 50,
+and gives IDs arriving during an in-flight read one trailing pass. Workspace
+generation, mounted-owner, and unmount checks reject stale results. Existing
+pending local-mutation echo suppression remains before enqueueing, so a skipped
+initiating-client echo does not launch a targeted read while remote clients
+still reconcile normally.
+
+Missing required schedule boundaries are diagnosed without applying an
+incomplete Task and use the existing full canonical snapshot as a rare bounded
+fallback. Targeted network/read errors retain local Task data and do not imply
+deletion. Events without a recoverable ID are diagnosed and use the existing
+full snapshot fallback rather than guessing an entity. Current Projection
+reconciliation remains separate and revision-aware: it runs only after a
+successful authoritative Task result passes the existing remote-versus-local
+canonical revision safety checks, and is skipped for missing/deleted,
+stale/error, or unsafe revision outcomes.
+
+`loadCanonicalTaskSnapshot()` remains for initial/core bootstrap and the
+manual/resume broad core refreshes; `reloadTaskRows()` remains for rollover
+reconciliation and the rare targeted correctness fallbacks. No normal
+identified Task Realtime event loads the workspace-wide Task snapshot. No History, broad command-operation,
+occurrence, reward, Calendar override, profile, or unrelated projection read
+was added. No SQL, schema, RLS, or Realtime publication change was made.
+
+The next optimization after 7.15.39 is the separate Realtime connection
+reliability investigation observed during 7.15.37/7.15.38, including the
+transient simultaneous `CHANNEL_ERROR` transitions; Task reconciliation is
+not being broadened to compensate for that issue.
 
 ## 2026-09-24 7.15.38 Workspace Realtime Publication Contract Repair
 

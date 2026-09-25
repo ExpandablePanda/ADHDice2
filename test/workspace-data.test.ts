@@ -614,7 +614,8 @@ test("Task Realtime skips only the locally owned Task echo and resumes after the
 
   assert.match(appSource, /return pendingTaskMutationTrackerRef\.current\.shouldSkipTaskReload\(change\)/);
   assert.match(realtime, /shouldSkipTaskReloadRef\.current\?\.\(\{ eventType: payload\.eventType, taskId \}\)/);
-  assert.ok(realtime.indexOf("shouldSkipTaskReloadRef.current") < realtime.indexOf("reloadTaskRows({ silent: true })"));
+  assert.match(realtime, /requestTaskEntityReconciliation\(taskId, payload\.eventType\)/);
+  assert.ok(realtime.indexOf("shouldSkipTaskReloadRef.current") < realtime.indexOf("requestTaskEntityReconciliation"));
 });
 
 test("known-task History Realtime uses targeted refresh and unknown-ID events keep the full-load fallback", async () => {

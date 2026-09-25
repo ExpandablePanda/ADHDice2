@@ -80,6 +80,14 @@ import {
 import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-freshness";
 import { createBoundedTaskProjectionReconciler } from "@/lib/task-current-projection-reconciliation";
 import {
+  createTaskEntityReconciliationCoordinator,
+  isActiveCanonicalTaskEntityRow,
+  loadCanonicalTaskEntities,
+  mergeTaskEntitySnapshot,
+  type CanonicalTaskEntitySnapshotBoundaryRow,
+  type CanonicalTaskEntitySnapshotRow,
+} from "@/lib/task-realtime-reconciliation";
+import {
   createAdhdiceRealtimeChannelDebugId,
   markAdhdiceRealtimeAuthorityPending,
   recordAdhdiceRealtimeDiagnostic,
@@ -203,28 +211,9 @@ export function startBackgroundTaskHistoryHydration(
   }, onFailure);
 }
 
-type CanonicalTaskSnapshotRow = {
-  id: string;
-  canonicalization_status?: string | null;
-  terminal_state?: string | null;
-  container_state?: string | null;
-};
-
-type CanonicalTaskSnapshotBoundaryRow = {
-  entity_id: string;
-};
-
-function isActiveCanonicalTaskSnapshotRow(task: CanonicalTaskSnapshotRow) {
-  return (
-    (task.canonicalization_status === "canonical_proven" || task.canonicalization_status === "canonical_runtime")
-    && task.terminal_state === "active"
-    && task.container_state === "active"
-  );
-}
-
 export async function loadCanonicalTaskSnapshot<
-  TaskRow extends CanonicalTaskSnapshotRow,
-  BoundaryRow extends CanonicalTaskSnapshotBoundaryRow,
+  TaskRow extends CanonicalTaskEntitySnapshotRow,
+  BoundaryRow extends CanonicalTaskEntitySnapshotBoundaryRow,
 >(
   loadTaskRows: () => PromiseLike<PagedFetchResult<TaskRow>>,
   loadScheduleBoundaries: (taskIds: string[]) => PromiseLike<PagedFetchResult<BoundaryRow>>,
@@ -245,7 +234,7 @@ export async function loadCanonicalTaskSnapshot<
 
   const boundaryTaskIds = new Set((boundaryResult.data ?? []).map((boundary) => boundary.entity_id));
   const missingBoundaryTaskIds = taskRows
-    .filter(isActiveCanonicalTaskSnapshotRow)
+    .filter(isActiveCanonicalTaskEntityRow)
     .filter((task) => !boundaryTaskIds.has(task.id))
     .map((task) => task.id);
   if (missingBoundaryTaskIds.length > 0) {
@@ -909,6 +898,25 @@ export function useWorkspaceData({
       );
     }
 
+    async function loadLatestTaskScheduleBoundaries(taskIds: string[]) {
+      const results = await Promise.all(taskIds.map((taskId) => client
+        .from("adhdice_task_schedule_boundaries")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("entity_id", taskId)
+        .order("boundary_sequence", { ascending: false })
+        .order("id", { ascending: true })
+        .limit(1)
+        .maybeSingle()));
+      const failed = results.find((result) => result.error);
+      return {
+        data: results
+          .map((result) => result.data as CanonicalTaskScheduleBoundary | null)
+          .filter((boundary): boundary is CanonicalTaskScheduleBoundary => boundary !== null),
+        error: failed?.error ?? null,
+      };
+    }
+
     async function reloadTaskRows({
       silent = false,
       source = "realtime",
@@ -1038,6 +1046,171 @@ export function useWorkspaceData({
       await taskReloadPromise;
     }
 
+    const taskEntityReconcileSources = new Map<string, Set<string>>();
+
+    function taskEntityChannelDebugId() {
+      return taskChannelRef.current
+        ? taskChannelDebugIdsRef.current.get(taskChannelRef.current)
+        : undefined;
+    }
+
+    async function reconcileTaskEntityBatch(taskIds: string[]) {
+      const channelDebugId = taskEntityChannelDebugId();
+      const sourceEventTypes = Object.fromEntries(taskIds.map((taskId) => [
+        taskId,
+        [...(taskEntityReconcileSources.get(taskId) ?? [])],
+      ]));
+      for (const taskId of taskIds) taskEntityReconcileSources.delete(taskId);
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        channelDebugId,
+        kind: "task_entity_reconcile_started",
+        batchSize: taskIds.length,
+        sourceEventTypes,
+        taskIds,
+      });
+
+      if (!isActive || !canApplyCoreWorkspaceResult()) {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "task_entity_reconcile_stale_generation_rejection",
+          batchSize: taskIds.length,
+          taskIds,
+        });
+        return new Map(taskIds.map((taskId) => [taskId, { status: "stale" as const }]));
+      }
+
+      const { taskResult, boundaryResult } = await loadCanonicalTaskEntities(
+        taskIds,
+        (requestedTaskIds) => client
+          .from("adhdice_clean_tasks")
+          .select("*")
+          .eq("user_id", userId)
+          .in("id", requestedTaskIds)
+          .is("permanently_deleted_at", null),
+        (activeTaskIds) => loadLatestTaskScheduleBoundaries(activeTaskIds),
+      );
+
+      if (!isActive || !canApplyCoreWorkspaceResult()) {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "task_entity_reconcile_stale_generation_rejection",
+          phase: "after_read",
+          batchSize: taskIds.length,
+          taskIds,
+        });
+        return new Map(taskIds.map((taskId) => [taskId, { status: "stale" as const }]));
+      }
+
+      if (taskResult.error || boundaryResult?.error) {
+        const error = taskResult.error ?? boundaryResult?.error;
+        const missingBoundary = error?.code === "CANONICAL_TASK_SNAPSHOT_INCOMPLETE";
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "task_entity_reconcile_error",
+          batchSize: taskIds.length,
+          errorCode: error?.code ?? "targeted_read_error",
+          missingBoundary,
+          taskIds,
+        });
+
+        if (!missingBoundary) {
+          return new Map(taskIds.map((taskId) => [taskId, { status: "error" as const }]));
+        }
+
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "task_entity_reconcile_broad_fallback",
+          reason: "missing_required_schedule_boundary",
+          taskIds,
+        });
+        await reloadTaskRows({ silent: true, source: "targeted_missing_boundary" });
+        if (!isActive || !canApplyCoreWorkspaceResult()) {
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "task",
+            channelDebugId,
+            kind: "task_entity_reconcile_stale_generation_rejection",
+            phase: "after_broad_fallback",
+            batchSize: taskIds.length,
+            taskIds,
+          });
+          return new Map(taskIds.map((taskId) => [taskId, { status: "stale" as const }]));
+        }
+        return new Map(taskIds.map((taskId) => [taskId, {
+          status: "fallback" as const,
+          task: tasksRef.current.find((task) => task.id === taskId),
+        }]));
+      }
+
+      const authoritativeTasks = projectTasksWithCanonicalScheduleBoundaries(
+        (taskResult.data ?? []) as Task[],
+        (boundaryResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
+      );
+      const authoritativeById = new Map(authoritativeTasks.map((task) => [task.id, task]));
+      const localTasksBeforeMerge = tasksRef.current;
+      const { tasks: nextTasks, outcomes } = mergeTaskEntitySnapshot(localTasksBeforeMerge, taskIds, authoritativeTasks);
+      tasksRef.current = nextTasks;
+      startTransition(() => {
+        setTasks((current) => {
+          const latestMerge = mergeTaskEntitySnapshot(current, taskIds, authoritativeTasks);
+          return keepCurrentIfStructurallyEqual(current, latestMerge.tasks);
+        });
+      });
+
+      const authoritativeRowsById = new Map((taskResult.data ?? []).map((task) => [task.id, task]));
+      const boundariesById = new Set((boundaryResult?.data ?? []).map((boundary) => boundary.entity_id));
+      for (const taskId of taskIds) {
+        const authoritativeTask = authoritativeById.get(taskId);
+        const localTask = localTasksBeforeMerge.find((task) => task.id === taskId);
+        const sourceRow = authoritativeRowsById.get(taskId);
+        const boundaryState = !authoritativeTask
+          ? "not_found"
+          : sourceRow && isActiveCanonicalTaskEntityRow(sourceRow)
+            ? boundariesById.has(taskId) ? "found" : "missing"
+            : "not_required";
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "task",
+          channelDebugId,
+          kind: "task_entity_reconcile_result",
+          boundaryState,
+          newCanonicalRevision: authoritativeTask?.canonical_revision ?? null,
+          newRevision: authoritativeTask?.revision ?? null,
+          oldCanonicalRevision: localTask?.canonical_revision ?? null,
+          oldRevision: localTask?.revision ?? null,
+          result: outcomes.get(taskId) ?? "not_found",
+          taskId,
+        });
+      }
+      return new Map(taskIds.map((taskId) => [taskId, {
+        status: outcomes.get(taskId) ?? "removed",
+        task: authoritativeById.get(taskId),
+      }]));
+    }
+
+    const taskEntityReconciliationCoordinator = createTaskEntityReconciliationCoordinator(
+      reconcileTaskEntityBatch,
+      { maxBatchSize: 50 },
+    );
+
+    function requestTaskEntityReconciliation(taskId: string, eventType: string) {
+      const eventSources = taskEntityReconcileSources.get(taskId) ?? new Set<string>();
+      eventSources.add(eventType);
+      taskEntityReconcileSources.set(taskId, eventSources);
+      const joined = taskEntityReconciliationCoordinator.isRunning() || taskEntityReconciliationCoordinator.hasPending();
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "task",
+        channelDebugId: taskEntityChannelDebugId(),
+        eventType,
+        kind: joined ? "task_entity_reconcile_joined" : "task_entity_reconcile_requested",
+        taskId,
+      });
+      return taskEntityReconciliationCoordinator.request([taskId]);
+    }
+
     function shouldReconnectTaskChannel() {
       return (
         taskChannelRef.current === null
@@ -1123,19 +1296,61 @@ export function useWorkspaceData({
             if (shouldSkip) {
               return;
             }
-            taskReloadTriggerTaskIdRef.current = taskId;
-            void reloadTaskRows({ silent: true }).then(() => {
-              const reloadedTask = taskId ? tasksRef.current.find((task) => task.id === taskId) : undefined;
+            if (!taskId) {
+              recordAdhdiceRealtimeDiagnostic({
+                channel: "task",
+                channelDebugId,
+                eventType: payload.eventType,
+                kind: "task_entity_reconcile_missing_event_id",
+              });
+              void reloadTaskRows({ silent: true, source: "realtime_missing_task_id" });
+              return;
+            }
+
+            void requestTaskEntityReconciliation(taskId, payload.eventType).then((reconciledResults) => {
+              const reconciliation = reconciledResults.get(taskId);
+              const reloadedTask = reconciliation?.task ?? tasksRef.current.find((task) => task.id === taskId);
               if (
-                !reloadedTask
+                reconciliation?.status === "error"
+                || reconciliation?.status === "stale"
+                || !reloadedTask
                 || typeof remoteCanonicalRevision !== "number"
                 || typeof reloadedTask.canonical_revision !== "number"
                 || reloadedTask.canonical_revision < remoteCanonicalRevision
                 || (typeof previousTaskCanonicalRevision === "number" && remoteCanonicalRevision <= previousTaskCanonicalRevision)
               ) {
+                recordAdhdiceRealtimeDiagnostic({
+                  channel: "task",
+                  channelDebugId,
+                  eventType: payload.eventType,
+                  kind: "task_entity_reconcile_projection_skipped",
+                  reason: !reloadedTask ? "task_not_present" : reconciliation?.status ?? "revision_safety_check",
+                  remoteCanonicalRevision,
+                  taskId,
+                });
                 return;
               }
+              recordAdhdiceRealtimeDiagnostic({
+                channel: "task",
+                channelDebugId,
+                eventType: payload.eventType,
+                kind: "task_entity_reconcile_projection_requested",
+                newCanonicalRevision: reloadedTask.canonical_revision,
+                oldCanonicalRevision: previousTaskCanonicalRevision,
+                remoteCanonicalRevision,
+                taskId,
+              });
               void requestTaskProjectionReconciliation(taskId!);
+            }, (error) => {
+              recordAdhdiceRealtimeDiagnostic({
+                channel: "task",
+                channelDebugId,
+                eventType: payload.eventType,
+                kind: "task_entity_reconcile_error",
+                errorCode: "targeted_reconcile_pipeline_error",
+                taskId,
+                errorMessage: error instanceof Error ? error.message : "unknown",
+              });
             });
           },
         )
@@ -2885,6 +3100,8 @@ export function useWorkspaceData({
       taskChannelRef.current = null;
       taskChannelStatusRef.current = "CLOSED";
       taskChannelRemovalPromiseRef.current = null;
+      taskEntityReconciliationCoordinator.dispose();
+      taskEntityReconcileSources.clear();
       if (taskChannel) {
         taskChannelRemovalPromiseRef.current = removeTaskChannel(taskChannel);
       }
