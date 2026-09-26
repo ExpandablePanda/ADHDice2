@@ -5,7 +5,7 @@ import { executeRecordsPipeline, RecordsStageError } from "../src/lib/record-rep
 
 const baseState: RecordsInternalState = {
   currentRecords: [], error: null, events: [], hasDetailedEvidence: false, hasSuccessfulResult: false, isLoading: false,
-  isRecalculating: false, lastCalculatedAt: null, ownerUserId: "user-1",
+  invalidatedEventsLoaded: false, invalidatedEventsLoading: false, isRecalculating: false, lastCalculatedAt: null, ownerUserId: "user-1",
   progress: null, provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [],
 };
 

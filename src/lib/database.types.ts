@@ -1,4 +1,5 @@
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/persisted-types.ts";
+import type { RecordsSourceState } from "./records/source-state.ts";
 import type { TaskType } from "./task-type-domain.ts";
 import type { TaskManualAction, TaskNeedsActionTrigger, TaskSuccessOutcome } from "./task-state-engine/behavior-policy.ts";
 import type {
@@ -30,6 +31,7 @@ export type RecordReconcileRun = {
   evaluated_at: string;
   timezone: string;
   logical_day_start: string;
+  source_state: RecordsSourceState | null;
   status: "uploading" | "completed" | "invalid";
   expires_at: string;
   completed_at: string | null;
@@ -3442,7 +3444,11 @@ export type Database = {
       };
       adhdice_get_latest_completed_records_run: {
         Args: { p_logical_day_start: string; p_rules_version: string; p_timezone: string };
-        Returns: Array<Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "timezone">>;
+        Returns: Array<Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "source_state" | "timezone">>;
+      };
+      adhdice_get_records_source_state: {
+        Args: Record<string, never>;
+        Returns: RecordsSourceState;
       };
       adhdice_activate_achievement_profile: {
         Args: {

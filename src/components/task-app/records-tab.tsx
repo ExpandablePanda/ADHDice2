@@ -305,6 +305,12 @@ export function RecordsTab(props: RecordsTabProps) {
   }, [selectableTaskIdSet]);
 
   useEffect(() => {
+    // Invalidated event visibility is owner-scoped and must never carry across accounts.
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset owner-scoped disclosure state
+    setShowInvalidated(false);
+  }, [props.logicalDayStart, props.timezone, props.userId]);
+
+  useEffect(() => {
     if (!initialMetricKey || !records.hasSuccessfulResult || openedInitialMetricRef.current === initialMetricKey) return;
     const record = records.currentRecords.find((candidate) => candidate.metric_key === initialMetricKey && candidate.scope_kind === "global" && candidate.scope_id === null);
     if (!record) {
@@ -392,7 +398,12 @@ export function RecordsTab(props: RecordsTabProps) {
         {perTaskRecords.length ? <RecordGrid currentRecords={records.currentRecords} events={records.events} hasDetailedEvidence={records.hasDetailedEvidence} onOpenDetails={openRecordDetails} records={perTaskRecords} taskEvidenceByRecordIdentity={records.taskEvidenceByRecordIdentity} /> : <p className="text-sm text-[#817990] dark:text-white/50">No matching per-task records.</p>}
       </RecordsSection>
       <RecordsSection expanded={expandedSections.history} id="history" onToggle={() => toggleSection("history")} title="Record history">
-        <div className="mb-3"><TaskTableChipButton aria-pressed={showInvalidated} onClick={() => setShowInvalidated((value) => !value)}>{showInvalidated ? "Hide invalidated" : "Show invalidated"}</TaskTableChipButton></div>
+        <div className="mb-3"><TaskTableChipButton aria-pressed={showInvalidated} onClick={() => {
+          const next = !showInvalidated;
+          setShowInvalidated(next);
+          if (next) void records.loadInvalidatedEvents();
+        }}>{showInvalidated ? "Hide invalidated" : "Show invalidated"}</TaskTableChipButton></div>
+        {showInvalidated && records.invalidatedEventsLoading ? <p className="mb-3 text-xs text-[#817990] dark:text-white/50">Loading invalidated events…</p> : null}
         {history.length ? <ul className="divide-y divide-[#eee9f5] dark:divide-white/10">{history.map((event) => <HistoryItem event={event} key={event.id} />)}</ul> : <p className="text-sm text-[#817990] dark:text-white/50">No record events yet.</p>}
       </RecordsSection>
       <aside className="rounded-lg border border-[#e8e2f2] bg-[#fbfaff] px-4 py-3 text-xs leading-5 text-[#716a86] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/55">

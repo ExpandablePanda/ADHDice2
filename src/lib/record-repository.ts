@@ -2,6 +2,7 @@ import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusSession, RecordReconcileRun, Task, TaskHistory } from "@/lib/database.types";
 import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
 import { RECORDS_RULES_VERSION, type RecordsEvaluation, type PersistedRecordCurrent, type PersistedRecordEvent } from "@/lib/records/types";
+import { isRecordsSourceState, recordsSourceStatesMatch, type RecordsSourceState } from "@/lib/records/source-state";
 import { evaluateRecords } from "@/lib/records/evaluator";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
 import {
@@ -17,7 +18,7 @@ const PAGE_SIZE = 1000;
 const activeRecordsPipelines = new Map<string, Promise<unknown>>();
 export const RECORDS_BUSY_MESSAGE = "Records are already refreshing in another session.";
 
-export type LatestCompletedRecordsRun = Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "timezone">;
+export type LatestCompletedRecordsRun = Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "source_state" | "timezone">;
 
 type RecordsFinalizeResult =
   | { status: "busy" }
@@ -44,6 +45,7 @@ export class RecordsBusyError extends Error {
 }
 
 export type RecordsPipelineStage =
+  | "Records source-state load"
   | "Task load"
   | "Task History load"
   | "Focus Session load"
@@ -83,6 +85,15 @@ export class RecordsStageError extends Error {
   }
 }
 
+export class RecordsSourceChangedError extends Error {
+  readonly code = "RECORDS_SOURCE_CHANGED";
+
+  constructor() {
+    super("Records source data changed during evaluation; retry required.");
+    this.name = "RecordsSourceChangedError";
+  }
+}
+
 export async function withRecordsStage<T>(stage: RecordsPipelineStage, operation: () => Promise<T> | T): Promise<T> {
   try {
     return await operation();
@@ -113,6 +124,13 @@ export function isRecordsSetupError(error: RecordsErrorDetail | null | undefined
     return /adhdice_(?:begin_records_reconciliation|upload_records_reconciliation_chunk|finalize_records_reconciliation)\(p_payload\)/i.test(recordsErrorText(error));
   }
   return /adhdice_record_(?:current|events|reconcile_runs|reconcile_chunks|current_stage|event_stage).*(?:does not exist|not found|schema cache)/i.test(recordsErrorText(error));
+}
+
+function isRecordsSourceStateUnavailableError(error: RecordsErrorDetail | null | undefined) {
+  const code = error?.code?.toUpperCase();
+  if (code === "42P01" || code === "PGRST205" || code === "42883" || code === "P0002") return true;
+  if (code === "PGRST202") return /adhdice_get_records_source_state\(\)/i.test(recordsErrorText(error));
+  return /adhdice_(?:get_records_source_state|records_source_state_for_owner).*(?:does not exist|not found|schema cache)/i.test(recordsErrorText(error));
 }
 
 export function isRecordsBusyError(error: { code?: string } | null | undefined) {
@@ -189,10 +207,11 @@ export async function reconcileRecords(
   evaluation: RecordsEvaluation,
   timezone: string,
   logicalDayStart: string,
+  sourceState?: RecordsSourceState | null,
   onProgress: (progress: RecordsProgress) => void = () => undefined,
 ) {
   onProgress("Preparing Records");
-  const serialized = await serializeRecordsReconciliation(evaluation, timezone, logicalDayStart);
+  const serialized = await serializeRecordsReconciliation(evaluation, timezone, logicalDayStart, sourceState);
   if (process.env.NODE_ENV === "development") {
     console.info("Records compact reconciliation", {
       totalCompactBytes: serialized.measurements.compactTotalBytes,
@@ -240,6 +259,16 @@ export async function loadPersistedRecords(client: RecordsClient, userId: string
   return { currentRecords, events };
 }
 
+export async function loadRecordsSourceState(client: Pick<RecordsClient, "rpc">): Promise<RecordsSourceState | null> {
+  const result = await client.rpc("adhdice_get_records_source_state");
+  if (result.error) {
+    if (isRecordsSourceStateUnavailableError(result.error)) return null;
+    throw result.error;
+  }
+  const row = Array.isArray(result.data) ? result.data[0] : result.data;
+  return isRecordsSourceState(row) ? row : null;
+}
+
 export async function loadLatestCompletedRecordsRun(client: Pick<RecordsClient, "rpc">, settings: { logicalDayStart: string; timezone: string }): Promise<LatestCompletedRecordsRun | null> {
   const result = await client.rpc("adhdice_get_latest_completed_records_run", {
     p_logical_day_start: settings.logicalDayStart,
@@ -255,11 +284,17 @@ export async function loadLatestCompletedRecordsRun(client: Pick<RecordsClient, 
     || candidate.rules_version !== RECORDS_RULES_VERSION
     || candidate.timezone !== settings.timezone
     || typeof candidate.logical_day_start !== "string") return null;
+  const sourceState = candidate.source_state === null || candidate.source_state === undefined
+    ? null
+    : isRecordsSourceState(candidate.source_state)
+      ? candidate.source_state
+      : null;
   return {
     completed_at: candidate.completed_at ?? null,
     evaluated_at: candidate.evaluated_at,
     logical_day_start: candidate.logical_day_start,
     rules_version: candidate.rules_version,
+    source_state: sourceState,
     timezone: candidate.timezone,
   };
 }
@@ -274,7 +309,15 @@ export async function loadRecordsCurrent(client: RecordsClient, userId: string) 
 
 export async function loadRecordEvents(client: RecordsClient, userId: string) {
   return withRecordsStage("Record events load", async () => {
-    const result = await client.from("adhdice_record_events").select("*").eq("user_id", userId).eq("rules_version", "records-v1").order("credited_date", { ascending: false }).order("created_at", { ascending: false });
+    const result = await client.from("adhdice_record_events").select("*").eq("user_id", userId).eq("rules_version", "records-v1").eq("validity_state", "valid").order("credited_date", { ascending: false }).order("created_at", { ascending: false });
+    if (result.error) throw result.error;
+    return (result.data ?? []) as PersistedRecordEvent[];
+  });
+}
+
+export async function loadInvalidatedRecordEvents(client: RecordsClient, userId: string) {
+  return withRecordsStage("Record events load", async () => {
+    const result = await client.from("adhdice_record_events").select("*").eq("user_id", userId).eq("rules_version", "records-v1").in("validity_state", ["invalid", "superseded"]).order("credited_date", { ascending: false }).order("created_at", { ascending: false });
     if (result.error) throw result.error;
     return (result.data ?? []) as PersistedRecordEvent[];
   });
@@ -285,20 +328,28 @@ export type RecordsPipelineStages<TTasks, THistory, TFocus, TEvaluation, TCurren
   loadCurrentRecords: () => Promise<TCurrent>;
   loadFocusSessions: () => Promise<TFocus>;
   loadRecordEvents: () => Promise<TEvents>;
+  loadRecordsSourceState?: () => Promise<RecordsSourceState | null>;
   loadTaskHistory: () => Promise<THistory>;
   loadTasks: () => Promise<TTasks>;
-  reconcile: (evaluation: TEvaluation) => Promise<unknown>;
+  reconcile: (evaluation: TEvaluation, sourceState?: RecordsSourceState | null) => Promise<unknown>;
 };
 
 export async function executeRecordsPipeline<TTasks, THistory, TFocus, TEvaluation, TCurrent, TEvents>(stages: RecordsPipelineStages<TTasks, THistory, TFocus, TEvaluation, TCurrent, TEvents>) {
+  const sourceStateBefore = stages.loadRecordsSourceState
+    ? await withRecordsStage("Records source-state load", stages.loadRecordsSourceState)
+    : null;
   const tasks = await withRecordsStage("Task load", stages.loadTasks);
   const taskHistory = await withRecordsStage("Task History load", stages.loadTaskHistory);
   const focusSessions = await withRecordsStage("Focus Session load", stages.loadFocusSessions);
   const evaluation = await withRecordsStage("Records evaluation", () => stages.evaluate(tasks, taskHistory, focusSessions));
-  await withRecordsStage("Records reconciliation", () => stages.reconcile(evaluation));
+  const sourceStateAfter = stages.loadRecordsSourceState
+    ? await withRecordsStage("Records source-state load", stages.loadRecordsSourceState)
+    : null;
+  if (sourceStateBefore && !recordsSourceStatesMatch(sourceStateBefore, sourceStateAfter)) throw new RecordsSourceChangedError();
+  await withRecordsStage("Records reconciliation", () => stages.reconcile(evaluation, sourceStateAfter));
   const currentRecords = await withRecordsStage("Current Records load", stages.loadCurrentRecords);
   const events = await withRecordsStage("Record events load", stages.loadRecordEvents);
-  return { currentRecords, evaluation, events, focusSessions, taskHistory, tasks };
+  return { currentRecords, evaluation, events, focusSessions, sourceState: sourceStateAfter, taskHistory, tasks };
 }
 
 export function runRecordsPipelineSingleFlight<T>(userId: string, operation: () => Promise<T>): Promise<T> {
@@ -313,13 +364,24 @@ export function runRecordsPipelineSingleFlight<T>(userId: string, operation: () 
 }
 
 export async function runRecordsPipeline(client: RecordsClient, userId: string, input: { evaluatedAt: string; logicalDayStart: string; openLogicalDate: string; timezone: string }, onProgress?: (progress: RecordsProgress) => void) {
-  return executeRecordsPipeline({
-    evaluate: (tasks, taskHistory, focusSessions) => evaluateRecords({ ...input, focusSessions, taskHistory, tasks }),
-    loadCurrentRecords: () => loadRecordsCurrent(client, userId),
-    loadFocusSessions: () => loadRecordsFocusSessions(client, userId),
-    loadRecordEvents: () => loadRecordEvents(client, userId),
-    loadTaskHistory: () => loadRecordsTaskHistory(client, userId),
-    loadTasks: () => loadRecordsTasks(client, userId),
-    reconcile: (evaluation) => reconcileRecords(client, evaluation, input.timezone, input.logicalDayStart, onProgress),
-  });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await executeRecordsPipeline({
+        evaluate: (tasks, taskHistory, focusSessions) => evaluateRecords({ ...input, focusSessions, taskHistory, tasks }),
+        loadCurrentRecords: () => loadRecordsCurrent(client, userId),
+        loadFocusSessions: () => loadRecordsFocusSessions(client, userId),
+        loadRecordEvents: () => loadRecordEvents(client, userId),
+        loadRecordsSourceState: () => loadRecordsSourceState(client),
+        loadTaskHistory: () => loadRecordsTaskHistory(client, userId),
+        loadTasks: () => loadRecordsTasks(client, userId),
+        reconcile: (evaluation, sourceState) => reconcileRecords(client, evaluation, input.timezone, input.logicalDayStart, sourceState, onProgress),
+      });
+    } catch (error) {
+      const detail = error as { code?: string };
+      const sourceChanged = error instanceof RecordsSourceChangedError || detail.code === "40001";
+      if (!sourceChanged || attempt > 0) throw error;
+      onProgress?.("Records sources changed; retrying Records");
+    }
+  }
+  throw new RecordsSourceChangedError();
 }

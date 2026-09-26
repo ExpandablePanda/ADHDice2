@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.48`.
+- Current working app version: `7.15.49`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,42 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.49 Records source-certified freshness and lazy invalidated events
+
+Records previously treated a completed projection as fresh only for twelve
+hours (`RECORDS_AUTO_REFRESH_INTERVAL_MS`), with a newer local invalidation
+also forcing reconciliation.  Ordinary Records opening now obtains one
+owner-scoped `adhdice_get_records_source_state()` result and compares it with
+the source fence persisted on the latest completed run.  A matching
+`records-source-state-v1` fence remains authoritative regardless of elapsed
+wall-clock time; rules version, timezone, and logical-day settings must also
+match.  Legacy completed runs without a fence retain the twelve-hour fallback
+until one full reconciliation certifies them.
+
+The source contract contains the History `sync_epoch` and `current_revision`,
+the current Task row count and deterministic digest, and the Focus row count
+and deterministic digest.  Task hashing is limited to ID, parent hierarchy,
+title, repeat frequency, tracking exclusion, and current inclusion (excluding
+permanently deleted rows).  Focus hashing includes every mutable field used by
+Records evidence/evaluation: ID, category, title snapshot, session date,
+duration, started/ended timestamps, source, runtime session identity, and
+creation time.  Focus uses a digest because the table has no `updated_at` and
+rows can be inserted, edited, or deleted.
+
+Full reconciliation reads the fence before loading complete sources and again
+before publishing.  A changed fence is rejected and retried once; SQL
+finalization repeats the owner-scoped fence check and raises a retryable
+serialization error before any publication.  The source-only SQL artifact is
+`supabase/patch_records_source_freshness_7_15_49.sql`; it has not been applied
+to live Supabase.
+
+Normal persisted Records opening loads current rows plus only
+`validity_state = 'valid'` events.  Invalid and superseded events load only
+after the user enables `Show invalidated`, with owner/session single-flight
+guards.  Card previous-value calculations, compact evidence snapshots,
+local detailed-evidence caching, and provisional-record behavior remain
+unchanged.  Browser/manual QA remains unverified by source checks.
 
 ## 2026-09-26 7.15.48 Home bounded current-day History read
 
