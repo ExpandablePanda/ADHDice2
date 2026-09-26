@@ -3379,6 +3379,12 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_get_task_activity_summary: {
+        Args: {
+          p_as_of: string;
+        };
+        Returns: Record<string, unknown>;
+      };
       adhdice_get_task_history_delta: {
         Args: {
           p_expected_protocol_version: string;

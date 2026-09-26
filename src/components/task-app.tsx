@@ -139,7 +139,7 @@ import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
-import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
+import { createSingleFlightRefreshCoordinator, type WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
 import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
@@ -348,6 +348,11 @@ import {
   recordAdhdiceRealtimeDiagnostic,
 } from "@/lib/adhdice-realtime-diagnostics";
 import { isTaskEffectivelyExcludedFromTracking } from "@/lib/task-tracking";
+import {
+  buildTaskActivitySummaryLegacyOracle,
+  compareTaskActivitySummary,
+} from "@/lib/task-activity-summary";
+import { fetchTaskActivitySummary } from "@/lib/task-activity-summary-repository";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import {
   buildManualMembershipMap,
@@ -1149,6 +1154,9 @@ function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocus
 
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
+  const taskActivitySummaryShadowCoordinator = useMemo(() => createSingleFlightRefreshCoordinator<void>(), []);
+  const taskActivitySummaryShadowGenerationRef = useRef(0);
+  const taskActivitySummaryShadowKeyRef = useRef<string | null>(null);
   const isNativeIosPlatform = useNativeIosPlatform();
   const profileSettingsHydratedRef = useRef(false);
   const [session, setSession] = useState<Session | null>(null);
@@ -1993,6 +2001,88 @@ export function TaskApp() {
     timezone: userTimeZone,
   });
   focusDomainMutationBarrierRef.current = invalidateFocusDomainGenerationFromWorkspace;
+  const taskActivitySummaryShadowInputRevision = useMemo(
+    () => createProjectionDomainRevision("task-activity-summary-shadow", {
+      history: taskHistory.map((entry) => ({
+        entry_date: entry.entry_date,
+        id: entry.id,
+        task_id: entry.task_id,
+        was_completed: entry.was_completed,
+      })),
+      tasks: tasks.map((task) => ({
+        exclude_from_tracking: task.exclude_from_tracking,
+        id: task.id,
+        parent_task_id: task.parent_task_id,
+        permanently_deleted_at: task.permanently_deleted_at,
+      })),
+    }),
+    [taskHistory, tasks],
+  );
+  useEffect(() => {
+    const hasFullHistoryConsumer = activePage === "Stats" || activePage === "Games";
+    if (!hasFullHistoryConsumer || !supabase || !currentUserId || !isFullTaskHistoryLoaded) return;
+
+    const workspaceGeneration = workspaceGenerationRef.current;
+    const requestKey = `${currentUserId}:${todayKey}:${taskActivitySummaryShadowInputRevision}`;
+    if (taskActivitySummaryShadowKeyRef.current === requestKey) return;
+    taskActivitySummaryShadowKeyRef.current = requestKey;
+    const requestGeneration = ++taskActivitySummaryShadowGenerationRef.current;
+    const legacyOracle = buildTaskActivitySummaryLegacyOracle(taskHistory, tasks, todayKey);
+
+    void taskActivitySummaryShadowCoordinator.request(async () => {
+      if (requestGeneration !== taskActivitySummaryShadowGenerationRef.current) return;
+      const startedAt = typeof performance === "undefined" ? 0 : performance.now();
+      try {
+        const summary = await fetchTaskActivitySummary(supabase, todayKey);
+        if (
+          requestGeneration !== taskActivitySummaryShadowGenerationRef.current
+          || workspaceGenerationRef.current !== workspaceGeneration
+        ) return;
+        const parity = compareTaskActivitySummary(summary, legacyOracle);
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          const durationMs = startedAt === 0 ? null : Math.round(performance.now() - startedAt);
+          const payloadBytes = JSON.stringify(summary).length;
+          console.info(
+            `[task-activity-summary] loaded asOf=${summary.as_of_logical_date}`
+              + ` revision=${summary.history_current_revision}`
+              + ` epoch=${summary.history_sync_epoch}`
+              + ` rpcMs=${durationMs ?? "unknown"}`
+              + ` payloadBytes=${payloadBytes}`,
+          );
+          console.info(
+            `[task-activity-summary] parity asOf=${summary.as_of_logical_date}`
+              + ` revision=${summary.history_current_revision}`
+              + ` epoch=${summary.history_sync_epoch}`
+              + ` matched=${parity.matched}`
+              + ` mismatchedFields=${parity.mismatchedFields.join(",") || "none"}`,
+          );
+        }
+      } catch (error) {
+        if (requestGeneration !== taskActivitySummaryShadowGenerationRef.current) return;
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(
+            `[task-activity-summary] failed asOf=${todayKey}`
+              + ` error=${error instanceof Error ? error.message : "unknown"}`,
+          );
+        }
+      }
+    }, { refreshAfterCurrent: true });
+
+    return () => {
+      taskActivitySummaryShadowGenerationRef.current += 1;
+    };
+  }, [
+    activePage,
+    currentUserId,
+    isFullTaskHistoryLoaded,
+    supabase,
+    taskActivitySummaryShadowCoordinator,
+    taskActivitySummaryShadowInputRevision,
+    taskHistory,
+    tasks,
+    todayKey,
+    workspaceGenerationRef,
+  ]);
   const taskTypeBehaviorProjectionSemantics = useMemo(() => ({
     task: selectTaskBehaviorProjectionSemantics({
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,

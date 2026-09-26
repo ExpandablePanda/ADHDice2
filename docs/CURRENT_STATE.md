@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.43`.
+- Current working app version: `7.15.44`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,65 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-25 7.15.44 Server Task Activity Summary Foundation
+
+7.15.44 adds the source-only `adhdice_get_task_activity_summary(date)` RPC and
+typed client repository as a compact server read model over canonical Task
+History. It returns the contract version, as-of logical date, History sync
+epoch/current revision/protocol fence, tracked logged/completed/missed days,
+the exact logged-day done rate, current/best global streaks, seven deterministic
+recent successful History-row counts with zero filling, and the unfiltered
+successful-today count used by Games. The SQL uses `SECURITY INVOKER`, resolves
+the owner with `auth.uid()`, preserves authenticated-only execution, and does
+not return raw History rows.
+
+Canonical History remains authoritative. The existing full-History UI path and
+all Stats, Games, Achievements, HUD, and Home behavior remain authoritative and
+unchanged. While Stats or Games has complete legacy History available, the
+TaskApp requests one single-flight, generation-fenced shadow summary and logs
+concise `[task-activity-summary] loaded` / `parity` diagnostics only when
+workspace performance diagnostics are enabled. Parity compares the exact
+`filterTrackedTaskHistory(...)` and `computeTaskHistoryStats(...)` meanings,
+including logged-day completion, missed days, island-based current/best streak,
+seven recent successful row counts, and Games' intentionally unfiltered today
+count. A mismatch cannot change UI output.
+
+Tracking exclusions are derived from current, non-permanently-deleted Tasks by
+walking descendants from directly excluded Tasks with cycle termination. A
+missing ancestor does not exclude a Task, and History for an entity absent from
+the current Task collection remains included unless its ID is positively in the
+effective excluded set. The read model has no persisted aggregate table and
+adds no index; the live-shaped prototype benchmark remains approximately
+35 ms for roughly 17,800 canonical facts. A disposable local EXPLAIN ANALYZE
+with 17,800 generated History facts measured 11.704 ms; this is supporting
+fixture evidence, not a live deployment measurement. Achievements' workspace full-History
+trigger is identified as redundant but is not removed, and Games still has its
+one-number full-History dependency. Records' reconciliation pipeline and Home's
+legacy `Finished Today` detail dependency are separate deferred seams. A
+7.15.45 read cutover is planned only after deployed-RPC browser parity proof.
+
+The SQL patch `supabase/patch_task_activity_summary_7_15_44.sql` was reviewed
+and deployed successfully to the live Supabase project. Live verification
+confirmed `SECURITY INVOKER`, `STABLE`, authenticated-only execution with anon
+denied, authenticated owner access through RLS, and contract version
+`task-activity-summary-v1`. For logical date `2026-09-25`, the live response
+reported 129 tracked logged days, 119 completed days, 10 missed days, 92% done
+rate, current/best streak 113, recent successful counts `[16, 14, 40, 17, 7,
+2, 0]` for 09/19 through 09/25, unfiltered today count 0, History revision
+415, and protocol `task-history-sync-v1`.
+
+Manual Stats QA matched the retained legacy/full-History UI exactly: Today 0,
+This Week 96, Streak 113, Best Streak 113d, and Done Rate 92%. Stats shadow
+parity is PASS. The browser `[task-activity-summary] parity` diagnostic was
+not obtained because the shadow path intentionally waits for the retained
+full-History oracle and page entry became slow during that load; no 7.15.44
+architecture change was made to expose it. Repeated Supabase Realtime WebSocket
+failures remain a separate existing transport issue and are outside this
+ticket. The summary remains shadow-only; no Stats/Games/Achievements/Home/HUD/
+Records/History cutover or Realtime change has occurred. A 7.15.45 read cutover
+is still planned only after the remaining parity process is explicitly
+approved.
 
 ## 2026-09-25 7.15.43 History Summary Label Correction
 
