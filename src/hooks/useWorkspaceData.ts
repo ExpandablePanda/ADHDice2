@@ -90,6 +90,11 @@ import {
   type CurrentTaskProjectionReadMap,
   type CurrentTaskProjectionReadRow,
 } from "@/lib/task-current-projection-read";
+import {
+  createTaskActivitySummaryRuntime,
+  type TaskActivitySummaryRuntime,
+  type TaskActivitySummaryRuntimeState,
+} from "@/lib/task-activity-summary-runtime";
 import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-freshness";
 import { createBoundedTaskProjectionReconciler } from "@/lib/task-current-projection-reconciliation";
 import {
@@ -374,6 +379,17 @@ export function useWorkspaceData({
   const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
   const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
   const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
+  const [taskActivitySummaryState, setTaskActivitySummaryState] = useState<TaskActivitySummaryRuntimeState>({
+    error: null,
+    logicalDate: null,
+    ownerId: null,
+    status: "idle",
+    summary: null,
+  });
+  const taskActivitySummaryRuntimeRef = useRef<TaskActivitySummaryRuntime | null>(null);
+  if (taskActivitySummaryRuntimeRef.current == null) {
+    taskActivitySummaryRuntimeRef.current = createTaskActivitySummaryRuntime(setTaskActivitySummaryState);
+  }
   const hasLoadedNotesRef = useRef(false);
   const hasLoadedFullTaskHistoryRef = useRef(false);
   const fullTaskHistoryRowsRef = useRef<DbTaskHistory[]>([]);
@@ -541,9 +557,6 @@ export function useWorkspaceData({
 
   useEffect(() => {
     activePageRef.current = activePage;
-    if (activePage === "Stats" || activePage === "Games" || activePage === "Achievements") {
-      void loadFullTaskHistoryRef.current?.();
-    }
     if (activePage === "Notes") void loadNotesRef.current?.();
   }, [activePage]);
 
@@ -554,9 +567,18 @@ export function useWorkspaceData({
   useEffect(() => {
     if (todayKeyRef.current === todayKey) return;
     todayKeyRef.current = todayKey;
+    if (supabase && currentUser?.id) {
+      void taskActivitySummaryRuntimeRef.current?.request({
+        client: supabase,
+        logicalDate: todayKey,
+        ownerId: currentUser.id,
+        reason: "logical-day",
+        workspaceGeneration: workspaceGenerationRef.current,
+      }, { force: true });
+    }
     if (!hasLoadedFullTaskHistoryRef.current) return;
     void loadTaskHistoryStreakSummariesRef.current?.(tasksRef.current, { supersede: true });
-  }, [todayKey]);
+  }, [currentUser?.id, supabase, todayKey]);
 
   useEffect(() => {
     behaviorProfilesRef.current = behaviorProfiles;
@@ -593,6 +615,7 @@ export function useWorkspaceData({
       workspaceStartupRequestRegistry.invalidate(startupRequestUserIdRef.current);
       startupRequestUserIdRef.current = null;
       liveWorkspaceUserIdRef.current = null;
+      taskActivitySummaryRuntimeRef.current?.clear();
       hasLoadedNotesRef.current = false;
       hasLoadedFullTaskHistoryRef.current = false;
       fullTaskHistoryRowsRef.current = [];
@@ -678,6 +701,13 @@ export function useWorkspaceData({
     let broadManualActionCommandOperationReads = 0;
     let realtimeGapCoordinator: ReturnType<typeof createRealtimeGapCoordinator> | null = null;
     let realtimeGapRecoveryPromise: Promise<void> | null = null;
+    void taskActivitySummaryRuntimeRef.current?.request({
+      client,
+      logicalDate: todayKeyRef.current,
+      ownerId: userId,
+      reason: "owner-ready",
+      workspaceGeneration,
+    });
     const taskHistoryRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
     const taskListDomainRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
     const taskContentFolderDomainRefreshCoordinator = createSingleFlightRefreshCoordinator<boolean>();
@@ -2684,12 +2714,6 @@ export function useWorkspaceData({
         focusHistory: shouldLoadFocusHistory ? nextFocusHistory.length : 0,
         tasks: nextTasks.length,
       });
-      if (
-        !hasLoadedFullTaskHistoryRef.current
-        && (activePageRef.current === "Stats" || activePageRef.current === "Games" || activePageRef.current === "Achievements")
-      ) {
-        void loadFullTaskHistoryRef.current?.();
-      }
       if (activePageRef.current === "Notes") void loadNotesRef.current?.();
 
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -2741,6 +2765,13 @@ export function useWorkspaceData({
         await ensureTaskChannelSubscribed();
         await ensureProjectionChannelSubscribed();
         await requestCoreWorkspaceRefresh({ silent: true, source });
+        await taskActivitySummaryRuntimeRef.current?.request({
+          client,
+          logicalDate: todayKeyRef.current,
+          ownerId: userId,
+          reason: `workspace-${source}`,
+          workspaceGeneration,
+        }, { force: true });
 
         if (includeSecondaryIfLoaded) {
           if (hasLoadedNotesRef.current) await loadNotes({ silent: true });
@@ -2784,6 +2815,13 @@ export function useWorkspaceData({
           await loadTaskHistoryStreakSummaries(tasksRef.current, { supersede: true });
         }
       }
+      await taskActivitySummaryRuntimeRef.current?.request({
+        client,
+        logicalDate: todayKeyRef.current,
+        ownerId: userId,
+        reason: "rollover-reconciliation",
+        workspaceGeneration,
+      }, { force: true });
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info("[workspace] Rollover targeted task reconciliation completed.");
       }
@@ -3203,6 +3241,14 @@ export function useWorkspaceData({
           });
         }
       }
+
+      await taskActivitySummaryRuntimeRef.current?.request({
+        client,
+        logicalDate: todayKeyRef.current,
+        ownerId: userId,
+        reason: "realtime-gap-recovery",
+        workspaceGeneration,
+      }, { force: true });
 
     }
 
@@ -3637,6 +3683,13 @@ export function useWorkspaceData({
               scheduleTaskHistoryRevisionReconciliation();
             }
           }
+          void taskActivitySummaryRuntimeRef.current?.request({
+            client,
+            logicalDate: todayKeyRef.current,
+            ownerId: userId,
+            reason: "history-realtime",
+            workspaceGeneration,
+          }, { force: true });
           // History notifications do not bootstrap either a complete semantic
           // cache or an unopened detail window.
         },
@@ -3807,6 +3860,25 @@ export function useWorkspaceData({
     async () => await loadNotesRef.current?.() ?? false,
     [],
   );
+  const refreshTaskActivitySummary = useCallback(
+    async (reason = "explicit-refresh") => {
+      const userId = currentUser?.id;
+      if (!supabase || !userId) return false;
+      return await taskActivitySummaryRuntimeRef.current?.request({
+        client: supabase,
+        logicalDate: todayKey,
+        ownerId: userId,
+        reason,
+        workspaceGeneration: workspaceGenerationRef.current,
+      }, { force: true }) ?? false;
+    },
+    [currentUser?.id, supabase, todayKey],
+  );
+  const taskActivitySummaryContextMatches = Boolean(
+    currentUser?.id
+    && taskActivitySummaryState.ownerId === currentUser.id
+    && taskActivitySummaryState.logicalDate === todayKey,
+  );
 
   return {
     isSoftWorkspaceRefreshing,
@@ -3827,6 +3899,7 @@ export function useWorkspaceData({
     loadOlderTaskHistoryDetail,
     refreshTaskHistoryStreakSummaries,
     fetchTaskHistoryForRollover,
+    refreshTaskActivitySummary,
     retryTaskHistoryForTask,
     loadTaskNotes,
     refreshTaskHistoryStreakSummary,
@@ -3834,6 +3907,9 @@ export function useWorkspaceData({
     taskHistoryLoadStateByTaskId,
     taskHistoryDetailByTaskId,
     taskHistoryStreakSummaries,
+    taskActivitySummary: taskActivitySummaryContextMatches ? taskActivitySummaryState.summary : null,
+    taskActivitySummaryError: taskActivitySummaryContextMatches ? taskActivitySummaryState.error : null,
+    taskActivitySummaryStatus: taskActivitySummaryContextMatches ? taskActivitySummaryState.status : "idle",
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
     isCurrentTaskProjectionReadReady,

@@ -472,7 +472,7 @@ test("summary calculation clears only its owned promise so a later retry can sta
 
 test("a logical-day transition supersedes the shared streak summary and uses the new day", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
-  assert.match(source, /if \(todayKeyRef\.current === todayKey\) return;\s*todayKeyRef\.current = todayKey;\s*if \(!hasLoadedFullTaskHistoryRef\.current\) return;\s*void loadTaskHistoryStreakSummariesRef\.current\?\.\(tasksRef\.current, \{ supersede: true \}\);/);
+  assert.match(source, /if \(todayKeyRef\.current === todayKey\) return;\s*todayKeyRef\.current = todayKey;\s*if \(supabase && currentUser\?\.id\) \{[\s\S]*reason: "logical-day"[\s\S]*\}\s*if \(!hasLoadedFullTaskHistoryRef\.current\) return;\s*void loadTaskHistoryStreakSummariesRef\.current\?\.\(tasksRef\.current, \{ supersede: true \}\);/);
 });
 
 test("rollover refreshes streak summaries after the canonical History snapshot, including zero Task mutations", async () => {

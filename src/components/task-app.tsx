@@ -107,7 +107,7 @@ import {
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
-import { buildEffectiveTrackingExclusionSet, filterTrackedTaskHistory } from "@/lib/task-tracking";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
@@ -139,7 +139,7 @@ import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
-import { createSingleFlightRefreshCoordinator, type WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 import { useTaskTypeBehaviorProfiles } from "@/hooks/useTaskTypeBehaviorProfiles";
 import { moveAssignedTasksToTaskAndDeleteRuleset } from "@/lib/custom-ruleset-delete-resolution";
 import { useTaskListFolderActions } from "@/hooks/useTaskListFolderActions";
@@ -314,12 +314,10 @@ import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/ta
 import { filterManualListTaskCandidates } from "@/lib/manual-list-task-search";
 import {
   buildTaskHistoryFacts,
-  computeTaskHistoryStats,
   deduplicateTaskHistoryByLogicalDate,
   isTaskCompletedForHistory,
   isTaskHistoryStatus,
   mapTaskHistoryRow,
-  type TaskHistoryStats,
 } from "@/lib/task-history";
 import { getTaskHistoryInitialDetailRange, getTaskHistoryOlderDetailRange, type TaskHistoryDetailRange } from "@/lib/task-history-detail-window";
 import { groupTaskSubtasksByTaskId } from "@/lib/task-subtasks";
@@ -348,11 +346,6 @@ import {
   recordAdhdiceRealtimeDiagnostic,
 } from "@/lib/adhdice-realtime-diagnostics";
 import { isTaskEffectivelyExcludedFromTracking } from "@/lib/task-tracking";
-import {
-  buildTaskActivitySummaryLegacyOracle,
-  compareTaskActivitySummary,
-} from "@/lib/task-activity-summary";
-import { fetchTaskActivitySummary } from "@/lib/task-activity-summary-repository";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import {
   buildManualMembershipMap,
@@ -1154,9 +1147,6 @@ function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocus
 
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
-  const taskActivitySummaryShadowCoordinator = useMemo(() => createSingleFlightRefreshCoordinator<void>(), []);
-  const taskActivitySummaryShadowGenerationRef = useRef(0);
-  const taskActivitySummaryShadowKeyRef = useRef<string | null>(null);
   const isNativeIosPlatform = useNativeIosPlatform();
   const profileSettingsHydratedRef = useRef(false);
   const [session, setSession] = useState<Session | null>(null);
@@ -1904,6 +1894,7 @@ export function TaskApp() {
     loadTaskNotes,
     prepareTaskMutation,
     reconcileRolloverWorkspace,
+    refreshTaskActivitySummary,
     refreshTaskHistoryStreakSummary,
     refreshTaskHistoryStreakSummaries,
     softRefreshWorkspace,
@@ -1911,6 +1902,8 @@ export function TaskApp() {
     taskHistoryLoadStateByTaskId,
     taskHistoryDetailByTaskId,
     taskHistoryStreakSummaries,
+    taskActivitySummary,
+    taskActivitySummaryStatus,
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
     isCurrentTaskProjectionReadReady,
@@ -2001,88 +1994,6 @@ export function TaskApp() {
     timezone: userTimeZone,
   });
   focusDomainMutationBarrierRef.current = invalidateFocusDomainGenerationFromWorkspace;
-  const taskActivitySummaryShadowInputRevision = useMemo(
-    () => createProjectionDomainRevision("task-activity-summary-shadow", {
-      history: taskHistory.map((entry) => ({
-        entry_date: entry.entry_date,
-        id: entry.id,
-        task_id: entry.task_id,
-        was_completed: entry.was_completed,
-      })),
-      tasks: tasks.map((task) => ({
-        exclude_from_tracking: task.exclude_from_tracking,
-        id: task.id,
-        parent_task_id: task.parent_task_id,
-        permanently_deleted_at: task.permanently_deleted_at,
-      })),
-    }),
-    [taskHistory, tasks],
-  );
-  useEffect(() => {
-    const hasFullHistoryConsumer = activePage === "Stats" || activePage === "Games";
-    if (!hasFullHistoryConsumer || !supabase || !currentUserId || !isFullTaskHistoryLoaded) return;
-
-    const workspaceGeneration = workspaceGenerationRef.current;
-    const requestKey = `${currentUserId}:${todayKey}:${taskActivitySummaryShadowInputRevision}`;
-    if (taskActivitySummaryShadowKeyRef.current === requestKey) return;
-    taskActivitySummaryShadowKeyRef.current = requestKey;
-    const requestGeneration = ++taskActivitySummaryShadowGenerationRef.current;
-    const legacyOracle = buildTaskActivitySummaryLegacyOracle(taskHistory, tasks, todayKey);
-
-    void taskActivitySummaryShadowCoordinator.request(async () => {
-      if (requestGeneration !== taskActivitySummaryShadowGenerationRef.current) return;
-      const startedAt = typeof performance === "undefined" ? 0 : performance.now();
-      try {
-        const summary = await fetchTaskActivitySummary(supabase, todayKey);
-        if (
-          requestGeneration !== taskActivitySummaryShadowGenerationRef.current
-          || workspaceGenerationRef.current !== workspaceGeneration
-        ) return;
-        const parity = compareTaskActivitySummary(summary, legacyOracle);
-        if (isWorkspacePerformanceDiagnosticsEnabled()) {
-          const durationMs = startedAt === 0 ? null : Math.round(performance.now() - startedAt);
-          const payloadBytes = JSON.stringify(summary).length;
-          console.info(
-            `[task-activity-summary] loaded asOf=${summary.as_of_logical_date}`
-              + ` revision=${summary.history_current_revision}`
-              + ` epoch=${summary.history_sync_epoch}`
-              + ` rpcMs=${durationMs ?? "unknown"}`
-              + ` payloadBytes=${payloadBytes}`,
-          );
-          console.info(
-            `[task-activity-summary] parity asOf=${summary.as_of_logical_date}`
-              + ` revision=${summary.history_current_revision}`
-              + ` epoch=${summary.history_sync_epoch}`
-              + ` matched=${parity.matched}`
-              + ` mismatchedFields=${parity.mismatchedFields.join(",") || "none"}`,
-          );
-        }
-      } catch (error) {
-        if (requestGeneration !== taskActivitySummaryShadowGenerationRef.current) return;
-        if (isWorkspacePerformanceDiagnosticsEnabled()) {
-          console.info(
-            `[task-activity-summary] failed asOf=${todayKey}`
-              + ` error=${error instanceof Error ? error.message : "unknown"}`,
-          );
-        }
-      }
-    }, { refreshAfterCurrent: true });
-
-    return () => {
-      taskActivitySummaryShadowGenerationRef.current += 1;
-    };
-  }, [
-    activePage,
-    currentUserId,
-    isFullTaskHistoryLoaded,
-    supabase,
-    taskActivitySummaryShadowCoordinator,
-    taskActivitySummaryShadowInputRevision,
-    taskHistory,
-    tasks,
-    todayKey,
-    workspaceGenerationRef,
-  ]);
   const taskTypeBehaviorProjectionSemantics = useMemo(() => ({
     task: selectTaskBehaviorProjectionSemantics({
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
@@ -2143,8 +2054,9 @@ export function TaskApp() {
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
     updateTaskHistoryForTask(taskId, nextTaskHistory);
+    void refreshTaskActivitySummary("history-mutation-settled");
     return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory, nextTask);
-  }, [refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
+  }, [refreshTaskActivitySummary, refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
 
   const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
 
@@ -2793,8 +2705,6 @@ export function TaskApp() {
     },
     [taskSubtasksByTaskId, tasks],
   );
-  const trackedTaskHistoryForStats = useMemo(() => filterTrackedTaskHistory(taskHistory, tasks), [taskHistory, tasks]);
-  const taskHistoryStats = useMemo(() => computeTaskHistoryStats(trackedTaskHistoryForStats, todayKey), [todayKey, trackedTaskHistoryForStats]);
   const { saveFocusSelection } = useFocusSelectionPersistence({
     currentUserId,
     defaultValidTaskIds: tasks,
@@ -8075,7 +7985,7 @@ export function TaskApp() {
                       onThemeChange={setTheme}
                       lowStim={lowStim}
                       onLowStimChange={setLowStim}
-                      currentStreak={taskHistoryStats.currentStreak}
+                      currentStreak={taskActivitySummary?.tracked.current_streak ?? 0}
                       notificationInboxItems={notificationInboxItems}
                       isNativeIosPlatform={isNativeIosPlatform}
                       focusAlarmEnabled={focusAlarmEnabled}
@@ -8881,8 +8791,8 @@ export function TaskApp() {
             achievementSummary={achievementSummaryPresentation}
             economy={economy}
             focusHistory={focusHistory}
-            taskHistory={taskHistory}
-            taskHistoryStats={taskHistoryStats}
+            taskActivitySummary={taskActivitySummary}
+            taskActivitySummaryStatus={taskActivitySummaryStatus}
             tasks={tasksForActiveStatusRead}
             todayDateKey={todayKey}
             userId={currentUserId}
@@ -8918,7 +8828,7 @@ export function TaskApp() {
           />
         ) : activePage === "Games" ? (
           <GamesPage
-            taskHistory={taskHistory}
+            todayCompletedCount={taskActivitySummary?.unfiltered_today_completed_count ?? null}
             onAwardXP={(xp, reason) =>
               void appendEconomyEvent({ source: "roll", refId: currentUser.id, points: 0, xp, reason })
             }

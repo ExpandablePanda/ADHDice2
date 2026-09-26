@@ -4,10 +4,13 @@ import { useMemo } from "react";
 
 import type { EconomyState } from "@/hooks/useEconomy";
 import type { AchievementSummaryPresentation } from "@/lib/achievement-progress";
-import type { Task, TaskEnergy, TaskHistory as DbTaskHistory } from "@/lib/database.types";
+import type { Task, TaskEnergy } from "@/lib/database.types";
 import { getLevelProgress } from "@/lib/economy-levels";
 import type { HistoricalFocusSession } from "@/lib/types";
 import { shiftDateKey } from "@/lib/date-key";
+import type { TaskActivitySummary } from "@/lib/task-activity-summary";
+import type { TaskActivitySummaryLoadStatus } from "@/lib/task-activity-summary-runtime";
+import { getStatsProductivityTaskCounts, getStatsTaskActivityMetrics } from "@/lib/task-activity-summary-consumers";
 import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 
 import { PageShellHeader } from "./page-shell-header";
@@ -15,18 +18,12 @@ import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, Re
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { STATS_PAGE_SHELL_CANONICAL_LAYOUT, STATS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 
-type TaskHistoryStats = {
-  bestStreak: number;
-  currentStreak: number;
-  doneRate: number;
-};
-
 type StatsPageProps = {
   achievementSummary: AchievementSummaryPresentation;
   economy: EconomyState;
   focusHistory: HistoricalFocusSession[];
-  taskHistory: DbTaskHistory[];
-  taskHistoryStats: TaskHistoryStats;
+  taskActivitySummary: TaskActivitySummary | null;
+  taskActivitySummaryStatus: TaskActivitySummaryLoadStatus;
   tasks: Task[];
   todayDateKey: string;
   userId: string | null;
@@ -36,8 +33,8 @@ export function StatsPage({
   achievementSummary,
   economy,
   focusHistory,
-  taskHistory,
-  taskHistoryStats,
+  taskActivitySummary,
+  taskActivitySummaryStatus,
   tasks,
   todayDateKey,
   userId,
@@ -45,10 +42,12 @@ export function StatsPage({
   const layout = usePageShellLayout(userId, "stats", STATS_PAGE_SHELL_IDS, STATS_PAGE_SHELL_CANONICAL_LAYOUT.sizes, STATS_PAGE_SHELL_CANONICAL_LAYOUT);
   const today = todayDateKey;
   const excludedTaskIds = useMemo(() => buildEffectiveTrackingExclusionSet(tasks), [tasks]);
-  const trackedTaskHistory = useMemo(() => taskHistory.filter((entry) => !excludedTaskIds.has(entry.task_id)), [excludedTaskIds, taskHistory]);
-  const todayDone = trackedTaskHistory.filter((entry) => entry.entry_date === today && entry.was_completed).length;
-  const weekDates = Array.from({ length: 7 }, (_, index) => shiftDateKey(today, -index));
-  const weekDone = trackedTaskHistory.filter((entry) => weekDates.includes(entry.entry_date) && entry.was_completed).length;
+  const taskActivityMetrics = useMemo(
+    () => taskActivitySummary ? getStatsTaskActivityMetrics(taskActivitySummary, today) : null,
+    [taskActivitySummary, today],
+  );
+  const todayDone = taskActivityMetrics?.todayDone ?? null;
+  const weekDone = taskActivityMetrics?.weekDone ?? null;
   const todayFocusMinutes = Math.floor(
     focusHistory
       .filter((entry) => entry.date === today)
@@ -56,17 +55,18 @@ export function StatsPage({
   );
 
   const { chartDays, maxScore } = useMemo(() => {
+    const taskCounts = taskActivitySummary ? getStatsProductivityTaskCounts(taskActivitySummary, today) : null;
     const days = Array.from({ length: 7 }, (_, index) => {
       const date = shiftDateKey(today, -(6 - index));
-      const done = trackedTaskHistory.filter((entry) => entry.entry_date === date && entry.was_completed).length;
+      const done = taskCounts?.[index]?.completedCount ?? null;
       const focusSeconds = focusHistory
         .filter((entry) => entry.date === date)
         .reduce((sum, entry) => sum + entry.durationSeconds, 0);
-      const score = done * 10 + Math.floor(focusSeconds / 60);
+      const score = done === null ? null : done * 10 + Math.floor(focusSeconds / 60);
       return { date, score };
     });
-    return { chartDays: days, maxScore: Math.max(...days.map((day) => day.score), 1) };
-  }, [focusHistory, trackedTaskHistory, today]);
+    return { chartDays: days, maxScore: Math.max(...days.flatMap((day) => day.score === null ? [] : [day.score]), 1) };
+  }, [focusHistory, taskActivitySummary, today]);
 
   const { energyCounts, totalEnergy } = useMemo(() => {
     const counts: Record<TaskEnergy, number> = { none: 0, low: 0, medium: 0, high: 0 };
@@ -96,13 +96,20 @@ export function StatsPage({
       <PageShellSurface>
       <PageShellBody>
       <div className="mb-4 flex gap-3">
-        {statCard("Today", String(todayDone), "tasks done")}
-        {statCard("This Week", String(weekDone), "tasks done")}
+        {statCard("Today", todayDone === null ? "—" : String(todayDone), "tasks done")}
+        {statCard("This Week", weekDone === null ? "—" : String(weekDone), "tasks done")}
       </div>
       <div className="mb-6 flex gap-3">
-        {statCard("Streak", String(taskHistoryStats.currentStreak), taskHistoryStats.currentStreak === 1 ? "day" : "days")}
+        {statCard("Streak", taskActivityMetrics ? String(taskActivityMetrics.currentStreak) : "—", taskActivityMetrics?.currentStreak === 1 ? "day" : "days")}
         {statCard("Focus Today", `${todayFocusMinutes}m`, "minutes logged")}
       </div>
+      {!taskActivitySummary ? (
+        <p className="mb-1 text-xs text-[#8e88a9] dark:text-white/40">
+          {taskActivitySummaryStatus === "loading" || taskActivitySummaryStatus === "idle"
+            ? "Task activity is loading…"
+            : "Task activity is temporarily unavailable."}
+        </p>
+      ) : null}
       </PageShellBody>
       </PageShellSurface>
       </PageShell>
@@ -143,11 +150,11 @@ export function StatsPage({
           </div>
           <div>
             <p className="text-xs text-[#8e88a9] dark:text-white/40">Best Streak</p>
-            <p className="font-bold tabular-nums text-[#27304c] dark:text-white">{taskHistoryStats.bestStreak}d</p>
+            <p className="font-bold tabular-nums text-[#27304c] dark:text-white">{taskActivityMetrics ? `${taskActivityMetrics.bestStreak}d` : "—"}</p>
           </div>
           <div>
             <p className="text-xs text-[#8e88a9] dark:text-white/40">Done Rate</p>
-            <p className="font-bold tabular-nums text-[#27304c] dark:text-white">{taskHistoryStats.doneRate}%</p>
+            <p className="font-bold tabular-nums text-[#27304c] dark:text-white">{taskActivityMetrics ? `${taskActivityMetrics.doneRate}%` : "—"}</p>
           </div>
         </div>
       </PageShellBody>
@@ -160,21 +167,27 @@ export function StatsPage({
         <p className="mb-4 text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40" data-style-component="StatsPage" data-style-role="ui.section.label">
           7-Day Productivity
         </p>
-        <div className="flex h-28 items-end gap-1.5">
-          {chartDays.map((day) => (
-            <div key={day.date} className="flex flex-1 flex-col items-center gap-1">
-              <div className="flex w-full flex-1 items-end">
-                <div
-                  className={`w-full rounded-t-lg transition-all ${day.date === today ? "bg-[linear-gradient(180deg,#7c63f7,#9b87ff)]" : "bg-[#cdc6f7] dark:bg-white/20"}`}
-                  style={{ height: `${Math.max(4, Math.round((day.score / maxScore) * 100))}%` }}
-                />
+        {taskActivitySummary ? (
+          <div className="flex h-28 items-end gap-1.5">
+            {chartDays.map((day) => (
+              <div key={day.date} className="flex flex-1 flex-col items-center gap-1">
+                <div className="flex w-full flex-1 items-end">
+                  <div
+                    className={`w-full rounded-t-lg transition-all ${day.date === today ? "bg-[linear-gradient(180deg,#7c63f7,#9b87ff)]" : "bg-[#cdc6f7] dark:bg-white/20"}`}
+                    style={{ height: `${Math.max(4, Math.round(((day.score ?? 0) / maxScore) * 100))}%` }}
+                  />
+                </div>
+                <p className="text-[9px] tabular-nums text-[#8e88a9] dark:text-white/40">
+                  {day.date.slice(5).replace("-", "/")}
+                </p>
               </div>
-              <p className="text-[9px] tabular-nums text-[#8e88a9] dark:text-white/40">
-                {day.date.slice(5).replace("-", "/")}
-              </p>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        ) : (
+          <div className="flex h-28 items-center justify-center text-xs text-[#8e88a9] dark:text-white/40">
+            7-day task activity is unavailable.
+          </div>
+        )}
         <p className="mt-2 text-[10px] text-[#8e88a9] dark:text-white/30">
           Score = tasks × 10 + focus minutes
         </p>

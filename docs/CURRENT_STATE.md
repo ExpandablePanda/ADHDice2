@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-25
+Last reviewed: 2026-09-26
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.44`.
+- Current working app version: `7.15.45`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.45 Task Activity Summary Read Cutover
+
+7.15.44 proved parity between the deployed `adhdice_get_task_activity_summary(date)` RPC and the retained full-History Stats/Games semantics on real data. 7.15.45 makes that compact Task Activity Summary the normal read model for its covered global metrics: Stats uses server task counts, streak, best streak, and done rate; Games uses the intentionally unfiltered today completion count; and the HUD uses the summary global current streak.
+
+Stats, Games, and Achievements page entry no longer triggers broad canonical Task History hydration. The summary loads independently when the authenticated owner/runtime is ready, is fenced by owner, logical day, and workspace generation, single-flights concurrent requests, retains a same-owner/day last-known-good value across refresh failures, and refreshes through existing mutation, workspace refresh, rollover, Realtime reconciliation, and logical-day seams. No polling or new Realtime subscription was added.
+
+Canonical Task History remains authoritative evidence, and the general full-History loader remains available for explicit historical consumers. Home and Records remain separate future optimization seams. This release changes no SQL, schema, canonical History rows, Realtime architecture, task engine, recurrence, rewards, or achievement runtime architecture.
 
 ## 2026-09-25 7.15.44 Server Task Activity Summary Foundation
 
@@ -48,8 +56,8 @@ with 17,800 generated History facts measured 11.704 ms; this is supporting
 fixture evidence, not a live deployment measurement. Achievements' workspace full-History
 trigger is identified as redundant but is not removed, and Games still has its
 one-number full-History dependency. Records' reconciliation pipeline and Home's
-legacy `Finished Today` detail dependency are separate deferred seams. A
-7.15.45 read cutover is planned only after deployed-RPC browser parity proof.
+legacy `Finished Today` detail dependency are separate deferred seams. The
+subsequent 7.15.45 read cutover is recorded above.
 
 The SQL patch `supabase/patch_task_activity_summary_7_15_44.sql` was reviewed
 and deployed successfully to the live Supabase project. Live verification
@@ -67,11 +75,9 @@ parity is PASS. The browser `[task-activity-summary] parity` diagnostic was
 not obtained because the shadow path intentionally waits for the retained
 full-History oracle and page entry became slow during that load; no 7.15.44
 architecture change was made to expose it. Repeated Supabase Realtime WebSocket
-failures remain a separate existing transport issue and are outside this
-ticket. The summary remains shadow-only; no Stats/Games/Achievements/Home/HUD/
-Records/History cutover or Realtime change has occurred. A 7.15.45 read cutover
-is still planned only after the remaining parity process is explicitly
-approved.
+failures remain a separate existing transport issue and are outside that
+release. The 7.15.44 summary was shadow-only; the deployed-RPC read cutover is
+recorded above as 7.15.45, with Home and Records still deferred.
 
 ## 2026-09-25 7.15.43 History Summary Label Correction
 

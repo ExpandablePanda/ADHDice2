@@ -103,7 +103,7 @@ test("F: core refresh does not create a full History read", () => {
   assert.doesNotMatch(softRefresh, /loadTaskHistory\(/);
 });
 
-test("G: initial startup retains projection readiness and explicit page-gated History loading", () => {
+test("G: initial startup retains projection readiness and explicit full-History loading", () => {
   const coreLoader = workspaceSource.slice(
     workspaceSource.indexOf("async function loadCoreWorkspaceData"),
     workspaceSource.indexOf("const requestCoreWorkspaceRefresh"),
@@ -112,7 +112,7 @@ test("G: initial startup retains projection readiness and explicit page-gated Hi
   assert.ok(criticalCommitIndex >= 0);
   assert.doesNotMatch(coreLoader, /canonicalHistoryHydration/);
   assert.match(coreLoader, /currentProjectionsLoaded: projectionRows\.length/);
-  assert.match(coreLoader, /loadFullTaskHistoryRef\.current\?\.\(\)/);
+  assert.doesNotMatch(coreLoader, /loadFullTaskHistoryRef\.current\?\.\(\)/);
   assert.match(workspaceSource, /initialCoreLoadActiveRef\.current = true/);
   assert.match(workspaceSource, /workspaceStartupRequestRegistry\.request\(userId, \(\) => requestCoreWorkspaceRefresh\(\{ silent: false, source: "initial" \}\)\)/);
 });
