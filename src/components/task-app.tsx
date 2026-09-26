@@ -1907,6 +1907,7 @@ export function TaskApp() {
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
     isCurrentTaskProjectionReadReady,
+    isCurrentTaskProjectionLogicalDayRefreshPending,
     invalidateTaskListDomainGeneration,
     invalidateTaskContentFolderDomainGeneration,
     invalidateFocusDomainGeneration: invalidateFocusDomainGenerationFromWorkspace,
@@ -3077,14 +3078,14 @@ export function TaskApp() {
     projectionFallbackHistoryRequestedRef.current.clear();
   }, [currentUserId]);
   useEffect(() => {
-    if (!isCurrentTaskProjectionReadReady || !isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) return;
+    if (!isCurrentTaskProjectionReadReady || isCurrentTaskProjectionLogicalDayRefreshPending || !isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) return;
     const taskIdsToLoad = currentTaskProjectionFallbackTaskIds.filter((taskId) => (
       !Object.hasOwn(taskHistoryLoadStateByTaskId, taskId)
       && !projectionFallbackHistoryRequestedRef.current.has(taskId)
     ));
     if (taskIdsToLoad.length === 0) return;
     for (const taskId of taskIdsToLoad) projectionFallbackHistoryRequestedRef.current.add(taskId);
-    void loadTaskHistoryForTasks(taskIdsToLoad, { silent: true }).then((results) => {
+    void loadTaskHistoryForTasks(taskIdsToLoad, { silent: true, source: "fallback" }).then((results) => {
       void Promise.all(taskIdsToLoad.map((taskId) => {
         const result = results[taskId];
         return result?.status === "ready"
@@ -3092,7 +3093,7 @@ export function TaskApp() {
           : false;
       }));
     });
-  }, [currentTaskProjectionFallbackTaskIds, isBehaviorAuthorityReady, isCurrentTaskProjectionReadReady, isTaskTypeBehaviorProfilesLoading, loadTaskHistoryForTasks, refreshTaskHistoryStreakSummary, taskHistoryLoadStateByTaskId]);
+  }, [currentTaskProjectionFallbackTaskIds, isBehaviorAuthorityReady, isCurrentTaskProjectionLogicalDayRefreshPending, isCurrentTaskProjectionReadReady, isTaskTypeBehaviorProfilesLoading, loadTaskHistoryForTasks, refreshTaskHistoryStreakSummary, taskHistoryLoadStateByTaskId]);
   useEffect(() => {
     const calculationToken = activeStatusCalculationTokenRef.current + 1;
     activeStatusCalculationTokenRef.current = calculationToken;

@@ -5,14 +5,57 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.45`.
+- Current working app version: `7.15.46`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
-  - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+- visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.46 Current Projection logical-day rollover repair
+
+The 7.15.45 projection fallback path correctly rejected valid rows whose
+`projected_logical_date` belonged to the prior logical day, but
+`TaskApp` immediately hydrated semantic History for every stale or missing
+Task. `useWorkspaceData` loaded those Tasks through independent
+`loadTaskHistoryForTask` calls, producing one
+`adhdice_task_history_facts?entity_id=eq.<task>` request per fallback Task.
+The projection freshness check was not changed: current-day status, due,
+handled-day, and streak fields remain usable only from a fresh trusted row.
+
+7.15.46 extends the existing service-role-only
+`task-current-projection-backfill` candidate RPC to include missing,
+`repair_required`, schema/algorithm-invalid, and projection rows whose
+`projected_logical_date` is not the owner profile's server-derived current
+logical date. The existing Edge function still calls the existing
+`rebuildCurrentTaskProjection()` authority and writer; no browser projection
+values are calculated or written. Startup and rollover reconciliation invoke
+one owner/generation/logical-day-fenced, single-flight logical-day refresh in
+serial ten-candidate Edge batches, capped at 50 batches, then consume one
+owner-scoped projection snapshot. A stale owner/day result is discarded.
+Fresh current-day rows are not rebuilt, and a completed owner/day population
+does not retrigger the refresh. Canonical Task and History rows are never
+mutated by this path.
+
+If a small remainder is still unavailable, multi-Task semantic History
+fallback now uses the existing canonical batched read pattern with bounded
+`.in("entity_id", batchTaskIds)` requests of 100 Task IDs. Results are mapped
+back per Task, errors remain per Task, and explicit one-Task History/detail
+reads keep their existing path. Development diagnostics report compact
+logical-day, projection, rebuild, and fallback batch counts without listing
+hundreds of IDs.
+
+The source SQL patch is
+`supabase/patch_task_current_projection_logical_day_refresh_7_15_46.sql`.
+It must be applied to the live Supabase project before manual rollover QA;
+the existing `task-current-projection-backfill` Edge function remains the
+trusted runtime boundary, so no new Edge source deployment is required by
+this patch. No SQL was applied and no Edge deployment or browser automation
+was performed for this source change. Stats, Games, Achievements, HUD, Home,
+Records, Realtime, recurrence, rewards, canonical History, and the 7.15.45
+Task Activity Summary read cutover remain unchanged.
 
 ## 2026-09-26 7.15.45 Task Activity Summary Read Cutover
 

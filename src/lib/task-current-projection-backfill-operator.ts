@@ -1,5 +1,6 @@
 export const CURRENT_PROJECTION_BACKFILL_BATCH_SIZE = 10;
 export const CURRENT_PROJECTION_BACKFILL_MAX_BATCHES = 5;
+export const CURRENT_PROJECTION_LOGICAL_DAY_REFRESH_MAX_BATCHES = 50;
 export const CURRENT_PROJECTION_REBUILD_BATCH_SIZE = CURRENT_PROJECTION_BACKFILL_BATCH_SIZE;
 export const CURRENT_PROJECTION_REBUILD_MAX_BATCHES = CURRENT_PROJECTION_BACKFILL_MAX_BATCHES;
 const CURRENT_PROJECTION_BACKFILL_FUNCTION = "task-current-projection-backfill";
@@ -40,6 +41,14 @@ export type ProjectionBackfillOperatorResult = {
   errorMessage: string | null;
 };
 
+type ProjectionBackfillOperatorInput = {
+  client: ProjectionBackfillOperatorClient;
+  maxBatches: number;
+  shouldContinue?: () => boolean;
+  isRolloverActive?: () => boolean;
+  onProgress?: (progress: ProjectionBackfillOperatorProgress) => void;
+};
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -67,14 +76,11 @@ function parseBatchResponse(value: unknown): ProjectionBackfillBatchResponse | n
   };
 }
 
-export async function runCurrentProjectionBackfillOperator(input: {
-  client: ProjectionBackfillOperatorClient;
-  maxBatches: number;
-  shouldContinue?: () => boolean;
-  isRolloverActive?: () => boolean;
-  onProgress?: (progress: ProjectionBackfillOperatorProgress) => void;
-}): Promise<ProjectionBackfillOperatorResult> {
-  const maxBatches = Math.min(CURRENT_PROJECTION_BACKFILL_MAX_BATCHES, Math.max(1, Math.floor(input.maxBatches)));
+async function runCurrentProjectionBackfillBatches(
+  input: ProjectionBackfillOperatorInput,
+  maxBatchLimit: number,
+): Promise<ProjectionBackfillOperatorResult> {
+  const maxBatches = Math.min(maxBatchLimit, Math.max(1, Math.floor(input.maxBatches)));
   const shouldContinue = input.shouldContinue ?? (() => true);
   let requestCount = 0;
   let batchCount = 0;
@@ -161,4 +167,19 @@ export async function runCurrentProjectionBackfillOperator(input: {
     stoppedReason,
     errorMessage,
   };
+}
+
+export async function runCurrentProjectionBackfillOperator(input: ProjectionBackfillOperatorInput) {
+  return await runCurrentProjectionBackfillBatches(input, CURRENT_PROJECTION_BACKFILL_MAX_BATCHES);
+}
+
+/**
+ * Refresh the current logical-day projection population through the existing
+ * trusted Edge/backfill boundary. Calls remain serial and keyset-paged; the
+ * cap is deliberately larger than the development-only manual campaign so a
+ * normal owner/day rollover can repair a bounded Task population without
+ * falling back to lifetime History for every stale projection.
+ */
+export async function runCurrentProjectionLogicalDayRefresh(input: ProjectionBackfillOperatorInput) {
+  return await runCurrentProjectionBackfillBatches(input, CURRENT_PROJECTION_LOGICAL_DAY_REFRESH_MAX_BATCHES);
 }

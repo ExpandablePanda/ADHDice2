@@ -91,6 +91,10 @@ import {
   type CurrentTaskProjectionReadRow,
 } from "@/lib/task-current-projection-read";
 import {
+  runCurrentProjectionLogicalDayRefresh,
+  type ProjectionBackfillOperatorClient,
+} from "@/lib/task-current-projection-backfill-operator";
+import {
   createTaskActivitySummaryRuntime,
   type TaskActivitySummaryRuntime,
   type TaskActivitySummaryRuntimeState,
@@ -376,6 +380,7 @@ export function useWorkspaceData({
     logicalDaySettingsRevision: null,
   });
   const [isCurrentTaskProjectionReadReady, setIsCurrentTaskProjectionReadReady] = useState(false);
+  const [isCurrentTaskProjectionLogicalDayRefreshPending, setIsCurrentTaskProjectionLogicalDayRefreshPending] = useState(false);
   const [isSoftWorkspaceRefreshing, setIsSoftWorkspaceRefreshing] = useState(false);
   const [isTaskResumeSyncPending, setIsTaskResumeSyncPending] = useState(false);
   const [taskListMembershipDataReadyUserId, setTaskListMembershipDataReadyUserId] = useState<string | null>(null);
@@ -458,6 +463,11 @@ export function useWorkspaceData({
     historySyncEpoch: null,
     logicalDaySettingsRevision: null,
   });
+  const currentTaskProjectionsByTaskIdRef = useRef<CurrentTaskProjectionReadMap>({});
+  const currentTaskProjectionLogicalDayRefreshRef = useRef<((reason: string, force?: boolean) => Promise<void>) | null>(null);
+  const currentTaskProjectionLogicalDayRefreshCompletedKeyRef = useRef<string | null>(null);
+  const currentTaskProjectionLogicalDayRefreshPromiseRef = useRef<OwnedWorkspacePromise<void> | null>(null);
+  const currentTaskProjectionLogicalDayRefreshTrailingRef = useRef(false);
   const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const rolloverWorkspaceReconciliationRef = useRef<(() => Promise<void>) | null>(null);
   const prepareTaskMutationRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -575,6 +585,7 @@ export function useWorkspaceData({
         reason: "logical-day",
         workspaceGeneration: workspaceGenerationRef.current,
       }, { force: true });
+      void currentTaskProjectionLogicalDayRefreshRef.current?.("logical-day", true);
     }
     if (!hasLoadedFullTaskHistoryRef.current) return;
     void loadTaskHistoryStreakSummariesRef.current?.(tasksRef.current, { supersede: true });
@@ -624,9 +635,15 @@ export function useWorkspaceData({
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped display cache on sign-out.
       setTaskHistoryStreakSummaries({});
       setCurrentTaskProjectionsByTaskId({});
+      currentTaskProjectionsByTaskIdRef.current = {};
       setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
       currentTaskProjectionReadContextRef.current = { historySyncEpoch: null, logicalDaySettingsRevision: null };
       setIsCurrentTaskProjectionReadReady(false);
+      setIsCurrentTaskProjectionLogicalDayRefreshPending(false);
+      currentTaskProjectionLogicalDayRefreshRef.current = null;
+      currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = null;
+      currentTaskProjectionLogicalDayRefreshPromiseRef.current = null;
+      currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
       setFullTaskHistoryLoadedUserId(null);
       taskHistoryLoadPromiseRef.current = null;
       loadTaskHistoryStreakSummariesRef.current = null;
@@ -676,9 +693,14 @@ export function useWorkspaceData({
     clearTaskHistoryTaskCache();
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
     setCurrentTaskProjectionsByTaskId({});
+    currentTaskProjectionsByTaskIdRef.current = {};
     setCurrentTaskProjectionReadContext({ historySyncEpoch: null, logicalDaySettingsRevision: null });
     currentTaskProjectionReadContextRef.current = { historySyncEpoch: null, logicalDaySettingsRevision: null };
     setIsCurrentTaskProjectionReadReady(false);
+    setIsCurrentTaskProjectionLogicalDayRefreshPending(false);
+    currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = null;
+    currentTaskProjectionLogicalDayRefreshPromiseRef.current = null;
+    currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
     hasLoadedFullTaskHistoryRef.current = false;
     fullTaskHistoryRowsRef.current = [];
     setFullTaskHistoryLoadedUserId(null);
@@ -1939,9 +1961,110 @@ export function useWorkspaceData({
 
     async function loadTaskHistoryForTasks(taskIds: string[], options: TaskHistoryLoadOptions = {}) {
       const uniqueTaskIds = [...new Set(taskIds)].filter(Boolean);
+      if (uniqueTaskIds.length === 0) return {};
+      if (uniqueTaskIds.length === 1) {
+        const taskId = uniqueTaskIds[0]!;
+        return { [taskId]: await loadTaskHistoryForTask(taskId, options) } satisfies TaskHistoryLoadMap;
+      }
+
+      const { force = false, silent = false, source } = options;
+      const resultsByTaskId = new Map<string, TaskHistoryLoadResult>();
+      const pendingByTaskId = new Map<string, Promise<TaskHistoryLoadResult>>();
+      const taskIdsToFetch: string[] = [];
+
+      for (const taskId of uniqueTaskIds) {
+        if (!force && taskHistoryLoadStateByTaskIdRef.current[taskId]?.status === "ready") {
+          resultsByTaskId.set(taskId, {
+            error: null,
+            history: [...(taskHistoryByTaskIdRef.current[taskId] ?? [])],
+            status: "ready",
+          });
+          continue;
+        }
+
+        const existingLoad = taskHistoryTaskLoadPromisesRef.current.get(taskId);
+        if (existingLoad?.generation === workspaceGeneration) {
+          pendingByTaskId.set(taskId, existingLoad.promise);
+          continue;
+        }
+        if (existingLoad) taskHistoryTaskLoadPromisesRef.current.delete(taskId);
+
+        setTaskHistoryTaskLoadState(taskId, { error: null, status: "loading" });
+        taskIdsToFetch.push(taskId);
+      }
+
+      if (taskIdsToFetch.length > 0) {
+        if (source === "fallback") {
+          logTaskHistoryDetailDiagnostic("history_semantic_fallback_batch_requested", {
+            batchSize: TASK_HISTORY_ROLLOVER_BATCH_SIZE,
+            generation: workspaceGeneration,
+            requestBatchCount: Math.ceil(taskIdsToFetch.length / TASK_HISTORY_ROLLOVER_BATCH_SIZE),
+            taskCount: taskIdsToFetch.length,
+          });
+        }
+        const batchResultPromise = (async () => {
+          try {
+            const batchResults = await fetchTaskHistoryForTaskIdsInBatches(taskIdsToFetch, async (batchTaskIds) => {
+              const result = await fetchAllPagedRows<CanonicalTaskHistoryFact>(async (from, to) => await canonicalHistoryQuery()
+                .in("entity_id", batchTaskIds)
+                .range(from, to));
+              return {
+                data: result.data
+                  ? mapCanonicalHistoryRows(result.data as CanonicalTaskHistoryFact[])
+                  : null,
+                error: result.error,
+              };
+            }, TASK_HISTORY_ROLLOVER_BATCH_SIZE);
+            if (!isActive || !canApplyCoreWorkspaceResult()) {
+              return Object.fromEntries(taskIdsToFetch.map((taskId) => [taskId, {
+                error: "Task History is not available for this workspace.",
+                history: null,
+                status: "error",
+              } satisfies TaskHistoryLoadResult])) as TaskHistoryLoadMap;
+            }
+            return batchResults;
+          } catch (error) {
+            const message = error instanceof Error && error.message ? error.message : "Could not load task history.";
+            return Object.fromEntries(taskIdsToFetch.map((taskId) => [taskId, {
+              error: message,
+              history: null,
+              status: "error",
+            } satisfies TaskHistoryLoadResult])) as TaskHistoryLoadMap;
+          }
+        })();
+
+        for (const taskId of taskIdsToFetch) {
+          const taskPromise = batchResultPromise.then((batchResults) => batchResults[taskId] ?? {
+            error: "Could not load task history.",
+            history: null,
+            status: "error",
+          } satisfies TaskHistoryLoadResult);
+          pendingByTaskId.set(taskId, taskPromise);
+          taskHistoryTaskLoadPromisesRef.current.set(taskId, { generation: workspaceGeneration, promise: taskPromise });
+          void taskPromise.then((result) => {
+            if (!isActive || !canApplyCoreWorkspaceResult()) return;
+            if (result.status === "ready") {
+              setTaskHistoryCacheForTask(taskId, result.history);
+              setTaskHistoryTaskLoadState(taskId, { error: null, status: "ready" });
+              return;
+            }
+            setTaskHistoryTaskLoadState(taskId, { error: result.error, status: "error" });
+            if (!silent) setMessage({ tone: "warn", text: result.error });
+          }).finally(() => {
+            if (taskHistoryTaskLoadPromisesRef.current.get(taskId)?.promise === taskPromise) {
+              taskHistoryTaskLoadPromisesRef.current.delete(taskId);
+            }
+          });
+        }
+      }
+
       const results = await Promise.all(uniqueTaskIds.map(async (taskId) => [
         taskId,
-        await loadTaskHistoryForTask(taskId, { ...options, silent: true }),
+        resultsByTaskId.get(taskId) ?? await pendingByTaskId.get(taskId) ?? {
+          error: "Could not load task history.",
+          history: null,
+          status: "error",
+        } satisfies TaskHistoryLoadResult,
       ] as const));
       return Object.fromEntries(results) as TaskHistoryLoadMap;
     }
@@ -2540,12 +2663,14 @@ export function useWorkspaceData({
         (taskScheduleBoundariesResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
       );
       tasksRef.current = nextTasks;
+      const nextProjectionMap = mergeCurrentTaskProjectionRows(
+        indexCurrentTaskProjectionRows(projectionRows),
+        Object.values(currentTaskProjectionsByTaskIdRef.current),
+      );
+      currentTaskProjectionsByTaskIdRef.current = nextProjectionMap;
       startTransition(() => {
         setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
-        setCurrentTaskProjectionsByTaskId((current) => mergeCurrentTaskProjectionRows(
-          indexCurrentTaskProjectionRows(projectionRows),
-          Object.values(current),
-        ));
+        setCurrentTaskProjectionsByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextProjectionMap));
         currentTaskProjectionReadContextRef.current = nextCurrentTaskProjectionReadContext;
         setCurrentTaskProjectionReadContext(nextCurrentTaskProjectionReadContext);
         setIsCurrentTaskProjectionReadReady(true);
@@ -2564,6 +2689,7 @@ export function useWorkspaceData({
       if (isWorkspacePerformanceDiagnosticsEnabled() && source === "initial") {
         console.info(`[workspace] Live owner applied shared initial result userId=${userId}.`);
       }
+      void requestCurrentTaskProjectionLogicalDayRefresh(source === "initial" ? "startup" : "core-refresh");
       void loadProfileMedia(client, userId);
 
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -2795,6 +2921,7 @@ export function useWorkspaceData({
       includeSecondaryIfLoaded: true,
       source: "manual",
     });
+    currentTaskProjectionLogicalDayRefreshRef.current = requestCurrentTaskProjectionLogicalDayRefresh;
 
     rolloverWorkspaceReconciliationRef.current = async () => {
       if (!isActive) {
@@ -2805,6 +2932,7 @@ export function useWorkspaceData({
         console.info("[workspace] Rollover targeted task reconciliation requested.");
       }
       await reloadTaskRows({ silent: true, source: "rollover" });
+      await requestCurrentTaskProjectionLogicalDayRefresh("rollover", true);
 
       if (hasLoadedFullTaskHistoryRef.current) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -2953,6 +3081,142 @@ export function useWorkspaceData({
       );
     }
 
+    function collectCurrentTaskProjectionLogicalDayDiagnostics(logicalDate = todayKeyRef.current) {
+      let freshCount = 0;
+      let staleDateCount = 0;
+      let repairRequiredCount = 0;
+      let missingCount = 0;
+      for (const task of tasksRef.current) {
+        const row = currentTaskProjectionsByTaskIdRef.current[task.id];
+        if (!row) {
+          missingCount += 1;
+          continue;
+        }
+        if (isFreshProjectionForTask(row, task.id)) freshCount += 1;
+        if (row.projected_logical_date < logicalDate) staleDateCount += 1;
+        if (row.validity === "repair_required") repairRequiredCount += 1;
+      }
+      return {
+        freshCount,
+        logicalDate,
+        missingCount,
+        projectionRowsLoaded: Object.keys(currentTaskProjectionsByTaskIdRef.current).length,
+        repairRequiredCount,
+        staleDateCount,
+      };
+    }
+
+    async function loadCurrentTaskProjectionSnapshot() {
+      if (!canApplyCoreWorkspaceResult()) return null;
+      const result = await client
+        .from("adhdice_task_current_projections")
+        .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
+        .eq("user_id", userId);
+      if (!canApplyCoreWorkspaceResult()) return null;
+      if (result.error) {
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(`[workspace:current-projection] refresh snapshot failed: ${result.error.message}`);
+        }
+        return null;
+      }
+      const rows = (result.data ?? []) as unknown as CurrentTaskProjectionReadRow[];
+      const nextProjectionMap = indexCurrentTaskProjectionRows(rows);
+      currentTaskProjectionsByTaskIdRef.current = nextProjectionMap;
+      setCurrentTaskProjectionsByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextProjectionMap));
+      for (const row of rows) markAdhdiceRealtimeAuthorityPending(row.entity_id);
+      return rows;
+    }
+
+    async function requestCurrentTaskProjectionLogicalDayRefresh(reason: string, force = false) {
+      if (!isActive || !canApplyCoreWorkspaceResult()) return;
+      const logicalDate = todayKeyRef.current;
+      const refreshKey = `${userId}:${logicalDate}`;
+      if (!force && currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current === refreshKey) return;
+      const existingRefresh = currentTaskProjectionLogicalDayRefreshPromiseRef.current;
+      if (existingRefresh?.generation === workspaceGeneration) {
+        if (force) {
+          currentTaskProjectionLogicalDayRefreshTrailingRef.current = true;
+          setIsCurrentTaskProjectionLogicalDayRefreshPending(true);
+        }
+        await existingRefresh.promise;
+        if (!force || !isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) {
+          if (force) {
+            currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
+            setIsCurrentTaskProjectionLogicalDayRefreshPending(false);
+          }
+          return;
+        }
+        return requestCurrentTaskProjectionLogicalDayRefresh(reason, true);
+      }
+
+      const initialDiagnostics = collectCurrentTaskProjectionLogicalDayDiagnostics(logicalDate);
+      if (tasksRef.current.length === 0 || initialDiagnostics.freshCount === tasksRef.current.length) {
+        currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = refreshKey;
+        setIsCurrentTaskProjectionLogicalDayRefreshPending(false);
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(
+            `[workspace:current-projection-rollover] logicalDay=${logicalDate}`
+              + ` projectionRowsLoaded=${initialDiagnostics.projectionRowsLoaded}`
+              + ` fresh=${initialDiagnostics.freshCount}`
+              + ` staleDate=${initialDiagnostics.staleDateCount}`
+              + ` repairRequired=${initialDiagnostics.repairRequiredCount}`
+              + ` missing=${initialDiagnostics.missingCount}`
+              + " rebuildRequested=0 rebuildSucceeded=0 rebuildFailed=0",
+          );
+        }
+        return;
+      }
+
+      const refreshOwner: OwnedWorkspacePromise<void> = {
+        generation: workspaceGeneration,
+        promise: Promise.resolve(),
+      };
+      setIsCurrentTaskProjectionLogicalDayRefreshPending(true);
+      const refreshPromise = (async () => {
+        const result = await runCurrentProjectionLogicalDayRefresh({
+          client: client as unknown as ProjectionBackfillOperatorClient,
+          maxBatches: 50,
+          shouldContinue: () => isActive
+            && canApplyCoreWorkspaceResult()
+            && todayKeyRef.current === logicalDate,
+        });
+        if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;
+
+        await loadCurrentTaskProjectionSnapshot();
+        if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;
+        currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = refreshKey;
+        const finalDiagnostics = collectCurrentTaskProjectionLogicalDayDiagnostics(logicalDate);
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(
+            `[workspace:current-projection-rollover] reason=${reason}`
+              + ` logicalDay=${logicalDate}`
+              + ` projectionRowsLoaded=${finalDiagnostics.projectionRowsLoaded}`
+              + ` fresh=${finalDiagnostics.freshCount}`
+              + ` staleDate=${finalDiagnostics.staleDateCount}`
+              + ` repairRequired=${finalDiagnostics.repairRequiredCount}`
+              + ` missing=${finalDiagnostics.missingCount}`
+              + ` rebuildRequested=${result.processedCount}`
+              + ` rebuildSucceeded=${result.writtenCount}`
+              + ` rebuildFailed=${result.failedCount}`,
+          );
+        }
+      })();
+      refreshOwner.promise = refreshPromise;
+      currentTaskProjectionLogicalDayRefreshPromiseRef.current = refreshOwner;
+      try {
+        await refreshPromise;
+      } finally {
+        if (currentTaskProjectionLogicalDayRefreshPromiseRef.current?.promise === refreshPromise) {
+          currentTaskProjectionLogicalDayRefreshPromiseRef.current = null;
+          if (currentTaskProjectionLogicalDayRefreshTrailingRef.current) {
+            currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
+          } else {
+            setIsCurrentTaskProjectionLogicalDayRefreshPending(false);
+          }
+        }
+      }
+    }
+
     function mergeProjectionRows(
       rows: readonly CurrentTaskProjectionReadRow[],
       source: "event" | "reconcile",
@@ -2970,6 +3234,7 @@ export function useWorkspaceData({
       if (!isActive) return;
       setCurrentTaskProjectionsByTaskId((current) => {
         const next = mergeCurrentTaskProjectionRows(current, rows);
+        currentTaskProjectionsByTaskIdRef.current = next;
         for (const row of rows) {
           const previous = current[row.entity_id];
           recordAdhdiceRealtimeDiagnostic({
@@ -3131,9 +3396,11 @@ export function useWorkspaceData({
       }
 
       const rows = (result.data ?? []) as unknown as CurrentTaskProjectionReadRow[];
+      const nextProjectionMap = indexCurrentTaskProjectionRows(rows);
+      currentTaskProjectionsByTaskIdRef.current = nextProjectionMap;
       setCurrentTaskProjectionsByTaskId((current) => keepCurrentIfStructurallyEqual(
         current,
-        indexCurrentTaskProjectionRows(rows),
+        nextProjectionMap,
       ));
       for (const row of rows) markAdhdiceRealtimeAuthorityPending(row.entity_id);
       recordAdhdiceRealtimeDiagnostic({
@@ -3746,6 +4013,7 @@ export function useWorkspaceData({
         liveWorkspaceUserIdRef.current = null;
       }
       softWorkspaceRefreshRef.current = null;
+      currentTaskProjectionLogicalDayRefreshRef.current = null;
       rolloverWorkspaceReconciliationRef.current = null;
       prepareTaskMutationRef.current = null;
       fetchTaskHistoryForRolloverRef.current = null;
@@ -3913,6 +4181,7 @@ export function useWorkspaceData({
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
     isCurrentTaskProjectionReadReady,
+    isCurrentTaskProjectionLogicalDayRefreshPending,
     updateTaskHistoryForTask,
   };
 }
