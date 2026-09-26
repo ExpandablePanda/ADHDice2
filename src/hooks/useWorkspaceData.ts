@@ -101,6 +101,11 @@ import {
   type TaskActivitySummaryRuntime,
   type TaskActivitySummaryRuntimeState,
 } from "@/lib/task-activity-summary-runtime";
+import {
+  createHomeCurrentDayHistoryRuntime,
+  type HomeCurrentDayHistoryRuntime,
+  type HomeCurrentDayHistoryRuntimeState,
+} from "@/lib/home-current-day-history-runtime";
 import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-freshness";
 import { createBoundedTaskProjectionReconciler } from "@/lib/task-current-projection-reconciliation";
 import {
@@ -397,6 +402,18 @@ export function useWorkspaceData({
   if (taskActivitySummaryRuntimeRef.current == null) {
     taskActivitySummaryRuntimeRef.current = createTaskActivitySummaryRuntime(setTaskActivitySummaryState);
   }
+  const [homeCurrentDayHistoryState, setHomeCurrentDayHistoryState] = useState<HomeCurrentDayHistoryRuntimeState>({
+    error: null,
+    logicalDate: null,
+    ownerId: null,
+    rows: [],
+    status: "idle",
+    workspaceGeneration: null,
+  });
+  const homeCurrentDayHistoryRuntimeRef = useRef<HomeCurrentDayHistoryRuntime | null>(null);
+  if (homeCurrentDayHistoryRuntimeRef.current == null) {
+    homeCurrentDayHistoryRuntimeRef.current = createHomeCurrentDayHistoryRuntime(setHomeCurrentDayHistoryState);
+  }
   const hasLoadedNotesRef = useRef(false);
   const hasLoadedFullTaskHistoryRef = useRef(false);
   const fullTaskHistoryRowsRef = useRef<DbTaskHistory[]>([]);
@@ -472,6 +489,7 @@ export function useWorkspaceData({
   const currentTaskProjectionLogicalDayRefreshTrailingRef = useRef(false);
   const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const rolloverWorkspaceReconciliationRef = useRef<(() => Promise<void>) | null>(null);
+  const homeCurrentDayHistoryRequestRef = useRef<((reason: string, options?: { force?: boolean; onlyIfLoaded?: boolean }) => Promise<boolean>) | null>(null);
   const prepareTaskMutationRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadFullTaskHistoryRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadNotesRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -570,6 +588,7 @@ export function useWorkspaceData({
   useEffect(() => {
     activePageRef.current = activePage;
     if (activePage === "Notes") void loadNotesRef.current?.();
+    if (activePage === "Home") void homeCurrentDayHistoryRequestRef.current?.("navigation");
   }, [activePage]);
 
   useEffect(() => {
@@ -580,6 +599,12 @@ export function useWorkspaceData({
     if (todayKeyRef.current === todayKey) return;
     todayKeyRef.current = todayKey;
     if (supabase && currentUser?.id) {
+      homeCurrentDayHistoryRuntimeRef.current?.invalidate({
+        logicalDate: todayKey,
+        ownerId: currentUser.id,
+        workspaceGeneration: workspaceGenerationRef.current,
+      });
+      if (activePageRef.current === "Home") void homeCurrentDayHistoryRequestRef.current?.("logical-day", { force: true });
       void taskActivitySummaryRuntimeRef.current?.request({
         client: supabase,
         logicalDate: todayKey,
@@ -629,6 +654,7 @@ export function useWorkspaceData({
       startupRequestUserIdRef.current = null;
       liveWorkspaceUserIdRef.current = null;
       taskActivitySummaryRuntimeRef.current?.clear();
+      homeCurrentDayHistoryRuntimeRef.current?.clear();
       hasLoadedNotesRef.current = false;
       hasLoadedFullTaskHistoryRef.current = false;
       fullTaskHistoryRowsRef.current = [];
@@ -646,6 +672,7 @@ export function useWorkspaceData({
       currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = null;
       currentTaskProjectionLogicalDayRefreshPromiseRef.current = null;
       currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
+      homeCurrentDayHistoryRequestRef.current = null;
       setFullTaskHistoryLoadedUserId(null);
       taskHistoryLoadPromiseRef.current = null;
       loadTaskHistoryStreakSummariesRef.current = null;
@@ -693,6 +720,7 @@ export function useWorkspaceData({
       behaviorAuthorityLoadingRef.current = true;
     }
     clearTaskHistoryTaskCache();
+    homeCurrentDayHistoryRuntimeRef.current?.clear();
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
     setCurrentTaskProjectionsByTaskId({});
     currentTaskProjectionsByTaskIdRef.current = {};
@@ -703,6 +731,7 @@ export function useWorkspaceData({
     currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = null;
     currentTaskProjectionLogicalDayRefreshPromiseRef.current = null;
     currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
+    homeCurrentDayHistoryRequestRef.current = null;
     hasLoadedFullTaskHistoryRef.current = false;
     fullTaskHistoryRowsRef.current = [];
     setFullTaskHistoryLoadedUserId(null);
@@ -725,6 +754,29 @@ export function useWorkspaceData({
     let broadManualActionCommandOperationReads = 0;
     let realtimeGapCoordinator: ReturnType<typeof createRealtimeGapCoordinator> | null = null;
     let realtimeGapRecoveryPromise: Promise<void> | null = null;
+    async function requestHomeCurrentDayHistory(
+      reason: string,
+      { force = false, onlyIfLoaded = false }: { force?: boolean; onlyIfLoaded?: boolean } = {},
+    ) {
+      const currentState = homeCurrentDayHistoryRuntimeRef.current?.getState();
+      const loadedForContext = Boolean(
+        currentState
+        && currentState.ownerId === userId
+        && currentState.logicalDate === todayKeyRef.current
+        && currentState.workspaceGeneration === workspaceGeneration
+        && currentState.status !== "idle",
+      );
+      if (onlyIfLoaded && !loadedForContext) return false;
+      return await homeCurrentDayHistoryRuntimeRef.current?.request({
+        client,
+        logicalDate: todayKeyRef.current,
+        ownerId: userId,
+        reason,
+        workspaceGeneration,
+      }, { force }) ?? false;
+    }
+    homeCurrentDayHistoryRequestRef.current = requestHomeCurrentDayHistory;
+    if (activePageRef.current === "Home") void requestHomeCurrentDayHistory("owner-ready");
     void taskActivitySummaryRuntimeRef.current?.request({
       client,
       logicalDate: todayKeyRef.current,
@@ -2893,6 +2945,7 @@ export function useWorkspaceData({
         await ensureTaskChannelSubscribed();
         await ensureProjectionChannelSubscribed();
         await requestCoreWorkspaceRefresh({ silent: true, source });
+        await requestHomeCurrentDayHistory(`workspace-${source}`, { force: true, onlyIfLoaded: true });
         await taskActivitySummaryRuntimeRef.current?.request({
           client,
           logicalDate: todayKeyRef.current,
@@ -2952,6 +3005,7 @@ export function useWorkspaceData({
         reason: "rollover-reconciliation",
         workspaceGeneration,
       }, { force: true });
+      await requestHomeCurrentDayHistory("rollover-reconciliation", { force: true, onlyIfLoaded: true });
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info("[workspace] Rollover targeted task reconciliation completed.");
       }
@@ -3546,6 +3600,7 @@ export function useWorkspaceData({
         reason: "realtime-gap-recovery",
         workspaceGeneration,
       }, { force: true });
+      await requestHomeCurrentDayHistory("realtime-gap-recovery", { force: true, onlyIfLoaded: true });
 
     }
 
@@ -3987,6 +4042,7 @@ export function useWorkspaceData({
             reason: "history-realtime",
             workspaceGeneration,
           }, { force: true });
+          void requestHomeCurrentDayHistory("history-realtime", { force: true, onlyIfLoaded: true });
           // History notifications do not bootstrap either a complete semantic
           // cache or an unopened detail window.
         },
@@ -4045,6 +4101,7 @@ export function useWorkspaceData({
       softWorkspaceRefreshRef.current = null;
       currentTaskProjectionLogicalDayRefreshRef.current = null;
       rolloverWorkspaceReconciliationRef.current = null;
+      homeCurrentDayHistoryRequestRef.current = null;
       prepareTaskMutationRef.current = null;
       fetchTaskHistoryForRolloverRef.current = null;
       loadTaskHistoryDetailWindowRef.current = null;
@@ -4176,10 +4233,24 @@ export function useWorkspaceData({
     },
     [currentUser?.id, supabase, todayKey],
   );
+  const refreshHomeCurrentDayHistory = useCallback(
+    async (reason = "history-mutation") => await homeCurrentDayHistoryRequestRef.current?.(reason, { force: true, onlyIfLoaded: true }) ?? false,
+    [],
+  );
+  const retryHomeCurrentDayHistory = useCallback(
+    async () => await homeCurrentDayHistoryRequestRef.current?.("retry", { force: true }) ?? false,
+    [],
+  );
   const taskActivitySummaryContextMatches = Boolean(
     currentUser?.id
     && taskActivitySummaryState.ownerId === currentUser.id
     && taskActivitySummaryState.logicalDate === todayKey,
+  );
+  const homeCurrentDayHistoryContextMatches = Boolean(
+    currentUser?.id
+    && homeCurrentDayHistoryState.ownerId === currentUser.id
+    && homeCurrentDayHistoryState.logicalDate === todayKey
+    && homeCurrentDayHistoryState.status !== "idle",
   );
 
   return {
@@ -4202,6 +4273,8 @@ export function useWorkspaceData({
     refreshTaskHistoryStreakSummaries,
     fetchTaskHistoryForRollover,
     refreshTaskActivitySummary,
+    refreshHomeCurrentDayHistory,
+    retryHomeCurrentDayHistory,
     retryTaskHistoryForTask,
     loadTaskNotes,
     refreshTaskHistoryStreakSummary,
@@ -4212,6 +4285,10 @@ export function useWorkspaceData({
     taskActivitySummary: taskActivitySummaryContextMatches ? taskActivitySummaryState.summary : null,
     taskActivitySummaryError: taskActivitySummaryContextMatches ? taskActivitySummaryState.error : null,
     taskActivitySummaryStatus: taskActivitySummaryContextMatches ? taskActivitySummaryState.status : "idle",
+    homeCurrentDayHistoryRows: homeCurrentDayHistoryContextMatches ? homeCurrentDayHistoryState.rows : [],
+    homeCurrentDayHistoryError: homeCurrentDayHistoryContextMatches ? homeCurrentDayHistoryState.error : null,
+    homeCurrentDayHistoryStatus: homeCurrentDayHistoryContextMatches ? homeCurrentDayHistoryState.status : "idle",
+    isHomeCurrentDayHistoryReady: homeCurrentDayHistoryContextMatches && homeCurrentDayHistoryState.status === "ready",
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
     isCurrentTaskProjectionReadReady,

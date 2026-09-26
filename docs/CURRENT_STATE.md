@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.47`.
+- Current working app version: `7.15.48`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,33 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.48 Home bounded current-day History read
+
+Home no longer waits for `isFullTaskHistoryLoaded` before rendering its
+`Finished Today` panel. The old dependency was the shared full canonical Task
+History snapshot, which Home did not load itself after the 7.15.35 lazy-History
+retirement and the 7.15.45 Task Activity Summary cutover. Home now uses one
+owner- and logical-day-scoped read of successful canonical facts from
+`adhdice_task_history_facts`, filtered to `done`, `did_my_best`, and `complete`.
+
+The canonical schema's unique `(user_id, entity_id, logical_date)` constraint
+means this current-day slice has at most one fact per Task/Step for the day;
+it is not complete semantic History and never sets full-History readiness. The
+runtime is owner/day/generation fenced, single-flight, cleared on sign-out,
+invalidated on logical-day change, refreshed on Home activation, History
+mutation, History Realtime, manual/resume refresh, and rollover/gap recovery.
+It retains same-owner/day rows on refresh failure and shows Home's compact
+retry state instead of invoking the full loader. Tracking exclusions, outcome
+counts, permanent Complete, and parent/Step record live values still flow
+through `buildHomeDailyProgress`; saved Record targets remain the separate
+`useHomeRecordTargets` pipeline. Full History remains lazy/explicit for
+Records reconciliation, mutation-required semantic reads, modal detail, and
+other historical consumers. Development-only shadow parity compares the
+bounded Home result with full History only when full History is already loaded.
+
+No SQL or Edge source changed, so no live deployment or migration is required
+for 7.15.48. Browser/manual QA remains unverified by source checks.
 
 ## 2026-09-26 7.15.47 Current Projection logical-day refresh completion repair
 

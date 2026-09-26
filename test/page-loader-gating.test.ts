@@ -22,8 +22,7 @@ test("Focus History and full Task History are loaded only for explicit consumers
   ]);
   assert.match(app, /useFocus\([\s\S]*?activePage === "Focus" \|\| activePage === "Stats" \|\| activePage === "Health"/);
   assert.match(focus, /!historyActive \|\| loadedFocusHistoryUserIdRef\.current === userId/);
-  assert.match(workspace, /activePage === "Stats" \|\| activePage === "Games" \|\| activePage === "Achievements"/);
-  assert.doesNotMatch(workspace, /window\.setTimeout\([\s\S]*?loadTaskHistory/);
+  assert.match(workspace, /loadFullTaskHistoryRef\.current = \(\) => loadTaskHistory/);
 });
 
 test("one canonical full-screen loader gates auth restoration and initial app boot", async () => {

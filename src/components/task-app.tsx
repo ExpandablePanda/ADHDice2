@@ -1895,6 +1895,8 @@ export function TaskApp() {
     prepareTaskMutation,
     reconcileRolloverWorkspace,
     refreshTaskActivitySummary,
+    refreshHomeCurrentDayHistory,
+    retryHomeCurrentDayHistory,
     refreshTaskHistoryStreakSummary,
     refreshTaskHistoryStreakSummaries,
     softRefreshWorkspace,
@@ -1902,6 +1904,10 @@ export function TaskApp() {
     taskHistoryLoadStateByTaskId,
     taskHistoryDetailByTaskId,
     taskHistoryStreakSummaries,
+    homeCurrentDayHistoryRows,
+    homeCurrentDayHistoryError,
+    homeCurrentDayHistoryStatus,
+    isHomeCurrentDayHistoryReady,
     taskActivitySummary,
     taskActivitySummaryStatus,
     currentTaskProjectionReadContext,
@@ -2055,9 +2061,10 @@ export function TaskApp() {
 
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
     updateTaskHistoryForTask(taskId, nextTaskHistory);
+    void refreshHomeCurrentDayHistory("history-mutation-settled");
     void refreshTaskActivitySummary("history-mutation-settled");
     return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory, nextTask);
-  }, [refreshTaskActivitySummary, refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
+  }, [refreshHomeCurrentDayHistory, refreshTaskActivitySummary, refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
 
   const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
 
@@ -2979,10 +2986,46 @@ export function TaskApp() {
     [compatibilityRoutingMemberships, taskListManualMemberships],
   );
   const taskHistoryByTaskId = sharedTaskHistoryByTaskId;
+  const homeCurrentDayHistoryByTaskId = useMemo(() => {
+    const grouped: Record<string, DbTaskHistory[]> = {};
+    for (const row of homeCurrentDayHistoryRows) {
+      (grouped[row.task_id] ??= []).push(row);
+    }
+    return grouped;
+  }, [homeCurrentDayHistoryRows]);
   const homeDailyProgress = useMemo(
-    () => buildHomeDailyProgress({ taskHistoryByTaskId, tasks, todayKey }),
-    [taskHistoryByTaskId, tasks, todayKey],
+    () => buildHomeDailyProgress({ taskHistoryByTaskId: homeCurrentDayHistoryByTaskId, tasks, todayKey }),
+    [homeCurrentDayHistoryByTaskId, tasks, todayKey],
   );
+  const homeFullHistoryShadowProgress = useMemo(
+    () => isFullTaskHistoryLoaded
+      ? buildHomeDailyProgress({ taskHistoryByTaskId, tasks, todayKey })
+      : null,
+    [isFullTaskHistoryLoaded, taskHistoryByTaskId, tasks, todayKey],
+  );
+  const homeShadowMismatchKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (process.env.NODE_ENV === "production" || !isFullTaskHistoryLoaded || !isHomeCurrentDayHistoryReady || !homeFullHistoryShadowProgress) {
+      homeShadowMismatchKeyRef.current = null;
+      return;
+    }
+    const bounded = JSON.stringify(homeDailyProgress);
+    const full = JSON.stringify(homeFullHistoryShadowProgress);
+    if (bounded === full) {
+      homeShadowMismatchKeyRef.current = null;
+      return;
+    }
+    const mismatchKey = `${todayKey}:${bounded}:${full}`;
+    if (homeShadowMismatchKeyRef.current === mismatchKey) return;
+    homeShadowMismatchKeyRef.current = mismatchKey;
+    console.info(
+      `[home-current-day-history] shadow-mismatch logicalDay=${todayKey}`
+        + ` boundedTotal=${homeDailyProgress.total}`
+        + ` fullTotal=${homeFullHistoryShadowProgress.total}`
+        + ` boundedRecords=${JSON.stringify(homeDailyProgress.recordLiveValues)}`
+        + ` fullRecords=${JSON.stringify(homeFullHistoryShadowProgress.recordLiveValues)}`,
+    );
+  }, [homeDailyProgress, homeFullHistoryShadowProgress, isFullTaskHistoryLoaded, isHomeCurrentDayHistoryReady, todayKey]);
   const openHomeRecord = useCallback((metricKey: RecordMetricKey) => {
     setPendingProgressRecordMetricKey(metricKey);
     setActivePage("Achievements");
@@ -8048,7 +8091,9 @@ export function TaskApp() {
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
             dailyProgress={homeDailyProgress}
             homeRecordChases={homeRecordChases}
-            isFullTaskHistoryLoaded={isFullTaskHistoryLoaded}
+            homeHistoryStatus={homeCurrentDayHistoryStatus}
+            homeHistoryError={homeCurrentDayHistoryError}
+            onRetryHomeHistory={() => { void retryHomeCurrentDayHistory(); }}
             onOpenRecord={openHomeRecord}
             recordTargetsError={homeRecordTargets.error}
             recordTargetsLoading={homeRecordTargets.loading}
