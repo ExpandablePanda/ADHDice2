@@ -21,6 +21,7 @@ import {
   getStyleLabBuilderChildren,
   getStyleLabBuilderNode,
   insertStyleLabBuilderDraft,
+  moveStyleLabBuilderNode,
   normalizeStyleLabBuilderDraft,
   STYLE_LAB_BUILDER_MAX_DEPTH,
   STYLE_LAB_BUILDER_MAX_NODES,
@@ -81,6 +82,95 @@ test("shared UI-system primitives and meaningful variants have ready adapters", 
   const chipTones = ["default", "purple", "pending", "progress", "delayed", "done", "best", "missed", "upcoming", "notDue", "complete", "archived", "danger"];
   for (const tone of chipTones) assert.ok(getStyleLabBuilderLibraryEntry(`primitive.chip.${tone}`), `${tone} chip tone should be represented`);
   for (const tone of ["default", "purple", "success", "warning", "danger", "ghost"]) assert.ok(getStyleLabBuilderLibraryEntry(`primitive.icon-button.${tone}`), `${tone} icon button tone should be represented`);
+});
+
+test("library entries declare root or children insertion and leaf primitives omit the transport root", () => {
+  for (const entry of STYLE_LAB_BUILDER_LIBRARY) assert.ok(entry.insertBehavior === "root" || entry.insertBehavior === "children");
+  assert.equal(getStyleLabBuilderLibraryEntry("primitive.chip.default")?.insertBehavior, "children");
+  assert.equal(getStyleLabBuilderLibraryEntry("primitive.icon-button.default")?.insertBehavior, "children");
+  assert.equal(getStyleLabBuilderLibraryEntry("node.divider")?.insertBehavior, "children");
+  assert.equal(getStyleLabBuilderLibraryEntry("primitive.card")?.insertBehavior, "root");
+});
+
+test("icon button and chip inserts are direct nodes while composite cards retain their root Container", () => {
+  const base = normalizeStyleLabBuilderDraft({ nodes: [
+    { id: "root", type: "container", parentId: null, order: 0, styles: {} },
+    { id: "icon-button", type: "icon-button", parentId: "root", order: 0, ariaLabel: "Existing" },
+    { id: "chip", type: "chip", parentId: "root", order: 1, text: "Existing" },
+  ] });
+  const iconEntry = getStyleLabBuilderLibraryEntry("primitive.icon-button.default")!;
+  const chipEntry = getStyleLabBuilderLibraryEntry("primitive.chip.progress")!;
+  const iconResult = insertStyleLabBuilderDraft(base, iconEntry.createDraft(), "root", iconEntry.insertBehavior);
+  const chipResult = insertStyleLabBuilderDraft(iconResult.draft, chipEntry.createDraft(), "root", chipEntry.insertBehavior);
+  const icon = getStyleLabBuilderNode(iconResult.draft, iconResult.insertedRootId);
+  const chip = getStyleLabBuilderNode(chipResult.draft, chipResult.insertedRootId);
+  assert.equal(icon?.type, "icon-button");
+  assert.equal(chip?.type, "chip");
+  assert.equal(iconResult.draft.nodes.length, base.nodes.length + 1);
+  assert.equal(chipResult.draft.nodes.length, iconResult.draft.nodes.length + 1);
+  assert.notEqual(icon?.id, "icon-button");
+  assert.notEqual(chip?.id, "chip");
+  assert.equal(getStyleLabBuilderNode(chipResult.draft, chipResult.insertedRootId)?.parentId, "root");
+
+  const cardEntry = getStyleLabBuilderLibraryEntry("primitive.card")!;
+  const cardResult = insertStyleLabBuilderDraft(base, cardEntry.createDraft(), "root", cardEntry.insertBehavior);
+  const cardRoot = getStyleLabBuilderNode(cardResult.draft, cardResult.insertedRootId);
+  assert.equal(cardRoot?.type, "container");
+  assert.equal(cardRoot?.parentId, "root");
+  assert.ok(getStyleLabBuilderChildren(cardResult.draft, cardResult.insertedRootId!).length > 0);
+});
+
+test("Start From icon button remains a normalized root draft", () => {
+  const entry = getStyleLabBuilderLibraryEntry("primitive.icon-button.default")!;
+  const started = entry.createDraft();
+  assert.deepEqual(started, normalizeStyleLabBuilderDraft(started));
+  assert.equal(started.nodes[0]?.id, STYLE_LAB_BUILDER_ROOT_ID);
+  assert.equal(started.nodes[0]?.type, "container");
+  assert.equal(getStyleLabBuilderChildren(started, STYLE_LAB_BUILDER_ROOT_ID)[0]?.type, "icon-button");
+});
+
+test("inserted atomic items remain reorderable in Row and Grid parents", () => {
+  for (const layout of ["row", "grid"] as const) {
+    const base = normalizeStyleLabBuilderDraft({ nodes: [
+      { id: "root", type: "container", parentId: null, order: 0, styles: {} },
+      { id: "host", type: "container", parentId: "root", order: 0, styles: { layout, gridColumns: 12 } },
+    ] });
+    const entry = getStyleLabBuilderLibraryEntry("primitive.chip.progress")!;
+    const first = insertStyleLabBuilderDraft(base, entry.createDraft(), "host", entry.insertBehavior);
+    const second = insertStyleLabBuilderDraft(first.draft, entry.createDraft(), "host", entry.insertBehavior);
+    const firstId = first.insertedRootId!;
+    const secondId = second.insertedRootId!;
+    assert.deepEqual(getStyleLabBuilderChildren(second.draft, "host").map((node) => node.id), [firstId, secondId]);
+    const moved = moveStyleLabBuilderNode(second.draft, firstId, "later");
+    assert.deepEqual(getStyleLabBuilderChildren(moved, "host").map((node) => node.id), [secondId, firstId]);
+  }
+});
+
+test("Context Menu is structurally and semantically distinct from Dropdown Panel", () => {
+  const dropdown = getStyleLabBuilderLibraryEntry("primitive.dropdown-panel")!.createDraft();
+  const contextMenu = getStyleLabBuilderLibraryEntry("pattern.context-menu")!.createDraft();
+  const textValues = (draft: typeof dropdown) => draft.nodes.filter((node): node is Extract<typeof node, { type: "text" }> => node.type === "text").map((node) => node.text);
+  assert.notDeepEqual(contextMenu.nodes.map((node) => node.type), dropdown.nodes.map((node) => node.type));
+  assert.deepEqual(textValues(contextMenu).slice(0, 6), ["Folder actions", "Work", "Add Folder", "Move Folder", "Rename Folder", "Delete Folder"]);
+  assert.ok(textValues(dropdown).includes("Save Current View"));
+  assert.ok(!textValues(contextMenu).includes("Menu Item"));
+});
+
+test("ready production-derived entries avoid generic placeholder copy and expose representative use", () => {
+  const placeholderPattern = /^(?:Test Page|Card title|Panel subtitle|Menu Item|Section label|Section title|Supporting context|Container content|Option menu open)$/;
+  const entriesRequiringUse = [
+    "shell.page", "primitive.card", "primitive.panel", "module.task-detail-hero", "primitive.dropdown-panel", "primitive.dropdown-select",
+    "header.entity", "header.page-shell", "shell.body-card", "pattern.section-typography", "pattern.task-row", "pattern.context-menu",
+    "module.hud-workspace", "module.hud-widget", "module.hud-collapsed", "module.journal-entry-summary", "module.health-panel", "module.planning-panel", "navigation.bottom-dock",
+  ];
+  for (const id of entriesRequiringUse) {
+    const entry = getStyleLabBuilderLibraryEntry(id)!;
+    assert.equal(entry.coverageStatus, "ready");
+    assert.ok(entry.representativeUse?.trim(), `${id} should identify a representative use`);
+    for (const node of entry.createDraft().nodes) {
+      if (node.type === "text" || node.type === "chip") assert.doesNotMatch(node.text, placeholderPattern, `${id} contains placeholder copy`);
+    }
+  }
 });
 
 test("Start From produces normalized drafts and Insert preserves fresh IDs, hierarchy, spans, and selection root", () => {
@@ -170,5 +260,7 @@ test("Builder exposes separate local Start From UI and Insert UI actions and pre
   assert.match(builderSource, /Insert UI/);
   assert.match(builderSource, /Search UI Library/);
   assert.match(builderSource, /Source: \{selectedEntry\.sourceComponent\}/);
+  assert.match(builderSource, /Representative use:/);
+  assert.match(builderSource, /children only \(no transport Root Container\)/);
   assert.equal(STYLE_LAB_BUILDER_STORAGE_KEY, "adhdice-style-lab:builder-draft");
 });

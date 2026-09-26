@@ -537,6 +537,8 @@ export type StyleLabBuilderInsertResult = {
   insertedRootId: string | null;
 };
 
+export type StyleLabBuilderInsertBehavior = "root" | "children";
+
 function styleLabBuilderNodeDepth(draft: StyleLabBuilderDraft, id: string): number {
   let depth = 0;
   let current = getStyleLabBuilderNode(draft, id);
@@ -554,6 +556,7 @@ export function insertStyleLabBuilderDraft(
   draft: StyleLabBuilderDraft,
   sourceDraft: StyleLabBuilderDraft,
   selectedId: string | null | undefined,
+  insertBehavior: StyleLabBuilderInsertBehavior = "root",
 ): StyleLabBuilderInsertResult {
   const normalized = normalizeStyleLabBuilderDraft(draft);
   const source = normalizeStyleLabBuilderDraft(sourceDraft);
@@ -564,34 +567,51 @@ export function insertStyleLabBuilderDraft(
     ? Math.max(0, siblings.findIndex((node) => node.id === selected.id) + 1)
     : siblings.length;
   const sourceRoot = getStyleLabBuilderNode(source, STYLE_LAB_BUILDER_ROOT_ID);
-  if (!sourceRoot || normalized.nodes.length + source.nodes.length > STYLE_LAB_BUILDER_MAX_NODES) {
+  if (!sourceRoot) {
     return { draft: normalized, insertedRootId: null };
   }
 
-  const sourceMaxDepth = Math.max(...source.nodes.map((node) => styleLabBuilderNodeDepth(source, node.id)), 0);
+  const sourceChildren = getStyleLabBuilderChildren(source, sourceRoot.id);
+  const insertedSourceNodes = insertBehavior === "children"
+    ? source.nodes.filter((node) => node.id !== sourceRoot.id)
+    : source.nodes;
+  const insertedSourceRoots = insertBehavior === "children" ? sourceChildren : [sourceRoot];
+  if (insertedSourceRoots.length === 0 || normalized.nodes.length + insertedSourceNodes.length > STYLE_LAB_BUILDER_MAX_NODES) {
+    return { draft: normalized, insertedRootId: null };
+  }
+
+  const sourceMaxDepth = Math.max(...insertedSourceNodes.map((node) => styleLabBuilderNodeDepth(source, node.id)), 0);
   const destinationDepth = styleLabBuilderNodeDepth(normalized, parentId);
-  if (destinationDepth + 1 + sourceMaxDepth > STYLE_LAB_BUILDER_MAX_DEPTH) {
+  const insertedDepth = insertBehavior === "children" ? destinationDepth + sourceMaxDepth : destinationDepth + 1 + sourceMaxDepth;
+  if (insertedDepth > STYLE_LAB_BUILDER_MAX_DEPTH) {
     return { draft: normalized, insertedRootId: null };
   }
 
   const usedIds = new Set(normalized.nodes.map((node) => node.id));
   const idMap = new Map<string, string>();
-  for (const sourceNode of source.nodes) {
+  for (const sourceNode of insertedSourceNodes) {
     idMap.set(sourceNode.id, nextUniqueId(usedIds, `${sourceNode.id}-inserted`));
   }
 
-  const insertedRootId = idMap.get(sourceRoot.id) ?? null;
+  const insertedRootIds = insertedSourceRoots.map((sourceNode) => idMap.get(sourceNode.id)).filter((id): id is string => Boolean(id));
+  const insertedRootId = insertedRootIds[0] ?? null;
   if (!insertedRootId) return { draft: normalized, insertedRootId: null };
 
   const nextSiblingIds = siblings.map((node) => node.id);
-  nextSiblingIds.splice(insertAt, 0, insertedRootId);
+  nextSiblingIds.splice(insertAt, 0, ...insertedRootIds);
   const orderById = new Map(nextSiblingIds.map((id, index) => [id, index]));
   const existingNodes = normalized.nodes.map((node) => orderById.has(node.id) ? { ...node, order: orderById.get(node.id)! } : node);
-  const insertedNodes = source.nodes.map((sourceNode) => ({
+  const insertedNodes = insertedSourceNodes.map((sourceNode) => ({
     ...sourceNode,
     id: idMap.get(sourceNode.id)!,
     parentId: sourceNode.id === sourceRoot.id ? parentId : idMap.get(sourceNode.parentId ?? sourceRoot.id) ?? parentId,
-    order: sourceNode.id === sourceRoot.id ? insertAt : sourceNode.order,
+    order: sourceNode.id === sourceRoot.id
+      ? insertAt
+      : sourceNode.parentId === sourceRoot.id
+        ? insertBehavior === "children"
+          ? insertAt + insertedSourceRoots.findIndex((rootNode) => rootNode.id === sourceNode.id)
+          : sourceNode.order
+        : sourceNode.order,
   }));
   return {
     draft: normalizeStyleLabBuilderDraft({ ...normalized, nodes: [...existingNodes, ...insertedNodes] }),

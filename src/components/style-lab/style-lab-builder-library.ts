@@ -4,7 +4,7 @@ import {
   createChipLibraryDraft,
   createIconButtonLibraryDraft,
 } from "./style-lab-builder-library-adapters";
-import type { StyleLabBuilderDraft } from "./style-lab-builder-model";
+import type { StyleLabBuilderDraft, StyleLabBuilderInsertBehavior } from "./style-lab-builder-model";
 
 export const STYLE_LAB_BUILDER_LIBRARY_CATEGORIES = [
   "All",
@@ -41,18 +41,20 @@ export type StyleLabBuilderLibraryEntry = {
   createDraft: () => StyleLabBuilderDraft;
   description: string;
   id: string;
+  insertBehavior: StyleLabBuilderInsertBehavior;
   kind: StyleLabBuilderLibraryKind;
   label: string;
   legacyTemplateId?: string;
+  representativeUse?: string;
   sourceComponent: string;
   sourcePath: string;
   tags: readonly string[];
 };
 
 function entry(
-  value: Omit<StyleLabBuilderLibraryEntry, "coverageStatus"> & Partial<Pick<StyleLabBuilderLibraryEntry, "coverageStatus">>,
+  value: Omit<StyleLabBuilderLibraryEntry, "coverageStatus" | "insertBehavior"> & Partial<Pick<StyleLabBuilderLibraryEntry, "coverageStatus" | "insertBehavior">>,
 ): StyleLabBuilderLibraryEntry {
-  return { coverageStatus: "ready", ...value };
+  return { coverageStatus: "ready", insertBehavior: "root", ...value };
 }
 
 const primitiveCapabilities = ["container", "text"] as const satisfies readonly StyleLabBuilderLibraryCapability[];
@@ -79,6 +81,7 @@ const templateEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "PageShellHeader / PageShellBody",
     sourcePath: "src/components/task-app/page-shell-header.tsx",
     description: "A representative Page Shell header and body/card region using Builder nodes.",
+    representativeUse: "Focus page: subtitle \"Focus Timers\", title \"Focus\", and the \"Focus Timer Workspace\" shell.",
     tags: ["shell", "page", "header", "body", "starter"],
     capabilities: ["container", "text"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.pageShell,
@@ -92,6 +95,7 @@ const templateEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdCard",
     sourcePath: "src/components/ui-system/adhd-card.tsx",
     description: "A task-agnostic card surface with representative title, copy, and action content.",
+    representativeUse: "AchievementsPage TrackCard and HealthTodayTab snapshot cards; the primitive itself has no fixed copy.",
     tags: ["card", "surface", "task", "records", "notes"],
     capabilities: primitiveCapabilities,
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.card,
@@ -105,6 +109,7 @@ const templateEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdPanel",
     sourcePath: "src/components/ui-system/adhd-panel.tsx",
     description: "A calm panel surface with title, subtitle, and content regions.",
+    representativeUse: "AchievementsPage uses \"Achievement summary\" and \"Milestones\" panels; the primitive itself has no fixed copy.",
     tags: ["panel", "surface", "overlay", "inlay", "metadata"],
     capabilities: primitiveCapabilities,
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.panel,
@@ -144,6 +149,7 @@ const templateEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "TestIosTaskDetail / task detail visual language",
     sourcePath: "src/components/task-app/test-ios-task-detail.tsx",
     description: "A representative task title hero with date, time, and status chip.",
+    representativeUse: "Side Test iOS Task Detail: \"Today\", \"Call UGI\", \"Today · 2:00 PM\", and \"In Progress\".",
     tags: ["task", "detail", "hero", "status", "starter"],
     capabilities: ["container", "text", "chip"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.taskDetailHero,
@@ -175,9 +181,11 @@ const chipEntries: readonly StyleLabBuilderLibraryEntry[] = chipDefinitions.map(
   sourceComponent: "AdhdChip",
   sourcePath: "src/components/ui-system/adhd-chip.tsx",
   description: `Builder-safe AdhdChip preview using the supported ${tone} tone.`,
+  representativeUse: "Tasks page status/filter chips and Health Water quick-log controls; this primitive has no fixed source copy.",
   tags,
   aliases: ["chip", "status"],
   capabilities: ["container", "chip"],
+  insertBehavior: "children",
   createDraft: () => createChipLibraryDraft(tone, label),
 }));
 
@@ -198,8 +206,10 @@ const iconButtonEntries: readonly StyleLabBuilderLibraryEntry[] = iconButtonDefi
   sourceComponent: "AdhdIconButton",
   sourcePath: "src/components/ui-system/adhd-icon-button.tsx",
   description: `Builder-safe ${tone} AdhdIconButton with a representative action icon.`,
+  representativeUse: "Task Management row-toolbar actions and Health Journal question controls; this primitive has no fixed source copy.",
   tags: ["icon button", "button", tone, "action"],
   capabilities: ["container", "icon-button"],
+  insertBehavior: "children",
   createDraft: () => createIconButtonLibraryDraft(tone, "md", label),
 }));
 
@@ -212,8 +222,10 @@ const iconButtonSizeEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdIconButton",
     sourcePath: "src/components/ui-system/adhd-icon-button.tsx",
     description: "The small supported AdhdIconButton size for row and compact actions.",
+    representativeUse: "Task Management row-toolbar actions such as \"Previous task\" and \"Next task\".",
     tags: ["icon button", "button", "sm", "compact", "row toolbar"],
     capabilities: ["container", "icon-button"],
+    insertBehavior: "children",
     createDraft: () => createIconButtonLibraryDraft("default", "sm", "Compact Icon Button"),
   }),
   entry({
@@ -224,8 +236,10 @@ const iconButtonSizeEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdIconButton",
     sourcePath: "src/components/ui-system/adhd-icon-button.tsx",
     description: "The large supported AdhdIconButton size for a prominent action.",
+    representativeUse: "Style Lab inspection and task/calendar navigation use this AdhdIconButton family; the large size is a Builder variant with no fixed source copy.",
     tags: ["icon button", "button", "lg", "large", "action"],
     capabilities: ["container", "icon-button"],
+    insertBehavior: "children",
     createDraft: () => createIconButtonLibraryDraft("default", "lg", "Large Icon Button"),
   }),
 ];
@@ -239,6 +253,7 @@ const sharedPrimitiveEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdDropdownPanel",
     sourcePath: "src/components/ui-system/adhd-dropdown-panel.tsx",
     description: "An editable open-state dropdown shell with representative menu rows.",
+    representativeUse: "PageShellLayoutControls \"Save page layout\" menu and Tasks page column/shortcut menus; the shell has no fixed row copy.",
     tags: ["menu", "dropdown", "overlay", "open state"],
     capabilities: ["container", "text"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.dropdownPanel,
@@ -251,6 +266,7 @@ const sharedPrimitiveEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdDropdownSelect",
     sourcePath: "src/components/ui-system/adhd-dropdown-select.tsx",
     description: "A Builder representation of the selected and open visual state of a dropdown select.",
+    representativeUse: "Task Type Behavior Settings selectors and Health Journal \"Choose a Feeling\" options.",
     tags: ["input", "select", "dropdown", "menu"],
     capabilities: ["container", "text"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.dropdownSelect,
@@ -263,6 +279,7 @@ const sharedPrimitiveEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "EditableEntityHeaderTitle",
     sourcePath: "src/components/ui-system/editable-entity-header-title.tsx",
     description: "A representative editable entity context and title hierarchy without persistence behavior.",
+    representativeUse: "Task history header: task type label, editable value, and \"Name this Task\" placeholder.",
     tags: ["header", "entity", "title", "editable", "task"],
     capabilities: ["container", "text", "editable-preview"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.entityHeader,
@@ -275,6 +292,7 @@ const sharedPrimitiveEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "PageShellHeader",
     sourcePath: "src/components/task-app/page-shell-header.tsx",
     description: "A representative Page Shell subtitle, title, and action region.",
+    representativeUse: "Health page: \"Health, Diet, Fitness\" subtitle and \"Health\" title.",
     tags: ["header", "page", "shell", "navigation"],
     capabilities: ["container", "text", "icon-button"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.pageShellHeader,
@@ -287,6 +305,7 @@ const sharedPrimitiveEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "ReorderablePageShells",
     sourcePath: "src/components/ui-system/reorderable-page-shells.tsx",
     description: "A static Builder region for a Page Shell body and card-like content area.",
+    representativeUse: "Health Water panel: the \"Water Log\" PageShell body with Water cards and controls.",
     tags: ["shell", "body", "card", "page"],
     capabilities: ["container", "text"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.panel,
@@ -299,6 +318,7 @@ const sharedPrimitiveEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "Shared section typography",
     sourcePath: "src/components/style-lab/style-lab-registry.ts",
     description: "A reusable label, title, and supporting-text hierarchy.",
+    representativeUse: "Health Today uses the \"Quick Log\" section label and task surfaces use compact supporting context.",
     tags: ["section", "typography", "label", "title", "subtitle"],
     capabilities: ["container", "text"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.sectionTypography,
@@ -323,8 +343,10 @@ const sharedPrimitiveEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "StyleLabBuilder Divider",
     sourcePath: "src/components/style-lab/style-lab-builder-model.ts",
     description: "A reusable Builder Divider with the current supported orientation and width defaults.",
+    representativeUse: "Use as the compact separator between grouped controls; the Builder divider has no fixed source copy.",
     tags: ["node", "divider", "separator"],
     capabilities: ["container", "divider"],
+    insertBehavior: "children",
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.dividerNode,
   }),
 ];
@@ -338,6 +360,7 @@ const panelVariantEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdPanel",
     sourcePath: "src/components/ui-system/adhd-panel.tsx",
     description: "The floating AdhdPanel surface represented as editable Builder nodes.",
+    representativeUse: "Floating controls such as the PageShellLayoutControls \"Save page layout\" menu.",
     tags: ["panel", "floating", "overlay", "surface"],
     capabilities: primitiveCapabilities,
     createDraft: () => STYLE_LAB_BUILDER_ADAPTERS.panel("floating", "Floating Panel"),
@@ -350,6 +373,7 @@ const panelVariantEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "AdhdPanel",
     sourcePath: "src/components/ui-system/adhd-panel.tsx",
     description: "The lighter nested AdhdPanel surface represented as editable Builder nodes.",
+    representativeUse: "Health Library empty states and nested content regions; the variant has no fixed source copy.",
     tags: ["panel", "subpanel", "nested", "surface"],
     capabilities: primitiveCapabilities,
     createDraft: () => STYLE_LAB_BUILDER_ADAPTERS.panel("subpanel", "Subpanel"),
@@ -365,6 +389,7 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "TasksDenseList / tasks-list-adapter",
     sourcePath: "src/components/ui/tasks-dense-list.tsx",
     description: "A static representative task row with title, status, and row action regions.",
+    representativeUse: "Dense Tasks list: \"Call UGI\", \"In Progress\", and quick actions \"Plan for Today\", \"Add to Focus\", \"Move to Waiting\", and \"Move to Later\".",
     tags: ["task", "row", "status", "action"],
     capabilities: ["container", "text", "chip", "icon-button"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.taskRow,
@@ -376,7 +401,8 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     kind: "menu",
     sourceComponent: "TaskContentFolderContextMenu",
     sourcePath: "src/components/task-app/task-content-folder-context-menu.tsx",
-    description: "A static open-state context menu pattern with editable rows.",
+    description: "A folder-action context menu with its source-specific header, folder identity, and actions.",
+    representativeUse: "Folder actions for \"Work\": \"Add Folder\", \"Move Folder\", \"Rename Folder\", and \"Delete Folder\".",
     tags: ["menu", "context", "task", "folder"],
     capabilities: ["container", "text"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.contextMenu,
@@ -389,6 +415,7 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "HudCommandCenter",
     sourcePath: "src/components/task-app/hud-command-center.tsx",
     description: "A static representative HUD workspace with compact widget surfaces.",
+    representativeUse: "HUD workspace widgets use source labels such as \"Status\", \"Synced\", \"Task Counts\", and \"New Task\".",
     tags: ["hud", "workspace", "widget", "focus", "timer"],
     capabilities: ["container", "text", "chip", "grid"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.hudWorkspace,
@@ -401,6 +428,7 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "HUD widgets",
     sourcePath: "src/components/task-app/hud-command-center.tsx",
     description: "A small static widget surface for a label, value, and optional status chip.",
+    representativeUse: "HUD widget source uses \"Status\" / \"Synced\" and actions such as \"Quick Capture\".",
     tags: ["hud", "widget", "metric", "chip"],
     capabilities: ["container", "text", "chip"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.hudWidget,
@@ -412,7 +440,8 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     kind: "module",
     sourceComponent: "Collapsed HUD",
     sourcePath: "src/components/task-app/hud-command-center.tsx",
-    description: "A compact static HUD bar with brand, timer, and open action regions.",
+    description: "A compact static HUD bar with brand, refresh, notes, and expand action regions.",
+    representativeUse: "Collapsed HUD presentation keeps the ADHDice brand beside refresh and expand controls; the static Builder preview has no fixed timer copy.",
     tags: ["hud", "collapsed", "timer", "brand"],
     capabilities: ["container", "text", "chip", "icon-button"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.hudCollapsed,
@@ -424,7 +453,8 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     kind: "module",
     sourceComponent: "JournalEntrySummary",
     sourcePath: "src/components/task-app/journal-entry-summary.tsx",
-    description: "A safe mock Journal summary using Morning Check-In content.",
+    description: "A static Journal details summary using labels from the production entry renderer.",
+    representativeUse: "JournalEntrySummary renders \"Event · structured Journal details\" plus fields such as \"Energy\" and \"Focus\".",
     tags: ["journal", "entry", "summary", "check-in"],
     capabilities: ["container", "text", "chip"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.journalSummary,
@@ -437,6 +467,7 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "Health Water / Fitness panels",
     sourcePath: "src/components/task-app/health-water-panel.tsx",
     description: "A static Health panel using safe Water content without integration behavior.",
+    representativeUse: "Health Water panel: \"Water\", \"Today in cups\", \"Today in fl oz\", and \"Entry status\" controls.",
     tags: ["health", "water", "panel", "goal"],
     capabilities: ["container", "text", "chip"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.healthPanel,
@@ -449,6 +480,7 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "DailyPlanningPanel / FocusPlannerModal",
     sourcePath: "src/components/task-app/daily-planning-panel.tsx",
     description: "A static planning panel with safe representative copy and a focus action.",
+    representativeUse: "Home planning surface: \"Daily planning\", \"Pick a realistic today list, then protect it.\", and \"Open Focus Planner\".",
     tags: ["planning", "daily", "focus", "panel"],
     capabilities: ["container", "text", "chip"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.planningPanel,
@@ -461,6 +493,7 @@ const moduleEntries: readonly StyleLabBuilderLibraryEntry[] = [
     sourceComponent: "BottomDock",
     sourcePath: "src/components/task-app/bottom-dock.tsx",
     description: "A static navigation dock with representative Tasks, Journal, and Health items.",
+    representativeUse: "The app navigation dock routes among \"Tasks\", \"Journal\", and \"Health\".",
     tags: ["navigation", "dock", "tasks", "journal", "health"],
     capabilities: ["container", "chip"],
     createDraft: STYLE_LAB_BUILDER_ADAPTERS.bottomDock,

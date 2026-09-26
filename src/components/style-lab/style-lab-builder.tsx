@@ -502,6 +502,15 @@ function BuilderLibraryPreviewNode({ draft, node }: { draft: StyleLabBuilderDraf
   return <span className="truncate text-[10px] text-[#5f5876] dark:text-white/70">{node.text}</span>;
 }
 
+function BuilderLibraryPreview({ entry, draft }: { entry: StyleLabBuilderLibraryEntry; draft: StyleLabBuilderDraft }): ReactNode {
+  const root = getStyleLabBuilderNode(draft, STYLE_LAB_BUILDER_ROOT_ID);
+  if (!root) return null;
+  if (entry.insertBehavior === "children") {
+    return <div className="flex min-w-0 flex-wrap items-center gap-1.5">{getStyleLabBuilderChildren(draft, root.id).slice(0, 4).map((child) => <BuilderLibraryPreviewNode draft={draft} key={child.id} node={child} />)}</div>;
+  }
+  return <BuilderLibraryPreviewNode draft={draft} node={root} />;
+}
+
 function BuilderLibraryPanel({
   mode,
   onClose,
@@ -540,18 +549,17 @@ function BuilderLibraryPanel({
       <div className="mt-2 grid max-h-64 min-w-0 gap-1 overflow-y-auto pr-1 sm:grid-cols-2" role="listbox">
         {results.map((entry) => {
           const entryDraft = entry.createDraft();
-          const root = getStyleLabBuilderNode(entryDraft, STYLE_LAB_BUILDER_ROOT_ID)!;
           return <button aria-selected={selectedEntry?.id === entry.id} className={`grid min-w-0 gap-1 rounded-lg border p-2 text-left ${selectedEntry?.id === entry.id ? "border-[#b9a9ff] bg-[#f7f3ff] dark:border-[#6f57f6] dark:bg-white/[0.08]" : "border-[#eeeaf8] hover:border-[#d9cffb] dark:border-white/10 dark:hover:border-white/20"}`} key={entry.id} onClick={() => setSelectedId(entry.id)} role="option" type="button">
             <span className="flex min-w-0 items-center justify-between gap-2"><span className="truncate text-[11px] font-semibold text-[#4c4565] dark:text-white/80">{entry.label}</span><span className="shrink-0 text-[9px] text-[#9a91b1]">{entry.category}</span></span>
             <span className="truncate text-[9px] text-[#8d82a7] dark:text-white/45">{entry.sourceComponent}</span>
-            {root ? <BuilderLibraryPreviewNode draft={entryDraft} node={root} /> : null}
+            <BuilderLibraryPreview draft={entryDraft} entry={entry} />
           </button>;
         })}
         {results.length === 0 ? <p className="col-span-full rounded-lg border border-dashed border-[#e4dcfb] p-4 text-center text-[11px] text-[#8d82a7]">No UI Library items match this search.</p> : null}
       </div>
       {selectedEntry && selectedDraft ? (
         <div className="mt-2 grid gap-2 rounded-lg border border-[#e4dcfb] bg-[#fbfaff] p-2.5 dark:border-white/10 dark:bg-white/[0.04]">
-          <div className="grid gap-0.5"><p className="text-[11px] font-semibold text-[#4c4565] dark:text-white/80">{selectedEntry.label}</p><p className="text-[10px] text-[#8d82a7]">{selectedEntry.description}</p><p className="text-[9px] text-[#8d82a7] dark:text-white/45">Source: {selectedEntry.sourceComponent} · {selectedEntry.sourcePath}</p></div>
+          <div className="grid gap-0.5"><p className="text-[11px] font-semibold text-[#4c4565] dark:text-white/80">{selectedEntry.label}</p><p className="text-[10px] text-[#8d82a7]">{selectedEntry.description}</p><p className="text-[9px] text-[#8d82a7] dark:text-white/45">Source: {selectedEntry.sourceComponent} · {selectedEntry.sourcePath}</p>{selectedEntry.representativeUse ? <p className="text-[9px] text-[#8d82a7] dark:text-white/45">Representative use: {selectedEntry.representativeUse}</p> : null}<p className="text-[9px] text-[#8d82a7] dark:text-white/45">Insert behavior: {selectedEntry.insertBehavior === "children" ? "children only (no transport Root Container)" : "root Container"}</p></div>
           <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-[9px] text-[#8d82a7]">Tags: {selectedEntry.tags.join(", ")}</span><span className="flex gap-1.5"><AdhdChip onClick={() => onStart(selectedEntry)} tone="purple" type="button">Start From</AdhdChip><AdhdChip onClick={() => onInsert(selectedEntry)} type="button">Insert</AdhdChip></span></div>
         </div>
       ) : null}
@@ -1052,7 +1060,7 @@ function StyleLabBuilderWorkspace() {
   }
 
   function handleLibraryInsert(entry: StyleLabBuilderLibraryEntry) {
-    const result = insertStyleLabBuilderDraft(draft, entry.createDraft(), activeSelectedId);
+    const result = insertStyleLabBuilderDraft(draft, entry.createDraft(), activeSelectedId, entry.insertBehavior);
     if (!result.insertedRootId) {
       setCopyStatus("This UI cannot be inserted here without exceeding Builder limits.");
       return;
