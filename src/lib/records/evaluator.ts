@@ -1,12 +1,12 @@
-import type { FocusSession, Task, TaskHistory } from "@/lib/database.types";
-import { getRecordMonth, getRecordWeek, isConsecutiveRecordDate } from "@/lib/records/calendar";
+import type { FocusSession, Task, TaskHistory } from "../database.types.ts";
+import { getRecordMonth, getRecordWeek, isConsecutiveRecordDate } from "./calendar.ts";
 import {
   buildPeriodCandidateIdentity,
   buildRecordEventIdentity,
   buildRunCandidateIdentity,
   getTaskOccurrenceIdentity,
   stableRecordFingerprint,
-} from "@/lib/records/identity";
+} from "./identity.ts";
 import {
   RECORDS_RULES_VERSION,
   type DurableCurrentRecord,
@@ -17,8 +17,8 @@ import {
   type RecordUnit,
   type RecordsEvaluation,
   type RecordsEvaluationInput,
-} from "@/lib/records/types";
-import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
+} from "./types.ts";
+import { buildEffectiveTrackingExclusionSet } from "../task-tracking.ts";
 
 type TaskOccurrence = {
   canonicalIdentity: string;
@@ -72,19 +72,22 @@ export function collapseTaskHistory(input: Pick<RecordsEvaluationInput, "taskHis
     const current = authoritative.get(dedupeKey);
     if (!current || compareHistoryAuthority(current.history, history) < 0) authoritative.set(dedupeKey, { canonicalIdentity, history, task });
   }
-  return [...authoritative.values()].map(({ canonicalIdentity, history, task }) => ({
-    canonicalIdentity,
-    creditedDate: history.entry_date,
-    entityKind: task.parent_task_id ? "step" : "parent",
-    firstQualifiedAt: sourceTimestamp(history),
-    history,
-    identity: `task:${task.id}:${canonicalIdentity}`,
-    isOrdinarySuccess: isOrdinarySuccess(history),
-    isPermanentComplete: isPermanentComplete(history),
-    isRecurring: task.repeat_frequency !== "none",
-    orderedDate: history.occurrence_due_on ?? history.entry_date,
-    task,
-  })).sort((left, right) => left.orderedDate.localeCompare(right.orderedDate) || left.firstQualifiedAt.localeCompare(right.firstQualifiedAt) || left.identity.localeCompare(right.identity));
+  return [...authoritative.values()].map(({ canonicalIdentity, history, task }) => {
+    const entityKind: TaskOccurrence["entityKind"] = task.parent_task_id ? "step" : "parent";
+    return {
+      canonicalIdentity,
+      creditedDate: history.entry_date,
+      entityKind,
+      firstQualifiedAt: sourceTimestamp(history),
+      history,
+      identity: `task:${task.id}:${canonicalIdentity}`,
+      isOrdinarySuccess: isOrdinarySuccess(history),
+      isPermanentComplete: isPermanentComplete(history),
+      isRecurring: task.repeat_frequency !== "none",
+      orderedDate: history.occurrence_due_on ?? history.entry_date,
+      task,
+    };
+  }).sort((left, right) => left.orderedDate.localeCompare(right.orderedDate) || left.firstQualifiedAt.localeCompare(right.firstQualifiedAt) || left.identity.localeCompare(right.identity));
 }
 
 function evidenceForOccurrences(items: readonly TaskOccurrence[]) {

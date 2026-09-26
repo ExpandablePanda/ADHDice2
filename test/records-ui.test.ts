@@ -60,7 +60,7 @@ test("Records stays lazy, prevents overlap, and contains a migration-missing fal
 });
 
 test("Records evidence reuses the successful evaluation projection and opens through TaskApp", () => {
-  assert.match(hook, /buildTaskEvidenceByRecordIdentity\(result\.evaluation\.currentRecords\)/);
+  assert.match(hook, /serverResult\.taskEvidenceByRecordIdentity/);
   assert.match(page, /onOpenTask: \(taskId: string\) => void/);
   assert.match(page, /onOpenTask=\{onOpenTask\}/);
   assert.match(records, /props\.onOpenTask\(taskId\)/);

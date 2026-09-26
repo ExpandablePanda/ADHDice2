@@ -1,5 +1,5 @@
-import { RECORD_METRICS, RECORDS_RULES_VERSION, type DurableCurrentRecord, type DurableRecordEvent, type RecordEvidence, type RecordMetricKey, type RecordsEvaluation } from "@/lib/records/types";
-import type { RecordsSourceState } from "@/lib/records/source-state";
+import { RECORD_METRICS, RECORDS_RULES_VERSION, type DurableCurrentRecord, type DurableRecordEvent, type RecordEvidence, type RecordMetricKey, type RecordsEvaluation } from "./types.ts";
+import type { RecordsSourceState } from "./source-state.ts";
 
 export const RECORDS_EVIDENCE_SCHEMA_VERSION = 2;
 export const RECORDS_MANIFEST_SCHEMA_VERSION = 1;

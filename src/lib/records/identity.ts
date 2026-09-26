@@ -1,5 +1,5 @@
-import type { Task, TaskHistory } from "@/lib/database.types";
-import { RECORDS_RULES_VERSION, type RecordMetricKey, type RecordScopeKind } from "@/lib/records/types";
+import type { Task, TaskHistory } from "../database.types.ts";
+import { RECORDS_RULES_VERSION, type RecordMetricKey, type RecordScopeKind } from "./types.ts";
 
 export function getTaskOccurrenceIdentity(history: Pick<TaskHistory, "entry_date" | "occurrence_key" | "task_id">, task: Pick<Task, "repeat_frequency"> | null) {
   const persisted = history.occurrence_key?.trim();

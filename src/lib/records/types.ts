@@ -1,4 +1,4 @@
-import type { FocusSession, Task, TaskHistory } from "@/lib/database.types";
+import type { FocusSession, Task, TaskHistory } from "../database.types.ts";
 import type {
   RecordEventKind,
   RecordMetricKey,

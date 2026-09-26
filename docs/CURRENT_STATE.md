@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.50`.
+- Current working app version: `7.15.51`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,27 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.51 Server-side Records recalculation
+
+Stale or explicitly refreshed Records now recalculate through the authenticated
+`records-recalculate` Supabase Edge Function. The function uses the caller's
+RLS-bound Supabase context, loads Tasks, canonical History facts, and Focus
+Sessions server-side, runs the existing TypeScript `evaluateRecords()` authority,
+fences source state and logical date before publication, and reuses the existing
+compact reconciliation begin/upload/finalize protocol. The browser receives only
+compact evaluator detail, then reloads persisted current Records and valid events;
+it no longer runs the bulk Records source loaders on the normal stale or refresh
+path. Busy/concurrent reconciliation remains retryable, and a failed Edge refresh
+retains the prior successful snapshot without falling back to browser bulk History.
+
+Records freshness now also requires the completed run's evaluated logical date to
+match the current logical date derived from the same timezone and day-start
+settings. This closes the rollover gap where a provisional open-day candidate
+became a durable closed-period candidate without any source-row change. No SQL
+schema patch was required. The new Edge Function must be deployed to the live
+Supabase project before this runtime path can succeed; no live deployment or
+browser/manual QA was performed by source checks.
 
 ## 2026-09-26 7.15.50 Complete lazy invalidated Record-event loading
 

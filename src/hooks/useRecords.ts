@@ -4,16 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import { getLogicalDayKey } from "@/lib/logical-day";
 import { RECORDS_RULES_VERSION, type PersistedRecordCurrent, type PersistedRecordEvent, type ProvisionalRecordCandidate } from "@/lib/records/types";
-import { buildTaskEvidenceByRecordIdentity, type RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
+import type { RecordTaskEvidenceByRecordIdentity } from "@/lib/records/evidence";
 import {
   isRecordsBusyError,
   isRecordsSetupError,
+  invokeRecordsRecalculation,
   loadInvalidatedRecordEvents,
   loadLatestCompletedRecordsRun,
   loadRecordsSourceState,
   loadPersistedRecords,
   RECORDS_BUSY_MESSAGE,
-  runRecordsPipeline,
   runRecordsPipelineSingleFlight,
   type LatestCompletedRecordsRun,
 } from "@/lib/record-repository";
@@ -137,6 +137,12 @@ export function recordsRunMatchesSettings(run: LatestCompletedRecordsRun, settin
     && runLogicalDayStart === settingsLogicalDayStart;
 }
 
+export function recordsRunMatchesLogicalDate(run: LatestCompletedRecordsRun, settings: { logicalDayStart: string; timezone: string }, openLogicalDate: string) {
+  const evaluatedAtMs = Date.parse(run.evaluated_at);
+  if (!Number.isFinite(evaluatedAtMs)) return false;
+  return getLogicalDayKey(new Date(evaluatedAtMs), { dayStartTime: settings.logicalDayStart, timezone: settings.timezone }) === openLogicalDate;
+}
+
 function resolveSavedDetails(sessionKey: string, evaluatedAt: string) {
   const cached = readRecordsLocalDetailCache(getRecordsLocalStorage(), sessionKey, evaluatedAt);
   return cached
@@ -161,10 +167,13 @@ function mergeRecordEvents(current: PersistedRecordEvent[], additional: Persiste
 }
 
 function logRecordsOpenDecision(input: {
-  decision: "saved_source_fresh" | "source_changed" | "legacy_uncertified" | "explicit_refresh";
+  decision: "saved_source_fresh" | "source_changed" | "legacy_uncertified" | "explicit_refresh" | "server_recalculation";
+  edgeInvoked: boolean;
   fullPipelineRan: boolean;
   invalidatedEventsLoaded: boolean;
+  logicalDateMatched: boolean;
   owner: string;
+  persistedRowsReloaded: boolean;
   rulesMatch: boolean;
   sourceStateAvailable: boolean;
   sourceStateMatched: boolean;
@@ -184,6 +193,10 @@ function logRecordsOpenDecision(input: {
     invalidatedEventsLoaded: input.invalidatedEventsLoaded,
     decision: input.decision,
     fullPipelineRan: input.fullPipelineRan,
+    edgeInvoked: input.edgeInvoked,
+    logicalDateMatched: input.logicalDateMatched,
+    persistedRowsReloaded: input.persistedRowsReloaded,
+    browserBulkSourceLoad: false,
   });
 }
 
@@ -301,8 +314,11 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
       let currentSourceState: RecordsSourceState | null = null;
       let sourceStateAvailable = false;
       let sourceStateMatched = false;
+      let logicalDateMatched = false;
+      let edgeInvoked = false;
+      let persistedRowsReloaded = false;
       let rulesMatch = false;
-      let decision: "source_changed" | "legacy_uncertified" | "explicit_refresh" = explicitRefresh ? "explicit_refresh" : "legacy_uncertified";
+      let decision: "source_changed" | "legacy_uncertified" | "explicit_refresh" | "server_recalculation" = explicitRefresh ? "explicit_refresh" : "legacy_uncertified";
       try {
         if (!explicitRefresh) {
           try {
@@ -320,11 +336,14 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
           }
 
           rulesMatch = Boolean(durableRun && recordsRunMatchesSettings(durableRun, { logicalDayStart, timezone }));
+          logicalDateMatched = Boolean(durableRun && recordsRunMatchesLogicalDate(durableRun, { logicalDayStart, timezone }, openLogicalDate));
           sourceStateMatched = Boolean(currentSourceState && durableRun?.source_state && recordsSourceStatesMatch(durableRun.source_state, currentSourceState));
           const durableIsFresh = sourceStateAvailable
             ? Boolean(durableRun && rulesMatch && durableRun.source_state && sourceStateMatched)
+              && logicalDateMatched
             : Boolean(durableRun
               && rulesMatch
+              && logicalDateMatched
               && isRecordsFresh(durableRun.evaluated_at)
               && !isRecordsInvalidatedAfter(durableRun.evaluated_at, invalidatedAt));
           if (durableIsFresh) {
@@ -338,9 +357,12 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
             logRecordsOpenDecision({
               currentRowCount: persisted.currentRecords.length,
               decision: sourceStateAvailable ? "saved_source_fresh" : "legacy_uncertified",
+              edgeInvoked: false,
               fullPipelineRan: false,
               invalidatedEventsLoaded: invalidatedEventsLoadedKeyRef.current === sessionKey,
+              logicalDateMatched,
               owner: userId,
+              persistedRowsReloaded: true,
               rulesMatch,
               sourceStateAvailable,
               sourceStateMatched,
@@ -367,6 +389,7 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
           }
 
           decision = sourceStateAvailable && durableRun?.source_state ? "source_changed" : "legacy_uncertified";
+          decision = "server_recalculation";
 
           if (durableRun && !cached?.hasSuccessfulResult) {
             try {
@@ -389,36 +412,45 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
                 }));
               }
             } catch {
-              // The full pipeline remains the recovery path when the retained saved result cannot be loaded.
+              // The server recalculation remains authoritative when the retained saved result cannot be loaded.
             }
           }
         }
 
         if (generation === generationRef.current && latestOwnerRef.current === userId) {
-          setState((current) => ({ ...current, error: null, isLoading: !current.hasSuccessfulResult, isRecalculating: true, progress: "Preparing Records" }));
+          setState((current) => ({ ...current, error: null, isLoading: !current.hasSuccessfulResult, isRecalculating: true, progress: "Recalculating Records on server…" }));
         }
-        const evaluatedAt = new Date().toISOString();
-        const result = await runRecordsPipelineSingleFlight(sessionKey ?? userId, () => runRecordsPipeline(client, userId, { evaluatedAt, logicalDayStart, openLogicalDate, timezone }, (progress) => {
-          if (generation === generationRef.current && latestOwnerRef.current === userId) setState((current) => ({ ...current, progress }));
-        }));
+        edgeInvoked = true;
+        const serverResult = await runRecordsPipelineSingleFlight(sessionKey ?? userId, () => invokeRecordsRecalculation(client, { logicalDayStart, timezone }));
+        if (generation === generationRef.current && latestOwnerRef.current === userId) {
+          setState((current) => ({ ...current, progress: "Reloading saved Records…" }));
+        }
+        const persisted = await loadPersistedRecords(client, userId);
+        persistedRowsReloaded = true;
         const refreshResult = {
-          currentRecords: result.currentRecords,
-          evaluatedAt: result.evaluation.evaluatedAt,
-          events: result.events,
-          provisionalCandidates: result.evaluation.provisionalCandidates,
-          taskEvidenceByRecordIdentity: buildTaskEvidenceByRecordIdentity(result.evaluation.currentRecords),
-          warnings: result.evaluation.warnings,
+          currentRecords: persisted.currentRecords,
+          evaluatedAt: serverResult.evaluatedAt,
+          events: persisted.events,
+          provisionalCandidates: serverResult.provisionalCandidates,
+          taskEvidenceByRecordIdentity: serverResult.taskEvidenceByRecordIdentity,
+          warnings: serverResult.warnings,
         } satisfies RecordsSessionRefresh;
+        sourceStateAvailable = true;
+        sourceStateMatched = true;
+        logicalDateMatched = serverResult.logicalDate === openLogicalDate;
         logRecordsOpenDecision({
           currentRowCount: refreshResult.currentRecords.length,
           decision,
-          fullPipelineRan: true,
+          edgeInvoked: true,
+          fullPipelineRan: false,
           invalidatedEventsLoaded: false,
+          logicalDateMatched,
           owner: userId,
+          persistedRowsReloaded,
           rulesMatch,
-          sourceStateAvailable: sourceStateAvailable || Boolean(result.sourceState),
-          sourceStateMatched: sourceStateAvailable ? sourceStateMatched : Boolean(result.sourceState),
-          sourceState: result.sourceState,
+          sourceStateAvailable,
+          sourceStateMatched,
+          sourceState: serverResult.sourceState,
           validEventRowCount: refreshResult.events.filter((event) => event.validity_state === "valid").length,
         });
         if (sessionKey) {
@@ -448,6 +480,21 @@ export function useRecords({ active, client, logicalDayStart, timezone, userId }
           : setupRequired
             ? "Records storage is not installed for this environment yet."
             : (detail.message ?? "Records could not be recalculated.");
+        logRecordsOpenDecision({
+          currentRowCount: cached?.currentRecords.length ?? 0,
+          decision,
+          edgeInvoked,
+          fullPipelineRan: false,
+          invalidatedEventsLoaded: false,
+          logicalDateMatched,
+          owner: userId,
+          persistedRowsReloaded,
+          rulesMatch,
+          sourceStateAvailable,
+          sourceStateMatched,
+          sourceState: currentSourceState,
+          validEventRowCount: cached?.events.filter((event) => event.validity_state === "valid").length ?? 0,
+        });
         setState((current) => retainRecordsAfterRefreshFailure(current, {
           error: errorMessage,
           ownerUserId: userId,

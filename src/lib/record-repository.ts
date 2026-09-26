@@ -1,19 +1,45 @@
-import type { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { FocusSession, RecordReconcileRun, Task, TaskHistory } from "@/lib/database.types";
-import type { CanonicalTaskHistoryFact } from "@/lib/task-state-canonical/types";
-import { RECORDS_RULES_VERSION, type RecordsEvaluation, type PersistedRecordCurrent, type PersistedRecordEvent } from "@/lib/records/types";
-import { isRecordsSourceState, recordsSourceStatesMatch, type RecordsSourceState } from "@/lib/records/source-state";
-import { evaluateRecords } from "@/lib/records/evaluator";
-import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
+import type { FocusSession, RecordReconcileRun, Task, TaskHistory } from "./database.types.ts";
+import type { CanonicalTaskHistoryFact } from "./task-state-canonical/types.ts";
+import { RECORDS_RULES_VERSION, type RecordsEvaluation, type PersistedRecordCurrent, type PersistedRecordEvent } from "./records/types.ts";
+import { isRecordsSourceState, recordsSourceStatesMatch, type RecordsSourceState } from "./records/source-state.ts";
+import { evaluateRecords } from "./records/evaluator.ts";
+import type { RecordsRecalculationResponse } from "./records/recalculation.ts";
+import { mapCanonicalTaskHistoryFacts } from "./task-state-canonical/history-projection.ts";
 import {
   RECORDS_CHUNK_CLIENT_MAX_BYTES,
   recordsUploadEnvelope,
   serializeRecordsReconciliation,
   utf8Bytes,
   type RecordsReconciliationChunk,
-} from "@/lib/records/persistence";
+} from "./records/persistence.ts";
 
-export type RecordsClient = NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
+type RecordsErrorDetail = { code?: string; context?: unknown; details?: string; hint?: string; message?: string };
+
+type RecordsQueryResult = { data: unknown[] | null; error: RecordsErrorDetail | null };
+
+export type RecordsQueryBuilder = {
+  select(columns?: string): RecordsQueryBuilder;
+  eq(column: string, value: unknown): RecordsQueryBuilder;
+  is(column: string, value: null): RecordsQueryBuilder;
+  in(column: string, values: readonly unknown[]): RecordsQueryBuilder;
+  order(column: string, options?: { ascending?: boolean }): RecordsQueryBuilder;
+  range(from: number, to: number): Promise<RecordsQueryResult>;
+  then: PromiseLike<RecordsQueryResult>["then"];
+};
+
+export type RecordsRpcClient = {
+  rpc: (name: string, args?: Record<string, unknown>) => Promise<{ data: unknown; error: RecordsErrorDetail | null }>;
+};
+
+export type RecordsFunctionsClient = {
+  functions: {
+    invoke: (name: string, options: { body: unknown }) => Promise<{ data: unknown; error: RecordsErrorDetail | null }>;
+  };
+};
+
+export type RecordsClient = RecordsRpcClient & RecordsFunctionsClient & {
+  from: (relation: string) => RecordsQueryBuilder;
+};
 const PAGE_SIZE = 1000;
 const activeRecordsPipelines = new Map<string, Promise<unknown>>();
 export const RECORDS_BUSY_MESSAGE = "Records are already refreshing in another session.";
@@ -60,7 +86,6 @@ type RecordsRpcName =
   | "adhdice_upload_records_reconciliation_chunk"
   | "adhdice_finalize_records_reconciliation";
 type RecordsRpcStage = "Begin" | "Upload" | "Finalize";
-type RecordsErrorDetail = { code?: string; details?: string; hint?: string; message?: string };
 
 export class RecordsRpcContractError extends Error {
   readonly code = "RECORDS_RPC_SIGNATURE";
@@ -137,7 +162,7 @@ export function isRecordsBusyError(error: { code?: string } | null | undefined) 
   return error?.code === "RECORDS_BUSY";
 }
 
-export async function callRecordsRpc(client: Pick<RecordsClient, "rpc">, name: RecordsRpcName, pPayload: unknown, stage: RecordsRpcStage) {
+export async function callRecordsRpc(client: RecordsRpcClient, name: RecordsRpcName, pPayload: unknown, stage: RecordsRpcStage) {
   const response = await client.rpc(name, { p_payload: pPayload });
   if (response.error) {
     if (isRecordsRpcSignatureMismatch(response.error)) throw new RecordsRpcContractError(stage);
@@ -146,21 +171,28 @@ export async function callRecordsRpc(client: Pick<RecordsClient, "rpc">, name: R
   return response.data;
 }
 
-export async function loadRecordsTasks(client: RecordsClient, userId: string) {
+function recordsRpc(client: unknown, name: string, args?: Record<string, unknown>) {
+  return (client as RecordsRpcClient).rpc(name, args);
+}
+
+function recordsFrom(client: unknown, table: string) {
+  return (client as RecordsClient).from(table);
+}
+
+export async function loadRecordsTasks(client: unknown, userId: string) {
   const rows: Task[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await client.from("adhdice_clean_tasks").select("*").eq("user_id", userId).is("permanently_deleted_at", null).order("created_at", { ascending: true }).range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await recordsFrom(client, "adhdice_clean_tasks").select("*").eq("user_id", userId).is("permanently_deleted_at", null).order("created_at", { ascending: true }).range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...((data ?? []) as Task[]));
     if ((data?.length ?? 0) < PAGE_SIZE) return rows;
   }
 }
 
-export async function loadRecordsTaskHistory(client: RecordsClient, userId: string) {
+export async function loadRecordsTaskHistory(client: unknown, userId: string) {
   const rows: TaskHistory[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await client
-      .from("adhdice_task_history_facts")
+    const { data, error } = await recordsFrom(client, "adhdice_task_history_facts")
       .select("*")
       .eq("user_id", userId)
       .order("logical_date", { ascending: true })
@@ -173,17 +205,17 @@ export async function loadRecordsTaskHistory(client: RecordsClient, userId: stri
   }
 }
 
-export async function loadRecordsFocusSessions(client: RecordsClient, userId: string) {
+export async function loadRecordsFocusSessions(client: unknown, userId: string) {
   const rows: FocusSession[] = [];
   for (let from = 0; ; from += PAGE_SIZE) {
-    const { data, error } = await client.from("adhdice_focus_sessions").select("*").eq("user_id", userId).order("created_at", { ascending: true }).range(from, from + PAGE_SIZE - 1);
+    const { data, error } = await recordsFrom(client, "adhdice_focus_sessions").select("*").eq("user_id", userId).order("created_at", { ascending: true }).range(from, from + PAGE_SIZE - 1);
     if (error) throw error;
     rows.push(...((data ?? []) as FocusSession[]));
     if ((data?.length ?? 0) < PAGE_SIZE) return rows;
   }
 }
 
-export async function loadCompleteRecordsSources(client: RecordsClient, userId: string) {
+export async function loadCompleteRecordsSources(client: unknown, userId: string) {
   const tasks = await withRecordsStage("Task load", () => loadRecordsTasks(client, userId));
   const taskHistory = await withRecordsStage("Task History load", () => loadRecordsTaskHistory(client, userId));
   const focusSessions = await withRecordsStage("Focus Session load", () => loadRecordsFocusSessions(client, userId));
@@ -203,7 +235,7 @@ const SECTION_LABELS = {
 } as const;
 
 export async function reconcileRecords(
-  client: Pick<RecordsClient, "rpc">,
+  client: unknown,
   evaluation: RecordsEvaluation,
   timezone: string,
   logicalDayStart: string,
@@ -212,7 +244,8 @@ export async function reconcileRecords(
 ) {
   onProgress("Preparing Records");
   const serialized = await serializeRecordsReconciliation(evaluation, timezone, logicalDayStart, sourceState);
-  if (process.env.NODE_ENV === "development") {
+  const runtimeProcess = (globalThis as typeof globalThis & { process?: { env?: { NODE_ENV?: string } } }).process;
+  if (runtimeProcess?.env?.NODE_ENV === "development") {
     console.info("Records compact reconciliation", {
       totalCompactBytes: serialized.measurements.compactTotalBytes,
       chunkCount: serialized.measurements.totalChunks,
@@ -223,7 +256,7 @@ export async function reconcileRecords(
     });
   }
 
-  const begin = await callRecordsRpc(client, "adhdice_begin_records_reconciliation", serialized.manifest, "Begin") as RecordsBeginResult | null;
+  const begin = await callRecordsRpc(client as RecordsRpcClient, "adhdice_begin_records_reconciliation", serialized.manifest, "Begin") as RecordsBeginResult | null;
   if (begin?.status === "busy") throw new RecordsBusyError();
   if (!begin || (begin.status !== "ready" && begin.status !== "resume") || typeof begin.run_id !== "string") {
     throw new Error("Records reconciliation begin returned an invalid response.");
@@ -241,26 +274,26 @@ export async function reconcileRecords(
     if (requestBytes > RECORDS_CHUNK_CLIENT_MAX_BYTES) {
       throw new Error(`Records ${SECTION_LABELS[chunk.sectionKey]} chunk is ${requestBytes.toLocaleString()} bytes and exceeds the 750 KiB upload limit.`);
     }
-    const upload = await callRecordsRpc(client, "adhdice_upload_records_reconciliation_chunk", envelope, "Upload") as { status?: string } | null;
+    const upload = await callRecordsRpc(client as RecordsRpcClient, "adhdice_upload_records_reconciliation_chunk", envelope, "Upload") as { status?: string } | null;
     if (upload?.status !== "ok" && upload?.status !== "already_received") throw new Error("Records chunk upload returned an invalid response.");
   }
 
   onProgress("Finalizing Records");
-  const result = await callRecordsRpc(client, "adhdice_finalize_records_reconciliation", { run_id: begin.run_id, manifest_digest: serialized.manifest.manifest_digest }, "Finalize") as RecordsFinalizeResult | null;
+  const result = await callRecordsRpc(client as RecordsRpcClient, "adhdice_finalize_records_reconciliation", { run_id: begin.run_id, manifest_digest: serialized.manifest.manifest_digest }, "Finalize") as RecordsFinalizeResult | null;
   if (result?.status === "busy") throw new RecordsBusyError();
   if (result?.status !== "ok") throw new Error("Records reconciliation finalize returned an invalid response.");
   onProgress("Reloading Records");
   return { ...result, measurements: serialized.measurements };
 }
 
-export async function loadPersistedRecords(client: RecordsClient, userId: string) {
+export async function loadPersistedRecords(client: unknown, userId: string) {
   const currentRecords = await loadRecordsCurrent(client, userId);
   const events = await loadRecordEvents(client, userId);
   return { currentRecords, events };
 }
 
-export async function loadRecordsSourceState(client: Pick<RecordsClient, "rpc">): Promise<RecordsSourceState | null> {
-  const result = await client.rpc("adhdice_get_records_source_state");
+export async function loadRecordsSourceState(client: unknown): Promise<RecordsSourceState | null> {
+  const result = await recordsRpc(client, "adhdice_get_records_source_state");
   if (result.error) {
     if (isRecordsSourceStateUnavailableError(result.error)) return null;
     throw result.error;
@@ -269,8 +302,57 @@ export async function loadRecordsSourceState(client: Pick<RecordsClient, "rpc">)
   return isRecordsSourceState(row) ? row : null;
 }
 
-export async function loadLatestCompletedRecordsRun(client: Pick<RecordsClient, "rpc">, settings: { logicalDayStart: string; timezone: string }): Promise<LatestCompletedRecordsRun | null> {
-  const result = await client.rpc("adhdice_get_latest_completed_records_run", {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function isRecordsRecalculationResponse(value: unknown): value is RecordsRecalculationResponse {
+  if (!isRecord(value) || value.status !== "ok") return false;
+  return typeof value.evaluatedAt === "string"
+    && typeof value.logicalDate === "string"
+    && Number.isSafeInteger(value.currentCount)
+    && Number.isSafeInteger(value.eventCount)
+    && Number.isSafeInteger(value.retryCount)
+    && isRecordsSourceState(value.sourceState)
+    && Array.isArray(value.provisionalCandidates)
+    && Array.isArray(value.warnings)
+    && value.warnings.every((warning) => typeof warning === "string")
+    && isRecord(value.taskEvidenceByRecordIdentity)
+    && Object.values(value.taskEvidenceByRecordIdentity).every((items) => Array.isArray(items));
+}
+
+async function readRecordsFunctionError(error: RecordsErrorDetail | null, data: unknown) {
+  const direct = isRecord(data) && isRecord(data.error) ? data.error : null;
+  if (direct) return direct;
+  const context = error?.context;
+  if (context && typeof context === "object" && "json" in context && typeof context.json === "function") {
+    try {
+      const payload = await (context.json as () => Promise<unknown>)();
+      return isRecord(payload) && isRecord(payload.error) ? payload.error : null;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
+export async function invokeRecordsRecalculation(
+  client: unknown,
+  settings: { logicalDayStart: string; timezone: string },
+) {
+  const response = await (client as RecordsFunctionsClient).functions.invoke("records-recalculate", { body: settings });
+  if (response.error) {
+    const payload = await readRecordsFunctionError(response.error, response.data);
+    const error = new Error(typeof payload?.message === "string" ? payload.message : response.error.message ?? "Records recalculation failed.");
+    Object.assign(error, { code: typeof payload?.code === "string" ? payload.code : response.error.code });
+    throw error;
+  }
+  if (!isRecordsRecalculationResponse(response.data)) throw new Error("Records recalculation returned an invalid response.");
+  return response.data;
+}
+
+export async function loadLatestCompletedRecordsRun(client: unknown, settings: { logicalDayStart: string; timezone: string }): Promise<LatestCompletedRecordsRun | null> {
+  const result = await recordsRpc(client, "adhdice_get_latest_completed_records_run", {
     p_logical_day_start: settings.logicalDayStart,
     p_rules_version: RECORDS_RULES_VERSION,
     p_timezone: settings.timezone,
@@ -299,28 +381,29 @@ export async function loadLatestCompletedRecordsRun(client: Pick<RecordsClient, 
   };
 }
 
-export async function loadRecordsCurrent(client: RecordsClient, userId: string) {
+export async function loadRecordsCurrent(client: unknown, userId: string) {
   return withRecordsStage("Current Records load", async () => {
-    const result = await client.from("adhdice_record_current").select("*").eq("user_id", userId).eq("rules_version", "records-v1").order("metric_key", { ascending: true });
+    const result = await recordsFrom(client, "adhdice_record_current").select("*").eq("user_id", userId).eq("rules_version", "records-v1").order("metric_key", { ascending: true });
     if (result.error) throw result.error;
     return (result.data ?? []) as PersistedRecordCurrent[];
   });
 }
 
-export async function loadRecordEvents(client: RecordsClient, userId: string) {
+export function loadRecordEvents(client: RecordsClient, userId: string): Promise<PersistedRecordEvent[]>;
+export function loadRecordEvents(client: unknown, userId: string): Promise<PersistedRecordEvent[]>;
+export async function loadRecordEvents(client: unknown, userId: string) {
   return withRecordsStage("Record events load", async () => {
-    const result = await client.from("adhdice_record_events").select("*").eq("user_id", userId).eq("rules_version", "records-v1").eq("validity_state", "valid").order("credited_date", { ascending: false }).order("created_at", { ascending: false });
+    const result = await recordsFrom(client, "adhdice_record_events").select("*").eq("user_id", userId).eq("rules_version", "records-v1").eq("validity_state", "valid").order("credited_date", { ascending: false }).order("created_at", { ascending: false });
     if (result.error) throw result.error;
     return (result.data ?? []) as PersistedRecordEvent[];
   });
 }
 
-export async function loadInvalidatedRecordEvents(client: RecordsClient, userId: string) {
+export async function loadInvalidatedRecordEvents(client: unknown, userId: string) {
   return withRecordsStage("Record events load", async () => {
     const rows: PersistedRecordEvent[] = [];
     for (let from = 0; ; from += PAGE_SIZE) {
-      const result = await client
-        .from("adhdice_record_events")
+      const result = await recordsFrom(client, "adhdice_record_events")
         .select("*")
         .eq("user_id", userId)
         .eq("rules_version", "records-v1")
@@ -376,7 +459,7 @@ export function runRecordsPipelineSingleFlight<T>(userId: string, operation: () 
   return request;
 }
 
-export async function runRecordsPipeline(client: RecordsClient, userId: string, input: { evaluatedAt: string; logicalDayStart: string; openLogicalDate: string; timezone: string }, onProgress?: (progress: RecordsProgress) => void) {
+export async function runRecordsPipeline(client: unknown, userId: string, input: { evaluatedAt: string; logicalDayStart: string; openLogicalDate: string; timezone: string }, onProgress?: (progress: RecordsProgress) => void) {
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       return await executeRecordsPipeline({
