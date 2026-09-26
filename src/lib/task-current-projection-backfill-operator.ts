@@ -31,13 +31,15 @@ export type ProjectionBackfillOperatorProgress = {
 };
 
 export type ProjectionBackfillOperatorResult = {
+  startingCandidateCount: number | null;
   requestCount: number;
   batchCount: number;
   processedCount: number;
   writtenCount: number;
   failedCount: number;
   remainingCount: number | null;
-  stoppedReason: "completed" | "candidate_count_zero" | "partial_batch" | "failed_count" | "request_failed" | "count_failed" | "rollover_active" | "unmounted";
+  stoppedReason: "completed" | "candidate_count_zero" | "partial_batch" | "failed_count" | "request_failed" | "count_failed" | "rollover_active" | "unmounted" | "max_batches";
+  shouldContinueBecameFalse: boolean;
   errorMessage: string | null;
 };
 
@@ -87,17 +89,25 @@ async function runCurrentProjectionBackfillBatches(
   let processedCount = 0;
   let writtenCount = 0;
   let failedCount = 0;
+  let startingCandidateCount: number | null = null;
   let remainingCount: number | null = null;
   let afterTaskId: string | null = null;
   let stoppedReason: ProjectionBackfillOperatorResult["stoppedReason"] = "completed";
+  let shouldContinueBecameFalse = false;
   let errorMessage: string | null = null;
+
+  function canContinue() {
+    const result = shouldContinue();
+    if (!result) shouldContinueBecameFalse = true;
+    return result;
+  }
 
   for (let batchIndex = 0; batchIndex < maxBatches; batchIndex += 1) {
     if (input.isRolloverActive?.()) {
       stoppedReason = "rollover_active";
       break;
     }
-    if (!shouldContinue()) {
+    if (!canContinue()) {
       stoppedReason = "unmounted";
       break;
     }
@@ -116,7 +126,7 @@ async function runCurrentProjectionBackfillBatches(
       break;
     }
 
-    if (!shouldContinue()) {
+    if (!canContinue()) {
       stoppedReason = "unmounted";
       break;
     }
@@ -132,8 +142,11 @@ async function runCurrentProjectionBackfillBatches(
     processedCount += batch.candidateCount;
     writtenCount += batch.writtenCount;
     failedCount += batch.failedCount;
+    if (startingCandidateCount === null) {
+      startingCandidateCount = batch.candidateCount + batch.remainingCount;
+    }
 
-    if (!shouldContinue()) {
+    if (!canContinue()) {
       stoppedReason = "unmounted";
       break;
     }
@@ -157,7 +170,12 @@ async function runCurrentProjectionBackfillBatches(
     }
   }
 
+  if (stoppedReason === "completed" && batchCount >= maxBatches) {
+    stoppedReason = "max_batches";
+  }
+
   return {
+    startingCandidateCount,
     requestCount,
     batchCount,
     processedCount,
@@ -165,8 +183,19 @@ async function runCurrentProjectionBackfillBatches(
     failedCount,
     remainingCount,
     stoppedReason,
+    shouldContinueBecameFalse,
     errorMessage,
   };
+}
+
+export function isCurrentProjectionLogicalDayRefreshComplete(result: ProjectionBackfillOperatorResult) {
+  return result.failedCount === 0
+    && result.remainingCount === 0
+    && !result.shouldContinueBecameFalse
+    && result.stoppedReason !== "request_failed"
+    && result.stoppedReason !== "count_failed"
+    && result.stoppedReason !== "rollover_active"
+    && result.stoppedReason !== "unmounted";
 }
 
 export async function runCurrentProjectionBackfillOperator(input: ProjectionBackfillOperatorInput) {

@@ -172,7 +172,7 @@ test("workspace ownership effect does not depend on active page navigation", asy
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
   assert.match(source, /activePageRef\.current = activePage/);
-  assert.match(source, /\}, \[currentUser\?\.id, behaviorSelectionStateRef, supabase, suppressCategoryReload\]\);/);
+  assert.match(source, /\}, \[currentUser\?\.id, supabase\]\);/);
   assert.doesNotMatch(source, /\}, \[activePage, currentUser\?\.id/);
 });
 

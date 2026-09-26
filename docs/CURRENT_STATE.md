@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.46`.
+- Current working app version: `7.15.47`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,42 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.47 Current Projection logical-day refresh completion repair
+
+7.15.46 eliminated the startup projection-fallback History fanout: live QA
+proved zero `adhdice_task_history_facts` requests, no broad/full History
+request, and use of the trusted `task-current-projection-backfill` Edge
+rebuild path. The SQL candidate population and keyset cursor progressed
+correctly, but the client refresh stopped after ten successful ten-row
+batches, leaving candidates above the highest rebuilt ID.
+
+The exact cancellation mechanism was the refresh's ownership by the local
+`useWorkspaceData` owner-effect lifetime. Its `shouldContinue()` fence used
+that effect's `isActive` flag, captured `workspaceGeneration`, and current
+logical day; cleanup also cleared the single-flight refresh refs. The effect
+restart boundary included mutable ref identities for behavior selections and
+focus-category suppression, so a non-owner startup/render replacement could
+make the in-progress refresh look unmounted even though the authenticated
+owner and logical day were unchanged. This was a client cancellation, not a
+pagination, candidate-SQL, or Edge failure.
+
+7.15.47 keeps the owner, logical-day, genuine-unmount, and real workspace
+generation fences, but makes the owner effect restart only on the actual
+Supabase client/auth-owner boundary. Mutable behavior and suppression refs
+remain live through `.current` and no longer restart the long-lived owner
+effect. The trusted serial refresh now runs through the configured 50-batch
+cap, reports whether its continuation fence became false, marks an owner/day
+complete only when the trusted remaining candidate count reaches zero, and
+emits one compact terminal development diagnostic with owner/day, candidate,
+request, batch, processed, written, failed, remaining, stop-reason, fence,
+generation, active, and logical-day fields. Task IDs are not logged.
+
+Focused tests cover 424 candidates, 43 full batches, harmless startup state
+changes, owner/day/unmount/generation cancellation, completion gating,
+failed-count stopping, the 7.15.46 bounded History fallback, and the absence
+of automatic broad History hydration for Stats, Games, and Achievements. No
+SQL or Edge source changed, so no live deployment is required for 7.15.47.
 
 ## 2026-09-26 7.15.46 Current Projection logical-day rollover repair
 

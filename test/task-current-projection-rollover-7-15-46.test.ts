@@ -218,7 +218,7 @@ test("fallback diagnostics expose counts rather than Task ID dumps", () => {
   assert.match(workspaceSource, /history_semantic_fallback_batch_requested/);
   assert.match(workspaceSource, /requestBatchCount/);
   assert.match(workspaceSource, /taskCount/);
-  assert.match(workspaceSource, /current-projection-rollover/);
+  assert.match(workspaceSource, /current-projection-refresh/);
   assert.match(workspaceSource, /projectionRowsLoaded/);
 });
 

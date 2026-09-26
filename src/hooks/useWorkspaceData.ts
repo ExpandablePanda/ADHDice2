@@ -91,7 +91,9 @@ import {
   type CurrentTaskProjectionReadRow,
 } from "@/lib/task-current-projection-read";
 import {
+  isCurrentProjectionLogicalDayRefreshComplete,
   runCurrentProjectionLogicalDayRefresh,
+  type ProjectionBackfillOperatorResult,
   type ProjectionBackfillOperatorClient,
 } from "@/lib/task-current-projection-backfill-operator";
 import {
@@ -3155,13 +3157,21 @@ export function useWorkspaceData({
         setIsCurrentTaskProjectionLogicalDayRefreshPending(false);
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
           console.info(
-            `[workspace:current-projection-rollover] logicalDay=${logicalDate}`
+            `[workspace:current-projection-refresh] terminal owner=${userId}`
+              + ` logicalDay=${logicalDate}`
+              + " startingCandidateCount=0"
+              + " requestCount=0 batchCount=0 processedCount=0 writtenCount=0 failedCount=0 remainingCount=0"
+              + " stoppedReason=candidate_count_zero shouldContinueBecameFalse=false"
+              + ` startingWorkspaceGeneration=${workspaceGeneration}`
+              + ` currentWorkspaceGeneration=${workspaceGenerationRef.current}`
+              + ` isActive=${isActive}`
+              + " logicalDayChanged=false"
               + ` projectionRowsLoaded=${initialDiagnostics.projectionRowsLoaded}`
               + ` fresh=${initialDiagnostics.freshCount}`
               + ` staleDate=${initialDiagnostics.staleDateCount}`
               + ` repairRequired=${initialDiagnostics.repairRequiredCount}`
               + ` missing=${initialDiagnostics.missingCount}`
-              + " rebuildRequested=0 rebuildSucceeded=0 rebuildFailed=0",
+              + " reason=no-candidates",
           );
         }
         return;
@@ -3173,32 +3183,52 @@ export function useWorkspaceData({
       };
       setIsCurrentTaskProjectionLogicalDayRefreshPending(true);
       const refreshPromise = (async () => {
-        const result = await runCurrentProjectionLogicalDayRefresh({
-          client: client as unknown as ProjectionBackfillOperatorClient,
-          maxBatches: 50,
-          shouldContinue: () => isActive
-            && canApplyCoreWorkspaceResult()
-            && todayKeyRef.current === logicalDate,
-        });
-        if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;
+        let result: ProjectionBackfillOperatorResult | null = null;
+        let completed = false;
+        try {
+          result = await runCurrentProjectionLogicalDayRefresh({
+            client: client as unknown as ProjectionBackfillOperatorClient,
+            maxBatches: 50,
+            shouldContinue: () => isActive
+              && canApplyCoreWorkspaceResult()
+              && todayKeyRef.current === logicalDate,
+          });
+          if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;
 
-        await loadCurrentTaskProjectionSnapshot();
-        if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;
-        currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = refreshKey;
-        const finalDiagnostics = collectCurrentTaskProjectionLogicalDayDiagnostics(logicalDate);
-        if (isWorkspacePerformanceDiagnosticsEnabled()) {
-          console.info(
-            `[workspace:current-projection-rollover] reason=${reason}`
-              + ` logicalDay=${logicalDate}`
-              + ` projectionRowsLoaded=${finalDiagnostics.projectionRowsLoaded}`
-              + ` fresh=${finalDiagnostics.freshCount}`
-              + ` staleDate=${finalDiagnostics.staleDateCount}`
-              + ` repairRequired=${finalDiagnostics.repairRequiredCount}`
-              + ` missing=${finalDiagnostics.missingCount}`
-              + ` rebuildRequested=${result.processedCount}`
-              + ` rebuildSucceeded=${result.writtenCount}`
-              + ` rebuildFailed=${result.failedCount}`,
-          );
+          await loadCurrentTaskProjectionSnapshot();
+          if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;
+          completed = isCurrentProjectionLogicalDayRefreshComplete(result);
+          if (completed) {
+            currentTaskProjectionLogicalDayRefreshCompletedKeyRef.current = refreshKey;
+          }
+        } finally {
+          if (result && isWorkspacePerformanceDiagnosticsEnabled()) {
+            const finalDiagnostics = collectCurrentTaskProjectionLogicalDayDiagnostics(logicalDate);
+            console.info(
+              `[workspace:current-projection-refresh] terminal owner=${userId}`
+                + ` reason=${reason}`
+                + ` logicalDay=${logicalDate}`
+                + ` startingCandidateCount=${result.startingCandidateCount ?? "unknown"}`
+                + ` requestCount=${result.requestCount}`
+                + ` batchCount=${result.batchCount}`
+                + ` processedCount=${result.processedCount}`
+                + ` writtenCount=${result.writtenCount}`
+                + ` failedCount=${result.failedCount}`
+                + ` remainingCount=${result.remainingCount ?? "unknown"}`
+                + ` stoppedReason=${result.stoppedReason}`
+                + ` shouldContinueBecameFalse=${result.shouldContinueBecameFalse}`
+                + ` startingWorkspaceGeneration=${workspaceGeneration}`
+                + ` currentWorkspaceGeneration=${workspaceGenerationRef.current}`
+                + ` isActive=${isActive}`
+                + ` logicalDayChanged=${todayKeyRef.current !== logicalDate}`
+                + ` projectionRowsLoaded=${finalDiagnostics.projectionRowsLoaded}`
+                + ` fresh=${finalDiagnostics.freshCount}`
+                + ` staleDate=${finalDiagnostics.staleDateCount}`
+                + ` repairRequired=${finalDiagnostics.repairRequiredCount}`
+                + ` missing=${finalDiagnostics.missingCount}`
+                + ` completed=${completed}`,
+            );
+          }
         }
       })();
       refreshOwner.promise = refreshPromise;
@@ -4057,7 +4087,11 @@ export function useWorkspaceData({
         });
       });
     };
-  }, [currentUser?.id, behaviorSelectionStateRef, supabase, suppressCategoryReload]);
+    // Keep the long-lived owner effect stable across mutable ref/callback updates;
+    // those channels are intentionally read from .current while auth/client
+    // changes remain the ownership boundary that invalidates this workspace.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, supabase]);
 
   useEffect(() => {
     if (!currentUser) {

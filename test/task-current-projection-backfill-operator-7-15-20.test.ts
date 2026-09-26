@@ -72,7 +72,7 @@ test("50 operator makes exactly five sequential ten-candidate calls", async () =
   assert.equal(result.writtenCount, 50);
   assert.equal(result.failedCount, 0);
   assert.equal(result.remainingCount, 0);
-  assert.equal(result.stoppedReason, "completed");
+  assert.equal(result.stoppedReason, "max_batches");
   assert.deepEqual(fake.events, [
     "invoke:0:start", "invoke:0:end", "invoke:1:start", "invoke:1:end", "invoke:2:start", "invoke:2:end",
     "invoke:3:start", "invoke:3:end", "invoke:4:start", "invoke:4:end",
