@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.49`.
+- Current working app version: `7.15.50`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.50 Complete lazy invalidated Record-event loading
+
+The lazy `loadInvalidatedRecordEvents()` path now pages through the complete
+owner-scoped `records-v1` invalid/superseded event set in bounded 1,000-row
+ranges. It preserves the existing `credited_date DESC` / `created_at DESC`
+ordering and stops only after a short page. A later-page failure rejects the
+load before the hook marks `invalidatedEventsLoaded`, so the existing
+owner/session guards, single-flight request cleanup, error state, and retry
+behavior remain intact without merging partial rows. Normal Records opening
+still requests valid events only; no SQL, schema, or full Records
+reconciliation path changed. Browser/manual QA remains unverified by source
+checks.
 
 ## 2026-09-26 7.15.49 Records source-certified freshness and lazy invalidated events
 

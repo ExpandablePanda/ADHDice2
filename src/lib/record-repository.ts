@@ -317,9 +317,22 @@ export async function loadRecordEvents(client: RecordsClient, userId: string) {
 
 export async function loadInvalidatedRecordEvents(client: RecordsClient, userId: string) {
   return withRecordsStage("Record events load", async () => {
-    const result = await client.from("adhdice_record_events").select("*").eq("user_id", userId).eq("rules_version", "records-v1").in("validity_state", ["invalid", "superseded"]).order("credited_date", { ascending: false }).order("created_at", { ascending: false });
-    if (result.error) throw result.error;
-    return (result.data ?? []) as PersistedRecordEvent[];
+    const rows: PersistedRecordEvent[] = [];
+    for (let from = 0; ; from += PAGE_SIZE) {
+      const result = await client
+        .from("adhdice_record_events")
+        .select("*")
+        .eq("user_id", userId)
+        .eq("rules_version", "records-v1")
+        .in("validity_state", ["invalid", "superseded"])
+        .order("credited_date", { ascending: false })
+        .order("created_at", { ascending: false })
+        .range(from, from + PAGE_SIZE - 1);
+      if (result.error) throw result.error;
+      const page = (result.data ?? []) as PersistedRecordEvent[];
+      rows.push(...page);
+      if (page.length < PAGE_SIZE) return rows;
+    }
   });
 }
 
