@@ -1278,6 +1278,7 @@ export function TaskApp() {
     profile: healthProfile,
     recipes: healthRecipes,
     saveFavoriteFood,
+    updatePreviousFoodLogs: updateHealthPreviousFoodLogs,
     setFavoriteFoodStatus,
     saveRecipe: saveHealthRecipe,
     savedMeals: healthSavedMeals,
@@ -8791,6 +8792,7 @@ export function TaskApp() {
             profile={healthProfile}
             recipes={healthRecipes}
             saveFavoriteFood={saveFavoriteFood}
+            updatePreviousFoodLogs={updateHealthPreviousFoodLogs}
             setFavoriteFoodStatus={setFavoriteFoodStatus}
             saveRecipe={saveHealthRecipe}
             savedMeals={healthSavedMeals}

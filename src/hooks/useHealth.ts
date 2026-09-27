@@ -89,6 +89,12 @@ import {
   setHealthFoodFavoriteStatus,
 } from "@/lib/health-library";
 import {
+  buildHealthFoodHistoryMealEntryUpdate,
+  formatHealthFoodHistoryRepairResult,
+  selectHealthFoodMealEntriesBySourceId,
+  type HealthFoodHistoryRepairResult,
+} from "@/lib/health-meal-recalculation";
+import {
   reconcileHealthWorkouts,
   sortHealthWorkouts,
   validateHealthWorkoutEditableInput,
@@ -2614,6 +2620,108 @@ export function useHealth(
     return true;
   }
 
+  async function updatePreviousFoodLogs(food: HealthFoodLibraryItem): Promise<HealthFoodHistoryRepairResult> {
+    const entries = selectHealthFoodMealEntriesBySourceId(mealEntries, food.id);
+    const result: HealthFoodHistoryRepairResult = {
+      failed: 0,
+      failureMessages: [],
+      requested: entries.length,
+      skipped: 0,
+      updated: 0,
+    };
+    if (!userId || !profile || entries.length === 0) {
+      if (entries.length === 0) {
+        setMessage({ tone: "neutral", text: formatHealthFoodHistoryRepairResult(result) });
+      }
+      return result;
+    }
+    const operation = captureOperation();
+    if (!operation) {
+      return result;
+    }
+
+    healthFoodMutationRevisionRef.current += 1;
+    const updatedRows = new Map<string, HealthMealEntry>();
+    for (const entry of entries) {
+      let update: HealthMealEntryUpdate;
+      try {
+        update = buildHealthFoodHistoryMealEntryUpdate(food, entry);
+      } catch {
+        result.skipped += 1;
+        continue;
+      }
+
+      const now = new Date().toISOString();
+      let nextRow: HealthMealEntry = { ...entry, ...update, updated_at: now };
+      if (client && storageMode === "remote") {
+        let data: HealthMealEntry | null = null;
+        let error: { message?: string } | null = null;
+        try {
+          const response = await client
+            .from("adhdice_health_meal_entries")
+            .update(update)
+            .eq("id", entry.id)
+            .eq("user_id", userId)
+            .eq("source_food_id", food.id)
+            .select("*")
+            .single();
+          data = response.data;
+          error = response.error;
+        } catch (caughtError) {
+          error = { message: caughtError instanceof Error ? caughtError.message : String(caughtError) };
+        }
+        if (!isCurrentOperation(operation)) {
+          return result;
+        }
+        if (error || !data) {
+          result.failed += 1;
+          if (error?.message) {
+            result.failureMessages.push(error.message);
+          }
+          continue;
+        }
+        nextRow = data;
+      }
+      updatedRows.set(entry.id, nextRow);
+      result.updated += 1;
+    }
+
+    if (!isCurrentOperation(operation)) {
+      return result;
+    }
+    if (updatedRows.size > 0) {
+      const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
+        awards,
+        checkIns,
+        favorites,
+        importAudits,
+        mealEntries,
+        metricEntries,
+        profile,
+        recipes,
+        savedMeals,
+        symptoms,
+        symptomEntries,
+        waterEntries,
+        weightEntries,
+      });
+      applySnapshot(buildHealthSnapshot({
+        ...currentSnapshot,
+        mealEntries: currentSnapshot.mealEntries
+          .map((entry) => updatedRows.get(entry.id) ?? entry)
+          .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+      }));
+    }
+
+    const message = formatHealthFoodHistoryRepairResult(result);
+    if (result.skipped > 0 || result.failed > 0) {
+      setMessage({ tone: "warn", text: message });
+    } else {
+      setHealthSuccessMessage({ tone: "good", text: message });
+    }
+    return result;
+  }
+
   async function addMealPlanEntry(input: Omit<HealthMealPlanEntryInsert, "user_id">) {
     if (!userId || !profile) {
       return false;
@@ -2929,12 +3037,12 @@ export function useHealth(
     return true;
   }
 
-  async function saveFavoriteFood(input: Omit<HealthFoodLibraryItemInsert, "user_id">) {
+  async function saveFavoriteFood(input: Omit<HealthFoodLibraryItemInsert, "user_id">): Promise<HealthFoodLibraryItem | null> {
     if (!userId || !profile) {
-      return false;
+      return null;
     }
     const operation = captureOperation();
-    if (!operation) return false;
+    if (!operation) return null;
 
     const currentFavorites = healthSnapshotRef.current?.favorites ?? favorites;
     let normalizedInput = input;
@@ -2945,7 +3053,7 @@ export function useHealth(
     if (duplicateFavorite) {
       if (!normalizedInput.is_favorite || duplicateFavorite.is_favorite) {
         setMessage({ tone: "neutral", text: "That food is already in your library." });
-        return true;
+        return duplicateFavorite;
       }
       normalizedInput = { ...normalizedInput, id: duplicateFavorite.id };
     }
@@ -2998,10 +3106,10 @@ export function useHealth(
         })
         .select("*")
         .single();
-      if (!isCurrentOperation(operation)) return false;
+      if (!isCurrentOperation(operation)) return null;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
-        return false;
+        return null;
       }
       nextRow = data ? normalizeHealthFoodLibraryItem(data) : localRow;
     }
@@ -3023,13 +3131,13 @@ export function useHealth(
       ...currentSnapshot.favorites.filter((item) => item.id !== nextRow.id),
       nextRow,
     ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
-    if (!isCurrentOperation(operation)) return false;
+    if (!isCurrentOperation(operation)) return null;
     applySnapshot(buildHealthSnapshot({ ...currentSnapshot, favorites: nextFavorites }));
     setHealthSuccessMessage({
       tone: "good",
       text: nextRow.is_favorite ? "Saved to favorites." : "Custom food saved.",
     });
-    return true;
+    return nextRow;
   }
 
   async function setFavoriteFoodStatus(itemId: string, isFavorite: boolean) {
@@ -4029,6 +4137,7 @@ export function useHealth(
     addWeightEntry,
     updateWaterEntry,
     updateMealEntry,
+    updatePreviousFoodLogs,
     storageMode,
     waterEntries,
     workouts,
