@@ -5,14 +5,39 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.51`.
+- Current working app version: `7.15.52`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
-- visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+  - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.52 Workspace efficiency release gate
+
+This release adds the offline `scripts/audit-workspace-har.mjs` analyzer and
+the `npm run audit:workspace-har -- <path-to-har>` command. It reports compact
+request, transfer, safe JSON row-count, read-classification, Realtime-boundary,
+and architecture-violation evidence without emitting HAR URLs, headers,
+request bodies, or response bodies. It detects the hard migration violations
+for full workspace History, command-ledger bulk reads, per-Task History
+fanout, browser Records bulk recalculation, and full History for Stats, while
+classifying approved bounded/current projection, delta, Activity Summary,
+Records, and projection-rebuild reads.
+
+The durable manual matrix is
+`docs/architecture/WORKSPACE_EFFICIENCY_RELEASE_GATE.md`. It records the
+14 cold/warm/current-read, History, Records, tab-resume, Realtime, and sign-out
+scenarios plus architecture-based hard budgets. Numeric request and byte
+baselines remain pending Andrew's comparable manual HAR runs. No normal
+production data-loading behavior, SQL, schema, RLS, Edge Function, or
+Realtime subscription changed in this measurement-only release.
+
+`docs/WORKSPACE_LOADING_ARCHITECTURE.md` now reflects the inspected current
+source: ordinary startup uses current projections and does not start full
+canonical History synchronization; full History remains explicit/repair and
+historical evidence. Browser/manual QA remains reserved for Andrew.
 
 ## 2026-09-26 7.15.51 Server-side Records recalculation
 

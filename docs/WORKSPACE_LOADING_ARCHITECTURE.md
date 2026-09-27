@@ -1,7 +1,7 @@
 # Workspace Loading Architecture
 
-Last reviewed: 2026-09-23
-Role: qualified source diagnostic; transitional loading implementation and
+Last reviewed: 2026-09-26
+Role: qualified source diagnostic; current loading implementation and
 Phase 1E migration contract
 
 ## Purpose and evidence boundary
@@ -22,9 +22,9 @@ projections, profile/logical-day context, and each independently required domain
 It does not require a workspace-wide canonical History snapshot for current
 Active Status, current due, current streaks, or Task readiness.
 
-The current source still starts a full canonical History synchronization as
-secondary work. That path is transitional: it remains available for historical
-consumers, parity, migration, and explicit repair, but it is no longer a target
+The current source no longer starts a full canonical History synchronization as
+ordinary secondary startup work. Full History remains available for historical
+consumers, parity, migration, and explicit repair, but it is no longer a
 current-read authority and must not gain new current-surface dependencies.
 
 Current-projection readiness and historical History readiness are separate. A
@@ -43,32 +43,32 @@ older rows.
 
 ## Implemented source seams
 
-The current source and target boundary are intentionally shown separately.
+The current source and target boundary are intentionally shown together so
+source inspection can distinguish implemented behavior from the contract.
 
-**Transitional source path**
+**Current source path**
 
-- `useWorkspaceData.loadTaskHistory` already performs a paged workspace-wide
-  load and stores full rows.
-- The former bounded `loadCriticalTaskHistoryFacts`,
-  `src/lib/workspace-critical-task-facts.ts`, and
-  `selectCriticalTaskHistoryFacts` path have no production caller and were
-  removed. They remain retired and are not an alternate History authority.
+- `useWorkspaceData` critical startup reads canonical Task/entity rows,
+  schedule boundaries, profile/logical-day context, valid current projections,
+  and projection sync state. Focus History and other page-specific data remain
+  consumer-scoped.
+- `useWorkspaceData.loadTaskHistory` remains available for explicit full
+  History consumers, parity, migration, and repair; it is not a normal current
+  workspace startup dependency.
 - `loadTaskHistoryForTask` and modal task caches may remain as presentation and
   retry mechanics, but they must read/refresh the same canonical authority and
   must not become a current projection or private truth.
-- While this transitional source path remains, rollover History reads,
-  streak-summary fallback reads, Realtime refreshes, and History mutation
-  callbacks update the shared canonical snapshot or an explicitly consistent
-  replacement. They must not create a second partial authority. The Phase 1E
-  target replaces this broad current-read dependency with entity-scoped
-  projection reconciliation.
+- Rollover, Realtime, and mutation paths reconcile affected current projections
+  and domains. Bounded Home/date/entity reads and batched projection-repair
+  History reads remain explicit consumer or repair paths rather than a second
+  current-state authority.
 
 The current History sync path uses `task-history-sync-v1`, the user-wide sync
 watermark/epoch, revision-fenced deltas, and IndexedDB snapshot validation.
 These are canonical-fact transport and cache mechanisms, not current
 projection validity proof.
 
-**Phase 1E target path**
+**Current projection path**
 
 - `useWorkspaceData` reads valid current projections for ordinary Task surfaces
   and tracks projection readiness separately from historical readiness.
@@ -108,10 +108,12 @@ a direct normal-startup input to the current Task projection.
 ## Non-claims
 
 This document does not claim that browser startup is fast or that deployed
-Edge/RPC behavior matches source. The current source has not implemented the
-Phase 1E projection cutover. This ticket does not propose a runtime repository,
-SQL migration, generated type, or performance budget; those require separate
-approved implementation tickets.
+Edge/RPC behavior matches source. Source inspection confirms the current
+projection cutover wiring, but it does not establish browser/live parity or
+numeric request/byte budgets. Use
+[`architecture/WORKSPACE_EFFICIENCY_RELEASE_GATE.md`](architecture/WORKSPACE_EFFICIENCY_RELEASE_GATE.md)
+for that evidence. This document does not propose a runtime repository, SQL
+migration, or generated type.
 
 ## Related documents
 
