@@ -1,36 +1,19 @@
 "use client";
 
-import { ChevronDown, ChevronUp } from "lucide-react";
-import { useState, type ReactNode } from "react";
-import type { TaskDraft } from "./task-editor-model";
+import type { ReactNode } from "react";
 import { renderTaskStatusCircle } from "./task-status-ui";
 import { formatActualSecondsLabel, formatRepeatSummary, formatTaskMetaLine } from "@/lib/task-formatting";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { preserveCurrentTaskStatusForPresentation } from "@/lib/task-state-engine/action-authority";
 import { formatOptionLabel } from "@/lib/task-label-format";
-import { buildTaskPriorityUpdate, formatTaskPriorityLevel, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
+import { formatTaskPriorityLevel, getTaskPriorityLevel, getTaskPriorityToneClass } from "@/lib/task-priority";
 import { getNextPendingSubtask } from "@/lib/task-subtasks";
 import { isTaskUrgent } from "@/lib/task-buckets";
-import { formatDueLabel } from "@/lib/task-cockpit";
-import type { CustomBehaviorRuleset, Task, TaskEnergy, TaskStatus } from "@/lib/database.types";
+import type { CustomBehaviorRuleset, Task, TaskStatus } from "@/lib/database.types";
 import { TaskCurrentStreakChip } from "@/components/ui/task-table-primitives";
 import { getTaskTypeSurfaceClassName } from "@/lib/task-type-presentation";
 import { resolveTaskTypeSelectionOption } from "@/lib/task-type";
 
-type SelectProps<T extends string> = {
-  label: string;
-  onChange: (value: T) => void;
-  options: T[];
-  showLabel?: boolean;
-  value: T;
-};
-
-type Message = {
-  text: string;
-  tone: "neutral" | "good" | "warn";
-};
-
-const ENERGY_OPTIONS: TaskEnergy[] = ["none", "low", "medium", "high"];
 type CustomTaskTypeIdentity = Pick<CustomBehaviorRuleset, "id" | "name" | "task_type" | "icon_key" | "accent_key" | "description">;
 
 function taskSurfaceClassName(task: Pick<Task, "task_type" | "custom_ruleset_id">, customBehaviorRulesets: readonly CustomTaskTypeIdentity[]) {
@@ -93,159 +76,6 @@ function TaskSupplementalMeta({ nextSubtask, task }: { nextSubtask: Task | null;
         </a>
       ) : null}
     </div>
-  );
-}
-
-export function TaskComposerCardComponent({
-  onAdd,
-  SelectComponent,
-}: {
-  onAdd: (draft: { focusToday: boolean; values: TaskDraft }) => Promise<void>;
-  SelectComponent: <T extends string>(props: SelectProps<T>) => React.JSX.Element;
-}) {
-  const [title, setTitle] = useState("");
-  const [focusToday, setFocusToday] = useState(false);
-  const [priorityLevel, setPriorityLevel] = useState<TaskPriorityLevelOption>("0");
-  const [energy, setEnergy] = useState<TaskEnergy>("none");
-  const [dueOn, setDueOn] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-
-  return (
-    <section className="rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6">
-      <div className="mb-4">
-        <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">Quick Capture</h2>
-        <p className="mt-2 text-sm text-[#78829c] dark:text-white/55">Keep the task cards focused. Capture one next action, assign energy, and move on.</p>
-      </div>
-
-      <form
-        className="space-y-3"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const trimmedTitle = title.trim();
-          if (!trimmedTitle) return;
-          setIsSubmitting(true);
-          await onAdd({
-            focusToday,
-            values: {
-              ...buildTaskPriorityUpdate(Number.parseInt(priorityLevel, 10) as 0 | 1 | 2 | 3 | 4 | 5),
-              title: trimmedTitle,
-              energy,
-              due_on: dueOn || null,
-            },
-          });
-          setFocusToday(false);
-          setTitle("");
-          setDueOn("");
-          setIsSubmitting(false);
-        }}
-      >
-        <label className="grid gap-2">
-          <span className="text-sm font-semibold text-[#5f6983] dark:text-white/65">Task title</span>
-          <input className="h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30" onChange={(event) => setTitle(event.target.value)} placeholder="Drink water, clear email, write first paragraph..." value={title} />
-        </label>
-        <div className="grid gap-3 md:grid-cols-2">
-          <SelectComponent label="Priority" onChange={setPriorityLevel} options={[...TASK_PRIORITY_LEVEL_OPTIONS]} showLabel value={priorityLevel} />
-          <SelectComponent label="Energy" onChange={setEnergy} options={ENERGY_OPTIONS} showLabel value={energy} />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <button
-            className={`inline-flex items-center rounded-xl px-3 py-2 text-sm font-semibold transition ${focusToday
-              ? "bg-[#f0ebff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]"
-              : "bg-[#f3f4f8] text-[#5e6782] dark:bg-white/10 dark:text-white/70"}`}
-            onClick={() => setFocusToday((current) => !current)}
-            type="button"
-          >
-            Focus Today
-          </button>
-        </div>
-        <label className="grid gap-2">
-          <span className="text-sm font-semibold text-[#5f6983] dark:text-white/65">Due date</span>
-          <input className="h-14 w-full rounded-[1.25rem] px-4 text-lg outline-none bg-[#f7f5ff] text-[#1f2642] dark:bg-white/8 dark:text-white" onChange={(event) => setDueOn(event.target.value)} type="date" value={dueOn} />
-        </label>
-        <button className="ui-pill-button-strong-light w-full" disabled={isSubmitting} type="submit">Add Task</button>
-      </form>
-    </section>
-  );
-}
-
-export function SupportPanelComponent({ doneCount, lowEnergyTasks, message, onImport }: { doneCount: number; lowEnergyTasks: Task[]; message: Message | null; onImport: (lines: string[]) => Promise<void>; }) {
-  const [text, setText] = useState("");
-  const [isSubmitting, setIsSubmitting] = useState(false);
-  const lines = text.split("\n").map((line) => line.trim().replace(/^[-*]\s+/, "")).filter(Boolean);
-
-  return (
-    <div className="grid gap-5">
-      <section className="rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6">
-        <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">Low Energy Wins</h2>
-        <div className="mt-4 space-y-3">
-          {lowEnergyTasks.length === 0 ? <EmptyTaskState text="No low-energy tasks match the current filters." /> : null}
-          {lowEnergyTasks.map((task) => (
-            <div className="rounded-[1.25rem] px-4 py-3 bg-[#f8f5ff] dark:bg-white/8" key={task.id}>
-              <p className="text-base font-semibold text-[#26304c] dark:text-white">{task.title}</p>
-              <p className="mt-1 text-sm text-[#7d88a1] dark:text-white/55">{formatDueLabel(task.due_on)} / low effort</p>
-            </div>
-          ))}
-        </div>
-      </section>
-
-      <section className="rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6">
-        <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">Import List</h2>
-        <p className="mt-2 text-sm text-[#78829c] dark:text-white/55">Paste a rough list and turn it into calm, structured tasks.</p>
-
-        <form className="mt-4 space-y-3" onSubmit={async (event) => { event.preventDefault(); setIsSubmitting(true); await onImport(lines); setText(""); setIsSubmitting(false); }}>
-          <textarea className="min-h-36 w-full resize-y rounded-[1.25rem] px-4 py-4 text-base outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/8 dark:text-white dark:placeholder:text-white/30" onChange={(event) => setText(event.target.value)} placeholder={"Call dentist\nDrink water\nChoose dinner"} value={text} />
-          <button className="ui-pill-button-strong-light w-full" disabled={lines.length === 0 || isSubmitting} type="submit">Import {lines.length || ""}</button>
-        </form>
-
-        <p className="mt-3 text-sm text-[#8c94ac] dark:text-white/45">{message?.text}</p>
-      </section>
-
-      <section className="rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6">
-        <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/35">Completed</p>
-        <p className="mt-2 text-4xl font-black text-[#1f2746] dark:text-white">{doneCount}</p>
-      </section>
-    </div>
-  );
-}
-
-export function TaskLaneComponent({ count, currentStreakByTaskId, customBehaviorRulesets = [], defaultExpanded = false, onEditTask, subtasksByTaskId, title, tasks, tone }: { count: number; currentStreakByTaskId: Readonly<Record<string, number>>; customBehaviorRulesets?: readonly CustomTaskTypeIdentity[]; defaultExpanded?: boolean; onEditTask: (task: Task) => void; subtasksByTaskId: Record<string, Task[]>; title: string; tasks: Task[]; tone: "purple" | "soft"; }) {
-  const DEFAULT_VISIBLE_COUNT = 3;
-  const [isExpanded, setIsExpanded] = useState(defaultExpanded);
-  const visibleTasks = isExpanded ? tasks : tasks.slice(0, DEFAULT_VISIBLE_COUNT);
-  const hiddenCount = Math.max(0, tasks.length - visibleTasks.length);
-
-  return (
-    <section className="w-full overflow-hidden rounded-[2rem] border p-5 transition hover:-translate-y-0.5 border-[#ece8f8] bg-white shadow-[0_18px_50px_rgba(81,61,168,0.07)] dark:border-white/10 dark:bg-white/6">
-      <div className="flex min-w-0 items-center justify-between gap-3">
-        <h2 className="text-2xl font-black uppercase tracking-[0.08em] text-[#28304a] dark:text-white">{title}</h2>
-        <div className="flex items-center gap-2">
-          <span className={`shrink-0 rounded-full px-3 py-1 text-sm font-bold ${tone === "purple" ? "bg-[#f2edff] text-[#725af6] dark:bg-[#22193f] dark:text-[#cabfff]" : "bg-[#f6f7fb] text-[#6a738d] dark:bg-white/8 dark:text-white/65"}`}>{count}</span>
-          {tasks.length > DEFAULT_VISIBLE_COUNT ? <button aria-label={isExpanded ? `Collapse ${title}` : `Expand ${title}`} className="flex h-9 w-9 items-center justify-center rounded-full bg-[#f6f2ff] text-[#6f57f6] dark:bg-white/8 dark:text-[#cabfff]" onClick={() => setIsExpanded((prev) => !prev)} type="button">{isExpanded ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}</button> : null}
-        </div>
-      </div>
-      <div className="mt-4 space-y-3">
-        {tasks.length === 0 ? <EmptyTaskState text={`No tasks in ${title.toLowerCase()} right now.`} /> : null}
-        {visibleTasks.map((task, index) => (
-          <div className={`w-full overflow-hidden rounded-[1.25rem] border px-4 py-3 ${taskSurfaceClassName(task, customBehaviorRulesets)}`} key={task.id}>
-            <div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-              <div className="min-w-0 flex-1">
-                <button className="truncate text-left text-lg font-semibold text-[#27304c] dark:text-white" onClick={() => onEditTask(task)} type="button">{task.title}</button>
-                <div className="mt-1 flex flex-wrap items-center gap-2">
-                  <p className="text-sm text-[#7d88a1] dark:text-white/55">{formatTaskMetaLine(task)}</p>
-                  <TaskCurrentStreakChip currentStreak={currentStreakByTaskId[task.id] ?? 0} />
-                </div>
-                <TaskSupplementalMeta nextSubtask={getNextPendingSubtask(task.id, subtasksByTaskId)} task={task} />
-              </div>
-              <div className="flex items-center gap-2 sm:shrink-0">
-                <span className={`self-start rounded-full px-3 py-1 text-xs font-semibold ${index % 2 === 0 ? "bg-[#ede8ff] text-[#6f57f6] dark:bg-[#22193f] dark:text-[#cabfff]" : "bg-[#eef9f4] text-[#12a876] dark:bg-[#17362d] dark:text-[#7de4b8]"}`}>{index % 2 === 0 ? "Visible" : "Queued"}</span>
-                <button className="ui-pill-button-strong-light" onClick={() => onEditTask(task)} type="button">Edit</button>
-              </div>
-            </div>
-          </div>
-        ))}
-        {tasks.length > DEFAULT_VISIBLE_COUNT ? <button className="ui-pill-button-light w-full" onClick={() => setIsExpanded((prev) => !prev)} type="button">{isExpanded ? "Show fewer" : `Show ${hiddenCount} more`}</button> : null}
-      </div>
-    </section>
   );
 }
 

@@ -19,6 +19,7 @@ import {
 } from "@/lib/task-list-rail-placement";
 import type { TaskListRailItem } from "@/lib/database.types";
 import type { TaskListRailMutationGeneration } from "@/lib/task-list-rail-order";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 
 type Message = {
   text: string;
@@ -35,6 +36,7 @@ type Options = {
   placements: readonly TaskListRailItem[];
   refresh: () => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
+  invalidateTaskListDomainGeneration?: WorkspaceDomainMutationBarrier;
 };
 
 export function useTaskListFolderActions({
@@ -45,6 +47,7 @@ export function useTaskListFolderActions({
   placements,
   refresh,
   setMessage,
+  invalidateTaskListDomainGeneration = () => {},
 }: Options) {
   const tree = buildTaskListFolderTree(folders, lists);
   const railTree = buildCanonicalTaskListRailTree(lists, folders, placements);
@@ -60,6 +63,7 @@ export function useTaskListFolderActions({
       return false;
     }
     try {
+      invalidateTaskListDomainGeneration();
       await mutation();
       if (!isCurrentGeneration()) return false;
       await refresh();

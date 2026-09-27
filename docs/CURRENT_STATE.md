@@ -1,18 +1,1685 @@
 # Current State
 
-Last reviewed: 2026-09-21
+Last reviewed: 2026-09-27
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.14.46`.
-- Current release group: `7.14.x`.
+- Current working app version: `7.15.62`.
+- Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-27 7.15.62 Shared branch consolidation
+
+- Main hierarchy hotfix preserved.
+- Side features integrated.
+- 7.15.61 Supabase hardening preserved.
+- Ready for public main promotion and iOS sync.
+
+## 2026-09-27 7.15.61 Supabase scale hardening and refresh diet
+
+Task command Last Handled reads now use the owner-authenticated compact
+`adhdice_get_latest_manual_task_commands(uuid[])` RPC instead of the broad
+command-operation read. The RPC preserves the existing JavaScript qualifying
+command semantics and deterministic latest-action ordering. Task rows,
+current projections, latest schedule boundaries, pending reward items, Health
+historical collections, linked custom-food repair reads, and page-gated Focus
+History now use the shared fail-closed 1,000-row pagination primitive with
+deterministic tie-breakers. A full page always probes the next page, and a
+later-page error never becomes a partial authority.
+
+Resume/mutation workspace refreshes now reconcile Task authority without
+reflexively reloading unrelated secondary workspace domains; initial and
+explicit manual refresh retain the broad scope. Health repeat activation uses
+the current per-user remote authority when available, and Focus History remains
+outside startup core with a single-flight page-gated loader. The safe Trash
+fallback retains lightweight Task rows for existing Trash/Restore and
+relationship semantics, while excluding trashed IDs from current projections
+and schedule-boundary reads and leaving heavier Trash-only reads lazy.
+
+The source-only migration is
+`supabase/patch_supabase_scale_hardening_7_15_61.sql`; it adds the compact RPC,
+deterministic boundary ordering, the Health meal `(user_id, source_food_id)`
+index, and targeted initPlan RLS rewrites. It has not been applied to live
+Supabase. No canonical or audit-row retention cleanup was added. Read-only
+EXPLAIN comparison on the current project measured the broad command read at
+1,212 ms with 8,942 rows and the compact qualifying latest-per-Task shape at
+159 ms with 266 rows; the existing `(user_id, entity_id, created_at)` index
+was used, so no speculative command index was added. Journal branch overlap
+inspection found no shared Health/schema changes to merge.
+
+Focused pagination, source-contract, Task, reward, Health/Food, Focus, and
+refresh tests plus `git diff --check` are the source verification boundary.
+The repository typecheck still has unrelated pre-existing diagnostics;
+browser/manual QA, migration application, Supabase advisor changes, and any
+Edge deployment remain unverified.
+
+## 2026-09-27 7.15.58 Bounded Reports Task History and nutrition display cleanup
+
+Bounded Reports ranges now read canonical Task History through the authenticated
+`adhdice_get_report_task_history` SECURITY INVOKER RPC. The source read model
+receives the latest baseline fact before the selected range for each current
+Task, plus all facts inside the range, while All Available retains the existing
+full-history fallback. Report New Misses, Total Misses, hierarchy, and canonical
+History authority are unchanged. The SQL source is authored but has not been
+applied to Supabase, and the `report-read` Edge Function source change has not
+been deployed.
+
+Nutrition summary lines that are unavailable or format to zero are omitted;
+stored nutrition and Health values are unchanged. Focused report tests,
+targeted lint, relevant typecheck diagnostics, and `git diff --check` are the
+verification boundary. Browser/manual QA, live SQL application, Edge
+deployment, and broad regression checks remain unverified in this pass.
+
+## 2026-09-27 7.15.57 Report cleanup and duplicate request fix
+
+Reports now have one unified Markdown format. The Summary/Detailed chips, detail
+level API, current-progress snapshot, and milestone report sections were removed.
+Each selected date is represented in Daily Detail, with Period Summary and Period
+Insights covering Tasks, Focus, PATHS, On-Time, Food/Nutrition, Water, Fitness,
+Journal, Weight, Sleep, Achievements, and Records.
+
+The Report workspace now invokes the authenticated `report-read` Edge Function
+for the selected range instead of range-loading raw Task History facts and
+multiple full-row Health tables in the browser. The function reads narrow columns
+server-side and returns a compact model: canonical historical Task outcomes and
+continuous Missed backlog counts, individual Focus sessions and foods, daily
+health aggregates, partial nutrition coverage, selected-range Achievement and
+Record events, and explicit warnings for unavailable historical domains.
+
+PATHS has no persisted historical progress/read model in this repository, and
+On-Time persists the current plan rather than historical sessions; the report
+states both limitations instead of synthesizing evidence. No SQL migration was
+authored or applied. The new Edge Function source still requires the normal
+authorized Supabase deployment before the live report can use it. Focused
+unified-report tests, targeted lint, and `git diff --check` are the verification
+boundary; browser/manual QA, live deployment, and broad regression checks remain
+unverified in this pass.
+
+## 2026-09-26 7.15.55 Final startup-network correction
+
+Workspace startup now preserves the authenticated owner's in-flight startup
+registry entry across same-owner effect replay. User changes and sign-out still
+invalidate the previous owner, and the registry remains an in-flight sharing
+mechanism rather than a data cache.
+
+Focus runtime and counter snapshots now use explicit channel-generation,
+connection, hidden/offline, and freshness state. The first authenticated
+`SUBSCRIBED` hydrates once; duplicate notifications and immediate ordinary
+visibility, pageshow, online, and broadcast noise do not start another read.
+Actual reconnect/error recovery, bfcache restore, offline-to-online recovery,
+and a meaningful visibility resume remain eligible for one recovery snapshot.
+
+Pending reward startup applies the same lifecycle guard to its lightweight
+account-row synchronization. Pending reward item payloads remain lazy and are
+still loaded only when the reward bank opens. Task state, recurrence, reward
+calculation/claims, Realtime payload application, cross-device synchronization,
+the 7.15.54 latest-boundary RPC, SQL, and schema are unchanged.
+
+Focused workspace, Focus, sync, and pending-reward tests pass; targeted lint and
+`git diff --check` are the source verification boundary. No SQL or live
+Supabase deployment is required. Browser/manual QA remains Andrew-owned; the
+next manual check is one clean reload followed by live Supabase log
+verification.
+
+## 2026-09-26 7.15.54 Bulk latest Task schedule-boundary startup read
+
+The ordinary canonical Task startup snapshot, broad Task-row refresh, and
+targeted Task reconciliation now use one authenticated bulk
+`adhdice_get_latest_task_schedule_boundaries(uuid[])` RPC. The
+`SECURITY INVOKER` function explicitly scopes rows to `auth.uid()`, preserves
+the existing schedule-boundary table RLS, and returns at most one row per
+requested entity using descending `boundary_sequence` plus deterministic ID
+ordering. The old startup/reload all-history pagination and targeted
+per-Task request fanout are no longer used; historical consumers remain
+historical. The existing incomplete active-Task boundary safety condition and
+all Task State/projection semantics are unchanged.
+
+The SQL source is
+`supabase/patch_task_schedule_boundaries_latest_7_15_54.sql`; it has not been
+applied to live Supabase. Focused source, SQL-contract, schedule-projection,
+workspace, and Realtime tests are the verification boundary. Browser/manual
+startup request QA remains Andrew-owned and unverified here.
+
+## 2026-09-26 7.15.53 Startup network correction
+
+Focus startup now establishes each authenticated-owner Realtime channel before
+running one snapshot hydration on its first successful `SUBSCRIBED`; same-owner
+auth callbacks no longer rebuild the channels, and runtime/counter snapshot
+requests are single-flight. Later successful resubscriptions and authorized
+resume/reconnect triggers can perform one recovery refresh without blindly
+hydrating on error statuses.
+
+Pending reward startup now reads only the lightweight
+`adhdice_pending_reward_dice` account row. The unclaimed reward-item payload
+queue is stale-aware and single-flight, loading only when the user opens the
+pending reward bank. Claim and Realtime invalidation clear or stale the local
+queue without eagerly downloading the item table. No SQL or Supabase schema
+changed; browser/manual QA remains Andrew-owned and unverified here.
+
+## 2026-09-26 7.15.52 Workspace efficiency release gate
+
+This release adds the offline `scripts/audit-workspace-har.mjs` analyzer and
+the `npm run audit:workspace-har -- <path-to-har>` command. It reports compact
+request, transfer, safe JSON row-count, read-classification, Realtime-boundary,
+and architecture-violation evidence without emitting HAR URLs, headers,
+request bodies, or response bodies. It detects the hard migration violations
+for full workspace History, command-ledger bulk reads, per-Task History
+fanout, browser Records bulk recalculation, and full History for Stats, while
+classifying approved bounded/current projection, delta, Activity Summary,
+Records, and projection-rebuild reads.
+
+The durable manual matrix is
+`docs/architecture/WORKSPACE_EFFICIENCY_RELEASE_GATE.md`. It records the
+14 cold/warm/current-read, History, Records, tab-resume, Realtime, and sign-out
+scenarios plus architecture-based hard budgets. Numeric request and byte
+baselines remain pending Andrew's comparable manual HAR runs. No normal
+production data-loading behavior, SQL, schema, RLS, Edge Function, or
+Realtime subscription changed in this measurement-only release.
+
+`docs/WORKSPACE_LOADING_ARCHITECTURE.md` now reflects the inspected current
+source: ordinary startup uses current projections and does not start full
+canonical History synchronization; full History remains explicit/repair and
+historical evidence. Browser/manual QA remains reserved for Andrew.
+
+## 2026-09-26 7.15.51 Server-side Records recalculation
+
+Stale or explicitly refreshed Records now recalculate through the authenticated
+`records-recalculate` Supabase Edge Function. The function uses the caller's
+RLS-bound Supabase context, loads Tasks, canonical History facts, and Focus
+Sessions server-side, runs the existing TypeScript `evaluateRecords()` authority,
+fences source state and logical date before publication, and reuses the existing
+compact reconciliation begin/upload/finalize protocol. The browser receives only
+compact evaluator detail, then reloads persisted current Records and valid events;
+it no longer runs the bulk Records source loaders on the normal stale or refresh
+path. Busy/concurrent reconciliation remains retryable, and a failed Edge refresh
+retains the prior successful snapshot without falling back to browser bulk History.
+
+Records freshness now also requires the completed run's evaluated logical date to
+match the current logical date derived from the same timezone and day-start
+settings. This closes the rollover gap where a provisional open-day candidate
+became a durable closed-period candidate without any source-row change. No SQL
+schema patch was required. The new Edge Function must be deployed to the live
+Supabase project before this runtime path can succeed; no live deployment or
+browser/manual QA was performed by source checks.
+
+## 2026-09-26 7.15.50 Complete lazy invalidated Record-event loading
+
+The lazy `loadInvalidatedRecordEvents()` path now pages through the complete
+owner-scoped `records-v1` invalid/superseded event set in bounded 1,000-row
+ranges. It preserves the existing `credited_date DESC` / `created_at DESC`
+ordering and stops only after a short page. A later-page failure rejects the
+load before the hook marks `invalidatedEventsLoaded`, so the existing
+owner/session guards, single-flight request cleanup, error state, and retry
+behavior remain intact without merging partial rows. Normal Records opening
+still requests valid events only; no SQL, schema, or full Records
+reconciliation path changed. Browser/manual QA remains unverified by source
+checks.
+
+## 2026-09-26 7.15.49 Records source-certified freshness and lazy invalidated events
+
+Records previously treated a completed projection as fresh only for twelve
+hours (`RECORDS_AUTO_REFRESH_INTERVAL_MS`), with a newer local invalidation
+also forcing reconciliation.  Ordinary Records opening now obtains one
+owner-scoped `adhdice_get_records_source_state()` result and compares it with
+the source fence persisted on the latest completed run.  A matching
+`records-source-state-v1` fence remains authoritative regardless of elapsed
+wall-clock time; rules version, timezone, and logical-day settings must also
+match.  Legacy completed runs without a fence retain the twelve-hour fallback
+until one full reconciliation certifies them.
+
+The source contract contains the History `sync_epoch` and `current_revision`,
+the current Task row count and deterministic digest, and the Focus row count
+and deterministic digest.  Task hashing is limited to ID, parent hierarchy,
+title, repeat frequency, tracking exclusion, and current inclusion (excluding
+permanently deleted rows).  Focus hashing includes every mutable field used by
+Records evidence/evaluation: ID, category, title snapshot, session date,
+duration, started/ended timestamps, source, runtime session identity, and
+creation time.  Focus uses a digest because the table has no `updated_at` and
+rows can be inserted, edited, or deleted.
+
+Full reconciliation reads the fence before loading complete sources and again
+before publishing.  A changed fence is rejected and retried once; SQL
+finalization repeats the owner-scoped fence check and raises a retryable
+serialization error before any publication.  The source-only SQL artifact is
+`supabase/patch_records_source_freshness_7_15_49.sql`; it has not been applied
+to live Supabase.
+
+Normal persisted Records opening loads current rows plus only
+`validity_state = 'valid'` events.  Invalid and superseded events load only
+after the user enables `Show invalidated`, with owner/session single-flight
+guards.  Card previous-value calculations, compact evidence snapshots,
+local detailed-evidence caching, and provisional-record behavior remain
+unchanged.  Browser/manual QA remains unverified by source checks.
+
+## 2026-09-26 7.15.48 Home bounded current-day History read
+
+Home no longer waits for `isFullTaskHistoryLoaded` before rendering its
+`Finished Today` panel. The old dependency was the shared full canonical Task
+History snapshot, which Home did not load itself after the 7.15.35 lazy-History
+retirement and the 7.15.45 Task Activity Summary cutover. Home now uses one
+owner- and logical-day-scoped read of successful canonical facts from
+`adhdice_task_history_facts`, filtered to `done`, `did_my_best`, and `complete`.
+
+The canonical schema's unique `(user_id, entity_id, logical_date)` constraint
+means this current-day slice has at most one fact per Task/Step for the day;
+it is not complete semantic History and never sets full-History readiness. The
+runtime is owner/day/generation fenced, single-flight, cleared on sign-out,
+invalidated on logical-day change, refreshed on Home activation, History
+mutation, History Realtime, manual/resume refresh, and rollover/gap recovery.
+It retains same-owner/day rows on refresh failure and shows Home's compact
+retry state instead of invoking the full loader. Tracking exclusions, outcome
+counts, permanent Complete, and parent/Step record live values still flow
+through `buildHomeDailyProgress`; saved Record targets remain the separate
+`useHomeRecordTargets` pipeline. Full History remains lazy/explicit for
+Records reconciliation, mutation-required semantic reads, modal detail, and
+other historical consumers. Development-only shadow parity compares the
+bounded Home result with full History only when full History is already loaded.
+
+No SQL or Edge source changed, so no live deployment or migration is required
+for 7.15.48. Browser/manual QA remains unverified by source checks.
+
+## 2026-09-26 7.15.47 Current Projection logical-day refresh completion repair
+
+7.15.46 eliminated the startup projection-fallback History fanout: live QA
+proved zero `adhdice_task_history_facts` requests, no broad/full History
+request, and use of the trusted `task-current-projection-backfill` Edge
+rebuild path. The SQL candidate population and keyset cursor progressed
+correctly, but the client refresh stopped after ten successful ten-row
+batches, leaving candidates above the highest rebuilt ID.
+
+The exact cancellation mechanism was the refresh's ownership by the local
+`useWorkspaceData` owner-effect lifetime. Its `shouldContinue()` fence used
+that effect's `isActive` flag, captured `workspaceGeneration`, and current
+logical day; cleanup also cleared the single-flight refresh refs. The effect
+restart boundary included mutable ref identities for behavior selections and
+focus-category suppression, so a non-owner startup/render replacement could
+make the in-progress refresh look unmounted even though the authenticated
+owner and logical day were unchanged. This was a client cancellation, not a
+pagination, candidate-SQL, or Edge failure.
+
+7.15.47 keeps the owner, logical-day, genuine-unmount, and real workspace
+generation fences, but makes the owner effect restart only on the actual
+Supabase client/auth-owner boundary. Mutable behavior and suppression refs
+remain live through `.current` and no longer restart the long-lived owner
+effect. The trusted serial refresh now runs through the configured 50-batch
+cap, reports whether its continuation fence became false, marks an owner/day
+complete only when the trusted remaining candidate count reaches zero, and
+emits one compact terminal development diagnostic with owner/day, candidate,
+request, batch, processed, written, failed, remaining, stop-reason, fence,
+generation, active, and logical-day fields. Task IDs are not logged.
+
+Focused tests cover 424 candidates, 43 full batches, harmless startup state
+changes, owner/day/unmount/generation cancellation, completion gating,
+failed-count stopping, the 7.15.46 bounded History fallback, and the absence
+of automatic broad History hydration for Stats, Games, and Achievements. No
+SQL or Edge source changed, so no live deployment is required for 7.15.47.
+
+## 2026-09-26 7.15.46 Current Projection logical-day rollover repair
+
+The 7.15.45 projection fallback path correctly rejected valid rows whose
+`projected_logical_date` belonged to the prior logical day, but
+`TaskApp` immediately hydrated semantic History for every stale or missing
+Task. `useWorkspaceData` loaded those Tasks through independent
+`loadTaskHistoryForTask` calls, producing one
+`adhdice_task_history_facts?entity_id=eq.<task>` request per fallback Task.
+The projection freshness check was not changed: current-day status, due,
+handled-day, and streak fields remain usable only from a fresh trusted row.
+
+7.15.46 extends the existing service-role-only
+`task-current-projection-backfill` candidate RPC to include missing,
+`repair_required`, schema/algorithm-invalid, and projection rows whose
+`projected_logical_date` is not the owner profile's server-derived current
+logical date. The existing Edge function still calls the existing
+`rebuildCurrentTaskProjection()` authority and writer; no browser projection
+values are calculated or written. Startup and rollover reconciliation invoke
+one owner/generation/logical-day-fenced, single-flight logical-day refresh in
+serial ten-candidate Edge batches, capped at 50 batches, then consume one
+owner-scoped projection snapshot. A stale owner/day result is discarded.
+Fresh current-day rows are not rebuilt, and a completed owner/day population
+does not retrigger the refresh. Canonical Task and History rows are never
+mutated by this path.
+
+If a small remainder is still unavailable, multi-Task semantic History
+fallback now uses the existing canonical batched read pattern with bounded
+`.in("entity_id", batchTaskIds)` requests of 100 Task IDs. Results are mapped
+back per Task, errors remain per Task, and explicit one-Task History/detail
+reads keep their existing path. Development diagnostics report compact
+logical-day, projection, rebuild, and fallback batch counts without listing
+hundreds of IDs.
+
+The source SQL patch is
+`supabase/patch_task_current_projection_logical_day_refresh_7_15_46.sql`.
+It must be applied to the live Supabase project before manual rollover QA;
+the existing `task-current-projection-backfill` Edge function remains the
+trusted runtime boundary, so no new Edge source deployment is required by
+this patch. No SQL was applied and no Edge deployment or browser automation
+was performed for this source change. Stats, Games, Achievements, HUD, Home,
+Records, Realtime, recurrence, rewards, canonical History, and the 7.15.45
+Task Activity Summary read cutover remain unchanged.
+
+## 2026-09-26 7.15.45 Task Activity Summary Read Cutover
+
+7.15.44 proved parity between the deployed `adhdice_get_task_activity_summary(date)` RPC and the retained full-History Stats/Games semantics on real data. 7.15.45 makes that compact Task Activity Summary the normal read model for its covered global metrics: Stats uses server task counts, streak, best streak, and done rate; Games uses the intentionally unfiltered today completion count; and the HUD uses the summary global current streak.
+
+Stats, Games, and Achievements page entry no longer triggers broad canonical Task History hydration. The summary loads independently when the authenticated owner/runtime is ready, is fenced by owner, logical day, and workspace generation, single-flights concurrent requests, retains a same-owner/day last-known-good value across refresh failures, and refreshes through existing mutation, workspace refresh, rollover, Realtime reconciliation, and logical-day seams. No polling or new Realtime subscription was added.
+
+Canonical Task History remains authoritative evidence, and the general full-History loader remains available for explicit historical consumers. Home and Records remain separate future optimization seams. This release changes no SQL, schema, canonical History rows, Realtime architecture, task engine, recurrence, rewards, or achievement runtime architecture.
+
+## 2026-09-25 7.15.44 Server Task Activity Summary Foundation
+
+7.15.44 adds the source-only `adhdice_get_task_activity_summary(date)` RPC and
+typed client repository as a compact server read model over canonical Task
+History. It returns the contract version, as-of logical date, History sync
+epoch/current revision/protocol fence, tracked logged/completed/missed days,
+the exact logged-day done rate, current/best global streaks, seven deterministic
+recent successful History-row counts with zero filling, and the unfiltered
+successful-today count used by Games. The SQL uses `SECURITY INVOKER`, resolves
+the owner with `auth.uid()`, preserves authenticated-only execution, and does
+not return raw History rows.
+
+Canonical History remains authoritative. The existing full-History UI path and
+all Stats, Games, Achievements, HUD, and Home behavior remain authoritative and
+unchanged. While Stats or Games has complete legacy History available, the
+TaskApp requests one single-flight, generation-fenced shadow summary and logs
+concise `[task-activity-summary] loaded` / `parity` diagnostics only when
+workspace performance diagnostics are enabled. Parity compares the exact
+`filterTrackedTaskHistory(...)` and `computeTaskHistoryStats(...)` meanings,
+including logged-day completion, missed days, island-based current/best streak,
+seven recent successful row counts, and Games' intentionally unfiltered today
+count. A mismatch cannot change UI output.
+
+Tracking exclusions are derived from current, non-permanently-deleted Tasks by
+walking descendants from directly excluded Tasks with cycle termination. A
+missing ancestor does not exclude a Task, and History for an entity absent from
+the current Task collection remains included unless its ID is positively in the
+effective excluded set. The read model has no persisted aggregate table and
+adds no index; the live-shaped prototype benchmark remains approximately
+35 ms for roughly 17,800 canonical facts. A disposable local EXPLAIN ANALYZE
+with 17,800 generated History facts measured 11.704 ms; this is supporting
+fixture evidence, not a live deployment measurement. Achievements' workspace full-History
+trigger is identified as redundant but is not removed, and Games still has its
+one-number full-History dependency. Records' reconciliation pipeline and Home's
+legacy `Finished Today` detail dependency are separate deferred seams. The
+subsequent 7.15.45 read cutover is recorded above.
+
+The SQL patch `supabase/patch_task_activity_summary_7_15_44.sql` was reviewed
+and deployed successfully to the live Supabase project. Live verification
+confirmed `SECURITY INVOKER`, `STABLE`, authenticated-only execution with anon
+denied, authenticated owner access through RLS, and contract version
+`task-activity-summary-v1`. For logical date `2026-09-25`, the live response
+reported 129 tracked logged days, 119 completed days, 10 missed days, 92% done
+rate, current/best streak 113, recent successful counts `[16, 14, 40, 17, 7,
+2, 0]` for 09/19 through 09/25, unfiltered today count 0, History revision
+415, and protocol `task-history-sync-v1`.
+
+Manual Stats QA matched the retained legacy/full-History UI exactly: Today 0,
+This Week 96, Streak 113, Best Streak 113d, and Done Rate 92%. Stats shadow
+parity is PASS. The browser `[task-activity-summary] parity` diagnostic was
+not obtained because the shadow path intentionally waits for the retained
+full-History oracle and page entry became slow during that load; no 7.15.44
+architecture change was made to expose it. Repeated Supabase Realtime WebSocket
+failures remain a separate existing transport issue and are outside that
+release. The 7.15.44 summary was shadow-only; the deployed-RPC read cutover is
+recorded above as 7.15.45, with Home and Records still deferred.
+
+## 2026-09-25 7.15.43 History Summary Label Correction
+
+Task History uses the normal `Best streak` and `Logged days` labels when
+complete semantic History is ready or when the bounded detail window is ready
+and `canLoadOlderTaskHistory` is false. A ready window that can still load
+older History remains explicitly labeled `Window best streak` and `Window
+logged days`. This is a presentation-only completeness decision; it does not
+trigger a complete semantic History fetch or change the existing statistics,
+cache, mutation, or bounded-read paths.
+
+## 2026-09-25 7.15.42 Historical Task History Fact Preservation
+
+Manual QA reproduced a canonical History mutation regression: changing one
+past rolling-schedule date from Missed to Done explicitly deleted later
+persisted automatic Missed facts. The later dates then disappeared from
+Logged days and appeared Not Due, and the compatibility/current projection
+changed as though those historical facts had never existed.
+
+The root cause was the Task State Engine's dependent rolling automatic-Missed
+cleanup. A successful replacement on a rolling interval greater than one ran
+that cleanup even when the command planner had correctly marked the action as
+`historicalOverride: true`. `command-service.ts` converted those engine delete
+changes into `automaticHistoryDeleteIds`, and the canonical command persisted
+the deletes.
+
+The corrected invariant is local historical fact mutation: a historical
+replacement updates only the selected logical date; every later persisted
+canonical History fact remains authoritative, with its existing identity and
+revision, unless that later date is explicitly selected. Current Task state
+and Current Projection are recomputed from the full preserved canonical
+History. Current/live replacements retain the existing dependent cleanup
+semantics where they apply.
+
+The 7.15.41 bounded History architecture remains intact. Complete semantic
+History is still loaded for mutation preparation and correctness/fallback;
+bounded detail-window reads, independent cache state, Load Older, bounded
+Calendar override reads, Realtime cache-aware refresh, gap recovery, and
+projection fallback remain unchanged. No SQL, schema, index, RPC, or
+publication change was made.
+
+The known QA-affected Task's eight deleted facts (2026-09-16 through
+2026-09-23) were not repaired automatically. Existing replay is not safe for
+this case because the committed rollover identities are already recorded and
+the change ledger retains tombstones rather than the complete deleted row
+payload. No broad or direct repair SQL was run. A narrowly scoped canonical
+repair transaction is still required to restore the original fact identities,
+row revisions, provenance, recurrence metadata, and audit linkage after those
+original row values are recovered and independently reviewed.
+
+## 2026-09-24 7.15.39 Targeted Task Realtime Reconciliation
+
+The 7.15.38 browser QA is recorded as PASS: cross-tab Task Content Folder
+updates arrived instantly after the workspace Realtime publication contract
+repair. Task Realtime then had one remaining normal inefficiency: an
+`adhdice_clean_tasks` event called `reloadTaskRows()`, which loaded every
+visible Task, every schedule boundary for those Tasks, and replaced the full
+local Task array before considering projection reconciliation.
+
+Normal identified Task events now use an entity-scoped canonical reconciliation
+path. The client reads only the owner-filtered affected IDs from
+`adhdice_clean_tasks` with `permanently_deleted_at is null`, then reads the
+latest boundary for each affected active canonical Task using
+`boundary_sequence desc, id asc limit 1`. The event payload remains an
+invalidation signal; it is never merged as authoritative state. Existing
+canonical schedule projection and active-Task boundary completeness rules are
+preserved.
+
+Successful reads replace, insert, or remove only the affected Task entities,
+retain unrelated Task object identity and existing array positions, and let
+the existing derived hierarchy recompute from an updated `parent_task_id`.
+INSERT, metadata/status/canonical-revision updates, hierarchy moves, permanent
+deletion updates, and hard DELETE events all use this path. The source schema's
+parent foreign key remains `ON DELETE CASCADE`, so descendant DELETE events are
+handled independently as they arrive; the client does not guess descendants
+from a parent event. DEFAULT replica identity still means DELETE identity is
+recovered from `payload.old.id` when available.
+
+A bounded microtask coordinator deduplicates Task IDs, caps each batch at 50,
+and gives IDs arriving during an in-flight read one trailing pass. Workspace
+generation, mounted-owner, and unmount checks reject stale results. Existing
+pending local-mutation echo suppression remains before enqueueing, so a skipped
+initiating-client echo does not launch a targeted read while remote clients
+still reconcile normally.
+
+Missing required schedule boundaries are diagnosed without applying an
+incomplete Task and use the existing full canonical snapshot as a rare bounded
+fallback. Targeted network/read errors retain local Task data and do not imply
+deletion. Events without a recoverable ID are diagnosed and use the existing
+full snapshot fallback rather than guessing an entity. Current Projection
+reconciliation remains separate and revision-aware: it runs only after a
+successful authoritative Task result passes the existing remote-versus-local
+canonical revision safety checks, and is skipped for missing/deleted,
+stale/error, or unsafe revision outcomes.
+
+`loadCanonicalTaskSnapshot()` remains for initial/core bootstrap and the
+manual/resume broad core refreshes; `reloadTaskRows()` remains for rollover
+reconciliation and the rare targeted correctness fallbacks. No normal
+identified Task Realtime event loads the workspace-wide Task snapshot. No History, broad command-operation,
+occurrence, reward, Calendar override, profile, or unrelated projection read
+was added. No SQL, schema, RLS, or Realtime publication change was made.
+
+The next optimization after 7.15.39 is the separate Realtime connection
+reliability investigation observed during 7.15.37/7.15.38, including the
+transient simultaneous `CHANNEL_ERROR` transitions; Task reconciliation is
+not being broadened to compensate for that issue.
+
+## 2026-09-24 7.15.41 Bounded Task History Detail Reads
+
+The 7.15.40 Realtime gap-recovery browser QA is recorded as PASS. Tab B was
+manually disconnected, a Task was renamed in Tab A during the transport gap,
+and Tab B reconciled the Task, Current Projection, scoped workspace domains,
+already-loaded task History, and HUD after one coordinated recovery. Heartbeats
+resumed. Browser QA for this 7.15.41 source change remains Andrew-owned and is
+not claimed here.
+
+The exact bottleneck was the Task History Calendar modal's open path: it loaded
+the selected Task's complete lifetime canonical History with the owner/Task
+scope but no logical-date bounds, and loaded all active Calendar overrides for
+that Task. The ordinary Tasks Calendar was not a History-loading problem: it
+uses the current Task collection and `due_on` and remains untouched.
+
+7.15.41 preserves complete semantic Task History as a separate correctness
+cache and fallback authority for Current Projection fallback, legacy Task-state
+evaluation, rollover, and History mutation preparation. The modal now uses an
+independent task-scoped bounded historical-detail window cache with Task ID,
+loaded date range, canonical rows, status/error, workspace generation,
+in-flight request identity, and older-detail availability. Opening a modal is
+cache-first for an already-loaded range and does not initialize complete
+semantic History.
+
+The initial detail query preserves the existing Calendar envelope: about 140
+days backward and 42 days forward, including the existing week-boundary
+padding. Canonical facts use owner and entity filters plus
+`logical_date >= windowStart` and `logical_date <= windowEnd`, with the
+existing deterministic order. Active Calendar overrides use the same bounded
+owner/entity/`is_active`/logical-date query. Older detail is explicit and
+on-demand in immediately preceding bounded chunks of about 140 days; chunks
+merge without duplicate logical dates, preserve the selected date/month, and
+do not reread loaded ranges.
+
+When a bounded detail window can still load older History, Best streak and
+Logged days are presented as `Window best streak` and `Window logged days`.
+When that ready window proves there is no older History, it uses the normal
+all-time labels without initializing complete semantic History. Last Done and
+Current streak prefer fresh Current Projection/current-summary authority, and
+complete semantic History preserves the existing all-time calculation path. A
+History mutation explicitly prepares the complete semantic Task History
+snapshot when needed, then keeps the existing canonical command, clear/Not Due
+ordering, reconciliation, and detail-window refresh behavior unchanged.
+
+History Realtime is cache-aware: an event does not bootstrap History when no
+matching cache is loaded; a loaded detail window refreshes only when the event
+date is inside that window; a loaded complete semantic cache keeps its
+task-scoped reconciliation; and explicit full History retains its existing
+full synchronization/delta path. 7.15.40 gap recovery applies the same
+contract, refreshing complete semantic caches, bounded detail windows, or the
+full History consumer only when that consumer was already loaded.
+
+The live baseline recorded for this work was approximately 17,715 canonical
+History facts across 724 Tasks, 24.47 rows per Task on average, with a maximum
+of 92 rows for one Task; no Task exceeded 140 rows. There were 59 active
+Calendar overrides, at most 6 for one Task, and the earliest current canonical
+History date was 2026-05-19. Immediate savings are therefore modest; the
+architectural value is bounded future growth rather than a dramatic current
+benchmark claim. Existing indexes already support the bounded queries. No SQL,
+table, index, RPC, view, trigger, RLS, or Realtime publication change was
+made.
+
+The next optimization phase is separate: move Stats, Games, and Achievements
+away from raw complete History using appropriate server-side aggregates or
+projections.
+
+## 2026-09-24 7.15.40 Realtime Gap Recovery and Transport Diagnostics
+
+The 7.15.39 browser QA is recorded as PASS for Task metadata, canonical/status,
+hierarchy, INSERT, DELETE, and parent-cascade removal. A separate live Safari
+incident then showed the workspace, Task, and Current Projection channels all
+entering `CHANNEL_ERROR` at essentially the same time, followed about three
+seconds later by `SUBSCRIBED` on all channels. Supabase edge logs showed a new
+Realtime WebSocket with HTTP `101` at `2026-09-24T21:59:00.676Z`, without a
+matching 4xx, 5xx, or obvious quota/rate-limit response.
+
+The exact transport cause remains unproven. The confirmed application defect
+was that a previously healthy channel could resubscribe without treating the
+unavailable interval as an event-loss window, leaving state stale indefinitely
+when a database change occurred during the gap.
+
+7.15.40 adds one shared core gap coordinator for workspace, Task, and Current
+Projection. Initial `SUBSCRIBED` is healthy startup only. A later
+`CHANNEL_ERROR`, `TIMED_OUT`, or unexpected active-session `CLOSED` opens one
+generation with affected channels, timestamps, statuses, and sanitized
+subscription errors. Recovery waits until every affected channel is healthy
+again, deduplicates simultaneous callbacks, and is fenced by the mounted
+workspace/user generation. Expected cleanup, owner changes, and sign-out do not
+open a gap. The actual recovery order is canonical Task rows first, then a
+complete owner-filtered Current Projection snapshot, then the existing scoped
+Task List, Content Folder, and Focus domain coordinators, followed by already
+loaded Notes and History consumers. This order lets Focus mapping and projection
+freshness observe the restored Task authority before their catch-up reads.
+
+Normal healthy Task events remain on the 7.15.39 entity-scoped reconciliation
+path. Only a proven gap uses the existing broad canonical Task snapshot once
+per incident. Projection gap recovery uses the existing named-column,
+owner-filtered projection read/indexing path once; normal projection events
+remain bounded. Workspace recovery does not call the old broad core refresh.
+Notes remain lazy: unloaded Notes are not queried, while loaded Notes refresh
+once. Full History uses its existing cache/delta synchronization once; when
+only task-scoped History is loaded, only those loaded Task IDs refresh; an
+unloaded History consumer remains untouched. Events arriving during catch-up
+join or replay their authoritative scoped path after recovery rather than being
+discarded.
+
+The separate HUD Realtime audit found that its existing remote-event handler
+already re-reads authoritative HUD settings. It now records status/error
+diagnostics and performs that same authoritative read once when a previously
+healthy HUD channel resubscribes after a gap; HUD is not coupled to core
+workspace refreshes.
+
+The singleton browser Supabase client now records installed Realtime heartbeat
+statuses (`sent`, `ok`, `error`, `timeout`, `disconnected`) and optional
+latency in the bounded diagnostic buffer. Task and Projection subscription
+callbacks now retain sanitized `.subscribe(status, error)` details like the
+Workspace callback. Explicit `supabase.realtime.connect()` was not added:
+`realtime-js` 2.105.1 already performs automatic reconnect/rejoin, and a
+manual call could race that built-in backoff. Worker mode remains unchanged
+(`worker` is not enabled), and the `@supabase/supabase-js` dependency remains
+`^2.105.1`. No SQL, schema, RLS, publication, or Edge change was made.
+
+## 2026-09-24 7.15.38 Workspace Realtime Publication Contract Repair
+
+The 7.15.37 mutation-race browser QA is recorded as PASS: the initiating tab
+kept the renamed Content Folder, reload preserved the new value, and a remote
+tab saw the correct value after reload. Cross-tab Realtime remained broken
+through the bundled shared workspace channel. A clean Tab B session kept the
+workspace, Task, and Current Projection channels `SUBSCRIBED` without a
+`CHANNEL_ERROR`; a manually-created dedicated Content Folder channel using the
+same client, user, table, wildcard event, and `user_id` filter received the next
+`UPDATE`, while the bundled workspace channel emitted no Content Folder event,
+scoped refresh request, or scoped refresh start.
+
+The live publication audit found the exact contract defect: the workspace
+channel subscribed to `adhdice_task_focus_days`, but that table was missing
+from `supabase_realtime`. The same audit found the existing Notes and canonical
+History handlers were also absent from the live publication, so those two
+demonstrated active subscription mismatches are repaired in the same additive
+source migration. No table was removed or silently published only because it
+appeared in source; all ten entries are active shared workspace callbacks and
+are now the explicit publication-contract list.
+
+`supabase/patch_workspace_realtime_publication_7_15_38.sql` was applied to the
+authorized live ADHDice project and is recorded in live migration history. Its
+postcondition audit now reports all ten shared workspace tables published. The
+SQL checks publication membership before adding any missing table, tolerates
+already-published memberships, never recreates the publication, and does not
+change data, RLS, or domain behavior. Shared workspace callbacks now emit a
+bounded development diagnostic identifying the source table and event type
+before refresh logic; workspace `CHANNEL_ERROR` and `TIMED_OUT` status
+callbacks also retain the Supabase error argument in diagnostics without
+ordinary production-console noise.
+
+The shared multi-table workspace channel remains in place. Broad workspace
+refreshes were not restored, polling/timer fallback was not introduced, and
+the 7.15.37 Content Folder, Task List, Focus, core, owner, and trailing-refresh
+generation fences remain intact. The earlier simultaneous shared `CHANNEL_ERROR`
+observation remains a separate reliability issue. Task Realtime narrowing moves
+to `7.15.39`.
+
+## 2026-09-24 7.15.37 Scoped Realtime Local-Mutation Freshness Boundary
+
+Browser QA found a local Tab A regression after a Task Content Folder rename:
+Tab B received the committed name through Realtime, while an older Content
+Folder snapshot already in flight in Tab A later applied and restored the old
+name. The same source shape was present for Task List/membership/structure and
+Focus category/Task Focus Day snapshots: local mutations did not advance the
+domain generation captured by scoped or core secondary reads.
+
+The mutation-generation contract is now explicit. A local mutation advances its
+domain generation before its remote write or optimistic local state change.
+Every scoped and core domain snapshot captures that generation and may apply
+only while it is still current. A committed local result therefore remains
+authoritative against any read that began before the mutation. Create-and-move
+Folder rollback advances the same boundary before its compensating delete.
+Later Realtime events still advance the generation and schedule a newer scoped
+read, so post-commit server reconciliation remains enabled without arbitrary
+delays, broad refreshes, or a Realtime loop.
+
+The boundary covers Task Content Folder create, rename, icon update, move,
+delete, and create-and-move rollback; Task List definition and manual
+membership writes; Task List Folder/container/rail mutations and rail-placement
+reconciliation; and Focus category plus Task Focus Day writes and local
+migration writes. Core/manual/resume refreshes retain their domain generation
+checks, so a secondary result started before a local mutation cannot overwrite
+the committed mutation. Missing-table compatibility, optimistic/non-optimistic
+behavior, list/container/rail revisions, Focus category suppression and local
+persistence, and rollback behavior remain unchanged.
+
+The 7.15.36 domain-scoped Realtime architecture is preserved. The eight
+non-Task Realtime handlers still use grouped Task List, Content Folder, and
+Focus scoped refreshers; broad workspace Realtime refreshes were not restored.
+Task Realtime remains broad and its narrowing is deferred to `7.15.38`.
+
+Browser QA also observed simultaneous `CHANNEL_ERROR` transitions on workspace,
+Task, and Current Projection channels followed by successful reconnection. That
+connection-reliability observation is separate from this stale local overwrite
+fix and remains unresolved/deferred; no general WebSocket or Supabase
+publication change was made here.
+
+No SQL/schema/RLS or Edge deployment was performed for 7.15.37.
+
+## 2026-09-24 7.15.36 Domain-Scoped Workspace Realtime Refresh
+
+7.15.36 replaces the broad workspace refresh previously used by the eight
+non-Task workspace Realtime handlers with bounded domain snapshots. Task List
+events now refresh the grouped Task List domain: `adhdice_task_lists`,
+`adhdice_task_list_manual_memberships`, and the authoritative
+`loadTaskListFolders()` read of `adhdice_task_list_folders`,
+`adhdice_task_list_containers`, and `adhdice_task_list_rail_items`. Task
+Content Folder events refresh only `adhdice_task_content_folders`. Focus
+category and Task Focus Day events share a Focus snapshot of
+`adhdice_focus_categories` and `adhdice_task_focus_days`, using the current
+Task reference set for Focus-day mapping.
+
+Each scoped domain has bounded single-flight/coalescing behavior with one
+latest trailing refresh for an event burst. Owner, mounted-workspace, and
+domain-generation checks prevent stale results from applying. Task List
+missing-table compatibility, `taskListDataGeneration`, list/membership
+readiness, folder/list ordering and identity, mapper/reconciliation authority,
+Content Folder normalization, category merging and local persistence, and
+`suppressCategoryReload` remain intact.
+
+The broad paths retired here are only the eight handlers for those List,
+Content Folder, and Focus tables. Task Realtime still reloads the broad
+canonical Task snapshot and is explicitly deferred to the next ticket because
+its Task-row and schedule-boundary correctness surface is larger. Manual,
+resume, and mutation refreshes remain intentional workspace refreshes. Notes,
+History, and Current Projection Realtime remain scoped as before; ordinary
+startup remains Current Projection-led with lazy History from 7.15.35.
+
+No SQL/schema/RLS or Edge deployment was performed for 7.15.36.
+
+## 2026-09-24 7.15.35 Current Projection Certification + Lazy History Startup
+
+The Current Projection rollout is certified complete. Read-only live
+verification found `519/519` valid rows, all using schema
+`task-current-projection-schema-v2` and algorithm
+`task-current-projection-algorithm-v3`. Settled browser parity has zero active
+semantic mismatches. No canonical Task or History data was rewritten, and no
+Current Projection rows were rewritten by this ticket.
+
+7.15.35 retires the automatic broad History and current-summary bootstrap from
+ordinary workspace startup. Current Tasks/Home/Table/List state now boots from
+fresh Current Projections and projection-specific readiness. History remains
+lazy and on demand for historical consumers. Stale or missing projections
+retain task-scoped History, Calendar override, and command-operation fallback
+paths; one stale Task does not trigger a full-user History or broad
+command-operation load. Full History synchronization, cache, delta, and fence
+infrastructure remains available when a historical consumer explicitly asks
+for it.
+
+The completed certification supersedes the earlier `7.15.34` intermediate
+checkpoint (`fresh=47`, `fallback=472`), which remains below as historical
+rollout evidence only.
+
+## 2026-09-24 7.15.33 Final Current Projection Semantic Convergence
+
+This section records the pre-certification implementation checkpoint. Its
+rollout gate was subsequently completed and is superseded by the 7.15.35
+certification above.
+
+The four live-derived semantic shapes are locked in deterministic source
+fixtures. The shared canonical input path now preserves `scheduled_due_on` as
+date metadata and supplies occurrence identity only from actual canonical
+occurrence provenance. The ordinary History presentation mapper remains
+unchanged; the narrower Active Status adapter strips synthesized occurrence
+identity from canonical facts whose `occurrence_id` is null. Actual
+occurrence-backed facts retain their canonical identity. Canonical occurrence
+effective overrides are read into the same engine input, so the Current
+Projection builder and Active Status read use equivalent semantic evidence.
+
+The four root causes are now covered as follows:
+
+- The `efc9690e...` and `e1ab421e...` rolling Custom shapes exposed that an
+  explicitly supplied empty Calendar override array selected the replay
+  timeline while an omitted option did not. Empty `calendarOverrides: []` is
+  now neutral; a non-empty active override still has Calendar authority.
+- The `34559ec3...` fixed-weekday shape exposed metadata-only automatic Missed
+  facts being able to look occurrence-backed in the legacy transport. Their
+  scheduled dates remain historical metadata and cannot consume a canonical
+  occurrence cursor without provenance.
+- The `233e433a...` delayed shape exposed the authoritative effective cursor
+  being dropped when the delayed fact predated the latest schedule boundary.
+  An occurrence-backed canonical Delay/effective override now keeps the
+  current effective cursor at `2026-12-29` until superseded by canonical
+  evidence.
+
+Because these changes alter durable projection output, the schema remains V2
+but `CURRENT_TASK_PROJECTION_ALGORITHM_VERSION` is now V3. The source
+migration `patch_task_current_projection_v3_7_15_33` was applied without
+direct projection-row writes. The initial read-only baseline was 519 valid V2
+rows. During the rollout, an unrelated live canonical revision advanced and
+its existing invalidation trigger marked one row `repair_required`; no direct
+repair was performed. The current live pre-rebuild state is therefore 518
+valid V2 rows and one repair-required V2 row, all stale under V3 by contract.
+
+Trusted Edge deployment completed in dependency order:
+
+- `task-state-command`: ACTIVE v43,
+  `78f2482824b1bc51ccffc50e74e22e2a8a7d017f2504c1a31cd61f5195552490`.
+- `task-current-projection-backfill`: ACTIVE v7,
+  `97bb0c951a494eda1c4fcf75e0768aacb9b882c103c3c57ee57a5cf235f0a30b`.
+
+The existing authenticated backfill endpoint verified all four target IDs as
+V3 rebuild candidates and safe single-row cursors, but no row was rebuilt:
+the stored user JWT was rejected as `UNAUTHORIZED_ASYMMETRIC_JWT`. No owner-wide
+rebuild was attempted and no projection row was mutated directly. A fresh
+authenticated operator session is required before the four-task rebuild,
+then the broader controlled campaign.
+
+Focused semantic tests and the webpack production build pass. Full typecheck
+still has unrelated repository baseline errors. At this checkpoint History
+startup remained active and the 7.15.35 retirement gate was still pending the
+four-task rebuild, the 519-row V3 freshness/fence audit, and settled browser
+parity.
+
+## 2026-09-24 7.15.34 Durable Scoped Last Handled Parity Proof
+
+This was an intermediate rollout checkpoint, not the final certified
+population. The later 7.15.35 certification above supersedes its
+`fresh=47`/`fallback=472` snapshot.
+
+The 7.15.34 QA checkpoint records the confirmed Current Projection population
+as `fresh=47` and `fallback=472`. Status and due semantic mismatches were zero
+in the fresh population. The scoped Last Handled verifier reached zero for the
+reported mismatches, but a later bulk streak-summary refresh overwrote the
+mutable `taskHistoryStreakSummaries` entry and made the same stable identity
+appear mismatched again.
+
+The development-only parity coordinator now retains a successful scoped
+Last Handled verification proof separately, keyed by the exact existing
+identity of Task ID, canonical revision, projection `updated_at`, logical
+date, and workspace generation. Parity uses that proof only for
+`lastHandledDate` and `lastHandledAt`; ordinary application summaries remain
+the mutable default and status, due, streak, Last Done, and History UI state
+remain unchanged. Resolved-false scoped checks are not cached as equivalent
+and remain blocking. Identity changes ignore the old proof and permit one new
+verification.
+
+No SQL, Edge deployment, or projection rebuild was performed by that
+checkpoint. History startup was still active there; 7.15.35 now retires the
+automatic startup bootstrap while preserving on-demand History.
+## 2026-09-25 7.15.40 Side Style Builder Phase 4A
+
+Style Builder Phase 4A establishes the development/local-only ADHDice UI
+Library as the single catalog for Builder starters and insertable visual trees.
+It adds searchable categories, separate Start From UI and Insert UI operations,
+fresh-ID subtree insertion under the existing Builder normalization and limits,
+shared UI-system primitive and meaningful variant coverage, Style Lab production
+role mapping, and a deterministic wider-app visual inventory with explicit
+`ready`, `adapter-needed`, `intentionally-nonvisual`, and
+`unsupported-for-builder` statuses. The seven Phase 1–3 starters remain
+available through compatibility IDs backed by the catalog. This phase does not
+adapt every Task, Health, Journal, HUD, planning, navigation, or larger feature
+module; those remain visible future inventory work. No production feature
+behavior, runtime data fetching, Supabase, persistence, or Inspector-to-Builder
+capture was added.
+
+## 2026-09-24 7.15.39 Side Style Lab Builder Phase 3
+
+Style Builder Phase 3 adds direct canvas drag/reorder with Page-Shell-inspired
+snapping guides, Row/Column insertion, packed Grid movement, cross-Container
+movement, and Builder-only grid child spans. Existing Builder drafts remain
+backward-compatible under the unchanged `adhdice-style-lab:builder-draft`
+storage key. The Builder remains development-only and local-only; exports remain
+reference artifacts and never write source files.
+
+## 2026-09-24 7.15.38 Side Style Lab Builder Phase 2
+
+Style Builder Phase 2 keeps the dedicated Test concept and adds a sticky live
+canvas with a normally scrolling editor, direct Container resize and inline
+Text/Chip editing, visual custom HEX color controls, a curated development-only
+font library, and curated ADHDice-style starter templates. Builder drafts remain
+backward-compatible and use the unchanged `adhdice-style-lab:builder-draft`
+storage key. The Builder remains development-only and local-only; exports remain
+reference artifacts and never write source files.
+
+## 2026-09-24 7.15.37 Side Style Lab Builder Test Workspace
+
+The Style Lab Builder now lives as the dedicated `test-style-builder` Test
+concept instead of inside the floating Style Lab panel. The floating panel is
+Inspect-only again. Builder storage and its normalized data model are unchanged,
+including the `adhdice-style-lab:builder-draft` key. The Builder remains
+development-only and local-only; Module Spec and Reference Code exports remain
+reference artifacts only and never write source files. Browser QA remains
+manual and this shared developer infrastructure should remain Side-only until
+that UX passes review.
+
+## 2026-09-24 7.15.35 Side Test iOS Task Detail Typography Pass
+
+The isolated Side Test iOS Task Detail concept now uses quiet sentence-case
+tile labels, centered semibold values, minimal optional status text, and a
+lighter Call UGI hero hierarchy. Long-press Arrange behavior, row-major
+reordering, local tile-order persistence, Reset Layout, and all production
+boundaries remain unchanged. Browser/device QA remains manual.
+
+## 2026-09-24 7.15.34 Side Test iOS Task Detail Concept
+
+The Side Test page now includes an isolated `test-ios-task-detail` concept for
+evaluating a future iOS-oriented task-detail hierarchy: a fixed Call UGI hero,
+compact 3-column metadata tiles, and local-only long-press Arrange mode with
+validated tile-order persistence and Reset Layout. It uses mock presentation
+data only and does not change production Task UI, native iOS code, Task State,
+History, Supabase, or shared PageShell behavior. Browser/device QA remains
+manual and the concept is intended to remain Side-only until separately
+approved.
+
+## 2026-09-24 7.15.32 Scoped Last Handled Parity Oracle + V2 Campaign Resume Gate
+
+The first-50 V2 expansion passed its structural checks. The reported live
+campaign state is 519 eligible projections, 60 valid V2, 459 valid V1, zero
+`repair_required`, unavailable, or missing rows. The two active parity
+blockers were false Last Handled blockers: the temporary bulk legacy
+`loadManualActionCommandOperations()` oracle queried the user's entire
+command-operation history without Task scope or paging, so older manual
+commands could be omitted and an older History fact could win.
+
+The runtime now uses the existing task-scoped
+`refreshTaskHistoryStreakSummary(taskId)` seam as a temporary development
+parity oracle only when a fresh active Task's mismatch is limited to
+`lastHandledDate` and/or `lastHandledAt`. It loads entity-scoped History,
+active calendar overrides, and command operations; it does not add a second
+Last Handled implementation, change V2 calculator semantics, or alter V2
+rows. Identity-fenced coordination coalesces duplicates, runs once per Task
+canonical revision/projection `updated_at`/logical date/workspace generation,
+ignores stale results, and permits re-verification when that identity
+changes. Genuine mismatches remain blockers. Dev diagnostics are emitted for
+request, start, and completion, with only Task ID, identity, and Last Handled
+values.
+
+All-user command pagination was intentionally not added. History startup,
+automatic migration, SQL, Edge deployment, and backfill behavior are
+unchanged. The local isolated QA account available during this source turn
+did not contain the reported 519-row production state, so the 60-row live
+parity gate, manual 50-row campaign, all-row fence audit, and settled final
+parity report were not run and no fixtures were restored. History retirement
+is not unlocked; after a verified 519-row completion it moves to 7.15.33.
+
+## 2026-09-24 7.15.31 Projection V2 Parity Gate Correction
+
+The first-10 7.15.30 V2 pilot passed its read-only database audit: 10 valid
+V2 rows, 509 valid V1 rows, zero `repair_required`, unavailable, or missing
+rows, with all canonical revision, History frontier/epoch, logical-day,
+projected-date, schedule, behavior, and timestamp-kind fences passing.
+
+The initial settled browser parity report showed three false blockers: two
+trashed/inactive Tasks and one active Task whose V2 `null` timestamp plus
+`logical_day_presentation` kind reconstructed the same floating logical-day
+midnight that legacy displayed. The comparator now excludes canonical
+`trashed`, `archived`, and `permanently_complete` Tasks from ordinary semantic
+parity while reporting them separately, and compares the reconstructed V2
+History summary rather than raw persisted `last_*_at` storage. Raw storage,
+kind, logical date, reconstructed presentation, and legacy values remain in
+timestamp diagnostics. Projection calculator semantics, stored V2 rows,
+History startup, SQL, and Edge deployment are unchanged.
+
+The corrected first-10 parity gate is a manual reload-and-settle check. The
+campaign remains manual and must continue only in controlled 50-row operations
+after that gate passes. History retirement moves to 7.15.33.
+
+## 2026-09-24 7.15.29 Current Projection Parity Root-Cause Lock
+
+7.15.28 browser QA is recorded as PASS. The dedicated projection reconciliation
+restored fresh projection authority across the cross-tab mutation and restored
+the visible positive streak to `1`. History startup remains active; History
+retirement is blocked only by settled projection parity correctness.
+
+### Stable parity baseline
+
+The recorded settled 7.15.28 parity capture had approximately 225–226 fresh,
+comparable projections after History and authority-pending state settled. Its
+field counts were: `displayStatus=2`, `displayDueOn=5–6`,
+`currentPositiveStreak=3`, `currentMissedStreak` had no separately recorded
+non-zero group, `lastHandledDate=126`, `lastHandledAt=195`, and
+`lastDoneAt=101`; `lastDoneDate` did not dominate the recorded mismatch count.
+The earlier runtime log did not persist the unique Task-ID union or separate
+zero-count fields, so the exact live unique mismatch total cannot be
+reconstructed from checked-in source alone; the deterministic fixture lock
+below has an exact 5-Task sample with 2 representation-only and 3 semantic
+mismatches. The just-mutated 7.15.28 QA Task is excluded from this baseline.
+
+### Timestamp root cause and contract
+
+The legacy Last Done and Last Handled helpers return a real event timestamp
+when the source event timestamp is authoritative. For an older logical date,
+they intentionally synthesize `${logicalDate}T00:00:00` when the source
+timestamp cannot be exposed as the logical-day presentation time. That value
+is a floating logical-day presentation timestamp, not an absolute instant.
+The v1 `timestamptz` columns cannot preserve that distinction: PostgreSQL
+readback of `2026-09-18T00:00:00+00:00` is an absolute instant and can render
+as September 17 at 8:00 PM in `America/New_York`, while the floating value
+renders as September 18 at midnight. A real event instant such as
+`2026-09-18T14:30:00.000Z` remains an instant; a different offset string for
+the same instant is representation-only noise.
+
+Projection V2 therefore keeps `last_handled_logical_date` and
+`last_done_logical_date` as the logical-date authorities, keeps
+`last_handled_at`/`last_done_at` nullable and reserved for true absolute event
+instants, and adds explicit nullable kind fields:
+`last_handled_at_kind` and `last_done_at_kind`, each
+`event_instant | logical_day_presentation`. A synthetic result stores a null
+`last_*_at`, the logical date, and `logical_day_presentation`; it is never
+silently reinterpreted from a v1 timestamptz row. The kind is derived from
+canonical event/provenance evidence during rebuild, not from timestamp text.
+
+### Semantic mismatch classes
+
+The existing canonical evaluator remains semantic authority. The source audit
+and focused fixtures did not reproduce a projection-builder divergence on the
+current canonical read-model path; live row-specific proof still requires a
+fresh settled capture. The locked classes are:
+
+- `displayStatus`: `upcoming` versus `pending` is a genuine semantic mismatch;
+  first classification is stale-but-valid v1 when a fresh rebuild matches the
+  evaluator, otherwise projection input/read-model or behavior-policy context
+  must be corrected. Blindly copying `clean_tasks.status` is not valid.
+- `displayDueOn`: a later evaluator `nextDueDate` versus an older projection
+  `next_due_on` is semantic. It is a schedule-boundary discrepancy when the
+  current boundary/occurrence source differs, stale-but-valid v1 when the
+  current rebuild matches, and input/read-model when the scoped source is
+  incomplete. `next_due_on`, not `current_effective_due_on`, is the display
+  due authority.
+- `currentPositiveStreak`/`currentMissedStreak`: non-zero legacy versus zero
+  projection is semantic. The locked Custom fixture records exact History
+  facts, effective exclusion, ruleset revision, empty Calendar overrides,
+  schedule boundary, active lifecycle, and the resulting effective timeline.
+  A matching scoped source with a zero v1 row is stale-but-valid; a differing
+  scoped source is an input/read-model or behavior-policy discrepancy.
+- `lastHandledDate`: date differences are semantic and are classified against
+  entity-scoped History, active Calendar overrides, eligible committed runtime
+  command operations, lifecycle, logical-day calculation, compatibility
+  evidence, and the current row version. An omitted entity operation is an
+  input/read-model defect; migration/legacy-only evidence is not equivalent to
+  canonical manual action evidence; inactive Tasks are excluded from ordinary
+  parity rather than repaired by copying a legacy date.
+- `lastHandledAt`/`lastDoneAt`: same instant with different serialization, or
+  synthetic logical-day versus timestamptz with the same logical date, is
+  representation-only. A different logical date or real event instant is
+  semantic.
+
+`history_source_revision=0` with existing canonical History is an expected
+pre-ledger baseline when no entity frontier exists; it is not proof that the
+History input was empty and is not, by itself, a freshness-fence gap. A
+positive entity revision still requires its matching frontier. No freshness-
+fence gap was proven by the deterministic fixtures; a live row can only be
+called a fence gap after its current entity frontier and source snapshot are
+captured.
+
+### Projection V2 / 7.15.30 controlled rollout status
+
+The additive migration `patch_task_current_projection_v2_7_15_30` is applied.
+The pre-deploy live baseline was 519 eligible canonical-runtime parent/step/
+substep Tasks, 519 existing valid projections, all 519 exact V1 rows, zero
+missing, zero `repair_required`, and zero `unavailable`. After SQL, the same
+519 rows remain valid V1, both new kind columns are null, and V2 candidates
+read as 519. No Task or History canonical data was mutated.
+
+The pre-deploy Edge baseline was `task-state-command` ACTIVE v40,
+`114cfc1def1c21cb07d4f18cd23d81fb4309fa7af9f6be58d5685afd189e7609`, and
+`task-current-projection-backfill` ACTIVE v3,
+`5420f22eac4a392c10261cca95fe3a3835af08812699d94675747ce8ed2a42c9`.
+
+The physical contract now has nullable `last_handled_at_kind` and
+`last_done_at_kind` values `event_instant | logical_day_presentation`, exact
+V1/V1 or V2/V2 version pairs, and strict V2 no-value, real-event, and
+synthetic-logical-day consistency checks. V1 timestamp values remain
+untouched. There is one projection row per `(user_id, entity_id)`; no same-
+entity V1/V2 duplicate storage exists.
+
+The V2 calculator returns explicit Last Handled and Last Done timestamp kind,
+includes logical date plus persisted timestamp/null choice in its source
+fingerprint, and continues to use the canonical evaluator for status, due,
+occurrence, streak, handled-day, and source-fence semantics. The V2 consumer
+gate accepts only fresh V2 rows. V1 rows are stale/unsupported for preferred
+projection reads and fall back to the existing History/evaluator path. A V2
+logical-day presentation is reconstructed as `${logicalDate}T00:00:00` without
+timezone conversion.
+
+The trusted writer accepts the exact V1 pair during transition and exact V2
+pair thereafter, validates timestamp consistency, retains all existing owner,
+revision, History, logical-day, schedule, behavior, fingerprint, and timestamp
+race fences, and fails closed if a V1 candidate would downgrade a stored V2
+row. Backend-only keyset candidate/count RPCs select missing, invalid,
+non-valid, and non-V2 rows, ordered by Task ID with a maximum batch of 10.
+
+Deployment order and result:
+
+- `task-state-command`: ACTIVE v41, hash
+  `0d0a5f8add2b6f3d7f683d98f984cbd3d4b4e284edc05d36c3cfd14bc38d20d3`.
+- `task-current-projection-backfill`: ACTIVE v5, hash
+  `545e9b9a8e95d51a232965724f08bd67a4ea585746e2c345058885108c208648`.
+
+The manual UI operator is labeled “Rebuild Current Projections”; nearby
+developer copy identifies the current algorithm as V3. It retains the
+shared busy/rollover guard, serial 10-row primitives, five-call/50-row maximum,
+keyset cursor, one retryable fence retry, failure stop, and authoritative
+remaining count. Automatic execution is disabled. At the 7.15.30 release
+boundary, the first-10 pilot had not been run: progress was written 0, failed
+0, retries 0, remaining 519.
+The verified first candidate page was read-only and contained 10 Task IDs.
+
+The final all-row fence audit and settled V2 parity report are pending the
+manual pilot and campaign. History startup remains active; History retirement
+is not unlocked for 7.15.31.
+
+## 2026-09-24 7.15.28 Projection Realtime Reliability + Bounded Self-Healing
+
+The 7.15.27 capture isolated the cross-tab current-projection break. The
+`clean_tasks` Realtime event succeeded, the remote Task reload completed with
+the advanced canonical revision, and the fresh durable projection already
+existed server-side before Tab B received the Task event. Tab B nevertheless
+retained the prior projection revision; the capture contained no projection
+Postgres callback, buffer enqueue/flush, or merge, so authority safely fell
+back to legacy and the positive streak remained stale.
+
+7.15.28 moves current-projection `INSERT` and `UPDATE` listeners out of the
+general workspace channel and into the dedicated owner-scoped
+`adhdice_task_current_projections:<userId>` channel. The dedicated lifecycle
+tracks its ref, status, removal promise, generation/debug ID, subscribe count,
+cleanup count, and late-callback guards. Visibility, focus, pageshow, and
+online resume paths independently ensure that channel is healthy without
+creating duplicates. The table remains in `supabase_realtime`; no publication
+or SQL change is part of this release.
+
+After a remote Task Realtime mutation advances `canonical_revision`, the
+normal Task reload remains unchanged and then performs at most one narrow
+owner/entity projection read using `CURRENT_TASK_PROJECTION_READ_COLUMNS` when
+the in-memory projection is stale or missing. A stale or missing immediate
+result may schedule one approximately 4.5-second retry; duplicate requests
+coalesce, obsolete owner/generation work is ignored, and no polling loop is
+introduced. Returned rows still pass `isCurrentTaskProjectionFresh()` before
+they can become preferred authority. Local `shouldSkipTaskReload=true`
+suppression remains intact, while projection events continue to merge for the
+eventual fresh local projection.
+
+The 7.15.27 diagnostics remain active and now include reconciliation request,
+start, result (entity, canonical revision, validity, freshness), retry,
+completion, and cancellation records. Projection parity and timestamp repair
+are explicitly deferred to 7.15.29. History startup remains active and
+History retirement remains blocked.
+
+## 2026-09-23 7.15.27 Projection Cutover Runtime Diagnostics
+
+7.15.26 browser QA established the current cutover baseline:
+
+- History modal opens: PASS.
+- History mutation works: PASS.
+- Next-due presentation semantics: PASS.
+- Startup projection reads: PASS.
+- Normal same-tab current presentation: PASS.
+- Two-tab Task synchronization: FAIL; Address Sorter and Pills (AM) stayed stale in tab B until refresh.
+- Settled parity remains approximately 225–226 Tasks: `displayStatus` 2, `displayDueOn` 5–6, `currentPositiveStreak` 3, `lastHandledDate` 126, `lastHandledAt` 195, and `lastDoneAt` 101. `lastDoneDate` does not dominate the mismatch count.
+
+The 7.15.27 runtime diagnostics ticket is diagnosis-only. It does not retire History startup, change Task State semantics, change projection builder/writer semantics, restructure Realtime channels, change Last Done/Last Handled persistence, add SQL, deploy Edge, backfill, or change publication membership.
+
+The browser now has a bounded development-only `window.copyAdhdiceRealtimeDiagnostics()` / `window.clearAdhdiceRealtimeDiagnostics()` trace buffer. It records task-channel creation/generation, every subscribe status, Task Postgres events, skip decisions, reload queue/start/completion/error states, triggering Task revision fences, shared-channel projection events, projection buffer enqueue/flush/merge decisions, event-scoped authority selection, parity samples, and cleanup. It excludes access tokens, email, titles, notes, and other private content.
+
+### Current live Realtime channel/publication matrix
+
+| Runtime channel | Client handlers | Live publication evidence |
+| --- | --- | --- |
+| Dedicated `adhdice_tasks:<userId>` | `adhdice_clean_tasks` | Published; separate from the shared workspace channel |
+| Shared `adhdice_workspace:<userId>` | `adhdice_task_list_folders`, `adhdice_task_content_folders`, `adhdice_task_list_containers`, `adhdice_task_list_rail_items`, `adhdice_focus_categories`, `adhdice_task_focus_days`, `adhdice_task_lists`, `adhdice_task_list_manual_memberships`, `adhdice_notes`, `adhdice_task_history_facts`, `adhdice_task_current_projections` | Projection table is published; `adhdice_notes`, `adhdice_task_focus_days`, and `adhdice_task_history_facts` currently have handlers but are not in `supabase_realtime` |
+
+No publication membership or channel topology change is part of 7.15.27. Source tests make the two-channel shape and all shared bindings explicit for the next behavioral ticket.
+
+### Timestamp diagnosis
+
+The parity trace now preserves raw projected/legacy values, Task `canonical_revision`, projection `canonical_task_revision`, `history_source_revision`, and `updated_at`. Timestamp mismatches are classified as exact, same instant/different serialization, same logical date but floating-time versus timestamptz, different instant, or different logical date using the configured timezone and logical-day start.
+
+The focused reproduction confirms that in `America/New_York`, `new Date("2026-09-18T00:00:00").toLocaleString(...)` displays September 18 while the equivalent persisted timestamptz readback `2026-09-18T00:00:00+00:00` displays September 17. That shape is synthesized logical-day presentation time versus an absolute event instant; it is not yet a schema/representation decision. Absolute event timestamps retain their instant when represented with an explicit offset.
+
+### Small true parity groups
+
+Development parity samples now emit a bounded event-scoped report for each sampled Task in the `displayStatus`, `displayDueOn`, and `currentPositiveStreak` groups. The report includes persisted Task status/due, projection status/next due/streak, legacy status/due/streak, safe latest History-fact metadata, behavior type/ruleset ID, direct/effective tracking exclusion, source-fence metadata, and whether the projection or legacy values agree with the canonical Active Status evaluator output. The actual Task-by-Task classification remains a runtime/browser evidence step; no production semantic change is made here.
+
+History retirement remains blocked. 7.15.27 is diagnostics-only.
+
+## 2026-09-23 7.15.26 Current Projection Cutover QA Corrections
+
+The 7.15.25 browser QA pass was partial: fresh-launch projection reads,
+current-field parity across visible views, and resume/auth lifecycle passed;
+cross-tab status updated, but the visible cross-tab streak badge did not update
+to `1-hot`. History mutation and historical-surfaces checks failed because the
+History modal path referenced `computeTaskSpecificHistoryStats` without importing
+it from `@/lib/task-history`.
+
+The same QA pass found a display-due semantic mismatch: the current projection
+read adapter used `current_effective_due_on`, which represents the current
+occurrence, instead of `next_due_on`, the durable equivalent of legacy
+`evaluated.nextDueDate`. The NBA 2K27 live example had Task `due_on`
+`2026-09-24`, projection display `upcoming`, `current_effective_due_on`
+`2026-09-23`, and `next_due_on` `2026-09-24`.
+
+The NBA 2K27 durable projection correctly rebuilt to `current_positive_streak =
+1`, `current_missed_streak = 0`, and valid freshness with the canonical revision
+matching the Task. The shadow rebuild occurred about four seconds after the
+canonical Task commit. The cross-tab correction therefore covers the visible
+consumer/state propagation seam; it does not change projection-writer or
+canonical Task State semantics.
+
+Before 7.15.35, development parity diagnostics ran when the legacy full
+History readiness state was true before Active Status and the bulk legacy
+streak-summary oracle had settled.
+7.15.26 adds an explicit parity-ready gate and bounded per-field mismatch
+diagnostics after due values are compared as `next_due_on` / display due.
+
+History retirement remains blocked pending 7.15.26 browser QA. History startup,
+History-backed Calendar/History detail, Records, Stats, Achievements, rollover,
+projection writer semantics, SQL, and Edge deployment are unchanged by this
+correction ticket.
+
+## 2026-09-23 7.15.25 First Current Projection Consumer Cutover
+
+The first browser current-read consumer cutover is active. For each Task, a
+projection is preferred only when `isCurrentTaskProjectionFresh()` accepts the
+row against the current owner, entity identity/kind, canonical Task revision,
+History sync epoch, profile `settings_revision`, logical date, projection
+schema, algorithm, and `valid` state. Fresh rows now provide the current
+display status, current effective due date, positive streak, missed streak,
+Last Handled logical date/time, and Last Done logical date/time.
+
+Stale, `repair_required`, `unavailable`, or missing rows fall back per entity
+to the existing legacy Active Status/History result. Until that legacy result
+is ready, the existing persisted Task snapshot remains the fallback. Projection
+values are never written into `clean_tasks`, and no canonical mutation source
+changed. The `unscheduled` presentation behavior remains owned by
+`projectTasksForActiveStatusRead()`.
+
+The startup critical-core request now loads the narrow projection column list
+and the owner's History sync-state fence alongside the existing Task/profile
+request. Projection reads do not wait for full History hydration, and a
+projection query failure remains non-blocking. Projection Realtime is now
+published through the existing `supabase_realtime` publication and subscribed
+owner-scoped for `INSERT` and `UPDATE`; events are buffered/coalesced into
+bounded in-memory state updates, with no per-row refetch or workspace reload.
+
+The legacy History hydration/cache/delta path, active-status engine, streak
+summary calculation, rollover History readiness, Calendar and History detail,
+Records, Stats, and Achievements remain intact. Historical/window Smart List
+facts remain History-backed and History-gated. Full History still hydrates in
+the background for this release. Eager History retirement is deferred until a
+post-browser-QA ticket.
+
+Live projection state remains 519 eligible, 519 valid, 0 `repair_required`, 0
+unavailable, and 0 missing after the publication-only SQL change. The runtime
+projection remains rebuildable derived state; no canonical authority changed.
+
+## 2026-09-23 7.15.24 Close Current Projection Freshness / Invalidation Matrix
+
+The completed 7.15.23 backfill now has 519/519 eligible projections materialized:
+519 valid, 0 repair-required, 0 unavailable, and 0 missing. Consumer cutover was
+intentionally still blocked at the start of this ticket; browser consumers and
+History startup remain unchanged, and no backfill was run for this release.
+
+The live audit found that canonical-revision invalidation alone did not cover
+direct or secondary changes to schedule, occurrence, effective override,
+calendar, behavior-selection, behavior-policy, logical-day, History sync-epoch,
+tracking-exclusion, or hierarchy sources. In particular,
+`adhdice_set_task_tracking_exclusion` changes `exclude_from_tracking` and the
+ordinary Task revision without advancing `canonical_revision`. Because inherited
+tracking exclusion is part of projection semantics, a parent change can stale a
+whole moved subtree even when descendants receive no canonical revision bump.
+
+The source-only matrix is now installed in
+`supabase/patch_task_current_projection_invalidation_matrix_7_15_24.sql` and
+has been applied to the live project after fail-closed prerequisite checks. It
+adds entity-scoped repair triggers for `adhdice_task_history_facts`,
+`adhdice_task_schedule_boundaries`, `adhdice_task_occurrences`,
+`adhdice_task_occurrence_effective_overrides`,
+`adhdice_task_calendar_overrides`, and `adhdice_task_behavior_selections`.
+History facts are the semantic source; the History change ledger's global
+`current_revision` advancement does not independently invalidate unrelated
+projections. It adds conservative owner-wide repair triggers for TaskType
+behavior profiles, named Custom ruleset identities/revisions, logical-day
+profile changes, and History sync epoch/protocol changes. Clean Task
+`task_type`/`custom_ruleset_id` changes repair the entity, while tracking
+exclusion and hierarchy parent changes use one bounded recursive subtree helper.
+Malformed, cyclic, orphaned, or over-depth owner hierarchies fail closed to
+owner-wide repair.
+
+The existing behavior-policy source fence remains authoritative and now also
+includes a bounded tracking-ancestry snapshot and effective exclusion value.
+This closes the race where an old child candidate could otherwise pass the
+trusted writer after an exclusion change that did not change
+`canonical_revision`. The helpers only update existing projection validity and
+`updated_at`; they never create rows, write canonical state, write History,
+create occurrences, or calculate projection values. No automatic rebuild is
+attached to these source triggers; the existing fresh-committed-command Edge
+shadow rebuild remains the only automatic materialization path.
+
+### 7.15.24 source invalidation matrix
+
+| Source / field | Semantics and mutation path | Canonical revision necessarily changes? | Scope | Automatic rebuild | Legacy fallback |
+| --- | --- | --- | --- | --- | --- |
+| `adhdice_clean_tasks.canonical_revision` | Canonical Task State command / canonical hierarchy paths | Yes when that canonical path commits; proven by the live Task trigger path | Entity | Existing canonical-revision trigger plus the fresh-committed-command Edge shadow | Required until cutover |
+| `adhdice_task_history_facts` | Canonical History insert/update/delete from command and History paths | No for arbitrary source-table DML; History sync ledger only advances global revision | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_schedule_boundaries` | Canonical schedule boundary writes and direct table mutations | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_occurrences` | Canonical occurrence materialization/resolution writes | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_occurrence_effective_overrides` | Canonical delay/effective-due writes | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_calendar_overrides` | Canonical calendar override writes | Not proven for every writer | Entity | No source-trigger rebuild | Required |
+| `adhdice_task_behavior_selections` | Effective-dated selection RPC and authenticated table DML | No universal proof | Entity | No source-trigger rebuild | Required |
+| TaskType behavior profiles | Authenticated owner DML; rare effective-dated policy edits | No | Owner | No source-trigger rebuild | Required |
+| Custom ruleset identity/revisions | Authenticated table DML and named-ruleset soft-delete RPC | No | Owner | No source-trigger rebuild | Required |
+| `clean_tasks.task_type/custom_ruleset_id` | Canonical behavior-selection RPC / authorized Task writes | Not for every mutation path | Entity | No source-trigger rebuild | Required |
+| `adhdice_user_profiles.timezone/day_start_time/settings_revision` | Profile update; the live BEFORE trigger advances settings revision for timezone/day-start changes | Timezone/day-start: yes through the profile trigger; not a sufficient projection invalidation boundary by itself | Owner | No source-trigger rebuild | Required |
+| `adhdice_task_history_sync_state.sync_epoch/protocol_version` | History protocol/reset authority; normal `current_revision` changes are excluded | No | Owner | No source-trigger rebuild | Required |
+| `clean_tasks.exclude_from_tracking` | Tracking-exclusion RPC/bulk path; ordinary revision only | No | Subtree | No source-trigger rebuild | Required |
+| `clean_tasks.parent_task_id` | Canonical hierarchy move path | Moved Task/direct role changes may; deeper descendants need not | Moved subtree | No source-trigger rebuild | Required |
+
+The pure future-consumer gate is `isCurrentTaskProjectionFresh()` in
+`src/lib/task-current-projection-freshness.ts`. It accepts only a valid row with
+supported schema/algorithm versions, matching user/entity and entity kind,
+matching Task canonical revision and History sync epoch, matching profile
+settings revision, and the current projected logical date. It is groundwork
+only: no consumer cutover and no History startup removal occurred.
+
+The runtime version is now `7.15.24`; Edge deployment status is unchanged.
+
+## 2026-09-23 7.15.23 Scalable Current Projection Backfill Candidate Query
+
+The backfill candidate-discovery failure paused at 382 valid projections and
+137 eligible Tasks still missing projections. Candidate discovery failed before
+the first projection write: the old Edge path loaded every projected
+`entity_id` and serialized hundreds of UUIDs into an unbounded PostgREST
+exclusion request.
+
+The new backend-only
+`adhdice_list_missing_task_current_projection_candidates(uuid, integer, uuid)`
+RPC performs the owner-scoped `NOT EXISTS` candidate selection in PostgreSQL,
+with deterministic ID keyset ordering and a hard 1–10 limit. The Edge function
+now receives at most ten UUIDs per request while retaining serial rebuilds, one
+retry for retryable projection fences, failure continuation within a batch,
+and the authoritative missing-count RPC.
+
+No projection semantic change, canonical Task/History change, task-state-command
+change, consumer cutover, or live backfill occurred. The SQL patch was applied
+only after fail-closed prerequisite checks, and only
+`task-current-projection-backfill` was redeployed as ACTIVE v3 with
+`verify_jwt=true`. Andrew's manual QA remains: click `Backfill 50 Projections`
+once.
+
+## 2026-09-23 7.15.22 Stale Workflow Rollover Without Occurrence
+
+This release corrects the 7.15.21 QA failure where a stale in-progress Task
+without `workflow_occurrence_id` was planned with a non-null History
+`scheduled_due_on`. The planner/Edge path now keeps the stale-workflow History
+fact occurrence-unbound while preserving the stale logical date, workflow
+clearing, rewards, Achievement capture, compatibility projection, and
+projection shadow maintenance. A canonical workflow occurrence still supplies
+its own canonical ID and scheduled due date.
+
+The 7.15.21 busy guard worked: Settings blocked backfill while the rollover
+sweep was genuinely active. That sweep processed 44 commands, deferred child
+Achievement evaluation, and completed one final Achievement evaluation
+successfully. One no-occurrence stale-workflow Task was rejected because the
+planner supplied occurrence metadata that the canonical validator correctly
+refused. The root cause was planner occurrence metadata, not projection or
+backfill. The correction is planner/Edge-only; no SQL was applied, no live
+projection backfill ran, and the projection migration remains paused.
+
+## 2026-09-23 7.15.21 Rollover Achievement Deferral + Backfill Count Correction
+
+This release corrects the two findings from the 7.15.20 live QA pass. The
+50-row operator completed five serial batches: 50 projection writes succeeded,
+0 failed, and 0 retried. Its displayed `519 remaining` value was incorrect;
+519 was the total eligible Task count, not the missing-projection count. The
+actual post-run state was 89 valid projections and 430 eligible Tasks still
+missing projections, with no invalid projection rows.
+
+The same QA pass recorded two automatic `reconcile_rollover` Task State RPC
+statement timeouts inside the full Achievement rebuild:
+`adhdice_execute_task_state_command` -> `adhdice_evaluate_achievements` ->
+`adhdice_rebuild_achievement_progress` -> insert into
+`adhdice_achievement_occurrence_matches`. The active scale was 2,212
+Achievement occurrences, 2,085 qualifying occurrences, and 12,285
+occurrence-match rows.
+
+The backfill Edge response now returns an owner-scoped authoritative
+`remainingCount` using the same canonical-runtime eligibility and missing-row
+contract as candidate selection; the operator displays that value directly.
+Rollover children now use the existing trusted Task State Edge orchestration
+with deferred per-command Achievement evaluation and one deterministic final
+evaluation per Achievement-affecting sweep. Finalizer failure leaves committed
+Tasks intact, does not persist the processed-rollover gate, and retries the
+finalizer without replaying successful child mutations. Backfill controls are
+disabled while the rollover coordinator is busy and a 50-row run stops between
+batches if rollover becomes active.
+
+No projection consumer cutover or automatic backfill is included. SQL and Edge
+deployment status must be verified separately from this source record; Andrew
+must first allow rollover to settle, then click `Backfill 50 Projections` once
+for manual QA.
+
+## 2026-09-23 7.15.20 Controlled 50-Projection Backfill Operator
+
+The first authenticated 10-Task `task-current-projection-backfill` pilot
+passed with 10/10 valid projections, canonical revision, History frontier,
+logical-day revision, schedule-fence, and behavior-fence matches; there were
+0 failures, 0 retries, and 5,632 ms elapsed. There were no hierarchy-stale
+errors or recurring PostgREST 504s. Before the later 50-run there were 23
+valid projections and 496 eligible Tasks missing projections. After the
+50-run, the actual state was 89 valid and 430 missing; no projection rows were
+invalid.
+
+Settings Developer tools retain `Backfill 10 Projections` and add the
+development-only `Backfill 50 Projections` operator. The 50-row operator is
+bounded to five sequential 10-row Edge requests. The browser's displayed
+remaining value in this release was wrong because it used the total eligible
+Task count rather than the missing count; 7.15.21 moves that count into the
+Edge response. Existing projection rows remain the progress authority; no
+cursor is carried between requests, so failed Tasks remain eligible for a
+future run.
+
+No automatic backfill, background continuation, canonical mutation path,
+History startup/read change, or projection consumer cutover was added. The
+Edge function and its maximum batch size remain unchanged and were not
+redeployed. Andrew's manual QA is still required: click `Backfill 50
+Projections` once.
+
+## 2026-09-23 7.15.19 Controlled Current Projection Backfill Pilot
+
+An authenticated `task-current-projection-backfill` Edge Function and one
+development-only Settings control now provide a resumable owner-scoped pilot
+backfill. Each request accepts a maximum batch of 10, uses deterministic
+`id` keyset pagination, selects only missing non-deleted canonical-runtime
+parent/step/substep projections, and rebuilds Tasks serially through the
+existing `rebuildCurrentTaskProjection()` authority. A retryable stale fence
+gets one immediate retry; failures do not abort the remaining batch.
+
+The first live pilot had **not** been run at the 7.15.19 commit time. The control is
+production-gated and never runs on startup. Browser projection consumers,
+History startup, and projection Realtime remain unchanged; the expected live
+projection count before Andrew's manual click remains 5.
+
+## 2026-09-23 7.15.18 Contain Runaway Task Hierarchy RPCs
+
+The browser hierarchy mutation boundary now deduplicates identical in-flight
+intents, blocks the exact expected-revision intent after a `40001` stale
+conflict, and coalesces one authoritative workspace refresh without retrying
+the stale move. Success, different Tasks, and explicit later intents with
+fresh revisions remain independent. No render/effect, dragover/pointermove,
+timer, visibility, or retry caller was found in the checked-in Table/List
+paths.
+
+The hierarchy RPC source now performs a cheap owner-scoped revision check
+before taking the Task row lock and repeats the revision fence after locking.
+`supabase/patch_task_hierarchy_move_7_14_34.sql` remains source-only; it was
+not applied to live Supabase. No projection backfill, projection read cutover,
+History startup change, or task-state-command v38 change was made. GitHub
+Pages deploys from `main`, whose current tracked source is still 7.14.46 and
+does not contain this containment fix; public deployment must receive the fix
+before normal hierarchy use resumes.
+
+## 2026-09-23 7.15.17 Controlled Live Current Projection Infrastructure Rollout
+
+The reviewed current Task projection infrastructure is installed live in
+Supabase project `mnwcuinnshsncqrhvsks`. The locked 7.15.12 schema,
+7.15.14 persistence trigger/writer, and 7.15.15 source-fence authority were
+applied individually and verified by the read-only 7.15.16 SQL. The projection
+table remains at 0 rows: no backfill occurred, no test Task or user Task was
+mutated, and no projection Realtime path was added.
+
+The `task-state-command` Edge Function was deployed from `codex/7.15` as
+ACTIVE version 38 with `verify_jwt = true` and deployment SHA-256
+`f6ae7d61cf1afda61293d3dbba34f558ec7915fec9efbd159243799a17d24bde`.
+Shadow maintenance is active for fresh committed commands only; rejected
+commands, semantic no-ops, and replays do not rebuild projections, and a
+projection failure remains non-fatal to the existing command response.
+
+The canonical command RPC was not replaced or patched; its definition
+fingerprint remains `f875b0c36a844fcc101bc895fde212dc` and it remains
+projection-agnostic. Canonical Task, History fact, and History ledger counts
+remained 1,468, 17,535, and 115 respectively. Browser reads still use the
+existing current architecture; no consumer cutover or History startup removal
+occurred. Runtime web version remains `7.15.10`. Andrew's one-Task browser QA
+is still required before projection QA can be called passed.
+
+## 2026-09-23 7.15.16 Replace Fragile Projection RPC Patching + Wire Shadow Maintenance
+
+The source-only 7.15.16 correction removes the fragile
+`pg_get_functiondef`/string-replacement patch from
+`patch_task_current_projection_persistence_7_15_14.sql` and removes the direct
+projection invalidation block from `add_task_state_command_rpc.sql`. The locked
+authority is: **canonical_revision advancement is the atomic projection
+invalidation event.** An idempotent `AFTER UPDATE OF canonical_revision` trigger
+on `adhdice_clean_tasks` marks only an existing owner/entity projection
+`repair_required`; it never creates a missing row. Semantic no-ops and replays
+do not advance the canonical revision and do not invalidate.
+
+The canonical Task State RPC is projection-agnostic. The trusted
+`task-state-command` Edge source now invokes `rebuildCurrentTaskProjection()`
+only after a fresh successful committed result, using the existing 7.15.15
+narrow entity loader and database-issued source fences. Rejected commands,
+semantic no-ops, and replays invoke zero rebuilds. A retryable stale-fence result
+gets at most one immediate retry; projection failure is logged server-side and
+does not change the successful Task command response or browser contract.
+
+Future manual install order: 7.15.12 projection schema, 7.15.14 writer and
+canonical-revision trigger, 7.15.15 source fences, read-only
+`verify_task_current_projection_7_15_16.sql`, then Edge deployment. SQL was not
+applied, the Edge Function was not deployed, no rows were created or backfilled,
+and no browser read cutover occurred. Runtime remains `7.15.10`.
+
+## 2026-09-23 7.15.15 Harden Current Projection Source Fences and Rebuild Inputs
+
+The source-only 7.15.15 projection patch adds one trusted PostgreSQL
+`adhdice_get_task_current_projection_source_fences` authority for deterministic
+schedule and behavior freshness tokens. The service-role writer recomputes that
+same snapshot immediately before upsert and rejects stale candidates when
+schedule boundaries, occurrences/overrides, effective behavior selections,
+TaskType policy revisions, or named Custom ruleset sources changed. Future
+policy rows that cannot affect the projected logical date are excluded from the
+token unless they are the source's required baseline. TypeScript-local fence
+serializers remain diagnostic/parity helpers; production persistence consumes
+the DB-issued tokens.
+
+Projection rebuilds now use a narrow entity-scoped canonical loader. It reads
+only the target Task and required logical-day, command, schedule, occurrence,
+override, History, Calendar, and behavior-selection inputs; it does not issue
+unfiltered command/History reads or load reward grants/claim consumptions. A
+bounded ancestor chain proves inherited tracking exclusion for Steps/Substeps,
+and missing, cyclic, or cross-owner hierarchy evidence fails closed. The broad
+canonical loader remains unchanged for other command paths.
+
+This is source-only: 7.15.12, 7.15.14, and 7.15.15 SQL were not applied, the
+task-state-command Edge Function was not deployed, no rebuild orchestration or
+runtime read cutover occurred, and the runtime baseline remains `7.15.10`.
+
+## 2026-09-23 7.15.14 Projection Freshness Correction + Durable Rebuild Protocol
+
+The 7.15.13 calculator now accepts old canonical History as a valid
+revision-zero `task-history-sync-v1` baseline when no entity ledger frontier
+exists. A positive entity History revision still requires its matching
+frontier; unrelated entity ledger changes do not invalidate a baseline Task.
+
+The Phase 1E persistence rule is corrected to atomic invalidation plus
+revision-fenced immediate post-commit materialization. A semantic canonical
+command marks only an existing affected projection `repair_required` in its
+transaction, then commits canonical Task/History facts without waiting for a
+fully calculated projection. The new source-only trusted writer accepts only
+valid service-role candidates and proves owner/Task identity, canonical Task
+revision, History sync epoch and entity frontier, logical-day settings/date,
+supported versions, fingerprint shape, and monotonic candidate time. A stale
+or failed rebuild is retryable and never becomes a reason to roll back or
+weaken canonical facts.
+
+`rebuildCurrentTaskProjection()` is authored and tested as an entity-scoped
+trusted TypeScript helper but is not wired into live command orchestration. It
+uses existing canonical reads, the TypeScript calculator, and the trusted
+writer; it does not load whole-workspace History or whole-user command
+operations, write canonical facts, or fall back to raw Task status.
+
+The invalidation/writer SQL is source-only: it has not been applied, no
+projection backfill or Edge deployment occurred, no UI/workspace read cutover
+occurred, and runtime behavior remains unchanged at `7.15.10`.
+
+## 2026-09-23 7.15.13 Current Task Projection Calculator + Parity Harness
+
+The pure `buildCurrentTaskProjection()` calculator now composes the canonical
+Task State read-model adapter, existing evaluator, Last Handled/Last Done
+semantics, effective-timeline streak authority, and entity-scoped freshness
+fences into a complete in-memory `TaskCurrentProjection` row. It emits only
+materialized canonical occurrence IDs, uses deterministic colon-prefixed
+SHA-256 schedule/behavior/History/source fingerprints, and fails closed for
+missing authority, malformed fences, contradictory occurrence state, or
+unproven child tracking exclusion.
+
+Focused parity and fingerprint tests cover current status/due/handled fields,
+last handled/Done, positive/Missed streaks, recurrence and lifecycle cases,
+occurrence identity, History/Calendar/policy boundaries, Custom, hierarchy,
+tracking exclusion, logical-day handling, semantic ordering, and timestamp
+churn. This remains a source-only shadow path: no projection rows were written,
+`supabase/add_task_current_projection_7_15_12.sql` was not applied, no runtime
+consumer or startup path changed, and the runtime baseline remains `7.15.10`.
+
+## 2026-09-23 7.15.12 Current Task Projection Physical Schema Foundation
+
+Phase 1E physical storage is now authored as a source-only additive contract.
+`public.adhdice_task_current_projections` is owner-scoped and keyed by
+`(user_id, entity_id)`, carries current status/due/occurrence/handled/streak
+values, and is fenced by canonical Task revision, entity-scoped History
+frontier plus the existing History sync epoch, schedule and behavior semantic
+fingerprints, profile `settings_revision`, projected logical date, and fixed
+projection schema/algorithm versions. Validity is explicitly `valid`,
+`repair_required`, or `unavailable`.
+
+The existing `adhdice_task_history_changes` ledger is reused for entity-scoped
+History freshness through a new `(user_id, entity_id, sequence DESC)` index;
+no second per-entity History authority was introduced. RLS permits only
+authenticated owner-scoped reads, while direct browser writes remain revoked
+for the future trusted command/rebuild boundary. No projection rows were
+created or backfilled, and no command, Realtime, startup, consumer, Edge
+Function, or live Supabase path changed.
+
+The runtime baseline remains `7.15.10`. The 7.15.11 entry was
+documentation-only and did not replace the runtime version.
+
+## 2026-09-23 7.15.11 Lock Current Task Read Projection Architecture
+
+Phase 1E locks the target read architecture for ordinary current Task surfaces.
+Canonical History, occurrences, schedule boundaries, effective overrides,
+commands, lifecycle/workflow facts, rewards, and achievements remain
+authoritative evidence and rebuild sources. A rebuildable owner-scoped current
+projection is designated to own the ordinary read result after cutover for
+display/current Active Status, current effective and next due, active
+occurrence summary, current-day handled
+state, last handled/last Done values, and current positive/Missed streaks.
+
+Projection validity is fenced by canonical Task revision, entity-scoped
+History revision/fingerprint plus the existing History sync epoch, schedule
+boundary revision, behavior-policy revision, logical-day settings revision,
+projected logical date, and projection schema/algorithm version. The prior
+strict atomic-projection-write rule is superseded by atomic invalidation plus
+revision-fenced immediate post-commit materialization. Projection repair writes
+no History, occurrence, reward, or achievement evidence.
+
+The previous full canonical History startup requirement for current Active
+Status, current streaks, and Task readiness is superseded. History, old
+boundaries, command ledgers, and detailed occurrences become lazy/bounded
+historical or explicit repair reads. Realtime and logical-day changes target
+the affected entity/domain rather than broad workspace reload. The current
+full-History source path remains transitional until shadow parity,
+invalidation/materialization, consumer cutover, and retirement gates pass.
+
+This was documentation/architecture only. The 7.15.12 foundation below adds
+source SQL/schema/types/tests without changing runtime behavior. No live
+Supabase state changed. The working runtime version remains `7.15.10`; no
+runtime version bump is required for either source-only ticket.
+
+## 2026-09-22 7.15.8 Retire Obsolete Task Grid Runtime
+
+The retired Task Grid View runtime no longer participates in workspace
+hydration, Realtime subscriptions, TaskApp state, local UI-state persistence,
+derived settings revisions, or current Tasks view routing. The dormant
+`adhdice_task_grid_layouts` schema/table and its historical data were not
+changed or deleted. HUD shell/widget sizing and placement, HUD local/cloud
+persistence, and current Table/List layout preferences remain unchanged.
+
+## 2026-09-23 7.14.47 Public Hierarchy Storm Containment Hotfix
+
+7.14.47 ports the hierarchy RPC storm containment from 7.15.18 to the public
+release line. This is a client-only hotfix; no SQL, Edge Function, or Task
+State semantic change is included.
 
 ## 2026-09-21 7.14.46 Consolidate Side Work into 7.14
 
@@ -3495,20 +5162,28 @@ out of scope.
 
 ### Workspace, Loading, and Cache Ownership
 
-- Full canonical Task History for all Tasks is required at workspace startup. The
-  former bounded critical-vs-modal-full distinction is transitional and must be
-  collapsed; modal History is not a more authoritative state read.
+- Phase 1E supersedes the former full canonical Task History startup authority
+  for current Active Status, current streaks, and Task readiness. Normal
+  startup targets canonical Task/entity rows, valid current projections, and
+  profile context; full History is lazy, bounded, or explicit-repair work.
+- The current full-History source path remains transitional until projection
+  shadow parity, command dual-write, consumer cutover, and old-read retirement
+  gates pass. Modal History is not a more authoritative state read.
 - Query changes should reuse stable workspace facts and avoid invalidating canonical entities, status authority, Archive/Trash sets, or unrelated page data.
 - Workspace performance diagnostics are development-only. Browser evidence for commit counts, inactive-page CPU, cross-tab/BFCache behavior, and Safari paint behavior remains unverified.
-- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) is a qualified source diagnostic, not canonical runtime proof; its browser, deployment, and performance questions remain unresolved.
+- [`docs/WORKSPACE_LOADING_ARCHITECTURE.md`](WORKSPACE_LOADING_ARCHITECTURE.md) is a qualified transitional source diagnostic, not canonical runtime proof; [`Phase 1E`](architecture/task-state-phase-1e-current-task-read-projection-contract.md) is the target current-read authority.
 
 ### Task History and Readiness
 
-- Startup readiness includes the full canonical Task History snapshot. A failed
-  or incomplete History load must expose error/retry and must not become an empty
-  successful snapshot or a legacy fallback.
+- Current-projection readiness is separate from historical History readiness. A
+  failed or incomplete historical load must expose error/retry to its consumer
+  and must not become an empty successful snapshot, but it does not block a
+  valid current projection.
 - History consumers must expose loading and retry states until the requested task's data is ready.
-- History readiness must not widen unrelated startup work or replace canonical current-state facts with partial detail payloads.
+- Current Task consumers must use valid, revision-fenced projections and must
+  not replace them with raw Task fields, partial History detail, or a second
+  calculator. Realtime, logical-day, and policy changes target affected
+  entities/domains rather than broad workspace reload.
 - Existing task/History contradictions are not repaired by this runtime correction; they require a separate preview-first data-repair ticket after runtime QA.
 
 ### 7.7.11 Task State Engine Authority Hardening

@@ -1041,7 +1041,7 @@ public class ADHDiceHealthKitPlugin: CAPPlugin, CAPBridgedPlugin {
         case .crossTraining: return "Cross Training"
         case .pilates: return "Pilates"
         case .other: return "Other"
-        @unknown default: return "Activity \(activityType.rawValue)"
+        default: return "Activity \(activityType.rawValue)"
         }
     }
 

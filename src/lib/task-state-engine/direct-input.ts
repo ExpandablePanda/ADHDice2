@@ -3,7 +3,7 @@ import type { CanonicalTaskStateColumns } from "../task-state-canonical/types.ts
 import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
-import { normalizeTaskType } from "../task-type.ts";
+import { normalizeTaskType } from "../task-type-domain.ts";
 import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import type {
   TaskCalendarOverride,
@@ -82,6 +82,10 @@ export function isCanonicalArchivedOrTrashed(task: CanonicalProjectedTaskState) 
   if (task.container_state === "archived" || task.container_state === "trashed") return true;
   if (task.terminal_state || task.container_state || task.workflow_state) return false;
   return task.status === "archived" || task.status === "trashed";
+}
+
+export function isCanonicalInactiveTask(task: CanonicalProjectedTaskState) {
+  return task.terminal_state === "permanently_complete" || isCanonicalArchivedOrTrashed(task);
 }
 
 export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {

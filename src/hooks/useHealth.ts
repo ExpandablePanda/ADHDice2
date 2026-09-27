@@ -108,6 +108,12 @@ import {
   setHealthFoodFavoriteStatus,
 } from "@/lib/health-library";
 import {
+  buildHealthFoodHistoryMealEntryUpdate,
+  formatHealthFoodHistoryRepairResult,
+  selectHealthFoodMealEntriesBySourceId,
+  type HealthFoodHistoryRepairResult,
+} from "@/lib/health-meal-recalculation";
+import {
   reconcileHealthWorkouts,
   sortHealthWorkouts,
   validateHealthWorkoutEditableInput,
@@ -133,6 +139,8 @@ import {
   type HealthOperationToken,
 } from "@/lib/health-operation-ownership";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
+import { fetchAllPagedRows, SUPABASE_READ_PAGE_SIZE, type PaginatedReadResult } from "@/lib/paginated-read";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
@@ -175,6 +183,46 @@ type HealthStateSnapshot = {
   workouts: HealthWorkout[];
   weightEntries: HealthWeightEntry[];
 };
+
+type HealthRemoteAuthority = {
+  client: SupabaseClient;
+  hydratedAt: number;
+  snapshot: HealthStateSnapshot;
+  userId: string;
+};
+
+type HealthRemoteClient = NonNullable<SupabaseClient>;
+
+async function loadHealthHydrationReads(client: HealthRemoteClient, userId: string) {
+  let pageCount = 0;
+  const loadRows = <T,>(fetchPage: (from: number, to: number) => PromiseLike<PaginatedReadResult<T>>) =>
+    fetchAllPagedRows(fetchPage, SUPABASE_READ_PAGE_SIZE, () => {
+      pageCount += 1;
+    });
+  const results = await Promise.all([
+    client.from("adhdice_health_profiles").select("*").eq("user_id", userId).maybeSingle(),
+    loadRows((from, to) => client.from("adhdice_health_checkins").select("id,user_id,entry_date,entry_time,mood_score,energy_score,stress_score,clarity_score,symptom_tags,reflection,entry_type,structured_answers,created_at,updated_at").eq("user_id", userId).order("entry_date", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_journal_signals").select("id,user_id,kind,symptom_id,name,color,low_label,high_label,scale_labels,in_template,template_sort_order,archived_at,created_at,updated_at").eq("user_id", userId).order("in_template", { ascending: false }).order("template_sort_order", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_journal_signal_values").select("id,user_id,journal_entry_id,signal_id,score,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_journal_signal_occurrences").select("id,user_id,journal_entry_id,signal_id,entry_date,occurred_at,score,note,created_at,updated_at").eq("user_id", userId).order("occurred_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_meal_entries").select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_meal_plan_entries").select("id,user_id,planned_date,meal_slot,planned_time,planned_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,confirmed_at,confirmed_meal_entry_id,created_at,updated_at").eq("user_id", userId).order("planned_date", { ascending: true }).order("planned_time", { ascending: true }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_food_library").select("id,user_id,food_name,brand_name,category,food_category,serving_label,serving_size,serving_quantity,serving_unit,serving_measure_value,serving_measure_unit,serving_weight_amount,serving_weight_unit,calories,protein_g,carbs_g,fat_g,nutrition_details,barcode,provider,provider_item_id,attribution,is_favorite,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_recipes").select("id,user_id,name,notes,servings,ingredients,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_saved_meals").select("id,user_id,name,default_meal_slot,items,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_symptoms").select("id,user_id,name,color,archived_at,created_at,updated_at").eq("user_id", userId).order("archived_at", { ascending: true, nullsFirst: true }).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_symptom_entries").select("id,user_id,symptom_id,journal_entry_id,entry_date,logged_at,severity,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_water_entries").select("id,user_id,entry_date,logged_at,amount,unit,amount_ml,confirmed_at,created_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_weight_entries").select("id,user_id,entry_date,logged_at,weight_kg,source,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_metric_entries").select("id,user_id,metric_type,metric_date,metric_value,source,source_fingerprint,created_at,updated_at").eq("user_id", userId).order("metric_date", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_workouts").select("id,user_id,workout_date,started_at,ended_at,duration_seconds,title,workout_type,active_calories,notes,source,source_external_id,created_at,updated_at").eq("user_id", userId).order("workout_date", { ascending: false }).order("started_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_import_audits").select("id,user_id,source,imported_count,duplicate_count,skipped_count,import_start_date,import_end_date,summary_text,started_at,completed_at,created_at").eq("user_id", userId).order("started_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_achievement_awards").select("id,user_id,achievement_code,title,description,awarded_points,awarded_xp,awarded_tokens,earned_at,created_at").eq("user_id", userId).order("earned_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+  ]);
+  return { pageCount, results };
+}
+
+type HealthHydrationReads = Awaited<ReturnType<typeof loadHealthHydrationReads>>;
 
 type LocalHealthState = {
   snapshot: HealthStateSnapshot;
@@ -421,6 +469,10 @@ export function useHealth(
   const [storageMode, setStorageMode] = useState<"local" | "remote">("local");
   const healthSnapshotRef = useRef<HealthStateSnapshot | null>(null);
   const healthScopeRevisionRef = useRef(0);
+  const healthRemoteAuthorityRef = useRef<HealthRemoteAuthority | null>(null);
+  const healthHydrationInFlightRef = useRef<{ client: HealthRemoteClient; promise: Promise<HealthHydrationReads>; userId: string } | null>(null);
+  const healthForceRemoteHydrationRef = useRef(false);
+  const [healthRefreshNonce, setHealthRefreshNonce] = useState(0);
   const healthFoodMutationRevisionRef = useRef(0);
   const workoutRemoteEnabledRef = useRef(true);
   const mealPlanRemoteEnabledRef = useRef(true);
@@ -440,6 +492,9 @@ export function useHealth(
   const isCurrentOperation = (token: HealthOperationToken | null) => isCurrentHealthOperation(currentHealthOwner(), token);
 
   useLayoutEffect(() => {
+    if (healthRemoteAuthorityRef.current && (healthRemoteAuthorityRef.current.userId !== userId || healthRemoteAuthorityRef.current.client !== client)) {
+      healthRemoteAuthorityRef.current = null;
+    }
     healthOperationGenerationRef.current += 1;
     healthOwnerRef.current = { active, userId };
     healthFoodMutationRevisionRef.current = 0;
@@ -448,6 +503,12 @@ export function useHealth(
       healthOwnerRef.current = { active: false, userId: null };
     };
   }, [active, client, userId]);
+
+  function refreshHealth() {
+    if (!client || !userId) return;
+    healthForceRemoteHydrationRef.current = true;
+    setHealthRefreshNonce((current) => current + 1);
+  }
 
   function rememberHealthLocalPersistenceFailure(
     result: LocalStorageWriteResult,
@@ -545,6 +606,9 @@ export function useHealth(
       journalSignalOccurrences: [...snapshot.journalSignalOccurrences].sort(sortHealthJournalSignalOccurrences),
     };
     healthSnapshotRef.current = nextSnapshot;
+    if (healthRemoteAuthorityRef.current?.userId === nextSnapshot.profile.user_id) {
+      healthRemoteAuthorityRef.current.snapshot = nextSnapshot;
+    }
     setProfile(nextSnapshot.profile);
     setCheckIns(nextSnapshot.checkIns);
     setJournalSignals([...nextSnapshot.journalSignals].sort(sortHealthJournalSignals));
@@ -725,6 +789,9 @@ export function useHealth(
     healthScopeRevisionRef.current += 1;
     if (!userId) {
       healthSnapshotRef.current = null;
+      healthRemoteAuthorityRef.current = null;
+      healthHydrationInFlightRef.current = null;
+      healthForceRemoteHydrationRef.current = false;
       setProfile(null);
       setCheckIns([]);
       setJournalSignals([]);
@@ -775,11 +842,37 @@ export function useHealth(
       return;
     }
 
+    const forceRemoteHydration = healthForceRemoteHydrationRef.current;
+    healthForceRemoteHydrationRef.current = false;
+    const cachedRemoteAuthority = healthRemoteAuthorityRef.current;
+    if (!forceRemoteHydration && cachedRemoteAuthority?.client === client && cachedRemoteAuthority.userId === userId) {
+      setStorageMode("remote");
+      applySnapshot(cachedRemoteAuthority.snapshot, { persistenceMode: "remote" });
+      setIsLoading(false);
+      return;
+    }
+
     let isActive = true;
     setIsLoading(true);
     const foodMutationRevisionAtFetchStart = healthFoodMutationRevisionRef.current;
 
+    const existingHydration = healthHydrationInFlightRef.current;
+    const hydrationRead = existingHydration && existingHydration.client === client && existingHydration.userId === userId
+      ? existingHydration.promise
+      : loadHealthHydrationReads(client, userId);
+    if (!existingHydration || existingHydration.client !== client || existingHydration.userId !== userId) {
+      const hydrationRequest = { client, promise: hydrationRead, userId };
+      healthHydrationInFlightRef.current = hydrationRequest;
+      const clearHydrationRequest = () => {
+        if (healthHydrationInFlightRef.current === hydrationRequest) {
+          healthHydrationInFlightRef.current = null;
+        }
+      };
+      void hydrationRead.then(clearHydrationRequest, clearHydrationRequest);
+    }
+
     void (async () => {
+      const { pageCount: healthPageCount, results } = await hydrationRead;
       const [
         profileResult,
         checkInsResult,
@@ -799,26 +892,7 @@ export function useHealth(
         workoutsResult,
         importAuditsResult,
         awardsResult,
-      ] = await Promise.all([
-        client.from("adhdice_health_profiles").select("*").eq("user_id", userId).maybeSingle(),
-        client.from("adhdice_health_checkins").select("*").eq("user_id", userId).order("entry_date", { ascending: false }),
-        client.from("adhdice_health_journal_signals").select("*").eq("user_id", userId).order("in_template", { ascending: false }).order("template_sort_order", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true }),
-        client.from("adhdice_health_journal_signal_values").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
-        client.from("adhdice_health_journal_signal_occurrences").select("*").eq("user_id", userId).order("occurred_at", { ascending: false }),
-        client.from("adhdice_health_meal_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
-        client.from("adhdice_health_meal_plan_entries").select("*").eq("user_id", userId).order("planned_date", { ascending: true }).order("planned_time", { ascending: true }),
-        client.from("adhdice_health_food_library").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
-        client.from("adhdice_health_recipes").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
-        client.from("adhdice_health_saved_meals").select("*").eq("user_id", userId).order("updated_at", { ascending: false }),
-        client.from("adhdice_health_symptoms").select("*").eq("user_id", userId).order("archived_at", { ascending: true, nullsFirst: true }).order("name", { ascending: true }),
-        client.from("adhdice_health_symptom_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
-        client.from("adhdice_health_water_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
-        client.from("adhdice_health_weight_entries").select("*").eq("user_id", userId).order("logged_at", { ascending: false }),
-        client.from("adhdice_health_metric_entries").select("*").eq("user_id", userId).order("metric_date", { ascending: false }),
-        client.from("adhdice_health_workouts").select("*").eq("user_id", userId).order("workout_date", { ascending: false }).order("started_at", { ascending: false }),
-        client.from("adhdice_health_import_audits").select("*").eq("user_id", userId).order("started_at", { ascending: false }),
-        client.from("adhdice_health_achievement_awards").select("*").eq("user_id", userId).order("earned_at", { ascending: false }),
-      ]);
+      ] = results;
 
       if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
@@ -1271,9 +1345,18 @@ export function useHealth(
       }
       setStorageMode("remote");
       applySnapshot(snapshotToApply, { persistenceMode: "remote" });
+      healthRemoteAuthorityRef.current = {
+        client,
+        hydratedAt: Date.now(),
+        snapshot: healthSnapshotRef.current ?? snapshotToApply,
+        userId,
+      };
       await claimEligibleAwards(snapshotToApply, hydrationOperation, { persistRemotely: true, silent: true });
       if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
+      }
+      if (isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[health] hydrated pages=${healthPageCount} user=${userId}`);
       }
       setIsLoading(false);
     })();
@@ -1281,6 +1364,35 @@ export function useHealth(
     return () => {
       isActive = false;
       healthScopeRevisionRef.current += 1;
+    };
+  }, [active, client, healthRefreshNonce, userId]);
+
+  useEffect(() => {
+    if (!active || !client || !userId || typeof window === "undefined") return;
+    let wasOnline = window.navigator.onLine;
+    const requestAuthorityReconciliation = () => {
+      const authority = healthRemoteAuthorityRef.current;
+      if (!authority || authority.client !== client || authority.userId !== userId) return;
+      healthForceRemoteHydrationRef.current = true;
+      setHealthRefreshNonce((current) => current + 1);
+    };
+    const handleOnline = () => {
+      if (!wasOnline) requestAuthorityReconciliation();
+      wasOnline = true;
+    };
+    const handleOffline = () => {
+      wasOnline = false;
+    };
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) requestAuthorityReconciliation();
+    };
+    window.addEventListener("online", handleOnline);
+    window.addEventListener("offline", handleOffline);
+    window.addEventListener("pageshow", handlePageShow);
+    return () => {
+      window.removeEventListener("online", handleOnline);
+      window.removeEventListener("offline", handleOffline);
+      window.removeEventListener("pageshow", handlePageShow);
     };
   }, [active, client, userId]);
 
@@ -2640,6 +2752,136 @@ export function useHealth(
     return true;
   }
 
+  async function updatePreviousFoodLogs(food: HealthFoodLibraryItem): Promise<HealthFoodHistoryRepairResult> {
+    let entries = selectHealthFoodMealEntriesBySourceId(mealEntries, food.id);
+    const result: HealthFoodHistoryRepairResult = {
+      failed: 0,
+      failureMessages: [],
+      requested: entries.length,
+      skipped: 0,
+      updated: 0,
+    };
+    if (!userId || !profile) {
+      return result;
+    }
+    if (entries.length === 0 && !(client && storageMode === "remote")) {
+      if (entries.length === 0) {
+        setMessage({ tone: "neutral", text: formatHealthFoodHistoryRepairResult(result) });
+      }
+      return result;
+    }
+    const operation = captureOperation();
+    if (!operation) {
+      return result;
+    }
+
+    healthFoodMutationRevisionRef.current += 1;
+    if (client && storageMode === "remote") {
+      const remoteEntries = await fetchAllPagedRows(
+        (from, to) => client
+          .from("adhdice_health_meal_entries")
+          .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
+          .eq("user_id", userId)
+          .eq("source_food_id", food.id)
+          .order("logged_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+      );
+      if (!isCurrentOperation(operation)) {
+        return result;
+      }
+      if (remoteEntries.error) {
+        result.failed = 1;
+        result.failureMessages.push(remoteEntries.error.message);
+        result.requested = 0;
+        setMessage({ tone: "warn", text: formatHealthFoodHistoryRepairResult(result) });
+        return result;
+      }
+      entries = (remoteEntries.data ?? []) as HealthMealEntry[];
+      result.requested = entries.length;
+    }
+    const updatedRows = new Map<string, HealthMealEntry>();
+    for (const entry of entries) {
+      let update: HealthMealEntryUpdate;
+      try {
+        update = buildHealthFoodHistoryMealEntryUpdate(food, entry);
+      } catch {
+        result.skipped += 1;
+        continue;
+      }
+
+      const now = new Date().toISOString();
+      let nextRow: HealthMealEntry = { ...entry, ...update, updated_at: now };
+      if (client && storageMode === "remote") {
+        let data: HealthMealEntry | null = null;
+        let error: { message?: string } | null = null;
+        try {
+          const response = await client
+            .from("adhdice_health_meal_entries")
+            .update(update)
+            .eq("id", entry.id)
+            .eq("user_id", userId)
+            .eq("source_food_id", food.id)
+            .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
+            .single();
+          data = response.data;
+          error = response.error;
+        } catch (caughtError) {
+          error = { message: caughtError instanceof Error ? caughtError.message : String(caughtError) };
+        }
+        if (!isCurrentOperation(operation)) {
+          return result;
+        }
+        if (error || !data) {
+          result.failed += 1;
+          if (error?.message) {
+            result.failureMessages.push(error.message);
+          }
+          continue;
+        }
+        nextRow = data;
+      }
+      updatedRows.set(entry.id, nextRow);
+      result.updated += 1;
+    }
+
+    if (!isCurrentOperation(operation)) {
+      return result;
+    }
+    if (updatedRows.size > 0) {
+      const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
+        awards,
+        checkIns,
+        favorites,
+        importAudits,
+        mealEntries,
+        metricEntries,
+        profile,
+        recipes,
+        savedMeals,
+        symptoms,
+        symptomEntries,
+        waterEntries,
+        weightEntries,
+      });
+      applySnapshot(buildHealthSnapshot({
+        ...currentSnapshot,
+        mealEntries: currentSnapshot.mealEntries
+          .map((entry) => updatedRows.get(entry.id) ?? entry)
+          .sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+      }));
+    }
+
+    const message = formatHealthFoodHistoryRepairResult(result);
+    if (result.skipped > 0 || result.failed > 0) {
+      setMessage({ tone: "warn", text: message });
+    } else {
+      setHealthSuccessMessage({ tone: "good", text: message });
+    }
+    return result;
+  }
+
   async function addMealPlanEntry(input: Omit<HealthMealPlanEntryInsert, "user_id">) {
     if (!userId || !profile) {
       return false;
@@ -2955,12 +3197,12 @@ export function useHealth(
     return true;
   }
 
-  async function saveFavoriteFood(input: Omit<HealthFoodLibraryItemInsert, "user_id">) {
+  async function saveFavoriteFood(input: Omit<HealthFoodLibraryItemInsert, "user_id">): Promise<HealthFoodLibraryItem | null> {
     if (!userId || !profile) {
-      return false;
+      return null;
     }
     const operation = captureOperation();
-    if (!operation) return false;
+    if (!operation) return null;
 
     const currentFavorites = healthSnapshotRef.current?.favorites ?? favorites;
     let normalizedInput = input;
@@ -2971,7 +3213,7 @@ export function useHealth(
     if (duplicateFavorite) {
       if (!normalizedInput.is_favorite || duplicateFavorite.is_favorite) {
         setMessage({ tone: "neutral", text: "That food is already in your library." });
-        return true;
+        return duplicateFavorite;
       }
       normalizedInput = { ...normalizedInput, id: duplicateFavorite.id };
     }
@@ -3024,10 +3266,10 @@ export function useHealth(
         })
         .select("*")
         .single();
-      if (!isCurrentOperation(operation)) return false;
+      if (!isCurrentOperation(operation)) return null;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
-        return false;
+        return null;
       }
       nextRow = data ? normalizeHealthFoodLibraryItem(data) : localRow;
     }
@@ -3049,13 +3291,13 @@ export function useHealth(
       ...currentSnapshot.favorites.filter((item) => item.id !== nextRow.id),
       nextRow,
     ].sort((left, right) => right.updated_at.localeCompare(left.updated_at));
-    if (!isCurrentOperation(operation)) return false;
+    if (!isCurrentOperation(operation)) return null;
     applySnapshot(buildHealthSnapshot({ ...currentSnapshot, favorites: nextFavorites }));
     setHealthSuccessMessage({
       tone: "good",
       text: nextRow.is_favorite ? "Saved to favorites." : "Custom food saved.",
     });
-    return true;
+    return nextRow;
   }
 
   async function setFavoriteFoodStatus(itemId: string, isFavorite: boolean) {
@@ -4389,6 +4631,8 @@ export function useHealth(
     addWeightEntry,
     updateWaterEntry,
     updateMealEntry,
+    updatePreviousFoodLogs,
+    refreshHealth,
     storageMode,
     waterEntries,
     workouts,

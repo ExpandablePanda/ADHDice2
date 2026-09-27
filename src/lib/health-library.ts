@@ -646,6 +646,31 @@ export function normalizeHealthFoodLibraryItem(food: HealthFoodLibraryItem): Hea
   };
 }
 
+export function countHealthFoodMealEntries(mealEntries: HealthMealEntry[], sourceFoodId: string) {
+  return mealEntries.filter((entry) => entry.source_food_id === sourceFoodId).length;
+}
+
+export function hasHealthFoodNutritionOrServingChanges(
+  current: HealthFoodLibraryItem,
+  next: Omit<HealthFoodLibraryItemInsert, "user_id">,
+) {
+  const currentDetails = normalizeHealthNutritionDetails(current.nutrition_details);
+  const nextDetails = normalizeHealthNutritionDetails(next.nutrition_details);
+  const scalarChanges = [
+    current.calories !== next.calories,
+    current.protein_g !== (next.protein_g ?? null),
+    current.carbs_g !== (next.carbs_g ?? null),
+    current.fat_g !== (next.fat_g ?? null),
+    current.serving_quantity !== (next.serving_quantity ?? 1),
+    current.serving_unit !== (next.serving_unit ?? "serving"),
+    current.serving_measure_value !== (next.serving_measure_value ?? null),
+    current.serving_measure_unit !== (next.serving_measure_unit ?? null),
+  ];
+  const detailChanges = Object.keys(currentDetails ?? {}).some((key) => currentDetails?.[key as keyof HealthNutritionDetails] !== nextDetails?.[key as keyof HealthNutritionDetails])
+    || Object.keys(nextDetails ?? {}).some((key) => currentDetails?.[key as keyof HealthNutritionDetails] !== nextDetails?.[key as keyof HealthNutritionDetails]);
+  return scalarChanges.some(Boolean) || detailChanges;
+}
+
 export function setHealthFoodFavoriteStatus(
   food: HealthFoodLibraryItem,
   isFavorite: boolean,

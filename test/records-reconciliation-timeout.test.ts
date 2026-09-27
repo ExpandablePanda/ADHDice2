@@ -364,7 +364,7 @@ test("7.2.24 busy and refresh failure preserve the previous UI snapshot", async 
 
   const prior: RecordsInternalState = completeRecordsRefresh({
     currentRecords: [], error: null, events: [], hasDetailedEvidence: false, hasSuccessfulResult: false, isLoading: false,
-    isRecalculating: false, lastCalculatedAt: null, ownerUserId: "user-1", progress: null,
+    invalidatedEventsLoaded: false, invalidatedEventsLoading: false, isRecalculating: false, lastCalculatedAt: null, ownerUserId: "user-1", progress: null,
     provisionalCandidates: [], setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [],
   }, {
     currentRecords: [{ id: "record-1" }] as never[], evaluatedAt: "2026-07-20T12:00:00Z",

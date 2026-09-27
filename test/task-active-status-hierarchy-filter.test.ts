@@ -32,8 +32,6 @@ function derive(
     focusedTaskIds: [],
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskGridLayout: [],
-    taskGridWidgetTypes: [],
     taskHistoryByTaskId: {},
     taskListEvaluationContext: {
       currentStreakByTaskId: {}, focusedTaskIds: new Set<string>(), hasStepsByTaskId: {}, historyFactsByTaskId: {},

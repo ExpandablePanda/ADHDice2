@@ -1,5 +1,5 @@
-import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
-import type { Task, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import { formatDateKey, shiftDateKey } from "./date-key.ts";
+import type { Task, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "./database.types.ts";
 
 export type TaskRepeatCategory = Task["repeat_frequency"] | "weekdays";
 

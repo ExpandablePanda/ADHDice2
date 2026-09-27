@@ -19,7 +19,7 @@ import {
   type TaskNeedsActionTrigger,
   type TaskSuccessOutcome,
 } from "./task-state-engine/behavior-policy.ts";
-import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, normalizeTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "./task-type-presentation.ts";
+import { DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION, normalizeStoredTaskTypePresentation, validateTaskTypeDescription, type TaskTypePresentation } from "./task-type-presentation-domain.ts";
 
 type RulesetError = { code?: string; message?: string };
 type RulesetQueryResult<T> = { data: T[] | null; error: RulesetError | null };
@@ -178,7 +178,7 @@ function toBehaviorSelection(row: PersistedTaskBehaviorSelection, userId: string
 
 /** Build a ruleset row without embedding user-created names into TaskType. */
 export function customBehaviorRulesetUpsertPayload(userId: string, name: string, presentation: Partial<TaskTypePresentation> = DEFAULT_CUSTOM_TASK_TYPE_PRESENTATION) {
-  const normalized = normalizeTaskTypePresentation(presentation);
+  const normalized = normalizeStoredTaskTypePresentation(presentation);
   return {
     accent_key: normalized.accentKey,
     description: normalized.description,
@@ -246,7 +246,7 @@ const RULESET_IDENTITY_SELECT = "id,user_id,name,task_type,icon_key,accent_key,d
 
 function normalizeCustomBehaviorRulesetIdentity(row: CustomBehaviorRuleset | null | undefined): CustomBehaviorRuleset | null {
   if (!isValidCustomBehaviorRulesetIdentity(row)) return null;
-  const presentation = normalizeTaskTypePresentation({
+  const presentation = normalizeStoredTaskTypePresentation({
     accentKey: row.accent_key,
     description: row.description,
     highlightTaskRows: row.highlight_task_rows,
@@ -399,7 +399,7 @@ export async function updateCustomBehaviorRulesetPresentation(
 ): Promise<CustomBehaviorRulesetMutationResult<CustomBehaviorRuleset>> {
   const current = loadedRulesets.find((ruleset) => ruleset.id === rulesetId);
   if (current?.deleted_at != null) return rulesetMutationError("The Custom Task Type has already been deleted.");
-  const currentPresentation = normalizeTaskTypePresentation({
+  const currentPresentation = normalizeStoredTaskTypePresentation({
     accentKey: current?.accent_key,
     description: current?.description,
     highlightTaskRows: current?.highlight_task_rows,
@@ -407,7 +407,7 @@ export async function updateCustomBehaviorRulesetPresentation(
   });
   const descriptionValidation = validateTaskTypeDescription(presentation.description ?? currentPresentation.description);
   if (descriptionValidation.error) return rulesetMutationError(descriptionValidation.error);
-  const normalized = normalizeTaskTypePresentation({ ...currentPresentation, ...presentation, description: descriptionValidation.description });
+  const normalized = normalizeStoredTaskTypePresentation({ ...currentPresentation, ...presentation, description: descriptionValidation.description });
   let result: RulesetQueryResult<CustomBehaviorRuleset>;
   try {
     result = await client

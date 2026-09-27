@@ -5,7 +5,7 @@ import type {
   TaskStatus,
 } from "@/lib/database.types";
 import type { TaskPriorityLevel } from "@/lib/task-priority";
-import { formatDateKey, shiftDateKey } from "@/lib/task-grid-layout";
+import { formatDateKey, shiftDateKey } from "@/lib/date-key";
 
 export type ImportedTaskWarning = {
   line: number;

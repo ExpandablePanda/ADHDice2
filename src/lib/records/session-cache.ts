@@ -5,6 +5,7 @@ export type RecordsSessionSnapshot = {
   currentRecords: PersistedRecordCurrent[];
   events: PersistedRecordEvent[];
   hasSuccessfulResult: true;
+  invalidatedEventsLoaded?: boolean;
   lastCalculatedAt: string;
   provisionalCandidates: ProvisionalRecordCandidate[];
   taskEvidenceByRecordIdentity: RecordTaskEvidenceByRecordIdentity;
@@ -44,6 +45,7 @@ export function createRecordsSessionSnapshot(input: RecordsSessionRefresh): Reco
     currentRecords: input.currentRecords,
     events: input.events,
     hasSuccessfulResult: true,
+    invalidatedEventsLoaded: Boolean(input.invalidatedEventsLoaded),
     lastCalculatedAt: input.evaluatedAt,
     provisionalCandidates: input.provisionalCandidates,
     taskEvidenceByRecordIdentity: input.taskEvidenceByRecordIdentity,

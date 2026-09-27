@@ -20,6 +20,7 @@ export type TaskHistoryCalendarPresentationProps = {
   historyDescription: string;
   historySummary: readonly { label: string; value: string }[];
   historyTitle: string;
+  historyFooter?: ReactNode;
   monthDays: readonly (string | null)[];
   monthLabel: string;
   onChangeMonth: (amount: number) => void;
@@ -122,9 +123,10 @@ export function TaskHistorySelectedDayPresentation({
   );
 }
 
-export function TaskHistoryHistoryPresentation({ emptyText = "No completed days yet.", entries, summary, summaryStats }: {
+export function TaskHistoryHistoryPresentation({ emptyText = "No completed days yet.", entries, footer, summary, summaryStats }: {
   emptyText?: string;
   entries: readonly TaskHistoryCalendarHistoryEntry[];
+  footer?: ReactNode;
   summary: { description: string; title: string };
   summaryStats: readonly { label: string; value: string }[];
 }) {
@@ -140,6 +142,7 @@ export function TaskHistoryHistoryPresentation({ emptyText = "No completed days 
         </div>
       </div>
       {entries.length === 0 ? <p className="mt-3 rounded-[0.75rem] bg-[#fbfaff] px-3 py-3 text-sm text-[#8d87a7] dark:bg-white/[0.04] dark:text-white/45">{emptyText}</p> : <div className="mt-3 divide-y divide-[#eee9f8] rounded-[0.75rem] border border-[#eee9f8] dark:divide-white/10 dark:border-white/10">{entries.map((entry) => <div className="flex items-start justify-between gap-3 px-3 py-2.5 text-sm" key={entry.key}><div><span className="font-semibold text-[#4e4865] dark:text-white/78">{entry.label}</span>{entry.detail}</div>{entry.status}</div>)}</div>}
+      {footer}
     </div>
   );
 }
@@ -151,6 +154,7 @@ export function TaskHistoryCalendarPresentation({
   historyDescription,
   historySummary,
   historyTitle,
+  historyFooter,
   monthDays,
   monthLabel,
   onChangeMonth,
@@ -178,7 +182,7 @@ export function TaskHistoryCalendarPresentation({
       <div className="mt-3 grid grid-cols-7 gap-1 text-center text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">{TASK_HISTORY_CALENDAR_WEEKDAY_LABELS.map((day) => <span key={day}>{day}</span>)}</div>
       <div className="mt-1 grid grid-cols-7 gap-1">{monthDays.map((day, index) => <Fragment key={day ?? `blank-${index}`}>{renderDay(day, index)}</Fragment>)}</div>
       <TaskHistorySelectedDayPresentation action={selectedDayAction} label={selectedDayLabel} status={selectedDayStatus}>{selectedDayContent}</TaskHistorySelectedDayPresentation>
-      <TaskHistoryHistoryPresentation entries={historyEntries} summary={{ description: historyDescription, title: historyTitle }} summaryStats={historySummary} />
+      <TaskHistoryHistoryPresentation entries={historyEntries} footer={historyFooter} summary={{ description: historyDescription, title: historyTitle }} summaryStats={historySummary} />
     </section>
   );
 }

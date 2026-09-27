@@ -31,9 +31,16 @@ export type TaskStateCommandIntent =
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: TaskStateScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
-  | { type: "archive_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "archive_task" | "clear_in_progress"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "trash_task" | "restore_task"; task_id: string; replay_identity: string; expected_revision?: number; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
+
+export type TaskRolloverSweepIntent = {
+  type: "reconcile_rollover_sweep";
+  replay_identity: string;
+  commands: Array<Extract<TaskStateCommandIntent, { type: "reconcile_rollover" }>>;
+};
 
 export type TaskStateScheduleChangeIntent = {
   schedule_model: "unscheduled" | "one_time" | "rolling" | "fixed";
@@ -264,6 +271,32 @@ function failureKind(status: number | null, code: string | null): TaskStateComma
   return "invocation_failure";
 }
 
+export function parseTaskStateCommandResponsePayload(payload: unknown): TaskStateCommandResponse {
+  if (!isObject(payload)) {
+    return failure("malformed_response", "The task-state-command response was not a JSON object.", { code: "MALFORMED_RESPONSE" });
+  }
+
+  try {
+    const fields = resultFields(payload);
+    if (fields.state === "rejected") {
+      return failure(
+        "command_rejected",
+        "Canonical Task State command was rejected.",
+        { code: fields.conflict_code ?? "COMMAND_REJECTED" },
+        fields,
+      );
+    }
+    if (!fields.task_id) throw new Error("Committed Edge response is missing task_id.");
+    return { ...fields, success: true, state: "committed", error: null };
+  } catch (caught) {
+    return failure(
+      "malformed_response",
+      caught instanceof Error ? caught.message : "The task-state-command response was malformed.",
+      { code: "MALFORMED_RESPONSE" },
+    );
+  }
+}
+
 /**
  * Invoke the trusted Edge boundary with browser intent only. This helper does
  * not retry, generate replay identities, or fall back to legacy mutations.
@@ -291,27 +324,182 @@ export async function invokeTaskStateCommand(
     return failure(failureKind(details.status, details.code), details.message, details);
   }
 
-  if (!isObject(data)) {
-    return failure("malformed_response", "The task-state-command response was not a JSON object.", { code: "MALFORMED_RESPONSE" });
+  return parseTaskStateCommandResponsePayload(data);
+}
+
+export type TaskRolloverSweepChildResult = {
+  taskId: string;
+  replayIdentity: string;
+  response: TaskStateCommandSuccess | null;
+  error: TaskStateCommandError | null;
+};
+
+export type TaskRolloverSweepResponse = {
+  success: boolean;
+  committedTaskIds: string[];
+  childResults: TaskRolloverSweepChildResult[];
+  achievementStatus: "completed" | "inactive" | "failed" | "not_run";
+  achievementOperationId: string;
+  achievementFinalizationPending: boolean;
+  error: TaskStateCommandError | null;
+};
+
+function sweepError(value: unknown, fallback: string): TaskStateCommandError {
+  const record = isObject(value) ? value : {};
+  return {
+    kind: "command_rejected",
+    message: typeof record.message === "string" ? record.message : fallback,
+    code: typeof record.code === "string" ? record.code : "ROLLOVER_SWEEP_FAILED",
+    status: typeof record.status === "number" ? record.status : null,
+  };
+}
+
+function parseRolloverSweepResponse(value: unknown): TaskRolloverSweepResponse {
+  if (!isObject(value)
+    || value.type !== "reconcile_rollover_sweep"
+    || !["committed", "partial", "failed"].includes(String(value.state))
+    || !Array.isArray(value.committed_task_ids)
+    || value.committed_task_ids.some((taskId) => typeof taskId !== "string")
+    || !Array.isArray(value.child_results)) {
+    return {
+      success: false,
+      committedTaskIds: [],
+      childResults: [],
+      achievementStatus: "failed",
+      achievementOperationId: "",
+      achievementFinalizationPending: false,
+      error: sweepError(null, "The rollover sweep response was malformed."),
+    };
   }
 
-  try {
-    const fields = resultFields(data);
-    if (fields.state === "rejected") {
-      return failure(
-        "command_rejected",
-        "Canonical Task State command was rejected.",
-        { code: fields.conflict_code ?? "COMMAND_REJECTED" },
-        fields,
-      );
-    }
-    if (!fields.task_id) throw new Error("Committed Edge response is missing task_id.");
-    return { ...fields, success: true, state: "committed", error: null };
-  } catch (caught) {
-    return failure(
-      "malformed_response",
-      caught instanceof Error ? caught.message : "The task-state-command response was malformed.",
-      { code: "MALFORMED_RESPONSE" },
-    );
+  const achievement = isObject(value.achievement) ? value.achievement : null;
+  const achievementStatus = achievement?.status;
+  const achievementOperationId = typeof achievement?.operation_id === "string" ? achievement.operation_id : "";
+  if (!achievement
+    || !["completed", "inactive", "failed", "not_run"].includes(String(achievementStatus))
+    || achievementOperationId.length === 0) {
+    return {
+      success: false,
+      committedTaskIds: value.committed_task_ids as string[],
+      childResults: [],
+      achievementStatus: "failed",
+      achievementOperationId: "",
+      achievementFinalizationPending: false,
+      error: sweepError(null, "The rollover sweep Achievement result was malformed."),
+    };
   }
+
+  const childResults: TaskRolloverSweepChildResult[] = [];
+  for (const child of value.child_results) {
+    if (!isObject(child) || typeof child.task_id !== "string" || typeof child.replay_identity !== "string") {
+      return {
+        success: false,
+        committedTaskIds: value.committed_task_ids as string[],
+        childResults: [],
+        achievementStatus: achievementStatus as TaskRolloverSweepResponse["achievementStatus"],
+        achievementOperationId,
+        achievementFinalizationPending: achievementStatus === "failed",
+        error: sweepError(null, "The rollover sweep child result was malformed."),
+      };
+    }
+    if (child.state === "committed") {
+      const response = parseTaskStateCommandResponsePayload(child.result);
+      if (!response.success) {
+        return {
+          success: false,
+          committedTaskIds: value.committed_task_ids as string[],
+          childResults: [],
+          achievementStatus: achievementStatus as TaskRolloverSweepResponse["achievementStatus"],
+          achievementOperationId,
+          achievementFinalizationPending: achievementStatus === "failed",
+          error: sweepError(null, "The rollover sweep committed child result was malformed."),
+        };
+      }
+      childResults.push({ taskId: child.task_id, replayIdentity: child.replay_identity, response, error: null });
+    } else if (child.state === "rejected") {
+      childResults.push({
+        taskId: child.task_id,
+        replayIdentity: child.replay_identity,
+        response: null,
+        error: sweepError(child.error, "The rollover child command was rejected."),
+      });
+    } else {
+      return {
+        success: false,
+        committedTaskIds: value.committed_task_ids as string[],
+        childResults: [],
+        achievementStatus: achievementStatus as TaskRolloverSweepResponse["achievementStatus"],
+        achievementOperationId,
+        achievementFinalizationPending: achievementStatus === "failed",
+        error: sweepError(null, "The rollover sweep child result was malformed."),
+      };
+    }
+  }
+
+  const topLevelError = value.error === null || value.error === undefined
+    ? null
+    : sweepError(value.error, "The rollover sweep did not complete.");
+  const finalizationPending = achievementStatus === "failed";
+  return {
+    success: value.state === "committed" && topLevelError === null && !finalizationPending,
+    committedTaskIds: value.committed_task_ids as string[],
+    childResults,
+    achievementStatus: achievementStatus as TaskRolloverSweepResponse["achievementStatus"],
+    achievementOperationId,
+    achievementFinalizationPending: finalizationPending,
+    error: topLevelError,
+  };
+}
+
+export async function invokeTaskRolloverSweep(
+  intent: TaskRolloverSweepIntent,
+  options: InvokeTaskStateCommandOptions = {},
+): Promise<TaskRolloverSweepResponse> {
+  const client = options.client === undefined ? createBrowserSupabaseClient() : options.client;
+  if (!client) {
+    return {
+      success: false,
+      committedTaskIds: [],
+      childResults: [],
+      achievementStatus: "failed",
+      achievementOperationId: "",
+      achievementFinalizationPending: false,
+      error: {
+        kind: "client_unavailable",
+        message: "The authenticated browser Supabase client is unavailable.",
+        code: null,
+        status: null,
+      },
+    };
+  }
+
+  let data: unknown;
+  let error: unknown;
+  try {
+    ({ data, error } = await client.functions.invoke<unknown>(TASK_STATE_COMMAND_FUNCTION, { body: intent }));
+  } catch (caught) {
+    const details = await functionErrorDetails(caught);
+    return {
+      success: false,
+      committedTaskIds: [],
+      childResults: [],
+      achievementStatus: "failed",
+      achievementOperationId: "",
+      achievementFinalizationPending: false,
+      error: failure(failureKind(details.status, details.code), details.message, details).error,
+    };
+  }
+  if (error) {
+    const details = await functionErrorDetails(error);
+    return {
+      success: false,
+      committedTaskIds: [],
+      childResults: [],
+      achievementStatus: "failed",
+      achievementOperationId: "",
+      achievementFinalizationPending: false,
+      error: failure(failureKind(details.status, details.code), details.message, details).error,
+    };
+  }
+  return parseRolloverSweepResponse(data);
 }

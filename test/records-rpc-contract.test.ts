@@ -64,6 +64,8 @@ test("7.2.25 signature mismatch stays stage-specific while genuine absence retai
     hasDetailedEvidence: false,
     hasSuccessfulResult: true,
     isLoading: false,
+    invalidatedEventsLoaded: false,
+    invalidatedEventsLoading: false,
     isRecalculating: true,
     lastCalculatedAt: "2026-07-20T12:00:00Z",
     ownerUserId: "user-1",

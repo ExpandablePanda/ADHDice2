@@ -1,20 +1,14 @@
 import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskEnergy } from "@/lib/database.types";
-import { shiftDateKey } from "@/lib/task-grid-layout";
-import type { TaskUiState } from "@/lib/task-ui-state";
+import { shiftDateKey } from "@/lib/date-key";
 
 type UseTaskEditorImportControllerInput = {
   clearListTaskSelection: () => void;
   deleteTasks: (taskIds: string[]) => Promise<boolean>;
-  handleAddGridWidget: (widgetType: "import") => Promise<void>;
   selectedListTaskIds: string[];
   setIsBatchDeleteModalOpen: Dispatch<SetStateAction<boolean>>;
   setIsImportWidgetMenuOpen: Dispatch<SetStateAction<boolean>>;
   setMessage: Dispatch<SetStateAction<{ tone: "neutral" | "good" | "warn"; text: string } | null>>;
-  setSelectedGridWidgetId: Dispatch<SetStateAction<string | null>>;
-  setTaskUiState: Dispatch<SetStateAction<TaskUiState>>;
-  taskGridLayout: Array<{ id: string; type: string }>;
-  taskUiView: TaskUiState["view"];
   tasks: Task[];
   todayDateKey: string;
   updateTask: (taskId: string, updates: Partial<Task>, options?: { manualAction?: "unscheduled_status" }) => Promise<unknown>;
@@ -23,15 +17,10 @@ type UseTaskEditorImportControllerInput = {
 export function useTaskEditorImportController({
   clearListTaskSelection,
   deleteTasks,
-  handleAddGridWidget,
   selectedListTaskIds,
   setIsBatchDeleteModalOpen,
   setIsImportWidgetMenuOpen,
   setMessage,
-  setSelectedGridWidgetId,
-  setTaskUiState,
-  taskGridLayout,
-  taskUiView,
   tasks,
   todayDateKey,
   updateTask,
@@ -70,34 +59,8 @@ export function useTaskEditorImportController({
     setMessage({ tone: "good", text: `${task.title} now repeats ${preset}.` });
   }
 
-  function scrollToTaskElement(elementId: string) {
-    if (typeof document === "undefined") {
-      return;
-    }
-    document.getElementById(elementId)?.scrollIntoView({ behavior: "smooth", block: "start" });
-  }
-
-  async function openTaskImportPanel() {
-    if (taskUiView === "table" || taskUiView === "list") {
-      setIsImportWidgetMenuOpen(true);
-      return;
-    }
-
-    setTaskUiState((prev) => ({
-      ...prev,
-      view: "grid",
-    }));
-
-    const existingImportWidget = taskGridLayout.find((item) => item.type === "import") ?? null;
-    if (existingImportWidget) {
-      setSelectedGridWidgetId(existingImportWidget.id);
-    } else {
-      await handleAddGridWidget("import");
-    }
-
-    window.setTimeout(() => {
-      scrollToTaskElement("task-import-panel");
-    }, 80);
+  function openTaskImportPanel() {
+    setIsImportWidgetMenuOpen(true);
   }
 
   async function deleteSelectedListTasks() {

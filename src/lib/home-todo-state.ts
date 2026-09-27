@@ -3,7 +3,7 @@ import { getCalendarDayKey } from "@/lib/logical-day";
 import type { TaskPriorityLevel } from "@/lib/task-priority";
 import type { TaskListMembership } from "@/lib/task-lists";
 import { formatDueTimeLabel } from "@/lib/task-cockpit";
-import { shiftDateKey } from "@/lib/task-grid-layout";
+import { shiftDateKey } from "@/lib/date-key";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 
 export type HomeTodoStateV1 = {

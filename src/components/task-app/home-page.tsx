@@ -25,6 +25,7 @@ import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
 import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
+import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-history-runtime";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
 import {
@@ -181,7 +182,9 @@ function HomeTodoTaskSignals({
 function HomeProgressDashboard({
   dailyProgress,
   homeRecordChases,
-  isTaskHistoryLoaded,
+  homeHistoryError,
+  homeHistoryStatus,
+  onRetryHomeHistory,
   onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
@@ -190,7 +193,9 @@ function HomeProgressDashboard({
 }: {
   dailyProgress: HomeDailyProgress;
   homeRecordChases: HomeRecordChase[];
-  isTaskHistoryLoaded: boolean;
+  homeHistoryError: string | null;
+  homeHistoryStatus: HomeCurrentDayHistoryLoadStatus;
+  onRetryHomeHistory: () => void;
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
@@ -203,10 +208,22 @@ function HomeProgressDashboard({
     <div className="mb-4 grid min-w-0 gap-3 sm:grid-cols-2" data-home-progress-dashboard>
       <AdhdPanel aria-labelledby="home-finished-today" padding="sm">
         <h2 className="text-sm font-semibold text-[#26324f] dark:text-white" id="home-finished-today">Finished Today</h2>
-        {!isTaskHistoryLoaded ? (
+        {homeHistoryStatus === "idle" || homeHistoryStatus === "loading" ? (
           <div aria-live="polite" className="mt-3 flex items-center gap-2 text-sm text-[#817990] dark:text-white/55" role="status">
             <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin text-[#7d6cf5]" />
             <span>Loading today&apos;s completions…</span>
+          </div>
+        ) : homeHistoryStatus === "error" ? (
+          <div className="mt-3 grid gap-2 text-xs text-[#8b82a7] dark:text-white/48">
+            <p>Today&apos;s completions are unavailable right now.</p>
+            <button
+              className="w-fit rounded-md border border-[#e6def8] px-2.5 py-1.5 font-semibold text-[#6f57f6] transition-colors hover:bg-[#faf8fe] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8b78ed] dark:border-white/10 dark:text-[#b8aaff] dark:hover:bg-white/5"
+              onClick={onRetryHomeHistory}
+              type="button"
+            >
+              Retry
+            </button>
+            {homeHistoryError ? <span className="sr-only">{homeHistoryError}</span> : null}
           </div>
         ) : (
           <div className="mt-3">
@@ -301,7 +318,9 @@ export function HomePage({
   taskDisplayStatusByTaskId,
   dailyProgress,
   homeRecordChases,
-  isTaskHistoryLoaded,
+  homeHistoryError,
+  homeHistoryStatus,
+  onRetryHomeHistory,
   onOpenRecord,
   recordTargetsError,
   recordTargetsLoading,
@@ -332,7 +351,9 @@ export function HomePage({
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
   dailyProgress: HomeDailyProgress;
   homeRecordChases: HomeRecordChase[];
-  isTaskHistoryLoaded: boolean;
+  homeHistoryError: string | null;
+  homeHistoryStatus: HomeCurrentDayHistoryLoadStatus;
+  onRetryHomeHistory: () => void;
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
   recordTargetsLoading: boolean;
@@ -1344,7 +1365,9 @@ export function HomePage({
       <HomeProgressDashboard
         dailyProgress={dailyProgress}
         homeRecordChases={homeRecordChases}
-        isTaskHistoryLoaded={isTaskHistoryLoaded}
+        homeHistoryError={homeHistoryError}
+        homeHistoryStatus={homeHistoryStatus}
+        onRetryHomeHistory={onRetryHomeHistory}
         onOpenRecord={onOpenRecord}
         recordTargetsError={recordTargetsError}
         recordTargetsLoading={recordTargetsLoading}

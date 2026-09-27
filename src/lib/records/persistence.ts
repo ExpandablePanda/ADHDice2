@@ -1,4 +1,5 @@
-import { RECORD_METRICS, RECORDS_RULES_VERSION, type DurableCurrentRecord, type DurableRecordEvent, type RecordEvidence, type RecordMetricKey, type RecordsEvaluation } from "@/lib/records/types";
+import { RECORD_METRICS, RECORDS_RULES_VERSION, type DurableCurrentRecord, type DurableRecordEvent, type RecordEvidence, type RecordMetricKey, type RecordsEvaluation } from "./types.ts";
+import type { RecordsSourceState } from "./source-state.ts";
 
 export const RECORDS_EVIDENCE_SCHEMA_VERSION = 2;
 export const RECORDS_MANIFEST_SCHEMA_VERSION = 1;
@@ -76,6 +77,7 @@ export type RecordsReconciliationManifest = {
   expected_current_row_count: number;
   expected_event_row_count: number;
   expected_chunk_count: number;
+  source_state?: RecordsSourceState;
 };
 
 export type SerializedRecordsReconciliation = {
@@ -273,7 +275,7 @@ async function chunkPartition(rowKind: RecordsRowKind, sectionKey: RecordsSectio
   return chunks;
 }
 
-export async function serializeRecordsReconciliation(evaluation: RecordsEvaluation, timezone: string, logicalDayStart: string): Promise<SerializedRecordsReconciliation> {
+export async function serializeRecordsReconciliation(evaluation: RecordsEvaluation, timezone: string, logicalDayStart: string, sourceState?: RecordsSourceState | null): Promise<SerializedRecordsReconciliation> {
   const currentRows = await Promise.all(evaluation.currentRecords.map(async (record) => compactCurrentRow(record, await compactRecordEvidence(record))));
   const eventRows = await Promise.all(evaluation.events.map(async (event) => compactEventRow(event, await compactRecordEvidence(event))));
   const partitions: Array<{ rowKind: RecordsRowKind; sectionKey: RecordsSectionKey; rows: CompactRecordsRow[] }> = [
@@ -296,6 +298,7 @@ export async function serializeRecordsReconciliation(evaluation: RecordsEvaluati
     logicalDayStart,
     expectedPartitions,
     chunkDigests: chunks.map((chunk) => `${chunk.rowKind}:${chunk.sectionKey}:${chunk.chunkIndex}:${chunk.chunkDigest}`),
+    ...(sourceState ? { sourceState } : {}),
   };
   const evaluationDigest = await recordsSha256(manifestSeed.chunkDigests);
   const manifestDigest = await recordsSha256({ ...manifestSeed, evaluationDigest });
@@ -312,6 +315,7 @@ export async function serializeRecordsReconciliation(evaluation: RecordsEvaluati
     expected_current_row_count: currentRows.length,
     expected_event_row_count: eventRows.length,
     expected_chunk_count: chunks.length,
+    ...(sourceState ? { source_state: sourceState } : {}),
   };
   const compactTotalBytes = utf8Bytes({
     manifest,

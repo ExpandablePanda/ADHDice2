@@ -1,7 +1,10 @@
 import type { CustomBehaviorRuleset } from "./database.types.ts";
+import { isTaskType, normalizeTaskType } from "./task-type-domain.ts";
+import type { TaskType } from "./task-type-domain.ts";
 import { STANDARD_TASK_TYPE_PRESENTATION, normalizeTaskTypePresentation, type TaskTypeAccentKey, type TaskTypeIconKey } from "./task-type-presentation.ts";
 
-export type TaskType = "task" | "custom";
+export { isTaskType, normalizeTaskType } from "./task-type-domain.ts";
+export type { TaskType } from "./task-type-domain.ts";
 
 export type TaskTypeSelection =
   | Readonly<{ customRulesetId: null; taskType: "task" }>
@@ -24,20 +27,9 @@ const BASE_TASK_TYPE_SELECTION_OPTIONS: ReadonlyArray<TaskTypeSelectionOption> =
   { ...STANDARD_TASK_TYPE_PRESENTATION, label: "Task", value: "task" },
 ];
 
-export function isTaskType(value: unknown): value is TaskType {
-  return value === "task" || value === "custom";
-}
-
 /** Parse explicit Task Type input without silently translating retired values. */
 export function parseTaskType(value: unknown): TaskType | null {
   return isTaskType(value) ? value : null;
-}
-
-export function normalizeTaskType(value: unknown): TaskType {
-  if (value === "pursuit" || value === "goal") {
-    throw new Error(`Task Type '${value}' is retired and cannot be normalized.`);
-  }
-  return isTaskType(value) ? value : "task";
 }
 
 function isNamedCustomRuleset(

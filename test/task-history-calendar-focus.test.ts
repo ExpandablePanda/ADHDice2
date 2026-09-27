@@ -7,7 +7,7 @@ import {
 } from "../src/lib/task-history-calendar-focus.ts";
 import { createTaskHistoryCalendarReadRevision } from "../src/lib/task-state-engine/calendar-authority.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
-import { shiftDateKey } from "../src/lib/task-grid-layout.ts";
+import { shiftDateKey } from "../src/lib/date-key.ts";
 
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const taskHistoryModalSource = modalSource.slice(modalSource.indexOf("export function TaskHistoryModal"));
@@ -93,7 +93,10 @@ test("History Calendar exposes Clear only when every selected persisted entry is
 });
 
 test("TaskHistoryModal keeps the canonical projection range for month rendering", () => {
-  assert.match(taskHistoryModalSource, /const days = buildTaskHistoryCalendarDateKeys\(today\);/);
+  assert.match(taskHistoryModalSource, /const initialCalendarDays = buildTaskHistoryCalendarDateKeys\(today\);/);
+  assert.match(taskHistoryModalSource, /const days = buildTaskHistoryCalendarDateKeysForRange\(/);
+  assert.match(taskHistoryModalSource, /historyWindowStartDate \?\? initialCalendarDays\[0\]/);
+  assert.match(taskHistoryModalSource, /historyWindowEndDate \?\? initialCalendarDays\.at\(-1\)/);
   assert.match(taskHistoryModalSource, /const calendarEnd = days\.at\(-1\) \?\? today/);
   assert.match(taskHistoryModalSource, /const calendarStart = days\[0\] \?\? today/);
   assert.match(taskHistoryModalSource, /const knownDateKeys = new Set\(days\)/);

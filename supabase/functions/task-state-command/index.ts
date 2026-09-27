@@ -3,14 +3,16 @@ import { userIdFromContext } from "./auth.ts";
 import {
   executeTrustedTaskStateCommand,
   executeHistoryOutcomeBatch,
+  executeRolloverSweep,
   type TrustedTaskStateCommandClient,
 } from "./orchestration.ts";
 import {
   validateHistoryOutcomeBatchIntent,
+  validateRolloverSweepIntent,
   validateTaskStateCommandIntent,
 } from "./domain.ts";
 
-const MAX_BODY_BYTES = 32 * 1024;
+const MAX_BODY_BYTES = 128 * 1024;
 
 function json(payload: unknown, status: number) {
   return Response.json(payload, { status, headers: { "Cache-Control": "no-store" } });
@@ -37,6 +39,15 @@ export default {
       body = JSON.parse(bodyText);
     } catch {
       return json({ error: { code: "invalid_request", message: "Request body must be valid JSON." } }, 400);
+    }
+    const rolloverSweepIntent = validateRolloverSweepIntent(body);
+    if (rolloverSweepIntent) {
+      const result = await executeRolloverSweep({
+        userId,
+        intent: rolloverSweepIntent,
+        adminClient: context.supabaseAdmin as unknown as TrustedTaskStateCommandClient,
+      });
+      return json(result.body, result.status);
     }
     const batchIntent = validateHistoryOutcomeBatchIntent(body);
     if (batchIntent) {

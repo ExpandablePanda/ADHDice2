@@ -6,10 +6,12 @@ import {
   parseAuthoritativeClaimSession,
   shouldApplyPendingRewardDiceSnapshot,
 } from "@/lib/pending-reward-dice";
+import { createRealtimeSnapshotLifecycle } from "../src/lib/realtime-snapshot-lifecycle.ts";
 import { resolveTaskRewardTier, type PendingTaskReward } from "@/lib/task-rewards";
 
 const sql = readFileSync(new URL("../supabase/add_pending_reward_dice.sql", import.meta.url), "utf8");
 const controller = readFileSync(new URL("../src/hooks/useTaskRewardController.ts", import.meta.url), "utf8");
+const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const claimFunction = sql.slice(
   sql.indexOf("create or replace function public.adhdice_claim_pending_reward_dice"),
   sql.indexOf("revoke all on function public.adhdice_claim_pending_reward_dice"),
@@ -110,15 +112,51 @@ test("pending rewards do not use the Roll-page bank or its RPC", () => {
   assert.doesNotMatch(sql, /adhdice_execute_roll/i);
 });
 
-test("client synchronization covers Realtime, resume, reconnect, and request generations", () => {
+test("normal pending reward startup synchronizes only the lightweight account", () => {
+  const lifecycle = createRealtimeSnapshotLifecycle();
+  assert.equal(lifecycle.handleStatus("SUBSCRIBED"), true);
+  lifecycle.completeHydration(true);
+  assert.equal(lifecycle.handleStatus("SUBSCRIBED"), false);
+  assert.equal(lifecycle.handleVisibilityChange("visible"), false);
+  assert.equal(lifecycle.handlePageShow(false), false);
+  assert.equal(lifecycle.handleOnline(), false);
+
   assert.match(controller, /fetchGenerationRef/);
+  assert.match(controller, /createRealtimeSnapshotLifecycle/);
+  assert.match(controller, /snapshotLifecycle\.handleStatus\(status\)/);
+  assert.match(controller, /snapshotLifecycle\.handleVisibilityChange/);
+  assert.match(controller, /snapshotLifecycle\.handlePageShow/);
+  assert.match(controller, /snapshotLifecycle\.handleOnline/);
   assert.match(controller, /postgres_changes/);
   assert.match(controller, /visibilitychange/);
   assert.match(controller, /pageshow/);
   assert.match(controller, /online/);
-  assert.match(controller, /CHANNEL_ERROR/);
-  assert.match(controller, /TIMED_OUT/);
-  assert.match(controller, /CLOSED/);
+  assert.match(controller, /refreshPendingRewardAccount/);
+  const startupEffectStart = controller.indexOf("useEffect(() => {");
+  const startupEffect = controller.slice(startupEffectStart, controller.indexOf("  }, [applyAuthoritativeSnapshot", startupEffectStart));
+  assert.match(startupEffect, /adhdice_pending_reward_dice/);
+  assert.doesNotMatch(startupEffect, /adhdice_pending_reward_dice_items/);
+  assert.match(controller, /status !== "SUBSCRIBED"/);
+});
+
+test("pending reward payloads load lazily and repeated opens join one request", () => {
+  const queueLoader = controller.slice(controller.indexOf("const loadPendingRewardQueue"), controller.indexOf("const clearPendingRewardQueue"));
+  assert.match(queueLoader, /adhdice_pending_reward_dice_items/);
+  assert.match(queueLoader, /queueLoadInFlightRef/);
+  assert.match(queueLoader, /return inFlight\.promise/);
+  const opener = taskApp.slice(taskApp.indexOf("const openPendingRewardBank"), taskApp.indexOf("const hudNotificationBaseItems"));
+  assert.match(opener, /await loadPendingRewardQueue\(\)/);
+  assert.match(opener, /setActiveRewardBankSession\(\[\.\.\.pendingRewardQueue\]\)/);
+});
+
+test("pending reward realtime invalidation and claim settlement do not eagerly reload payloads", () => {
+  const syncEffectStart = controller.indexOf("useEffect(() => {");
+  const syncEffect = controller.slice(syncEffectStart, controller.indexOf("  }, [applyAuthoritativeSnapshot", syncEffectStart));
+  assert.doesNotMatch(syncEffect, /void loadPendingRewardQueue\(\)/);
+  const claim = controller.slice(controller.indexOf("async function claimPendingRewardBank"));
+  assert.match(claim, /clearPendingRewardQueue\(\)/);
+  assert.match(claim, /refreshPendingRewardAccount/);
+  assert.doesNotMatch(claim, /adhdice_pending_reward_dice_items/);
 });
 
 test("pending-dice mutation IDs use the shared UUID helper and retain retry IDs", () => {

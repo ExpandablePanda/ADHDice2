@@ -6,7 +6,6 @@ import type { TaskViewMode } from "@/lib/task-ui-state";
 type TasksNonListContentProps = {
   cardsNode: ReactNode;
   calendarNode: ReactNode;
-  gridNode: ReactNode;
   listNode: ReactNode;
   matrixNode: ReactNode;
   view: TaskViewMode;
@@ -15,17 +14,12 @@ type TasksNonListContentProps = {
 export function TasksNonListContent({
   cardsNode,
   calendarNode,
-  gridNode,
   listNode,
   matrixNode,
   view,
 }: TasksNonListContentProps) {
   if (view === "list") {
     return <>{listNode}</>;
-  }
-
-  if (view === "grid") {
-    return <>{gridNode}</>;
   }
 
   if (view === "matrix") {

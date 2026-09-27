@@ -1388,3 +1388,370 @@ grant select on table public.adhdice_task_calendar_overrides to authenticated;
 grant select on table public.adhdice_task_reward_entitlements to authenticated;
 grant select on table public.adhdice_task_reward_grants to authenticated;
 grant select on table public.adhdice_task_reward_claim_consumptions to authenticated;
+
+-- 7.15.6 canonical Task History synchronization metadata. This is transport
+-- identity only; public.adhdice_task_history_facts remains the authority.
+create table if not exists public.adhdice_task_history_sync_state (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  current_revision bigint not null default 0
+    check (current_revision >= 0),
+  sync_epoch uuid not null default gen_random_uuid(),
+  protocol_version text not null default 'task-history-sync-v1'
+    check (protocol_version = 'task-history-sync-v1'),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create table if not exists public.adhdice_task_history_changes (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  sequence bigint not null check (sequence >= 1),
+  history_fact_id uuid not null,
+  entity_id uuid not null,
+  logical_date date not null,
+  operation text not null check (operation in ('upsert', 'delete')),
+  row_revision bigint,
+  changed_at timestamptz not null default now(),
+  primary key (user_id, sequence)
+);
+
+create index if not exists adhdice_task_history_changes_history_fact_sequence_idx
+  on public.adhdice_task_history_changes (user_id, history_fact_id, sequence);
+create index if not exists adhdice_task_history_changes_entity_sequence_idx
+  on public.adhdice_task_history_changes (user_id, entity_id, sequence desc);
+
+-- 7.15.12 Phase 1E current Task read projection. This is a rebuildable
+-- non-authoritative read model. Canonical Task, schedule, behavior, History,
+-- and profile rows remain the only sources of truth.
+create table if not exists public.adhdice_task_current_projections (
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entity_id uuid not null,
+  entity_kind text not null check (entity_kind in ('parent', 'step', 'substep')),
+
+  display_status text not null check (display_status in (
+    'pending', 'in_progress', 'done', 'did_my_best', 'missed',
+    'upcoming', 'not_due', 'delayed', 'unscheduled', 'archived',
+    'trashed', 'complete'
+  )),
+  current_effective_due_on date,
+  next_due_on date,
+  active_occurrence_id uuid,
+  active_occurrence_status text not null default 'none' check (
+    active_occurrence_status in ('none', 'open', 'overdue', 'delayed', 'handled', 'terminated')
+  ),
+  handled_current_logical_day boolean not null,
+  last_handled_logical_date date,
+  last_handled_at timestamptz,
+  last_done_logical_date date,
+  last_done_at timestamptz,
+  current_positive_streak integer not null default 0 check (current_positive_streak >= 0),
+  current_missed_streak integer not null default 0 check (current_missed_streak >= 0),
+
+  canonical_task_revision bigint not null check (canonical_task_revision >= 1),
+  history_sync_epoch uuid not null,
+  history_source_revision bigint not null check (history_source_revision >= 0),
+  history_source_fingerprint text not null check (
+    history_source_fingerprint ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  schedule_boundary_revision text not null check (
+    schedule_boundary_revision ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  behavior_policy_revision text not null check (
+    behavior_policy_revision ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  logical_day_settings_revision bigint not null check (logical_day_settings_revision >= 1),
+  projected_logical_date date not null,
+  projection_schema_version text not null check (
+    projection_schema_version = 'task-current-projection-schema-v1'
+  ),
+  projection_algorithm_version text not null check (
+    projection_algorithm_version = 'task-current-projection-algorithm-v1'
+  ),
+  source_fingerprint text not null check (
+    source_fingerprint ~ '^sha256:[0-9a-f]{64}$'
+  ),
+  validity text not null default 'unavailable' check (
+    validity in ('valid', 'repair_required', 'unavailable')
+  ),
+
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint adhdice_task_current_projections_identity_key
+    primary key (user_id, entity_id),
+  constraint adhdice_task_current_projections_entity_fkey
+    foreign key (user_id, entity_id)
+    references public.adhdice_clean_tasks (user_id, id)
+    on delete cascade
+);
+
+create index if not exists adhdice_task_current_projections_reconciliation_idx
+  on public.adhdice_task_current_projections (user_id, validity, projected_logical_date, entity_id);
+
+insert into public.adhdice_task_history_sync_state (user_id, current_revision, sync_epoch, protocol_version)
+select users.id, 0, gen_random_uuid(), 'task-history-sync-v1'
+from auth.users users
+on conflict (user_id) do nothing;
+
+create or replace function public.adhdice_capture_task_history_sync_change()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $function$
+declare
+  v_sequence bigint;
+begin
+  -- updated_at is maintained by the existing canonical timestamp trigger and
+  -- is not itself a History change.
+  if tg_op = 'UPDATE'
+     and (pg_catalog.to_jsonb(old) - 'updated_at') is not distinct from
+         (pg_catalog.to_jsonb(new) - 'updated_at') then
+    return new;
+  end if;
+
+  -- A cascading auth.users deletion removes all metadata with the user. Do
+  -- not append a durable ledger row whose user FK is being removed.
+  if tg_op = 'DELETE' then
+    if exists (select 1 from auth.users users where users.id = old.user_id) then
+      insert into public.adhdice_task_history_sync_state (user_id)
+      values (old.user_id)
+      on conflict (user_id) do nothing;
+      select state.current_revision + 1 into v_sequence
+        from public.adhdice_task_history_sync_state state
+       where state.user_id = old.user_id for update;
+      update public.adhdice_task_history_sync_state
+         set current_revision = v_sequence, updated_at = pg_catalog.clock_timestamp()
+       where user_id = old.user_id;
+      insert into public.adhdice_task_history_changes (
+        user_id, sequence, history_fact_id, entity_id, logical_date,
+        operation, row_revision, changed_at
+      ) values (
+        old.user_id, v_sequence, old.id, old.entity_id, old.logical_date,
+        'delete', old.revision, pg_catalog.clock_timestamp()
+      );
+    end if;
+    return old;
+  end if;
+
+  -- Preserve the old cache placement before publishing a new placement if an
+  -- operational UPDATE changes user_id, id, entity_id, or logical_date.
+  if tg_op = 'UPDATE'
+     and (
+       old.user_id is distinct from new.user_id
+       or old.id is distinct from new.id
+       or old.entity_id is distinct from new.entity_id
+       or old.logical_date is distinct from new.logical_date
+     )
+     and exists (select 1 from auth.users users where users.id = old.user_id) then
+    insert into public.adhdice_task_history_sync_state (user_id)
+    values (old.user_id) on conflict (user_id) do nothing;
+    select state.current_revision + 1 into v_sequence
+      from public.adhdice_task_history_sync_state state
+     where state.user_id = old.user_id for update;
+    update public.adhdice_task_history_sync_state
+       set current_revision = v_sequence, updated_at = pg_catalog.clock_timestamp()
+     where user_id = old.user_id;
+    insert into public.adhdice_task_history_changes (
+      user_id, sequence, history_fact_id, entity_id, logical_date,
+      operation, row_revision, changed_at
+    ) values (
+      old.user_id, v_sequence, old.id, old.entity_id, old.logical_date,
+      'delete', old.revision, pg_catalog.clock_timestamp()
+    );
+  end if;
+
+  insert into public.adhdice_task_history_sync_state (user_id)
+  values (new.user_id) on conflict (user_id) do nothing;
+  select state.current_revision + 1 into v_sequence
+    from public.adhdice_task_history_sync_state state
+   where state.user_id = new.user_id for update;
+  update public.adhdice_task_history_sync_state
+     set current_revision = v_sequence, updated_at = pg_catalog.clock_timestamp()
+   where user_id = new.user_id;
+  insert into public.adhdice_task_history_changes (
+    user_id, sequence, history_fact_id, entity_id, logical_date,
+    operation, row_revision, changed_at
+  ) values (
+    new.user_id, v_sequence, new.id, new.entity_id, new.logical_date,
+    'upsert', new.revision, pg_catalog.clock_timestamp()
+  );
+
+  return new;
+end;
+$function$;
+
+revoke all on function public.adhdice_capture_task_history_sync_change() from public, anon, authenticated;
+
+drop trigger if exists adhdice_capture_task_history_sync_change
+  on public.adhdice_task_history_facts;
+-- AFTER is intentional: INSERT ... ON CONFLICT DO UPDATE must emit only the
+-- final UPDATE event, not an extra event for the proposed INSERT.
+create trigger adhdice_capture_task_history_sync_change
+  after insert or update or delete
+  on public.adhdice_task_history_facts
+  for each row execute function public.adhdice_capture_task_history_sync_change();
+
+alter table public.adhdice_task_history_sync_state enable row level security;
+alter table public.adhdice_task_history_changes enable row level security;
+alter table public.adhdice_task_current_projections enable row level security;
+
+drop policy if exists "Users can read their own Task History sync state"
+  on public.adhdice_task_history_sync_state;
+create policy "Users can read their own Task History sync state"
+  on public.adhdice_task_history_sync_state
+  for select to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users can read their own Task History changes"
+  on public.adhdice_task_history_changes;
+create policy "Users can read their own Task History changes"
+  on public.adhdice_task_history_changes
+  for select to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users can read their own current Task projections"
+  on public.adhdice_task_current_projections;
+create policy "Users can read their own current Task projections"
+  on public.adhdice_task_current_projections
+  for select to authenticated
+  using ((select auth.uid()) = user_id);
+
+revoke all on table public.adhdice_task_history_sync_state from public, anon, authenticated;
+revoke all on table public.adhdice_task_history_changes from public, anon, authenticated;
+revoke all on table public.adhdice_task_current_projections from public, anon, authenticated;
+grant select on table public.adhdice_task_history_sync_state to authenticated;
+grant select on table public.adhdice_task_history_changes to authenticated;
+grant select on table public.adhdice_task_current_projections to authenticated;
+grant all on table public.adhdice_task_current_projections to service_role;
+
+-- 7.15.7 canonical Task History delta read protocol. The function is a
+-- revision-fenced read of the canonical facts; the ledger is transport data.
+create or replace function public.adhdice_get_task_history_delta(
+  p_expected_protocol_version text,
+  p_expected_sync_epoch uuid,
+  p_from_revision bigint
+)
+returns jsonb
+language plpgsql
+volatile
+security definer
+set search_path = ''
+as $function$
+declare
+  v_user_id uuid;
+  v_state public.adhdice_task_history_sync_state%rowtype;
+  v_to_revision bigint;
+  v_expected_count bigint;
+  v_actual_count bigint;
+  v_first_sequence bigint;
+  v_last_sequence bigint;
+  v_changes jsonb;
+begin
+  v_user_id := auth.uid();
+  if v_user_id is null then
+    raise exception 'Task History delta requires an authenticated owner.' using errcode = '28000';
+  end if;
+  if p_expected_protocol_version is distinct from 'task-history-sync-v1' then
+    raise exception 'Unsupported Task History sync protocol.' using errcode = '22023';
+  end if;
+  if p_from_revision is null or p_from_revision < 0 then
+    raise exception 'Task History delta fromRevision must be non-negative.' using errcode = '22023';
+  end if;
+
+  select * into v_state
+    from public.adhdice_task_history_sync_state state
+   where state.user_id = v_user_id
+   for share;
+  if not found then
+    raise exception 'Task History sync state is unavailable for this owner.' using errcode = 'P0002';
+  end if;
+  if v_state.protocol_version <> 'task-history-sync-v1' then
+    raise exception 'Stored Task History sync protocol is unsupported.' using errcode = '22023';
+  end if;
+  if p_expected_sync_epoch is null or v_state.sync_epoch is distinct from p_expected_sync_epoch then
+    raise exception 'Task History sync epoch does not match.' using errcode = '40001';
+  end if;
+  if p_from_revision > v_state.current_revision then
+    raise exception 'Task History delta starts ahead of the server revision.' using errcode = '40001';
+  end if;
+
+  v_to_revision := v_state.current_revision;
+  v_expected_count := v_to_revision - p_from_revision;
+  select count(*), min(changes.sequence), max(changes.sequence)
+    into v_actual_count, v_first_sequence, v_last_sequence
+    from public.adhdice_task_history_changes changes
+   where changes.user_id = v_user_id
+     and changes.sequence > p_from_revision
+     and changes.sequence <= v_to_revision;
+  if coalesce(v_actual_count, 0) <> v_expected_count
+     or (v_expected_count > 0 and (v_first_sequence <> p_from_revision + 1 or v_last_sequence <> v_to_revision))
+     or exists (
+       select 1
+         from pg_catalog.generate_series(p_from_revision + 1, v_to_revision) expected(sequence)
+        where not exists (
+          select 1 from public.adhdice_task_history_changes changes
+           where changes.user_id = v_user_id and changes.sequence = expected.sequence
+        )
+     ) then
+    raise exception 'Task History change ledger continuity is incomplete.' using errcode = 'XX001';
+  end if;
+
+  if exists (
+    with final_changes as (
+      select distinct on (changes.history_fact_id) changes.history_fact_id, changes.operation
+        from public.adhdice_task_history_changes changes
+       where changes.user_id = v_user_id
+         and changes.sequence > p_from_revision and changes.sequence <= v_to_revision
+       order by changes.history_fact_id, changes.sequence desc
+    )
+    select 1 from final_changes
+     where final_changes.operation = 'upsert'
+       and not exists (
+         select 1 from public.adhdice_task_history_facts facts
+          where facts.user_id = v_user_id and facts.id = final_changes.history_fact_id
+       )
+  ) then
+    raise exception 'Task History delta upsert has no current canonical fact.' using errcode = 'XX002';
+  end if;
+
+  select coalesce(jsonb_agg(
+    case when final_changes.operation = 'upsert' then jsonb_build_object(
+      'operation', 'upsert', 'historyFactId', final_changes.history_fact_id,
+      'entityId', final_changes.entity_id, 'logicalDate', final_changes.logical_date,
+      'fact', to_jsonb(facts)
+    ) else jsonb_build_object(
+      'operation', 'delete', 'historyFactId', final_changes.history_fact_id,
+      'entityId', final_changes.entity_id, 'logicalDate', final_changes.logical_date
+    ) end order by final_changes.sequence), '[]'::jsonb)
+    into v_changes
+    from (
+      select distinct on (changes.history_fact_id)
+        changes.history_fact_id, changes.entity_id, changes.logical_date,
+        changes.operation, changes.sequence
+        from public.adhdice_task_history_changes changes
+       where changes.user_id = v_user_id
+         and changes.sequence > p_from_revision and changes.sequence <= v_to_revision
+       order by changes.history_fact_id, changes.sequence desc
+    ) final_changes
+    left join public.adhdice_task_history_facts facts
+      on facts.user_id = v_user_id and facts.id = final_changes.history_fact_id;
+
+  return jsonb_build_object(
+    'protocolVersion', v_state.protocol_version, 'syncEpoch', v_state.sync_epoch,
+    'fromRevision', p_from_revision, 'toRevision', v_to_revision,
+    'continuity', jsonb_build_object(
+      'isContiguous', true,
+      'firstRevision', case when v_expected_count = 0 then null else p_from_revision + 1 end,
+      'lastRevision', case when v_expected_count = 0 then null else v_to_revision end
+    ),
+    'completeness', jsonb_build_object('isComplete', true, 'scope', 'canonical-task-history'),
+    'changes', v_changes
+  );
+end;
+$function$;
+
+revoke all on function public.adhdice_get_task_history_delta(text, uuid, bigint)
+  from public, anon, authenticated;
+grant execute on function public.adhdice_get_task_history_delta(text, uuid, bigint)
+  to authenticated;
+
+notify pgrst, 'reload schema';

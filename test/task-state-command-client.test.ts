@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
+  invokeTaskRolloverSweep,
   invokeTaskStateCommand,
   type TaskStateCommandClient,
   type TaskStateCommandIntent,
@@ -122,6 +123,56 @@ test("preserves replayed responses and distinguishes canonical rejection", async
   assert.equal(conflict.state, "rejected");
   assert.equal(conflict.conflict_code, "STALE_REVISION");
   assert.equal(conflict.next_revision, 6);
+});
+
+test("rollover sweep client preserves committed children and deterministic Achievement status", async () => {
+  const sweepIntent = {
+    type: "reconcile_rollover_sweep" as const,
+    replay_identity: "rollover-sweep-1",
+    commands: [{ type: "reconcile_rollover" as const, task_id: "task-1", replay_identity: "rollover-1", expected_revision: 4 }],
+  };
+  const harness = fakeClient({
+    type: "reconcile_rollover_sweep",
+    state: "committed",
+    replay_identity: sweepIntent.replay_identity,
+    committed_task_ids: ["task-1"],
+    child_results: [{ task_id: "task-1", replay_identity: "rollover-1", state: "committed", result: committedPayload() }],
+    achievement: { status: "completed", operation_id: "operation-1", error_code: null },
+    achievement_warning: null,
+    error: null,
+  });
+
+  const result = await invokeTaskRolloverSweep(sweepIntent, { client: harness.client });
+  assert.equal(harness.calls[0]?.functionName, "task-state-command");
+  assert.strictEqual(harness.calls[0]?.body, sweepIntent);
+  assert.equal(result.success, true);
+  assert.deepEqual(result.committedTaskIds, ["task-1"]);
+  assert.equal(result.childResults[0]?.response?.task_id, "task-1");
+  assert.equal(result.achievementStatus, "completed");
+  assert.equal(result.achievementFinalizationPending, false);
+});
+
+test("rollover sweep client marks finalizer failure as retryable without replaying child mutations", async () => {
+  const harness = fakeClient({
+    type: "reconcile_rollover_sweep",
+    state: "partial",
+    replay_identity: "rollover-sweep-retry",
+    committed_task_ids: ["task-1"],
+    child_results: [{ task_id: "task-1", replay_identity: "rollover-1", state: "committed", result: committedPayload() }],
+    achievement: { status: "failed", operation_id: "operation-retry", error_code: "57014" },
+    achievement_warning: "Rollover Tasks committed, but Achievement reconciliation did not complete.",
+    error: { kind: "achievement_finalization", message: "retry", code: "57014", status: 503 },
+  });
+
+  const result = await invokeTaskRolloverSweep({
+    type: "reconcile_rollover_sweep",
+    replay_identity: "rollover-sweep-retry",
+    commands: [],
+  }, { client: harness.client });
+  assert.equal(result.success, false);
+  assert.equal(result.achievementFinalizationPending, true);
+  assert.equal(result.achievementOperationId, "operation-retry");
+  assert.equal(result.committedTaskIds[0], "task-1");
 });
 
 test("fails closed for an authentication/function failure and does not retry", async () => {

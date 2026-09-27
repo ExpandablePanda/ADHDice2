@@ -28,6 +28,8 @@ declare
   v_next_entity_kind text;
   v_next_child_entity_kind text;
   v_next_canonical_revision bigint;
+  v_current_revision integer;
+  v_current_canonical_revision bigint;
 begin
   if v_owner_id is null then
     raise exception 'Authentication is required.' using errcode = '42501';
@@ -40,6 +42,34 @@ begin
 
   if p_expected_revision is null or p_expected_revision < 1 then
     raise exception 'A current Task revision is required.' using errcode = '22023';
+  end if;
+
+  -- Reject an already-stale request before taking the Task row lock. The
+  -- locked read below repeats the fence because the row can change between
+  -- these two reads.
+  select task.revision, task.canonical_revision
+    into v_current_revision, v_current_canonical_revision
+    from public.adhdice_clean_tasks as task
+   where task.user_id = v_owner_id
+     and task.id = p_task_id;
+
+  if not found then
+    raise exception 'Task not found or unavailable.' using errcode = 'P0002';
+  end if;
+
+  if v_current_revision is distinct from p_expected_revision then
+    raise exception 'Task hierarchy is stale; refresh before moving it.'
+      using errcode = '40001';
+  end if;
+
+  if v_current_canonical_revision is null then
+    if p_expected_canonical_revision is not null then
+      raise exception 'The expected canonical revision does not match this legacy Task.'
+        using errcode = '40001';
+    end if;
+  elsif v_current_canonical_revision is distinct from p_expected_canonical_revision then
+    raise exception 'Task canonical hierarchy is stale; refresh before moving it.'
+      using errcode = '40001';
   end if;
 
   select task.*

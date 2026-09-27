@@ -3,7 +3,7 @@
 import { CalendarDays } from "lucide-react";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
-import { shiftDateKey } from "@/lib/task-grid-layout";
+import { shiftDateKey } from "@/lib/date-key";
 
 function daysBetweenDateKeys(startDateKey: string, endDateKey: string) {
   const start = new Date(`${startDateKey}T00:00:00Z`);

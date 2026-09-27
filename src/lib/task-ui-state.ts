@@ -6,7 +6,7 @@ import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 import { normalizeListSortBySurface, type ListSortBySurface } from "@/lib/task-list-sort";
 
-export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "grid" | "calendar";
+export type TaskViewMode = "table" | "list" | "cards" | "matrix" | "calendar";
 export type TasksSurface = "tasks" | "attention" | "paths" | "report" | "on_time" | "brainstorm" | "completed_milestones";
 export type TaskQuickFilter = "active" | "done" | "urgent" | "today" | "focused";
 export type TaskTableTextFilterColumnId = "title" | "lists" | "tags" | "link" | "notes";
@@ -65,12 +65,11 @@ export const TASK_ROUTING_STORAGE_KEY = "adhdice-task-routing";
 export const TASK_FOCUS_STORAGE_KEY = "adhdice-task-focus";
 export const DAILY_PLANNING_COLLAPSED_STORAGE_KEY = "adhdice-daily-planning-collapsed";
 export const TASK_FILTERS_OPEN_STORAGE_KEY = "adhdice-task-filters-open";
-export const TASK_GRID_STORAGE_KEY = "adhdice-task-grid-layout";
 export const HUD_UI_STORAGE_KEY = "adhdice-hud-ui";
 
-export const TASK_UI_SCHEMA_VERSION = 11;
+export const TASK_UI_SCHEMA_VERSION = 12;
 export const DEFAULT_TASK_WORKSPACE_TAB_ID = "workspace-1";
-export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "grid", "calendar"];
+export const VALID_TASK_VIEWS: TaskViewMode[] = ["table", "list", "cards", "matrix", "calendar"];
 export const VALID_LIST_COLUMN_IDS: AgentPlanColumnId[] = [
   "bucket",
   "task_type",
@@ -98,12 +97,11 @@ export const DEFAULT_VISIBLE_COLUMNS_BY_VIEW: Record<TaskViewMode, AgentPlanColu
   list: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
   cards: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
   matrix: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
-  grid: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
   calendar: [...DEFAULT_NON_TABLE_VISIBLE_COLUMNS],
 };
 export const DEFAULT_TASK_UI_STATE: TaskUiState = {
   duplicateTitleMode: false,
-  includeStepsByView: { table: false, list: false, cards: false, matrix: false, grid: false, calendar: false },
+  includeStepsByView: { table: false, list: false, cards: false, matrix: false, calendar: false },
   matchAny: true,
   listSortBySurface: {},
   quickFilters: [],
@@ -222,7 +220,6 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     list: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.list],
     cards: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.cards],
     matrix: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.matrix],
-    grid: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.grid],
     calendar: [...DEFAULT_VISIBLE_COLUMNS_BY_VIEW.calendar],
   });
 
@@ -233,7 +230,7 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     includeStepsByView: VALID_TASK_VIEWS.reduce<Record<TaskViewMode, boolean>>((result, view) => {
       result[view] = state.includeStepsByView?.[view] === true;
       return result;
-    }, { table: false, list: false, cards: false, matrix: false, grid: false, calendar: false }),
+    }, { table: false, list: false, cards: false, matrix: false, calendar: false }),
     listSortBySurface: normalizeListSortBySurface(state.listSortBySurface),
     selectedBucket: isLegacyAttentionSurface ? "attention" : nextBucket,
     statusFilters: Array.isArray(state.statusFilters)

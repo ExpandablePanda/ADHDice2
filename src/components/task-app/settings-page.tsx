@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
-import type { Task } from "@/lib/database.types";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database, Task } from "@/lib/database.types";
 import type { NavigatorSettingsSection } from "@/lib/navigator-search";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
@@ -9,11 +10,14 @@ import { SETTINGS_PAGE_SHELL_CANONICAL_LAYOUT, SETTINGS_PAGE_SHELL_IDS } from "@
 import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
+import { CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, runCurrentProjectionBackfillOperator, type ProjectionBackfillOperatorClient } from "@/lib/task-current-projection-backfill-operator";
+import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 
 type ThemeMode = "light" | "dark";
 
 type SettingsPageProps = {
   accentColor: string;
+  client: SupabaseClient<Database> | null;
   dayStartTime: string;
   lowStim: boolean;
   onAccentColorChange: (color: string) => void;
@@ -35,6 +39,7 @@ const ACCENT_PRESETS = ["#6f57f6", "#e05597", "#e05050", "#e08830", "#22b87a", "
 
 export function SettingsPage({
   accentColor,
+  client,
   dayStartTime,
   lowStim,
   onAccentColorChange,
@@ -55,12 +60,29 @@ export function SettingsPage({
   const [importStatus, setImportStatus] = useState<string | null>(null);
   const [isResettingEconomy, setIsResettingEconomy] = useState(false);
   const [economyStatus, setEconomyStatus] = useState<string | null>(null);
+  const [isBackfillingProjections, setIsBackfillingProjections] = useState(false);
+  const [backfillStatus, setBackfillStatus] = useState<string | null>(null);
+  const isRolloverActive = useSyncExternalStore(
+    taskRolloverCoordinator.subscribe,
+    taskRolloverCoordinator.isBusy,
+    () => false,
+  );
+  const isBackfillRunActiveRef = useRef(false);
+  const isMountedRef = useRef(true);
   const handledSectionRef = useRef<NavigatorSettingsSection | null>(null);
   const timezoneOptions = useMemo(() => {
     if (typeof Intl === "undefined" || typeof Intl.supportedValuesOf !== "function") return [timeZone];
     const supported = Intl.supportedValuesOf("timeZone");
     return supported.includes(timeZone) ? supported : [timeZone, ...supported];
   }, [timeZone]);
+
+  useEffect(() => {
+    isMountedRef.current = true;
+    return () => {
+      isMountedRef.current = false;
+      isBackfillRunActiveRef.current = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (!requestedSection) {
@@ -138,6 +160,48 @@ export function SettingsPage({
     setEconomyStatus(didReset ? "Economy reset to 0." : "Could not reset economy.");
   }
 
+  async function handleProjectionBackfill(maxBatches: number) {
+    if (!client || !userId) {
+      setBackfillStatus("Authenticated Supabase client unavailable.");
+      return;
+    }
+    if (isBackfillRunActiveRef.current) return;
+    if (taskRolloverCoordinator.isBusy()) {
+      setBackfillStatus("Wait for Task rollover to finish before rebuilding current projections.");
+      return;
+    }
+    isBackfillRunActiveRef.current = true;
+    setIsBackfillingProjections(true);
+    setBackfillStatus(`Rebuilding current projections · 0 / ${maxBatches * CURRENT_PROJECTION_BACKFILL_BATCH_SIZE}`);
+    try {
+      const result = await runCurrentProjectionBackfillOperator({
+        client: client as unknown as ProjectionBackfillOperatorClient,
+        maxBatches,
+        shouldContinue: () => isMountedRef.current && isBackfillRunActiveRef.current,
+        isRolloverActive: () => taskRolloverCoordinator.isBusy(),
+        onProgress: (progress) => {
+          if (!isMountedRef.current) return;
+          setBackfillStatus(`Rebuilding current projections · ${progress.processedCount} / ${progress.totalCount}`);
+        },
+      });
+      if (!isMountedRef.current || result.stoppedReason === "unmounted") return;
+      if (result.stoppedReason === "rollover_active") {
+        setBackfillStatus("Wait for Task rollover to finish before rebuilding current projections.");
+      } else if (result.errorMessage) {
+        setBackfillStatus("Current projection rebuild failed.");
+      } else if (maxBatches === 1) {
+        setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed`);
+      } else if (result.remainingCount !== null) {
+        setBackfillStatus(`${result.writtenCount} written · ${result.failedCount} failed · ${result.remainingCount} remaining`);
+      } else {
+        setBackfillStatus("Current projection rebuild failed.");
+      }
+    } finally {
+      isBackfillRunActiveRef.current = false;
+      if (isMountedRef.current) setIsBackfillingProjections(false);
+    }
+  }
+
   const row = "flex items-center justify-between px-5 py-4";
   const label = "text-sm font-medium text-[#27304c] dark:text-white";
   const sectionClass = "divide-y divide-[#e5e0f5] rounded-2xl bg-[#f7f5ff] dark:divide-white/10 dark:bg-white/5";
@@ -163,11 +227,35 @@ export function SettingsPage({
             ))}
           </div>
         </div>
-        {process.env.NODE_ENV === "development" ? (
+        {process.env.NODE_ENV !== "production" ? (
           <div className="border-t border-[#e5e0f5] px-5 py-4 dark:border-white/10">
             <p className={label}>Developer tools</p>
             <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Inspect registered UI roles and preview semantic styling locally.</p>
             <div className="mt-3"><StyleLabLauncher /></div>
+            <div className="mt-4 border-t border-[#e5e0f5] pt-4 dark:border-white/10">
+              <p className="text-xs text-[#7d88a1] dark:text-white/55">Temporary Current Task Projection operator; the current algorithm is V3.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <button
+                  className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isBackfillingProjections || isRolloverActive}
+                  onClick={() => { void handleProjectionBackfill(1); }}
+                  type="button"
+                >
+                  {isBackfillingProjections ? "Rebuilding..." : "Rebuild Current Projections · 10"}
+                </button>
+                <button
+                  className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isBackfillingProjections || isRolloverActive}
+                  onClick={() => { void handleProjectionBackfill(5); }}
+                  type="button"
+                >
+                  {isBackfillingProjections ? "Rebuilding..." : "Rebuild Current Projections · 50"}
+                </button>
+              </div>
+              {isRolloverActive
+                ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">Wait for Task rollover to finish before rebuilding current projections.</p>
+                : backfillStatus ? <p className="mt-2 text-xs text-[#7d88a1] dark:text-white/55">{backfillStatus}</p> : null}
+            </div>
           </div>
         ) : null}
       </PageShellBody>

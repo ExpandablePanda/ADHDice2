@@ -1,7 +1,9 @@
 import type { PersistedRecordCurrent, PersistedRecordEvent } from "./records/persisted-types.ts";
-import type { TaskType } from "./task-type.ts";
+import type { RecordsSourceState } from "./records/source-state.ts";
+import type { TaskType } from "./task-type-domain.ts";
 import type { TaskManualAction, TaskNeedsActionTrigger, TaskSuccessOutcome } from "./task-state-engine/behavior-policy.ts";
 import type {
+  CanonicalEntityKind,
   CanonicalTaskCalendarOverride,
   CanonicalTaskCommandOperation,
   CanonicalTaskHistoryFact,
@@ -29,6 +31,7 @@ export type RecordReconcileRun = {
   evaluated_at: string;
   timezone: string;
   logical_day_start: string;
+  source_state: RecordsSourceState | null;
   status: "uploading" | "completed" | "invalid";
   expires_at: string;
   completed_at: string | null;
@@ -75,7 +78,7 @@ export type TaskEnergy = "none" | "low" | "medium" | "high";
 export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
-export type { TaskType } from "./task-type.ts";
+export type { TaskType } from "./task-type-domain.ts";
 export type TaskTypeBehaviorProfile = {
   user_id: string;
   task_type: TaskType;
@@ -433,7 +436,7 @@ export type Task = {
 
   revision: number;
   title: string;
-  task_type: import("./task-type.ts").TaskType;
+  task_type: import("./task-type-domain.ts").TaskType;
   /** Nullable assignment; optional for rows/fixtures read before 7.13.27 is applied. */
   custom_ruleset_id?: string | null;
   notes: string | null;
@@ -502,7 +505,7 @@ export type TaskInsert = {
 
   revision?: number;
   title: string;
-  task_type?: import("./task-type.ts").TaskType;
+  task_type?: import("./task-type-domain.ts").TaskType;
   custom_ruleset_id?: string | null;
   notes?: string | null;
   status?: TaskStatus;
@@ -638,6 +641,84 @@ export type TaskHistory = {
 };
 
 export type TaskHistoryEventType = "status" | "completed_permanently";
+
+export type TaskHistorySyncState = {
+  user_id: string;
+  current_revision: number;
+  sync_epoch: string;
+  protocol_version: "task-history-sync-v1";
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskHistoryChange = {
+  user_id: string;
+  sequence: number;
+  history_fact_id: string;
+  entity_id: string;
+  logical_date: string;
+  operation: "upsert" | "delete";
+  row_revision: number | null;
+  changed_at: string;
+};
+
+export type CurrentTaskProjectionDisplayStatus = TaskStatus | "unscheduled";
+export type CurrentTaskProjectionActiveOccurrenceStatus =
+  | "none"
+  | "open"
+  | "overdue"
+  | "delayed"
+  | "handled"
+  | "terminated";
+export type CurrentTaskProjectionValidity = "valid" | "repair_required" | "unavailable";
+export type CurrentTaskProjectionTimestampKind = "event_instant" | "logical_day_presentation";
+export type CurrentTaskProjectionSchemaVersion = "task-current-projection-schema-v1" | "task-current-projection-schema-v2";
+export type CurrentTaskProjectionAlgorithmVersion = "task-current-projection-algorithm-v1" | "task-current-projection-algorithm-v2" | "task-current-projection-algorithm-v3";
+
+export type TaskCurrentProjection = {
+  user_id: string;
+  entity_id: string;
+  entity_kind: CanonicalEntityKind;
+  display_status: CurrentTaskProjectionDisplayStatus;
+  current_effective_due_on: string | null;
+  next_due_on: string | null;
+  active_occurrence_id: string | null;
+  active_occurrence_status: CurrentTaskProjectionActiveOccurrenceStatus;
+  handled_current_logical_day: boolean;
+  last_handled_logical_date: string | null;
+  last_handled_at: string | null;
+  last_handled_at_kind: CurrentTaskProjectionTimestampKind | null;
+  last_done_logical_date: string | null;
+  last_done_at: string | null;
+  last_done_at_kind: CurrentTaskProjectionTimestampKind | null;
+  current_positive_streak: number;
+  current_missed_streak: number;
+  canonical_task_revision: number;
+  history_sync_epoch: string;
+  history_source_revision: number;
+  history_source_fingerprint: string;
+  schedule_boundary_revision: string;
+  behavior_policy_revision: string;
+  logical_day_settings_revision: number;
+  projected_logical_date: string;
+  projection_schema_version: CurrentTaskProjectionSchemaVersion;
+  projection_algorithm_version: CurrentTaskProjectionAlgorithmVersion;
+  source_fingerprint: string;
+  validity: CurrentTaskProjectionValidity;
+  created_at: string;
+  updated_at: string;
+};
+
+export type TaskCurrentProjectionInsert = Omit<TaskCurrentProjection, "created_at" | "updated_at"> & {
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type TaskCurrentProjectionUpdate = Partial<
+  Omit<TaskCurrentProjection, "user_id" | "entity_id" | "created_at" | "updated_at">
+> & {
+  updated_at?: string;
+};
 
 export type TaskHistoryActionInput = {
   id?: string;
@@ -816,6 +897,7 @@ export type UserProfile = {
   accent_color: string | null;
   day_start_time: string;
   timezone: string;
+  settings_revision: number;
   focus_alarm_enabled: boolean;
   focus_alarm_interval_minutes: number;
   level: number;
@@ -2791,6 +2873,24 @@ export type Database = {
         Update: Partial<CanonicalTaskHistoryFact>;
         Relationships: [];
       };
+      adhdice_task_history_sync_state: {
+        Row: TaskHistorySyncState;
+        Insert: Partial<TaskHistorySyncState>;
+        Update: Partial<TaskHistorySyncState>;
+        Relationships: [];
+      };
+      adhdice_task_history_changes: {
+        Row: TaskHistoryChange;
+        Insert: Partial<TaskHistoryChange>;
+        Update: Partial<TaskHistoryChange>;
+        Relationships: [];
+      };
+      adhdice_task_current_projections: {
+        Row: TaskCurrentProjection;
+        Insert: TaskCurrentProjectionInsert;
+        Update: TaskCurrentProjectionUpdate;
+        Relationships: [];
+      };
       adhdice_task_calendar_overrides: {
         Row: CanonicalTaskCalendarOverride;
         Insert: Partial<CanonicalTaskCalendarOverride>;
@@ -3286,6 +3386,32 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_get_latest_manual_task_commands: {
+        Args: {
+          p_entity_ids: string[];
+        };
+        Returns: Array<Pick<CanonicalTaskCommandOperation, "id" | "user_id" | "entity_id" | "command_type" | "requested_logical_date" | "state" | "result_references" | "source_kind" | "created_at" | "completed_at">>;
+      };
+      adhdice_get_latest_task_schedule_boundaries: {
+        Args: {
+          p_entity_ids: string[];
+        };
+        Returns: CanonicalTaskScheduleBoundary[];
+      };
+      adhdice_get_task_activity_summary: {
+        Args: {
+          p_as_of: string;
+        };
+        Returns: Record<string, unknown>;
+      };
+      adhdice_get_task_history_delta: {
+        Args: {
+          p_expected_protocol_version: string;
+          p_expected_sync_epoch: string;
+          p_from_revision: number;
+        };
+        Returns: Record<string, unknown>;
+      };
       adhdice_move_task_hierarchy: {
         Args: {
           p_expected_canonical_revision: number | null;
@@ -3335,7 +3461,11 @@ export type Database = {
       };
       adhdice_get_latest_completed_records_run: {
         Args: { p_logical_day_start: string; p_rules_version: string; p_timezone: string };
-        Returns: Array<Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "timezone">>;
+        Returns: Array<Pick<RecordReconcileRun, "completed_at" | "evaluated_at" | "logical_day_start" | "rules_version" | "source_state" | "timezone">>;
+      };
+      adhdice_get_records_source_state: {
+        Args: Record<string, never>;
+        Returns: RecordsSourceState;
       };
       adhdice_activate_achievement_profile: {
         Args: {

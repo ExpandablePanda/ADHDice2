@@ -412,7 +412,7 @@ test("rollover diagnostics distinguish planned from committed writes and preserv
   const end = source.indexOf("await reconcileRolloverWorkspace();", start);
   const lifecycle = source.slice(start, end);
   assert.match(lifecycle, /plannedTaskPatches = mutationCandidates\.length/);
-  assert.match(lifecycle, /committedTaskPatches = canonicalCommitted/);
+  assert.match(lifecycle, /committedTaskPatches = sweep\.committedTasks\.length/);
   assert.match(lifecycle, /committedTaskPatches: error && settledTaskIds\.length === 0 \? 0 : committedTaskPatches/);
   assert.match(lifecycle, /authority = "canonical" as const/);
   assert.doesNotMatch(lifecycle, /plannedHistoryRows|committedHistoryRows|deduplicatedOutcomes|historyRowsInserted/);
@@ -505,7 +505,7 @@ test("zero-commit engine response still refreshes logical-day-dependent workspac
   const start = source.indexOf("const runDayReset = useCallback");
   const end = source.indexOf("await reconcileRolloverWorkspace();", start);
   const lifecycle = source.slice(start, end);
-  assert.match(lifecycle, /didMutate = canonicalCommitted > 0/);
+  assert.match(lifecycle, /didMutate = committedTaskPatches > 0/);
   assert.doesNotMatch(lifecycle, /if \(!didMutate\) return/);
   assert.match(lifecycle, /Rollover completed; requesting targeted workspace reconciliation \(task mutation=\$\{didMutate\}\)/);
   assert.equal((source.match(/await reconcileRolloverWorkspace\(\);/g) ?? []).length, 1);

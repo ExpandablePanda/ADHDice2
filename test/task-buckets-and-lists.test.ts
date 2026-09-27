@@ -976,12 +976,12 @@ test("History-dependent smart lists do not treat not-ready History as empty", ()
   };
   const loadedHistory = [historyRow];
   const pendingContext = createTaskListEvaluationContext({
-    isTaskHistoryLoaded: false,
+    isFullTaskHistoryLoaded: false,
     taskDisplayStatusByTaskId: { [task.id]: "done" },
   });
   const readyContext = createTaskListEvaluationContext({
     historyFactsByTaskId: { [task.id]: buildTaskHistoryFacts(loadedHistory, "2026-06-24") },
-    isTaskHistoryLoaded: true,
+    isFullTaskHistoryLoaded: true,
     taskDisplayStatusByTaskId: { [task.id]: "done" },
     taskHistoryByTaskId: { [task.id]: loadedHistory },
   });

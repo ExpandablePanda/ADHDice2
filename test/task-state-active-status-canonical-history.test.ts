@@ -256,32 +256,34 @@ test("modal canonical hydration invalidates the active-status projection without
   assert.match(taskAppSource, /taskHistoryByTaskId\[task\.id\]/);
 });
 
-test("TaskApp gates initial Task presentation on the authoritative Active Status read", async () => {
+test("TaskApp gates initial Task presentation on projection readiness and scopes legacy Active Status to fallback Tasks", async () => {
   const taskAppSource = await readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const activeStatusStart = taskAppSource.indexOf("const [activeStatusRead");
   const activeStatusEnd = taskAppSource.indexOf("const taskDisplayStatusByTaskId", activeStatusStart);
   const activeStatusRead = taskAppSource.slice(activeStatusStart, activeStatusEnd);
 
-  assert.match(taskAppSource, /const persistedTaskDisplayStatusByTaskId = useMemo\([\s\S]*tasks\.map\(\(task\) => \[task\.id, task\.status\]\)/);
-  assert.match(taskAppSource, /const taskDisplayStatusByTaskId = activeStatusRead\?\.statusesByTaskId \?\? persistedTaskDisplayStatusByTaskId/);
-  assert.match(taskAppSource, /const isInitialTaskStateProjectionReady = isTaskHistoryLoaded && isBehaviorAuthorityReady && activeStatusRead !== null/);
+  assert.match(taskAppSource, /const taskDisplayStatusByTaskId = currentTaskProjectionReadResolution\.displayStatusByTaskId/);
+  assert.match(taskAppSource, /const isInitialTaskStateProjectionReady = isCurrentTaskProjectionReadReady && isBehaviorAuthorityReady/);
   assert.match(taskAppSource, /const isAuthenticatedAppBootReady = [\s\S]*isInitialTaskStateProjectionReady/);
   assert.match(taskAppSource, /const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady/);
-  assert.match(taskAppSource, /const taskHistoryReadinessRevision = useMemo\([\s\S]*createProjectionDomainRevision\("task-history-readiness", isTaskHistoryLoaded\)/);
+  assert.match(taskAppSource, /const taskHistoryReadinessRevision = useMemo\([\s\S]*createProjectionDomainRevision\("full-task-history-readiness", isFullTaskHistoryLoaded\)/);
   assert.match(taskAppSource, /taskActiveStatusAuthorityReadinessRevision/);
   assert.match(taskAppSource, /taskHistoryReadinessRevision,[\s\S]*activeStatusRead/);
-  assert.match(activeStatusRead, /if \(!isTaskHistoryLoaded\)/);
+  assert.doesNotMatch(activeStatusRead, /if \(!isTaskHistoryLoaded\)/);
+  assert.match(activeStatusRead, /currentTaskProjectionFallbackTaskIds\.length === 0/);
+  assert.match(taskAppSource, /loadTaskHistoryForTasks\(taskIdsToLoad, \{ silent: true \}\)/);
+  assert.match(taskAppSource, /tasks: tasks\.filter\(\(task\) => currentTaskProjectionFallbackTaskIds\.includes\(task\.id\)\)/);
   assert.match(activeStatusRead, /if \(!isBehaviorAuthorityReady \|\| isTaskTypeBehaviorProfilesLoading\)/);
   assert.match(activeStatusRead, /if \(activeStatusCalculationTokenRef\.current === calculationToken\) activeStatusCalculationTokenRef\.current \+= 1/);
   const authorityRefreshGateStart = activeStatusRead.indexOf("if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading)");
   const activeStatusInputStart = activeStatusRead.indexOf("const activeStatusInput", authorityRefreshGateStart);
-  assert.doesNotMatch(activeStatusRead.slice(authorityRefreshGateStart, activeStatusInputStart), /setActiveStatusRead\(null\)/);
+  assert.match(activeStatusRead.slice(authorityRefreshGateStart, activeStatusInputStart), /setActiveStatusRead\(null\)/);
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementally\(/);
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementallyChunked\(/);
-  assert.match(activeStatusRead, /mode=global-chunked tasks=\$\{tasks\.length\} chunks=\$\{result\.chunks\}/);
+  assert.match(activeStatusRead, /mode=fallback-chunked tasks=\$\{activeStatusInput\.tasks\.length\} chunks=\$\{result\.chunks\}/);
   assert.match(activeStatusRead, /activeStatusCalculationTokenRef/);
   assert.match(activeStatusRead, /setActiveStatusRead\(result\)/);
-  assert.match(taskAppSource, /const taskDisplayDueOnByTaskId = activeStatusRead\?\.dueOnByTaskId/);
+  assert.match(taskAppSource, /const taskDisplayDueOnByTaskId = currentTaskProjectionReadResolution\.dueOnByTaskId/);
   assert.match(taskAppSource, /createProjectionDomainRevision\("active-task-read", \{[\s\S]*dueOnByTaskId:[\s\S]*statusesByTaskId:/);
   assert.match(taskAppSource, /projectTasksForActiveStatusRead\(tasks, taskDisplayStatusByTaskId, taskDisplayDueOnByTaskId\)/);
 });

@@ -54,6 +54,26 @@ test("rollover History batches multiple Tasks without one request per Task", asy
   assert.equal(result[taskIds[204]]?.history.length, 1);
 });
 
+test("400-plus fallback Tasks produce bounded concurrent History batches, never one request per Task", async () => {
+  const taskIds = Array.from({ length: 426 }, (_, index) => `task-${index}`);
+  const requestedBatches: string[][] = [];
+  let activeRequests = 0;
+  let maximumInFlight = 0;
+  const result = await fetchTaskHistoryForTaskIdsInBatches(taskIds, async (batchTaskIds) => {
+    requestedBatches.push(batchTaskIds);
+    activeRequests += 1;
+    maximumInFlight = Math.max(maximumInFlight, activeRequests);
+    await Promise.resolve();
+    activeRequests -= 1;
+    return { data: batchTaskIds.map((taskId) => history(taskId, "2026-08-10")), error: null };
+  });
+
+  assert.equal(requestedBatches.length, 5);
+  assert.deepEqual(requestedBatches.map((batch) => batch.length), [100, 100, 100, 100, 26]);
+  assert.equal(maximumInFlight, 5);
+  assert.equal(Object.keys(result).length, taskIds.length);
+});
+
 test("canonical History wins over an overlapping legacy row in the rollover read model", () => {
   const legacy = { ...history(VERA_TASK_ID, "2026-08-03", "user", "legacy-row"), canonical_fact_id: null };
   const canonical = history(VERA_TASK_ID, "2026-08-03", "migration_reconstruction", "canonical-row");

@@ -1,5 +1,5 @@
 import type { ProposedTaskStatePatch } from "./types.ts";
-import type { TaskStatus } from "@/lib/database.types";
+import type { TaskStatus } from "../database.types.ts";
 
 /**
  * The engine can describe internal recurrence facts, but the current task row

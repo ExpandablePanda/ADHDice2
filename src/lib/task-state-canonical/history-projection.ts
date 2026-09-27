@@ -41,6 +41,20 @@ export function mapCanonicalTaskHistoryFact(fact: CanonicalTaskHistoryFact): Tas
   };
 }
 
+/**
+ * Active Status may consume canonical facts through the legacy TaskHistory
+ * transport before the full canonical read model is available. In that
+ * adapter, scheduled_due_on remains date metadata; only canonical occurrence
+ * provenance may supply occurrence identity.
+ */
+export function normalizeCanonicalActiveStatusHistoryRows(
+  history: readonly TaskHistory[],
+) {
+  return history.map((row) => row.canonical_fact_id && !row.canonical_occurrence_id
+    ? { ...row, occurrence_key: null }
+    : row);
+}
+
 export function mapCanonicalTaskHistoryFacts(facts: readonly CanonicalTaskHistoryFact[]) {
   return facts.map(mapCanonicalTaskHistoryFact);
 }

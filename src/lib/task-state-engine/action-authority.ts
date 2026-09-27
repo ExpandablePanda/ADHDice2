@@ -1,9 +1,9 @@
-import type { Task, TaskHistory, TaskHistoryActionInput, TaskUpdate } from "@/lib/database.types";
+import type { Task, TaskHistory, TaskHistoryActionInput, TaskUpdate } from "../database.types.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
 import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
 import { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
-import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
+import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "../task-state-canonical/active-status-read.ts";
 import type { TaskHistoryChange, TaskHistoryOutcome, TaskStateHistoryRow } from "./types.ts";
 import {
   normalizeTaskBehaviorProfile,

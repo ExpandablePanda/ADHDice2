@@ -21,7 +21,7 @@ const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.me
 
 const baseState: RecordsInternalState = {
   currentRecords: [], error: null, events: [], hasDetailedEvidence: false, hasSuccessfulResult: false, isLoading: false,
-  isRecalculating: false, lastCalculatedAt: null, ownerUserId: null, progress: null,
+  invalidatedEventsLoaded: false, invalidatedEventsLoading: false, isRecalculating: false, lastCalculatedAt: null, ownerUserId: null, progress: null,
   provisionalCandidates: [], sessionKey: null, setupRequired: false, taskEvidenceByRecordIdentity: {}, warnings: [],
 };
 
@@ -68,11 +68,13 @@ test("a successful refresh writes the complete UI snapshot and a matching remoun
   assert.deepEqual(restored.currentRecords, refresh.currentRecords);
 });
 
-test("the hook checks a matching snapshot before starting the pipeline, while first activation and explicit refresh bypass it", () => {
+test("the hook checks durable source freshness on activation while explicit refresh bypasses it", () => {
   const lookup = hook.indexOf("getRecordsSessionSnapshot(sessionKey)");
   const pipeline = hook.indexOf("runRecordsPipelineSingleFlight(sessionKey ?? userId");
   assert.ok(lookup >= 0 && lookup < pipeline);
-  assert.match(hook, /if \(!explicitRefresh && cachedIsFresh\)/);
+  assert.match(hook, /loadRecordsSourceState/);
+  assert.match(hook, /if \(durableIsFresh\)/);
+  assert.doesNotMatch(hook, /if \(!explicitRefresh && cachedIsFresh\)/);
   assert.match(hook, /refreshRequestedRef\.current = true/);
   assert.match(hook, /if \(runningRef\.current\) return/);
   assert.match(hook, /if \(!sessionKey\) return/);

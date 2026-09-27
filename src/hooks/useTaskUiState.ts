@@ -30,7 +30,6 @@ import {
   reorderTaskWorkspaceTabs,
   TASK_FILTERS_OPEN_STORAGE_KEY,
   TASK_FOCUS_STORAGE_KEY,
-  TASK_GRID_STORAGE_KEY,
   TASK_ROUTING_STORAGE_KEY,
   TASK_UI_STORAGE_KEY,
   type AppPage,
@@ -40,6 +39,11 @@ import {
   type TaskUiState,
 } from "@/lib/task-ui-state";
 import { createDefaultHudUiState, DEFAULT_HUD_UI_STATE } from "@/lib/task-hud-layout";
+import {
+  createAdhdiceRealtimeChannelDebugId,
+  describeAdhdiceRealtimeSubscriptionError,
+  recordAdhdiceRealtimeDiagnostic,
+} from "@/lib/adhdice-realtime-diagnostics";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type HudStateSource = "local" | "remote" | "restore";
@@ -61,10 +65,8 @@ const HUD_UI_UPDATED_AT_STORAGE_KEY = "adhdice-hud-ui-updated-at";
 const TASK_TABLE_LAYOUT_UPDATED_AT_STORAGE_KEY = "adhdice-task-table-layout-updated-at";
 const HUD_CLOUD_WRITE_DEBOUNCE_MS = 900;
 
-type UseTaskUiStateOptions<TTaskGridItem> = {
-  normalizeTaskGridLayout: (layout: TTaskGridItem[]) => TTaskGridItem[];
+type UseTaskUiStateOptions = {
   supabase?: SupabaseClient;
-  taskGridStarterLayout: TTaskGridItem[];
   userId: string | null | undefined;
 };
 
@@ -132,17 +134,14 @@ function latestSyncTimestamp(...timestamps: Array<string | null>) {
   ));
 }
 
-export function useTaskUiState<TTaskGridItem>({
-  normalizeTaskGridLayout,
+export function useTaskUiState({
   supabase,
-  taskGridStarterLayout,
   userId,
-}: UseTaskUiStateOptions<TTaskGridItem>) {
+}: UseTaskUiStateOptions) {
   const [activePage, setActivePage] = useState<AppPage>("Home");
   const [taskWorkspaceTabsState, setTaskWorkspaceTabsState] = useState<TaskWorkspaceTabsState>(DEFAULT_TASK_WORKSPACE_TABS_STATE);
   const [taskRouting, setTaskRouting] = useState<Record<string, TaskRoutingBucket>>({});
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
-  const [taskGridLayout, setTaskGridLayout] = useState<TTaskGridItem[]>(taskGridStarterLayout);
   const [hudUiState, setHudUiStateState] = useState<HudUiState>(() => (userId ? readStoredHudState(userId) : createDefaultHudState()));
   const [taskTableLayoutPreferences, setTaskTableLayoutPreferencesState] = useState<TaskTableLayoutPreferences>(() => (
     userId
@@ -190,7 +189,6 @@ export function useTaskUiState<TTaskGridItem>({
       setTaskWorkspaceTabsState(DEFAULT_TASK_WORKSPACE_TABS_STATE);
       setTaskRouting({});
       setFocusedTaskIdsByDate({});
-      setTaskGridLayout(taskGridStarterLayout);
       setHudUiStateState(createDefaultHudState());
       setTaskTableLayoutPreferencesState({});
       hudSyncMetadataRef.current = {
@@ -223,14 +221,6 @@ export function useTaskUiState<TTaskGridItem>({
       parseStoredJson<Record<string, string[]>>(
         getUserScopedStorageKey(TASK_FOCUS_STORAGE_KEY, userId),
         {},
-      ),
-    );
-    setTaskGridLayout(
-      normalizeTaskGridLayout(
-        parseStoredJson<TTaskGridItem[]>(
-          getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId),
-          taskGridStarterLayout,
-        ),
       ),
     );
     setHudUiStateState(readStoredHudState(userId));
@@ -271,7 +261,7 @@ export function useTaskUiState<TTaskGridItem>({
       ),
     );
     setRestoredUserId(userId);
-  }, [normalizeTaskGridLayout, taskGridStarterLayout, userId]);
+  }, [userId]);
 
   const isRestoringPersistedUiState = Boolean(userId) && restoredUserId !== userId;
 
@@ -324,16 +314,6 @@ export function useTaskUiState<TTaskGridItem>({
       JSON.stringify(focusedTaskIdsByDate),
     );
   }, [focusedTaskIdsByDate, userId]);
-
-  useEffect(() => {
-    if (!userId || typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(
-      getUserScopedStorageKey(TASK_GRID_STORAGE_KEY, userId),
-      JSON.stringify(taskGridLayout),
-    );
-  }, [taskGridLayout, userId]);
 
   useEffect(() => {
     if (!userId || typeof window === "undefined") {
@@ -549,7 +529,7 @@ export function useTaskUiState<TTaskGridItem>({
 
   const syncTaskUiSettingsToCloud = useCallback(async ({ allowBeforeReady = false }: { allowBeforeReady?: boolean } = {}) => {
     if (!supabase || !userId || (!allowBeforeReady && (!hudCloudReadyRef.current || !hudCloudSupportedRef.current))) {
-      return;
+      return false;
     }
 
     const requestId = hudCloudSyncRequestRef.current + 1;
@@ -563,7 +543,7 @@ export function useTaskUiState<TTaskGridItem>({
       .eq("user_id", currentUserId)
       .maybeSingle();
     if (hudCloudSyncRequestRef.current !== requestId) {
-      return;
+      return false;
     }
 
     const data = result.data as HudSyncRow | null;
@@ -575,11 +555,11 @@ export function useTaskUiState<TTaskGridItem>({
           console.warn("[hud] HUD cloud sync table is unavailable. Falling back to local-only HUD persistence until `supabase/add_hud_ui_settings.sql` is applied.");
           hudMissingTableWarnedRef.current = true;
         }
-        return;
+        return false;
       }
       console.warn("[hud] HUD cloud sync load failed. Continuing with local-only HUD persistence.", result.error.message);
       hudCloudReadyRef.current = true;
-      return;
+      return false;
     }
 
     hudCloudSupportedRef.current = true;
@@ -604,7 +584,7 @@ export function useTaskUiState<TTaskGridItem>({
       remote: remoteSnapshot,
     });
     if (hudLocalRevisionRef.current !== localRevision) {
-      return;
+      return false;
     }
     const nextHudState = normalizeHudUiState(reconciliation.hudUiStateValue ?? DEFAULT_HUD_UI_STATE);
     const uploadTimestamp = new Date().toISOString();
@@ -633,7 +613,7 @@ export function useTaskUiState<TTaskGridItem>({
     hudCloudReadyRef.current = true;
 
     if (!reconciliation.shouldPush) {
-      return;
+      return true;
     }
 
     const payloadTimestamp = nextUpdatedAt ?? uploadTimestamp;
@@ -644,10 +624,10 @@ export function useTaskUiState<TTaskGridItem>({
     );
     const signature = `${payloadTimestamp}:${JSON.stringify(payloadState)}`;
     if (hudCloudSignatureRef.current === signature) {
-      return;
+      return true;
     }
     if (hudLocalRevisionRef.current !== localRevision) {
-      return;
+      return false;
     }
 
     const { error } = await client
@@ -658,7 +638,7 @@ export function useTaskUiState<TTaskGridItem>({
         user_id: currentUserId,
       });
     if (hudCloudSyncRequestRef.current !== requestId) {
-      return;
+      return false;
     }
 
     if (error) {
@@ -669,13 +649,14 @@ export function useTaskUiState<TTaskGridItem>({
           console.warn("[hud] HUD cloud sync table is unavailable. Falling back to local-only HUD persistence until `supabase/add_hud_ui_settings.sql` is applied.");
           hudMissingTableWarnedRef.current = true;
         }
-        return;
+        return false;
       }
       console.warn("[hud] HUD cloud sync write failed. Continuing with local-only HUD persistence.", error.message);
-      return;
+      return false;
     }
 
     hudCloudSignatureRef.current = signature;
+    return true;
   }, [supabase, userId]);
 
   useEffect(() => {
@@ -727,14 +708,65 @@ export function useTaskUiState<TTaskGridItem>({
     let isActive = true;
     const client = supabase;
     const currentUserId = userId;
+    let hudChannelEverSubscribed = false;
+    let hudGapGeneration = 0;
+    let hudGapOpen = false;
+    let hudGapRecoveryPromise: Promise<boolean> | null = null;
+
+    function requestHudGapRecovery(channelDebugId: string) {
+      if (hudGapRecoveryPromise) {
+        recordAdhdiceRealtimeDiagnostic({
+          channel: "hud",
+          channelDebugId,
+          generation: hudGapGeneration,
+          kind: "realtime_gap_recovery_joined",
+        });
+        return;
+      }
+
+      recordAdhdiceRealtimeDiagnostic({
+        channel: "hud",
+        channelDebugId,
+        generation: hudGapGeneration,
+        kind: "realtime_gap_recovery_requested",
+      });
+      const recovery = syncTaskUiSettingsToCloud();
+      hudGapRecoveryPromise = recovery;
+      void recovery.then(
+        (recovered) => {
+          if (recovered) hudGapOpen = false;
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "hud",
+            channelDebugId,
+            generation: hudGapGeneration,
+            kind: recovered ? "realtime_gap_recovery_completed" : "realtime_gap_recovery_error",
+          });
+        },
+        (error) => {
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "hud",
+            channelDebugId,
+            errorMessage: error instanceof Error ? error.message : String(error),
+            generation: hudGapGeneration,
+            kind: "realtime_gap_recovery_error",
+          });
+        },
+      ).finally(() => {
+        if (hudGapRecoveryPromise === recovery) hudGapRecoveryPromise = null;
+      });
+    }
 
     void syncTaskUiSettingsToCloud({ allowBeforeReady: true }).then(() => {
       if (!isActive || !hudCloudSupportedRef.current || hudCloudChannelRef.current) {
         return;
       }
 
+      const channelDebugId = createAdhdiceRealtimeChannelDebugId("hud");
       const nextChannel = client
-        .channel(`adhdice_hud_ui_settings:${currentUserId}`)
+        .channel(`adhdice_hud_ui_settings:${currentUserId}`);
+      hudCloudChannelRef.current = nextChannel;
+      const isCurrentHudChannel = () => isActive && hudCloudChannelRef.current === nextChannel;
+      nextChannel
         .on(
           "postgres_changes",
           {
@@ -750,13 +782,54 @@ export function useTaskUiState<TTaskGridItem>({
             void syncTaskUiSettingsToCloud();
           },
         )
-        .subscribe((status) => {
-          if ((status === "CHANNEL_ERROR" || status === "TIMED_OUT") && !hudMissingTableWarnedRef.current) {
-            console.warn("[hud] HUD realtime sync subscription failed. Continuing with local HUD state.");
+        .subscribe((status, error) => {
+          if (!isCurrentHudChannel()) return;
+          recordAdhdiceRealtimeDiagnostic({
+            channel: "hud",
+            channelDebugId,
+            kind: "channel_subscribe_status",
+            status,
+          });
+          const unexpectedClosed = status === "CLOSED" && hudChannelEverSubscribed;
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || unexpectedClosed) {
+            recordAdhdiceRealtimeDiagnostic({
+              channel: "hud",
+              channelDebugId,
+              kind: "hud_channel_subscription_error",
+              status,
+              subscriptionError: describeAdhdiceRealtimeSubscriptionError(error),
+            });
+          }
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || unexpectedClosed) {
+            if (hudChannelEverSubscribed && !hudGapOpen) {
+              hudGapOpen = true;
+              hudGapGeneration += 1;
+              recordAdhdiceRealtimeDiagnostic({
+                channel: "hud",
+                channelDebugId,
+                generation: hudGapGeneration,
+                kind: "realtime_gap_opened",
+                status,
+              });
+            }
+            if (!hudMissingTableWarnedRef.current) {
+              console.warn("[hud] HUD realtime sync subscription failed. Continuing with local HUD state.");
+            }
+          }
+          if (status === "SUBSCRIBED") {
+            const wasGapOpen = hudGapOpen;
+            hudChannelEverSubscribed = true;
+            if (wasGapOpen) {
+              recordAdhdiceRealtimeDiagnostic({
+                channel: "hud",
+                channelDebugId,
+                generation: hudGapGeneration,
+                kind: "realtime_gap_channel_resubscribed",
+              });
+              requestHudGapRecovery(channelDebugId);
+            }
           }
         });
-
-      hudCloudChannelRef.current = nextChannel;
     });
 
     return () => {
@@ -793,12 +866,10 @@ export function useTaskUiState<TTaskGridItem>({
     setTaskWorkspaceRailHidden,
     setTaskTableLayoutPreferences,
     setIsTaskFiltersOpen,
-    setTaskGridLayout,
     setTaskRouting,
     taskWorkspaceTabsState,
     setTaskUiState,
     taskTableLayoutPreferences,
-    taskGridLayout,
     taskRouting,
     taskUiState: activeTaskWorkspaceTab.taskUiState,
   };

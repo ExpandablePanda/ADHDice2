@@ -108,6 +108,21 @@ test("record live values remain occurrence-based even when the Home summary is u
   assert.equal(result.recordLiveValues.parent_tasks_day, 2);
 });
 
+test("tracking exclusions still remove excluded Tasks and their Steps from Home progress", () => {
+  const result = progress([
+    { ...task("excluded"), exclude_from_tracking: true } as Task,
+    task("step", "excluded"),
+    task("included"),
+  ], [
+    history("excluded-row", "excluded", "done"),
+    history("step-row", "step", "did_my_best"),
+    history("included-row", "included", "done"),
+  ]);
+  assert.equal(result.total, 1);
+  assert.deepEqual(result.finishedItems, [{ taskId: "included", title: "included", outcome: "done", entityKind: "parent" }]);
+  assert.deepEqual(result.recordLiveValues, { parent_tasks_day: 1, permanent_completes_day: 0, steps_day: 0 });
+});
+
 test("record chase states calculate below, tied, new, and first-record messages", () => {
   const liveValues = { parent_tasks_day: 8, steps_day: 12, permanent_completes_day: 15 } as const;
   const rows = buildHomeRecordChases(liveValues, { parent_tasks_day: 12, steps_day: 12, permanent_completes_day: 13 });
@@ -138,9 +153,13 @@ test("Home production wiring keeps History readiness separate from the record ta
   assert.match(homeSource, /finishedItems/);
   assert.match(homeSource, /Records to Beat/);
   assert.match(homeSource, /onOpenRecord\(chase\.metricKey\)/);
-  assert.match(homeSource, /!isTaskHistoryLoaded/);
-  assert.match(taskAppSource, /taskHistoryByTaskId, tasks, todayKey/);
-  assert.match(taskAppSource, /isTaskHistoryLoaded=\{isTaskHistoryLoaded\}/);
+  assert.match(homeSource, /homeHistoryStatus === "idle" \|\| homeHistoryStatus === "loading"/);
+  assert.match(homeSource, /homeHistoryStatus === "error"/);
+  assert.match(homeSource, /onRetryHomeHistory/);
+  assert.doesNotMatch(homeSource, /isFullTaskHistoryLoaded/);
+  assert.match(taskAppSource, /homeCurrentDayHistoryByTaskId/);
+  assert.match(taskAppSource, /homeHistoryStatus=\{homeCurrentDayHistoryStatus\}/);
+  assert.doesNotMatch(taskAppSource.slice(taskAppSource.indexOf("<TaskHomePage"), taskAppSource.indexOf("<TaskHomePage") + 1800), /isFullTaskHistoryLoaded/);
   assert.match(taskAppSource, /setActivePage\("Achievements"\)/);
   assert.match(taskAppSource, /initialRecordMetricKey=\{pendingProgressRecordMetricKey\}/);
   assert.match(taskAppSource, /onOpenTask=\{openTaskEditorFromId\}/);

@@ -211,7 +211,7 @@ export type TaskListEvaluationContext = {
   isLater: (date: string | null) => boolean;
   isOpen: (task: Task) => boolean;
   isOverdue: (date: string | null) => boolean;
-  isTaskHistoryLoaded?: boolean;
+  isFullTaskHistoryLoaded?: boolean;
   historyFactsByTaskId: Record<string, TaskHistoryFacts>;
   manualMembershipsByTaskId: Record<string, TaskListId[]>;
   attentionEligibleTaskIds?: ReadonlySet<string>;
@@ -730,7 +730,7 @@ function matchesTaskListRule(
   evaluationCache: Map<string, boolean> = new Map(),
   lookup: TaskListLookup = buildTaskListLookup(lists),
 ): boolean {
-  const canReadTaskHistory = context.isTaskHistoryLoaded !== false;
+  const canReadTaskHistory = context.isFullTaskHistoryLoaded !== false;
   const matchesStreakThreshold = (value: TaskListRuleStreakValue) => {
     const currentStreak = context.currentStreakByTaskId[task.id] ?? 0;
     if (value === "0") return currentStreak === 0;

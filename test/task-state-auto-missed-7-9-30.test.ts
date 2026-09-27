@@ -210,19 +210,123 @@ test("independent Daily automatic Missed survives an earlier correction", () => 
   assert.deepEqual(result.proposedHistoryChanges.filter((change) => change.type === "delete"), []);
 });
 
-test("dependent rolling Auto Missed reconciles after its source correction while manual Missed remains", () => {
+test("historical rolling success preserves later automatic Missed facts", () => {
   const automatic = [history("2026-08-16", "rollover", "2026-08-16"), history("2026-08-17", "rollover", "2026-08-16")];
   const corrected = evaluateTaskState({
     ...engineInput({ dueOn: "2026-08-16", recurrence: { kind: "rolling", intervalDays: 3 } }, automatic),
     now: "2026-08-18T12:00:00.000Z",
     action: { type: "record_outcome", logicalDate: "2026-08-16", outcome: "done", replaceExisting: true, previousOutcome: "missed", occurrenceDueOn: "2026-08-16", historicalOverride: true },
   });
-  assert.deepEqual(corrected.proposedHistoryChanges.flatMap((change) => change.type === "delete" ? [change.logicalDate] : []), ["2026-08-17"]);
+  assert.deepEqual(corrected.proposedHistoryChanges.flatMap((change) => change.type === "delete" ? [change.logicalDate] : []), []);
   assert.equal(corrected.nextDueDate, "2026-08-19");
 
   const manual = [automatic[0]!, history("2026-08-17", "manual", "2026-08-16")];
   const preserved = evaluateTaskState({ ...engineInput({ dueOn: "2026-08-16", recurrence: { kind: "rolling", intervalDays: 3 } }, manual), now: "2026-08-18T12:00:00.000Z", action: correctedAction() });
   assert.equal(preserved.proposedHistoryChanges.some((change) => change.type === "delete"), false);
+});
+
+test("same-day rolling success retains live dependent Missed cleanup", () => {
+  const result = evaluateTaskState({
+    ...engineInput({ dueOn: "2026-08-16", recurrence: { kind: "rolling", intervalDays: 3 } }, [
+      history("2026-08-16", "rollover", "2026-08-16"),
+      history("2026-08-17", "rollover", "2026-08-16"),
+    ]),
+    now: "2026-08-16T12:00:00.000Z",
+    action: {
+      type: "record_outcome",
+      logicalDate: "2026-08-16",
+      outcome: "done",
+      replaceExisting: true,
+      previousOutcome: "missed",
+      occurrenceDueOn: "2026-08-16",
+    },
+  });
+
+  assert.deepEqual(result.proposedHistoryChanges.flatMap((change) => change.type === "delete" ? [change.logicalDate] : []), ["2026-08-17"]);
+});
+
+test("historical replacements preserve the full later canonical chain and recompute current state", () => {
+  const dates = [
+    "2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19",
+    "2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23",
+  ];
+  const persisted = dates.map((logicalDate) => history(logicalDate, "rollover", "2026-09-15"));
+
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const result = evaluateTaskState({
+      ...engineInput({ dueOn: "2026-09-15", recurrence: { kind: "rolling", intervalDays: 3 }, activeStatus: "missed" }, persisted),
+      now: "2026-09-24T12:00:00.000Z",
+      action: {
+        type: "record_outcome",
+        logicalDate: "2026-09-15",
+        outcome,
+        replaceExisting: true,
+        previousOutcome: "missed",
+        occurrenceDueOn: "2026-09-15",
+        historicalOverride: true,
+      },
+    });
+    const replacement = result.proposedHistoryChanges.find((change) => change.type === "insert")?.row;
+    const finalRows = persisted.map((row) => row.logicalDate === "2026-09-15" ? replacement! : row);
+
+    assert.deepEqual(result.proposedHistoryChanges.filter((change) => change.type === "delete"), [], outcome);
+    assert.deepEqual(finalRows.map((row) => [row.logicalDate, row.outcome]), [
+      ["2026-09-15", outcome],
+      ...dates.slice(1).map((logicalDate) => [logicalDate, "missed"]),
+    ], outcome);
+    assert.equal(result.nextDueDate, "2026-09-18", outcome);
+    assert.equal(result.activeStatus, "missed", outcome);
+  }
+
+  const historicalMissed = evaluateTaskState({
+    ...engineInput({ dueOn: "2026-09-15", recurrence: { kind: "rolling", intervalDays: 3 }, activeStatus: "pending" }, [
+      ...persisted.slice(0, 1).map((row) => ({ ...row, outcome: "done" as const, provenance: "manual" as const })),
+      ...persisted.slice(1),
+    ]),
+    now: "2026-09-24T12:00:00.000Z",
+    action: {
+      type: "record_outcome",
+      logicalDate: "2026-09-15",
+      outcome: "missed",
+      replaceExisting: true,
+      previousOutcome: "done",
+      occurrenceDueOn: "2026-09-15",
+      historicalOverride: true,
+    },
+  });
+  assert.deepEqual(historicalMissed.proposedHistoryChanges.filter((change) => change.type === "delete"), []);
+  assert.equal(historicalMissed.activeStatus, "missed");
+});
+
+test("historical replacement delete boundary covers rolling, fixed, and one-time recurrence", () => {
+  const cases = [
+    { recurrence: { kind: "rolling", intervalDays: 1 } as const, dueOn: "2026-09-15" },
+    { recurrence: { kind: "rolling", intervalDays: 3 } as const, dueOn: "2026-09-15" },
+    { recurrence: { kind: "weekly", weekdays: [2], anchorDate: "2026-09-15" } as const, dueOn: "2026-09-15" },
+    { recurrence: { kind: "monthly", mode: "day_of_month", dayOfMonth: 15, anchorDate: "2026-09-15" } as const, dueOn: "2026-09-15" },
+    { recurrence: { kind: "none" } as const, dueOn: "2026-09-15" },
+  ];
+
+  for (const scenario of cases) {
+    const result = evaluateTaskState({
+      ...engineInput({ dueOn: scenario.dueOn, recurrence: scenario.recurrence }, [
+        history("2026-09-15", "rollover", "2026-09-15"),
+        history("2026-09-16", "rollover", "2026-09-15"),
+      ]),
+      now: "2026-09-24T12:00:00.000Z",
+      action: {
+        type: "record_outcome",
+        logicalDate: "2026-09-15",
+        outcome: "done",
+        replaceExisting: true,
+        previousOutcome: "missed",
+        occurrenceDueOn: "2026-09-15",
+        historicalOverride: true,
+      },
+    });
+
+    assert.deepEqual(result.proposedHistoryChanges.filter((change) => change.type === "delete"), [], scenario.recurrence.kind);
+  }
 });
 
 function correctedAction() {

@@ -42,7 +42,8 @@ export type TaskStateCommandIntent =
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
-  | { type: "archive_task" | "clear_in_progress" | "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "archive_task" | "clear_in_progress"; task_id: string; replay_identity: string; expected_revision?: number }
+  | { type: "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "trash_task" | "restore_task"; task_id: string; replay_identity: string; expected_revision?: number; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
   | { type: "start_in_progress"; task_id: string; replay_identity: string; expected_revision?: number; occurrence_key?: string };
 
@@ -59,6 +60,12 @@ export type HistoryOutcomeBatchIntent = {
   expected_revision: number;
   outcome: "done" | "did_my_best" | "missed";
   entries: HistoryOutcomeBatchEntry[];
+};
+
+export type RolloverSweepIntent = {
+  type: "reconcile_rollover_sweep";
+  replay_identity: string;
+  commands: Array<Extract<TaskStateCommandIntent, { type: "reconcile_rollover" }>>;
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -228,6 +235,36 @@ export function validateHistoryOutcomeBatchIntent(value: unknown): HistoryOutcom
     expected_revision: value.expected_revision,
     outcome: value.outcome,
     entries,
+  };
+}
+
+const ROLLOVER_SWEEP_KEYS = new Set(["type", "replay_identity", "commands"]);
+export const MAX_ROLLOVER_SWEEP_COMMANDS = 256;
+
+export function validateRolloverSweepIntent(value: unknown): RolloverSweepIntent | null {
+  if (!isRecord(value)
+    || value.type !== "reconcile_rollover_sweep"
+    || !exactOrSubsetKeys(value, ROLLOVER_SWEEP_KEYS)
+    || !isString(value.replay_identity, 1, 256)
+    || !Array.isArray(value.commands)
+    || value.commands.length > MAX_ROLLOVER_SWEEP_COMMANDS) return null;
+
+  const taskIds = new Set<string>();
+  const replayIdentities = new Set<string>();
+  const commands: RolloverSweepIntent["commands"] = [];
+  for (const candidate of value.commands) {
+    const command = validateTaskStateCommandIntent(candidate);
+    if (!command || command.type !== "reconcile_rollover" || command.expected_revision === undefined) return null;
+    if (taskIds.has(command.task_id) || replayIdentities.has(command.replay_identity)) return null;
+    taskIds.add(command.task_id);
+    replayIdentities.add(command.replay_identity);
+    commands.push(command);
+  }
+
+  return {
+    type: "reconcile_rollover_sweep",
+    replay_identity: value.replay_identity,
+    commands,
   };
 }
 

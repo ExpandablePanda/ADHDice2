@@ -1,10 +1,10 @@
-import type { Task, TaskHistory } from "@/lib/database.types";
+import type { Task, TaskHistory } from "../database.types.ts";
 import type { CanonicalTaskStateColumns, CanonicalTaskScheduleBoundary } from "../task-state-canonical/types.ts";
-import { deduplicateTaskHistoryByLogicalDate } from "@/lib/task-history";
+import { deduplicateTaskHistoryByLogicalDate } from "../task-state-canonical/history-deduplication.ts";
 import { logicalDateForTimestamp, shiftDateKey } from "./calendar.ts";
 import { buildCompatibilityTaskStateEngineInput, buildDirectTaskStateEngineInput, isCanonicalArchivedOrTrashed, type CanonicalProjectedTaskState } from "./direct-input.ts";
 import { evaluateTaskState } from "./engine.ts";
-import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "./read-authority.ts";
+import { TASK_STATE_ENGINE_INTEGRATION_ENABLED } from "../task-state-canonical/active-status-read.ts";
 import { evaluateTaskActionAuthority, resolveTaskStatusOptionsForTask } from "./action-authority.ts";
 import { buildTaskEffectiveTimeline } from "./effective-timeline.ts";
 import { createProjectionDomainRevision } from "../stable-task-projection.ts";
@@ -12,7 +12,7 @@ import type { TaskCalendarOverride, TaskHistoryOutcome } from "./types.ts";
 import type { TaskEffectiveTimeline } from "./types.ts";
 import type { TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import { selectTaskBehaviorProjectionSemantics } from "./behavior-policy.ts";
-import { normalizeTaskType } from "../task-type.ts";
+import { normalizeTaskType } from "../task-type-domain.ts";
 
 export type TaskHistoryCalendarActionStatus = "done" | "did_my_best" | "delayed" | "missed" | "complete";
 

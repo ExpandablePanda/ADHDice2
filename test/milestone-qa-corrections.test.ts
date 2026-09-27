@@ -39,8 +39,6 @@ function derive(tasks: ReturnType<typeof createTask>[], milestones: Milestone[],
     listVisibleColumns: [],
     milestoneSearchTokensByTaskId: lookups.milestoneSearchTokensByTaskId,
     milestoneTaskIds: lookups.milestoneTaskIds,
-    taskGridLayout: [],
-    taskGridWidgetTypes: [],
     taskHistoryByTaskId: history,
     taskListEvaluationContext: {
       activeMilestoneTaskIds: lookups.activeMilestoneTaskIds,

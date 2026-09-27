@@ -19,16 +19,7 @@ import {
   getNextMomentumView,
   updateFocusedTaskIdsByDate,
 } from "../src/lib/task-momentum.ts";
-import {
-  buildTaskGridWidget,
-  formatDateKey,
-  getMissingTaskGridWidgetTypes,
-  getSpanFromDisplayRows,
-  moveTaskGridItem,
-  normalizeTaskGridLayout,
-  reorderTaskGridItems,
-  shiftDateKey,
-} from "../src/lib/task-grid-layout.ts";
+import { formatDateKey, shiftDateKey } from "../src/lib/date-key.ts";
 import { todayISO } from "../src/lib/utils.ts";
 import { countImportedTaskNodes, parseImportedTaskLines } from "../src/lib/task-input-parsing.ts";
 import {
@@ -154,8 +145,6 @@ function computeDerivedForHierarchyDiagnostics(
     focusedTaskIds: [],
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskGridLayout: [],
-    taskGridWidgetTypes: [],
     taskHistoryByTaskId: overrides.taskHistoryByTaskId ?? {},
     taskListEvaluationContext: {
       currentStreakByTaskId: {},
@@ -287,8 +276,6 @@ function computeDerivedForQueueCount(tasks: ReturnType<typeof createTask>[], foc
     focusedTaskIds,
     listColumnPickerOrder: [],
     listVisibleColumns: [],
-    taskGridLayout: [],
-    taskGridWidgetTypes: [],
     taskHistoryByTaskId: {},
     taskListEvaluationContext: {
       currentStreakByTaskId: {},
@@ -757,30 +744,7 @@ test("rolled-forward recurring display status ignores today history for future a
   }], "2026-06-24"), "upcoming");
 });
 
-test("grid layout helpers normalize, reorder, move, and date utilities behave consistently", () => {
-  const isWidgetType = (value: string): value is "urgent" | "import" => value === "urgent" || value === "import";
-  const layout = normalizeTaskGridLayout([
-    { h: 7, id: "a", type: "urgent", w: 2, x: 0, y: 0 },
-    { h: 6, id: "b", type: "import", w: 2, x: 0, y: 0 },
-  ], isWidgetType, 4, 24);
-  assert.equal(layout.length, 2);
-  assert.equal(layout[0]?.x, 0);
-  assert.equal(layout[1]?.x, 2);
-
-  const reordered = reorderTaskGridItems(layout, "a", "b", isWidgetType, 4, 24);
-  assert.equal(reordered[0]?.id, "b");
-
-  const moved = moveTaskGridItem(reordered, "a", "up", isWidgetType, 4, 24);
-  assert.equal(moved[0]?.id, "a");
-
-  const nextWidget = buildTaskGridWidget("urgent", "grid-urgent-id");
-  assert.equal(nextWidget.w, 2);
-  assert.equal(nextWidget.id, "grid-urgent-id");
-
-  const missing = getMissingTaskGridWidgetTypes(layout, ["urgent", "import"]);
-  assert.deepEqual(missing, []);
-
-  assert.equal(getSpanFromDisplayRows(2, 24), 4);
+test("date key utilities preserve local date-key behavior", () => {
   assert.equal(shiftDateKey("2026-05-20", 1), "2026-05-21");
 });
 

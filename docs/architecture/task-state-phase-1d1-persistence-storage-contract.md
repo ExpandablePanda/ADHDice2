@@ -1,5 +1,10 @@
 # Phase 1D-1: Canonical Persistence Contract and Target Storage Design
 
+Phase 1E refinement: [Current Task Read Projection Architecture](task-state-phase-1e-current-task-read-projection-contract.md)
+adds a dedicated rebuildable current-read projection to the target persistence
+model. The projection is not canonical evidence and does not change the
+canonical fact stores defined below.
+
 ## Status and boundary
 
 This is an architecture and storage-design document for the `codex/chatgpt-diagnostic-branch`.
@@ -31,8 +36,8 @@ Task entity row ------------- current lifecycle/container/workflow facts
         v
 EffectiveTaskState and EffectiveTimeline (derived)
         |
-        +-- guarded status/due/active projections
-        +-- streak and Calendar projections
+        +-- guarded current Task projection (status/due/active/handled/streak)
+        +-- Calendar/timeline projections
 ```
 
 The key design choices are:
@@ -792,6 +797,7 @@ Use a layered revision strategy:
 | Reward entitlement | Unique identity plus state revision; grant transition requires expected entitlement state. |
 | Command operation | Payload digest, expected proof, and stored result. |
 | Profile logical-day settings | Monotonic `settings_revision` on the profile row. |
+| Current Task projection | Owner/entity identity plus source fences for Task, entity-scoped History, schedule boundaries, behavior policy, logical-day settings, projected logical date, and projection algorithm/schema version. |
 
 Commands carry the relevant subset of these proofs plus a facts fingerprint. They do not require one global lock for every Task. A transaction may use narrower entity/date/occurrence locks or uniqueness constraints where required; physical lock syntax belongs later.
 
@@ -837,7 +843,7 @@ Old History rows may lack context snapshots. Migration should classify that prov
 
 ### TARGET
 
-Do not create canonical rows or counters solely because time passed. Calculated Missed, positive streak, Missed streak, Upcoming, Not Due, Unscheduled, and active display status are derived from canonical facts plus LogicalDayContext.
+Do not create canonical rows or counters solely because time passed. Calculated Missed, positive streak, Missed streak, Upcoming, Not Due, Unscheduled, and active display status are derived from canonical facts plus LogicalDayContext. Phase 1E permits these current results to be stored in a dedicated rebuildable projection record, but never as canonical History or recurrence authority.
 
 Optional caches are permitted only with:
 
@@ -975,7 +981,7 @@ TASK_ENTITY
   content metadata
   terminal_state, container_state, prior_container_state
   workflow_state, workflow date/start/occurrence
-  canonical_revision, projection metadata
+  canonical_revision, compatibility projection metadata only
         |
         +------------------------------+
         |                              |
@@ -1017,8 +1023,14 @@ TASK_HISTORY_FACT                  TASK_REWARD_ENTITLEMENT
 ACHIEVEMENT SOURCE/EVALUATION      ECONOMY LEDGER / BANK / ROLL
   downstream only                  downstream only
 
+TASK_CURRENT_PROJECTION
+  owner/entity identity
+  display status, current/next due, active occurrence,
+  handled/last-handled/last-Done, current positive/Missed streaks
+  Task/History/boundary/policy/logical-day/date/version fences
+
 Projection fields (`status`, `due_on`, active compatibility fields, cached
-streaks) are rebuildable outputs from the canonical stores. An
+streaks) are rebuildable outputs from the canonical stores. A
 EffectiveObligation merge is derived from occurrence facts and overrides; it
 has no physical canonical row.
 ```
@@ -1030,6 +1042,7 @@ Canonical relationships are owner-scoped. Derived relationships are timeline, st
 | Concern | TARGET | WHY | CURRENT GAP | MIGRATION IMPACT |
 |---|---|---|---|---|
 | Task identity/content/hierarchy | One owner-scoped Task Entity with explicit `entity_kind` and self parent identity | Uniform Parent/Step/Substep facts and independent rewards | Same-table parent links and separate legacy subtasks lack one entity contract | Map promoted/current rows; retain old subtasks as evidence |
+| Current Task projection | Owner/entity current-read record with status, current/next due, active occurrence, handled dates, streaks, and source fences | Ordinary current reads without workspace-wide History replay | Current status/streak reads depend on full startup History | Backfill and dual-read parity before consumer cutover |
 | Schedule model/configuration | Immutable full schedule snapshots in boundary rows with explicit four-way discriminator | Historical replay and no overloaded due semantics | Mutable Repeat fields and distributed writers | Create initial/boundary snapshots with confidence |
 | Recurrence anchor | Stable anchor in boundary snapshot with confidence/provenance | Membership survives cursor movement | No universal anchor; `due_on` is overloaded | High-risk anchor classification |
 | Explicit History | One current explicit outcome per entity/date with occurrence/effective/provenance metadata | Date replacement/clear is deterministic | Current row mixes automatic Missed and explicit facts | Separate/classify legacy automatic rows |
@@ -1061,7 +1074,8 @@ Canonical relationships are owner-scoped. Derived relationships are timeline, st
 6. `task_legacy_history_evidence` for automatic/ambiguous legacy rows.
 7. `task_command_operation` compact canonical command/replay ledger.
 8. `task_reward_entitlement`, `reward_grant`, and `reward_claim` downstream identities.
-9. Task Entity lifecycle/workflow fields and profile `settings_revision`.
+9. Owner-scoped `task_current_projection` with source-fence metadata.
+10. Task Entity lifecycle/workflow fields and profile `settings_revision`.
 
 These are conceptual structures. They are not SQL authorization.
 
@@ -1255,6 +1269,12 @@ The next phase is:
 PHASE 1D-2
 Migration / Backfill / Compatibility Cutover Design
 ```
+
+Phase 1E now locks the current-read projection boundary that Phase 1D-2 must
+include. Phase 1D-2 must not reintroduce full canonical History as ordinary
+workspace startup authority; its migration and cutover design must preserve
+the entity-scoped current projection, source fences, repair rules, and lazy
+historical reads defined by Phase 1E.
 
 It must later cover, without reopening the target model:
 

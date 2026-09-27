@@ -1,6 +1,6 @@
 # Documentation Index
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-09-26
 
 This file is the documentation map for the ADHDice repo. Use it to decide which markdown files are current source of truth, which are working context, and which are supporting or historical only.
 
@@ -31,6 +31,8 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/UI_SYSTEM.md` - Canonical ADHDice visual, interaction, and reuse rules.
 - `docs/TASKAPP_ARCHITECTURE.md` - Canonical TaskApp production routing, ownership, and change-boundary contract.
 - `docs/TASK_STATE_ENGINE.md` - Canonical active Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar projection, rewards eligibility, and persistence projection.
+- `docs/architecture/task-state-phase-1e-current-task-read-projection-contract.md` - Canonical current Task read-projection, freshness, invalidation, repair, and migration authority; supersedes full canonical History as normal current-workspace startup authority.
+- `docs/architecture/WORKSPACE_EFFICIENCY_RELEASE_GATE.md` - Canonical 7.15 current-read migration measurement plan, HAR audit interpretation, architecture budgets, and manual release scenarios.
 
 ## Active implementation lookups
 
@@ -39,7 +41,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 
 ## Qualified diagnostics
 
-- `docs/WORKSPACE_LOADING_ARCHITECTURE.md` - Qualified source diagnostic for workspace hydration, readiness, History loading, Realtime refresh, and caching ownership; not canonical runtime proof.
+- `docs/WORKSPACE_LOADING_ARCHITECTURE.md` - Qualified source diagnostic for current workspace hydration, readiness, History loading, Realtime refresh, and caching ownership.
 
 ## Active working docs
 

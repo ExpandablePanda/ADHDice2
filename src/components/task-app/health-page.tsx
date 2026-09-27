@@ -35,7 +35,6 @@ import type {
   HealthMealPlanEntry,
   HealthMealPlanEntryInsert,
   HealthMealPlanEntryUpdate,
-  HealthMealFoodSnapshot,
   HealthMetricEntry,
   HealthNutritionDetails,
   HealthProfile,
@@ -197,6 +196,11 @@ import {
   sumHealthMealPlanNutritionForDate,
 } from "@/lib/health-meal-planning";
 import {
+  buildHealthMealFoodSnapshot,
+  formatHealthConsumedMealLabel,
+  type HealthFoodHistoryRepairResult,
+} from "@/lib/health-meal-recalculation";
+import {
   TASK_TABLE_CHIP_BASE_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
 } from "@/components/ui/task-table-primitives";
@@ -304,7 +308,8 @@ type HealthPageProps = {
     serving_weight_amount?: number | null;
     serving_weight_unit?: HealthServingWeightUnit | null;
     is_favorite?: boolean;
-  }) => Promise<boolean>;
+  }) => Promise<HealthFoodLibraryItem | null>;
+  updatePreviousFoodLogs: (food: HealthFoodLibraryItem) => Promise<HealthFoodHistoryRepairResult>;
   setFavoriteFoodStatus: (itemId: string, isFavorite: boolean) => Promise<boolean>;
   saveRecipe: (input: {
     id?: string;
@@ -1221,6 +1226,7 @@ export function HealthPage({
   reorderJournalSignals,
   deleteJournalEntry,
   saveFavoriteFood,
+  updatePreviousFoodLogs,
   setFavoriteFoodStatus,
   saveRecipe,
   savedMeals,
@@ -2650,7 +2656,7 @@ export function HealthPage({
         protein_g: calculation.nutrientTotals.protein_g,
         provider: mealDraft.provider ?? "manual",
         provider_item_id: mealDraft.providerItemId,
-        serving_label: formatConsumedMealLabel(calculation, mealDraft.servingLabel),
+        serving_label: formatHealthConsumedMealLabel(calculation, mealDraft.servingLabel),
         source_food_id: sourceFoodId,
         consumed_quantity: calculation.consumed.quantity,
         consumed_unit: calculation.consumed.unit,
@@ -2821,7 +2827,7 @@ export function HealthPage({
         logged_at: loggedAt,
         meal_slot: mealEditDraft.mealSlot,
         protein_g: calculation.nutrientTotals.protein_g,
-        serving_label: formatConsumedMealLabel(calculation, structuredMeal.servingLabel),
+        serving_label: formatHealthConsumedMealLabel(calculation, structuredMeal.servingLabel),
         source_food_id: currentEntry.source_food_id ?? structuredMeal.sourceFoodId,
         consumed_quantity: calculation.consumed.quantity,
         consumed_unit: calculation.consumed.unit,
@@ -4356,11 +4362,13 @@ export function HealthPage({
             deleteRecipe={deleteRecipe}
             deleteSavedMeal={deleteSavedMeal}
             favorites={favorites}
+            mealEntries={mealEntries}
             recipes={recipes}
             saveFood={saveFavoriteFood}
             saveRecipe={saveRecipe}
             savedMeals={savedMeals}
             saveSavedMeal={saveSavedMeal}
+            updatePreviousFoodLogs={updatePreviousFoodLogs}
             shellSurface
           />
           </PageShell>
@@ -5393,36 +5401,27 @@ function getStructuredMealDefinition(entry: HealthMealEntry): MealFoodSelection 
   };
 }
 
-function buildMealFoodSnapshot(source: MealDraft | MealFoodSelection): HealthMealFoodSnapshot {
-  return {
+function buildMealFoodSnapshot(source: MealDraft | MealFoodSelection) {
+  return buildHealthMealFoodSnapshot({
     attribution: source.attribution,
     barcode: source.barcode,
-    brand_name: source.brandName || null,
+    brandName: source.brandName,
     calories: finiteNumber(source.calories) ?? 0,
-    carbs_g: nullableFiniteNumber(source.carbs),
-    food_category: source.foodCategory,
-    food_name: source.foodName.trim(),
-    fat_g: nullableFiniteNumber(source.fat),
-    provider: source.provider ?? "manual",
-    provider_item_id: source.providerItemId,
-    serving_label: source.servingLabel,
-    serving_measure_unit: validServingMeasureUnit(source.servingMeasureUnit),
-    serving_measure_value: positiveFiniteNumber(source.servingMeasureValue),
-    serving_quantity: positiveFiniteNumber(source.servingQuantity) ?? 1,
-    serving_unit: source.servingUnit.trim() || "serving",
-    source_food_id: source.sourceFoodId,
-    protein_g: nullableFiniteNumber(source.protein),
-    nutrition_details: source.nutritionDetails,
-  };
-}
-
-function formatConsumedMealLabel(
-  calculation: ReturnType<typeof calculateHealthFoodNutrition>,
-  servingLabel: string | null | undefined,
-) {
-  const consumedLabel = formatHealthFoodQuantityUnit(calculation.consumed.quantity, calculation.consumed.unit);
-  const serving = emptyToNull(servingLabel ?? "");
-  return serving ? `${consumedLabel} / ${serving}` : consumedLabel;
+    carbs: nullableFiniteNumber(source.carbs),
+    fat: nullableFiniteNumber(source.fat),
+    foodCategory: source.foodCategory,
+    foodName: source.foodName,
+    nutritionDetails: source.nutritionDetails,
+    provider: source.provider,
+    providerItemId: source.providerItemId,
+    protein: nullableFiniteNumber(source.protein),
+    servingLabel: source.servingLabel,
+    servingMeasureUnit: validServingMeasureUnit(source.servingMeasureUnit),
+    servingMeasureValue: positiveFiniteNumber(source.servingMeasureValue),
+    servingQuantity: positiveFiniteNumber(source.servingQuantity) ?? 1,
+    servingUnit: source.servingUnit,
+    sourceFoodId: source.sourceFoodId,
+  });
 }
 
 function validServingMeasureUnit(value: unknown): HealthServingMeasureUnit | null {

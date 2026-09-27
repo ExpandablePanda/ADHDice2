@@ -7,11 +7,10 @@ import type { TaskStateCommandResponse } from "../src/lib/task-state-command-cli
 
 const hook = readFileSync(new URL("../src/hooks/useMilestoneData.ts", import.meta.url), "utf8");
 const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-const milestoneHistoryLoad = "const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];";
-const milestoneHistoryLoadStart = taskApp.indexOf(milestoneHistoryLoad, taskApp.indexOf("const activeMilestone = milestoneData.milestoneByTaskId.get(task.id);"));
+const milestoneCompleteStart = taskApp.indexOf("const activeMilestone = milestoneData.milestoneByTaskId.get(task.id);");
 const milestoneCompletePath = taskApp.slice(
-  taskApp.indexOf("const activeMilestone = milestoneData.milestoneByTaskId.get(task.id);"),
-  taskApp.indexOf(milestoneHistoryLoad, milestoneHistoryLoadStart + milestoneHistoryLoad.length),
+  milestoneCompleteStart,
+  taskApp.indexOf("\n    const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];", milestoneCompleteStart),
 );
 const milestoneTrashPath = taskApp.slice(
   taskApp.indexOf("async function runMilestoneTaskTrash"),
@@ -64,7 +63,7 @@ test("Milestone Complete fulfills only a returned canonical entitlement", () => 
 
 test("Milestone Complete refreshes and reconciles canonical History when identified", () => {
   assert.match(milestoneCompletePath, /if \(completion\.result\.canonicalHistoryFactId\)/);
-  assert.match(milestoneCompletePath, /loadTaskHistoryForTasks\(\[task\.id\]\)/);
+  assert.match(milestoneCompletePath, /loadTaskHistoryForTasks\(\[task\.id\], \{ force: true, silent: true \}\)/);
   assert.match(milestoneCompletePath, /reconcileTaskHistoryMutation\(task\.id, historyLoad\.history, completedTask\)/);
   assert.doesNotMatch(milestoneCompletePath, /adhdice_task_history(?!_facts)/);
   assert.doesNotMatch(hook, /adhdice_task_history(?!_facts)/);

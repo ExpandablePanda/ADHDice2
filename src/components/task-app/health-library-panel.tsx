@@ -3,25 +3,27 @@
 import { Camera, Copy, FileUp, Pencil, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode } from "react";
 
+import { ModalShell } from "@/components/modal-shell";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import type {
   HealthFoodLibraryItem,
+  HealthFoodLibraryItemInsert,
+  HealthMealEntry,
   HealthMealSlot,
   HealthRecipe,
   HealthRecipeIngredient,
   HealthSavedMeal,
   HealthSavedMealItem,
   HealthNutritionDetailKey,
-  HealthNutritionDetails,
   HealthServingMeasureUnit,
-  HealthServingWeightUnit,
 } from "@/lib/database.types";
 import {
   buildRecipeIngredient,
   buildSavedMealFoodItem,
   buildSavedMealRecipeItem,
+  countHealthFoodMealEntries,
   composeHealthFoodStructuredServingLabel,
   formatQuantity,
   getHealthFoodIdentityKey,
@@ -29,6 +31,7 @@ import {
   getHealthFoodDisplaySuggestions,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
+  hasHealthFoodNutritionOrServingChanges,
   searchHealthFoodLibrary,
   sortHealthFoodLibraryByCreatedAt,
 } from "@/lib/health-library";
@@ -52,6 +55,7 @@ import {
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import type { HealthFoodHistoryRepairResult } from "@/lib/health-meal-recalculation";
 
 type LibrarySection = "foods" | "recipes" | "meals";
 
@@ -70,6 +74,12 @@ type FoodDraft = {
   carbs: string;
   fat: string;
   nutritionDetails: Record<HealthNutritionDetailKey, string>;
+};
+
+type HealthFoodSaveInput = Omit<HealthFoodLibraryItemInsert, "user_id">;
+type FoodSaveConfirmation = {
+  affectedCount: number;
+  input: HealthFoodSaveInput;
 };
 
 function createEmptyNutritionDetailDraft() {
@@ -139,34 +149,13 @@ type HealthLibraryPanelProps = {
   favorites: HealthFoodLibraryItem[];
   recipes: HealthRecipe[];
   savedMeals: HealthSavedMeal[];
+  mealEntries: HealthMealEntry[];
   shellSurface?: boolean;
   deleteFood: (id: string) => Promise<boolean>;
   deleteRecipe: (id: string) => Promise<boolean>;
   deleteSavedMeal: (id: string) => Promise<boolean>;
-  saveFood: (input: {
-    id?: string;
-    attribution?: string | null;
-    barcode?: string | null;
-    food_name: string;
-    brand_name?: string | null;
-    category?: string | null;
-    food_category?: string | null;
-    serving_label?: string | null;
-    serving_size?: string | null;
-    serving_quantity?: number;
-    serving_unit?: string;
-    serving_measure_value?: number | null;
-    serving_measure_unit?: HealthServingMeasureUnit | null;
-    serving_weight_amount?: number | null;
-    serving_weight_unit?: HealthServingWeightUnit | null;
-    calories: number;
-    protein_g?: number | null;
-    carbs_g?: number | null;
-    fat_g?: number | null;
-    nutrition_details?: HealthNutritionDetails | null;
-    provider?: string;
-    provider_item_id?: string | null;
-  }) => Promise<boolean>;
+  saveFood: (input: HealthFoodSaveInput) => Promise<HealthFoodLibraryItem | null>;
+  updatePreviousFoodLogs: (food: HealthFoodLibraryItem) => Promise<HealthFoodHistoryRepairResult>;
   saveRecipe: (input: {
     id?: string;
     name: string;
@@ -190,9 +179,11 @@ export function HealthLibraryPanel({
   deleteFood,
   deleteRecipe,
   deleteSavedMeal,
+  mealEntries,
   saveFood,
   saveRecipe,
   saveSavedMeal,
+  updatePreviousFoodLogs,
 }: HealthLibraryPanelProps) {
   const [section, setSection] = useState<LibrarySection>("foods");
   const [foodDraft, setFoodDraft] = useState<FoodDraft>(EMPTY_FOOD_DRAFT);
@@ -208,6 +199,9 @@ export function HealthLibraryPanel({
   const [hasFoodScanBaseline, setHasFoodScanBaseline] = useState(false);
   const [isFoodImportOpen, setIsFoodImportOpen] = useState(false);
   const [isSavingFoodImport, setIsSavingFoodImport] = useState(false);
+  const [foodSaveConfirmation, setFoodSaveConfirmation] = useState<FoodSaveConfirmation | null>(null);
+  const [isSavingFood, setIsSavingFood] = useState(false);
+  const [updatingFoodLogsId, setUpdatingFoodLogsId] = useState<string | null>(null);
   const [ingredientSearchQuery, setIngredientSearchQuery] = useState("");
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
   const [mealDraft, setMealDraft] = useState<MealDraft>(EMPTY_MEAL_DRAFT);
@@ -248,6 +242,9 @@ export function HealthLibraryPanel({
     () => reviewFoodImportRows(foodImportRows, favorites),
     [favorites, foodImportRows],
   );
+  const editingFood = foodDraft.id ? favorites.find((food) => food.id === foodDraft.id) ?? null : null;
+  const editingFoodLogCount = editingFood ? countHealthFoodMealEntries(mealEntries, editingFood.id) : 0;
+  const editingFoodHasUnsavedChanges = editingFood ? hasFoodDraftChanges(editingFood, foodDraft) : false;
 
   function resetFoodDraft() {
     barcodeLookupGenerationRef.current += 1;
@@ -302,7 +299,7 @@ export function HealthLibraryPanel({
       servingMeasureValue,
       servingMeasureUnit: foodDraft.servingMeasureUnit || null,
     });
-    const saved = await saveFood({
+    const foodInput: HealthFoodSaveInput = {
       id: foodDraft.id,
       brand_name: emptyToNull(foodDraft.brandName),
       barcode: emptyToNull(foodDraft.barcode),
@@ -323,9 +320,47 @@ export function HealthLibraryPanel({
       serving_weight_amount: foodDraft.servingMeasureUnit === "g" || foodDraft.servingMeasureUnit === "oz" || foodDraft.servingMeasureUnit === "fl_oz" ? servingMeasureValue : null,
       serving_weight_unit: foodDraft.servingMeasureUnit === "g" || foodDraft.servingMeasureUnit === "oz" || foodDraft.servingMeasureUnit === "fl_oz" ? foodDraft.servingMeasureUnit : null,
       ...(nutritionDetails ? { nutrition_details: nutritionDetails } : {}),
-    });
+    };
+    if (editingFood && editingFoodLogCount > 0 && hasHealthFoodNutritionOrServingChanges(editingFood, foodInput)) {
+      setFoodSaveConfirmation({ affectedCount: editingFoodLogCount, input: foodInput });
+      return;
+    }
+    const saved = await saveFood(foodInput);
     if (saved) {
       resetFoodDraft();
+    }
+  }
+
+  async function completeFoodSave(choice: "update" | "future") {
+    if (!foodSaveConfirmation || isSavingFood) {
+      return;
+    }
+    setIsSavingFood(true);
+    const pending = foodSaveConfirmation;
+    setFoodSaveConfirmation(null);
+    try {
+      const saved = await saveFood(pending.input);
+      if (!saved) {
+        return;
+      }
+      if (choice === "update") {
+        await updatePreviousFoodLogs(saved);
+      }
+      resetFoodDraft();
+    } finally {
+      setIsSavingFood(false);
+    }
+  }
+
+  async function handleUpdatePreviousLogs(food: HealthFoodLibraryItem) {
+    if (updatingFoodLogsId || editingFoodHasUnsavedChanges) {
+      return;
+    }
+    setUpdatingFoodLogsId(food.id);
+    try {
+      await updatePreviousFoodLogs(food);
+    } finally {
+      setUpdatingFoodLogsId(null);
     }
   }
 
@@ -476,6 +511,7 @@ export function HealthLibraryPanel({
   }
 
   return (
+    <>
     <HealthCollapsiblePanel
       className="min-w-0"
       shellSurface={shellSurface}
@@ -719,6 +755,15 @@ export function HealthLibraryPanel({
                 <AdhdChip onClick={() => { void handleSaveFood(); }} selected>
                   Save food
                 </AdhdChip>
+                {editingFood && editingFoodLogCount > 0 ? (
+                  <AdhdChip
+                    disabled={Boolean(updatingFoodLogsId) || editingFoodHasUnsavedChanges}
+                    onClick={() => { void handleUpdatePreviousLogs(editingFood); }}
+                    title={editingFoodHasUnsavedChanges ? "Save or cancel the current food edits before updating previous logs." : undefined}
+                  >
+                    {updatingFoodLogsId === editingFood.id ? "Updating previous logs..." : `Update Previous Logs · ${editingFoodLogCount} ${editingFoodLogCount === 1 ? "entry" : "entries"}`}
+                  </AdhdChip>
+                ) : null}
                 {foodDraft.id ? <AdhdChip onClick={resetFoodDraft}>Cancel</AdhdChip> : null}
               </div>
             </HealthCollapsiblePanel>
@@ -894,6 +939,20 @@ export function HealthLibraryPanel({
         </div>
       ) : null}
     </HealthCollapsiblePanel>
+    {foodSaveConfirmation ? (
+      <ModalShell label="Update previous logs" onClose={isSavingFood ? undefined : () => setFoodSaveConfirmation(null)}>
+        <div className="w-[min(92vw,30rem)] rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
+          <h2 className="text-lg font-semibold text-[#342d53] dark:text-white">Update previous logs?</h2>
+          <p className="mt-2 text-sm leading-6 text-[#716b8c] dark:text-white/60">This food appears in {foodSaveConfirmation.affectedCount} previous meal {foodSaveConfirmation.affectedCount === 1 ? "entry" : "entries"}.</p>
+          <div className="mt-5 flex flex-wrap justify-end gap-2">
+            <AdhdChip disabled={isSavingFood} onClick={() => { void completeFoodSave("update"); }} selected>Update all previous logs</AdhdChip>
+            <AdhdChip disabled={isSavingFood} onClick={() => { void completeFoodSave("future"); }}>Future entries only</AdhdChip>
+            <AdhdChip disabled={isSavingFood} onClick={() => setFoodSaveConfirmation(null)}>Cancel</AdhdChip>
+          </div>
+        </div>
+      </ModalShell>
+    ) : null}
+    </>
   );
 }
 
@@ -1016,6 +1075,24 @@ function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
     servingMeasureUnit: servingMeasureUnit,
     nutritionDetails: Object.fromEntries(HEALTH_NUTRITION_FIELD_REGISTRY.map((field) => [field.key, typeof nutritionDetails?.[field.key] === "number" ? String(nutritionDetails[field.key]) : ""])) as Record<HealthNutritionDetailKey, string>,
   };
+}
+
+function hasFoodDraftChanges(food: HealthFoodLibraryItem, draft: FoodDraft) {
+  const foodDetails = normalizeHealthNutritionDetails(food.nutrition_details);
+  const draftDetails = parseHealthNutritionDetailsInput(draft.nutritionDetails);
+  return food.food_name !== draft.foodName.trim()
+    || (food.brand_name ?? "") !== draft.brandName.trim()
+    || (food.barcode ?? "") !== draft.barcode.trim()
+    || (food.food_category ?? "Uncategorized") !== (draft.foodCategory.trim() || "Uncategorized")
+    || food.calories !== Number.parseInt(draft.calories, 10)
+    || food.protein_g !== nullableNumber(draft.protein)
+    || food.carbs_g !== nullableNumber(draft.carbs)
+    || food.fat_g !== nullableNumber(draft.fat)
+    || food.serving_quantity !== nullablePositiveNumber(draft.servingQuantity)
+    || food.serving_unit !== draft.servingUnit.trim()
+    || food.serving_measure_value !== nullablePositiveNumber(draft.servingMeasureValue)
+    || (food.serving_measure_unit ?? "") !== draft.servingMeasureUnit
+    || HEALTH_NUTRITION_FIELD_REGISTRY.some((field) => foodDetails?.[field.key] !== draftDetails?.[field.key]);
 }
 
 function cloneFoodDraft(draft: FoodDraft): FoodDraft {

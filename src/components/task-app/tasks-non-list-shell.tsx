@@ -10,7 +10,6 @@ type TasksNonListShellProps = {
   cardsNode: ReactNode;
   dailyPlanningNode: ReactNode;
   filterRowsNode: ReactNode;
-  gridNode: ReactNode;
   listNode: ReactNode;
   matrixNode: ReactNode;
   view: TaskViewMode;
@@ -21,7 +20,6 @@ export function TasksNonListShell({
   cardsNode,
   dailyPlanningNode,
   filterRowsNode,
-  gridNode,
   listNode,
   matrixNode,
   view,
@@ -32,7 +30,6 @@ export function TasksNonListShell({
         <TasksNonListContent
           cardsNode={cardsNode}
           calendarNode={calendarNode}
-          gridNode={gridNode}
           listNode={listNode}
           matrixNode={matrixNode}
           view={view}

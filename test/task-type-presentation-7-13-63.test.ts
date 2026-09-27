@@ -20,9 +20,7 @@ const settingsSource = readFileSync("src/components/task-app/task-type-behavior-
 const tableSource = readFileSync("src/components/ui/task-management-table-v2.tsx", "utf8");
 const listSource = readFileSync("src/components/task-app/tasks-list-adapter.tsx", "utf8");
 const secondarySource = readFileSync("src/components/task-app/task-secondary-views.tsx", "utf8");
-const gridSource = readFileSync("src/components/task-app/task-grid-widgets.tsx", "utf8");
 const pathsSource = readFileSync("src/components/task-app/paths-workspace.tsx", "utf8");
-const taskAppSource = readFileSync("src/components/task-app.tsx", "utf8");
 
 const customRulesets = [
   { id: "yellow-type", name: "Home", task_type: "custom" as const, icon_key: "house", accent_key: "yellow", description: "Home tasks" },
@@ -146,11 +144,9 @@ test("Standard child rows remain neutral while named child identity stays indepe
   assert.doesNotMatch(tableSource, /childTaskTypeOption = resolveTaskTypeSelectionOption\(task\.taskType/);
 });
 
-test("secondary Task cards, Grid widgets, and Paths nodes reuse the shared surface helper", () => {
+test("secondary Task cards and Paths nodes reuse the shared surface helper", () => {
   assert.match(secondarySource, /getTaskTypeSurfaceClassName\(option\.accentKey\)/);
-  assert.match(gridSource, /getTaskTypeSurfaceClassName\(option\.accentKey\)/);
   assert.match(pathsSource, /getTaskTypeSurfaceClassName\(taskTypeOption\.accentKey\)/);
-  assert.match(taskAppSource, /customBehaviorRulesets=\{customBehaviorRulesets\}[\s\S]*tasksByWidget/);
 });
 
 test("surface presentation does not alter Task behavior or status values", () => {

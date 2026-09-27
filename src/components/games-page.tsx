@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { X } from "lucide-react";
-import type { TaskHistory as DbTaskHistory } from "@/lib/database.types";
-import { todayISO, playSound } from "@/lib/utils";
+import { playSound } from "@/lib/utils";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -296,20 +295,16 @@ function DopamineMatch({
 // ─── Games Hub ────────────────────────────────────────────────────────────────
 
 export function GamesPage({
-  taskHistory,
+  todayCompletedCount,
   onAwardXP,
 }: {
-  taskHistory: DbTaskHistory[];
+  todayCompletedCount: number | null;
   onAwardXP: (xp: number, reason: string) => void;
 }) {
   const [activeGame, setActiveGame] = useState<ActiveGame>(null);
   const [playCredits, setPlayCredits] = useState(0);
 
-  const today = todayISO();
-  const todayCredits = useMemo(
-    () => taskHistory.filter((h) => h.entry_date === today && h.was_completed).length,
-    [taskHistory, today]
-  );
+  const todayCredits = todayCompletedCount ?? 0;
 
   // Sync credits on load (use tasks done today as the credit pool)
   useEffect(() => {
@@ -387,8 +382,8 @@ export function GamesPage({
         </div>
         <div>
           <p className={`text-[11px] font-semibold uppercase tracking-widest text-[#8e88a9] dark:text-white/40`}>Play Credits</p>
-          <p className={`text-2xl font-black tabular-nums text-[#17203a] dark:text-white`}>{playCredits}</p>
-          <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>1 credit per task completed today</p>
+          <p className={`text-2xl font-black tabular-nums text-[#17203a] dark:text-white`}>{todayCompletedCount === null ? "—" : playCredits}</p>
+          <p className={`text-xs text-[#8e88a9] dark:text-white/40`}>{todayCompletedCount === null ? "Task activity is unavailable" : "1 credit per task completed today"}</p>
         </div>
       </div>
 

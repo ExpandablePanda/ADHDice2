@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import type { Task } from "../src/lib/database.types.ts";
+import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import {
   planTaskStateCommand,
   isCanonicalTaskStateCommandSemanticNoOp,
@@ -17,6 +17,7 @@ import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effecti
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { buildTrustedTaskStateCommand } from "../supabase/functions/task-state-command/domain.ts";
 import { normalizeTaskBehaviorProfile, STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
+import { createEngineRolloverPlan, engineRolloverPlanTaskMutationCandidates } from "../src/lib/task-state-engine/rollover-authority.ts";
 
 const logicalDay = {
   identity: "user-1:2026-08-10:America/New_York:06:00:3",
@@ -236,6 +237,7 @@ test("clear_outcome RPC serialization preserves its clear date without side effe
   assert.equal(payload.clear_logical_date, "2026-08-09");
   assert.equal(plan.normalizedResult.historyFact, null);
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
   assert.equal(payload.history_fact, undefined);
   assert.equal(payload.reward_program_version, undefined);
   assert.equal(payload.schedule_boundary, undefined);
@@ -260,6 +262,7 @@ test("clearing today's explicit Missed recomputes Pending from the remaining sch
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
   assert.equal(plan.normalizedResult.historyFact, null);
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
 test("clearing an overdue explicit Missed preserves calculated Missed when still warranted", () => {
@@ -278,6 +281,7 @@ test("clearing an overdue explicit Missed preserves calculated Missed when still
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "missed");
   assert.equal(plan.normalizedResult.historyFact, null);
   assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
 test("reusing an idempotence identity with a different intent produces a different accepted digest", () => {
@@ -425,6 +429,170 @@ function staleRolloverState(overrides: Partial<CanonicalTaskRow> = {}): Canonica
   };
   return planningState;
 }
+
+test("stale one-off workflow without an occurrence remains occurrence-unbound through the rollover payload", () => {
+  const staleTask = task({
+    status: "in_progress",
+    due_on: "2026-09-21",
+    repeat_frequency: "none",
+    active_status_logical_date: "2026-09-22",
+    active_occurrence_due_on: "2026-09-21",
+    workflow_state: "in_progress",
+    workflow_logical_date: "2026-09-22",
+    workflow_occurrence_id: null,
+    workflow_command_id: "00000000-0000-4000-8000-000000000040",
+    workflow_revision: 2,
+  });
+  const scheduleBoundary = {
+    ...boundary("one_time"),
+    id: "boundary-one-off-2026-09-21",
+    effective_from_logical_date: "2026-09-21",
+    one_time_due_on: "2026-09-21",
+    anchor_date: "2026-09-21",
+  };
+  const priorMissedFact = {
+    id: "history-2026-09-21",
+    user_id: "user-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    logical_date: "2026-09-21",
+    outcome: "missed",
+    event_kind: "status",
+    occurrence_id: null,
+    scheduled_due_on: "2026-09-21",
+    effective_due_on: null,
+    schedule_boundary_id: scheduleBoundary.id,
+    recurrence_source_fingerprint: scheduleBoundary.id,
+    provenance_kind: "authorized_automation",
+    actor_kind: "authorized_automation",
+    actor_id: null,
+    source: "task_state_command",
+    logical_day_settings_revision: 3,
+    timezone: "America/New_York",
+    day_start_time: "06:00",
+    command_id: null,
+    idempotence_identity: "history:2026-09-21",
+    source_legacy_history_id: null,
+    revision: 1,
+    created_at: "2026-09-21T12:00:00.000Z",
+    updated_at: "2026-09-21T12:00:00.000Z",
+  } as unknown as CanonicalTaskStateReadModel["historyFacts"][number];
+  const readModel = {
+    task: staleTask,
+    scheduleBoundaries: [scheduleBoundary],
+    occurrences: [],
+    occurrenceEffectiveOverrides: [],
+    historyFacts: [priorMissedFact],
+    commandOperations: [],
+    calendarOverrides: [],
+    rewardEntitlements: [],
+    rewardGrants: [],
+    rewardClaimConsumptions: [],
+    logicalDayProfile: { timezone: "America/New_York", day_start_time: "06:00", settings_revision: 3 },
+  } as unknown as CanonicalTaskStateReadModel;
+  const plannerTask = { ...staleTask, canonical_schedule_boundary: scheduleBoundary } as Task;
+  const context = {
+    now: "2026-09-23T12:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  };
+  const rolloverPlan = createEngineRolloverPlan({
+    history: [
+      {
+        id: priorMissedFact.id,
+        task_id: "task-1",
+        user_id: "user-1",
+        entry_date: "2026-09-21",
+        status: "missed",
+        occurrence_key: null,
+        occurrence_due_on: "2026-09-21",
+        canonical_provenance_kind: "authorized_automation",
+      } as unknown as TaskHistory,
+    ],
+    now: context.now,
+    rolloverTime: context.logicalDayRollover,
+    tasks: [plannerTask],
+    timezone: context.timezone,
+  });
+  const mutationCandidates = engineRolloverPlanTaskMutationCandidates(rolloverPlan, [plannerTask]);
+  assert.equal(mutationCandidates.length, 1);
+
+  const engineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+  assert.equal(engineInput.task.activeOccurrenceDueOn, null);
+  const command = buildTrustedTaskStateCommand({
+    intent: {
+      type: "reconcile_rollover",
+      task_id: "task-1",
+      replay_identity: "rollover:task-1:2026-09-23:stale-no-occurrence",
+      expected_revision: 4,
+    },
+    userId: "user-1",
+    readModel,
+    logicalDay: {
+      identity: "user-1:2026-09-23:America/New_York:06:00:3",
+      logicalDate: "2026-09-23",
+      timezone: "America/New_York",
+      dayStartTime: "06:00",
+      settingsRevision: 3,
+    },
+    now: context.now,
+  });
+  const plan = planTaskStateCommand({ task: staleTask, engineInput }, command);
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, Record<string, unknown>>;
+
+  assert.equal(plan.normalizedResult.historyFact?.logical_date, "2026-09-22");
+  assert.equal(plan.normalizedResult.historyFact?.occurrence_id, null);
+  assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, null);
+  assert.equal(payload.history_fact.scheduled_due_on, null);
+  assert.equal(plan.normalizedResult.canonicalTaskPatch.workflow_state, "none");
+});
+
+test("stale recurring workflow without an occurrence never fabricates an occurrence binding", () => {
+  const { readModel } = canonicalRolloverReadModel("rolling");
+  const recurringReadModel = {
+    ...readModel,
+    task: {
+      ...readModel.task,
+      active_occurrence_due_on: "2026-08-09",
+      workflow_occurrence_id: null,
+    },
+    occurrences: [],
+  } as unknown as CanonicalTaskStateReadModel;
+  const context = {
+    now: "2026-08-10T12:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  };
+  const engineInput = buildCanonicalTaskStateEngineInput(recurringReadModel, context);
+  const engineResult = evaluateTaskState({ ...engineInput, action: { type: "reconcile_rollover" } });
+  const history = engineResult.proposedHistoryChanges.find((change) => change.type === "insert")?.row;
+  assert.equal(engineInput.task.activeOccurrenceDueOn, null);
+  assert.equal(engineInput.task.activeStatusLogicalDate, "2026-08-09");
+  assert.equal(engineInput.workflow?.occurrenceId, null);
+  assert.equal(engineInput.history.length, 0);
+  assert.equal(history?.logicalDate, "2026-08-09");
+  assert.equal(engineResult.logicalDate, "2026-08-10");
+  assert.equal(history?.outcome, "did_my_best");
+  assert.deepEqual([history?.occurrenceIdentity, history?.occurrenceDueOn], [null, null]);
+
+  const command = buildTrustedTaskStateCommand({
+    intent: {
+      type: "reconcile_rollover",
+      task_id: "task-1",
+      replay_identity: "rollover:task-1:2026-08-10:recurring-no-occurrence",
+      expected_revision: 4,
+    },
+    userId: "user-1",
+    readModel: recurringReadModel,
+    logicalDay,
+    now: context.now,
+  });
+  const plan = planTaskStateCommand({ task: recurringReadModel.task, engineInput }, command);
+  assert.equal(command.occurrenceId, null);
+  assert.equal(command.scheduledDueOn, null);
+  assert.equal(plan.normalizedResult.historyFact?.occurrence_id, null);
+  assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, null);
+});
 
 function canonicalOccurrence(overrides: Partial<CanonicalTaskOccurrence> = {}): CanonicalTaskOccurrence {
   return {
@@ -1010,7 +1178,7 @@ test("trusted historical replacement derives replaceExisting and previous outcom
   assert.equal(plan.command.payload.occurrenceKey, null);
 });
 
-test("trusted Every-3-Days success replacement atomically removes dependent automatic Missed facts", () => {
+test("historical Every-3-Days success replacement preserves dependent automatic Missed facts", () => {
   for (const outcome of ["done", "did_my_best"] as const) {
     const planningState = state({ due_on: "2026-08-17", repeat_frequency: "daily", repeat_interval: 3 });
     planningState.engineInput = {
@@ -1038,18 +1206,94 @@ test("trusted Every-3-Days success replacement atomically removes dependent auto
     const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
 
     assert.equal(plan.normalizedResult.historyFact?.outcome, outcome);
-    assert.deepEqual([...plan.normalizedResult.automaticHistoryDeleteIds].sort(), [
-      "automatic-missed-2026-08-18",
-      "automatic-missed-2026-08-19",
-    ].sort(), outcome);
-    assert.deepEqual(
-      [...(payload.automatic_history_delete_ids as string[])].sort(),
-      [...plan.normalizedResult.automaticHistoryDeleteIds].sort(),
-      outcome,
-    );
+    assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, [], outcome);
+    assert.equal(payload.automatic_history_delete_ids, undefined, outcome);
     assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20", outcome);
     assert.equal(plan.normalizedResult.rewardEntitlement?.logicalDate, "2026-08-17", outcome);
   }
+});
+
+test("same-day Every-3-Days success retains live dependent automatic Missed cleanup", () => {
+  const planningState = state({ due_on: "2026-08-17", repeat_frequency: "daily", repeat_interval: 3 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-08-17T12:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-17",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [
+      automaticMissedHistory("2026-08-17", "2026-08-17"),
+      automaticMissedHistory("2026-08-18", "2026-08-17"),
+    ],
+  };
+  const plan = planTaskStateCommand(planningState, trustedCommand({
+    type: "set_outcome",
+    task_id: "task-1",
+    replay_identity: "calendar:every-3-days:live-done",
+    outcome: "done",
+    logical_date: "2026-08-17",
+  }, planningState.task, { ...boundary("rolling"), repeat_interval: 3, anchor_date: "2026-08-17" }, {
+    ...logicalDay,
+    logicalDate: "2026-08-17",
+    identity: "user-1:2026-08-17:America/New_York:06:00:3",
+  }));
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, ["automatic-missed-2026-08-18"]);
+  assert.deepEqual(payload.automatic_history_delete_ids, ["automatic-missed-2026-08-18"]);
+});
+
+test("multi-date historical replacements preserve unselected later facts between canonical plans", () => {
+  const planningState = state({ due_on: "2026-09-15", repeat_frequency: "daily", repeat_interval: 3 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-09-24T12:00:00.000Z",
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "missed",
+      dueOn: "2026-09-15",
+      recurrence: { kind: "rolling", intervalDays: 3 },
+    },
+    history: [
+      ...["2026-09-15", "2026-09-16", "2026-09-17", "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23"]
+        .map((logicalDate) => automaticMissedHistory(logicalDate, "2026-09-15")),
+    ],
+  };
+  const originalLaterIds = planningState.engineInput.history
+    .filter((row) => row.logicalDate > "2026-09-15")
+    .map((row) => row.id);
+
+  for (const [index, logicalDate] of ["2026-09-15", "2026-09-17"].entries()) {
+    const plan = planTaskStateCommand(planningState, trustedCommand({
+      type: "set_outcome",
+      task_id: "task-1",
+      replay_identity: `calendar:multi-date:${logicalDate}`,
+      outcome: "done",
+      logical_date: logicalDate,
+    }, planningState.task, { ...boundary("rolling"), repeat_interval: 3, anchor_date: "2026-09-15" }, {
+      ...logicalDay,
+      logicalDate: "2026-09-24",
+      identity: `user-1:2026-09-24:America/New_York:06:00:3:${index}`,
+    }));
+
+    assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, [], logicalDate);
+    planningState.engineInput.history = planningState.engineInput.history.map((row) => (
+      row.logicalDate === logicalDate
+        ? { ...row, outcome: "done" as const, provenance: "manual" as const }
+        : row
+    ));
+  }
+
+  assert.deepEqual(
+    planningState.engineInput.history.filter((row) => row.logicalDate > "2026-09-15").map((row) => row.id),
+    originalLaterIds,
+  );
+  assert.deepEqual(
+    planningState.engineInput.history.filter((row) => ["2026-09-15", "2026-09-17"].includes(row.logicalDate)).map((row) => row.outcome),
+    ["done", "done"],
+  );
 });
 
 test("canonical Daily success projection derives its own date after ambiguous old Missed rows", () => {
@@ -1425,6 +1669,7 @@ test("trusted Calendar override planner evaluates the proposed override before c
   assert.equal(plan.normalizedResult.calendarOverride?.override_state, "not_due");
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-11");
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
 test("trusted planner accepts the Appanda 8/8-8/12 replacement range without occurrences", () => {
@@ -1555,6 +1800,7 @@ test("canonical Delay carries the effective due cursor through replay and RPC pr
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "delayed");
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, effectiveDueOn);
   assert.equal(plan.normalizedResult.scheduleBoundary, null);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
   assert.equal(payload.compatibility_projection.due_on, effectiveDueOn);
   assert.equal(payload.history_fact.effective_due_on, effectiveDueOn);
   assert.equal(payload.occurrence_effective_override.effective_due_on, effectiveDueOn);

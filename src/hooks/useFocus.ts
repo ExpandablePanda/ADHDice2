@@ -1,8 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
+import { subscribeToBrowserAuth } from "@/lib/supabase";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, FocusReallocationMode, PendingFocusDailySurplus } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
+import { createRealtimeSnapshotLifecycle } from "@/lib/realtime-snapshot-lifecycle";
 import { buildFocusGoalPlan, getMondayWeekRange, getPromptedDailySurplusSeconds, normalizeCarryoverMode, normalizeDistributionMode, normalizePriorityLevel } from "@/lib/focus-goals";
 import {
   dedupeCategoriesByName,
@@ -38,10 +41,22 @@ import {
   type FocusCounterRow,
 } from "@/lib/focus-counter-sync";
 import { normalizeFocusReallocationMode, readFocusReallocationMode, writeFocusReallocationMode } from "@/lib/focus-reallocation";
+import { fetchAllPagedRows, SUPABASE_READ_PAGE_SIZE, type PaginatedReadResult } from "@/lib/paginated-read";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 type FocusRuntimeRpcResult = { runtime?: FocusRuntimeRow | null; deleted_session_id?: string; completed_session?: DbFocusSession; was_replayed?: boolean };
+type FocusHistoryLoad = {
+  client: SupabaseClient;
+  getPageCount: () => number;
+  promise: Promise<PaginatedReadResult<DbFocusSession>>;
+  userId: string;
+};
+
+export function isFocusAuthReady(confirmedUserId: string | null, userId: string | null) {
+  return Boolean(confirmedUserId && userId && confirmedUserId === userId);
+}
 
 // ─── Storage keys ─────────────────────────────────────────────────────────────
 
@@ -276,6 +291,7 @@ export function useFocus(
   userId: string | null,
   setMessage: SetMessage,
   historyActive = true,
+  invalidateFocusDomainGeneration: WorkspaceDomainMutationBarrier = () => {},
 ) {
   const [focusCategories, setFocusCategories] = useState<FocusCategory[]>([]);
   const [activeSessions, setActiveSessions] = useState<Record<string, ActiveFocusSession>>({});
@@ -287,23 +303,31 @@ export function useFocus(
     ownerUserId: userId,
   }));
   const [focusCounterState, setFocusCounterState] = useState<FocusCounterState>({ counters: [], history: [], ownerUserId: null });
+  const [confirmedAuthUserId, setConfirmedAuthUserId] = useState<string | null>(null);
   const suppressCategoryReload = useRef(false);
   const activeSessionsRef = useRef(activeSessions);
   const runtimeRequestGenerationRef = useRef(0);
+  const runtimeHydrationGenerationRef = useRef(0);
   const runtimeClosedRevisionsRef = useRef(new Map<string, number>());
   const counterRequestGenerationRef = useRef(0);
   const focusCounterStateRef = useRef(focusCounterState);
+  const confirmedAuthUserIdRef = useRef<string | null>(null);
+  const currentUserIdRef = useRef(userId);
   const runtimeOperationIdsRef = useRef(new Map<string, string>());
   const runtimeCreateSessionIdsRef = useRef(new Map<string, string>());
   const completingRuntimeIdsRef = useRef(new Set<string>());
   const loadedFocusHistoryUserIdRef = useRef<string | null>(null);
+  const focusHistoryLoadInFlightRef = useRef<FocusHistoryLoad | null>(null);
   const migratedRuntimeUserRef = useRef<string | null>(null);
   const runtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const runtimeChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
+  const runtimeHydrationInFlightRef = useRef<{ client: SupabaseClient; promise: Promise<void>; userId: string } | null>(null);
   const counterChannelRef = useRef<RealtimeChannel | null>(null);
   const counterChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
-  const focusCounters = focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
-  const focusCounterHistory = focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
+  const counterHydrationInFlightRef = useRef<{ client: SupabaseClient; promise: Promise<void>; userId: string } | null>(null);
+  const isFocusAuthReadyForUser = isFocusAuthReady(confirmedAuthUserId, userId);
+  const focusCounters = isFocusAuthReadyForUser && focusCounterState.ownerUserId === userId ? focusCounterState.counters : [];
+  const focusCounterHistory = isFocusAuthReadyForUser && focusCounterState.ownerUserId === userId ? focusCounterState.history : [];
   const pendingDailyGoalSurplus = pendingDailyGoalSurplusState.ownerUserId === userId
     ? pendingDailyGoalSurplusState.pending
     : null;
@@ -320,6 +344,28 @@ export function useFocus(
   }, [focusCounterState]);
 
   useEffect(() => {
+    if (!client) {
+      confirmedAuthUserIdRef.current = null;
+      return;
+    }
+
+    return subscribeToBrowserAuth((_event, session) => {
+      const previousUserId = confirmedAuthUserIdRef.current;
+      const nextUserId = session?.user?.id ?? null;
+      confirmedAuthUserIdRef.current = nextUserId;
+      if (previousUserId !== nextUserId) {
+        migratedRuntimeUserRef.current = null;
+        counterRequestGenerationRef.current += 1;
+        runtimeRequestGenerationRef.current += 1;
+        runtimeHydrationGenerationRef.current += 1;
+      }
+      setConfirmedAuthUserId(nextUserId);
+    });
+  }, [client]);
+
+  useEffect(() => {
+    currentUserIdRef.current = userId;
+    loadedFocusHistoryUserIdRef.current = null;
     counterRequestGenerationRef.current += 1;
     const nextState = { counters: [], history: [], ownerUserId: userId };
     focusCounterStateRef.current = nextState;
@@ -327,6 +373,7 @@ export function useFocus(
 
   useEffect(() => {
     runtimeRequestGenerationRef.current += 1;
+    runtimeHydrationGenerationRef.current += 1;
     runtimeClosedRevisionsRef.current.clear();
   }, [userId]);
 
@@ -371,17 +418,53 @@ export function useFocus(
 
   useEffect(() => {
     if (!client || !userId || !historyActive || loadedFocusHistoryUserIdRef.current === userId) return;
-    let active = true;
-    void client.from("adhdice_focus_sessions").select("*").eq("user_id", userId)
-      .order("session_date", { ascending: false }).order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (!active || error) return;
-        const next = mergeStoredFocusHistory((data ?? []).map((row) => mapFocusSessionRow(row)));
-        loadedFocusHistoryUserIdRef.current = userId;
-        setFocusHistory(next);
-        saveFocusHistory(next);
-      });
-    return () => { active = false; };
+    const existingLoad = focusHistoryLoadInFlightRef.current;
+    let load = existingLoad && existingLoad.client === client && existingLoad.userId === userId
+      ? existingLoad
+      : null;
+    if (!load) {
+      let pageCount = 0;
+      const promise = fetchAllPagedRows(
+        (from, to) => client
+          .from("adhdice_focus_sessions")
+          .select("id,user_id,category_id,title_snapshot,focus_type_snapshot,focus_subtype_snapshot,focus_subtype_2_snapshot,session_date,duration_seconds,notes,started_at,ended_at,source,runtime_session_id,created_at")
+          .eq("user_id", userId)
+          .order("session_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+        () => {
+          pageCount += 1;
+        },
+      );
+      load = {
+        client,
+        getPageCount: () => pageCount,
+        promise,
+        userId,
+      };
+      focusHistoryLoadInFlightRef.current = load;
+      const clearInFlightLoad = () => {
+        if (focusHistoryLoadInFlightRef.current === load) {
+          focusHistoryLoadInFlightRef.current = null;
+        }
+      };
+      void promise.then(clearInFlightLoad, clearInFlightLoad);
+    }
+
+    let disposed = false;
+    void load.promise.then(({ data, error }) => {
+      if (disposed || currentUserIdRef.current !== userId || error) return;
+      const next = mergeStoredFocusHistory(((data ?? []) as DbFocusSession[]).map((row) => mapFocusSessionRow(row)));
+      loadedFocusHistoryUserIdRef.current = userId;
+      setFocusHistory(next);
+      saveFocusHistory(next);
+      if (isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[focus] history hydrated pages=${load?.getPageCount() ?? 0} rows=${data?.length ?? 0}`);
+      }
+    });
+    return () => { disposed = true; };
   }, [client, historyActive, userId]);
 
   const applyRuntimeRow = useCallback((row: FocusRuntimeRow) => {
@@ -401,96 +484,133 @@ export function useFocus(
     }
   }, [client]);
 
-  const hydrateFocusRuntimes = useCallback(async () => {
-    if (!client || !userId) return;
-    const generation = ++runtimeRequestGenerationRef.current;
-    const { data, error } = await client
-      .from("adhdice_focus_active_sessions")
-      .select("session_id,user_id,runtime_kind,category_id,mode,mode_authoritative,countdown_target_seconds,state,current_run_started_at,accumulated_seconds,revision,closed_at,close_reason,created_at,updated_at")
-      .eq("user_id", userId)
-      .is("closed_at", null);
-    if (error) {
-      if (!/does not exist|schema cache/i.test(error.message)) setMessage({ tone: "warn", text: `Focus timer sync failed: ${error.message}` });
-      return;
-    }
-    if (!isCurrentFocusRuntimeSnapshotRequest(generation, runtimeRequestGenerationRef.current)) return;
-    const rows = (data ?? []) as Array<FocusRuntimeRow & { mode_authoritative?: boolean }>;
-    setActiveSessions(() => {
-      const next = reconcileFocusRuntimeSnapshot(rows);
-      activeSessionsRef.current = next;
-      return next;
-    });
+  const hydrateFocusRuntimes = useCallback(() => {
+    if (!client || !userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+    const inFlight = runtimeHydrationInFlightRef.current;
+    if (inFlight?.client === client && inFlight.userId === userId) return inFlight.promise;
 
-    if (migratedRuntimeUserRef.current === userId) return;
-    migratedRuntimeUserRef.current = userId;
-    const legacyMetadata = readCountdownMetadata();
-    const legacyStandalone = readLocalActiveSession(userId);
-    const migrationKeyPrefix = `adhdice_focus_runtime_migration_op:${userId}:`;
-    const getMigrationOperationId = (slot: string) => {
-      const key = `${migrationKeyPrefix}${slot}`;
-      const stored = window.localStorage.getItem(key);
-      if (stored) return stored;
-      const operationId = createBrowserUuidV4();
-      window.localStorage.setItem(key, operationId);
-      return operationId;
-    };
-
-    for (const row of rows) {
-      if (row.runtime_kind !== "category" || !row.category_id) continue;
-      const metadata = legacyMetadata[row.category_id];
-      if (metadata?.mode !== "countdown" || !metadata.targetSeconds) continue;
-      if (row.mode_authoritative) {
-        delete legacyMetadata[row.category_id];
-        writeCountdownMetadata(legacyMetadata);
-        continue;
+    const promise = (async () => {
+      const hydrationGeneration = ++runtimeHydrationGenerationRef.current;
+      const generation = ++runtimeRequestGenerationRef.current;
+      const { data, error } = await client
+        .from("adhdice_focus_active_sessions")
+        .select("session_id,user_id,runtime_kind,category_id,mode,mode_authoritative,countdown_target_seconds,state,current_run_started_at,accumulated_seconds,revision,closed_at,close_reason,created_at,updated_at")
+        .eq("user_id", userId)
+        .is("closed_at", null);
+      const isCurrentRuntimeHydration = () =>
+        currentUserIdRef.current === userId &&
+        isFocusAuthReady(confirmedAuthUserIdRef.current, userId) &&
+        isCurrentFocusRuntimeSnapshotRequest(hydrationGeneration, runtimeHydrationGenerationRef.current);
+      if (
+        !isCurrentRuntimeHydration() ||
+        !isCurrentFocusRuntimeSnapshotRequest(generation, runtimeRequestGenerationRef.current)
+      ) return;
+      if (error) {
+        if (!/does not exist|schema cache/i.test(error.message)) setMessage({ tone: "warn", text: `Focus timer sync failed: ${error.message}` });
+        return;
       }
-      const { data: migrated, error: migrationError } = await client.rpc("adhdice_migrate_focus_runtime", {
-        p_operation_id: getMigrationOperationId(row.category_id),
-        p_runtime_kind: "category",
-        p_category_id: row.category_id,
-        p_session_id: row.session_id,
-        p_expected_revision: row.revision,
-        p_mode: "countdown",
-        p_countdown_target_seconds: metadata.targetSeconds,
+      if (!isCurrentFocusRuntimeSnapshotRequest(generation, runtimeRequestGenerationRef.current)) return;
+      const rows = (data ?? []) as Array<FocusRuntimeRow & { mode_authoritative?: boolean }>;
+      setActiveSessions(() => {
+        const next = reconcileFocusRuntimeSnapshot(rows);
+        activeSessionsRef.current = next;
+        return next;
       });
-      if (!migrationError && migrated) {
-        const result = migrated as FocusRuntimeRpcResult;
-        if (result.runtime) applyRuntimeRow(result.runtime);
-        delete legacyMetadata[row.category_id];
-        writeCountdownMetadata(legacyMetadata);
-        window.localStorage.removeItem(`${migrationKeyPrefix}${row.category_id}`);
-      }
-    }
 
-    if (legacyStandalone) {
-      const { data: migrated, error: migrationError } = await client.rpc("adhdice_migrate_focus_runtime", {
-        p_operation_id: getMigrationOperationId("standalone"),
-        p_runtime_kind: "standalone_countdown",
-        p_session_id: legacyStandalone.sessionId && isUuid(legacyStandalone.sessionId) ? legacyStandalone.sessionId : createBrowserUuidV4(),
-        p_mode: "countdown",
-        p_countdown_target_seconds: legacyStandalone.countdownTargetSeconds ?? 60,
-        p_legacy_started_at: legacyStandalone.startTime ? new Date(legacyStandalone.startTime).toISOString() : null,
-        p_legacy_accumulated_seconds: legacyStandalone.accumulatedSeconds,
-        p_legacy_is_running: legacyStandalone.isRunning,
-      });
-      if (!migrationError && migrated) {
-        const result = migrated as FocusRuntimeRpcResult;
-        if (result.runtime) applyRuntimeRow(result.runtime);
-        writeLocalActiveSession(userId, null);
-        delete legacyMetadata[legacyStandalone.categoryId];
-        writeCountdownMetadata(legacyMetadata);
-        window.localStorage.removeItem(`${migrationKeyPrefix}standalone`);
+      if (migratedRuntimeUserRef.current === userId) return;
+      migratedRuntimeUserRef.current = userId;
+      const legacyMetadata = readCountdownMetadata();
+      const legacyStandalone = readLocalActiveSession(userId);
+      const migrationKeyPrefix = `adhdice_focus_runtime_migration_op:${userId}:`;
+      const getMigrationOperationId = (slot: string) => {
+        const key = `${migrationKeyPrefix}${slot}`;
+        const stored = window.localStorage.getItem(key);
+        if (stored) return stored;
+        const operationId = createBrowserUuidV4();
+        window.localStorage.setItem(key, operationId);
+        return operationId;
+      };
+
+      for (const row of rows) {
+        if (!isCurrentRuntimeHydration()) return;
+        if (row.runtime_kind !== "category" || !row.category_id) continue;
+        const metadata = legacyMetadata[row.category_id];
+        if (metadata?.mode !== "countdown" || !metadata.targetSeconds) continue;
+        if (row.mode_authoritative) {
+          delete legacyMetadata[row.category_id];
+          writeCountdownMetadata(legacyMetadata);
+          continue;
+        }
+        const { data: migrated, error: migrationError } = await client.rpc("adhdice_migrate_focus_runtime", {
+          p_operation_id: getMigrationOperationId(row.category_id),
+          p_runtime_kind: "category",
+          p_category_id: row.category_id,
+          p_session_id: row.session_id,
+          p_expected_revision: row.revision,
+          p_mode: "countdown",
+          p_countdown_target_seconds: metadata.targetSeconds,
+        });
+        if (!isCurrentRuntimeHydration()) return;
+        if (!migrationError && migrated) {
+          const result = migrated as FocusRuntimeRpcResult;
+          if (result.runtime) applyRuntimeRow(result.runtime);
+          delete legacyMetadata[row.category_id];
+          writeCountdownMetadata(legacyMetadata);
+          window.localStorage.removeItem(`${migrationKeyPrefix}${row.category_id}`);
+        }
       }
-    }
+
+      if (legacyStandalone) {
+        if (!isCurrentRuntimeHydration()) return;
+        const { data: migrated, error: migrationError } = await client.rpc("adhdice_migrate_focus_runtime", {
+          p_operation_id: getMigrationOperationId("standalone"),
+          p_runtime_kind: "standalone_countdown",
+          p_session_id: legacyStandalone.sessionId && isUuid(legacyStandalone.sessionId) ? legacyStandalone.sessionId : createBrowserUuidV4(),
+          p_mode: "countdown",
+          p_countdown_target_seconds: legacyStandalone.countdownTargetSeconds ?? 60,
+          p_legacy_started_at: legacyStandalone.startTime ? new Date(legacyStandalone.startTime).toISOString() : null,
+          p_legacy_accumulated_seconds: legacyStandalone.accumulatedSeconds,
+          p_legacy_is_running: legacyStandalone.isRunning,
+        });
+        if (!isCurrentRuntimeHydration()) return;
+        if (!migrationError && migrated) {
+          const result = migrated as FocusRuntimeRpcResult;
+          if (result.runtime) applyRuntimeRow(result.runtime);
+          writeLocalActiveSession(userId, null);
+          delete legacyMetadata[legacyStandalone.categoryId];
+          writeCountdownMetadata(legacyMetadata);
+          window.localStorage.removeItem(`${migrationKeyPrefix}standalone`);
+        }
+      }
+    })();
+    runtimeHydrationInFlightRef.current = { client, promise, userId };
+    void promise.then(
+      () => { if (runtimeHydrationInFlightRef.current?.promise === promise) runtimeHydrationInFlightRef.current = null; },
+      () => { if (runtimeHydrationInFlightRef.current?.promise === promise) runtimeHydrationInFlightRef.current = null; },
+    );
+    return promise;
   }, [applyRuntimeRow, client, setMessage, userId]);
 
   useEffect(() => {
-    if (!client || !userId) {
+    if (!client || !userId || !isFocusAuthReadyForUser) {
       migratedRuntimeUserRef.current = null;
       return;
     }
     const currentClient = client;
     let active = true;
+    const snapshotLifecycle = createRealtimeSnapshotLifecycle();
+    const requestRuntimeSnapshot = (shouldRequest: boolean) => {
+      if (!shouldRequest) return;
+      const promise = hydrateFocusRuntimes();
+      if (!promise) {
+        snapshotLifecycle.completeHydration(false);
+        return;
+      }
+      void promise.then(
+        () => snapshotLifecycle.completeHydration(true),
+        () => snapshotLifecycle.completeHydration(false),
+      );
+    };
     async function subscribeToRuntimeChannel() {
       const previousChannel = runtimeChannelRef.current;
       runtimeChannelRef.current = null;
@@ -501,13 +621,12 @@ export function useFocus(
 
       await removalPromise;
 
-      if (!active) return;
-
-      void hydrateFocusRuntimes();
+      if (!active || currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
 
       const channel = currentClient
         .channel(`focus-runtime:${userId}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_active_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (!active || currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
           if (payload.eventType === "DELETE") {
             const deleted = payload.old as Partial<FocusRuntimeRow>;
             runtimeRequestGenerationRef.current += 1;
@@ -523,6 +642,7 @@ export function useFocus(
           }
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_sessions", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (!active || currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
           const entry = mapFocusSessionRow(payload.new as DbFocusSession);
           setFocusHistory((current) => {
             const next = upsertFocusHistoryEntry(current, entry);
@@ -531,33 +651,44 @@ export function useFocus(
           });
         })
         .subscribe((status) => {
-          if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusRuntimes();
+          if (!active) return;
+          if (status !== "SUBSCRIBED") {
+            snapshotLifecycle.handleStatus(status);
+            return;
+          }
+          if (!isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+          requestRuntimeSnapshot(snapshotLifecycle.handleStatus(status));
         });
       runtimeChannelRef.current = channel;
       runtimeChannelRemovalPromiseRef.current = null;
     }
 
     void subscribeToRuntimeChannel();
-    const refetchWhenVisible = () => { if (document.visibilityState === "visible") void hydrateFocusRuntimes(); };
-    const refetch = () => { void hydrateFocusRuntimes(); };
+    const refetchWhenVisible = () => requestRuntimeSnapshot(snapshotLifecycle.handleVisibilityChange(document.visibilityState));
+    const refetch = (event: PageTransitionEvent) => requestRuntimeSnapshot(snapshotLifecycle.handlePageShow(event.persisted));
+    const refetchWhenOnline = () => requestRuntimeSnapshot(snapshotLifecycle.handleOnline());
+    const refetchWhenOffline = () => { snapshotLifecycle.handleOffline(); };
     document.addEventListener("visibilitychange", refetchWhenVisible);
     window.addEventListener("pageshow", refetch);
-    window.addEventListener("online", refetch);
+    window.addEventListener("online", refetchWhenOnline);
+    window.addEventListener("offline", refetchWhenOffline);
     const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("adhdice_focus_sync") : null;
-    if (broadcast) broadcast.onmessage = refetch;
+    if (broadcast) broadcast.onmessage = () => requestRuntimeSnapshot(snapshotLifecycle.handleBroadcast());
     return () => {
       active = false;
       document.removeEventListener("visibilitychange", refetchWhenVisible);
       window.removeEventListener("pageshow", refetch);
-      window.removeEventListener("online", refetch);
+      window.removeEventListener("online", refetchWhenOnline);
+      window.removeEventListener("offline", refetchWhenOffline);
       broadcast?.close();
+      snapshotLifecycle.dispose();
       const channel = runtimeChannelRef.current;
       runtimeChannelRef.current = null;
       if (channel) {
         runtimeChannelRemovalPromiseRef.current = removeRealtimeChannel(channel);
       }
     };
-  }, [applyRuntimeRow, client, hydrateFocusRuntimes, removeRealtimeChannel, userId]);
+  }, [applyRuntimeRow, client, hydrateFocusRuntimes, isFocusAuthReadyForUser, removeRealtimeChannel, userId]);
 
   const replaceFocusCounterState = useCallback((ownerUserId: string, counters: FocusCounter[], history: FocusCounterHistoryEntry[]) => {
     const nextState = { counters, history, ownerUserId };
@@ -567,36 +698,51 @@ export function useFocus(
     setFocusCounterState(nextState);
   }, []);
 
-  const hydrateFocusCounters = useCallback(async () => {
-    if (!client || !userId) return;
-    const generation = ++counterRequestGenerationRef.current;
-    const [counterResponse, eventResponse] = await Promise.all([
-      client
-        .from("adhdice_focus_counters")
-        .select("*")
-        .eq("user_id", userId)
-        .is("deleted_at", null)
-        .order("sort_order", { ascending: true })
-        .order("id", { ascending: true }),
-      client
-        .from("adhdice_focus_counter_events")
-        .select("*")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false }),
-    ]);
-    const error = counterResponse.error ?? eventResponse.error;
-    if (error) {
-      if (!/does not exist|schema cache/i.test(error.message)) {
-        setMessage({ tone: "warn", text: `Focus counter sync failed: ${error.message}` });
+  const hydrateFocusCounters = useCallback(() => {
+    if (!client || !userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+    const inFlight = counterHydrationInFlightRef.current;
+    if (inFlight?.client === client && inFlight.userId === userId) return inFlight.promise;
+
+    const promise = (async () => {
+      const generation = ++counterRequestGenerationRef.current;
+      const [counterResponse, eventResponse] = await Promise.all([
+        client
+          .from("adhdice_focus_counters")
+          .select("*")
+          .eq("user_id", userId)
+          .is("deleted_at", null)
+          .order("sort_order", { ascending: true })
+          .order("id", { ascending: true }),
+        client
+          .from("adhdice_focus_counter_events")
+          .select("*")
+          .eq("user_id", userId)
+          .order("created_at", { ascending: false }),
+      ]);
+      if (
+        currentUserIdRef.current !== userId ||
+        !isFocusAuthReady(confirmedAuthUserIdRef.current, userId) ||
+        !isCurrentFocusCounterSnapshotRequest(generation, counterRequestGenerationRef.current)
+      ) return;
+      const error = counterResponse.error ?? eventResponse.error;
+      if (error) {
+        if (!/does not exist|schema cache/i.test(error.message)) {
+          setMessage({ tone: "warn", text: `Focus counter sync failed: ${error.message}` });
+        }
+        return;
       }
-      return;
-    }
-    if (!isCurrentFocusCounterSnapshotRequest(generation, counterRequestGenerationRef.current)) return;
-    replaceFocusCounterState(
-      userId,
-      reconcileFocusCounterSnapshot((counterResponse.data ?? []) as FocusCounterRow[]),
-      reconcileFocusCounterHistorySnapshot((eventResponse.data ?? []) as FocusCounterEventRow[]),
+      replaceFocusCounterState(
+        userId,
+        reconcileFocusCounterSnapshot((counterResponse.data ?? []) as FocusCounterRow[]),
+        reconcileFocusCounterHistorySnapshot((eventResponse.data ?? []) as FocusCounterEventRow[]),
+      );
+    })();
+    counterHydrationInFlightRef.current = { client, promise, userId };
+    void promise.then(
+      () => { if (counterHydrationInFlightRef.current?.promise === promise) counterHydrationInFlightRef.current = null; },
+      () => { if (counterHydrationInFlightRef.current?.promise === promise) counterHydrationInFlightRef.current = null; },
     );
+    return promise;
   }, [client, replaceFocusCounterState, setMessage, userId]);
 
   const applyFocusCounterMutationResult = useCallback((result: FocusCounterMutationResult) => {
@@ -616,9 +762,22 @@ export function useFocus(
   }, [userId]);
 
   useEffect(() => {
-    if (!client || !userId) return;
+    if (!client || !userId || !isFocusAuthReadyForUser) return;
     const currentClient = client;
     let cancelled = false;
+    const snapshotLifecycle = createRealtimeSnapshotLifecycle();
+    const requestCounterSnapshot = (shouldRequest: boolean) => {
+      if (!shouldRequest) return;
+      const promise = hydrateFocusCounters();
+      if (!promise) {
+        snapshotLifecycle.completeHydration(false);
+        return;
+      }
+      void promise.then(
+        () => snapshotLifecycle.completeHydration(true),
+        () => snapshotLifecycle.completeHydration(false),
+      );
+    };
     async function subscribeToCounterChannel() {
       const previousChannel = counterChannelRef.current;
       counterChannelRef.current = null;
@@ -629,13 +788,12 @@ export function useFocus(
 
       await removalPromise;
 
-      if (cancelled) return;
-
-      void hydrateFocusCounters();
+      if (cancelled || currentUserIdRef.current !== userId || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
 
       const channel = currentClient
         .channel(`focus-counters:${userId}`)
         .on("postgres_changes", { event: "*", schema: "public", table: "adhdice_focus_counters", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (cancelled) return;
           if (payload.eventType !== "INSERT" && payload.eventType !== "UPDATE") return;
           if (focusCounterStateRef.current.ownerUserId !== userId) return;
           counterRequestGenerationRef.current += 1;
@@ -650,6 +808,7 @@ export function useFocus(
           });
         })
         .on("postgres_changes", { event: "INSERT", schema: "public", table: "adhdice_focus_counter_events", filter: `user_id=eq.${userId}` }, (payload) => {
+          if (cancelled) return;
           if (focusCounterStateRef.current.ownerUserId !== userId) return;
           counterRequestGenerationRef.current += 1;
           const row = payload.new as FocusCounterEventRow;
@@ -663,33 +822,44 @@ export function useFocus(
           });
         })
         .subscribe((status) => {
-          if (["SUBSCRIBED", "TIMED_OUT", "CLOSED", "CHANNEL_ERROR"].includes(status)) void hydrateFocusCounters();
+          if (cancelled) return;
+          if (status !== "SUBSCRIBED") {
+            snapshotLifecycle.handleStatus(status);
+            return;
+          }
+          if (!isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+          requestCounterSnapshot(snapshotLifecycle.handleStatus(status));
         });
       counterChannelRef.current = channel;
       counterChannelRemovalPromiseRef.current = null;
     }
 
     void subscribeToCounterChannel();
-    const refetchWhenVisible = () => { if (document.visibilityState === "visible") void hydrateFocusCounters(); };
-    const refetch = () => { void hydrateFocusCounters(); };
+    const refetchWhenVisible = () => requestCounterSnapshot(snapshotLifecycle.handleVisibilityChange(document.visibilityState));
+    const refetch = (event: PageTransitionEvent) => requestCounterSnapshot(snapshotLifecycle.handlePageShow(event.persisted));
+    const refetchWhenOnline = () => requestCounterSnapshot(snapshotLifecycle.handleOnline());
+    const refetchWhenOffline = () => { snapshotLifecycle.handleOffline(); };
     document.addEventListener("visibilitychange", refetchWhenVisible);
     window.addEventListener("pageshow", refetch);
-    window.addEventListener("online", refetch);
+    window.addEventListener("online", refetchWhenOnline);
+    window.addEventListener("offline", refetchWhenOffline);
     const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("adhdice_focus_counter_sync") : null;
-    if (broadcast) broadcast.onmessage = refetch;
+    if (broadcast) broadcast.onmessage = () => requestCounterSnapshot(snapshotLifecycle.handleBroadcast());
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", refetchWhenVisible);
       window.removeEventListener("pageshow", refetch);
-      window.removeEventListener("online", refetch);
+      window.removeEventListener("online", refetchWhenOnline);
+      window.removeEventListener("offline", refetchWhenOffline);
       broadcast?.close();
+      snapshotLifecycle.dispose();
       const channel = counterChannelRef.current;
       counterChannelRef.current = null;
       if (channel) {
         counterChannelRemovalPromiseRef.current = removeRealtimeChannel(channel);
       }
     };
-  }, [client, hydrateFocusCounters, removeRealtimeChannel, replaceFocusCounterState, setMessage, userId]);
+  }, [client, hydrateFocusCounters, isFocusAuthReadyForUser, removeRealtimeChannel, replaceFocusCounterState, setMessage, userId]);
 
   async function transitionFocusRuntime(categoryId: string, action: string, args: Record<string, unknown> = {}) {
     if (!client || !userId) return null;
@@ -1025,12 +1195,14 @@ export function useFocus(
     );
 
     if (uniqueCategories.length === 0) {
+      invalidateFocusDomainGeneration();
       setFocusCategories([]);
       saveFocusCategories([]);
       setMessage({ tone: "good", text: "Focus categories updated." });
       return true;
     }
 
+    invalidateFocusDomainGeneration();
     setFocusCategories(uniqueCategories);
     saveFocusCategories(uniqueCategories);
     suppressCategoryReload.current = true;
@@ -1102,6 +1274,7 @@ export function useFocus(
     );
     if (!confirmed) return false;
 
+    invalidateFocusDomainGeneration();
     const { error } = await client
       .from("adhdice_focus_categories")
       .delete()

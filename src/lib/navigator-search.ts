@@ -48,7 +48,6 @@ const TASK_VIEW_TARGETS: Array<{ title: string; view: TaskViewMode }> = [
   { title: "List View", view: "list" },
   { title: "Cards View", view: "cards" },
   { title: "Matrix View", view: "matrix" },
-  { title: "Grid View", view: "grid" },
   { title: "Calendar View", view: "calendar" },
 ];
 

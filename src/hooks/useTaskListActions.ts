@@ -1,9 +1,10 @@
 "use client";
 
-import type { Dispatch, MutableRefObject, SetStateAction } from "react";
+import type { Dispatch, SetStateAction } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import type { TaskList, TaskListInsert } from "@/lib/database.types";
 import { getStoredTaskListMembershipMode, getTaskListCapabilities, type TaskListDefinition, type TaskListId, type TaskListManualMembership } from "@/lib/task-lists";
+import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 
 type Message = {
   text: string;
@@ -34,7 +35,7 @@ type UseTaskListActionsOptions = {
   setMessage?: Dispatch<SetStateAction<Message | null>>;
   setTaskListManualMemberships?: Dispatch<SetStateAction<TaskListManualMembership[]>>;
   setTaskLists?: Dispatch<SetStateAction<TaskListDefinition[]>>;
-  taskListDataGeneration?: MutableRefObject<number>;
+  invalidateTaskListDomainGeneration?: WorkspaceDomainMutationBarrier;
   taskLists?: TaskListDefinition[];
 };
 
@@ -52,6 +53,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
     setMessage = NOOP_SETTER as Dispatch<SetStateAction<Message | null>>,
     setTaskListManualMemberships = NOOP_SETTER as Dispatch<SetStateAction<TaskListManualMembership[]>>,
     setTaskLists = NOOP_SETTER as Dispatch<SetStateAction<TaskListDefinition[]>>,
+    invalidateTaskListDomainGeneration = () => {},
     taskLists = [],
   } = options;
   async function saveTaskListDefinition(input: TaskListSaveInput) {
@@ -74,6 +76,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       name: baseline.type === "custom" ? input.name : baseline.name,
       rules: capabilities.usesRuleEvaluation ? (input.rules as TaskListDefinition["rules"]) : null,
     };
+    invalidateTaskListDomainGeneration();
     setTaskLists((current) => [
       ...current.filter((list) => list.id !== savedDefinition.id),
       savedDefinition,
@@ -129,6 +132,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       type: "custom",
     };
 
+    invalidateTaskListDomainGeneration();
     setTaskLists((current) => [...current, nextDefinition]);
 
     const payload: TaskListInsert = {
@@ -185,6 +189,7 @@ export function useTaskListActions(options: UseTaskListActionsOptions = {}) {
       return false;
     }
 
+    invalidateTaskListDomainGeneration();
     setTaskLists((current) => current.filter((list) => list.id !== listId));
     setTaskListManualMemberships((current) => current.filter((membership) => membership.list_id !== listId));
 

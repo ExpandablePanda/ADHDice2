@@ -1,4 +1,4 @@
-import type { EvaluatedRecordCandidate, ProvisionalRecordCandidate, RecordMetricKey, RecordScopeKind } from "@/lib/records/types";
+import type { EvaluatedRecordCandidate, ProvisionalRecordCandidate, RecordMetricKey, RecordScopeKind } from "./types.ts";
 
 export type RecordTaskEvidenceOutcome = "done" | "did_my_best" | "complete";
 
