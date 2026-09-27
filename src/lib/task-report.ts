@@ -91,14 +91,16 @@ function humanize(value: string) {
 }
 
 function macroLine(label: string, value: number | null, goal: number | null, suffix: string) {
+  if (value === null || !Number.isFinite(value)) return null;
   return `- ${label}: ${formatNumber(value)}${suffix}${goal === null ? "" : ` / ${formatNumber(goal)}${suffix} goal`}`;
 }
 
 function nutritionLabel(key: string) {
   const labels: Record<string, string> = {
-    added_sugars_g: "Added sugar", calcium_mg: "Calcium", cholesterol_mg: "Cholesterol", dietary_fiber_g: "Fiber", iron_mg: "Iron", magnesium_mg: "Magnesium", potassium_mg: "Potassium", sodium_mg: "Sodium", total_sugars_g: "Sugar", vitamin_a_mcg_rae: "Vitamin A", vitamin_c_mg: "Vitamin C", vitamin_d_mcg: "Vitamin D", vitamin_e_mg: "Vitamin E", vitamin_k_mcg: "Vitamin K",
+    added_sugars_g: "Added Sugars", calcium_mg: "Calcium", caffeine_mg: "Caffeine", cholesterol_mg: "Cholesterol", choline_mg: "Choline", copper_mg: "Copper", dietary_fiber_g: "Fiber", folate_b9_mcg_dfe: "Vitamin B9", iron_mg: "Iron", iodine_mcg: "Iodine", insoluble_fiber_g: "Insoluble Fiber", magnesium_mg: "Magnesium", manganese_mg: "Manganese", monounsaturated_fat_g: "Monounsaturated Fat", molybdenum_mcg: "Molybdenum", niacin_b3_mg: "Vitamin B3", omega_3_g: "Omega-3", omega_6_g: "Omega-6", pantothenic_acid_b5_mg: "Vitamin B5", phosphorus_mg: "Phosphorus", polyunsaturated_fat_g: "Polyunsaturated Fat", potassium_mg: "Potassium", riboflavin_b2_mg: "Vitamin B2", saturated_fat_g: "Saturated Fat", selenium_mcg: "Selenium", sodium_mg: "Sodium", soluble_fiber_g: "Soluble Fiber", sugar_alcohol_g: "Sugar Alcohol", thiamin_b1_mg: "Vitamin B1", total_sugars_g: "Total Sugars", trans_fat_g: "Trans Fat", vitamin_a_mcg_rae: "Vitamin A", vitamin_b12_mcg: "Vitamin B12", vitamin_b6_mg: "Vitamin B6", vitamin_c_mg: "Vitamin C", vitamin_d_mcg: "Vitamin D", vitamin_e_mg: "Vitamin E", vitamin_k_mcg: "Vitamin K", zinc_mg: "Zinc",
   };
-  return labels[key] ?? humanize(key);
+  if (labels[key]) return labels[key];
+  return humanize(key.replace(/_(?:mcg|mg|g)(?:_(?:rae|dfe))?$/, ""));
 }
 
 function nutritionUnit(key: string) {
@@ -166,11 +168,17 @@ function formatHealthSummary(reportData: UnifiedReportReadModel) {
   const weightEntries = reportData.weightEntries;
   const workouts = reportData.days.flatMap((day) => day.fitness.workouts);
   const workoutTypes = workouts.reduce<Record<string, number>>((counts, workout) => { counts[workout.type] = (counts[workout.type] ?? 0) + 1; return counts; }, {});
+  const averageCalories = macroLine("Average daily calories", averageMacro("calories"), reportData.healthGoals.calorieGoal, " kcal");
+  const averageMacros = [
+    { label: "protein", value: averageMacro("protein_g") },
+    { label: "carbs", value: averageMacro("carbs_g") },
+    { label: "fat", value: averageMacro("fat_g") },
+  ].filter((entry): entry is { label: string; value: number } => entry.value !== null && Number.isFinite(entry.value));
   return [
     "### Food / Nutrition",
     `- Logged days: ${foodDays.length} of ${reportData.days.length}`,
-    `- Average daily calories: ${formatNumber(averageMacro("calories"))}${reportData.healthGoals.calorieGoal === null ? "" : ` / ${formatNumber(reportData.healthGoals.calorieGoal)} goal`}`,
-    `- Average protein: ${formatNumber(averageMacro("protein_g"))}g; carbs: ${formatNumber(averageMacro("carbs_g"))}g; fat: ${formatNumber(averageMacro("fat_g"))}g`,
+    ...(averageCalories ? [averageCalories] : []),
+    ...(averageMacros.length > 0 ? [`- Average ${averageMacros.map(({ label, value }) => `${label}: ${formatNumber(value)}g`).join("; ")}`] : []),
     "",
     "### Water",
     `- Days logged: ${waterDays.length} of ${reportData.days.length}`,
@@ -198,7 +206,10 @@ function formatHealthSummary(reportData: UnifiedReportReadModel) {
 }
 
 function formatPathsAndOnTime(reportData: UnifiedReportReadModel) {
-  return ["### PATHS", reportData.paths.available ? "- Paths used: available in report data." : `- ${reportData.paths.limitation ?? "No PATHS history available."}`, "", "### On-Time", reportData.onTime.available ? "- On-Time sessions: available in report data." : `- ${reportData.onTime.limitation ?? "No historical On-Time sessions available."}`];
+  const lines: string[] = [];
+  if (reportData.paths.available) lines.push("### PATHS", "- Paths used: available in report data.");
+  if (reportData.onTime.available) lines.push(...(lines.length > 0 ? [""] : []), "### On-Time", "- On-Time sessions: available in report data.");
+  return lines;
 }
 
 function formatRecords(reportData: UnifiedReportReadModel) {
@@ -210,17 +221,36 @@ function formatRecords(reportData: UnifiedReportReadModel) {
 
 function formatFoodDay(day: UnifiedReportHealthDay, reportData: UnifiedReportReadModel) {
   const hasFood = Object.keys(day.food.foodsByMeal).length > 0;
-  const lines = ["#### Food / Nutrition", hasFood ? macroLine("Calories", day.food.macros.calories, reportData.healthGoals.calorieGoal, " kcal") : "- Not logged"];
+  const macroLines = [
+    macroLine("Calories", day.food.macros.calories, reportData.healthGoals.calorieGoal, " kcal"),
+    macroLine("Protein", day.food.macros.protein_g, reportData.healthGoals.proteinGoalG, "g"),
+    macroLine("Carbs", day.food.macros.carbs_g, reportData.healthGoals.carbsGoalG, "g"),
+    macroLine("Fat", day.food.macros.fat_g, reportData.healthGoals.fatGoalG, "g"),
+  ].filter((line): line is string => line !== null);
+  const lines = ["#### Food / Nutrition", ...(hasFood ? macroLines : ["- Not logged"])]
   if (!hasFood) return lines;
-  lines.push(macroLine("Protein", day.food.macros.protein_g, reportData.healthGoals.proteinGoalG, "g"), macroLine("Carbs", day.food.macros.carbs_g, reportData.healthGoals.carbsGoalG, "g"), macroLine("Fat", day.food.macros.fat_g, reportData.healthGoals.fatGoalG, "g"));
   for (const [meal, foods] of Object.entries(day.food.foodsByMeal).sort(([left], [right]) => left.localeCompare(right))) {
     lines.push("", humanize(meal));
-    for (const food of foods) lines.push(`- ${food.name}`, `  - ${formatNumber(food.calories)} kcal | ${formatNumber(food.proteinG)}g protein | ${formatNumber(food.carbsG)}g carbs | ${formatNumber(food.fatG)}g fat`);
+    for (const food of foods) {
+      const macros = [
+        food.calories === null || !Number.isFinite(food.calories) ? null : `${formatNumber(food.calories)} kcal`,
+        food.proteinG === null || !Number.isFinite(food.proteinG) ? null : `${formatNumber(food.proteinG)}g protein`,
+        food.carbsG === null || !Number.isFinite(food.carbsG) ? null : `${formatNumber(food.carbsG)}g carbs`,
+        food.fatG === null || !Number.isFinite(food.fatG) ? null : `${formatNumber(food.fatG)}g fat`,
+      ].filter((value): value is string => value !== null);
+      lines.push(`- ${food.name}`);
+      if (macros.length > 0) lines.push(`  - ${macros.join(" | ")}`);
+    }
   }
-  if (day.food.nutritionSummary && Object.keys(day.food.nutritionSummary.values).length > 0) {
-    const partial = Object.values(day.food.nutritionSummary.coverage).some((coverage) => coverage.knownEntries < coverage.totalEntries);
+  const knownNutrients = Object.entries(day.food.nutritionSummary?.values ?? {})
+    .filter(([, value]) => Number.isFinite(value) && value !== 0);
+  if (day.food.nutritionSummary && knownNutrients.length > 0) {
+    const partial = knownNutrients.some(([key]) => {
+      const coverage = day.food.nutritionSummary?.coverage[key];
+      return coverage !== undefined && coverage.knownEntries < coverage.totalEntries;
+    });
     lines.push("", `Daily Nutrition Summary${partial ? " (partial known-data coverage)" : ""}`);
-    for (const [key, value] of Object.entries(day.food.nutritionSummary.values).sort(([left], [right]) => left.localeCompare(right))) {
+    for (const [key, value] of knownNutrients.sort(([left], [right]) => left.localeCompare(right))) {
       const coverage = day.food.nutritionSummary.coverage[key];
       lines.push(`- ${nutritionLabel(key)}: ${formatNumber(value)}${nutritionUnit(key)}${coverage && coverage.knownEntries < coverage.totalEntries ? ` (${coverage.knownEntries} of ${coverage.totalEntries} food entries known)` : ""}`);
     }
@@ -240,7 +270,10 @@ function formatDailyDetail(reportData: UnifiedReportReadModel, range: ReportRang
     const health = healthByDate.get(dateKey) ?? createEmptyUnifiedReportReadModel(dateKey, dateKey).days[0];
     lines.push("", `### ${formatReportDate(dateKey)}`, "#### Tasks", `- Done (${task.done.length})`, ...task.done.map((name) => `  - ${name}`), `- Did My Best (${task.didMyBest.length})`, ...task.didMyBest.map((name) => `  - ${name}`), `- Complete (${task.complete.length})`, ...task.complete.map((name) => `  - ${name}`), "- Missed", `  - New Misses: ${task.newMisses.length}`, ...task.newMisses.map((name) => `    - ${name}`), `  - Total Misses: ${task.totalMisses} (includes ${task.newMisses.length} new)`);
     lines.push("", "#### Focus", `- Total: ${formatDuration(focus.totalSeconds)} across ${focus.sessions.length} session${focus.sessions.length === 1 ? "" : "s"}`, ...(focus.sessions.length === 0 ? ["- No sessions logged."] : focus.sessions.map((session) => `- ${session.title} — ${session.category} — ${formatDuration(session.durationSeconds)}`)));
-    lines.push("", "#### PATHS", reportData.paths.available ? "- No Path activity logged." : `- ${reportData.paths.limitation}`, "", "#### On-Time", reportData.onTime.available ? "- No On-Time activity logged." : `- ${reportData.onTime.limitation}`, "", ...formatFoodDay(health, reportData), "", "#### Water", health.water.logged ? `- ${formatNumber((health.water.amountMl ?? 0) / 29.5735)} fl oz${health.water.goalMl === null ? "" : ` / ${formatNumber(health.water.goalMl / 29.5735)} fl oz goal`}` : "- Not logged", "", "#### Fitness");
+    const historicalSections: string[] = [];
+    if (reportData.paths.available) historicalSections.push("#### PATHS", "- No Path activity logged.");
+    if (reportData.onTime.available) historicalSections.push(...(historicalSections.length > 0 ? [""] : []), "#### On-Time", "- No On-Time activity logged.");
+    lines.push("", ...historicalSections, ...(historicalSections.length > 0 ? [""] : []), ...formatFoodDay(health, reportData), "", "#### Water", health.water.logged ? `- ${formatNumber((health.water.amountMl ?? 0) / 29.5735)} fl oz${health.water.goalMl === null ? "" : ` / ${formatNumber(health.water.goalMl / 29.5735)} fl oz goal`}` : "- Not logged", "", "#### Fitness");
     const movement = [`Steps: ${formatNumber(health.fitness.steps, 0)}`, `Active Energy: ${formatNumber(health.fitness.activeEnergyKcal, 0)} kcal`, `Exercise Minutes: ${formatNumber(health.fitness.exerciseMinutes, 0)}`].filter((line) => !line.includes("unknown"));
     if (health.fitness.workouts.length === 0 && movement.length === 0) lines.push("- Not logged");
     else { lines.push(...movement.map((line) => `- ${line}`)); for (const workout of health.fitness.workouts) lines.push(`- ${workout.title} — ${workout.type} — ${formatDuration(workout.durationSeconds)}${workout.activeCalories === null ? "" : ` — ${formatNumber(workout.activeCalories, 0)} active kcal`}`); }

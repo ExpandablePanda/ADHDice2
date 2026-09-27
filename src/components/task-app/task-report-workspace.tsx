@@ -5,6 +5,7 @@ import { Copy } from "lucide-react";
 import { TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import type { AchievementProgressModel } from "@/lib/achievement-progress";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { readUnifiedReport } from "@/lib/report-read-client";
 import {
   generateTaskReport,
   resolveTaskReportHistoryFetchRange,
@@ -57,11 +58,11 @@ export function TaskReportWorkspace({ achievementModel, achievementWarning, appV
         return;
       }
       try {
-        const { data, error } = await client.functions.invoke<UnifiedReportReadModel>("report-read", {
-          body: { endDateKey: fetchRange.endDateKey, startDateKey: fetchRange.startDateKey, todayDateKey },
+        const data = await readUnifiedReport(client, userId, {
+          endDateKey: fetchRange.endDateKey,
+          startDateKey: fetchRange.startDateKey,
+          todayDateKey,
         });
-        if (error) throw new Error(error.message);
-        if (!data?.dateRange || !Array.isArray(data.days) || !data.tasks || !data.focus) throw new Error("Compact report read returned an invalid model.");
         if (!cancelled) {
           setReportData(data);
           setReadWarning(null);

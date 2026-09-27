@@ -45,7 +45,9 @@ test("unified report removes detail chips and browser-side broad raw reads", () 
   const workspace = readFileSync(new URL("../src/components/task-app/task-report-workspace.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(workspace, /TASK_REPORT_DETAIL_OPTIONS|TaskReportDetailLevel|detailLevel|Summary.*Detailed/);
   assert.doesNotMatch(workspace, /select\("\*"\)/);
-  assert.match(workspace, /functions\.invoke<UnifiedReportReadModel>\("report-read"/);
+  assert.match(workspace, /readUnifiedReport\(client, userId/);
+  const reportReadClient = readFileSync(new URL("../src/lib/report-read-client.ts", import.meta.url), "utf8");
+  assert.match(reportReadClient, /functions\.invoke<UnifiedReportReadModel>\("report-read"/);
   const reportReadDomain = readFileSync(new URL("../supabase/functions/report-read/domain.ts", import.meta.url), "utf8");
   assert.doesNotMatch(reportReadDomain, /select\("\*"\)/);
   assert.match(reportReadDomain, /adhdice_task_history_facts.*entity_id,logical_date,outcome,updated_at/s);
@@ -129,6 +131,44 @@ test("food keeps individual macros small and reports partial daily micronutrient
   assert.match(markdown, /Eggs\n  - 280 kcal \| 24g protein \| 2g carbs \| 20g fat/);
   assert.match(markdown, /Daily Nutrition Summary \(partial known-data coverage\)/);
   assert.doesNotMatch(markdown, /Eggs[\s\S]*Vitamin|Eggs[\s\S]*Sodium/);
+});
+
+test("food omits missing individual macros without changing known values", () => {
+  const model = buildUnifiedReportReadModel(emptySource({
+    meals: [{ carbs_g: 39, calories: 140, entry_date: "2026-09-01", fat_g: null, food_name: "Caffeine Free", food_snapshot: null, meal_slot: "snack", nutrition_snapshot: null, protein_g: null }],
+  }));
+  const markdown = report(model);
+  assert.match(markdown, /Caffeine Free\n  - 140 kcal \| 39g carbs/);
+  assert.doesNotMatch(markdown, /Caffeine Free\n  - [^\n]*unknown/);
+  assert.doesNotMatch(markdown, /Caffeine Free\n  - [^\n]*protein|Caffeine Free\n  - [^\n]*fat/);
+});
+
+test("nutrition summary omits unavailable and zero nutrients while preserving useful coverage and labels", () => {
+  const model = buildUnifiedReportReadModel(emptySource({
+    meals: [
+      { carbs_g: 1, calories: 100, entry_date: "2026-09-01", fat_g: 1, food_name: "Known", food_snapshot: { nutrition_details: { dietary_fiber_g: 6.8, sodium_mg: 1769.5, vitamin_c_mg: 130, saturated_fat_g: 1.2, vitamin_b12_mcg: 2, choline_mg: 10, copper_mg: 0, vitamin_a_mcg_rae: 0, vitamin_e_mg: null } }, meal_slot: "breakfast", nutrition_snapshot: null, protein_g: 1 },
+      { carbs_g: 1, calories: 100, entry_date: "2026-09-01", fat_g: 1, food_name: "Partial", food_snapshot: { nutrition_details: { dietary_fiber_g: null, sodium_mg: null, vitamin_c_mg: null, saturated_fat_g: null, vitamin_b12_mcg: null, choline_mg: null, copper_mg: 0, vitamin_a_mcg_rae: 0, vitamin_e_mg: null } }, meal_slot: "breakfast", nutrition_snapshot: null, protein_g: 1 },
+    ],
+  }));
+  const markdown = report(model);
+  assert.match(markdown, /Daily Nutrition Summary \(partial known-data coverage\)/);
+  assert.match(markdown, /- Fiber: 6\.8g \(1 of 2 food entries known\)/);
+  assert.match(markdown, /- Sodium: 1,769\.5mg \(1 of 2 food entries known\)/);
+  assert.match(markdown, /- Vitamin C: 130mg \(1 of 2 food entries known\)/);
+  assert.match(markdown, /- Saturated Fat: 1\.2g \(1 of 2 food entries known\)/);
+  assert.match(markdown, /- Vitamin B12: 2mcg \(1 of 2 food entries known\)/);
+  assert.match(markdown, /- Choline: 10mg \(1 of 2 food entries known\)/);
+  assert.doesNotMatch(markdown, /Copper: 0mg|Vitamin A: 0mcg|Vitamin E: 0mg/);
+  assert.doesNotMatch(markdown, /Saturated Fat G|Vitamin B12 Mcg|Choline Mg/);
+});
+
+test("unavailable PATHS and On-Time sections are omitted from summary and daily detail", () => {
+  const markdown = report(buildUnifiedReportReadModel(emptySource()));
+  assert.doesNotMatch(markdown, /^### PATHS$/m);
+  assert.doesNotMatch(markdown, /^#### PATHS$/m);
+  assert.doesNotMatch(markdown, /^### On-Time$/m);
+  assert.doesNotMatch(markdown, /^#### On-Time$/m);
+  assert.doesNotMatch(markdown, /No persisted PATHS|Historical On-Time sessions/);
 });
 
 test("water and weight emit logged and Not logged states", () => {
