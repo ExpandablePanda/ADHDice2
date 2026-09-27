@@ -8235,15 +8235,6 @@ export function TaskApp() {
                 achievementModel={achievementProgress.model}
                 achievementWarning={achievementProgress.isReadyForUser ? null : achievementProgress.error ?? "Current Achievement progress is not ready for this account."}
                 appVersion={APP_VERSION}
-                availableTaskLists={availableTaskLists}
-                focusCategories={focusCategories}
-                focusDailyGoalAdjustments={focusDailyGoalAdjustments}
-                focusHistory={focusHistory}
-                isMembershipProjectionReady={isTaskListMembershipDataReady}
-                listMembershipsByTaskId={taskListMembershipsByTaskId}
-                milestones={milestoneData.milestones}
-                taskHistory={taskHistory}
-                tasks={tasksForActiveStatusRead}
                 todayDateKey={todayKey}
                 userId={currentUserId}
               />

@@ -12,6 +12,7 @@ const productionSources = [
   read("src/lib/task-state-canonical/read-model.ts"),
   read("src/lib/record-repository.ts"),
   read("src/components/task-app/task-report-workspace.tsx"),
+  read("supabase/functions/report-read/domain.ts"),
   read("scripts/local-qa-session-handler.ts"),
 ].join("\n");
 
@@ -65,8 +66,8 @@ test("current production paths cannot reintroduce retired runtime architecture",
 
 test("canonical History and timer contracts remain wired", () => {
   assert.match(read("src/hooks/useWorkspaceData.ts"), /from\("adhdice_task_history_facts"\)/);
-  assert.match(read("src/lib/record-repository.ts"), /from\("adhdice_task_history_facts"\)/);
-  assert.match(read("src/components/task-app/task-report-workspace.tsx"), /from\("adhdice_task_history_facts"\)/);
+  assert.match(read("src/lib/record-repository.ts"), /adhdice_task_history_facts/);
+  assert.match(read("supabase/functions/report-read/domain.ts"), /adhdice_task_history_facts/);
   assert.match(read("src/components/task-app.tsx"), /async function recordStoppedTaskTimer/);
   assert.match(read("src/components/task-app.tsx"), /actual_seconds: nextActualSeconds/);
   assert.doesNotMatch(read("supabase/schema.sql"), /adhdice_task_history\b/);

@@ -3,15 +3,12 @@ import test from "node:test";
 import type { Milestone, MilestoneEvent, Task } from "@/lib/database.types";
 import { createTask } from "@/lib/task-buckets";
 import { DEFAULT_TASK_UI_STATE } from "@/lib/task-ui-state";
-import { getBuiltInTaskLists } from "@/lib/task-lists";
-import { generateTaskReport } from "@/lib/task-report";
 import {
   buildHomeMilestoneDashboard,
   buildMilestoneEventOccurredAtRange,
   buildMilestoneReportSummary,
   classifyActiveMilestoneTiming,
   formatMilestoneDisplayDate,
-  formatMilestoneReportSection,
   getHomeMilestoneNavigationState,
 } from "../src/lib/milestones/index.ts";
 
@@ -101,16 +98,4 @@ test("Current completed rows authoritatively provide earned tiers, Aura kinds, a
   assert.equal(result.diamondAuras, 1);
   assert.equal(result.completedWithoutAura, 1);
   assert.ok(result.details.some((row) => row.task_id === null && row.task_title_snapshot === "Deleted late goal"));
-});
-
-test("shared Markdown report includes the same Milestone aggregate while preserving existing sections", () => {
-  const earned = completed("gold", "gold", "standard");
-  const milestoneEvents = [event("on", "completed_on_time")];
-  const summary = buildMilestoneReportSummary(milestoneEvents, [earned], { startDateKey: "2026-07-10", endDateKey: "2026-07-16" });
-  const section = formatMilestoneReportSection(summary, false).join("\n");
-  const report = generateTaskReport({ appVersion: "6.29.29", availableTaskLists: getBuiltInTaskLists(), detailLevel: "summary", focusCategories: [], focusHistory: [], generatedAt: new Date("2026-07-16T12:00:00Z"), historySourceLabel: "test", historyWarning: null, milestoneEvents, milestones: [earned], rangeId: "last7", taskHistory: [], tasks: [], todayDateKey: "2026-07-16" });
-  assert.match(report, /## Overview/);
-  assert.match(report, /## Focus Report/);
-  assert.ok(report.includes(section));
-  assert.match(report, /Completed lifecycle events: 1 total; 1 on time; 0 grace period; 0 late/);
 });

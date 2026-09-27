@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-26
+Last reviewed: 2026-09-27
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.55`.
+- Current working app version: `7.15.56`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,31 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-27 7.15.56 Unified Reports V1 and compact report reads
+
+Reports now have one unified Markdown format. The Summary/Detailed chips, detail
+level API, current-progress snapshot, and milestone report sections were removed.
+Each selected date is represented in Daily Detail, with Period Summary and Period
+Insights covering Tasks, Focus, PATHS, On-Time, Food/Nutrition, Water, Fitness,
+Journal, Weight, Sleep, Achievements, and Records.
+
+The Report workspace now invokes the authenticated `report-read` Edge Function
+for the selected range instead of range-loading raw Task History facts and
+multiple full-row Health tables in the browser. The function reads narrow columns
+server-side and returns a compact model: canonical historical Task outcomes and
+continuous Missed backlog counts, individual Focus sessions and foods, daily
+health aggregates, partial nutrition coverage, selected-range Achievement and
+Record events, and explicit warnings for unavailable historical domains.
+
+PATHS has no persisted historical progress/read model in this repository, and
+On-Time persists the current plan rather than historical sessions; the report
+states both limitations instead of synthesizing evidence. No SQL migration was
+authored or applied. The new Edge Function source still requires the normal
+authorized Supabase deployment before the live report can use it. Focused
+unified-report tests, targeted lint, and `git diff --check` are the verification
+boundary; browser/manual QA, live deployment, and broad regression checks remain
+unverified in this pass.
 
 ## 2026-09-26 7.15.55 Final startup-network correction
 

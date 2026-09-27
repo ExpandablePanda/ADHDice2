@@ -1,27 +1,14 @@
-import type { Milestone, MilestoneEvent, Task, TaskHistory, TaskStatus } from "@/lib/database.types";
-import { buildFocusGoalPlan } from "@/lib/focus-goals";
-import type { FocusCategory, FocusDailyGoalAdjustment, HistoricalFocusSession } from "@/lib/types";
+import type { AchievementProgressModel } from "@/lib/achievement-progress";
+import { formatTierLabel } from "@/lib/achievement-progress";
 import { shiftDateKey } from "@/lib/date-key";
-import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
-import { hasTaskListMembership, type TaskListDefinition, type TaskListMembership } from "@/lib/task-lists";
-import { formatTaskPriorityLevel, getTaskPriorityLevel, inferLegacyTaskPriorityLevel, type TaskPriorityLevel } from "@/lib/task-priority";
-import { formatRepeatSummary } from "@/lib/task-repeat";
-import { buildMilestoneReportSummary, formatMilestoneReportSection } from "@/lib/milestones/milestone-report";
+import { formatReportDate } from "@/lib/report-presentation";
 import {
-  formatAchievementValue,
-  formatTierLabel,
-  type AchievementProgressModel,
-} from "@/lib/achievement-progress";
-import { getTaskOccurrenceIdentity } from "@/lib/records/identity";
-import {
-  formatRecordsReportSection,
-  formatReportDate,
-  isReportDateInRange,
-  type ReportDateRange,
-  type RecordsReportData,
-} from "@/lib/report-presentation";
-import { formatHealthReportSection, getHealthReportDateKeys, type HealthReportData } from "@/lib/health-report";
-import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
+  createEmptyUnifiedReportReadModel,
+  type UnifiedReportFocusDay,
+  type UnifiedReportHealthDay,
+  type UnifiedReportReadModel,
+  type UnifiedReportTaskDay,
+} from "@/lib/unified-report-read-model";
 
 export const TASK_REPORT_RANGE_OPTIONS = [
   { id: "today", label: "Today", days: 1 },
@@ -32,1285 +19,255 @@ export const TASK_REPORT_RANGE_OPTIONS = [
   { id: "all", label: "All available", days: null },
 ] as const;
 
-export const TASK_REPORT_DETAIL_OPTIONS = [
-  { id: "summary", label: "Summary" },
-  { id: "detailed", label: "Detailed" },
-] as const;
-
 export type TaskReportRangeId = typeof TASK_REPORT_RANGE_OPTIONS[number]["id"];
-export type TaskReportDetailLevel = typeof TASK_REPORT_DETAIL_OPTIONS[number]["id"];
+export type TaskReportCustomRange = { endDateKey: string; startDateKey: string };
 
-export type TaskReportCustomRange = {
-  endDateKey: string;
-  startDateKey: string;
-};
-
-type GenerateTaskReportInput = {
-  appVersion: string;
+export type GenerateTaskReportInput = {
   achievementModel?: AchievementProgressModel | null;
   achievementWarning?: string | null;
-  availableTaskLists: TaskListDefinition[];
-  detailLevel: TaskReportDetailLevel;
+  appVersion: string;
   generatedAt: Date;
   historySourceLabel: string;
   historyWarning: string | null;
-  focusCategories: FocusCategory[];
-  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[];
-  focusHistory: HistoricalFocusSession[];
-  healthData?: HealthReportData | null;
-  listMembershipsByTaskId: Record<string, TaskListMembership[]>;
-  milestoneEvents?: MilestoneEvent[];
-  milestones?: Milestone[];
-  milestoneWarning?: string | null;
   customRange?: TaskReportCustomRange | null;
   rangeId: TaskReportRangeId;
-  records?: RecordsReportData;
-  taskHistory: TaskHistory[];
-  tasks: Task[];
+  reportData?: UnifiedReportReadModel | null;
   todayDateKey: string;
 };
 
-type ReportRange = {
-  endDateKey: string | null;
-  label: string;
-  spanDays: number;
-  startDateKey: string | null;
-};
+type ReportRange = { endDateKey: string; label: string; spanDays: number; startDateKey: string };
 
-type TaskTypeLabel = "Parent" | "Step" | "Substep";
-type OutcomeLabel = "Done" | "Did My Best" | "Complete" | "Missed";
-
-type TaskReportTaskMetadata = {
-  cadenceLabel: string | null;
-  currentStatusLabel: string;
-  dueDate: string | null;
-  dueTime: string | null;
-  energyLabel: string | null;
-  estimatedMinutes: number | null;
-  actualSeconds: number;
-  listNames: string[];
-  tags: string[];
-  externalLinkLabel: string | null;
-  externalLinkUrl: string | null;
-  notes: string | null;
-  isImportant: boolean;
-  isPinned: boolean;
-  isRoutine: boolean;
-  isExcludedFromTracking: boolean;
-  isTrashed: boolean;
-  isUrgent: boolean;
-  pathLabel: string;
-  priorityLevel: TaskPriorityLevel | null;
-  title: string;
-  typeLabel: TaskTypeLabel;
-};
-
-type LatestHistoryEntry = TaskHistory & {
-  metadata: TaskReportTaskMetadata;
-  taskTitle: string;
-};
-
-type TaskPatternEntry = {
-  completeCount: number;
-  didMyBestCount: number;
-  doneCount: number;
-  handledCount: number;
-  historyEntries: LatestHistoryEntry[];
-  metadata: TaskReportTaskMetadata;
-  missedCount: number;
-  task: Task;
-  taskId: string;
-};
-
-type RankedDayEntry = {
-  count: number;
-  dateKey: string;
-};
-
-type OutcomeSplitCounts = {
-  parentCount: number;
-  stepCount: number;
-};
-
-type RoutineOutcomeCounts = {
-  didMyBest: number;
-  done: number;
-  handled: number;
-  missed: number;
-};
-
-type RoutinePerformanceSummary = {
-  parents: RoutineOutcomeCounts;
-  steps: RoutineOutcomeCounts;
-};
-
-type DayBreakdown = {
-  handledParents: number;
-  handledSteps: number;
-  handledTotal: number;
-  missed: number;
-  outcomes: Record<OutcomeLabel, LatestHistoryEntry[]>;
-};
-
-type CompactStatusSummary = {
-  byStatus: Record<string, number>;
-  total: number;
-};
-
-type PriorityStatusSummary = CompactStatusSummary & {
-  priorityLevel: TaskPriorityLevel;
-};
-
-const STATUS_LABELS: Record<TaskStatus, string> = {
-  archived: "Archived",
-  complete: "Complete",
-  delayed: "Delayed",
-  did_my_best: "Did My Best",
-  done: "Done",
-  in_progress: "In Progress",
-  missed: "Missed",
-  not_due: "Not Due",
-  pending: "Open",
-  trashed: "Trashed",
-  upcoming: "Upcoming",
-};
-
-const STATUS_SNAPSHOT_ORDER = [
-  "Open",
-  "In Progress",
-  "Done",
-  "Did My Best",
-  "Complete",
-  "Missed",
-  "Delayed",
-  "Upcoming",
-  "Not Due",
-  "Archived",
-] as const;
-const OUTCOME_ORDER: OutcomeLabel[] = ["Done", "Did My Best", "Complete", "Missed"];
-const MISSED_DAILY_CAP = 25;
-
-function formatDateLabel(dateKey: string | null) {
-  return dateKey ? formatReportDate(dateKey) : "Unknown";
-}
-
-function formatShortDate(dateKey: string) {
-  return formatReportDate(dateKey, { short: true });
-}
-
-function formatDateHeading(dateKey: string) {
-  return formatReportDate(dateKey, { includeWeekday: true });
-}
-
-function formatTimestamp(date: Date) {
-  return new Intl.DateTimeFormat("en-US", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(date);
-}
-
-function formatRangeSummary(range: ReportRange) {
-  if (range.startDateKey && range.endDateKey) {
-    return `${range.label} (${formatDateLabel(range.startDateKey)} to ${formatDateLabel(range.endDateKey)})`;
-  }
-  return range.label;
-}
-
-function formatTimeOnly(isoString: string | null | undefined) {
-  if (!isoString) {
-    return null;
-  }
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return new Intl.DateTimeFormat("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-  }).format(date);
-}
-
-function formatTaskTime(value: string | null) {
-  if (!value) return null;
-  const [hourText, minuteText] = value.split(":");
-  const hour = Number(hourText);
-  const minute = Number(minuteText);
-  if (!Number.isInteger(hour) || !Number.isInteger(minute) || hour < 0 || hour > 23 || minute < 0 || minute > 59) return value;
-  const date = new Date(2000, 0, 1, hour, minute);
-  return new Intl.DateTimeFormat("en-US", { hour: "numeric", minute: "2-digit" }).format(date);
-}
-
-function formatHistoryMoment(isoString: string | null | undefined) {
-  if (!isoString) {
-    return null;
-  }
-  const date = new Date(isoString);
-  if (Number.isNaN(date.getTime())) {
-    return null;
-  }
-  return new Intl.DateTimeFormat("en-US", {
-    day: "numeric",
-    hour: "numeric",
-    minute: "2-digit",
-    month: "short",
-  }).format(date);
-}
-
-function getCreatedHistoryTimestamp(entry: Pick<TaskHistory, "created_at">) {
-  return entry.created_at || null;
-}
-
-function getEditedHistoryTimestamp(entry: Pick<TaskHistory, "created_at" | "updated_at">) {
-  if (!entry.updated_at || !entry.created_at || entry.updated_at === entry.created_at) {
-    return null;
-  }
-  return entry.updated_at;
-}
-
-function formatHistoryCreatedLabel(entry: Pick<TaskHistory, "created_at">) {
-  const timestamp = getCreatedHistoryTimestamp(entry);
-  return timestamp ? `Logged ${formatHistoryMoment(timestamp) ?? timestamp}` : null;
-}
-
-function formatHistoryEditedLabel(entry: Pick<TaskHistory, "created_at" | "updated_at">) {
-  const timestamp = getEditedHistoryTimestamp(entry);
-  return timestamp ? `Edited ${formatHistoryMoment(timestamp) ?? timestamp}` : null;
-}
-
-function formatDurationCompact(totalSeconds: number) {
-  const safeSeconds = Math.max(0, Math.floor(totalSeconds));
-  const hours = Math.floor(safeSeconds / 3600);
-  const minutes = Math.floor((safeSeconds % 3600) / 60);
-  if (hours > 0 && minutes > 0) {
-    return `${hours}h ${minutes}m`;
-  }
-  if (hours > 0) {
-    return `${hours}h`;
-  }
-  return `${minutes}m`;
-}
-
-function incrementCount(map: Record<string, number>, key: string) {
-  map[key] = (map[key] ?? 0) + 1;
-}
-
-function compareHistoryEntries(left: TaskHistory, right: TaskHistory) {
-  const leftTimestamp = left.updated_at || left.created_at || `${left.entry_date}T00:00:00.000Z`;
-  const rightTimestamp = right.updated_at || right.created_at || `${right.entry_date}T00:00:00.000Z`;
-  if (leftTimestamp !== rightTimestamp) {
-    return leftTimestamp < rightTimestamp ? -1 : 1;
-  }
-  return left.id.localeCompare(right.id);
-}
-
-function normalizeTaskReportCustomRange(customRange: TaskReportCustomRange | null | undefined, todayDateKey: string): TaskReportCustomRange {
+function normalizeCustomRange(customRange: TaskReportCustomRange | null | undefined, todayDateKey: string) {
   const startDateKey = customRange?.startDateKey || todayDateKey;
   const endDateKey = customRange?.endDateKey || startDateKey;
-  return startDateKey <= endDateKey
-    ? { startDateKey, endDateKey }
-    : { startDateKey: endDateKey, endDateKey: startDateKey };
+  return startDateKey <= endDateKey ? { startDateKey, endDateKey } : { startDateKey: endDateKey, endDateKey: startDateKey };
 }
 
-function resolveTaskReportHistoryFetchRange(rangeId: TaskReportRangeId, todayDateKey: string, customRange?: TaskReportCustomRange | null) {
+export function resolveTaskReportHistoryFetchRange(rangeId: TaskReportRangeId, todayDateKey: string, customRange?: TaskReportCustomRange | null) {
+  const option = TASK_REPORT_RANGE_OPTIONS.find((entry) => entry.id === rangeId) ?? TASK_REPORT_RANGE_OPTIONS[0];
+  if (option.days === "custom") return normalizeCustomRange(customRange, todayDateKey);
+  if (option.days !== null) return { endDateKey: todayDateKey, startDateKey: shiftDateKey(todayDateKey, -(option.days - 1)) };
+  return { endDateKey: null, startDateKey: null };
+}
+
+function countDays(startDateKey: string, endDateKey: string) {
+  let count = 0;
+  let cursor = startDateKey;
+  while (cursor <= endDateKey) {
+    count += 1;
+    if (cursor === endDateKey) break;
+    cursor = shiftDateKey(cursor, 1);
+  }
+  return count;
+}
+
+function buildRange(rangeId: TaskReportRangeId, todayDateKey: string, reportData: UnifiedReportReadModel, customRange?: TaskReportCustomRange | null): ReportRange {
   const option = TASK_REPORT_RANGE_OPTIONS.find((entry) => entry.id === rangeId) ?? TASK_REPORT_RANGE_OPTIONS[0];
   if (option.days === "custom") {
-    return normalizeTaskReportCustomRange(customRange, todayDateKey);
+    const normalized = normalizeCustomRange(customRange, todayDateKey);
+    return { ...normalized, label: option.label, spanDays: countDays(normalized.startDateKey, normalized.endDateKey) };
   }
-  if (option.days !== null) {
-    return {
-      endDateKey: todayDateKey,
-      startDateKey: shiftDateKey(todayDateKey, -(option.days - 1)),
-    };
-  }
+  if (option.days !== null) return { endDateKey: todayDateKey, label: option.label, spanDays: option.days, startDateKey: shiftDateKey(todayDateKey, -(option.days - 1)) };
+  return { endDateKey: reportData.dateRange.endDateKey, label: option.label, spanDays: countDays(reportData.dateRange.startDateKey, reportData.dateRange.endDateKey), startDateKey: reportData.dateRange.startDateKey };
+}
 
-  return {
-    endDateKey: null,
-    startDateKey: null,
+function formatDuration(totalSeconds: number) {
+  const safeSeconds = Math.max(0, Math.round(totalSeconds));
+  const hours = Math.floor(safeSeconds / 3600);
+  const minutes = Math.floor((safeSeconds % 3600) / 60);
+  return hours > 0 ? `${hours}h ${minutes}m` : `${minutes}m`;
+}
+
+function formatNumber(value: number | null, digits = 1) {
+  return value === null || !Number.isFinite(value) ? "unknown" : value.toLocaleString("en-US", { maximumFractionDigits: digits });
+}
+
+function formatRange(range: ReportRange) {
+  return `${range.label} (${formatReportDate(range.startDateKey)} to ${formatReportDate(range.endDateKey)})`;
+}
+
+function humanize(value: string) {
+  return value.replaceAll("_", " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+function macroLine(label: string, value: number | null, goal: number | null, suffix: string) {
+  return `- ${label}: ${formatNumber(value)}${suffix}${goal === null ? "" : ` / ${formatNumber(goal)}${suffix} goal`}`;
+}
+
+function nutritionLabel(key: string) {
+  const labels: Record<string, string> = {
+    added_sugars_g: "Added sugar", calcium_mg: "Calcium", cholesterol_mg: "Cholesterol", dietary_fiber_g: "Fiber", iron_mg: "Iron", magnesium_mg: "Magnesium", potassium_mg: "Potassium", sodium_mg: "Sodium", total_sugars_g: "Sugar", vitamin_a_mcg_rae: "Vitamin A", vitamin_c_mg: "Vitamin C", vitamin_d_mcg: "Vitamin D", vitamin_e_mg: "Vitamin E", vitamin_k_mcg: "Vitamin K",
   };
+  return labels[key] ?? humanize(key);
 }
 
-function buildRange(
-  rangeId: TaskReportRangeId,
-  todayDateKey: string,
-  history: TaskHistory[],
-  focusHistory: HistoricalFocusSession[] = [],
-  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[] = [],
-  healthDateKeys: string[] = [],
-  customRange?: TaskReportCustomRange | null,
-): ReportRange {
-  const option = TASK_REPORT_RANGE_OPTIONS.find((entry) => entry.id === rangeId) ?? TASK_REPORT_RANGE_OPTIONS[0];
-  const fetchRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
-  if (option.days === "custom") {
-    const customFetchRange = normalizeTaskReportCustomRange(customRange, todayDateKey);
-    let spanDays = 0;
-    let cursor = customFetchRange.startDateKey;
-    while (cursor <= customFetchRange.endDateKey) {
-      spanDays += 1;
-      if (cursor === customFetchRange.endDateKey) {
-        break;
-      }
-      cursor = shiftDateKey(cursor, 1);
-    }
-    return {
-      ...customFetchRange,
-      label: option.label,
-      spanDays,
-    };
-  }
-  if (option.days !== null) {
-    return {
-      ...fetchRange,
-      label: option.label,
-      spanDays: option.days,
-    };
-  }
-
-  const sortedDates = [
-    ...history.map((entry) => entry.entry_date),
-    ...focusHistory.map((session) => session.date),
-    ...focusDailyGoalAdjustments.map((adjustment) => adjustment.adjustmentDate),
-    ...healthDateKeys,
-  ].sort();
-  const startDateKey = sortedDates[0] ?? null;
-  const latestAvailableDateKey = sortedDates.at(-1) ?? todayDateKey;
-  const endDateKey = latestAvailableDateKey > todayDateKey ? latestAvailableDateKey : todayDateKey;
-  let spanDays = 0;
-
-  if (startDateKey && endDateKey) {
-    let cursor = startDateKey;
-    while (cursor <= endDateKey) {
-      spanDays += 1;
-      if (cursor === endDateKey) {
-        break;
-      }
-      cursor = shiftDateKey(cursor, 1);
-    }
-  }
-
-  return {
-    endDateKey,
-    label: option.label,
-    spanDays: Math.max(spanDays, sortedDates.length > 0 ? 1 : 0),
-    startDateKey,
-  };
+function nutritionUnit(key: string) {
+  return key.endsWith("_g") ? "g" : key.endsWith("_mcg") || key.includes("_mcg_") ? "mcg" : "mg";
 }
 
-function isEntryInRange(entry: TaskHistory, range: ReportRange) {
-  if (range.startDateKey && entry.entry_date < range.startDateKey) {
-    return false;
-  }
-  if (range.endDateKey && entry.entry_date > range.endDateKey) {
-    return false;
-  }
-  return true;
+function formatWeight(valueKg: number, unit: "kg" | "lb") {
+  const display = unit === "lb" ? valueKg * 2.2046226218 : valueKg;
+  return `${formatNumber(display)} ${unit}`;
 }
 
-function getTaskTypeLabel(task: Task, depth: number | null): TaskTypeLabel {
-  if (task.parent_task_id === null) {
-    return "Parent";
-  }
-  if (depth === null || depth <= 1) {
-    return "Step";
-  }
-  return "Substep";
+function formatWeightChange(valueKg: number, unit: "kg" | "lb") {
+  const display = unit === "lb" ? valueKg * 2.2046226218 : valueKg;
+  return `${display >= 0 ? "+" : ""}${formatNumber(display)} ${unit}`;
 }
 
-function isFocusSessionInRange(session: HistoricalFocusSession, range: ReportRange) {
-  if (range.startDateKey && session.date < range.startDateKey) {
-    return false;
-  }
-  if (range.endDateKey && session.date > range.endDateKey) {
-    return false;
-  }
-  return true;
-}
-
-function buildFocusSection(
-  range: ReportRange,
-  focusCategories: FocusCategory[],
-  focusHistory: HistoricalFocusSession[],
-  focusDailyGoalAdjustments: FocusDailyGoalAdjustment[],
-  todayDateKey: string,
-) {
-  const sortedCategories = [...focusCategories].sort((left, right) => left.title.localeCompare(right.title, undefined, { sensitivity: "base" }));
-  const rangedSessions = focusHistory
-    .filter((session) => isFocusSessionInRange(session, range))
-    .sort((left, right) => {
-      if (left.date !== right.date) {
-        return left.date.localeCompare(right.date);
-      }
-      const leftCreatedAt = left.createdAt ?? "";
-      const rightCreatedAt = right.createdAt ?? "";
-      if (leftCreatedAt !== rightCreatedAt) {
-        return leftCreatedAt.localeCompare(rightCreatedAt);
-      }
-      return left.id.localeCompare(right.id);
-    });
-  const categoryById = new Map(sortedCategories.map((category) => [category.id, category] as const));
-  const rangedAdjustments = focusDailyGoalAdjustments
-    .filter((adjustment) => {
-      if (range.startDateKey && adjustment.adjustmentDate < range.startDateKey) {
-        return false;
-      }
-      if (range.endDateKey && adjustment.adjustmentDate > range.endDateKey) {
-        return false;
-      }
-      return true;
-    })
-    .sort((left, right) => {
-      if (left.adjustmentDate !== right.adjustmentDate) {
-        return left.adjustmentDate.localeCompare(right.adjustmentDate);
-      }
-      if (left.createdAt !== right.createdAt) {
-        return left.createdAt.localeCompare(right.createdAt);
-      }
-      return left.id.localeCompare(right.id);
-    });
-  const sessionsByDate = rangedSessions.reduce<Map<string, HistoricalFocusSession[]>>((accumulator, session) => {
-    const sessions = accumulator.get(session.date) ?? [];
-    sessions.push(session);
-    accumulator.set(session.date, sessions);
-    return accumulator;
-  }, new Map());
-  const adjustmentLinesByDate = rangedAdjustments.reduce<Map<string, string[]>>((accumulator, adjustment) => {
-    const sourceLabel = categoryById.get(adjustment.sourceCategoryId)?.title ?? "Deleted source";
-    const targetLabel = categoryById.get(adjustment.targetCategoryId)?.title ?? "Deleted target";
-    const lines = accumulator.get(adjustment.adjustmentDate) ?? [];
-    lines.push(`- ${sourceLabel} -> ${targetLabel} — ${formatDurationCompact(adjustment.reductionSeconds)} — ${formatAdjustmentReason(adjustment.reason)}`);
-    accumulator.set(adjustment.adjustmentDate, lines);
-    return accumulator;
-  }, new Map());
-  const plan = buildFocusGoalPlan({
-    adjustments: focusDailyGoalAdjustments,
-    categories: sortedCategories,
-    history: focusHistory,
-    todayDate: range.endDateKey ?? todayDateKey,
-  });
-
-  const lines = ["## Focus Report"];
-
-  if (sortedCategories.length === 0 && rangedSessions.length === 0) {
-    lines.push("- No focus goals or focus sessions in the selected range.");
-    return lines;
-  }
-
-  lines.push("", "### Focus Goals");
-  if (sortedCategories.length === 0) {
-    lines.push("- No focus categories configured.");
-  } else {
-    for (const summary of plan.summaries.sort((left, right) => left.category.title.localeCompare(right.category.title, undefined, { sensitivity: "base" }))) {
-      const goalParts = [
-        `Today ${formatDurationCompact(summary.todayActualSeconds)}/${formatDurationCompact(summary.adjustedTodayTargetSeconds)}`,
-        `Week ${formatDurationCompact(summary.weekActualSeconds)}/${formatDurationCompact(summary.baseWeeklyTargetSeconds)}`,
-        `Pace ${formatPaceStatus(summary.weeklyPaceBehindSeconds, summary.weekDeltaSeconds)}`,
-      ];
-      const reallocationParts = [
-        summary.todayReceivedShiftSeconds > 0 ? `Received ${formatDurationCompact(summary.todayReceivedShiftSeconds)}` : null,
-        summary.todaySourceShiftedSeconds > 0 ? `Shifted ${formatDurationCompact(summary.todaySourceShiftedSeconds)}` : null,
-        summary.incomingCarryoverCreditSeconds > 0 ? `Carryover ${formatDurationCompact(summary.incomingCarryoverCreditSeconds)}` : null,
-      ].filter((value): value is string => Boolean(value));
-      lines.push(`- ${summary.category.title || "Untitled category"}: ${goalParts.join("; ")}${reallocationParts.length > 0 ? `; Reallocation ${reallocationParts.join(", ")}` : ""}`);
-    }
-  }
-
-  lines.push("", "### Focus Reallocations");
-  if (adjustmentLinesByDate.size === 0) {
-    lines.push("- No focus reallocations in the selected range.");
-  } else {
-    for (const dateKey of [...adjustmentLinesByDate.keys()].sort((left, right) => left.localeCompare(right))) {
-      lines.push("", `#### ${formatReportDate(dateKey)}`, ...adjustmentLinesByDate.get(dateKey)!);
-    }
-  }
-
-  lines.push("", "### Focus Sessions by Day");
-  if (sessionsByDate.size === 0) {
-    lines.push("- No focus sessions in the selected range.");
-    return lines;
-  }
-
-  const chronologicalDates = [...sessionsByDate.keys()].sort((left, right) => left.localeCompare(right));
-  for (const dateKey of chronologicalDates) {
-    const sessions = sessionsByDate.get(dateKey) ?? [];
-    const totalSeconds = sessions.reduce((sum, session) => sum + Math.max(0, session.durationSeconds), 0);
-    lines.push(
-      "",
-      `#### ${formatReportDate(dateKey)}`,
-      `- Total: ${formatDurationCompact(totalSeconds)} across ${sessions.length} session${sessions.length === 1 ? "" : "s"}`,
-    );
-    for (const session of sessions) {
-      const category = session.categoryId ? categoryById.get(session.categoryId) ?? null : null;
-      const categoryLabel = category?.title || "Deleted/uncategorized category";
-      const sessionTitle = session.title.trim() || "Untitled session";
-      const typeParts = [session.focusType, session.focusSubtype, session.focusSubtype2].filter((value): value is string => Boolean(value));
-      const notesSuffix = session.notes?.trim() ? ` — Notes: ${session.notes.trim()}` : "";
-      lines.push(
-        `- ${sessionTitle} — ${categoryLabel} — ${formatDurationCompact(session.durationSeconds)}${typeParts.length > 0 ? ` — ${typeParts.join(" / ")}` : ""}${notesSuffix}`,
-      );
-    }
-  }
-
-  return lines;
-}
-
-function buildTaskMetadata(
-  tasks: Task[],
-  availableTaskLists: TaskListDefinition[],
-  listMembershipsByTaskId: Record<string, TaskListMembership[]>,
-) {
-  const taskHierarchy = buildTaskHierarchyAdapter(tasks);
-  const excludedTaskIds = buildEffectiveTrackingExclusionSet(tasks);
-  const listNameById = new Map(availableTaskLists.map((list) => [list.id, list.name] as const));
-  const metadataByTaskId = new Map<string, TaskReportTaskMetadata>();
-
-  for (const task of tasks) {
-    const parentChain = taskHierarchy.getParentChain(task.id);
-    const title = task.title.trim() || "Untitled task";
-    const ancestry = parentChain
-      .map((ancestor) => ancestor.title?.trim() || "Untitled task")
-      .reverse();
-    const pathLabel = [...ancestry, title].join(" > ");
-    const rootParentId = parentChain.at(-1)?.id ?? task.id;
-    const hasInheritedManualRoutineMembership = rootParentId !== task.id
-      && (listMembershipsByTaskId[rootParentId] ?? []).some((membership) => membership.id === "routine" && membership.isManual);
-
-    const priorityLevel = getTaskPriorityLevel(task);
-    metadataByTaskId.set(task.id, {
-      cadenceLabel: formatRepeatSummary(task) ?? null,
-      currentStatusLabel: STATUS_LABELS[task.status] ?? task.status,
-      dueDate: task.due_on,
-      dueTime: task.due_time,
-      energyLabel: task.energy === "none" ? null : task.energy,
-      estimatedMinutes: task.estimated_minutes,
-      actualSeconds: task.actual_seconds,
-      listNames: (listMembershipsByTaskId[task.id] ?? [])
-        .map((membership) => listNameById.get(membership.id))
-        .filter((name): name is string => Boolean(name))
-        .sort((left, right) => left.localeCompare(right)),
-      tags: task.tags.filter((tag) => tag.trim()).sort((left, right) => left.localeCompare(right)),
-      externalLinkLabel: task.external_link_label,
-      externalLinkUrl: task.external_link_url,
-      notes: task.notes,
-      isImportant: priorityLevel === 4,
-      isPinned: Boolean(task.pinned_at),
-      isRoutine: hasTaskListMembership(listMembershipsByTaskId[task.id] ?? [], "routine") || hasInheritedManualRoutineMembership,
-      isExcludedFromTracking: excludedTaskIds.has(task.id),
-      isTrashed: task.status === "trashed" || parentChain.some((ancestor) => ancestor.status === "trashed"),
-      isUrgent: priorityLevel === 5,
-      pathLabel,
-      priorityLevel: resolveReportPriorityLevel(task),
-      title,
-      typeLabel: getTaskTypeLabel(task, taskHierarchy.getDepth(task.id)),
-    });
-  }
-
-  return metadataByTaskId;
-}
-
-function buildTaskSnapshotSections(
-  tasks: Task[],
-  availableTaskLists: TaskListDefinition[],
-  listMembershipsByTaskId: Record<string, TaskListMembership[]>,
-) {
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId);
-  const workloadTasks = tasks.filter((task) => {
-    const metadata = metadataByTaskId.get(task.id);
-    return metadata && !metadata.isTrashed && !metadata.isExcludedFromTracking;
-  });
-  const currentStatusSnapshotCounts = workloadTasks.reduce<Record<string, number>>((accumulator, task) => {
-    const metadata = metadataByTaskId.get(task.id);
-    if (!metadata) {
-      return accumulator;
-    }
-    incrementCount(accumulator, metadata.currentStatusLabel);
-    return accumulator;
-  }, {});
-
-  return {
-    activeLoadedTaskCount: workloadTasks.length,
-    currentStatusSnapshotCounts,
-    excludedLoadedTaskCount: tasks.filter((task) => metadataByTaskId.get(task.id)?.isExcludedFromTracking).length,
-    metadataByTaskId,
-    pinnedSummary: buildCompactTaskSummary(workloadTasks, metadataByTaskId, (metadata) => metadata.isPinned),
-    prioritySummaries: buildPriorityStatusSummaries(workloadTasks, metadataByTaskId),
-    snapshotTaskCount: workloadTasks.length,
-    trashedLoadedTaskCount: tasks.filter((task) => metadataByTaskId.get(task.id)?.isTrashed).length,
-  };
-}
-
-function buildCompactTaskSummary(
-  tasks: Task[],
-  metadataByTaskId: Map<string, TaskReportTaskMetadata>,
-  predicate: (metadata: TaskReportTaskMetadata) => boolean,
-): CompactStatusSummary {
-  return tasks.reduce<CompactStatusSummary>((summary, task) => {
-    const metadata = metadataByTaskId.get(task.id);
-    if (!metadata || !predicate(metadata)) {
-      return summary;
-    }
-    summary.total += 1;
-    incrementCount(summary.byStatus, metadata.currentStatusLabel);
-    return summary;
-  }, { byStatus: {}, total: 0 });
-}
-
-function buildPriorityStatusSummaries(tasks: Task[], metadataByTaskId: Map<string, TaskReportTaskMetadata>) {
-  const byPriority = new Map<TaskPriorityLevel, PriorityStatusSummary>();
-
-  for (const task of tasks) {
-    const metadata = metadataByTaskId.get(task.id);
-    if (!metadata || metadata.priorityLevel === null) {
-      continue;
-    }
-
-    const existing = byPriority.get(metadata.priorityLevel) ?? {
-      byStatus: {},
-      priorityLevel: metadata.priorityLevel,
-      total: 0,
-    };
-    existing.total += 1;
-    incrementCount(existing.byStatus, metadata.currentStatusLabel);
-    byPriority.set(metadata.priorityLevel, existing);
-  }
-
-  return [...byPriority.values()].sort((left, right) => right.priorityLevel - left.priorityLevel);
-}
-
-function buildLatestEntries(entries: TaskHistory[], tasksById: Map<string, Task>, metadataByTaskId: Map<string, TaskReportTaskMetadata>) {
-  const byTaskDate = new Map<string, LatestHistoryEntry>();
-  for (const entry of entries) {
-    const metadata = metadataByTaskId.get(entry.task_id);
-    if (!metadata || !tasksById.has(entry.task_id)) {
-      continue;
-    }
-    const key = `${entry.task_id}:${entry.entry_date}`;
-    const existing = byTaskDate.get(key);
-    if (!existing || compareHistoryEntries(existing, entry) < 0) {
-      byTaskDate.set(key, {
-        ...entry,
-        metadata,
-        taskTitle: metadata.title,
-      });
-    }
-  }
-  return [...byTaskDate.values()].sort(compareHistoryEntries);
-}
-
-function createEmptyDayBreakdown(): DayBreakdown {
-  return {
-    handledParents: 0,
-    handledSteps: 0,
-    handledTotal: 0,
-    missed: 0,
-    outcomes: {
-      Complete: [],
-      Done: [],
-      "Did My Best": [],
-      Missed: [],
-    },
-  };
-}
-
-function createEmptyOutcomeSplitCounts(): OutcomeSplitCounts {
-  return {
-    parentCount: 0,
-    stepCount: 0,
-  };
-}
-
-function getOutcomeLabel(status: TaskStatus): OutcomeLabel | null {
-  if (status === "done") {
-    return "Done";
-  }
-  if (status === "did_my_best") {
-    return "Did My Best";
-  }
-  if (status === "complete") {
-    return "Complete";
-  }
-  if (status === "missed") {
-    return "Missed";
-  }
-  return null;
-}
-
-function compareRankedDayEntries(left: RankedDayEntry, right: RankedDayEntry) {
-  return right.count - left.count || left.dateKey.localeCompare(right.dateKey);
-}
-
-function buildHistorySections(
-  tasks: Task[],
-  taskHistory: TaskHistory[],
-  range: ReportRange,
-  availableTaskLists: TaskListDefinition[],
-  listMembershipsByTaskId: Record<string, TaskListMembership[]>,
-) {
-  const tasksById = new Map(tasks.map((task) => [task.id, task] as const));
-  const metadataByTaskId = buildTaskMetadata(tasks, availableTaskLists, listMembershipsByTaskId);
-  const rangedEntries = taskHistory.filter((entry) => isEntryInRange(entry, range));
-  const latestEntries = buildLatestEntries(rangedEntries, tasksById, metadataByTaskId);
-  const dayBreakdownsByDate = new Map<string, DayBreakdown>();
-  const outcomeTotals: Record<OutcomeLabel, OutcomeSplitCounts> = {
-    Complete: createEmptyOutcomeSplitCounts(),
-    Done: createEmptyOutcomeSplitCounts(),
-    "Did My Best": createEmptyOutcomeSplitCounts(),
-    Missed: createEmptyOutcomeSplitCounts(),
-  };
-  const taskPatternsByTaskId = new Map<string, TaskPatternEntry>();
-
-  for (const entry of latestEntries) {
-    const task = tasksById.get(entry.task_id);
-    const outcomeLabel = getOutcomeLabel(entry.status);
-    if (!task || !outcomeLabel || entry.metadata.isTrashed || entry.metadata.isExcludedFromTracking) {
-      continue;
-    }
-
-    const taskPattern = taskPatternsByTaskId.get(entry.task_id) ?? {
-      completeCount: 0,
-      didMyBestCount: 0,
-      doneCount: 0,
-      handledCount: 0,
-      historyEntries: [],
-      metadata: entry.metadata,
-      missedCount: 0,
-      task,
-      taskId: entry.task_id,
-    };
-    taskPattern.historyEntries.push(entry);
-
-    const dayBreakdown = dayBreakdownsByDate.get(entry.entry_date) ?? createEmptyDayBreakdown();
-    dayBreakdown.outcomes[outcomeLabel].push(entry);
-
-    if (outcomeLabel === "Missed") {
-      taskPattern.missedCount += 1;
-      dayBreakdown.missed += 1;
-    } else {
-      taskPattern.handledCount += 1;
-      dayBreakdown.handledTotal += 1;
-      if (entry.metadata.typeLabel === "Parent") {
-        dayBreakdown.handledParents += 1;
-      } else {
-        dayBreakdown.handledSteps += 1;
-      }
-
-      if (outcomeLabel === "Done") {
-        taskPattern.doneCount += 1;
-      } else if (outcomeLabel === "Did My Best") {
-        taskPattern.didMyBestCount += 1;
-      } else if (outcomeLabel === "Complete") {
-        taskPattern.completeCount += 1;
-      }
-    }
-
-    const splitCounts = outcomeTotals[outcomeLabel];
-    if (entry.metadata.typeLabel === "Parent") {
-      splitCounts.parentCount += 1;
-    } else {
-      splitCounts.stepCount += 1;
-    }
-
-    dayBreakdownsByDate.set(entry.entry_date, dayBreakdown);
-    taskPatternsByTaskId.set(entry.task_id, taskPattern);
-  }
-
-  const taskPatterns = [...taskPatternsByTaskId.values()]
-    .filter((entry) => entry.historyEntries.length > 0)
-    .sort((left, right) => left.metadata.pathLabel.localeCompare(right.metadata.pathLabel));
-  const rankedHandledDays = [...dayBreakdownsByDate.entries()]
-    .map(([dateKey, totals]) => ({ count: totals.handledTotal, dateKey }))
-    .sort(compareRankedDayEntries);
-  const rankedMissedDays = [...dayBreakdownsByDate.entries()]
-    .map(([dateKey, totals]) => ({ count: totals.missed, dateKey }))
-    .sort(compareRankedDayEntries);
-
-  return {
-    dayBreakdownsByDate,
-    dailyZeroWinCount: taskPatterns.filter((entry) => entry.task.repeat_frequency === "daily" && entry.handledCount === 0 && entry.missedCount > 0).length,
-    highestMissedDay: rankedMissedDays.find((entry) => entry.count > 0) ?? null,
-    latestEntriesCount: latestEntries.length,
-    outcomeTotals,
-    repeatedMissCount: taskPatterns.filter((entry) => entry.missedCount >= 3).length,
-    taskPatterns,
-    topHandledDay: rankedHandledDays.find((entry) => entry.count > 0) ?? null,
-  };
-}
-
-function createEmptyRoutineOutcomeCounts(): RoutineOutcomeCounts {
-  return { didMyBest: 0, done: 0, handled: 0, missed: 0 };
-}
-
-function getRoutineOccurrenceIdentity(entry: TaskHistory, task: Task) {
-  const occurrenceKey = entry.occurrence_key?.trim();
-  if (occurrenceKey) return `occurrence-key:${occurrenceKey}`;
-  if (entry.occurrence_due_on) return `occurrence-due-on:${entry.occurrence_due_on}`;
-  return `history-fallback:${getTaskOccurrenceIdentity(entry, task)}`;
-}
-
-function buildRoutinePerformanceSummary(
-  tasks: Task[],
-  taskHistory: TaskHistory[],
-  range: ReportRange,
-  metadataByTaskId: Map<string, TaskReportTaskMetadata>,
-): RoutinePerformanceSummary {
-  const tasksById = new Map(tasks.map((task) => [task.id, task] as const));
-  const latestByOccurrence = new Map<string, TaskHistory>();
-  for (const entry of taskHistory) {
-    const task = tasksById.get(entry.task_id);
-    const metadata = metadataByTaskId.get(entry.task_id);
-    if (!task || !metadata?.isRoutine || metadata.isTrashed || metadata.isExcludedFromTracking || !isEntryInRange(entry, range)) continue;
-    const identity = `${entry.task_id}:${getRoutineOccurrenceIdentity(entry, task)}`;
-    const existing = latestByOccurrence.get(identity);
-    if (!existing || compareHistoryEntries(existing, entry) < 0) latestByOccurrence.set(identity, entry);
-  }
-
-  const summary = {
-    parents: createEmptyRoutineOutcomeCounts(),
-    steps: createEmptyRoutineOutcomeCounts(),
-  };
-  for (const entry of latestByOccurrence.values()) {
-    const metadata = metadataByTaskId.get(entry.task_id);
-    if (!metadata) continue;
-    const counts = metadata.typeLabel === "Parent" ? summary.parents : summary.steps;
-    if (entry.status === "done" || entry.status === "complete") counts.done += 1;
-    else if (entry.status === "did_my_best") counts.didMyBest += 1;
-    else if (entry.status === "missed") counts.missed += 1;
-    else continue;
-    counts.handled = counts.done + counts.didMyBest;
-  }
-  return summary;
-}
-
-function formatRoutineOutcomeLine(label: string, counts: RoutineOutcomeCounts) {
-  return `- ${label}: Done ${counts.done}; Did My Best ${counts.didMyBest}; Missed ${counts.missed}; Handled ${counts.handled}`;
-}
-
-function formatAchievementSection(
-  model: AchievementProgressModel | null | undefined,
-  range: ReportDateRange,
-  warning: string | null | undefined,
-) {
-  const lines = ["## Achievements", "", "### Earned during the selected range"];
+function formatAchievementSection(model: AchievementProgressModel | null | undefined, warning: string | null | undefined, range: ReportRange) {
+  const lines = ["### Achievements"];
   if (warning) lines.push(`- Warning: ${warning}`);
-  if (!model) {
-    lines.push("- Achievement progress is unavailable.");
-    lines.push("", "### Current progress snapshot", "- Achievement progress is unavailable.");
-    return lines;
-  }
-
-  const earnedLines: string[] = [];
-  for (const collection of model.collections) {
+  const earned: Array<{ collection: string; earnedDate: string; name: string; tier: string }> = [];
+  for (const collection of model?.collections ?? []) {
     for (const track of collection.tracks) {
       for (const tier of track.tiers) {
-        if (!tier.earnedAt || !isReportDateInRange(tier.earnedAt, range)) continue;
-        earnedLines.push(`- ${track.title} — Collection: ${collection.title} — Tier: ${formatTierLabel(tier.id)} — Permanently earned: ${formatReportDate(tier.earnedAt)}`);
+        const earnedDate = tier.earnedAt?.slice(0, 10);
+        if (earnedDate && earnedDate >= range.startDateKey && earnedDate <= range.endDateKey) earned.push({ collection: collection.title, earnedDate: tier.earnedAt!, name: track.title, tier: formatTierLabel(tier.id) });
       }
     }
-    if (collection.masteredAt && isReportDateInRange(collection.masteredAt, range)) {
-      earnedLines.push(`- ${collection.title} — Collection mastery aura earned: ${formatReportDate(collection.masteredAt)}`);
-    }
+    const masteredDate = collection.masteredAt?.slice(0, 10);
+    if (masteredDate && masteredDate >= range.startDateKey && masteredDate <= range.endDateKey) earned.push({ collection: collection.title, earnedDate: collection.masteredAt!, name: collection.title, tier: "Collection mastery" });
   }
-  lines.push(...(earnedLines.length > 0 ? earnedLines : ["- No permanent Achievement tiers or mastery auras earned in the selected range."]));
+  if (earned.length === 0) lines.push("- None earned during the selected range.");
+  else for (const entry of earned.sort((left, right) => left.earnedDate.localeCompare(right.earnedDate) || left.name.localeCompare(right.name))) lines.push(`- ${entry.name} — Collection: ${entry.collection} — Tier: ${entry.tier} — Earned: ${formatReportDate(entry.earnedDate)}`);
+  return lines;
+}
 
-  lines.push("", "### Current progress snapshot");
-  for (const collection of model.collections) {
-    const masteryLabel = collection.isMastered
-      ? `Mastered${collection.masteredAt ? ` ${formatReportDate(collection.masteredAt)}` : ""}`
-      : "Mastery locked";
-    lines.push(`- ${collection.title}: ${collection.earnedTiers} of ${collection.totalTiers} tiers — ${masteryLabel}`);
-    for (const track of collection.tracks) {
-      const earnedTiers = track.tiers.filter((tier) => tier.isEarned).map((tier) => formatTierLabel(tier.id));
-      lines.push(
-        `  - ${track.title} — Current progress: ${formatAchievementValue(track.currentValue, track.unit)}`
-        + ` — Earned tiers: ${earnedTiers.length > 0 ? earnedTiers.join(", ") : "None"}`
-        + ` — ${track.nextTier && track.nextThreshold !== null
-          ? `Next: ${formatTierLabel(track.nextTier)} at ${formatAchievementValue(track.nextThreshold, track.unit)}`
-          : "Platinum complete"}`,
-      );
+function formatTasksSummary(reportData: UnifiedReportReadModel, range: ReportRange) {
+  const lines = ["### Tasks", `- Range: ${formatRange(range)}`, `- Done: ${reportData.tasks.totals.done}`, `- Did My Best: ${reportData.tasks.totals.didMyBest}`, `- Complete: ${reportData.tasks.totals.complete}`, `- New Misses: ${reportData.tasks.totals.newMisses}`];
+  const best = reportData.tasks.days.reduce<UnifiedReportTaskDay | null>((current, day) => {
+    const handled = day.done.length + day.didMyBest.length + day.complete.length;
+    const currentHandled = current ? current.done.length + current.didMyBest.length + current.complete.length : 0;
+    return handled > currentHandled ? day : current;
+  }, null);
+  const highestNewMiss = reportData.tasks.days.reduce<UnifiedReportTaskDay | null>((current, day) => day.newMisses.length > (current?.newMisses.length ?? 0) ? day : current, null);
+  const highestBacklog = reportData.tasks.days.reduce<UnifiedReportTaskDay | null>((current, day) => day.totalMisses > (current?.totalMisses ?? 0) ? day : current, null);
+  lines.push(`- Best completion day: ${best ? `${formatReportDate(best.dateKey)} (${best.done.length + best.didMyBest.length + best.complete.length} handled)` : "None"}`);
+  lines.push(`- Highest new-miss day: ${highestNewMiss ? `${formatReportDate(highestNewMiss.dateKey)} (${highestNewMiss.newMisses.length})` : "None"}`);
+  lines.push(`- Highest Total Misses backlog: ${highestBacklog ? `${formatReportDate(highestBacklog.dateKey)} (${highestBacklog.totalMisses})` : "None"}`);
+  return lines;
+}
+
+function formatFocusSummary(reportData: UnifiedReportReadModel) {
+  const average = reportData.focus.sessionCount > 0 ? reportData.focus.totalSeconds / reportData.focus.sessionCount : null;
+  return ["### Focus", `- Total Focus time: ${formatDuration(reportData.focus.totalSeconds)}`, `- Session count: ${reportData.focus.sessionCount}`, `- Average session duration: ${formatDuration(average ?? 0)}`, `- Totals by category: ${Object.entries(reportData.focus.byCategorySeconds).sort(([left], [right]) => left.localeCompare(right)).map(([category, seconds]) => `${category} ${formatDuration(seconds)}`).join(", ") || "None"}`];
+}
+
+function formatHealthSummary(reportData: UnifiedReportReadModel) {
+  const foodDays = reportData.days.filter((day) => Object.keys(day.food.foodsByMeal).length > 0);
+  const averageMacro = (key: "calories" | "protein_g" | "carbs_g" | "fat_g") => {
+    const values = foodDays.map((day) => day.food.macros[key]).filter((value): value is number => value !== null);
+    return values.length > 0 ? values.reduce((sum, value) => sum + value, 0) / values.length : null;
+  };
+  const waterDays = reportData.days.filter((day) => day.water.logged);
+  const workoutDays = reportData.days.filter((day) => day.fitness.workouts.length > 0);
+  const sleepDays = reportData.days.map((day) => day.sleep.totalMinutes).filter((value): value is number => value !== null);
+  const weightEntries = reportData.weightEntries;
+  const workouts = reportData.days.flatMap((day) => day.fitness.workouts);
+  const workoutTypes = workouts.reduce<Record<string, number>>((counts, workout) => { counts[workout.type] = (counts[workout.type] ?? 0) + 1; return counts; }, {});
+  return [
+    "### Food / Nutrition",
+    `- Logged days: ${foodDays.length} of ${reportData.days.length}`,
+    `- Average daily calories: ${formatNumber(averageMacro("calories"))}${reportData.healthGoals.calorieGoal === null ? "" : ` / ${formatNumber(reportData.healthGoals.calorieGoal)} goal`}`,
+    `- Average protein: ${formatNumber(averageMacro("protein_g"))}g; carbs: ${formatNumber(averageMacro("carbs_g"))}g; fat: ${formatNumber(averageMacro("fat_g"))}g`,
+    "",
+    "### Water",
+    `- Days logged: ${waterDays.length} of ${reportData.days.length}`,
+    `- Total: ${formatNumber(waterDays.reduce((sum, day) => sum + (day.water.amountMl ?? 0), 0) / 29.5735)} fl oz; average logged day: ${formatNumber(waterDays.length > 0 ? waterDays.reduce((sum, day) => sum + (day.water.amountMl ?? 0), 0) / waterDays.length / 29.5735 : null)} fl oz`,
+    `- Days meeting goal: ${waterDays.filter((day) => day.water.goalMl !== null && (day.water.amountMl ?? 0) >= day.water.goalMl).length}`,
+    "",
+    "### Fitness",
+    `- Workout count: ${workouts.length}; workout days: ${workoutDays.length}`,
+    `- Total workout duration: ${formatDuration(workouts.reduce((sum, workout) => sum + workout.durationSeconds, 0))}`,
+    `- Workout types: ${Object.entries(workoutTypes).map(([type, count]) => `${type} ${count}`).join(", ") || "None"}`,
+    `- Movement totals: Steps ${formatNumber(reportData.days.reduce((sum, day) => sum + (day.fitness.steps ?? 0), 0), 0)}; Active Energy ${formatNumber(reportData.days.reduce((sum, day) => sum + (day.fitness.activeEnergyKcal ?? 0), 0), 0)} kcal; Exercise Minutes ${formatNumber(reportData.days.reduce((sum, day) => sum + (day.fitness.exerciseMinutes ?? 0), 0), 0)}`,
+    "",
+    "### Journal",
+    `- Entries: ${reportData.days.reduce((sum, day) => sum + day.journal.entries.length, 0)}`,
+    `- Recorded feeling/symptom observations: ${reportData.days.reduce((sum, day) => sum + day.journal.entries.reduce((entrySum, entry) => entrySum + entry.feelings.length + entry.symptoms.length, 0), 0)}`,
+    "",
+    "### Weight",
+    weightEntries.length === 0 ? "- No weight entries in selected range." : `- Starting: ${formatWeight(weightEntries[0].weightKg, reportData.healthGoals.preferredWeightUnit)}; ending: ${formatWeight(weightEntries.at(-1)!.weightKg, reportData.healthGoals.preferredWeightUnit)}; change: ${formatWeightChange(weightEntries.at(-1)!.weightKg - weightEntries[0].weightKg, reportData.healthGoals.preferredWeightUnit)}`,
+    "",
+    "### Sleep",
+    `- Average recorded sleep: ${sleepDays.length > 0 ? formatDuration((sleepDays.reduce((sum, value) => sum + value, 0) / sleepDays.length) * 60) : "unknown"}`,
+    `- Goal: ${reportData.healthGoals.sleepGoalMinutes === null ? "Not configured" : formatDuration(reportData.healthGoals.sleepGoalMinutes * 60)}`,
+    `- Days meeting goal: ${reportData.healthGoals.sleepGoalMinutes === null ? "Not available" : sleepDays.filter((value) => value >= reportData.healthGoals.sleepGoalMinutes!).length}`,
+  ];
+}
+
+function formatPathsAndOnTime(reportData: UnifiedReportReadModel) {
+  return ["### PATHS", reportData.paths.available ? "- Paths used: available in report data." : `- ${reportData.paths.limitation ?? "No PATHS history available."}`, "", "### On-Time", reportData.onTime.available ? "- On-Time sessions: available in report data." : `- ${reportData.onTime.limitation ?? "No historical On-Time sessions available."}`];
+}
+
+function formatRecords(reportData: UnifiedReportReadModel) {
+  const lines = ["### Records", `- Events in selected range: ${reportData.records.length}`];
+  if (reportData.records.length === 0) lines.push("- No Set, Broken, or Tied Record events in selected range.");
+  else for (const event of reportData.records) lines.push(`- ${event.eventKind === "break" ? "Broken" : humanize(event.eventKind)}: ${humanize(event.metricKey)} — ${formatReportDate(event.creditedDate)} — ${formatNumber(event.value)} ${event.unit} — ${event.scopeLabel}`);
+  return lines;
+}
+
+function formatFoodDay(day: UnifiedReportHealthDay, reportData: UnifiedReportReadModel) {
+  const hasFood = Object.keys(day.food.foodsByMeal).length > 0;
+  const lines = ["#### Food / Nutrition", hasFood ? macroLine("Calories", day.food.macros.calories, reportData.healthGoals.calorieGoal, " kcal") : "- Not logged"];
+  if (!hasFood) return lines;
+  lines.push(macroLine("Protein", day.food.macros.protein_g, reportData.healthGoals.proteinGoalG, "g"), macroLine("Carbs", day.food.macros.carbs_g, reportData.healthGoals.carbsGoalG, "g"), macroLine("Fat", day.food.macros.fat_g, reportData.healthGoals.fatGoalG, "g"));
+  for (const [meal, foods] of Object.entries(day.food.foodsByMeal).sort(([left], [right]) => left.localeCompare(right))) {
+    lines.push("", humanize(meal));
+    for (const food of foods) lines.push(`- ${food.name}`, `  - ${formatNumber(food.calories)} kcal | ${formatNumber(food.proteinG)}g protein | ${formatNumber(food.carbsG)}g carbs | ${formatNumber(food.fatG)}g fat`);
+  }
+  if (day.food.nutritionSummary && Object.keys(day.food.nutritionSummary.values).length > 0) {
+    const partial = Object.values(day.food.nutritionSummary.coverage).some((coverage) => coverage.knownEntries < coverage.totalEntries);
+    lines.push("", `Daily Nutrition Summary${partial ? " (partial known-data coverage)" : ""}`);
+    for (const [key, value] of Object.entries(day.food.nutritionSummary.values).sort(([left], [right]) => left.localeCompare(right))) {
+      const coverage = day.food.nutritionSummary.coverage[key];
+      lines.push(`- ${nutritionLabel(key)}: ${formatNumber(value)}${nutritionUnit(key)}${coverage && coverage.knownEntries < coverage.totalEntries ? ` (${coverage.knownEntries} of ${coverage.totalEntries} food entries known)` : ""}`);
     }
   }
   return lines;
 }
 
-function formatStatusSnapshotCounts(counts: Record<string, number>) {
-  const orderedEntries = [
-    ...STATUS_SNAPSHOT_ORDER
-      .map((label) => [label, counts[label] ?? 0] as const)
-      .filter(([, count]) => count > 0),
-    ...Object.entries(counts)
-      .filter(([label, count]) => count > 0 && !STATUS_SNAPSHOT_ORDER.includes(label as typeof STATUS_SNAPSHOT_ORDER[number]))
-      .sort((left, right) => left[0].localeCompare(right[0])),
-  ];
-  if (orderedEntries.length === 0) {
-    return "None";
+function formatDailyDetail(reportData: UnifiedReportReadModel, range: ReportRange) {
+  const tasksByDate = new Map(reportData.tasks.days.map((day) => [day.dateKey, day] as const));
+  const focusByDate = new Map(reportData.focus.days.map((day) => [day.dateKey, day] as const));
+  const healthByDate = new Map(reportData.days.map((day) => [day.dateKey, day] as const));
+  const lines = ["## Daily Detail"];
+  let dateKey = range.startDateKey;
+  while (dateKey <= range.endDateKey) {
+    const task = tasksByDate.get(dateKey) ?? { complete: [], didMyBest: [], done: [], dateKey, newMisses: [], totalMisses: 0 };
+    const focus = focusByDate.get(dateKey) ?? { dateKey, sessions: [], totalSeconds: 0 } satisfies UnifiedReportFocusDay;
+    const health = healthByDate.get(dateKey) ?? createEmptyUnifiedReportReadModel(dateKey, dateKey).days[0];
+    lines.push("", `### ${formatReportDate(dateKey)}`, "#### Tasks", `- Done (${task.done.length})`, ...task.done.map((name) => `  - ${name}`), `- Did My Best (${task.didMyBest.length})`, ...task.didMyBest.map((name) => `  - ${name}`), `- Complete (${task.complete.length})`, ...task.complete.map((name) => `  - ${name}`), "- Missed", `  - New Misses: ${task.newMisses.length}`, ...task.newMisses.map((name) => `    - ${name}`), `  - Total Misses: ${task.totalMisses} (includes ${task.newMisses.length} new)`);
+    lines.push("", "#### Focus", `- Total: ${formatDuration(focus.totalSeconds)} across ${focus.sessions.length} session${focus.sessions.length === 1 ? "" : "s"}`, ...(focus.sessions.length === 0 ? ["- No sessions logged."] : focus.sessions.map((session) => `- ${session.title} — ${session.category} — ${formatDuration(session.durationSeconds)}`)));
+    lines.push("", "#### PATHS", reportData.paths.available ? "- No Path activity logged." : `- ${reportData.paths.limitation}`, "", "#### On-Time", reportData.onTime.available ? "- No On-Time activity logged." : `- ${reportData.onTime.limitation}`, "", ...formatFoodDay(health, reportData), "", "#### Water", health.water.logged ? `- ${formatNumber((health.water.amountMl ?? 0) / 29.5735)} fl oz${health.water.goalMl === null ? "" : ` / ${formatNumber(health.water.goalMl / 29.5735)} fl oz goal`}` : "- Not logged", "", "#### Fitness");
+    const movement = [`Steps: ${formatNumber(health.fitness.steps, 0)}`, `Active Energy: ${formatNumber(health.fitness.activeEnergyKcal, 0)} kcal`, `Exercise Minutes: ${formatNumber(health.fitness.exerciseMinutes, 0)}`].filter((line) => !line.includes("unknown"));
+    if (health.fitness.workouts.length === 0 && movement.length === 0) lines.push("- Not logged");
+    else { lines.push(...movement.map((line) => `- ${line}`)); for (const workout of health.fitness.workouts) lines.push(`- ${workout.title} — ${workout.type} — ${formatDuration(workout.durationSeconds)}${workout.activeCalories === null ? "" : ` — ${formatNumber(workout.activeCalories, 0)} active kcal`}`); }
+    lines.push("", "#### Journal");
+    if (health.journal.entries.length === 0) lines.push("- No entries logged.");
+    else for (const entry of health.journal.entries) { lines.push(`- ${entry.entryType}${entry.time ? ` — ${entry.time}` : ""}`); if (entry.reflection) lines.push(`  - Reflection: ${entry.reflection}`); if (entry.tags.length > 0) lines.push(`  - Tags: ${entry.tags.join(", ")}`); for (const [label, value] of Object.entries(entry.ratings)) lines.push(`  - ${label}: ${value}`); for (const field of entry.structured) lines.push(`  - ${field.label}: ${field.value}`); for (const feeling of entry.feelings) lines.push(`  - Feeling: ${feeling.name} (${feeling.score})`); for (const symptom of entry.symptoms) lines.push(`  - Symptom: ${symptom.name} (${symptom.severity})`); }
+    lines.push("", "#### Weight", health.weightKg === null ? "- Not logged" : `- ${formatWeight(health.weightKg, reportData.healthGoals.preferredWeightUnit)}`, "", "#### Sleep", health.sleep.totalMinutes === null ? "- Not logged" : `- Total: ${formatDuration(health.sleep.totalMinutes * 60)}`, ...health.sleep.sessions.map((session) => `- Sleep session: ${session.title} — ${formatDuration(session.durationMinutes * 60)}`));
+    dateKey = shiftDateKey(dateKey, 1);
   }
-  return orderedEntries.map(([label, count]) => `${label} ${count}`).join(", ");
+  return lines;
 }
 
-function formatCompactTaskSummaryLine(label: string, summary: CompactStatusSummary) {
-  return `- ${label}: ${summary.total} total${summary.total > 0 ? ` (${formatStatusSnapshotCounts(summary.byStatus)})` : ""}`;
+export function generateTaskReport({ achievementModel = null, achievementWarning = null, appVersion, generatedAt, historySourceLabel, historyWarning, customRange, rangeId, reportData: suppliedReportData = null, todayDateKey }: GenerateTaskReportInput) {
+  const reportData = suppliedReportData ?? createEmptyUnifiedReportReadModel(todayDateKey, todayDateKey);
+  const range = buildRange(rangeId, todayDateKey, reportData, customRange);
+  const insights = [...reportData.insights];
+  const foodDays = reportData.days.filter((day) => Object.keys(day.food.foodsByMeal).length > 0);
+  const waterDays = reportData.days.filter((day) => day.water.logged);
+  const sleepDays = reportData.days.filter((day) => day.sleep.totalMinutes !== null);
+  insights.push(`Focus sessions: ${reportData.focus.sessionCount} across ${reportData.focus.days.filter((day) => day.totalSeconds > 0).length} logged day(s).`);
+  insights.push(`Food logging: ${foodDays.length} of ${reportData.days.length} day(s).`);
+  insights.push(`Hydration logging: ${waterDays.length} of ${reportData.days.length} day(s).`);
+  insights.push(`Average recorded sleep: ${sleepDays.length > 0 ? formatDuration(sleepDays.reduce((sum, day) => sum + day.sleep.totalMinutes!, 0) / sleepDays.length * 60) : "unknown"}.`);
+  return [
+    "# ADHDice Report", "", "## Period Summary", `- Generated: ${generatedAt.toLocaleString("en-US")}`, `- App Version: ${appVersion}`, `- Selected Date Range: ${formatRange(range)}`, `- Read path: ${historySourceLabel}`,
+    ...(historyWarning ? [`- Warning: ${historyWarning}`] : []), ...reportData.warnings.map((warning) => `- Warning: ${warning}`), "", ...formatTasksSummary(reportData, range), "", ...formatFocusSummary(reportData), "", ...formatPathsAndOnTime(reportData), "", ...formatHealthSummary(reportData), "", ...formatAchievementSection(achievementModel, achievementWarning, range), "", ...formatRecords(reportData), "", "## Period Insights", "### Insights", ...(insights.length > 0 ? insights.map((insight) => `- ${insight}`) : ["- No computed observations in selected range."]), "", ...formatDailyDetail(reportData, range),
+  ].join("\n");
 }
 
-function formatHistoryEntryMoment(entry: LatestHistoryEntry) {
-  const createdTimestamp = getCreatedHistoryTimestamp(entry);
-  const timeLabel = formatTimeOnly(createdTimestamp);
-  if (!createdTimestamp) {
-    return formatShortDate(entry.entry_date);
-  }
-  const loggedDateKey = createdTimestamp.slice(0, 10);
-  if (loggedDateKey !== entry.entry_date) {
-    const loggedLabel = formatHistoryMoment(createdTimestamp);
-    return loggedLabel
-      ? `${formatShortDate(entry.entry_date)} (logged ${loggedLabel})`
-      : formatShortDate(entry.entry_date);
-  }
-  return timeLabel ? `${formatShortDate(entry.entry_date)} ${timeLabel}` : formatShortDate(entry.entry_date);
-}
-
-function formatDateRangeShort(startDateKey: string, endDateKey: string) {
-  if (startDateKey === endDateKey) {
-    return formatShortDate(startDateKey);
-  }
-
-  const [startYear, startMonth, startDay] = startDateKey.split("-").map((part) => Number.parseInt(part, 10));
-  const [endYear, endMonth, endDay] = endDateKey.split("-").map((part) => Number.parseInt(part, 10));
-  if (
-    Number.isFinite(startYear)
-    && Number.isFinite(startMonth)
-    && Number.isFinite(startDay)
-    && Number.isFinite(endYear)
-    && Number.isFinite(endMonth)
-    && Number.isFinite(endDay)
-  ) {
-    if (startYear === endYear && startMonth === endMonth) {
-      const startMonthLabel = new Intl.DateTimeFormat("en-US", { month: "short" }).format(new Date(startYear, startMonth - 1, startDay));
-      return `${startMonthLabel} ${startDay}-${endDay}`;
-    }
-  }
-
-  return `${formatShortDate(startDateKey)}-${formatShortDate(endDateKey)}`;
-}
-
-function compressDateKeys(dateKeys: string[]) {
-  if (dateKeys.length === 0) {
-    return "";
-  }
-
-  const uniqueDateKeys = [...new Set(dateKeys)].sort((left, right) => left.localeCompare(right));
-  const segments: string[] = [];
-  let rangeStart = uniqueDateKeys[0];
-  let previous = uniqueDateKeys[0];
-
-  for (let index = 1; index < uniqueDateKeys.length; index += 1) {
-    const current = uniqueDateKeys[index];
-    const expectedNext = shiftDateKey(previous, 1);
-    if (current === expectedNext) {
-      previous = current;
-      continue;
-    }
-    segments.push(formatDateRangeShort(rangeStart, previous));
-    rangeStart = current;
-    previous = current;
-  }
-
-  segments.push(formatDateRangeShort(rangeStart, previous));
-  return segments.join(", ");
-}
-
-function formatCompactHistory(entries: LatestHistoryEntry[]) {
-  if (entries.length === 0) {
-    return "No records in selected range";
-  }
-
-  const lines = OUTCOME_ORDER
-    .map((outcomeLabel) => {
-      const matchingEntries = entries.filter((entry) => getOutcomeLabel(entry.status) === outcomeLabel);
-      if (matchingEntries.length === 0) {
-        return null;
-      }
-      if (outcomeLabel === "Missed") {
-        return `${outcomeLabel}: ${compressDateKeys(matchingEntries.map((entry) => entry.entry_date))}`;
-      }
-      return `${outcomeLabel}: ${matchingEntries.map((entry) => formatHistoryEntryMoment(entry)).join(", ")}`;
-    })
-    .filter((value): value is string => Boolean(value));
-
-  return lines.join("; ");
-}
-
-function formatCurrentStreak(entries: LatestHistoryEntry[]) {
-  if (entries.length === 0) {
-    return "Mixed / none";
-  }
-
-  const latestOutcome = getOutcomeLabel(entries[entries.length - 1].status);
-  if (!latestOutcome) {
-    return "Mixed / none";
-  }
-
-  let streakCount = 0;
-  for (let index = entries.length - 1; index >= 0; index -= 1) {
-    if (getOutcomeLabel(entries[index].status) !== latestOutcome) {
-      break;
-    }
-    streakCount += 1;
-  }
-
-  if (streakCount === 1 && entries.length > 1) {
-    return "Mixed / none";
-  }
-  return `${streakCount} ${latestOutcome}`;
-}
-
-function formatTaskHistoryLine(entry: TaskPatternEntry, detailed = false) {
-  const parts = [
-    entry.metadata.title,
-    `Type: ${entry.metadata.typeLabel}`,
-    entry.metadata.typeLabel === "Parent" ? null : `Path: ${entry.metadata.pathLabel}`,
-    `Current Status: ${entry.metadata.currentStatusLabel}`,
-    `History: ${formatCompactHistory(entry.historyEntries)}`,
-    `Current Streak: ${formatCurrentStreak(entry.historyEntries)}`,
-    `Cadence: ${entry.metadata.cadenceLabel ?? "None"}`,
-    entry.metadata.dueDate ? `Due: ${formatDateLabel(entry.metadata.dueDate)}${formatTaskTime(entry.metadata.dueTime) ? ` at ${formatTaskTime(entry.metadata.dueTime)}` : ""}` : null,
-    entry.metadata.energyLabel ? `Energy: ${entry.metadata.energyLabel}` : null,
-    entry.metadata.estimatedMinutes === null ? null : `Estimated Time: ${formatDurationCompact(entry.metadata.estimatedMinutes * 60)}`,
-    entry.metadata.actualSeconds > 0 ? `Actual Time: ${formatDurationCompact(entry.metadata.actualSeconds)}` : null,
-    entry.metadata.listNames.length > 0 ? `Lists: ${entry.metadata.listNames.join(", ")}` : null,
-    entry.metadata.tags.length > 0 ? `Tags: ${entry.metadata.tags.join(", ")}` : null,
-    entry.metadata.externalLinkLabel || entry.metadata.externalLinkUrl
-      ? `External Link: ${entry.metadata.externalLinkLabel || "Link"}${entry.metadata.externalLinkUrl ? ` — ${entry.metadata.externalLinkUrl}` : ""}`
-      : null,
-  ];
-  if (entry.metadata.priorityLevel !== null) {
-    parts.push(`Priority: ${formatTaskPriorityLevel(entry.metadata.priorityLevel)}`);
-  }
-  if (entry.metadata.isPinned) {
-    parts.push("Pinned");
-  }
-  if (entry.metadata.isRoutine) {
-    parts.push("Routine");
-  }
-  if (detailed && entry.metadata.notes?.trim()) {
-    parts.push(`Notes: ${entry.metadata.notes.trim()}`);
-  }
-  return `- ${parts.filter((value): value is string => Boolean(value)).join(" — ")}`;
-}
-
-function formatAdjustmentReason(reason: string) {
-  return reason
-    .replaceAll("_", " ")
-    .replace(/\b\w/g, (match) => match.toUpperCase());
-}
-
-function formatPaceStatus(weeklyPaceBehindSeconds: number, weekDeltaSeconds: number) {
-  if (weeklyPaceBehindSeconds > 0) {
-    return `Behind ${formatDurationCompact(weeklyPaceBehindSeconds)}`;
-  }
-  if (weekDeltaSeconds > 0) {
-    return `Over ${formatDurationCompact(weekDeltaSeconds)}`;
-  }
-  return "On pace";
-}
-
-function resolveReportPriorityLevel(task: Task) {
-  if (task.priority_level !== null) {
-    return getTaskPriorityLevel(task);
-  }
-
-  const legacyLevel = inferLegacyTaskPriorityLevel(task);
-  return legacyLevel === 3 ? null : legacyLevel;
-}
-
-function sortLatestEntries(entries: LatestHistoryEntry[]) {
-  return [...entries].sort((left, right) => left.metadata.pathLabel.localeCompare(right.metadata.pathLabel));
-}
-
-function formatDayRow(entry: LatestHistoryEntry) {
-  const descriptor = entry.metadata.typeLabel === "Parent"
-    ? entry.metadata.typeLabel
-    : `${entry.metadata.typeLabel} — ${entry.metadata.pathLabel}`;
-  const createdTimestamp = getCreatedHistoryTimestamp(entry);
-  const createdDateKey = createdTimestamp?.slice(0, 10) ?? null;
-  const createdTimingLabel = !createdTimestamp
-    ? null
-    : createdDateKey !== entry.entry_date
-      ? formatHistoryCreatedLabel(entry)
-      : formatTimeOnly(createdTimestamp);
-  const editedTimingLabel = formatHistoryEditedLabel(entry);
-  const timingParts = [createdTimingLabel, editedTimingLabel].filter((value): value is string => Boolean(value));
-  return `- ${entry.metadata.title} — ${descriptor}${timingParts.length > 0 ? ` — ${timingParts.join(" — ")}` : ""}`;
-}
-
-function formatDayOutcomeGroup(outcomeLabel: OutcomeLabel, entries: LatestHistoryEntry[]) {
-  const sortedEntries = sortLatestEntries(entries);
-  const cappedEntries = outcomeLabel === "Missed" ? sortedEntries.slice(0, MISSED_DAILY_CAP) : sortedEntries;
-  const lines = [`#### ${outcomeLabel}`];
-  if (sortedEntries.length === 0) {
-    lines.push("- None");
-    return lines.join("\n");
-  }
-  if (outcomeLabel === "Missed" && sortedEntries.length > MISSED_DAILY_CAP) {
-    lines.push(`Showing ${MISSED_DAILY_CAP} of ${sortedEntries.length}.`);
-  }
-  lines.push(...cappedEntries.map((entry) => formatDayRow(entry)));
-  return lines.join("\n");
-}
-
-function formatOutcomeTotalLine(label: OutcomeLabel, counts: OutcomeSplitCounts) {
-  const total = counts.parentCount + counts.stepCount;
-  return `- ${label}: ${counts.parentCount} Parents, ${counts.stepCount} Steps/Substeps, ${total} Total`;
-}
-
-function generateTaskReport({
-  appVersion,
-  achievementModel = null,
-  achievementWarning = null,
-  availableTaskLists,
-  detailLevel,
-  focusCategories,
-  focusDailyGoalAdjustments = [],
-  focusHistory,
-  healthData = null,
-  generatedAt,
-  historySourceLabel,
-  historyWarning,
-  listMembershipsByTaskId = {},
-  milestoneEvents = [],
-  milestones = [],
-  milestoneWarning = null,
-  customRange,
-  rangeId,
-  records = { currentRecords: [], events: [] },
-  taskHistory,
-  tasks,
-  todayDateKey,
-}: GenerateTaskReportInput) {
-  const range = buildRange(rangeId, todayDateKey, taskHistory, focusHistory, focusDailyGoalAdjustments, healthData ? getHealthReportDateKeys(healthData) : [], customRange);
-  const snapshot = buildTaskSnapshotSections(tasks, availableTaskLists, listMembershipsByTaskId);
-  const history = buildHistorySections(tasks, taskHistory, range, availableTaskLists, listMembershipsByTaskId);
-  const routinePerformance = buildRoutinePerformanceSummary(tasks, taskHistory, range, snapshot.metadataByTaskId);
-  const focusSection = buildFocusSection(range, focusCategories, focusHistory, focusDailyGoalAdjustments, todayDateKey);
-  const healthSection = healthData ? formatHealthReportSection(healthData, range, detailLevel === "detailed", focusCategories, focusHistory) : [];
-  const milestoneRange = resolveTaskReportHistoryFetchRange(rangeId, todayDateKey, customRange);
-  const achievementSection = formatAchievementSection(achievementModel, milestoneRange, achievementWarning);
-  const milestoneSection = formatMilestoneReportSection(
-    buildMilestoneReportSummary(milestoneEvents, milestones, milestoneRange),
-    detailLevel === "detailed",
-    milestoneWarning,
-  );
-  const recordsSection = formatRecordsReportSection(
-    records,
-    milestoneRange,
-    Object.fromEntries([...snapshot.metadataByTaskId].map(([taskId, metadata]) => [taskId, metadata.pathLabel])),
-  );
-  const reportEligibleHistoryCount = taskHistory.filter((entry) => {
-    const metadata = snapshot.metadataByTaskId.get(entry.task_id);
-    return metadata && !metadata.isTrashed && !metadata.isExcludedFromTracking;
-  }).length;
-  const healthRecordCount = healthData
-    ? healthData.checkIns.length
-      + healthData.journalSignalValues.length
-      + healthData.journalSignalOccurrences.length
-      + healthData.symptomEntries.length
-      + healthData.mealEntries.length
-      + healthData.waterEntries.length
-      + healthData.weightEntries.length
-      + healthData.metricEntries.length
-      + healthData.workouts.length
-    : null;
-
-  const lines = [
-    "# ADHDice Report",
-    "",
-    "## Overview",
-    `- Generated: ${formatTimestamp(generatedAt)}`,
-    `- App Version: ${appVersion}`,
-    `- Selected Date Range: ${formatRangeSummary(range)}`,
-    `- History Records Analyzed: ${reportEligibleHistoryCount}`,
-    `- History Source: ${historySourceLabel}`,
-    ...(healthData ? [`- Health Records Analyzed: ${healthData.isAvailable ? healthData.warnings.length > 0 ? "partial; see Health warnings" : healthRecordCount : "unavailable"}`, "- Health Source: Range-scoped persisted Health reads"] : []),
-    `- Active vs Trashed Loaded: ${snapshot.activeLoadedTaskCount} active, ${snapshot.trashedLoadedTaskCount} trashed excluded${snapshot.excludedLoadedTaskCount > 0 ? `, ${snapshot.excludedLoadedTaskCount} tracking-excluded` : ""}`,
-    ...(historyWarning ? [`- Warning: ${historyWarning}`] : []),
-    formatOutcomeTotalLine("Done", history.outcomeTotals.Done),
-    formatOutcomeTotalLine("Did My Best", history.outcomeTotals["Did My Best"]),
-    formatOutcomeTotalLine("Complete", history.outcomeTotals.Complete),
-    formatOutcomeTotalLine("Missed", history.outcomeTotals.Missed),
-    `- Current Status Snapshot: ${formatStatusSnapshotCounts(snapshot.currentStatusSnapshotCounts)}`,
-    ...(snapshot.pinnedSummary.total > 0 ? [formatCompactTaskSummaryLine("Pinned Tasks", snapshot.pinnedSummary)] : []),
-    ...snapshot.prioritySummaries.map((summary) => `- Priority ${summary.priorityLevel}: ${formatStatusSnapshotCounts(summary.byStatus)}`),
-    `- Best Completion Day: ${history.topHandledDay ? `${formatDateLabel(history.topHandledDay.dateKey)} (${history.topHandledDay.count} handled)` : "None in selected range"}`,
-    `- Highest Missed Day: ${history.highestMissedDay ? `${formatDateLabel(history.highestMissedDay.dateKey)} (${history.highestMissedDay.count} missed)` : "None in selected range"}`,
-    `- Repeated Missed Count: ${history.repeatedMissCount}`,
-    `- Daily Tasks With 0 Wins Count: ${history.dailyZeroWinCount}`,
-    "",
-    "## Routine Performance",
-    "- Range outcomes for Tasks currently in Routine",
-    formatRoutineOutcomeLine("Parent Tasks", routinePerformance.parents),
-    formatRoutineOutcomeLine("Steps/Substeps", routinePerformance.steps),
-    "- Note: Routine membership reflects the current Routine list, including inherited manual membership, because historical membership is unavailable.",
-    "",
-    ...achievementSection,
-    "",
-    ...milestoneSection,
-    "",
-    ...recordsSection,
-    "",
-    ...focusSection,
-    ...(healthSection.length > 0 ? ["", ...healthSection] : []),
-  ];
-
-  if (detailLevel === "detailed") {
-    lines.push(
-      "",
-      "## Task History / details",
-      "",
-      "### All Current Task History",
-      ...(history.taskPatterns.length > 0
-        ? history.taskPatterns.map((entry) => formatTaskHistoryLine(entry, true))
-        : ["- No active, non-trashed task history in the selected range."]),
-      "",
-      "### Day-by-Day Breakdown",
-    );
-
-    const chronologicalDates = [...history.dayBreakdownsByDate.keys()].sort((left, right) => left.localeCompare(right));
-    if (chronologicalDates.length === 0) {
-      lines.push("- No day-by-day records in the selected range.");
-    } else {
-      for (const dateKey of chronologicalDates) {
-        const dayBreakdown = history.dayBreakdownsByDate.get(dateKey);
-        if (!dayBreakdown) {
-          continue;
-        }
-        lines.push(
-          "",
-          `#### ${formatDateHeading(dateKey)}`,
-          `- Summary: Parents handled ${dayBreakdown.handledParents}; Steps/Substeps handled ${dayBreakdown.handledSteps}; Combined handled ${dayBreakdown.handledTotal}; Missed ${dayBreakdown.missed}`,
-          "",
-          formatDayOutcomeGroup("Done", dayBreakdown.outcomes.Done),
-          "",
-          formatDayOutcomeGroup("Did My Best", dayBreakdown.outcomes["Did My Best"]),
-          "",
-          formatDayOutcomeGroup("Complete", dayBreakdown.outcomes.Complete),
-          "",
-          formatDayOutcomeGroup("Missed", dayBreakdown.outcomes.Missed),
-        );
-      }
-    }
-  }
-
-  lines.push(
-    "",
-    "## Analysis Request",
-    "Please analyze this ADHDice report and help me with the following:",
-    "",
-    "- Identify task-by-task follow-through and missed-pattern trends across the selected range.",
-    "- Call out which current tasks look overloaded, stale, avoidance-prone, or ready for simplification.",
-    "- Use the day-by-day breakdown to spot context, sequencing, or timing patterns behind wins and misses.",
-    "- Suggest which recurring tasks need lighter cadence, clearer success criteria, or a better time of day.",
-    "- Propose a realistic 7-day adjustment plan plus 3 to 5 small experiments to improve follow-through.",
-    "- Look for possible correlations worth monitoring across sleep, food/nutrition, hydration, movement/workouts, mood, energy, stress, symptoms, focus, and task follow-through.",
-    "- Describe cross-domain patterns cautiously as associations to explore; do not diagnose medical conditions or assert medical causation.",
-  );
-
-  return lines.join("\n");
-}
-
-export { generateTaskReport, resolveTaskReportHistoryFetchRange };
+export { createEmptyUnifiedReportReadModel };
