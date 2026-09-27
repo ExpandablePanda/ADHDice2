@@ -185,7 +185,7 @@ test("canonical reward path does not recreate legacy History", () => {
 
 test("pending-reward refresh remains after successful canonical fulfillment", () => {
   const canonicalClient = rewardHook.slice(rewardHook.indexOf("async function fulfillCanonicalRewardEntitlements"), rewardHook.indexOf("async function queueTaskRewards"));
-  assert.match(canonicalClient, /if \(allFulfilled\) await refreshPendingRewards\(\);/);
+  assert.match(canonicalClient, /if \(allFulfilled\) await refreshPendingRewardAccount\(\);/);
 });
 
 test("first eligible success snapshots one reward per Task/logical day", () => {

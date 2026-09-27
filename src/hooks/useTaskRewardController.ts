@@ -41,6 +41,11 @@ export function useTaskRewardController({
   const [pendingRewardQueue, setPendingRewardQueue] = useState<PendingTaskReward[]>([]);
   const [pendingRewardDiceCount, setPendingRewardDiceCount] = useState(0);
   const accountSnapshotRef = useRef<PendingRewardDiceAccountSnapshot | null>(null);
+  const pendingRewardQueueRef = useRef<PendingTaskReward[]>([]);
+  const pendingRewardQueueStaleRef = useRef(true);
+  const accountHydrationInFlightRef = useRef<{ client: SupabaseClient; promise: Promise<void>; userId: string } | null>(null);
+  const queueLoadInFlightRef = useRef<{ client: SupabaseClient; promise: Promise<PendingTaskReward[] | null>; userId: string } | null>(null);
+  const ownerGenerationRef = useRef(0);
   const fetchGenerationRef = useRef(0);
   const claimOperationIdRef = useRef<string | null>(null);
   function isFetchFailure(error: unknown) {
@@ -54,14 +59,19 @@ export function useTaskRewardController({
       || message.includes("Network request failed");
   }
 
-  const applyAuthoritativeSnapshot = useCallback((
-    snapshot: PendingRewardDiceAccountSnapshot,
-    queue?: PendingTaskReward[],
-  ) => {
+  const applyAuthoritativeSnapshot = useCallback((snapshot: PendingRewardDiceAccountSnapshot) => {
     if (!shouldApplyPendingRewardDiceSnapshot(accountSnapshotRef.current, snapshot)) return false;
+    const previousSnapshot = accountSnapshotRef.current;
     accountSnapshotRef.current = snapshot;
     setPendingRewardDiceCount(snapshot.pendingDice);
-    if (queue) setPendingRewardQueue(queue);
+    if (
+      !previousSnapshot
+      || previousSnapshot.pendingDice !== snapshot.pendingDice
+      || previousSnapshot.revision !== snapshot.revision
+      || previousSnapshot.updatedAt !== snapshot.updatedAt
+    ) {
+      pendingRewardQueueStaleRef.current = true;
+    }
     return true;
   }, []);
 
@@ -75,40 +85,117 @@ export function useTaskRewardController({
     });
   }, [applyAuthoritativeSnapshot]);
 
-  const refreshPendingRewards = useCallback(async () => {
+  const refreshPendingRewardAccount = useCallback(() => {
     if (!client || !currentUserId) return;
+    const inFlight = accountHydrationInFlightRef.current;
+    if (inFlight?.client === client && inFlight.userId === currentUserId) return inFlight.promise;
+    const ownerGeneration = ownerGenerationRef.current;
     const generation = ++fetchGenerationRef.current;
-    const [accountResult, itemsResult] = await Promise.all([
-      client.from("adhdice_pending_reward_dice").select("pending_dice,revision,updated_at").eq("user_id", currentUserId).maybeSingle(),
-      client.from("adhdice_pending_reward_dice_items").select("reward_payload").eq("user_id", currentUserId).is("claimed_operation_id", null).order("created_at"),
-    ]);
-    if (generation !== fetchGenerationRef.current) return;
-    if (accountResult.error || itemsResult.error) {
-      const error = accountResult.error ?? itemsResult.error;
-      if (!isFetchFailure(error)) {
-        setMessage({ tone: "warn", text: error?.message ?? "Could not synchronize pending reward dice." });
+    const promise = (async () => {
+      const { data, error } = await client
+        .from("adhdice_pending_reward_dice")
+        .select("pending_dice,revision,updated_at")
+        .eq("user_id", currentUserId)
+        .maybeSingle();
+      if (ownerGenerationRef.current !== ownerGeneration || generation !== fetchGenerationRef.current) return;
+      if (error) {
+        if (!isFetchFailure(error)) {
+          setMessage({ tone: "warn", text: error.message ?? "Could not synchronize pending reward dice." });
+        }
+        return;
       }
-      return;
-    }
-    const row = accountResult.data;
-    const snapshot = {
-      pendingDice: row?.pending_dice ?? 0,
-      revision: Number(row?.revision ?? 0),
-      updatedAt: row?.updated_at ?? "",
-    };
-    applyAuthoritativeSnapshot(snapshot, parsePendingRewardItems(itemsResult.data));
+      const row = data;
+      applyAuthoritativeSnapshot({
+        pendingDice: row?.pending_dice ?? 0,
+        revision: Number(row?.revision ?? 0),
+        updatedAt: row?.updated_at ?? "",
+      });
+    })();
+    accountHydrationInFlightRef.current = { client, promise, userId: currentUserId };
+    void promise.then(
+      () => { if (accountHydrationInFlightRef.current?.promise === promise) accountHydrationInFlightRef.current = null; },
+      () => { if (accountHydrationInFlightRef.current?.promise === promise) accountHydrationInFlightRef.current = null; },
+    );
+    return promise;
   }, [applyAuthoritativeSnapshot, client, currentUserId, setMessage]);
 
+  const loadPendingRewardQueue = useCallback(() => {
+    if (!client || !currentUserId) return Promise.resolve<PendingTaskReward[] | null>([]);
+    const inFlight = queueLoadInFlightRef.current;
+    if (inFlight?.client === client && inFlight.userId === currentUserId) return inFlight.promise;
+    if (!pendingRewardQueueStaleRef.current) return Promise.resolve(pendingRewardQueueRef.current);
+
+    const ownerGeneration = ownerGenerationRef.current;
+    const snapshotAtStart = accountSnapshotRef.current;
+    const promise = (async () => {
+      const { data, error } = await client
+        .from("adhdice_pending_reward_dice_items")
+        .select("reward_payload")
+        .eq("user_id", currentUserId)
+        .is("claimed_operation_id", null)
+        .order("created_at");
+      if (ownerGenerationRef.current !== ownerGeneration) return null;
+      if (error) {
+        setMessage({
+          tone: "warn",
+          text: isFetchFailure(error)
+            ? "Could not reach Supabase to load the pending reward bank. Please try again."
+            : (error.message ?? "Could not load the pending reward bank."),
+        });
+        return null;
+      }
+      const queue = parsePendingRewardItems(data);
+      pendingRewardQueueRef.current = queue;
+      setPendingRewardQueue(queue);
+      const snapshotAfterLoad = accountSnapshotRef.current;
+      if (
+        snapshotAtStart?.pendingDice === snapshotAfterLoad?.pendingDice
+        && snapshotAtStart?.revision === snapshotAfterLoad?.revision
+        && snapshotAtStart?.updatedAt === snapshotAfterLoad?.updatedAt
+      ) {
+        pendingRewardQueueStaleRef.current = false;
+      } else {
+        pendingRewardQueueStaleRef.current = true;
+      }
+      return queue;
+    })();
+    queueLoadInFlightRef.current = { client, promise, userId: currentUserId };
+    void promise.then(
+      () => { if (queueLoadInFlightRef.current?.promise === promise) queueLoadInFlightRef.current = null; },
+      () => { if (queueLoadInFlightRef.current?.promise === promise) queueLoadInFlightRef.current = null; },
+    );
+    return promise;
+  }, [client, currentUserId, setMessage]);
+
+  const clearPendingRewardQueue = useCallback(() => {
+    pendingRewardQueueRef.current = [];
+    pendingRewardQueueStaleRef.current = true;
+    setPendingRewardQueue([]);
+  }, []);
+
   useEffect(() => {
+    ownerGenerationRef.current += 1;
     accountSnapshotRef.current = null;
+    pendingRewardQueueStaleRef.current = true;
+    pendingRewardQueueRef.current = [];
     fetchGenerationRef.current += 1;
     claimOperationIdRef.current = null;
-    setPendingRewardDiceCount(0);
-    setPendingRewardQueue([]);
+    const resetGeneration = ownerGenerationRef.current;
+    queueMicrotask(() => {
+      if (ownerGenerationRef.current !== resetGeneration) return;
+      setPendingRewardDiceCount(0);
+      setPendingRewardQueue([]);
+    });
     if (!client || !currentUserId || typeof window === "undefined") return;
 
     let cancelled = false;
-    void refreshPendingRewards();
+    let hasRequestedStartupSnapshot = false;
+    let hasSubscribed = false;
+
+    const requestAccountSnapshot = () => {
+      if (!hasRequestedStartupSnapshot) hasRequestedStartupSnapshot = true;
+      void refreshPendingRewardAccount();
+    };
 
     const channel = client
       .channel(`pending-reward-dice:${currentUserId}`)
@@ -122,17 +209,18 @@ export function useTaskRewardController({
         const row = payload.new as { pending_dice?: number; revision?: number; updated_at?: string };
         const revision = Number(row.revision);
         if (typeof row.pending_dice !== "number" || !Number.isFinite(revision) || typeof row.updated_at !== "string") return;
-        const applied = applyAuthoritativeSnapshot({ pendingDice: row.pending_dice, revision, updatedAt: row.updated_at });
-        if (applied) void refreshPendingRewards();
+        fetchGenerationRef.current += 1;
+        applyAuthoritativeSnapshot({ pendingDice: row.pending_dice, revision, updatedAt: row.updated_at });
       })
       .subscribe((status) => {
         if (cancelled) return;
-        if (status === "SUBSCRIBED" || status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          void refreshPendingRewards();
+        if (status === "SUBSCRIBED") {
+          if (hasSubscribed || !hasRequestedStartupSnapshot) requestAccountSnapshot();
+          hasSubscribed = true;
         }
       });
 
-    const refresh = () => { void refreshPendingRewards(); };
+    const refresh = () => { requestAccountSnapshot(); };
     const refreshWhenVisible = () => { if (document.visibilityState === "visible") refresh(); };
     window.addEventListener("online", refresh);
     window.addEventListener("pageshow", refresh);
@@ -144,7 +232,7 @@ export function useTaskRewardController({
       document.removeEventListener("visibilitychange", refreshWhenVisible);
       void client.removeChannel(channel);
     };
-  }, [applyAuthoritativeSnapshot, client, currentUserId, refreshPendingRewards, setMessage]);
+  }, [applyAuthoritativeSnapshot, client, currentUserId, refreshPendingRewardAccount]);
 
   async function fulfillCanonicalRewardEntitlements(candidates: TaskRewardCandidate[]) {
     if (!client || !currentUserId || candidates.length === 0) return;
@@ -168,7 +256,7 @@ export function useTaskRewardController({
       }
       applyMutationRow(mutationRow);
     }
-    if (allFulfilled) await refreshPendingRewards();
+    if (allFulfilled) await refreshPendingRewardAccount();
   }
 
   async function queueTaskRewards(candidates: TaskRewardCandidate[]) {
@@ -187,7 +275,7 @@ export function useTaskRewardController({
       const mutationRow = claim.data?.[0] as PendingRewardDiceMutationRow | undefined;
       if (claim.error || !mutationRow) {
         setMessage({ tone: "warn", text: claim.error?.message ?? "Could not claim the pending reward dice. Please try again." });
-        await refreshPendingRewards();
+        await refreshPendingRewardAccount();
         return null;
       }
       const session = parseAuthoritativeClaimSession(mutationRow.result_payload);
@@ -196,18 +284,18 @@ export function useTaskRewardController({
         : null;
       if (!session || !economyResult || typeof economyResult.points !== "number" || typeof economyResult.xp !== "number" || typeof economyResult.level !== "number" || typeof economyResult.tokens !== "number") {
         setMessage({ tone: "warn", text: "Supabase returned an incomplete reward result. The canonical balance will be refreshed." });
-        await refreshPendingRewards();
+        await refreshPendingRewardAccount();
         return null;
       }
-      const appliedClaimBalance = applyMutationRow(mutationRow);
-      if (appliedClaimBalance) setPendingRewardQueue([]);
+      applyMutationRow(mutationRow);
+      clearPendingRewardQueue();
       setEconomy({ level: economyResult.level, points: economyResult.points, tokens: economyResult.tokens, xp: economyResult.xp });
       claimOperationIdRef.current = null;
       setMessage({
         tone: "good",
         text: `Reward claimed: +${session.totalFinalPoints} points, +${session.totalXp} XP, +${session.totalTokens} token${session.totalTokens === 1 ? "" : "s"}.`,
       });
-      void refreshPendingRewards();
+      void refreshPendingRewardAccount();
       return session;
     } catch (error) {
       if (isFetchFailure(error)) {
@@ -227,6 +315,7 @@ export function useTaskRewardController({
 
   return {
     claimPendingRewardBank,
+    loadPendingRewardQueue,
     pendingRewardDiceCount,
     pendingRewardQueue,
     queueTaskRewards,

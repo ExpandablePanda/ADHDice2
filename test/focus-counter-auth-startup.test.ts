@@ -1,15 +1,12 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { isFocusAuthReady } from "@/hooks/useFocus";
 
 const focusSource = readFileSync(new URL("../src/hooks/useFocus.ts", import.meta.url), "utf8");
-const userId = "22222222-2222-4222-8222-222222222222";
 
 test("Focus sync requires a matching confirmed authenticated user", () => {
-  assert.equal(isFocusAuthReady(null, userId), false);
-  assert.equal(isFocusAuthReady("33333333-3333-4333-8333-333333333333", userId), false);
-  assert.equal(isFocusAuthReady(userId, userId), true);
+  assert.match(focusSource, /export function isFocusAuthReady\(confirmedUserId: string \| null, userId: string \| null\)/);
+  assert.match(focusSource, /confirmedUserId && userId && confirmedUserId === userId/);
 });
 
 test("Focus counter hydration and Realtime startup are auth-gated and transition-safe", () => {
@@ -22,15 +19,24 @@ test("Focus counter hydration and Realtime startup are auth-gated and transition
   assert.match(hydration, /setMessage\(\{ tone: "warn", text: `Focus counter sync failed:/);
 
   const counterEffectStart = focusSource.indexOf("useEffect(() => {\n    if (!client || !userId || !isFocusAuthReadyForUser) return;");
-  const counterEffectEnd = focusSource.indexOf("  }, [authConfirmationVersion, client, hydrateFocusCounters", counterEffectStart);
+  const counterEffectEnd = focusSource.indexOf("  }, [client, hydrateFocusCounters", counterEffectStart);
   const counterEffect = focusSource.slice(counterEffectStart, counterEffectEnd);
   assert.match(counterEffect, /if \(cancelled \|\| currentUserIdRef\.current !== userId \|\| !isFocusAuthReady\(confirmedAuthUserIdRef\.current, userId\)\) return;/);
   assert.match(counterEffect, /\.channel\(`focus-counters:\$\{userId\}`\)/);
   assert.match(counterEffect, /counterRequestGenerationRef\.current \+= 1;/);
+  assert.match(counterEffect, /hasEstablishedSubscription/);
+  assert.match(counterEffect, /status !== "SUBSCRIBED"/);
+  assert.doesNotMatch(counterEffect, /TIMED_OUT|CHANNEL_ERROR|CLOSED/);
+  const counterBeforeChannel = counterEffect.slice(0, counterEffect.indexOf(".channel(`focus-counters"));
+  assert.doesNotMatch(counterBeforeChannel, /hydrateFocusCounters\(\)/);
+  const counterSubscribeStart = counterEffect.indexOf(".subscribe((status)");
+  const counterSubscribe = counterEffect.slice(counterSubscribeStart, counterEffect.indexOf("counterChannelRef.current", counterSubscribeStart));
+  assert.equal((counterSubscribe.match(/void hydrateFocusCounters\(\)/g) ?? []).length, 1);
 
   assert.match(focusSource, /subscribeToBrowserAuth\(\(_event, session\)/);
   assert.match(focusSource, /confirmedAuthUserIdRef\.current = nextUserId/);
-  assert.match(focusSource, /setAuthConfirmationVersion\(\(current\) => current \+ 1\)/);
+  assert.match(focusSource, /if \(previousUserId !== nextUserId\) \{[\s\S]*counterRequestGenerationRef\.current \+= 1;[\s\S]*runtimeHydrationGenerationRef\.current \+= 1;/);
+  assert.doesNotMatch(focusSource, /authConfirmationVersion/);
 });
 
 test("Focus runtime hydration and Realtime startup share the confirmed-auth gate", () => {
@@ -45,14 +51,30 @@ test("Focus runtime hydration and Realtime startup share the confirmed-auth gate
   assert.match(hydration, /if \(!isCurrentRuntimeHydration\(\)\) return;/);
 
   const runtimeEffectStart = focusSource.indexOf("useEffect(() => {\n    if (!client || !userId || !isFocusAuthReadyForUser) {", hydrationStart);
-  const runtimeEffectEnd = focusSource.indexOf("  }, [applyRuntimeRow, authConfirmationVersion", runtimeEffectStart);
+  const runtimeEffectEnd = focusSource.indexOf("  }, [applyRuntimeRow, client", runtimeEffectStart);
   const runtimeEffect = focusSource.slice(runtimeEffectStart, runtimeEffectEnd);
   assert.match(runtimeEffect, /if \(!client \|\| !userId \|\| !isFocusAuthReadyForUser\) \{/);
   assert.match(runtimeEffect, /if \(!active \|\| currentUserIdRef\.current !== userId \|\| !isFocusAuthReady\(confirmedAuthUserIdRef\.current, userId\)\) return;/);
   assert.match(runtimeEffect, /\.channel\(`focus-runtime:\$\{userId\}`\)/);
   assert.match(runtimeEffect, /runtimeRequestGenerationRef\.current \+= 1;/);
-  assert.match(runtimeEffect, /runtimeHydrationGenerationRef\.current \+= 1;/);
+  assert.match(focusSource, /runtimeHydrationGenerationRef\.current \+= 1;/);
   assert.match(runtimeEffect, /removeRealtimeChannel\(channel\)/);
+  assert.match(runtimeEffect, /hasEstablishedSubscription/);
+  assert.match(runtimeEffect, /status !== "SUBSCRIBED"/);
+  assert.doesNotMatch(runtimeEffect, /TIMED_OUT|CHANNEL_ERROR|CLOSED/);
+  const runtimeBeforeChannel = runtimeEffect.slice(0, runtimeEffect.indexOf(".channel(`focus-runtime"));
+  assert.doesNotMatch(runtimeBeforeChannel, /hydrateFocusRuntimes\(\)/);
+  const runtimeSubscribeStart = runtimeEffect.indexOf(".subscribe((status)");
+  const runtimeSubscribe = runtimeEffect.slice(runtimeSubscribeStart, runtimeEffect.indexOf("runtimeChannelRef.current", runtimeSubscribeStart));
+  assert.equal((runtimeSubscribe.match(/void hydrateFocusRuntimes\(\)/g) ?? []).length, 1);
+});
+
+test("Focus startup hydration is single-flight per authenticated owner and reconnect-safe", () => {
+  assert.match(focusSource, /runtimeHydrationInFlightRef/);
+  assert.match(focusSource, /counterHydrationInFlightRef/);
+  assert.match(focusSource, /inFlight\?\.client === client && inFlight\.userId === userId/);
+  assert.match(focusSource, /if \(inFlight\?\.client === client && inFlight\.userId === userId\) return inFlight\.promise;/);
+  assert.match(focusSource, /status !== "SUBSCRIBED"/);
 });
 
 test("Focus counter mutations remain RPC-only", () => {

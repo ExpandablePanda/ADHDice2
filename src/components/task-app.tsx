@@ -4640,8 +4640,8 @@ export function TaskApp() {
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
   const {
     claimPendingRewardBank,
+    loadPendingRewardQueue,
     pendingRewardDiceCount,
-    pendingRewardQueue,
     queueTaskRewards,
   } = useTaskRewardController({
     client,
@@ -4650,13 +4650,14 @@ export function TaskApp() {
     setMessage,
     setEconomy,
   });
-  const openPendingRewardBank = useCallback(() => {
-    if (pendingRewardQueue.length === 0) {
+  const openPendingRewardBank = useCallback(async () => {
+    const pendingRewardQueue = await loadPendingRewardQueue();
+    if (!pendingRewardQueue || pendingRewardQueue.length === 0) {
       return;
     }
 
     setActiveRewardBankSession([...pendingRewardQueue]);
-  }, [pendingRewardQueue]);
+  }, [loadPendingRewardQueue]);
   const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
     if (pendingRewardDiceCount > 0) {

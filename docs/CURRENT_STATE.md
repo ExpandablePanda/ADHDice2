@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.52`.
+- Current working app version: `7.15.53`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.53 Startup network correction
+
+Focus startup now establishes each authenticated-owner Realtime channel before
+running one snapshot hydration on its first successful `SUBSCRIBED`; same-owner
+auth callbacks no longer rebuild the channels, and runtime/counter snapshot
+requests are single-flight. Later successful resubscriptions and authorized
+resume/reconnect triggers can perform one recovery refresh without blindly
+hydrating on error statuses.
+
+Pending reward startup now reads only the lightweight
+`adhdice_pending_reward_dice` account row. The unclaimed reward-item payload
+queue is stale-aware and single-flight, loading only when the user opens the
+pending reward bank. Claim and Realtime invalidation clear or stale the local
+queue without eagerly downloading the item table. No SQL or Supabase schema
+changed; browser/manual QA remains Andrew-owned and unverified here.
 
 ## 2026-09-26 7.15.52 Workspace efficiency release gate
 
