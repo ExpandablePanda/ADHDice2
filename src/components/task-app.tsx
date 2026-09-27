@@ -107,7 +107,7 @@ import {
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
-import { buildEffectiveTrackingExclusionSet, filterTrackedTaskHistory } from "@/lib/task-tracking";
+import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";

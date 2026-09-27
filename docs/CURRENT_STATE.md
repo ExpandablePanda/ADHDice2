@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.61`.
+- Current working app version: `7.15.62`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-27 7.15.62 Shared branch consolidation
+
+- Main hierarchy hotfix preserved.
+- Side features integrated.
+- 7.15.61 Supabase hardening preserved.
+- Ready for public main promotion and iOS sync.
 
 ## 2026-09-27 7.15.61 Supabase scale hardening and refresh diet
 
