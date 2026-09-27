@@ -31,6 +31,7 @@ export type ReportReadRequest = {
 
 type QueryClient = {
   from: (table: string) => ReportQuery;
+  rpc: <T>(functionName: string, args: Record<string, unknown>) => Promise<{ data: T[] | null; error: unknown | null }>;
 };
 
 type ReportQuery = {
@@ -93,10 +94,6 @@ function inDateRange(column: string, startDateKey: string | null, endDateKey: st
   };
 }
 
-function historyThrough(endDateKey: string | null) {
-  return (query: ReportQuery) => endDateKey ? query.lte("logical_date", endDateKey) : query;
-}
-
 function sourceDates(source: Omit<UnifiedReportSourceRows, "startDateKey" | "endDateKey" | "todayDateKey">) {
   return [
     ...source.history.map((row) => row.logical_date),
@@ -113,6 +110,18 @@ function sourceDates(source: Omit<UnifiedReportSourceRows, "startDateKey" | "end
   ].filter(isDateKey).sort();
 }
 
+async function readReportTaskHistory(client: QueryClient, userId: string, request: ReportReadRequest) {
+  if (request.startDateKey && request.endDateKey) {
+    const { data, error } = await client.rpc<ReportHistorySourceRow>("adhdice_get_report_task_history", {
+      p_end_date: request.endDateKey,
+      p_start_date: request.startDateKey,
+    });
+    if (error) throw error;
+    return (data ?? []) as ReportHistorySourceRow[];
+  }
+  return readRows<ReportHistorySourceRow>(client, "adhdice_task_history_facts", "entity_id,logical_date,outcome,updated_at", userId);
+}
+
 export async function loadReportReadModel(client: QueryClient, userId: string, request: ReportReadRequest): Promise<UnifiedReportReadModel> {
   const warnings: string[] = [];
   const optional = async <T>(label: string, load: () => Promise<T>, fallback: T) => {
@@ -126,7 +135,7 @@ export async function loadReportReadModel(client: QueryClient, userId: string, r
   const ranged = (column: string) => inDateRange(column, request.startDateKey, request.endDateKey);
   const [tasks, history, focusCategories, focusSessions, profile, meals, water, weight, metrics, workouts, checkIns, signals, symptoms, signalOccurrences, symptomEntries, records] = await Promise.all([
     readRows<ReportTaskSourceRow>(client, "adhdice_clean_tasks", "id,title,parent_task_id,permanently_deleted_at", userId),
-    readRows<ReportHistorySourceRow>(client, "adhdice_task_history_facts", "entity_id,logical_date,outcome,updated_at", userId, historyThrough(request.endDateKey)),
+    readReportTaskHistory(client, userId, request),
     readRows<ReportFocusCategorySourceRow>(client, "adhdice_focus_categories", "id,title,focus_type,focus_subtype,focus_subtype_2", userId),
     readRows<ReportFocusSourceRow>(client, "adhdice_focus_sessions", "id,category_id,title_snapshot,session_date,duration_seconds", userId, ranged("session_date")),
     optional("Health profile", async () => {

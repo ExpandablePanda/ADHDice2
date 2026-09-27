@@ -243,7 +243,7 @@ function formatFoodDay(day: UnifiedReportHealthDay, reportData: UnifiedReportRea
     }
   }
   const knownNutrients = Object.entries(day.food.nutritionSummary?.values ?? {})
-    .filter(([, value]) => Number.isFinite(value) && value !== 0);
+    .filter(([, value]) => Number.isFinite(value) && value !== 0 && formatNumber(value) !== "0" && formatNumber(value) !== "-0");
   if (day.food.nutritionSummary && knownNutrients.length > 0) {
     const partial = knownNutrients.some(([key]) => {
       const coverage = day.food.nutritionSummary?.coverage[key];

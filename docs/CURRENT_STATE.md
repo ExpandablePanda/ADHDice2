@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.56`.
+- Current working app version: `7.15.58`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,7 +14,24 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
-## 2026-09-27 7.15.56 Unified Reports V1 and compact report reads
+## 2026-09-27 7.15.58 Bounded Reports Task History and nutrition display cleanup
+
+Bounded Reports ranges now read canonical Task History through the authenticated
+`adhdice_get_report_task_history` SECURITY INVOKER RPC. The source read model
+receives the latest baseline fact before the selected range for each current
+Task, plus all facts inside the range, while All Available retains the existing
+full-history fallback. Report New Misses, Total Misses, hierarchy, and canonical
+History authority are unchanged. The SQL source is authored but has not been
+applied to Supabase, and the `report-read` Edge Function source change has not
+been deployed.
+
+Nutrition summary lines that are unavailable or format to zero are omitted;
+stored nutrition and Health values are unchanged. Focused report tests,
+targeted lint, relevant typecheck diagnostics, and `git diff --check` are the
+verification boundary. Browser/manual QA, live SQL application, Edge
+deployment, and broad regression checks remain unverified in this pass.
+
+## 2026-09-27 7.15.57 Report cleanup and duplicate request fix
 
 Reports now have one unified Markdown format. The Summary/Detailed chips, detail
 level API, current-progress snapshot, and milestone report sections were removed.

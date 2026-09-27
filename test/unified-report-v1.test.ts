@@ -162,6 +162,15 @@ test("nutrition summary omits unavailable and zero nutrients while preserving us
   assert.doesNotMatch(markdown, /Saturated Fat G|Vitamin B12 Mcg|Choline Mg/);
 });
 
+test("nutrition summary omits values that round to displayed zero", () => {
+  const model = buildUnifiedReportReadModel(emptySource({
+    meals: [{ carbs_g: 1, calories: 100, entry_date: "2026-09-01", fat_g: 1, food_name: "Trace nutrients", food_snapshot: { nutrition_details: { vitamin_b6_mg: 0.04, vitamin_d_mcg: 0.1 } }, meal_slot: "breakfast", nutrition_snapshot: null, protein_g: 1 }],
+  }));
+  const markdown = report(model);
+  assert.doesNotMatch(markdown, /Vitamin B6: 0mg/);
+  assert.match(markdown, /Vitamin D: 0\.1mcg/);
+});
+
 test("unavailable PATHS and On-Time sections are omitted from summary and daily detail", () => {
   const markdown = report(buildUnifiedReportReadModel(emptySource()));
   assert.doesNotMatch(markdown, /^### PATHS$/m);
