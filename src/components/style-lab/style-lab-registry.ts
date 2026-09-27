@@ -27,6 +27,39 @@ export type StyleLabBackgroundColor = (typeof STYLE_LAB_BACKGROUND_COLORS)[numbe
 
 export const STYLE_LAB_CUSTOM_COLOR_DEFAULT = "#8f6cff";
 
+export const STYLE_LAB_BUILDER_FONT_OPTIONS = [
+  {
+    id: "adhdice",
+    label: "ADHDice Default",
+    cssFamily: '"Avenir Next", Manrope, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+    googleFamily: null,
+  },
+  {
+    id: "system",
+    label: "System / SF Pro",
+    cssFamily: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", system-ui, sans-serif',
+    googleFamily: null,
+  },
+  { id: "inter", label: "Inter", cssFamily: '"Inter", sans-serif', googleFamily: "Inter" },
+  { id: "roboto", label: "Roboto", cssFamily: '"Roboto", sans-serif', googleFamily: "Roboto" },
+  { id: "open-sans", label: "Open Sans", cssFamily: '"Open Sans", sans-serif', googleFamily: "Open+Sans" },
+  { id: "poppins", label: "Poppins", cssFamily: '"Poppins", sans-serif', googleFamily: "Poppins" },
+  { id: "montserrat", label: "Montserrat", cssFamily: '"Montserrat", sans-serif', googleFamily: "Montserrat" },
+  { id: "lato", label: "Lato", cssFamily: '"Lato", sans-serif', googleFamily: "Lato" },
+] as const;
+
+export type StyleLabBuilderFontFamily = (typeof STYLE_LAB_BUILDER_FONT_OPTIONS)[number]["id"];
+
+export const STYLE_LAB_BUILDER_WEB_FONT_STYLESHEET = "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Lato:wght@400;700;900&family=Montserrat:wght@400;500;600;700&family=Open+Sans:wght@400;500;600;700&family=Poppins:wght@400;500;600;700&family=Roboto:wght@400;500;700&display=swap";
+
+export function isStyleLabBuilderFontFamily(value: unknown): value is StyleLabBuilderFontFamily {
+  return typeof value === "string" && STYLE_LAB_BUILDER_FONT_OPTIONS.some((option) => option.id === value);
+}
+
+export function getStyleLabBuilderFontOption(value: unknown) {
+  return STYLE_LAB_BUILDER_FONT_OPTIONS.find((option) => option.id === value) ?? STYLE_LAB_BUILDER_FONT_OPTIONS[0]!;
+}
+
 export const STYLE_LAB_BACKGROUND_PALETTE = [
   { label: "Surface", token: "--surface", value: "Surface" },
   { label: "Subtle", token: "--surface-muted", value: "Subtle" },
@@ -50,6 +83,55 @@ export function normalizeStyleLabCustomColor(value: unknown): string | null {
 export const STYLE_LAB_ICON_OPTIONS = TASK_TYPE_ICON_OPTIONS.filter((option) => Boolean(option.icon) || isLucideIconName(option.key));
 
 export type StyleLabIconName = (typeof STYLE_LAB_ICON_OPTIONS)[number]["key"];
+
+export const STYLE_LAB_BUILDER_LAYOUTS = ["column", "row", "grid"] as const;
+export type StyleLabBuilderLayout = (typeof STYLE_LAB_BUILDER_LAYOUTS)[number];
+
+export const STYLE_LAB_BUILDER_GRID_COLUMNS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12] as const;
+export type StyleLabBuilderGridColumns = (typeof STYLE_LAB_BUILDER_GRID_COLUMNS)[number];
+
+export const STYLE_LAB_BUILDER_CANVAS_WIDTHS = ["320", "390", "430", "fit"] as const;
+export type StyleLabBuilderCanvasWidth = (typeof STYLE_LAB_BUILDER_CANVAS_WIDTHS)[number];
+
+export const STYLE_LAB_BUILDER_CHIP_TONES = ["default", "purple", "pending", "progress", "delayed", "done", "best", "missed", "upcoming", "notDue", "complete", "archived", "danger"] as const;
+export type StyleLabBuilderChipTone = (typeof STYLE_LAB_BUILDER_CHIP_TONES)[number];
+
+export const STYLE_LAB_BUILDER_ICON_BUTTON_SIZES = ["sm", "md", "lg"] as const;
+export type StyleLabBuilderIconButtonSize = (typeof STYLE_LAB_BUILDER_ICON_BUTTON_SIZES)[number];
+
+export const STYLE_LAB_BUILDER_ICON_BUTTON_TONES = ["default", "purple", "success", "warning", "danger", "ghost"] as const;
+export type StyleLabBuilderIconButtonTone = (typeof STYLE_LAB_BUILDER_ICON_BUTTON_TONES)[number];
+
+export const STYLE_LAB_BUILDER_DIVIDER_ORIENTATIONS = ["horizontal", "vertical"] as const;
+export type StyleLabBuilderDividerOrientation = (typeof STYLE_LAB_BUILDER_DIVIDER_ORIENTATIONS)[number];
+
+export const STYLE_LAB_BUILDER_DIVIDER_WIDTHS = ["25%", "50%", "75%", "100%"] as const;
+export type StyleLabBuilderDividerWidth = (typeof STYLE_LAB_BUILDER_DIVIDER_WIDTHS)[number];
+
+export const STYLE_LAB_BUILDER_RADIUS_OPTIONS = [
+  { label: "None", value: "none", cssValue: "0" },
+  { label: "Small", value: "small", cssValue: "0.5rem" },
+  { label: "Medium", value: "medium", cssValue: "0.75rem" },
+  { label: "Large", value: "large", cssValue: "1rem" },
+  { label: "XL", value: "xl", cssValue: "1.5rem" },
+  { label: "2XL", value: "2xl", cssValue: "2rem" },
+  { label: "Pill", value: "pill", cssValue: "9999px" },
+] as const;
+export type StyleLabBuilderRadius = (typeof STYLE_LAB_BUILDER_RADIUS_OPTIONS)[number]["value"];
+
+export const STYLE_LAB_BUILDER_BORDER_OPTIONS = [
+  { label: "None", value: "none", cssValue: "none" },
+  { label: "Subtle", value: "subtle", cssValue: "1px solid var(--border-soft)" },
+] as const;
+export type StyleLabBuilderBorder = (typeof STYLE_LAB_BUILDER_BORDER_OPTIONS)[number]["value"];
+
+export const STYLE_LAB_BUILDER_SHADOW_OPTIONS = [
+  { label: "None", value: "none", cssValue: "none" },
+  { label: "Subtle", value: "subtle", cssValue: "0 4px 12px color-mix(in srgb, var(--accent) 8%, transparent)" },
+  { label: "Card", value: "card", cssValue: "0 8px 24px color-mix(in srgb, var(--accent) 10%, transparent)" },
+  { label: "Floating", value: "floating", cssValue: "0 20px 60px color-mix(in srgb, var(--accent) 18%, transparent)" },
+] as const;
+export type StyleLabBuilderShadow = (typeof STYLE_LAB_BUILDER_SHADOW_OPTIONS)[number]["value"];
 
 export const STYLE_LAB_PROPERTY_IDS = [
   "fontSize",
@@ -253,7 +335,9 @@ export function isStyleLabIconName(value: unknown): value is StyleLabIconName {
   return typeof value === "string" && STYLE_LAB_ICON_OPTIONS.some((option) => option.key === value);
 }
 
-export function getStyleLabTextColorCssValue(value: StyleLabTextColor): string {
+export function getStyleLabTextColorCssValue(value: string): string {
+  const customColor = normalizeStyleLabCustomColor(value);
+  if (customColor) return customColor;
   const tokenByColor: Record<StyleLabTextColor, string> = {
     Primary: "var(--text-primary)",
     Secondary: "var(--text-secondary)",
@@ -263,7 +347,7 @@ export function getStyleLabTextColorCssValue(value: StyleLabTextColor): string {
     Warning: "var(--warning)",
     Danger: "var(--danger)",
   };
-  return tokenByColor[value];
+  return tokenByColor[value as StyleLabTextColor] ?? tokenByColor.Primary;
 }
 
 export function getStyleLabBackgroundColorCssValue(value: string): string {

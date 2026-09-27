@@ -871,6 +871,70 @@ verification.
 No SQL, Edge deployment, or projection rebuild was performed by that
 checkpoint. History startup was still active there; 7.15.35 now retires the
 automatic startup bootstrap while preserving on-demand History.
+## 2026-09-25 7.15.40 Side Style Builder Phase 4A
+
+Style Builder Phase 4A establishes the development/local-only ADHDice UI
+Library as the single catalog for Builder starters and insertable visual trees.
+It adds searchable categories, separate Start From UI and Insert UI operations,
+fresh-ID subtree insertion under the existing Builder normalization and limits,
+shared UI-system primitive and meaningful variant coverage, Style Lab production
+role mapping, and a deterministic wider-app visual inventory with explicit
+`ready`, `adapter-needed`, `intentionally-nonvisual`, and
+`unsupported-for-builder` statuses. The seven Phase 1–3 starters remain
+available through compatibility IDs backed by the catalog. This phase does not
+adapt every Task, Health, Journal, HUD, planning, navigation, or larger feature
+module; those remain visible future inventory work. No production feature
+behavior, runtime data fetching, Supabase, persistence, or Inspector-to-Builder
+capture was added.
+
+## 2026-09-24 7.15.39 Side Style Lab Builder Phase 3
+
+Style Builder Phase 3 adds direct canvas drag/reorder with Page-Shell-inspired
+snapping guides, Row/Column insertion, packed Grid movement, cross-Container
+movement, and Builder-only grid child spans. Existing Builder drafts remain
+backward-compatible under the unchanged `adhdice-style-lab:builder-draft`
+storage key. The Builder remains development-only and local-only; exports remain
+reference artifacts and never write source files.
+
+## 2026-09-24 7.15.38 Side Style Lab Builder Phase 2
+
+Style Builder Phase 2 keeps the dedicated Test concept and adds a sticky live
+canvas with a normally scrolling editor, direct Container resize and inline
+Text/Chip editing, visual custom HEX color controls, a curated development-only
+font library, and curated ADHDice-style starter templates. Builder drafts remain
+backward-compatible and use the unchanged `adhdice-style-lab:builder-draft`
+storage key. The Builder remains development-only and local-only; exports remain
+reference artifacts and never write source files.
+
+## 2026-09-24 7.15.37 Side Style Lab Builder Test Workspace
+
+The Style Lab Builder now lives as the dedicated `test-style-builder` Test
+concept instead of inside the floating Style Lab panel. The floating panel is
+Inspect-only again. Builder storage and its normalized data model are unchanged,
+including the `adhdice-style-lab:builder-draft` key. The Builder remains
+development-only and local-only; Module Spec and Reference Code exports remain
+reference artifacts only and never write source files. Browser QA remains
+manual and this shared developer infrastructure should remain Side-only until
+that UX passes review.
+
+## 2026-09-24 7.15.35 Side Test iOS Task Detail Typography Pass
+
+The isolated Side Test iOS Task Detail concept now uses quiet sentence-case
+tile labels, centered semibold values, minimal optional status text, and a
+lighter Call UGI hero hierarchy. Long-press Arrange behavior, row-major
+reordering, local tile-order persistence, Reset Layout, and all production
+boundaries remain unchanged. Browser/device QA remains manual.
+
+## 2026-09-24 7.15.34 Side Test iOS Task Detail Concept
+
+The Side Test page now includes an isolated `test-ios-task-detail` concept for
+evaluating a future iOS-oriented task-detail hierarchy: a fixed Call UGI hero,
+compact 3-column metadata tiles, and local-only long-press Arrange mode with
+validated tile-order persistence and Reset Layout. It uses mock presentation
+data only and does not change production Task UI, native iOS code, Task State,
+History, Supabase, or shared PageShell behavior. Browser/device QA remains
+manual and the concept is intended to remain Side-only until separately
+approved.
 
 ## 2026-09-24 7.15.32 Scoped Last Handled Parity Oracle + V2 Campaign Resume Gate
 

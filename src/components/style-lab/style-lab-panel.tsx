@@ -240,7 +240,7 @@ export function StyleLabPanel({
         </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-0.5" ref={panelBodyRef}>
-      <div className="mt-3 flex items-center justify-between gap-2 rounded-lg border border-[#ece8f8] bg-[#faf9ff] px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
+      <div className="mt-2 flex items-center justify-between gap-2 rounded-lg border border-[#ece8f8] bg-[#faf9ff] px-2.5 py-2 text-xs dark:border-white/10 dark:bg-white/[0.04]">
         <span className="flex min-w-0 items-center gap-2">
           <span className={`h-2 w-2 shrink-0 rounded-full ${inspectionActive ? "bg-[#12a876]" : "bg-[#a8a0bd]"}`} />
           <span>{inspectionActive ? "Inspection active" : "Inspection inactive"}</span>
