@@ -1604,6 +1604,12 @@ derived settings revisions, or current Tasks view routing. The dormant
 changed or deleted. HUD shell/widget sizing and placement, HUD local/cloud
 persistence, and current Table/List layout preferences remain unchanged.
 
+## 2026-09-23 7.14.47 Public Hierarchy Storm Containment Hotfix
+
+7.14.47 ports the hierarchy RPC storm containment from 7.15.18 to the public
+release line. This is a client-only hotfix; no SQL, Edge Function, or Task
+State semantic change is included.
+
 ## 2026-09-21 7.14.46 Consolidate Side Work into 7.14
 
 Merged the completed `codex/Side` application work into the active `7.14`

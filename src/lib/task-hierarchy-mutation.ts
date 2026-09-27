@@ -133,7 +133,7 @@ export function buildTaskHierarchyUnlinkPlan(
 export function moveTaskHierarchy(
   client: Client,
   input: MoveTaskHierarchyInput,
-) : Promise<TaskHierarchyMutationResult> {
+): Promise<TaskHierarchyMutationResult> {
   const guard = getTaskHierarchyMutationGuard(client);
   const intentKey = getTaskHierarchyMutationIntentKey(input);
 
