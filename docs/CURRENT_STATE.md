@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.54`.
+- Current working app version: `7.15.55`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,32 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.55 Final startup-network correction
+
+Workspace startup now preserves the authenticated owner's in-flight startup
+registry entry across same-owner effect replay. User changes and sign-out still
+invalidate the previous owner, and the registry remains an in-flight sharing
+mechanism rather than a data cache.
+
+Focus runtime and counter snapshots now use explicit channel-generation,
+connection, hidden/offline, and freshness state. The first authenticated
+`SUBSCRIBED` hydrates once; duplicate notifications and immediate ordinary
+visibility, pageshow, online, and broadcast noise do not start another read.
+Actual reconnect/error recovery, bfcache restore, offline-to-online recovery,
+and a meaningful visibility resume remain eligible for one recovery snapshot.
+
+Pending reward startup applies the same lifecycle guard to its lightweight
+account-row synchronization. Pending reward item payloads remain lazy and are
+still loaded only when the reward bank opens. Task state, recurrence, reward
+calculation/claims, Realtime payload application, cross-device synchronization,
+the 7.15.54 latest-boundary RPC, SQL, and schema are unchanged.
+
+Focused workspace, Focus, sync, and pending-reward tests pass; targeted lint and
+`git diff --check` are the source verification boundary. No SQL or live
+Supabase deployment is required. Browser/manual QA remains Andrew-owned; the
+next manual check is one clean reload followed by live Supabase log
+verification.
 
 ## 2026-09-26 7.15.54 Bulk latest Task schedule-boundary startup read
 

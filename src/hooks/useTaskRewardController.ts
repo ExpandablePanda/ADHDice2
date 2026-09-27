@@ -9,6 +9,7 @@ import {
   type TaskRewardCandidate,
 } from "@/lib/task-rewards";
 import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
+import { createRealtimeSnapshotLifecycle } from "@/lib/realtime-snapshot-lifecycle";
 import {
   parseAuthoritativeClaimSession,
   parsePendingRewardItems,
@@ -189,12 +190,19 @@ export function useTaskRewardController({
     if (!client || !currentUserId || typeof window === "undefined") return;
 
     let cancelled = false;
-    let hasRequestedStartupSnapshot = false;
-    let hasSubscribed = false;
+    const snapshotLifecycle = createRealtimeSnapshotLifecycle();
 
-    const requestAccountSnapshot = () => {
-      if (!hasRequestedStartupSnapshot) hasRequestedStartupSnapshot = true;
-      void refreshPendingRewardAccount();
+    const requestAccountSnapshot = (shouldRequest: boolean) => {
+      if (!shouldRequest) return;
+      const promise = refreshPendingRewardAccount();
+      if (!promise) {
+        snapshotLifecycle.completeHydration(false);
+        return;
+      }
+      void promise.then(
+        () => snapshotLifecycle.completeHydration(true),
+        () => snapshotLifecycle.completeHydration(false),
+      );
     };
 
     const channel = client
@@ -214,22 +222,28 @@ export function useTaskRewardController({
       })
       .subscribe((status) => {
         if (cancelled) return;
-        if (status === "SUBSCRIBED") {
-          if (hasSubscribed || !hasRequestedStartupSnapshot) requestAccountSnapshot();
-          hasSubscribed = true;
+        if (status !== "SUBSCRIBED") {
+          snapshotLifecycle.handleStatus(status);
+          return;
         }
+        requestAccountSnapshot(snapshotLifecycle.handleStatus(status));
       });
 
-    const refresh = () => { requestAccountSnapshot(); };
-    const refreshWhenVisible = () => { if (document.visibilityState === "visible") refresh(); };
-    window.addEventListener("online", refresh);
-    window.addEventListener("pageshow", refresh);
+    const refreshWhenVisible = () => requestAccountSnapshot(snapshotLifecycle.handleVisibilityChange(document.visibilityState));
+    const refreshWhenPageShows = (event: PageTransitionEvent) => requestAccountSnapshot(snapshotLifecycle.handlePageShow(event.persisted));
+    const refreshWhenOnline = () => requestAccountSnapshot(snapshotLifecycle.handleOnline());
+    const refreshWhenOffline = () => { snapshotLifecycle.handleOffline(); };
+    window.addEventListener("online", refreshWhenOnline);
+    window.addEventListener("offline", refreshWhenOffline);
+    window.addEventListener("pageshow", refreshWhenPageShows);
     document.addEventListener("visibilitychange", refreshWhenVisible);
     return () => {
       cancelled = true;
-      window.removeEventListener("online", refresh);
-      window.removeEventListener("pageshow", refresh);
+      window.removeEventListener("online", refreshWhenOnline);
+      window.removeEventListener("offline", refreshWhenOffline);
+      window.removeEventListener("pageshow", refreshWhenPageShows);
       document.removeEventListener("visibilitychange", refreshWhenVisible);
+      snapshotLifecycle.dispose();
       void client.removeChannel(channel);
     };
   }, [applyAuthoritativeSnapshot, client, currentUserId, refreshPendingRewardAccount]);

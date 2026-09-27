@@ -6,6 +6,7 @@ import {
   parseAuthoritativeClaimSession,
   shouldApplyPendingRewardDiceSnapshot,
 } from "@/lib/pending-reward-dice";
+import { createRealtimeSnapshotLifecycle } from "../src/lib/realtime-snapshot-lifecycle.ts";
 import { resolveTaskRewardTier, type PendingTaskReward } from "@/lib/task-rewards";
 
 const sql = readFileSync(new URL("../supabase/add_pending_reward_dice.sql", import.meta.url), "utf8");
@@ -112,7 +113,20 @@ test("pending rewards do not use the Roll-page bank or its RPC", () => {
 });
 
 test("normal pending reward startup synchronizes only the lightweight account", () => {
+  const lifecycle = createRealtimeSnapshotLifecycle();
+  assert.equal(lifecycle.handleStatus("SUBSCRIBED"), true);
+  lifecycle.completeHydration(true);
+  assert.equal(lifecycle.handleStatus("SUBSCRIBED"), false);
+  assert.equal(lifecycle.handleVisibilityChange("visible"), false);
+  assert.equal(lifecycle.handlePageShow(false), false);
+  assert.equal(lifecycle.handleOnline(), false);
+
   assert.match(controller, /fetchGenerationRef/);
+  assert.match(controller, /createRealtimeSnapshotLifecycle/);
+  assert.match(controller, /snapshotLifecycle\.handleStatus\(status\)/);
+  assert.match(controller, /snapshotLifecycle\.handleVisibilityChange/);
+  assert.match(controller, /snapshotLifecycle\.handlePageShow/);
+  assert.match(controller, /snapshotLifecycle\.handleOnline/);
   assert.match(controller, /postgres_changes/);
   assert.match(controller, /visibilitychange/);
   assert.match(controller, /pageshow/);
@@ -122,7 +136,7 @@ test("normal pending reward startup synchronizes only the lightweight account", 
   const startupEffect = controller.slice(startupEffectStart, controller.indexOf("  }, [applyAuthoritativeSnapshot", startupEffectStart));
   assert.match(startupEffect, /adhdice_pending_reward_dice/);
   assert.doesNotMatch(startupEffect, /adhdice_pending_reward_dice_items/);
-  assert.match(controller, /status === "SUBSCRIBED"/);
+  assert.match(controller, /status !== "SUBSCRIBED"/);
 });
 
 test("pending reward payloads load lazily and repeated opens join one request", () => {

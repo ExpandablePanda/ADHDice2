@@ -405,14 +405,15 @@ test("streak-summary resolution checks the captured user before applying", async
   assert.match(source, /if \(liveWorkspaceUserIdRef\.current === userId\) \{\s*liveWorkspaceUserIdRef\.current = null/);
 });
 
-test("same-user workspace replacement creates a new ownership generation", async () => {
+test("same-user workspace replacement creates a new generation without invalidating startup ownership", async () => {
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
 
   assert.match(source, /const workspaceGeneration = workspaceGenerationRef\.current \+ 1/);
   assert.match(source, /workspaceGenerationRef\.current = workspaceGeneration/);
   assert.match(source, /workspaceGenerationRef\.current === workspaceGeneration/);
-  assert.match(source, /workspaceStartupRequestRegistry\.invalidate\(startupRequestUserIdRef\.current\)/);
-  assert.match(source, /startupRequestUserIdRef\.current = null;\s*coreRefreshCoordinatorRef\.current = null/);
+  assert.match(source, /startupRequestUserIdRef\.current = updateWorkspaceStartupRequestOwner\(/);
+  assert.doesNotMatch(source, /workspaceStartupRequestRegistry\.invalidate\(startupRequestUserIdRef\.current\)/);
+  assert.doesNotMatch(source, /startupRequestUserIdRef\.current = null;\s*coreRefreshCoordinatorRef\.current = null/);
 });
 
 test("a stale in-flight summary promise is neither joined nor allowed to clear a newer one", async () => {

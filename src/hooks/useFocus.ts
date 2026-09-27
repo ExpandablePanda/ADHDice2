@@ -5,6 +5,7 @@ import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, FocusReallocationMode, PendingFocusDailySurplus } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
 import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
+import { createRealtimeSnapshotLifecycle } from "@/lib/realtime-snapshot-lifecycle";
 import { buildFocusGoalPlan, getMondayWeekRange, getPromptedDailySurplusSeconds, normalizeCarryoverMode, normalizeDistributionMode, normalizePriorityLevel } from "@/lib/focus-goals";
 import {
   dedupeCategoriesByName,
@@ -551,7 +552,19 @@ export function useFocus(
     }
     const currentClient = client;
     let active = true;
-    let hasEstablishedSubscription = false;
+    const snapshotLifecycle = createRealtimeSnapshotLifecycle();
+    const requestRuntimeSnapshot = (shouldRequest: boolean) => {
+      if (!shouldRequest) return;
+      const promise = hydrateFocusRuntimes();
+      if (!promise) {
+        snapshotLifecycle.completeHydration(false);
+        return;
+      }
+      void promise.then(
+        () => snapshotLifecycle.completeHydration(true),
+        () => snapshotLifecycle.completeHydration(false),
+      );
+    };
     async function subscribeToRuntimeChannel() {
       const previousChannel = runtimeChannelRef.current;
       runtimeChannelRef.current = null;
@@ -592,28 +605,37 @@ export function useFocus(
           });
         })
         .subscribe((status) => {
-          if (!active || status !== "SUBSCRIBED" || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
-          hasEstablishedSubscription = true;
-          void hydrateFocusRuntimes();
+          if (!active) return;
+          if (status !== "SUBSCRIBED") {
+            snapshotLifecycle.handleStatus(status);
+            return;
+          }
+          if (!isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+          requestRuntimeSnapshot(snapshotLifecycle.handleStatus(status));
         });
       runtimeChannelRef.current = channel;
       runtimeChannelRemovalPromiseRef.current = null;
     }
 
     void subscribeToRuntimeChannel();
-    const refetchWhenVisible = () => { if (hasEstablishedSubscription && document.visibilityState === "visible") void hydrateFocusRuntimes(); };
-    const refetch = () => { if (hasEstablishedSubscription) void hydrateFocusRuntimes(); };
+    const refetchWhenVisible = () => requestRuntimeSnapshot(snapshotLifecycle.handleVisibilityChange(document.visibilityState));
+    const refetch = (event: PageTransitionEvent) => requestRuntimeSnapshot(snapshotLifecycle.handlePageShow(event.persisted));
+    const refetchWhenOnline = () => requestRuntimeSnapshot(snapshotLifecycle.handleOnline());
+    const refetchWhenOffline = () => { snapshotLifecycle.handleOffline(); };
     document.addEventListener("visibilitychange", refetchWhenVisible);
     window.addEventListener("pageshow", refetch);
-    window.addEventListener("online", refetch);
+    window.addEventListener("online", refetchWhenOnline);
+    window.addEventListener("offline", refetchWhenOffline);
     const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("adhdice_focus_sync") : null;
-    if (broadcast) broadcast.onmessage = refetch;
+    if (broadcast) broadcast.onmessage = () => requestRuntimeSnapshot(snapshotLifecycle.handleBroadcast());
     return () => {
       active = false;
       document.removeEventListener("visibilitychange", refetchWhenVisible);
       window.removeEventListener("pageshow", refetch);
-      window.removeEventListener("online", refetch);
+      window.removeEventListener("online", refetchWhenOnline);
+      window.removeEventListener("offline", refetchWhenOffline);
       broadcast?.close();
+      snapshotLifecycle.dispose();
       const channel = runtimeChannelRef.current;
       runtimeChannelRef.current = null;
       if (channel) {
@@ -697,7 +719,19 @@ export function useFocus(
     if (!client || !userId || !isFocusAuthReadyForUser) return;
     const currentClient = client;
     let cancelled = false;
-    let hasEstablishedSubscription = false;
+    const snapshotLifecycle = createRealtimeSnapshotLifecycle();
+    const requestCounterSnapshot = (shouldRequest: boolean) => {
+      if (!shouldRequest) return;
+      const promise = hydrateFocusCounters();
+      if (!promise) {
+        snapshotLifecycle.completeHydration(false);
+        return;
+      }
+      void promise.then(
+        () => snapshotLifecycle.completeHydration(true),
+        () => snapshotLifecycle.completeHydration(false),
+      );
+    };
     async function subscribeToCounterChannel() {
       const previousChannel = counterChannelRef.current;
       counterChannelRef.current = null;
@@ -742,28 +776,37 @@ export function useFocus(
           });
         })
         .subscribe((status) => {
-          if (cancelled || status !== "SUBSCRIBED" || !isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
-          hasEstablishedSubscription = true;
-          void hydrateFocusCounters();
+          if (cancelled) return;
+          if (status !== "SUBSCRIBED") {
+            snapshotLifecycle.handleStatus(status);
+            return;
+          }
+          if (!isFocusAuthReady(confirmedAuthUserIdRef.current, userId)) return;
+          requestCounterSnapshot(snapshotLifecycle.handleStatus(status));
         });
       counterChannelRef.current = channel;
       counterChannelRemovalPromiseRef.current = null;
     }
 
     void subscribeToCounterChannel();
-    const refetchWhenVisible = () => { if (hasEstablishedSubscription && document.visibilityState === "visible") void hydrateFocusCounters(); };
-    const refetch = () => { if (hasEstablishedSubscription) void hydrateFocusCounters(); };
+    const refetchWhenVisible = () => requestCounterSnapshot(snapshotLifecycle.handleVisibilityChange(document.visibilityState));
+    const refetch = (event: PageTransitionEvent) => requestCounterSnapshot(snapshotLifecycle.handlePageShow(event.persisted));
+    const refetchWhenOnline = () => requestCounterSnapshot(snapshotLifecycle.handleOnline());
+    const refetchWhenOffline = () => { snapshotLifecycle.handleOffline(); };
     document.addEventListener("visibilitychange", refetchWhenVisible);
     window.addEventListener("pageshow", refetch);
-    window.addEventListener("online", refetch);
+    window.addEventListener("online", refetchWhenOnline);
+    window.addEventListener("offline", refetchWhenOffline);
     const broadcast = typeof BroadcastChannel !== "undefined" ? new BroadcastChannel("adhdice_focus_counter_sync") : null;
-    if (broadcast) broadcast.onmessage = refetch;
+    if (broadcast) broadcast.onmessage = () => requestCounterSnapshot(snapshotLifecycle.handleBroadcast());
     return () => {
       cancelled = true;
       document.removeEventListener("visibilitychange", refetchWhenVisible);
       window.removeEventListener("pageshow", refetch);
-      window.removeEventListener("online", refetch);
+      window.removeEventListener("online", refetchWhenOnline);
+      window.removeEventListener("offline", refetchWhenOffline);
       broadcast?.close();
+      snapshotLifecycle.dispose();
       const channel = counterChannelRef.current;
       counterChannelRef.current = null;
       if (channel) {

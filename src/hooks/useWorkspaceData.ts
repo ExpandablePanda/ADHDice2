@@ -50,7 +50,10 @@ import {
   type RealtimeGapChannel,
   type RealtimeGapIncident,
 } from "@/lib/realtime-gap-recovery";
-import { workspaceStartupRequestRegistry } from "@/lib/workspace-startup-request";
+import {
+  updateWorkspaceStartupRequestOwner,
+  workspaceStartupRequestRegistry,
+} from "@/lib/workspace-startup-request";
 import {
   buildTaskHistoryStreakSummary,
   buildTaskHistoryStreakSummaryMapCooperatively,
@@ -644,14 +647,18 @@ export function useWorkspaceData({
   useEffect(() => {
     const workspaceGeneration = workspaceGenerationRef.current + 1;
     workspaceGenerationRef.current = workspaceGeneration;
+    const nextStartupUserId = supabase && currentUser ? currentUser.id : null;
+    startupRequestUserIdRef.current = updateWorkspaceStartupRequestOwner(
+      workspaceStartupRequestRegistry,
+      startupRequestUserIdRef.current,
+      nextStartupUserId,
+    );
 
     if (!supabase || !currentUser) {
       behaviorAuthorityOwnerUserIdRef.current = null;
       behaviorAuthorityReadyRef.current = false;
       behaviorAuthorityLoadingRef.current = false;
       setActiveProfileUserId(null);
-      workspaceStartupRequestRegistry.invalidate(startupRequestUserIdRef.current);
-      startupRequestUserIdRef.current = null;
       liveWorkspaceUserIdRef.current = null;
       taskActivitySummaryRuntimeRef.current?.clear();
       homeCurrentDayHistoryRuntimeRef.current?.clear();
@@ -740,12 +747,7 @@ export function useWorkspaceData({
     taskHistoryStreakSummaryLoadPromiseRef.current = null;
     taskHistoryStreakSummaryTaskReloadsRef.current.clear();
     setActiveProfileUserId(userId);
-    if (startupRequestUserIdRef.current) {
-      workspaceStartupRequestRegistry.invalidate(startupRequestUserIdRef.current);
-    }
-    startupRequestUserIdRef.current = null;
     coreRefreshCoordinatorRef.current = null;
-    startupRequestUserIdRef.current = userId;
     liveWorkspaceUserIdRef.current = userId;
     let isActive = true;
     let taskChannel: RealtimeChannel | null = null;
