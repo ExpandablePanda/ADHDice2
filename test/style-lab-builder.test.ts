@@ -205,6 +205,9 @@ test("curated starter templates normalize into bounded unique editable trees", (
     assert.ok(Math.max(...depths.values()) <= STYLE_LAB_BUILDER_MAX_DEPTH, `${template.id} should respect the depth limit`);
     assert.equal(draft.nodes[0]?.id, STYLE_LAB_BUILDER_ROOT_ID);
   }
+  const blankRoot = createDefaultStyleLabBuilderDraft().nodes[0];
+  assert.equal(blankRoot?.type === "container" ? blankRoot.styles.layout : "", "grid");
+  assert.equal(blankRoot?.type === "container" ? blankRoot.styles.gridColumns : 0, 12);
   assert.equal(STYLE_LAB_BUILDER_STORAGE_KEY, "adhdice-style-lab:builder-draft");
 });
 
@@ -249,6 +252,27 @@ test("exports include custom colors, exact dimensions, and font family", () => {
   assert.match(code, /color: "#372f55"/);
   assert.match(code, /width: "286px"/);
   assert.match(code, /height: "94px"/);
+});
+
+test("grid exports and live Builder source preserve explicit column start and span", () => {
+  const draft = normalizeStyleLabBuilderDraft({
+    nodes: [
+      { id: "root", type: "container", parentId: null, styles: { layout: "grid", gridColumns: 12 } },
+      { id: "chip", type: "chip", parentId: "root", order: 0, text: "In Progress", placement: { gridColumnStart: 7, gridColumnSpan: 2 } },
+    ],
+  });
+  const spec = buildStyleLabModuleSpec(draft);
+  const code = buildStyleLabReferenceCode(draft);
+  assert.match(spec, /Column start: 7/);
+  assert.match(spec, /Column span: 2/);
+  assert.match(code, /gridColumn: "7 \/ span 2"/);
+  assert.match(builderSource, /gridColumn: `\$\{node\.placement\.gridColumnStart\} \/ span \$\{node\.placement\.gridColumnSpan\}`/);
+  assert.match(builderSource, /width: "max-content"/);
+  assert.match(builderSource, /justifySelf: "start"/);
+  assert.match(builderSource, /Column start/);
+  assert.match(builderSource, /Convert to 12-column Grid/);
+  assert.match(builderDragSource, /getStyleLabBuilderGridStartFromPointer/);
+  assert.match(builderDragSource, /blockedBy/);
 });
 
 test("Builder is a separate development-only Test workspace and the panel stays Inspect-only", () => {

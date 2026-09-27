@@ -6,6 +6,7 @@ import {
   getStyleLabBuilderDescendantIds,
   getStyleLabBuilderDropContainer,
   getStyleLabBuilderGridDropTarget,
+  getStyleLabBuilderGridStartFromPointer,
   getStyleLabBuilderLinearDropTarget,
   getStyleLabBuilderNodeDepth,
   packStyleLabBuilderGrid,
@@ -13,6 +14,7 @@ import {
 } from "@/components/style-lab/style-lab-builder-drag";
 import {
   normalizeStyleLabBuilderDraft,
+  normalizeStyleLabBuilderGridColumnStart,
   normalizeStyleLabBuilderGridColumnSpan,
   STYLE_LAB_BUILDER_MAX_DEPTH,
   STYLE_LAB_BUILDER_STORAGE_KEY,
@@ -55,6 +57,24 @@ test("legacy grid drafts default children to span one and clamp spans to parent 
   assert.equal(STYLE_LAB_BUILDER_STORAGE_KEY, "adhdice-style-lab:builder-draft");
 });
 
+test("grid column starts normalize safely and legacy spans receive deterministic packed starts", () => {
+  assert.equal(normalizeStyleLabBuilderGridColumnStart(0, 12, 1), 1);
+  assert.equal(normalizeStyleLabBuilderGridColumnStart(99, 12, 4), 9);
+  assert.equal(normalizeStyleLabBuilderGridColumnStart(8, 6, 4), 3);
+  const legacy = draftWithNodes([
+    { id: "root", type: "container", parentId: null, styles: { layout: "grid", gridColumns: 12 } },
+    { id: "a", type: "text", parentId: "root", order: 0, text: "A", placement: { gridColumnSpan: 3 } },
+    { id: "b", type: "text", parentId: "root", order: 1, text: "B", placement: { gridColumnSpan: 2 } },
+    { id: "c", type: "text", parentId: "root", order: 2, text: "C", placement: { gridColumnSpan: 4 } },
+  ]);
+  assert.deepEqual(legacy.nodes.filter((node) => node.parentId === "root").map((node) => [node.placement.gridColumnStart, node.placement.gridColumnSpan]), [[1, 3], [4, 2], [6, 4]]);
+  const clamped = draftWithNodes([
+    { id: "root", type: "container", parentId: null, styles: { layout: "grid", gridColumns: 6 } },
+    { id: "wide", type: "text", parentId: "root", order: 0, text: "Wide", placement: { gridColumnStart: 6, gridColumnSpan: 4 } },
+  ]);
+  assert.deepEqual(clamped.nodes.find((node) => node.id === "wide")?.placement, { gridColumnStart: 3, gridColumnSpan: 4 });
+});
+
 test("packed grid geometry creates equal-span and mixed-span rows", () => {
   const equal = packStyleLabBuilderGrid([
     { id: "a", gridColumnSpan: 4, height: 20 },
@@ -68,6 +88,74 @@ test("packed grid geometry creates equal-span and mixed-span rows", () => {
     { id: "c", gridColumnSpan: 3, height: 20 },
   ], 12, 120, 0);
   assert.deepEqual(mixed.items.map((item) => [item.id, item.rowIndex, item.columnStart, item.columnSpan]), [["a", 0, 1, 6], ["b", 0, 7, 3], ["c", 0, 10, 3]]);
+});
+
+test("grid pointer mapping steps through all legal 12-column starts", () => {
+  const starts = Array.from({ length: 11 }, (_, index) => getStyleLabBuilderGridStartFromPointer({ columns: 12, contentWidth: 120, gap: 0, pointerX: index * 10, sourceSpan: 2 }));
+  assert.deepEqual(starts, [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  assert.equal(getStyleLabBuilderGridStartFromPointer({ columns: 12, contentWidth: 120, gap: 0, grabOffsetX: 5, pointerX: 75, sourceSpan: 2 }), 8);
+});
+
+test("explicit grid holes persist and overlapping target footprints are blocked", () => {
+  const packed = packStyleLabBuilderGrid([
+    { id: "a", gridColumnStart: 1, gridColumnSpan: 3, height: 20 },
+    { id: "b", gridColumnStart: 8, gridColumnSpan: 2, height: 20 },
+  ], 12, 120, 0);
+  assert.deepEqual(packed.items.map((item) => [item.id, item.rowIndex, item.columnStart, item.columnSpan]), [["a", 0, 1, 3], ["b", 0, 8, 2]]);
+  const blocked = getStyleLabBuilderGridDropTarget({
+    children: [...packed.items.map((item) => ({ gridColumnStart: item.columnStart, gridColumnSpan: item.columnSpan, height: item.height, id: item.id })), { id: "source", gridColumnSpan: 2, height: 20 }],
+    columns: 12,
+    contentWidth: 120,
+    gap: 0,
+    pointerX: 70,
+    pointerY: 5,
+    sourceHeight: 20,
+    sourceId: "source",
+    sourceSpan: 2,
+  });
+  assert.equal(blocked.candidate.columnStart, 8);
+  assert.equal(blocked.blocked, true);
+  assert.deepEqual(blocked.blockedBy, ["b"]);
+  const open = getStyleLabBuilderGridDropTarget({
+    children: [...packed.items.map((item) => ({ gridColumnStart: item.columnStart, gridColumnSpan: item.columnSpan, height: item.height, id: item.id })), { id: "source", gridColumnSpan: 2, height: 20 }],
+    columns: 12,
+    contentWidth: 120,
+    gap: 0,
+    pointerX: 30,
+    pointerY: 5,
+    sourceHeight: 20,
+    sourceId: "source",
+    sourceSpan: 2,
+  });
+  assert.equal(open.candidate.columnStart, 4);
+  assert.equal(open.blocked, false);
+});
+
+test("same-order lateral grid moves persist start and span, including cross-container local mapping", () => {
+  const draft = draftWithNodes([
+    { id: "root", type: "container", parentId: null, styles: { layout: "grid", gridColumns: 12 } },
+    { id: "a", type: "chip", parentId: "root", order: 0, text: "A", placement: { gridColumnStart: 1, gridColumnSpan: 2 } },
+    { id: "b", type: "chip", parentId: "root", order: 1, text: "B", placement: { gridColumnStart: 4, gridColumnSpan: 2 } },
+  ]);
+  const target = getStyleLabBuilderGridDropTarget({
+    children: draft.nodes.filter((node) => node.parentId === "root").map((node) => ({ gridColumnStart: node.placement.gridColumnStart, gridColumnSpan: node.placement.gridColumnSpan, height: 20, id: node.id })),
+    columns: 12,
+    contentWidth: 120,
+    gap: 0,
+    pointerX: 65,
+    pointerY: 5,
+    preserveSourceOrder: true,
+    sourceIndex: 0,
+    sourceHeight: 20,
+    sourceId: "a",
+    sourceSpan: 2,
+  });
+  assert.equal(target.blocked, false);
+  assert.equal(target.insertionIndex, 0);
+  assert.equal(target.candidate.columnStart, 8);
+  const moved = applyStyleLabBuilderDrop(draft, "a", "root", target.insertionIndex, { gridColumnStart: target.columnStart, gridColumnSpan: target.candidate.columnSpan });
+  assert.deepEqual(moved.nodes.filter((node) => node.parentId === "root").map((node) => [node.id, node.order, node.placement.gridColumnStart, node.placement.gridColumnSpan]), [["a", 0, 8, 2], ["b", 1, 4, 2]]);
+  assert.equal(getStyleLabBuilderGridDropTarget({ children: [], columns: 12, contentLeft: 100, contentWidth: 120, gap: 0, pointerX: 150, pointerY: 5, sourceHeight: 20, sourceId: "cross", sourceSpan: 2 }).candidate.columnStart, getStyleLabBuilderGridDropTarget({ children: [], columns: 12, contentLeft: 300, contentWidth: 120, gap: 0, pointerX: 350, pointerY: 5, sourceHeight: 20, sourceId: "cross", sourceSpan: 2 }).candidate.columnStart);
 });
 
 test("row and column insertion candidates snap before, between, and after", () => {
@@ -86,7 +174,7 @@ test("row and column insertion candidates snap before, between, and after", () =
   assert.equal(getStyleLabBuilderLinearDropTarget({ childRects: rowChildren, container: { ...container, height: 30, width: 220 }, layout: "row", pointerX: 210, pointerY: 15, sourceHeight: 30, sourceWidth: 40 }).insertionIndex, 3);
 });
 
-test("grid pointer candidates snap to packed legal cells", () => {
+test("grid pointer candidates snap to direct legal cells", () => {
   const target = getStyleLabBuilderGridDropTarget({
     children: [
       { id: "a", gridColumnSpan: 4, height: 20 },
@@ -105,9 +193,9 @@ test("grid pointer candidates snap to packed legal cells", () => {
     sourceId: "c",
     sourceSpan: 4,
   });
-  assert.equal(target.insertionIndex, 1);
-  assert.equal(target.candidate.left, 50);
-  assert.equal(target.candidate.columnStart, 5);
+  assert.equal(target.insertionIndex, 0);
+  assert.equal(target.candidate.left, 60);
+  assert.equal(target.candidate.columnStart, 6);
 });
 
 test("drop planning reorders row, column, and grid siblings and supports spans", () => {
@@ -172,7 +260,7 @@ test("cancel leaves the exact starting draft and successful grid exports include
   const code = buildStyleLabReferenceCode(draft);
   assert.match(spec, /Grid columns: 12/);
   assert.match(spec, /Column span: 4/);
-  assert.match(code, /gridColumn: "span 4"/);
+  assert.match(code, /gridColumn: "1 \/ span 4"/);
   assert.match(code, /gridTemplateColumns: "repeat\(12, minmax\(0, 1fr\)\)"/);
 });
 

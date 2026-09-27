@@ -40,6 +40,11 @@ function nodeGridColumnSpan(draft: StyleLabBuilderDraft, node: StyleLabBuilderNo
   return parent?.type === "container" && parent.styles.layout === "grid" ? node.placement.gridColumnSpan : null;
 }
 
+function nodeGridColumnStart(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode): number | null {
+  const parent = node.parentId ? getStyleLabBuilderNode(draft, node.parentId) : null;
+  return parent?.type === "container" && parent.styles.layout === "grid" ? node.placement.gridColumnStart : null;
+}
+
 function textStyleSpec(styles: StyleLabBuilderTextStyles, indent: string): string[] {
   return [
     `${indent}- Font family: ${getStyleLabBuilderFontOption(styles.fontFamily).label}`,
@@ -55,8 +60,9 @@ function textStyleSpec(styles: StyleLabBuilderTextStyles, indent: string): strin
 function nodeSpecLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode, depth: number): string[] {
   const indent = "  ".repeat(depth);
   const propertyIndent = "  ".repeat(depth + 1);
+  const gridStart = nodeGridColumnStart(draft, node);
   const gridSpan = nodeGridColumnSpan(draft, node);
-  const lines = [`${indent}${depth === 0 ? "Root Container" : nodeLabel(node)}`, ...(gridSpan ? [`${propertyIndent}- Column span: ${gridSpan}`] : [])];
+  const lines = [`${indent}${depth === 0 ? "Root Container" : nodeLabel(node)}`, ...(gridStart ? [`${propertyIndent}- Column start: ${gridStart}`] : []), ...(gridSpan ? [`${propertyIndent}- Column span: ${gridSpan}`] : [])];
   if (node.type === "container") {
     lines.push(
       `${propertyIndent}- Layout: ${titleCase(node.styles.layout)}`,
@@ -188,8 +194,9 @@ function referenceIcon(iconName: string): string {
 function referenceNodeLines(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode, depth: number): string[] {
   const indent = "  ".repeat(depth);
   const childIndent = "  ".repeat(depth + 1);
+  const gridStart = nodeGridColumnStart(draft, node);
   const gridSpan = nodeGridColumnSpan(draft, node);
-  const gridEntries = gridSpan ? [["gridColumn", `span ${gridSpan}`] as [string, string]] : [];
+  const gridEntries = gridStart && gridSpan ? [["gridColumn", `${gridStart} / span ${gridSpan}`] as [string, string]] : [];
   if (node.type === "container") {
     const lines = [`${indent}<div`, `${indent}  style={{`, ...containerStyleObject(node, gridEntries).map((line) => `${indent}${line}`), `${indent}  }}`, `${indent}>`];
     for (const child of getStyleLabBuilderChildren(draft, node.id)) lines.push(...referenceNodeLines(draft, child, depth + 1));

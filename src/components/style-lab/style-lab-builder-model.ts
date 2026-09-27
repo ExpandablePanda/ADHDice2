@@ -87,6 +87,7 @@ export type StyleLabBuilderBaseNode = {
 };
 
 export type StyleLabBuilderPlacement = {
+  gridColumnStart: number;
   gridColumnSpan: number;
 };
 
@@ -195,6 +196,19 @@ export function normalizeStyleLabBuilderGridColumnSpan(value: unknown, parentCol
   return Math.max(1, Math.min(safeParentColumns, Math.round(Number.isFinite(raw) ? raw : fallback)));
 }
 
+export function normalizeStyleLabBuilderGridColumnStart(
+  value: unknown,
+  parentColumns: number = STYLE_LAB_BUILDER_GRID_COLUMNS[STYLE_LAB_BUILDER_GRID_COLUMNS.length - 1],
+  span = STYLE_LAB_BUILDER_DEFAULT_GRID_COLUMN_SPAN,
+  fallback = 1,
+): number {
+  const safeParentColumns = Number.isFinite(parentColumns) ? Math.max(1, Math.min(STYLE_LAB_BUILDER_GRID_COLUMNS[STYLE_LAB_BUILDER_GRID_COLUMNS.length - 1], Math.round(parentColumns))) : STYLE_LAB_BUILDER_GRID_COLUMNS[STYLE_LAB_BUILDER_GRID_COLUMNS.length - 1];
+  const safeSpan = normalizeStyleLabBuilderGridColumnSpan(span, safeParentColumns);
+  const maxStart = Math.max(1, safeParentColumns - safeSpan + 1);
+  const raw = typeof value === "number" && Number.isFinite(value) ? value : typeof value === "string" && /^\d+$/.test(value.trim()) ? Number.parseInt(value, 10) : fallback;
+  return Math.max(1, Math.min(maxStart, Math.round(Number.isFinite(raw) ? raw : fallback)));
+}
+
 export type StyleLabBuilderDimensionOptions = {
   allowAuto?: boolean;
   fallback: string;
@@ -262,7 +276,10 @@ function normalizeTextStyles(value: unknown): StyleLabBuilderTextStyles {
 
 function normalizeBuilderPlacement(value: unknown): StyleLabBuilderPlacement {
   const source = isRecord(value) ? value : {};
-  return { gridColumnSpan: normalizeStyleLabBuilderGridColumnSpan(source.gridColumnSpan) };
+  return {
+    gridColumnStart: source.gridColumnStart === undefined ? 0 : normalizeStyleLabBuilderGridColumnStart(source.gridColumnStart),
+    gridColumnSpan: normalizeStyleLabBuilderGridColumnSpan(source.gridColumnSpan),
+  };
 }
 
 function normalizeContainerStyles(value: unknown): StyleLabBuilderContainerStyles {
@@ -428,21 +445,42 @@ function normalizeSiblingOrder(nodes: StyleLabBuilderNode[]): StyleLabBuilderNod
 
 function normalizeGridChildPlacements(nodes: StyleLabBuilderNode[]): StyleLabBuilderNode[] {
   const nodeById = new Map(nodes.map((node) => [node.id, node]));
-  return nodes.map((node) => {
-    const parent = node.parentId ? nodeById.get(node.parentId) : undefined;
-    const parentColumns = parent?.type === "container" && parent.styles.layout === "grid" ? parent.styles.gridColumns : undefined;
-    return {
-      ...node,
-      placement: {
-        gridColumnSpan: normalizeStyleLabBuilderGridColumnSpan(node.placement.gridColumnSpan, parentColumns),
-      },
-    };
-  });
+  const childrenByParent = new Map<string, StyleLabBuilderNode[]>();
+  for (const node of nodes) {
+    if (node.id === STYLE_LAB_BUILDER_ROOT_ID) continue;
+    const parentId = node.parentId ?? STYLE_LAB_BUILDER_ROOT_ID;
+    const children = childrenByParent.get(parentId) ?? [];
+    children.push(node);
+    childrenByParent.set(parentId, children);
+  }
+  const normalizedPlacements = new Map<string, StyleLabBuilderPlacement>();
+  normalizedPlacements.set(STYLE_LAB_BUILDER_ROOT_ID, { gridColumnStart: 1, gridColumnSpan: 1 });
+  for (const [parentId, children] of childrenByParent) {
+    const parentNode = nodeById.get(parentId);
+    const parentColumns = parentNode?.type === "container" && parentNode.styles.layout === "grid" ? parentNode.styles.gridColumns : STYLE_LAB_BUILDER_GRID_COLUMNS[STYLE_LAB_BUILDER_GRID_COLUMNS.length - 1];
+    const occupied: Array<{ start: number; span: number }> = [];
+    for (const node of [...children].sort((left, right) => left.order - right.order || left.id.localeCompare(right.id))) {
+      const span = normalizeStyleLabBuilderGridColumnSpan(node.placement.gridColumnSpan, parentColumns);
+      const hasExplicitStart = node.placement.gridColumnStart > 0;
+      const start = hasExplicitStart
+        ? normalizeStyleLabBuilderGridColumnStart(node.placement.gridColumnStart, parentColumns, span)
+        : (() => {
+          const maxStart = Math.max(1, parentColumns - span + 1);
+          for (let candidate = 1; candidate <= maxStart; candidate += 1) {
+            if (!occupied.some((item) => candidate < item.start + item.span && item.start < candidate + span)) return candidate;
+          }
+          return 1;
+        })();
+      occupied.push({ span, start });
+      normalizedPlacements.set(node.id, { gridColumnStart: start, gridColumnSpan: span });
+    }
+  }
+  return nodes.map((node) => ({ ...node, placement: normalizedPlacements.get(node.id) ?? { gridColumnStart: 1, gridColumnSpan: 1 } }));
 }
 
 export function createDefaultStyleLabBuilderDraft(moduleName = STYLE_LAB_BUILDER_DEFAULT_MODULE_NAME): StyleLabBuilderDraft {
-  const root = normalizeNode({ type: "container", styles: {} }, STYLE_LAB_BUILDER_ROOT_ID, null, 0);
-  return { moduleName: normalizedModuleName(moduleName), canvasWidth: "390", nodes: root ? [root] : [] };
+  const root = normalizeNode({ type: "container", styles: { layout: "grid", gridColumns: 12 } }, STYLE_LAB_BUILDER_ROOT_ID, null, 0);
+  return { moduleName: normalizedModuleName(moduleName), canvasWidth: "390", nodes: root ? [{ ...root, placement: { gridColumnStart: 1, gridColumnSpan: 1 } }] : [] };
 }
 
 export function normalizeStyleLabBuilderDraft(value: unknown): StyleLabBuilderDraft {
@@ -468,11 +506,12 @@ export function normalizeStyleLabBuilderDraft(value: unknown): StyleLabBuilderDr
     rawParentById.set(id, rawParentId(rawNode.parentId));
   }
 
-  const withParents = normalizeGridChildPlacements(normalizeParentLinks(nodes, new Map([...rawParentById].map(([id, parent]) => [id, parent ? originalIdMap.get(parent) ?? (parent === STYLE_LAB_BUILDER_ROOT_ID ? STYLE_LAB_BUILDER_ROOT_ID : null) : STYLE_LAB_BUILDER_ROOT_ID]))));
+  const linkedNodes = normalizeParentLinks(nodes, new Map([...rawParentById].map(([id, parent]) => [id, parent ? originalIdMap.get(parent) ?? (parent === STYLE_LAB_BUILDER_ROOT_ID ? STYLE_LAB_BUILDER_ROOT_ID : null) : STYLE_LAB_BUILDER_ROOT_ID])));
+  const withParents = normalizeGridChildPlacements(normalizeSiblingOrder(linkedNodes));
   return {
     moduleName: normalizedModuleName(source.moduleName),
     canvasWidth: allowedValue(source.canvasWidth, STYLE_LAB_BUILDER_CANVAS_WIDTHS, "390"),
-    nodes: normalizeSiblingOrder(withParents),
+    nodes: withParents,
   };
 }
 

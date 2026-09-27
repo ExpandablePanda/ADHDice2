@@ -177,6 +177,15 @@ function containerStyle(node: StyleLabBuilderContainerNode): CSSProperties {
   };
 }
 
+function builderNodePlacementStyle(draft: StyleLabBuilderDraft, node: StyleLabBuilderNode): CSSProperties {
+  const parent = node.parentId ? getStyleLabBuilderNode(draft, node.parentId) : null;
+  if (parent?.type !== "container" || parent.styles.layout !== "grid") return {};
+  return {
+    gridColumn: `${node.placement.gridColumnStart} / span ${node.placement.gridColumnSpan}`,
+    ...(node.type === "chip" || node.type === "icon-button" ? { justifySelf: "start" } : {}),
+  };
+}
+
 function selectedPreviewStyle(selected: boolean): CSSProperties {
   return selected ? { outline: "2px solid var(--accent)", outlineOffset: "2px" } : {};
 }
@@ -234,6 +243,7 @@ function BuilderPreviewNode({
   const dragging = node.id === draggingId;
   const visuallySelected = selected || dragging;
   const movable = node.id !== STYLE_LAB_BUILDER_ROOT_ID;
+  const placementStyle = builderNodePlacementStyle(draft, node);
   const nodePointerDown = movable ? (event: PointerEvent<HTMLElement>) => onNodePointerDown(event, node.id) : undefined;
   const nodePointerMove = movable ? onNodePointerMove : undefined;
   const nodePointerUp = movable ? onNodePointerUp : undefined;
@@ -292,7 +302,7 @@ function BuilderPreviewNode({
       type: "button" as const,
     });
     return (
-      <div aria-label={`Select ${node.id === STYLE_LAB_BUILDER_ROOT_ID ? "root container" : "container"}`} className={dragging ? "cursor-grabbing select-none" : movable ? "cursor-grab" : "cursor-default"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} role="group" style={{ ...containerStyle(node), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>
+      <div aria-label={`Select ${node.id === STYLE_LAB_BUILDER_ROOT_ID ? "root container" : "container"}`} className={dragging ? "cursor-grabbing select-none" : movable ? "cursor-grab" : "cursor-default"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} role="group" style={{ ...containerStyle(node), ...placementStyle, ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>
         {children}
         {selected ? (
           <>
@@ -307,17 +317,17 @@ function BuilderPreviewNode({
   if (node.type === "text") {
     const editing = editingNodeId === node.id;
     return editing
-      ? <span className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>{inlineInput(`Edit ${nodeTitle(node)}`)}</span>
-      : <span className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>{node.text}</span>;
+      ? <span className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} style={{ ...placementStyle, ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>{inlineInput(`Edit ${nodeTitle(node)}`)}</span>
+      : <span className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} style={{ ...placementStyle, ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }}>{node.text}</span>;
   }
   if (node.type === "chip") {
     const icon = node.styles.iconName ? <TaskTypeIcon aria-hidden="true" className="h-3.5 w-3.5" iconKey={node.styles.iconName} /> : undefined;
-    return <AdhdChip className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} icon={icon} iconName={node.styles.iconName ?? undefined} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} selected={node.styles.selected} style={{ ...textStyle(node.styles), ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} tone={node.styles.tone} type="button">{editingNodeId === node.id ? inlineInput("Edit Chip label") : node.text}</AdhdChip>;
+    return <AdhdChip className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} icon={icon} iconName={node.styles.iconName ?? undefined} onClick={select} onDoubleClick={(event) => { event.preventDefault(); event.stopPropagation(); onBeginTextEdit(node.id); }} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} selected={node.styles.selected} style={{ ...placementStyle, ...textStyle(node.styles), maxWidth: "100%", width: "max-content", ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} tone={node.styles.tone} type="button">{editingNodeId === node.id ? inlineInput("Edit Chip label") : node.text}</AdhdChip>;
   }
   if (node.type === "icon-button") {
-    return <AdhdIconButton aria-label={node.ariaLabel} className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} size={node.styles.size} style={{ ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} tone={node.styles.tone} type="button"><TaskTypeIcon aria-hidden="true" iconKey={node.styles.iconName} /></AdhdIconButton>;
+    return <AdhdIconButton aria-label={node.ariaLabel} className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} size={node.styles.size} style={{ ...placementStyle, ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} tone={node.styles.tone} type="button"><TaskTypeIcon aria-hidden="true" iconKey={node.styles.iconName} /></AdhdIconButton>;
   }
-  return <div aria-label="Select divider" className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} role="separator" style={{ background: getStyleLabTextColorCssValue(node.styles.color), height: node.styles.orientation === "horizontal" ? "1px" : node.styles.width, width: node.styles.orientation === "horizontal" ? node.styles.width : "1px", ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} />;
+  return <div aria-label="Select divider" className={dragging ? "cursor-grabbing select-none" : "cursor-grab"} data-builder-node-id={node.id} onClick={select} onLostPointerCapture={nodeLostPointerCapture} onPointerCancel={nodePointerCancel} onPointerDown={nodePointerDown} onPointerMove={nodePointerMove} onPointerUp={nodePointerUp} role="separator" style={{ ...placementStyle, background: getStyleLabTextColorCssValue(node.styles.color), height: node.styles.orientation === "horizontal" ? "1px" : node.styles.width, width: node.styles.orientation === "horizontal" ? node.styles.width : "1px", ...selectedPreviewStyle(visuallySelected), ...(dragging ? { opacity: 0.52, transform: "translateY(-1px)" } : {}) }} />;
 }
 
 function nodeTitle(node: StyleLabBuilderNode): string {
@@ -370,12 +380,13 @@ function TypographyControls({ onStyleChange, styles }: { onStyleChange: (key: ke
   );
 }
 
-function ContainerControls({ node, onResetSize, onStyleChange }: { node: StyleLabBuilderContainerNode; onResetSize: () => void; onStyleChange: (key: string, value: string) => void }) {
+function ContainerControls({ node, onConvertToGrid, onResetSize, onStyleChange }: { node: StyleLabBuilderContainerNode; onConvertToGrid: () => void; onResetSize: () => void; onStyleChange: (key: string, value: string) => void }) {
   return (
     <div className="grid gap-2">
       <SectionHeading>Layout</SectionHeading>
       <BuilderSelect label="Layout" onChange={(value) => onStyleChange("layout", value)} options={options(STYLE_LAB_BUILDER_LAYOUTS)} value={node.styles.layout} />
       {node.styles.layout === "grid" ? <BuilderSelect label="Grid columns" onChange={(value) => onStyleChange("gridColumns", value)} options={options(STYLE_LAB_BUILDER_GRID_COLUMNS)} value={String(node.styles.gridColumns)} /> : null}
+      {node.styles.layout !== "grid" ? <div className="flex justify-end"><AdhdChip onClick={onConvertToGrid} type="button">Convert to 12-column Grid</AdhdChip></div> : null}
       <BuilderSelect label="Gap" onChange={(value) => onStyleChange("gap", value)} options={options(getStyleLabProperty("gap")?.values ?? [])} value={node.styles.gap} />
       <BuilderSelect label="Padding X" onChange={(value) => onStyleChange("paddingX", value)} options={options(getStyleLabProperty("paddingX")?.values ?? [])} value={node.styles.paddingX} />
       <BuilderSelect label="Padding Y" onChange={(value) => onStyleChange("paddingY", value)} options={options(getStyleLabProperty("paddingY")?.values ?? [])} value={node.styles.paddingY} />
@@ -434,6 +445,8 @@ type BuilderResizeInteraction = {
 type BuilderDragVisual = {
   candidateRect: StyleLabBuilderDragRect | null;
   columnLines: number[];
+  gridColumnStart?: number;
+  gridColumnSpan?: number;
   insertionIndex: number;
   insertionLine?: { orientation: "horizontal" | "vertical"; position: number };
   layout: "row" | "column" | "grid";
@@ -450,6 +463,7 @@ type BuilderDragInteraction = {
   active: boolean;
   captureElement: HTMLElement;
   completed: boolean;
+  grabOffsetX: number;
   pointerId: number;
   pointerX: number;
   pointerY: number;
@@ -479,10 +493,10 @@ function BuilderDragOverlay({ visual }: { visual: BuilderDragVisual }) {
       {visual.insertionLine ? <span className={`absolute ${visual.insertionLine.orientation === "horizontal" ? "h-0.5 w-full" : "h-full w-0.5"} rounded-full ${visual.valid ? "bg-[#6f57f6]/75" : "bg-[#d65775]/80"}`} data-builder-drag-insertion-line style={visual.insertionLine.orientation === "horizontal" ? { left: visual.targetRect.left - originLeft, top: visual.insertionLine.position - originTop, width: visual.targetRect.width } : { left: visual.insertionLine.position - originLeft, top: visual.targetRect.top - originTop, height: visual.targetRect.height }} /> : null}
       {visual.candidateRect ? (
         <div className={`absolute rounded-xl border-2 ${visual.valid ? "border-[#6f57f6] bg-[#6f57f6]/20 shadow-[0_0_0_3px_rgba(111,87,246,0.16)]" : "border-[#d65775] bg-[#d65775]/18 shadow-[0_0_0_3px_rgba(214,87,117,0.16)]"}`} data-builder-drag-candidate data-builder-drag-candidate-index={visual.insertionIndex} style={localRect(visual.candidateRect, originLeft, originTop)}>
-          <span className={`absolute -top-5 left-1 rounded bg-current px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm ${visual.valid ? "text-[#6f57f6]" : "text-[#d65775]"}`}>{visual.valid ? "Drop here" : "Blocked"}</span>
+          <span className={`absolute -top-5 left-1 rounded bg-current px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm ${visual.valid ? "text-[#6f57f6]" : "text-[#d65775]"}`}>{visual.valid ? `Drop here · Column ${visual.gridColumnStart ?? "?"}` : `Blocked · Column ${visual.gridColumnStart ?? "?"}`}</span>
         </div>
       ) : (
-        <span className={`absolute -top-5 rounded px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm ${visual.valid ? "bg-[#6f57f6]" : "bg-[#d65775]"}`} style={{ left: visual.targetRect.left - originLeft, top: visual.targetRect.top - originTop }}>{visual.valid ? "Drop here" : "Blocked"}</span>
+        <span className={`absolute -top-5 rounded px-1.5 py-0.5 text-[9px] font-semibold leading-none text-white shadow-sm ${visual.valid ? "bg-[#6f57f6]" : "bg-[#d65775]"}`} style={{ left: visual.targetRect.left - originLeft, top: visual.targetRect.top - originTop }}>{visual.valid ? `Drop here · Column ${visual.gridColumnStart ?? "?"}` : `Blocked · Column ${visual.gridColumnStart ?? "?"}`}</span>
       )}
     </div>
   );
@@ -822,26 +836,33 @@ function StyleLabBuilderWorkspace() {
       const contentWidth = Math.max(1, target.container.width - paddingLeft - paddingRight);
       const gap = Number.parseFloat(computed.columnGap) || Number.parseFloat(computed.gap) || 12;
       const rowGap = Number.parseFloat(computed.rowGap) || gap;
+      const sourceIndex = childNodes.findIndex((child) => child.id === interaction.sourceId);
+      const preserveSourceOrder = source.parentId === targetNode.id && sourceRect.top <= interaction.pointerY && interaction.pointerY <= sourceRect.bottom;
       const gridTarget = getStyleLabBuilderGridDropTarget({
-        children: childNodes.map((child) => ({ gridColumnSpan: child.placement.gridColumnSpan, height: getBuilderRect(child.id)?.height ?? sourceRect.height, id: child.id })),
+        children: childNodes.map((child) => ({ gridColumnStart: child.placement.gridColumnStart, gridColumnSpan: child.placement.gridColumnSpan, height: getBuilderRect(child.id)?.height ?? sourceRect.height, id: child.id })),
         columns: targetNode.styles.gridColumns,
         contentLeft,
         contentTop,
         contentWidth,
         gap,
+        grabOffsetX: interaction.grabOffsetX,
         pointerX: interaction.pointerX,
         pointerY: interaction.pointerY,
+        preserveSourceOrder,
         rowGap,
+        sourceIndex: sourceIndex >= 0 ? sourceIndex : undefined,
         sourceHeight: sourceRect.height,
         sourceId: interaction.sourceId,
         sourceSpan,
       });
       const absoluteItem = (item: { bottom: number; height: number; id: string; left: number; top: number; width: number }): StyleLabBuilderDragRect => ({ bottom: item.bottom + contentTop, height: item.height, id: item.id, left: item.left + contentLeft, right: item.left + item.width + contentLeft, top: item.top + contentTop, width: item.width });
-      const columnLines = Array.from({ length: gridTarget.preview.columns }, (_, index) => contentLeft + index * (gridTarget.preview.trackWidth + gap));
+      const columnLines = Array.from({ length: gridTarget.preview.columns + 1 }, (_, index) => contentLeft + index * (gridTarget.preview.trackWidth + gap) - (index === gridTarget.preview.columns ? gap : 0));
       const rowLines = gridTarget.preview.rows.map((row) => contentTop + row.top);
       const visual = {
-        candidateRect: absoluteItem(gridTarget.candidate),
+        candidateRect: gridTarget.candidate,
         columnLines,
+        gridColumnSpan: gridTarget.candidate.columnSpan,
+        gridColumnStart: gridTarget.candidate.columnStart,
         insertionIndex: gridTarget.insertionIndex,
         layout: "grid",
         originLeft,
@@ -850,7 +871,7 @@ function StyleLabBuilderWorkspace() {
         rowLines,
         targetId: target.container.id,
         targetRect: target.container,
-        valid,
+        valid: valid && !gridTarget.blocked,
       } satisfies BuilderDragVisual;
       dragVisualRef.current = visual;
       setDragVisual(visual);
@@ -953,10 +974,12 @@ function StyleLabBuilderWorkspace() {
     if ((event.pointerType === "mouse" && event.button !== 0) || resizeInteractionRef.current || dragInteractionRef.current) return;
     event.stopPropagation();
     setSelectedId(nodeId);
+    const rect = event.currentTarget.getBoundingClientRect();
     const interaction: BuilderDragInteraction = {
       active: false,
       captureElement: event.currentTarget,
       completed: false,
+      grabOffsetX: event.clientX - rect.left,
       pointerId: event.pointerId,
       pointerX: event.clientX,
       pointerY: event.clientY,
@@ -1004,7 +1027,10 @@ function StyleLabBuilderWorkspace() {
     event.stopPropagation();
     const visual = dragVisualRef.current;
     if (visual?.valid) {
-      const plan = applyStyleLabBuilderDrop(interaction.startDraft, interaction.sourceId, visual.targetId, visual.insertionIndex);
+      const placement = visual.layout === "grid" && visual.gridColumnStart !== undefined && visual.gridColumnSpan !== undefined
+        ? { gridColumnStart: visual.gridColumnStart, gridColumnSpan: visual.gridColumnSpan }
+        : undefined;
+      const plan = applyStyleLabBuilderDrop(interaction.startDraft, interaction.sourceId, visual.targetId, visual.insertionIndex, placement);
       const validation = canStyleLabBuilderMoveNode(interaction.startDraft, interaction.sourceId, visual.targetId);
       if (validation.valid) commit(plan);
     }
@@ -1098,6 +1124,11 @@ function StyleLabBuilderWorkspace() {
 
   function handleResetSize() {
     commit(updateStyleLabBuilderNode(draft, selectedNode.id, { styles: { height: "auto", maxWidth: "100%", width: "100%" } }));
+  }
+
+  function handleConvertToGrid() {
+    if (selectedNode.type !== "container") return;
+    commit(updateStyleLabBuilderNode(draft, selectedNode.id, { styles: { layout: "grid", gridColumns: 12 } }));
   }
 
   function handleTextStyleChange(key: keyof StyleLabBuilderTextStyles, value: string) {
@@ -1238,8 +1269,8 @@ function StyleLabBuilderWorkspace() {
 
           <section className={SUBPANEL_CLASS}>
             <SectionHeading>Selected element</SectionHeading>
-            {selectedParent?.type === "container" && selectedParent.styles.layout === "grid" ? <BuilderSelect label="Column span" onChange={(value) => handlePlacementChange("gridColumnSpan", value)} options={options(Array.from({ length: selectedParent.styles.gridColumns }, (_, index) => index + 1))} value={String(selectedNode.placement.gridColumnSpan)} /> : null}
-            {selectedNode.type === "container" ? <ContainerControls node={selectedNode} onResetSize={handleResetSize} onStyleChange={handleStyleChange} /> : null}
+            {selectedParent?.type === "container" && selectedParent.styles.layout === "grid" ? <><BuilderSelect label="Column start" onChange={(value) => handlePlacementChange("gridColumnStart", value)} options={options(Array.from({ length: Math.max(1, selectedParent.styles.gridColumns - selectedNode.placement.gridColumnSpan + 1) }, (_, index) => index + 1))} value={String(selectedNode.placement.gridColumnStart)} /><BuilderSelect label="Column span" onChange={(value) => handlePlacementChange("gridColumnSpan", value)} options={options(Array.from({ length: selectedParent.styles.gridColumns }, (_, index) => index + 1))} value={String(selectedNode.placement.gridColumnSpan)} /></> : null}
+            {selectedNode.type === "container" ? <ContainerControls node={selectedNode} onConvertToGrid={handleConvertToGrid} onResetSize={handleResetSize} onStyleChange={handleStyleChange} /> : null}
             {selectedNode.type === "text" ? (
               <div className="grid gap-3">
                 <BuilderTextInput label="Text" onChange={(value) => commit(updateStyleLabBuilderNode(draft, selectedNode.id, { text: value }))} value={selectedNode.text} />

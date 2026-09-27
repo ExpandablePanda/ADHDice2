@@ -2,9 +2,11 @@ import {
   getStyleLabBuilderChildren,
   getStyleLabBuilderNode,
   normalizeStyleLabBuilderDraft,
+  normalizeStyleLabBuilderGridColumnStart,
   normalizeStyleLabBuilderGridColumnSpan,
   STYLE_LAB_BUILDER_MAX_DEPTH,
   type StyleLabBuilderDraft,
+  type StyleLabBuilderPlacement,
 } from "./style-lab-builder-model";
 import { STYLE_LAB_BUILDER_GRID_COLUMNS, type StyleLabBuilderLayout } from "./style-lab-registry";
 
@@ -26,6 +28,7 @@ export type StyleLabBuilderDragContainerGeometry = StyleLabBuilderDragRect & {
 };
 
 export type StyleLabBuilderGridInputItem = {
+  gridColumnStart?: number;
   gridColumnSpan?: number;
   height: number;
   id: string;
@@ -54,10 +57,14 @@ export type StyleLabBuilderPackedGrid = {
 };
 
 export type StyleLabBuilderGridDropTarget = {
+  blocked: boolean;
+  blockedBy: string[];
   candidate: StyleLabBuilderPackedGridItem;
+  columnStart: number;
   insertionIndex: number;
   occupied: StyleLabBuilderPackedGrid;
   preview: StyleLabBuilderPackedGrid;
+  rowIndex: number;
 };
 
 export type StyleLabBuilderLinearDropTarget = {
@@ -92,12 +99,6 @@ function safePositive(value: number, fallback: number): number {
   return Math.max(1, safeNumber(value, fallback));
 }
 
-function distanceToRect(pointX: number, pointY: number, rect: Pick<StyleLabBuilderDragRect, "bottom" | "left" | "right" | "top">): number {
-  const dx = pointX < rect.left ? rect.left - pointX : pointX > rect.right ? pointX - rect.right : 0;
-  const dy = pointY < rect.top ? rect.top - pointY : pointY > rect.bottom ? pointY - rect.bottom : 0;
-  return Math.hypot(dx, dy);
-}
-
 export function packStyleLabBuilderGrid(
   items: readonly StyleLabBuilderGridInputItem[],
   columns: number,
@@ -112,30 +113,46 @@ export function packStyleLabBuilderGrid(
   const trackWidth = Math.max(1, (safeWidth - safeGap * (safeColumns - 1)) / safeColumns);
   const packedItems: StyleLabBuilderPackedGridItem[] = [];
   const rows: StyleLabBuilderPackedGridRow[] = [];
-  let rowIndex = 0;
-  let columnStart = 1;
   let rowTop = 0;
-  let rowHeight = 0;
 
   const ensureRow = () => {
-    const existing = rows[rowIndex];
+    const existing = rows[rows.length - 1];
     if (existing) return existing;
-    const row = { bottom: rowTop, index: rowIndex, items: [], top: rowTop };
+    const row = { bottom: rowTop, index: rows.length, items: [], top: rowTop };
     rows.push(row);
     return row;
   };
 
+  const beginRow = () => {
+    const previous = rows[rows.length - 1];
+    rowTop = previous ? previous.bottom + safeRowGap : 0;
+    const row = { bottom: rowTop, index: rows.length, items: [], top: rowTop };
+    rows.push(row);
+    return row;
+  };
+
+  const overlaps = (start: number, span: number, item: StyleLabBuilderPackedGridItem) => start < item.columnStart + item.columnSpan && item.columnStart < start + span;
+
+  const firstAvailableStart = (row: StyleLabBuilderPackedGridRow, span: number) => {
+    const maxStart = Math.max(1, safeColumns - span + 1);
+    for (let candidate = 1; candidate <= maxStart; candidate += 1) {
+      if (!row.items.some((item) => overlaps(candidate, span, item))) return candidate;
+    }
+    return 1;
+  };
+
   items.forEach((item, index) => {
     const columnSpan = normalizeStyleLabBuilderGridColumnSpan(item.gridColumnSpan, safeColumns);
-    if (columnStart > 1 && columnStart + columnSpan - 1 > safeColumns) {
-      const previousRow = ensureRow();
-      previousRow.bottom = previousRow.top + rowHeight;
-      rowTop = previousRow.bottom + safeRowGap;
-      rowIndex += 1;
-      columnStart = 1;
-      rowHeight = 0;
+    let row = ensureRow();
+    const hasExplicitStart = item.gridColumnStart !== undefined && Number.isFinite(item.gridColumnStart);
+    const requestedStart = hasExplicitStart
+      ? normalizeStyleLabBuilderGridColumnStart(item.gridColumnStart, safeColumns, columnSpan)
+      : firstAvailableStart(row, columnSpan);
+    let columnStart = requestedStart;
+    if (row.items.some((existing) => overlaps(columnStart, columnSpan, existing))) {
+      row = beginRow();
+      columnStart = hasExplicitStart ? requestedStart : firstAvailableStart(row, columnSpan);
     }
-    const row = ensureRow();
     const height = safePositive(item.height, 1);
     const width = trackWidth * columnSpan + safeGap * (columnSpan - 1);
     const packed = {
@@ -147,21 +164,14 @@ export function packStyleLabBuilderGrid(
       index,
       left: (columnStart - 1) * (trackWidth + safeGap),
       right: (columnStart - 1) * (trackWidth + safeGap) + width,
-      rowIndex,
+      rowIndex: row.index,
       top: rowTop,
       width,
     };
     row.items.push(packed);
     packedItems.push(packed);
-    rowHeight = Math.max(rowHeight, height);
-    row.bottom = rowTop + rowHeight;
-    columnStart += columnSpan;
+    row.bottom = Math.max(row.bottom, rowTop + height);
   });
-
-  if (rows.length > 0) {
-    const lastRow = rows[rows.length - 1]!;
-    lastRow.bottom = lastRow.top + rowHeight;
-  }
   return {
     columns: safeColumns,
     contentHeight: rows.length > 0 ? rows[rows.length - 1]!.bottom : 0,
@@ -251,9 +261,12 @@ export function getStyleLabBuilderGridDropTarget({
   contentTop = 0,
   contentWidth,
   gap = 12,
+  grabOffsetX = 0,
   pointerX,
   pointerY,
+  preserveSourceOrder = false,
   rowGap = gap,
+  sourceIndex,
   sourceHeight,
   sourceId,
   sourceSpan = 1,
@@ -264,35 +277,100 @@ export function getStyleLabBuilderGridDropTarget({
   contentTop?: number;
   contentWidth: number;
   gap?: number;
+  grabOffsetX?: number;
   pointerX: number;
   pointerY: number;
+  preserveSourceOrder?: boolean;
   rowGap?: number;
+  sourceIndex?: number;
   sourceHeight: number;
   sourceId: string;
   sourceSpan?: number;
 }): StyleLabBuilderGridDropTarget {
-  const occupied = packStyleLabBuilderGrid(children.filter((child) => child.id !== sourceId), columns, contentWidth, gap, rowGap);
-  const source = { gridColumnSpan: normalizeStyleLabBuilderGridColumnSpan(sourceSpan, columns), height: sourceHeight, id: sourceId };
-  const candidates = Array.from({ length: children.filter((child) => child.id !== sourceId).length + 1 }, (_, insertionIndex) => {
-    const withoutSource = children.filter((child) => child.id !== sourceId);
-    withoutSource.splice(insertionIndex, 0, source);
-    const preview = packStyleLabBuilderGrid(withoutSource, columns, contentWidth, gap, rowGap);
-    const candidate = preview.items.find((item) => item.id === sourceId)!;
-    return { candidate, insertionIndex, preview, score: distanceToRect(pointerX, pointerY, { bottom: contentTop + candidate.bottom, left: contentLeft + candidate.left, right: contentLeft + candidate.right, top: contentTop + candidate.top }) };
-  });
-  const selected = candidates.sort((left, right) => left.score - right.score || left.insertionIndex - right.insertionIndex)[0]!;
-  return {
-    candidate: {
-      ...selected.candidate,
-      bottom: selected.candidate.bottom + contentTop,
-      left: selected.candidate.left + contentLeft,
-      right: selected.candidate.right + contentLeft,
-      top: selected.candidate.top + contentTop,
-    },
-    insertionIndex: selected.insertionIndex,
-    occupied,
-    preview: selected.preview,
+  const withoutSource = children.filter((child) => child.id !== sourceId);
+  const occupied = packStyleLabBuilderGrid(withoutSource, columns, contentWidth, gap, rowGap);
+  const sourceColumnSpan = normalizeStyleLabBuilderGridColumnSpan(sourceSpan, occupied.columns);
+  const columnStart = getStyleLabBuilderGridStartFromPointer({ columns: occupied.columns, contentLeft, contentWidth, gap, grabOffsetX, pointerX, sourceSpan: sourceColumnSpan });
+  const pointerLocalY = pointerY - contentTop;
+  const rowIndex = getStyleLabBuilderGridRowIndexFromPointer(occupied, pointerLocalY, rowGap);
+  const row = occupied.rows[rowIndex];
+  const rowTop = row?.top ?? (occupied.rows[occupied.rows.length - 1]?.bottom ?? 0) + (occupied.rows.length > 0 ? rowGap : 0);
+  const rowItems = row?.items ?? [];
+  const firstRowIndex = rowItems.length > 0 ? Math.min(...rowItems.map((item) => item.index)) : withoutSource.length;
+  const lastRowIndex = rowItems.length > 0 ? Math.max(...rowItems.map((item) => item.index)) + 1 : withoutSource.length;
+  const insertionIndex = preserveSourceOrder && sourceIndex !== undefined
+    ? Math.max(0, Math.min(withoutSource.length, sourceIndex))
+    : row
+      ? pointerLocalY > (row.top + row.bottom) / 2 ? lastRowIndex : firstRowIndex
+      : withoutSource.length;
+  const source = { gridColumnStart: columnStart, gridColumnSpan: sourceColumnSpan, height: sourceHeight, id: sourceId };
+  const previewItems = [...withoutSource];
+  previewItems.splice(insertionIndex, 0, source);
+  const preview = packStyleLabBuilderGrid(previewItems, occupied.columns, contentWidth, gap, rowGap);
+  const trackWidth = occupied.trackWidth;
+  const candidateWidth = trackWidth * sourceColumnSpan + gap * (sourceColumnSpan - 1);
+  const candidate: StyleLabBuilderPackedGridItem = {
+    bottom: contentTop + rowTop + sourceHeight,
+    columnSpan: sourceColumnSpan,
+    columnStart,
+    height: sourceHeight,
+    id: sourceId,
+    index: insertionIndex,
+    left: contentLeft + (columnStart - 1) * (trackWidth + gap),
+    right: contentLeft + (columnStart - 1) * (trackWidth + gap) + candidateWidth,
+    rowIndex,
+    top: contentTop + rowTop,
+    width: candidateWidth,
   };
+  const blockedBy = occupied.items
+    .filter((item) => item.rowIndex === rowIndex && item.id !== sourceId && columnStart < item.columnStart + item.columnSpan && item.columnStart < columnStart + sourceColumnSpan)
+    .map((item) => item.id);
+  return {
+    blocked: blockedBy.length > 0,
+    blockedBy,
+    candidate,
+    columnStart,
+    insertionIndex,
+    occupied,
+    preview,
+    rowIndex,
+  };
+}
+
+export function getStyleLabBuilderGridStartFromPointer({
+  columns,
+  contentLeft = 0,
+  contentWidth,
+  gap = 12,
+  grabOffsetX = 0,
+  pointerX,
+  sourceSpan = 1,
+}: {
+  columns: number;
+  contentLeft?: number;
+  contentWidth: number;
+  gap?: number;
+  grabOffsetX?: number;
+  pointerX: number;
+  sourceSpan?: number;
+}): number {
+  const safeColumns = Math.max(1, Math.min(12, Math.round(safeNumber(columns, 1))));
+  const safeGap = Math.max(0, safeNumber(gap, 0));
+  const trackWidth = (Math.max(1, safeNumber(contentWidth, 1)) - safeGap * (safeColumns - 1)) / safeColumns;
+  if (trackWidth <= 0) return 1;
+  const intendedLeft = safeNumber(pointerX, contentLeft) - safeNumber(grabOffsetX, 0);
+  return normalizeStyleLabBuilderGridColumnStart(Math.round((intendedLeft - contentLeft) / (trackWidth + safeGap)) + 1, safeColumns, sourceSpan);
+}
+
+function getStyleLabBuilderGridRowIndexFromPointer(grid: StyleLabBuilderPackedGrid, pointerY: number, rowGap: number): number {
+  if (grid.rows.length === 0) return 0;
+  for (let index = 0; index < grid.rows.length; index += 1) {
+    const row = grid.rows[index]!;
+    const next = grid.rows[index + 1];
+    const boundary = next ? (row.bottom + next.top) / 2 : row.bottom + rowGap / 2;
+    if (pointerY <= boundary) return index;
+  }
+  return grid.rows.length;
 }
 
 function containsPoint(container: StyleLabBuilderDragContainerGeometry, pointerX: number, pointerY: number): boolean {
@@ -360,7 +438,7 @@ export function canStyleLabBuilderMoveNode(draft: StyleLabBuilderDraft, sourceId
   return { valid: true };
 }
 
-export function planStyleLabBuilderDrop(draft: StyleLabBuilderDraft, sourceId: string, targetParentId: string, insertionIndex: number): StyleLabBuilderDropPlan {
+export function planStyleLabBuilderDrop(draft: StyleLabBuilderDraft, sourceId: string, targetParentId: string, insertionIndex: number, placement?: Partial<StyleLabBuilderPlacement>): StyleLabBuilderDropPlan {
   const normalized = normalizeStyleLabBuilderDraft(draft);
   const validation = canStyleLabBuilderMoveNode(normalized, sourceId, targetParentId);
   if (!validation.valid) return { draft: normalized, reason: validation.reason, valid: false };
@@ -376,7 +454,7 @@ export function planStyleLabBuilderDrop(draft: StyleLabBuilderDraft, sourceId: s
   targetChildren.forEach((id, index) => orderById.set(id, index));
   sourceChildren.forEach((id, index) => orderById.set(id, index));
   const nextNodes = normalized.nodes.map((node) => {
-    if (node.id === sourceId) return { ...node, parentId: targetParentId, order: orderById.get(node.id) ?? nextIndex };
+    if (node.id === sourceId) return { ...node, parentId: targetParentId, order: orderById.get(node.id) ?? nextIndex, placement: placement ? { ...node.placement, ...placement } : node.placement };
     if (node.parentId === targetParentId || (sourceParentId !== targetParentId && node.parentId === sourceParentId)) {
       return { ...node, order: orderById.get(node.id) ?? node.order };
     }
@@ -385,6 +463,6 @@ export function planStyleLabBuilderDrop(draft: StyleLabBuilderDraft, sourceId: s
   return { draft: normalizeStyleLabBuilderDraft({ ...normalized, nodes: nextNodes }), valid: true };
 }
 
-export function applyStyleLabBuilderDrop(draft: StyleLabBuilderDraft, sourceId: string, targetParentId: string, insertionIndex: number): StyleLabBuilderDraft {
-  return planStyleLabBuilderDrop(draft, sourceId, targetParentId, insertionIndex).draft;
+export function applyStyleLabBuilderDrop(draft: StyleLabBuilderDraft, sourceId: string, targetParentId: string, insertionIndex: number, placement?: Partial<StyleLabBuilderPlacement>): StyleLabBuilderDraft {
+  return planStyleLabBuilderDrop(draft, sourceId, targetParentId, insertionIndex, placement).draft;
 }

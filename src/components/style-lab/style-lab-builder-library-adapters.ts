@@ -108,14 +108,14 @@ export function createTaskDetailHeroLibraryDraft(): StyleLabBuilderDraft {
 
 export function createChipLibraryDraft(tone: string, label: string): StyleLabBuilderDraft {
   return draft(label, [
-    container("root", null, 0, { alignItems: "start", backgroundColor: "Transparent", paddingX: "0.5rem", paddingY: "0.5rem", width: "100%" }),
+    container("root", null, 0, { alignItems: "start", backgroundColor: "Transparent", layout: "grid", gridColumns: 12, paddingX: "0.5rem", paddingY: "0.5rem", width: "100%" }),
     chip("chip", "root", 0, label, { tone }),
   ]);
 }
 
 export function createIconButtonLibraryDraft(tone: string, size = "md", label = "Default Icon Button"): StyleLabBuilderDraft {
   return draft(label, [
-    container("root", null, 0, { alignItems: "start", backgroundColor: "Transparent", paddingX: "0.5rem", paddingY: "0.5rem", width: "100%" }),
+    container("root", null, 0, { alignItems: "start", backgroundColor: "Transparent", layout: "grid", gridColumns: 12, paddingX: "0.5rem", paddingY: "0.5rem", width: "100%" }),
     iconButton("icon-button", "root", 0, label, { size, tone }),
   ]);
 }
@@ -265,7 +265,7 @@ export function createContainerNodeLibraryDraft(): StyleLabBuilderDraft {
 
 export function createDividerNodeLibraryDraft(): StyleLabBuilderDraft {
   return draft("Divider Node", [
-    container("root", null, 0, { backgroundColor: "Transparent", gap: "0.5rem", paddingX: "0.5rem", paddingY: "0.5rem", width: "100%" }),
+    container("root", null, 0, { backgroundColor: "Transparent", gap: "0.5rem", layout: "grid", gridColumns: 12, paddingX: "0.5rem", paddingY: "0.5rem", width: "100%" }),
     { id: "divider", type: "divider", parentId: "root", order: 0, styles: { color: "Muted", orientation: "horizontal", width: "100%" } },
   ]);
 }
