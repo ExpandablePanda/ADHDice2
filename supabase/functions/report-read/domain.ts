@@ -31,7 +31,11 @@ export type ReportReadRequest = {
 
 type QueryClient = {
   from: (table: string) => ReportQuery;
-  rpc: <T>(functionName: string, args: Record<string, unknown>) => Promise<{ data: T[] | null; error: unknown | null }>;
+  rpc: <T>(functionName: string, args: Record<string, unknown>) => ReportRpc<T>;
+};
+
+type ReportRpc<T> = PromiseLike<{ data: T[] | null; error: unknown | null }> & {
+  range: (from: number, to: number) => ReportRpc<T>;
 };
 
 type ReportQuery = {
@@ -110,14 +114,18 @@ function sourceDates(source: Omit<UnifiedReportSourceRows, "startDateKey" | "end
   ].filter(isDateKey).sort();
 }
 
-async function readReportTaskHistory(client: QueryClient, userId: string, request: ReportReadRequest) {
+export async function readReportTaskHistory(client: QueryClient, userId: string, request: ReportReadRequest) {
   if (request.startDateKey && request.endDateKey) {
-    const { data, error } = await client.rpc<ReportHistorySourceRow>("adhdice_get_report_task_history", {
-      p_end_date: request.endDateKey,
-      p_start_date: request.startDateKey,
-    });
-    if (error) throw error;
-    return (data ?? []) as ReportHistorySourceRow[];
+    const rows: ReportHistorySourceRow[] = [];
+    for (let offset = 0; ; offset += PAGE_SIZE) {
+      const { data, error } = await client.rpc<ReportHistorySourceRow>("adhdice_get_report_task_history", {
+        p_end_date: request.endDateKey,
+        p_start_date: request.startDateKey,
+      }).range(offset, offset + PAGE_SIZE - 1);
+      if (error) throw error;
+      rows.push(...(data ?? []));
+      if ((data?.length ?? 0) < PAGE_SIZE) return rows;
+    }
   }
   return readRows<ReportHistorySourceRow>(client, "adhdice_task_history_facts", "entity_id,logical_date,outcome,updated_at", userId);
 }

@@ -2,7 +2,9 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { buildUnifiedReportReadModel, type UnifiedReportSourceRows } from "../src/lib/unified-report-read-model.ts";
-import { loadReportReadModel } from "../supabase/functions/report-read/domain.ts";
+import { loadReportReadModel, readReportTaskHistory } from "../supabase/functions/report-read/domain.ts";
+
+const PAGE_SIZE = 1000;
 
 const boundedRequest = {
   endDateKey: "2026-09-03",
@@ -36,42 +38,145 @@ function source(overrides: Partial<UnifiedReportSourceRows> = {}): UnifiedReport
   };
 }
 
-function fakeReportClient(historyRows: unknown[] = []) {
+function fakeReportClient(
+  historyPages: unknown[][] = [[]],
+  options: { rpcErrors?: unknown[]; tasks?: unknown[] } = {},
+) {
   const fromTables: string[] = [];
   const rpcCalls: Array<{ args: Record<string, unknown>; functionName: string }> = [];
+  const rpcRanges: Array<{ from: number; to: number }> = [];
   const client = {
     from(table: string) {
       fromTables.push(table);
+      const tableRows = table === "adhdice_clean_tasks" ? options.tasks ?? [] : [];
       const query = {
         eq: () => query,
         gte: () => query,
         in: () => query,
         lte: () => query,
         order: () => query,
-        range: async () => ({ data: [], error: null }),
+        range: async (from: number, to: number) => ({ data: tableRows.slice(from, to + 1), error: null }),
         select: () => query,
       };
       return query;
     },
-    async rpc(functionName: string, args: Record<string, unknown>) {
+    rpc(functionName: string, args: Record<string, unknown>) {
       rpcCalls.push({ args, functionName });
-      return { data: historyRows, error: null };
+      let offset = 0;
+      const builder = {
+        range(from: number, to: number) {
+          rpcRanges.push({ from, to });
+          offset = from;
+          return builder;
+        },
+        then(onFulfilled: (value: { data: unknown[]; error: unknown | null }) => unknown, onRejected?: (reason: unknown) => unknown) {
+          const page = Math.floor(offset / PAGE_SIZE);
+          return Promise.resolve({ data: historyPages[page] ?? [], error: options.rpcErrors?.[page] ?? null }).then(onFulfilled, onRejected);
+        },
+      };
+      return builder;
     },
   } as Parameters<typeof loadReportReadModel>[0];
-  return { client, fromTables, rpcCalls };
+  return { client, fromTables, rpcCalls, rpcRanges };
 }
 
 test("bounded report History reads use the compact RPC instead of paged full-history reads", async () => {
   const harness = fakeReportClient([
-    { entity_id: "task-1", logical_date: "2026-08-31", outcome: "missed", updated_at: "2026-08-31T12:00:00Z" },
-    { entity_id: "task-1", logical_date: "2026-09-01", outcome: "done", updated_at: "2026-09-01T12:00:00Z" },
+    [
+      { entity_id: "task-1", logical_date: "2026-08-31", outcome: "missed", updated_at: "2026-08-31T12:00:00Z" },
+      { entity_id: "task-1", logical_date: "2026-09-01", outcome: "done", updated_at: "2026-09-01T12:00:00Z" },
+    ],
   ]);
   await loadReportReadModel(harness.client, "user-1", boundedRequest);
   assert.deepEqual(harness.rpcCalls, [{
     args: { p_end_date: "2026-09-03", p_start_date: "2026-09-01" },
     functionName: "adhdice_get_report_task_history",
   }]);
+  assert.deepEqual(harness.rpcRanges, [{ from: 0, to: PAGE_SIZE - 1 }]);
   assert.equal(harness.fromTables.includes("adhdice_task_history_facts"), false);
+});
+
+test("compact RPC requests a second page when the first page is exactly full", async () => {
+  const firstPage = Array.from({ length: PAGE_SIZE }, (_, index) => ({
+    entity_id: `task-${index}`,
+    logical_date: "2026-09-01",
+    outcome: "done",
+    updated_at: "2026-09-01T12:00:00Z",
+  }));
+  const harness = fakeReportClient([firstPage, []]);
+  const rows = await readReportTaskHistory(harness.client, "user-1", boundedRequest);
+  assert.equal(rows.length, PAGE_SIZE);
+  assert.deepEqual(harness.rpcRanges, [
+    { from: 0, to: PAGE_SIZE - 1 },
+    { from: PAGE_SIZE, to: PAGE_SIZE * 2 - 1 },
+  ]);
+});
+
+test("compact RPC accumulates pages in order and stops at the first short page", async () => {
+  const pages = [
+    Array.from({ length: PAGE_SIZE }, (_, index) => ({ entity_id: `task-${index}`, logical_date: "2026-08-05", outcome: "missed", updated_at: "2026-08-05T12:00:00Z" })),
+    Array.from({ length: PAGE_SIZE }, (_, index) => ({ entity_id: `task-${PAGE_SIZE + index}`, logical_date: "2026-08-20", outcome: "done", updated_at: "2026-08-20T12:00:00Z" })),
+    [{ entity_id: "task-2000", logical_date: "2026-09-03", outcome: "complete", updated_at: "2026-09-03T12:00:00Z" }],
+  ];
+  const harness = fakeReportClient(pages);
+  const rows = await readReportTaskHistory(harness.client, "user-1", { ...boundedRequest, startDateKey: "2026-08-05" });
+  assert.equal(rows.length, PAGE_SIZE * 2 + 1);
+  assert.deepEqual(rows, pages.flat());
+  assert.deepEqual(harness.rpcRanges, [
+    { from: 0, to: PAGE_SIZE - 1 },
+    { from: PAGE_SIZE, to: PAGE_SIZE * 2 - 1 },
+    { from: PAGE_SIZE * 2, to: PAGE_SIZE * 3 - 1 },
+  ]);
+});
+
+test("30-day compact report data beyond page 1 preserves New Misses and Total Misses", async () => {
+  const thirtyDayRequest = { endDateKey: "2026-09-03", startDateKey: "2026-08-05", todayDateKey: "2026-09-03" };
+  const pageOne = Array.from({ length: PAGE_SIZE }, (_, index) => ({
+    entity_id: `unloaded-task-${index}`,
+    logical_date: "2026-08-05",
+    outcome: "missed",
+    updated_at: "2026-08-05T12:00:00Z",
+  }));
+  const pageTwo = [
+    { entity_id: "late-task", logical_date: "2026-08-20", outcome: "missed", updated_at: "2026-08-20T12:00:00Z" },
+    ...Array.from({ length: PAGE_SIZE - 1 }, (_, index) => ({
+      entity_id: `unloaded-task-two-${index}`,
+      logical_date: "2026-08-20",
+      outcome: "missed",
+      updated_at: "2026-08-20T12:00:00Z",
+    })),
+  ];
+  const pageThree = [{ entity_id: "late-task", logical_date: "2026-09-03", outcome: "done", updated_at: "2026-09-03T12:00:00Z" }];
+  const harness = fakeReportClient([pageOne, pageTwo, pageThree], {
+    tasks: [{ id: "late-task", parent_task_id: null, title: "Late Task" }],
+  });
+  const report = await loadReportReadModel(harness.client, "user-1", thirtyDayRequest);
+  const missDay = report.tasks.days.find((day) => day.dateKey === "2026-08-20");
+  const doneDay = report.tasks.days.find((day) => day.dateKey === "2026-09-03");
+  assert.deepEqual(missDay?.newMisses, ["Late Task"]);
+  assert.equal(missDay?.totalMisses, 1);
+  assert.deepEqual(doneDay?.done, ["Late Task"]);
+  assert.equal(doneDay?.totalMisses, 0);
+  assert.deepEqual(harness.rpcRanges, [
+    { from: 0, to: PAGE_SIZE - 1 },
+    { from: PAGE_SIZE, to: PAGE_SIZE * 2 - 1 },
+    { from: PAGE_SIZE * 2, to: PAGE_SIZE * 3 - 1 },
+  ]);
+});
+
+test("a failed compact RPC page rejects the report instead of returning partial History", async () => {
+  const firstPage = Array.from({ length: PAGE_SIZE }, (_, index) => ({
+    entity_id: `task-${index}`,
+    logical_date: "2026-09-01",
+    outcome: "done",
+    updated_at: "2026-09-01T12:00:00Z",
+  }));
+  const harness = fakeReportClient([firstPage, []], { rpcErrors: [null, new Error("page 2 failed")] });
+  await assert.rejects(loadReportReadModel(harness.client, "user-1", boundedRequest), /page 2 failed/);
+  assert.deepEqual(harness.rpcRanges, [
+    { from: 0, to: PAGE_SIZE - 1 },
+    { from: PAGE_SIZE, to: PAGE_SIZE * 2 - 1 },
+  ]);
 });
 
 test("All Available retains the full canonical History fallback", async () => {
