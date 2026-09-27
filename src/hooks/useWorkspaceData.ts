@@ -126,6 +126,13 @@ import {
   recordAdhdiceRealtimeDiagnostic,
   recordAdhdiceTaskPostgresEventDiagnostic,
 } from "@/lib/adhdice-realtime-diagnostics";
+import {
+  fetchAllPagedRows,
+  SUPABASE_READ_PAGE_SIZE,
+  type PaginatedReadResult,
+  type PaginatedReadPage,
+} from "@/lib/paginated-read";
+export { fetchAllPagedRows } from "@/lib/paginated-read";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type ResolvedSupabaseClient = NonNullable<SupabaseClient>;
@@ -198,7 +205,6 @@ type UseWorkspaceDataOptions = {
 };
 
 const TASK_RESUME_SYNC_COOLDOWN_MS = 1500;
-const TASK_HISTORY_PAGE_SIZE = 1000;
 const TASK_HISTORY_SYNC_MAX_DELTA_ATTEMPTS = 3;
 const TASK_HISTORY_BOOTSTRAP_MAX_ATTEMPTS = 2;
 
@@ -219,11 +225,6 @@ export type CurrentTaskProjectionReadContext = {
 function keepCurrentIfStructurallyEqual<T>(current: T, next: T) {
   return JSON.stringify(current) === JSON.stringify(next) ? current : next;
 }
-
-type PagedFetchResult<T> = {
-  data: T[] | null;
-  error: { code?: string; message?: string } | null;
-};
 
 export function startBackgroundTaskHistoryHydration(
   load: () => Promise<boolean>,
@@ -248,8 +249,8 @@ export async function loadCanonicalTaskSnapshot<
   TaskRow extends CanonicalTaskEntitySnapshotRow,
   BoundaryRow extends CanonicalTaskEntitySnapshotBoundaryRow,
 >(
-  loadTaskRows: () => PromiseLike<PagedFetchResult<TaskRow>>,
-  loadScheduleBoundaries: (taskIds: string[]) => PromiseLike<PagedFetchResult<BoundaryRow>>,
+  loadTaskRows: () => PromiseLike<PaginatedReadResult<TaskRow>>,
+  loadScheduleBoundaries: (taskIds: string[]) => PromiseLike<PaginatedReadResult<BoundaryRow>>,
 ) {
   const taskResult = await loadTaskRows();
   if (taskResult.error) {
@@ -257,7 +258,14 @@ export async function loadCanonicalTaskSnapshot<
   }
 
   const taskRows = taskResult.data ?? [];
-  const taskIds = taskRows.map((task) => task.id);
+  const taskIds = taskRows
+    .filter((task) => (
+      task.canonicalization_status === undefined
+      || task.terminal_state === undefined
+      || task.container_state === undefined
+      || isActiveCanonicalTaskEntityRow(task)
+    ))
+    .map((task) => task.id);
   const boundaryResult = taskIds.length === 0
     ? { data: [] as BoundaryRow[], error: null }
     : await loadScheduleBoundaries(taskIds);
@@ -298,27 +306,6 @@ export type TaskHistoryDetailLoadOptions = {
 };
 
 type TaskHistoryCacheUpdate = DbTaskHistory[] | ((current: DbTaskHistory[]) => DbTaskHistory[]);
-
-export async function fetchAllPagedRows<T>(
-  fetchPage: (from: number, to: number) => Promise<PagedFetchResult<T>>,
-  pageSize = TASK_HISTORY_PAGE_SIZE,
-): Promise<PagedFetchResult<T>> {
-  const rows: T[] = [];
-
-  for (let from = 0; ; from += pageSize) {
-    const pageResult = await fetchPage(from, from + pageSize - 1);
-    if (pageResult.error) {
-      return { data: null, error: pageResult.error };
-    }
-
-    const pageRows = pageResult.data ?? [];
-    rows.push(...pageRows);
-
-    if (pageRows.length < pageSize) {
-      return { data: rows, error: null };
-    }
-  }
-}
 
 function logWorkspaceTiming(step: string, startedAt: number, details: Record<string, boolean | number | string> = {}) {
   if (!isWorkspacePerformanceDiagnosticsEnabled() || typeof performance === "undefined" || step !== "Startup summary") {
@@ -753,7 +740,7 @@ export function useWorkspaceData({
     let taskChannel: RealtimeChannel | null = null;
     let projectionChannel: RealtimeChannel | null = null;
     let workspaceChannelEverSubscribed = false;
-    let broadManualActionCommandOperationReads = 0;
+    const broadManualActionCommandOperationReads = 0;
     let realtimeGapCoordinator: ReturnType<typeof createRealtimeGapCoordinator> | null = null;
     let realtimeGapRecoveryPromise: Promise<void> | null = null;
     async function requestHomeCurrentDayHistory(
@@ -1022,16 +1009,16 @@ export function useWorkspaceData({
       return (result.data ?? []) as CanonicalTaskCalendarOverride[];
     }
 
-    async function loadManualActionCommandOperations(taskId?: string) {
-      if (!taskId) broadManualActionCommandOperationReads += 1;
-      let query = client
-        .from("adhdice_task_command_operations")
-        .select("id,user_id,entity_id,command_type,requested_logical_date,state,result_references,source_kind,created_at,completed_at")
-        .eq("user_id", userId)
-        .order("created_at", { ascending: false });
-      if (taskId) query = query.eq("entity_id", taskId);
-      const result = await query;
-      if (result.error) return [] as CanonicalTaskCommandOperation[];
+    async function loadManualActionCommandOperations(taskIds?: readonly string[]) {
+      const requestedTaskIds = [...new Set((taskIds ?? tasksRef.current.map((task) => task.id)).filter(Boolean))];
+      if (requestedTaskIds.length === 0) return [] as CanonicalTaskCommandOperation[];
+      const result = await fetchAllPagedRows(
+        (from, to) => client
+          .rpc("adhdice_get_latest_manual_task_commands", { p_entity_ids: requestedTaskIds })
+          .range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+      );
+      if (result.error) return null;
       return (result.data ?? []) as CanonicalTaskCommandOperation[];
     }
 
@@ -1052,17 +1039,41 @@ export function useWorkspaceData({
         .is("permanently_deleted_at", null)
         .order("status", { ascending: true })
         .order("sort_order", { ascending: true })
-        .order("created_at", { ascending: false });
+        .order("created_at", { ascending: false })
+        .order("id", { ascending: true });
     }
 
-    async function loadLatestTaskScheduleBoundaries(taskIds: string[]) {
-      const result = await client.rpc("adhdice_get_latest_task_schedule_boundaries", {
-        p_entity_ids: taskIds,
-      });
-      return {
-        data: (result.data ?? []) as CanonicalTaskScheduleBoundary[],
-        error: result.error,
-      };
+    async function loadAllTaskRows(onPage?: (page: PaginatedReadPage) => void) {
+      return await fetchAllPagedRows(
+        (from, to) => createTaskRowsRequest().range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+        onPage,
+      );
+    }
+
+    async function loadLatestTaskScheduleBoundaries(taskIds: string[], onPage?: (page: PaginatedReadPage) => void) {
+      if (taskIds.length === 0) return { data: [] as CanonicalTaskScheduleBoundary[], error: null };
+      return await fetchAllPagedRows(
+        (from, to) => client.rpc("adhdice_get_latest_task_schedule_boundaries", {
+          p_entity_ids: taskIds,
+        }).range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+        onPage,
+      ) as PaginatedReadResult<CanonicalTaskScheduleBoundary>;
+    }
+
+    async function loadAllCurrentTaskProjections(onPage?: (page: PaginatedReadPage) => void) {
+      return await fetchAllPagedRows(
+        (from, to) => client
+          .from("adhdice_task_current_projections")
+          .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
+          .eq("user_id", userId)
+          .neq("display_status", "trashed")
+          .order("entity_id", { ascending: true })
+          .range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+        onPage,
+      ) as unknown as PaginatedReadResult<CurrentTaskProjectionReadRow>;
     }
 
     async function reloadTaskRows({
@@ -1121,7 +1132,7 @@ export function useWorkspaceData({
         do {
           queuedTaskReloadRef.current = false;
           const { taskResult, boundaryResult } = await loadCanonicalTaskSnapshot(
-            () => createTaskRowsRequest(),
+            () => loadAllTaskRows(),
             (taskIds) => loadLatestTaskScheduleBoundaries(taskIds),
           );
 
@@ -2153,9 +2164,9 @@ export function useWorkspaceData({
 
           const [activeCalendarOverrides, manualActionCommandOperations] = await Promise.all([
             loadActiveCalendarOverrides(),
-            loadManualActionCommandOperations(),
+            loadManualActionCommandOperations(nextTasks.map((task) => task.id)),
           ]);
-          if (!activeCalendarOverrides || !canApplySummaryCalculation()) {
+          if (!activeCalendarOverrides || !manualActionCommandOperations || !canApplySummaryCalculation()) {
             return false;
           }
 
@@ -2220,9 +2231,9 @@ export function useWorkspaceData({
           if (!task) return false;
           const [activeCalendarOverrides, manualActionCommandOperations] = await Promise.all([
             loadActiveCalendarOverrides(taskId),
-            loadManualActionCommandOperations(taskId),
+            loadManualActionCommandOperations([taskId]),
           ]);
-          if (!activeCalendarOverrides || !isActive || !canApplyCoreWorkspaceResult() || !canApplyBehaviorAuthorityProjection()) return false;
+          if (!activeCalendarOverrides || !manualActionCommandOperations || !isActive || !canApplyCoreWorkspaceResult() || !canApplyBehaviorAuthorityProjection()) return false;
           const summaryContext = {
             behaviorProfiles: behaviorProfilesRef.current,
             behaviorPolicyRevisions: behaviorPolicyRevisionsRef.current,
@@ -2566,9 +2577,16 @@ export function useWorkspaceData({
     }
 
     async function loadCoreWorkspaceData({ silent = false, source = "initial" }: { silent?: boolean; source?: WorkspaceCoreRefreshSource } = {}) {
-      const taskListLoadGeneration = advanceWorkspaceDomainGeneration(taskListDataGeneration);
-      const taskContentFolderLoadGeneration = advanceWorkspaceDomainGeneration(taskContentFolderDataGenerationRef);
-      const focusLoadGeneration = advanceWorkspaceDomainGeneration(focusDataGenerationRef);
+      const shouldLoadSecondaryDomains = source === "initial" || source === "manual";
+      const taskListLoadGeneration = shouldLoadSecondaryDomains
+        ? advanceWorkspaceDomainGeneration(taskListDataGeneration)
+        : taskListDataGeneration.current;
+      const taskContentFolderLoadGeneration = shouldLoadSecondaryDomains
+        ? advanceWorkspaceDomainGeneration(taskContentFolderDataGenerationRef)
+        : taskContentFolderDataGenerationRef.current;
+      const focusLoadGeneration = shouldLoadSecondaryDomains
+        ? advanceWorkspaceDomainGeneration(focusDataGenerationRef)
+        : focusDataGenerationRef.current;
       if (!silent) {
         setIsWorkspaceLoading(true);
       }
@@ -2580,19 +2598,25 @@ export function useWorkspaceData({
         .select(WORKSPACE_PROFILE_COLUMNS)
         .eq("user_id", userId)
         .maybeSingle();
-      const currentTaskProjectionRequest = client
-        .from("adhdice_task_current_projections")
-        .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
-        .eq("user_id", userId);
       const historySyncStateRequest = client
         .from("adhdice_task_history_sync_state")
         .select("sync_epoch,protocol_version")
         .eq("user_id", userId)
         .maybeSingle();
+      const pagedReadCounts = {
+        boundaries: { pages: 0, rows: 0 },
+        projections: { pages: 0, rows: 0 },
+        tasks: { pages: 0, rows: 0 },
+      };
+      const trackPagedRead = (target: keyof typeof pagedReadCounts) => (page: PaginatedReadPage) => {
+        pagedReadCounts[target].pages += 1;
+        pagedReadCounts[target].rows += page.rowCount;
+      };
       const canonicalTaskSnapshotRequest = loadCanonicalTaskSnapshot(
-        () => createTaskRowsRequest(),
-        (taskIds) => loadLatestTaskScheduleBoundaries(taskIds),
+        () => loadAllTaskRows(trackPagedRead("tasks")),
+        (taskIds) => loadLatestTaskScheduleBoundaries(taskIds, trackPagedRead("boundaries")),
       );
+      const currentTaskProjectionRequest = loadAllCurrentTaskProjections(trackPagedRead("projections"));
       const criticalCoreRequest = Promise.all([
         canonicalTaskSnapshotRequest,
         profileRequest,
@@ -2601,46 +2625,48 @@ export function useWorkspaceData({
       ]);
       // Focus History is owned by the page-gated Focus hook, never core startup.
       const shouldLoadFocusHistory = false;
-      const secondaryCoreRequest = Promise.all([
-        client
-          .from("adhdice_focus_categories")
-          .select("*")
-          .eq("user_id", userId)
-          .order("sort_order", { ascending: true })
-          .order("created_at", { ascending: true }),
-        shouldLoadFocusHistory
-          ? client
-            .from("adhdice_focus_sessions")
+      const secondaryCoreRequest = shouldLoadSecondaryDomains
+        ? Promise.all([
+          client
+            .from("adhdice_focus_categories")
             .select("*")
             .eq("user_id", userId)
-            .order("session_date", { ascending: false })
-            .order("created_at", { ascending: false })
-          : Promise.resolve({ data: null as DbFocusSession[] | null, error: null }),
-        client
-          .from("adhdice_task_focus_days")
-          .select("*")
-          .eq("user_id", userId)
-          .order("focus_date", { ascending: false }),
-        client
-          .from("adhdice_task_lists")
-          .select("*")
-          .eq("user_id", userId)
-          .order("sort_order", { ascending: true })
-          .order("created_at", { ascending: true }),
-        client
-          .from("adhdice_task_list_manual_memberships")
-          .select("*")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: true }),
-        loadTaskListFolders(client, userId)
-          .then((data) => ({ data, error: null }))
-          .catch((error: { message?: string }) => ({ data: null, error })),
-        client
-          .from("adhdice_task_content_folders")
-          .select("*")
-          .eq("user_id", userId)
-          .order("created_at", { ascending: true }),
-      ]);
+            .order("sort_order", { ascending: true })
+            .order("created_at", { ascending: true }),
+          shouldLoadFocusHistory
+            ? client
+              .from("adhdice_focus_sessions")
+              .select("*")
+              .eq("user_id", userId)
+              .order("session_date", { ascending: false })
+              .order("created_at", { ascending: false })
+            : Promise.resolve({ data: null as DbFocusSession[] | null, error: null }),
+          client
+            .from("adhdice_task_focus_days")
+            .select("*")
+            .eq("user_id", userId)
+            .order("focus_date", { ascending: false }),
+          client
+            .from("adhdice_task_lists")
+            .select("*")
+            .eq("user_id", userId)
+            .order("sort_order", { ascending: true })
+            .order("created_at", { ascending: true }),
+          client
+            .from("adhdice_task_list_manual_memberships")
+            .select("*")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: true }),
+          loadTaskListFolders(client, userId)
+            .then((data) => ({ data, error: null }))
+            .catch((error: { message?: string }) => ({ data: null, error })),
+          client
+            .from("adhdice_task_content_folders")
+            .select("*")
+            .eq("user_id", userId)
+            .order("created_at", { ascending: true }),
+        ] as const)
+        : null;
       const [
         { taskResult, boundaryResult: taskScheduleBoundariesResult },
         profileResult,
@@ -2694,9 +2720,13 @@ export function useWorkspaceData({
         (taskScheduleBoundariesResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
       );
       tasksRef.current = nextTasks;
+      const activeTaskIds = new Set(nextTasks.filter(isActiveCanonicalTaskEntityRow).map((task) => task.id));
+      const activeCurrentTaskProjections = Object.fromEntries(
+        Object.entries(currentTaskProjectionsByTaskIdRef.current).filter(([taskId]) => activeTaskIds.has(taskId)),
+      );
       const nextProjectionMap = mergeCurrentTaskProjectionRows(
         indexCurrentTaskProjectionRows(projectionRows),
-        Object.values(currentTaskProjectionsByTaskIdRef.current),
+        Object.values(activeCurrentTaskProjections),
       );
       currentTaskProjectionsByTaskIdRef.current = nextProjectionMap;
       startTransition(() => {
@@ -2727,6 +2757,13 @@ export function useWorkspaceData({
         console.info(`[workspace] Tasks ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
       }
       const secondaryCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
+      if (!secondaryCoreRequest) {
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(`[workspace] Secondary workspace refresh skipped source=${source} scope=task-authority tasks=${pagedReadCounts.tasks.rows} taskPages=${pagedReadCounts.tasks.pages} boundaryRows=${pagedReadCounts.boundaries.rows} boundaryPages=${pagedReadCounts.boundaries.pages} projectionRows=${pagedReadCounts.projections.rows} projectionPages=${pagedReadCounts.projections.pages}.`);
+        }
+        return;
+      }
+
       const [categoryResult, historyResult, focusDayResult, taskListsResult, manualMembershipResult, folderStructureResult, taskContentFolderResult] = await secondaryCoreRequest;
 
       if (!canApplyCoreWorkspaceResult()) {
@@ -2863,18 +2900,25 @@ export function useWorkspaceData({
         taskLists: nextTaskLists.length,
       });
       logWorkspaceTiming("Startup summary", loadStartedAt, {
+        boundaryPages: pagedReadCounts.boundaries.pages,
+        boundaryRows: pagedReadCounts.boundaries.rows,
         currentProjectionsLoaded: projectionRows.length,
         fullHistoryLoaded: hasLoadedFullTaskHistoryRef.current,
         fullHistoryFacts: hasLoadedFullTaskHistoryRef.current ? fullTaskHistoryRowsRef.current.length : 0,
         scopedHistoryTasks: Object.values(taskHistoryLoadStateByTaskIdRef.current).filter((state) => state.status === "ready").length,
         broadManualActionCommandOperationReads,
         focusHistory: shouldLoadFocusHistory ? nextFocusHistory.length : 0,
+        projectionPages: pagedReadCounts.projections.pages,
+        projectionRows: pagedReadCounts.projections.rows,
+        taskPages: pagedReadCounts.tasks.pages,
         tasks: nextTasks.length,
+        refreshScope: shouldLoadSecondaryDomains ? "full" : "task-authority",
+        refreshSource: source,
       });
       if (activePageRef.current === "Notes") void loadNotesRef.current?.();
 
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
-        console.info(`[workspace] Background details ready in ${Math.round(performance.now() - loadStartedAt)}ms.`);
+        console.info(`[workspace] Background details ready in ${Math.round(performance.now() - loadStartedAt)}ms scope=full source=${source}.`);
       }
 
     }
@@ -3141,10 +3185,7 @@ export function useWorkspaceData({
 
     async function loadCurrentTaskProjectionSnapshot() {
       if (!canApplyCoreWorkspaceResult()) return null;
-      const result = await client
-        .from("adhdice_task_current_projections")
-        .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
-        .eq("user_id", userId);
+      const result = await loadAllCurrentTaskProjections();
       if (!canApplyCoreWorkspaceResult()) return null;
       if (result.error) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
@@ -3440,10 +3481,7 @@ export function useWorkspaceData({
         kind: "realtime_gap_projection_reconcile_started",
       });
       if (!canApplyCoreWorkspaceResult()) return false;
-      const result = await client
-        .from("adhdice_task_current_projections")
-        .select(CURRENT_TASK_PROJECTION_READ_COLUMNS)
-        .eq("user_id", userId);
+      const result = await loadAllCurrentTaskProjections();
       if (!canApplyCoreWorkspaceResult()) return false;
       if (result.error) {
         recordAdhdiceRealtimeDiagnostic({

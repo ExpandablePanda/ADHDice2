@@ -18,6 +18,8 @@ import {
   type PendingRewardDiceMutationRow,
 } from "@/lib/pending-reward-dice";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
+import { fetchAllPagedRows, SUPABASE_READ_PAGE_SIZE } from "@/lib/paginated-read";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 
 type Message = {
   text: string;
@@ -129,23 +131,33 @@ export function useTaskRewardController({
     const ownerGeneration = ownerGenerationRef.current;
     const snapshotAtStart = accountSnapshotRef.current;
     const promise = (async () => {
-      const { data, error } = await client
-        .from("adhdice_pending_reward_dice_items")
-        .select("reward_payload")
-        .eq("user_id", currentUserId)
-        .is("claimed_operation_id", null)
-        .order("created_at");
+      let pageCount = 0;
+      const result = await fetchAllPagedRows(
+        (from, to) => client
+          .from("adhdice_pending_reward_dice_items")
+          .select("id,created_at,reward_payload")
+          .eq("user_id", currentUserId)
+          .is("claimed_operation_id", null)
+          .order("created_at", { ascending: true })
+          .order("id", { ascending: true })
+          .range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+        () => { pageCount += 1; },
+      );
       if (ownerGenerationRef.current !== ownerGeneration) return null;
-      if (error) {
+      if (result.error) {
         setMessage({
           tone: "warn",
-          text: isFetchFailure(error)
+          text: isFetchFailure(result.error)
             ? "Could not reach Supabase to load the pending reward bank. Please try again."
-            : (error.message ?? "Could not load the pending reward bank."),
+            : (result.error.message ?? "Could not load the pending reward bank."),
         });
         return null;
       }
-      const queue = parsePendingRewardItems(data);
+      const queue = parsePendingRewardItems(result.data);
+      if (isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[rewards] Pending reward bank pages=${pageCount} rows=${queue.length}.`);
+      }
       pendingRewardQueueRef.current = queue;
       setPendingRewardQueue(queue);
       const snapshotAfterLoad = accountSnapshotRef.current;

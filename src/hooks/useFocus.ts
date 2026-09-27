@@ -41,10 +41,18 @@ import {
   type FocusCounterRow,
 } from "@/lib/focus-counter-sync";
 import { normalizeFocusReallocationMode, readFocusReallocationMode, writeFocusReallocationMode } from "@/lib/focus-reallocation";
+import { fetchAllPagedRows, SUPABASE_READ_PAGE_SIZE, type PaginatedReadResult } from "@/lib/paginated-read";
+import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
 type FocusRuntimeRpcResult = { runtime?: FocusRuntimeRow | null; deleted_session_id?: string; completed_session?: DbFocusSession; was_replayed?: boolean };
+type FocusHistoryLoad = {
+  client: SupabaseClient;
+  getPageCount: () => number;
+  promise: Promise<PaginatedReadResult<DbFocusSession>>;
+  userId: string;
+};
 
 export function isFocusAuthReady(confirmedUserId: string | null, userId: string | null) {
   return Boolean(confirmedUserId && userId && confirmedUserId === userId);
@@ -309,6 +317,7 @@ export function useFocus(
   const runtimeCreateSessionIdsRef = useRef(new Map<string, string>());
   const completingRuntimeIdsRef = useRef(new Set<string>());
   const loadedFocusHistoryUserIdRef = useRef<string | null>(null);
+  const focusHistoryLoadInFlightRef = useRef<FocusHistoryLoad | null>(null);
   const migratedRuntimeUserRef = useRef<string | null>(null);
   const runtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const runtimeChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
@@ -356,6 +365,7 @@ export function useFocus(
 
   useEffect(() => {
     currentUserIdRef.current = userId;
+    loadedFocusHistoryUserIdRef.current = null;
     counterRequestGenerationRef.current += 1;
     const nextState = { counters: [], history: [], ownerUserId: userId };
     focusCounterStateRef.current = nextState;
@@ -408,17 +418,53 @@ export function useFocus(
 
   useEffect(() => {
     if (!client || !userId || !historyActive || loadedFocusHistoryUserIdRef.current === userId) return;
-    let active = true;
-    void client.from("adhdice_focus_sessions").select("*").eq("user_id", userId)
-      .order("session_date", { ascending: false }).order("created_at", { ascending: false })
-      .then(({ data, error }) => {
-        if (!active || error) return;
-        const next = mergeStoredFocusHistory((data ?? []).map((row) => mapFocusSessionRow(row)));
-        loadedFocusHistoryUserIdRef.current = userId;
-        setFocusHistory(next);
-        saveFocusHistory(next);
-      });
-    return () => { active = false; };
+    const existingLoad = focusHistoryLoadInFlightRef.current;
+    let load = existingLoad && existingLoad.client === client && existingLoad.userId === userId
+      ? existingLoad
+      : null;
+    if (!load) {
+      let pageCount = 0;
+      const promise = fetchAllPagedRows(
+        (from, to) => client
+          .from("adhdice_focus_sessions")
+          .select("id,user_id,category_id,title_snapshot,focus_type_snapshot,focus_subtype_snapshot,focus_subtype_2_snapshot,session_date,duration_seconds,notes,started_at,ended_at,source,runtime_session_id,created_at")
+          .eq("user_id", userId)
+          .order("session_date", { ascending: false })
+          .order("created_at", { ascending: false })
+          .order("id", { ascending: true })
+          .range(from, to),
+        SUPABASE_READ_PAGE_SIZE,
+        () => {
+          pageCount += 1;
+        },
+      );
+      load = {
+        client,
+        getPageCount: () => pageCount,
+        promise,
+        userId,
+      };
+      focusHistoryLoadInFlightRef.current = load;
+      const clearInFlightLoad = () => {
+        if (focusHistoryLoadInFlightRef.current === load) {
+          focusHistoryLoadInFlightRef.current = null;
+        }
+      };
+      void promise.then(clearInFlightLoad, clearInFlightLoad);
+    }
+
+    let disposed = false;
+    void load.promise.then(({ data, error }) => {
+      if (disposed || currentUserIdRef.current !== userId || error) return;
+      const next = mergeStoredFocusHistory(((data ?? []) as DbFocusSession[]).map((row) => mapFocusSessionRow(row)));
+      loadedFocusHistoryUserIdRef.current = userId;
+      setFocusHistory(next);
+      saveFocusHistory(next);
+      if (isWorkspacePerformanceDiagnosticsEnabled()) {
+        console.info(`[focus] history hydrated pages=${load?.getPageCount() ?? 0} rows=${data?.length ?? 0}`);
+      }
+    });
+    return () => { disposed = true; };
   }, [client, historyActive, userId]);
 
   const applyRuntimeRow = useCallback((row: FocusRuntimeRow) => {

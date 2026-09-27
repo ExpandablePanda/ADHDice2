@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.58`.
+- Current working app version: `7.15.61`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,44 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-27 7.15.61 Supabase scale hardening and refresh diet
+
+Task command Last Handled reads now use the owner-authenticated compact
+`adhdice_get_latest_manual_task_commands(uuid[])` RPC instead of the broad
+command-operation read. The RPC preserves the existing JavaScript qualifying
+command semantics and deterministic latest-action ordering. Task rows,
+current projections, latest schedule boundaries, pending reward items, Health
+historical collections, linked custom-food repair reads, and page-gated Focus
+History now use the shared fail-closed 1,000-row pagination primitive with
+deterministic tie-breakers. A full page always probes the next page, and a
+later-page error never becomes a partial authority.
+
+Resume/mutation workspace refreshes now reconcile Task authority without
+reflexively reloading unrelated secondary workspace domains; initial and
+explicit manual refresh retain the broad scope. Health repeat activation uses
+the current per-user remote authority when available, and Focus History remains
+outside startup core with a single-flight page-gated loader. The safe Trash
+fallback retains lightweight Task rows for existing Trash/Restore and
+relationship semantics, while excluding trashed IDs from current projections
+and schedule-boundary reads and leaving heavier Trash-only reads lazy.
+
+The source-only migration is
+`supabase/patch_supabase_scale_hardening_7_15_61.sql`; it adds the compact RPC,
+deterministic boundary ordering, the Health meal `(user_id, source_food_id)`
+index, and targeted initPlan RLS rewrites. It has not been applied to live
+Supabase. No canonical or audit-row retention cleanup was added. Read-only
+EXPLAIN comparison on the current project measured the broad command read at
+1,212 ms with 8,942 rows and the compact qualifying latest-per-Task shape at
+159 ms with 266 rows; the existing `(user_id, entity_id, created_at)` index
+was used, so no speculative command index was added. Journal branch overlap
+inspection found no shared Health/schema changes to merge.
+
+Focused pagination, source-contract, Task, reward, Health/Food, Focus, and
+refresh tests plus `git diff --check` are the source verification boundary.
+The repository typecheck still has unrelated pre-existing diagnostics;
+browser/manual QA, migration application, Supabase advisor changes, and any
+Edge deployment remain unverified.
 
 ## 2026-09-27 7.15.58 Bounded Reports Task History and nutrition display cleanup
 

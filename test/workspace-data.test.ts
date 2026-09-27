@@ -275,12 +275,12 @@ test("Task refresh paths use the same causal canonical snapshot loader", async (
   const latestBoundaryLoader = source.slice(source.indexOf("async function loadLatestTaskScheduleBoundaries"), source.indexOf("async function reloadTaskRows"));
 
   assert.match(source, /export async function loadCanonicalTaskSnapshot/);
-  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds\)/);
-  assert.match(coreLoader, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*loadAllTaskRows\(\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(coreLoader, /loadCanonicalTaskSnapshot\([\s\S]*loadAllTaskRows\(trackPagedRead\("tasks"\)\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds, trackPagedRead\("boundaries"\)\)/);
   assert.match(latestBoundaryLoader, /client\.rpc\("adhdice_get_latest_task_schedule_boundaries", \{\s*p_entity_ids: taskIds,/);
-  assert.doesNotMatch(latestBoundaryLoader, /fetchAllPagedRows|Promise\.all|taskIds\.map/);
-  assert.doesNotMatch(reload, /fetchAllPagedRows<CanonicalTaskScheduleBoundary>/);
-  assert.doesNotMatch(coreLoader, /fetchAllPagedRows<CanonicalTaskScheduleBoundary>/);
+  assert.match(latestBoundaryLoader, /fetchAllPagedRows/);
+  assert.match(reload, /loadAllTaskRows/);
+  assert.match(coreLoader, /loadAllCurrentTaskProjections\(trackPagedRead\("projections"\)\)/);
   assert.doesNotMatch(reload, /Promise\.all\(\[\s*createTaskRowsRequest\(\)/);
   assert.doesNotMatch(coreLoader, /Promise\.all\(\[[\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
 });
@@ -372,7 +372,7 @@ test("global streak-policy refresh uses one stable bulk workspace authority", as
   assert.match(summaryLoader, /setTaskHistoryStreakSummaries\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextSummaries\.summaries\)\)/);
   assert.match(summaryLoader, /taskHistoryStreakSummaryCalculationTokenRef/);
   assert.match(summaryLoader, /mode=bulk-chunked reason=behavior-policy/);
-  assert.doesNotMatch(summaryLoader, /nextTasks\.map\(/);
+  assert.match(summaryLoader, /loadManualActionCommandOperations\(nextTasks\.map\(\(task\) => task\.id\)\)/);
 });
 
 test("workspace streak summaries batch-load active Calendar overrides and index them by task", async () => {
@@ -517,7 +517,8 @@ test("ordinary startup does not invoke the bulk History summary path or broad co
   assert.doesNotMatch(startupLoader, /loadTaskHistoryStreakSummaries\(nextTasks/);
   assert.match(summaryLoader, /if \(!hasLoadedFullTaskHistoryRef\.current\)/);
   assert.doesNotMatch(startupLoader, /loadManualActionCommandOperations\(\)/);
-  assert.match(source, /if \(!taskId\) broadManualActionCommandOperationReads \+= 1/);
+  assert.match(source, /const broadManualActionCommandOperationReads = 0/);
+  assert.doesNotMatch(source, /broadManualActionCommandOperationReads \+=/);
 });
 
 test("opening Task History reads only the bounded detail window", async () => {

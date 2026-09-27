@@ -3381,6 +3381,12 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_get_latest_manual_task_commands: {
+        Args: {
+          p_entity_ids: string[];
+        };
+        Returns: Array<Pick<CanonicalTaskCommandOperation, "id" | "user_id" | "entity_id" | "command_type" | "requested_logical_date" | "state" | "result_references" | "source_kind" | "created_at" | "completed_at">>;
+      };
       adhdice_get_latest_task_schedule_boundaries: {
         Args: {
           p_entity_ids: string[];
