@@ -1053,38 +1053,13 @@ export function useWorkspaceData({
         .order("created_at", { ascending: false });
     }
 
-    function createTaskScheduleBoundariesRequest(taskIds: string[]) {
-      return client
-        .from("adhdice_task_schedule_boundaries")
-        .select("*")
-        .eq("user_id", userId)
-        .in("entity_id", taskIds)
-        .order("boundary_sequence", { ascending: false })
-        .order("id", { ascending: true });
-    }
-
-    function loadTaskScheduleBoundaries(taskIds: string[]) {
-      return fetchAllPagedRows<CanonicalTaskScheduleBoundary>(
-        async (from, to) => await createTaskScheduleBoundariesRequest(taskIds).range(from, to),
-      );
-    }
-
     async function loadLatestTaskScheduleBoundaries(taskIds: string[]) {
-      const results = await Promise.all(taskIds.map((taskId) => client
-        .from("adhdice_task_schedule_boundaries")
-        .select("*")
-        .eq("user_id", userId)
-        .eq("entity_id", taskId)
-        .order("boundary_sequence", { ascending: false })
-        .order("id", { ascending: true })
-        .limit(1)
-        .maybeSingle()));
-      const failed = results.find((result) => result.error);
+      const result = await client.rpc("adhdice_get_latest_task_schedule_boundaries", {
+        p_entity_ids: taskIds,
+      });
       return {
-        data: results
-          .map((result) => result.data as CanonicalTaskScheduleBoundary | null)
-          .filter((boundary): boundary is CanonicalTaskScheduleBoundary => boundary !== null),
-        error: failed?.error ?? null,
+        data: (result.data ?? []) as CanonicalTaskScheduleBoundary[],
+        error: result.error,
       };
     }
 
@@ -1145,7 +1120,7 @@ export function useWorkspaceData({
           queuedTaskReloadRef.current = false;
           const { taskResult, boundaryResult } = await loadCanonicalTaskSnapshot(
             () => createTaskRowsRequest(),
-            (taskIds) => loadTaskScheduleBoundaries(taskIds),
+            (taskIds) => loadLatestTaskScheduleBoundaries(taskIds),
           );
 
           if (!canApplyCoreWorkspaceResult() || workspaceGenerationRef.current !== reloadGeneration) {
@@ -2614,7 +2589,7 @@ export function useWorkspaceData({
         .maybeSingle();
       const canonicalTaskSnapshotRequest = loadCanonicalTaskSnapshot(
         () => createTaskRowsRequest(),
-        (taskIds) => loadTaskScheduleBoundaries(taskIds),
+        (taskIds) => loadLatestTaskScheduleBoundaries(taskIds),
       );
       const criticalCoreRequest = Promise.all([
         canonicalTaskSnapshotRequest,

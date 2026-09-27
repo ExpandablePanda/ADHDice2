@@ -207,7 +207,13 @@ test("normal Task Realtime uses authoritative entity reconciliation and keeps lo
 
 test("targeted Task reads exclude unrelated workspace authorities", () => {
   assert.match(entityReconcileSource, /from\("adhdice_clean_tasks"\)[\s\S]*\.in\("id", requestedTaskIds\)[\s\S]*\.is\("permanently_deleted_at", null\)/);
-  assert.match(entityReconcileSource, /eq\("entity_id", taskId\)[\s\S]*order\("boundary_sequence", \{ ascending: false \}\)[\s\S]*limit\(1\)[\s\S]*maybeSingle\(\)/);
+  assert.match(entityReconcileSource, /client\.rpc\("adhdice_get_latest_task_schedule_boundaries", \{\s*p_entity_ids: taskIds,/);
+  assert.match(entityReconcileSource, /loadLatestTaskScheduleBoundaries\(activeTaskIds\)/);
+  const latestBoundaryLoader = entityReconcileSource.slice(
+    entityReconcileSource.indexOf("async function loadLatestTaskScheduleBoundaries"),
+    entityReconcileSource.indexOf("async function reloadTaskRows"),
+  );
+  assert.doesNotMatch(latestBoundaryLoader, /Promise\.all|taskIds\.map|maybeSingle\(\)/);
   for (const unrelatedTable of [
     "adhdice_task_history_facts",
     "adhdice_task_command_operations",
@@ -248,8 +254,8 @@ test("intentional broad paths remain on the canonical full snapshot", () => {
     workspaceSource.indexOf("prepareTaskMutationRef.current", workspaceSource.indexOf("rolloverWorkspaceReconciliationRef.current = async () =>")),
   );
 
-  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadTaskScheduleBoundaries\(taskIds\)/);
-  assert.match(core, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(core, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds\)/);
   assert.match(rollover, /reloadTaskRows\(\{ silent: true, source: "rollover" \}\)/);
   assert.doesNotMatch(taskRealtimeSource, /reloadTaskRows\(\{ silent: true \}\)/);
 });

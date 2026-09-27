@@ -147,7 +147,7 @@ test("production wiring preserves normal Task/Projection paths and adds one gap 
   assert.match(workspaceSource, /realtimeGapCoordinator\?\.reportStatus\("task", status/);
   assert.match(workspaceSource, /realtimeGapCoordinator\?\.reportStatus\("projection", status/);
   assert.match(workspaceSource, /source: "realtime_gap_recovery"/);
-  assert.match(workspaceSource, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadTaskScheduleBoundaries/);
+  assert.match(workspaceSource, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadLatestTaskScheduleBoundaries/);
   assert.match(workspaceSource, /from\("adhdice_task_current_projections"\)[\s\S]*select\(CURRENT_TASK_PROJECTION_READ_COLUMNS\)[\s\S]*eq\("user_id", userId\)/);
   assert.match(workspaceSource, /requestTaskEntityReconciliationAfterGap/);
   assert.match(workspaceSource, /requestTaskEntityReconciliationAfterGap\(taskId, payload\.eventType\)/);

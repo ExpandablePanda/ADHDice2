@@ -99,34 +99,21 @@ test("canonical boundary reads exclude historical and deleted Task IDs", async (
   assert.equal(snapshot.boundaryResult?.data?.[0]?.entity_id, currentTask.id);
 });
 
-test("scoped canonical boundary pagination is safe when unrelated history exceeds the API row cap", async () => {
+test("canonical boundary snapshots accept one latest row per requested Task", async () => {
   const task = { id: "current-task" } as Task;
-  const unrelatedBoundaries = Array.from({ length: 1001 }, (_, index) => ({
-    entity_id: `historical-task-${index}`,
-    boundary_sequence: 1,
-  } as CanonicalTaskScheduleBoundary));
-  const relevantBoundary = { entity_id: task.id, boundary_sequence: 1 } as CanonicalTaskScheduleBoundary;
-  const accountBoundaries = [...unrelatedBoundaries, relevantBoundary];
-  const ranges: Array<[number, number]> = [];
+  const latestBoundary = { entity_id: task.id, boundary_sequence: 4 } as CanonicalTaskScheduleBoundary;
 
   const snapshot = await loadCanonicalTaskSnapshot(
     async () => ({ data: [task], error: null }),
-    async (taskIds) => {
-      const scopedRows = accountBoundaries.filter((boundary) => taskIds.includes(boundary.entity_id));
-      return fetchAllPagedRows(async (from, to) => {
-        ranges.push([from, to]);
-        return { data: scopedRows.slice(from, to + 1), error: null };
-      });
-    },
+    async (taskIds) => ({ data: taskIds.map(() => latestBoundary), error: null }),
   );
 
   const projectedTasks = projectTasksWithCanonicalScheduleBoundaries(
     snapshot.taskResult.data ?? [],
     snapshot.boundaryResult?.data ?? [],
   );
-  assert.equal(unrelatedBoundaries.length, 1001);
-  assert.deepEqual(ranges, [[0, 999]]);
   assert.equal(projectedTasks[0]?.canonical_schedule_boundary?.entity_id, task.id);
+  assert.equal(projectedTasks[0]?.canonical_schedule_boundary?.boundary_sequence, 4);
 });
 
 test("empty canonical Task snapshots skip boundary fetching", async () => {
@@ -285,13 +272,15 @@ test("Task refresh paths use the same causal canonical snapshot loader", async (
   const source = await readFile(new URL("../src/hooks/useWorkspaceData.ts", import.meta.url), "utf8");
   const reload = source.slice(source.indexOf("async function reloadTaskRows"), source.indexOf("function shouldReconnectTaskChannel"));
   const coreLoader = source.slice(source.indexOf("async function loadCoreWorkspaceData"), source.indexOf("const requestCoreWorkspaceRefresh"));
+  const latestBoundaryLoader = source.slice(source.indexOf("async function loadLatestTaskScheduleBoundaries"), source.indexOf("async function reloadTaskRows"));
 
   assert.match(source, /export async function loadCanonicalTaskSnapshot/);
-  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadTaskScheduleBoundaries\(taskIds\)/);
-  assert.match(coreLoader, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadTaskScheduleBoundaries\(taskIds\)/);
-  assert.match(source, /\.in\("entity_id", taskIds\)/);
-  assert.match(source, /\.order\("boundary_sequence", \{ ascending: false \}\)[\s\S]*\.order\("id", \{ ascending: true \}\)/);
-  assert.match(source, /fetchAllPagedRows<CanonicalTaskScheduleBoundary>/);
+  assert.match(reload, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(coreLoader, /loadCanonicalTaskSnapshot\([\s\S]*createTaskRowsRequest\(\)[\s\S]*loadLatestTaskScheduleBoundaries\(taskIds\)/);
+  assert.match(latestBoundaryLoader, /client\.rpc\("adhdice_get_latest_task_schedule_boundaries", \{\s*p_entity_ids: taskIds,/);
+  assert.doesNotMatch(latestBoundaryLoader, /fetchAllPagedRows|Promise\.all|taskIds\.map/);
+  assert.doesNotMatch(reload, /fetchAllPagedRows<CanonicalTaskScheduleBoundary>/);
+  assert.doesNotMatch(coreLoader, /fetchAllPagedRows<CanonicalTaskScheduleBoundary>/);
   assert.doesNotMatch(reload, /Promise\.all\(\[\s*createTaskRowsRequest\(\)/);
   assert.doesNotMatch(coreLoader, /Promise\.all\(\[[\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
 });

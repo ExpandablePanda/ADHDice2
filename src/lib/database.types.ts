@@ -3381,6 +3381,12 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_get_latest_task_schedule_boundaries: {
+        Args: {
+          p_entity_ids: string[];
+        };
+        Returns: CanonicalTaskScheduleBoundary[];
+      };
       adhdice_get_task_activity_summary: {
         Args: {
           p_as_of: string;

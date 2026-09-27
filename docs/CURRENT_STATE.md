@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.53`.
+- Current working app version: `7.15.54`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-26 7.15.54 Bulk latest Task schedule-boundary startup read
+
+The ordinary canonical Task startup snapshot, broad Task-row refresh, and
+targeted Task reconciliation now use one authenticated bulk
+`adhdice_get_latest_task_schedule_boundaries(uuid[])` RPC. The
+`SECURITY INVOKER` function explicitly scopes rows to `auth.uid()`, preserves
+the existing schedule-boundary table RLS, and returns at most one row per
+requested entity using descending `boundary_sequence` plus deterministic ID
+ordering. The old startup/reload all-history pagination and targeted
+per-Task request fanout are no longer used; historical consumers remain
+historical. The existing incomplete active-Task boundary safety condition and
+all Task State/projection semantics are unchanged.
+
+The SQL source is
+`supabase/patch_task_schedule_boundaries_latest_7_15_54.sql`; it has not been
+applied to live Supabase. Focused source, SQL-contract, schedule-projection,
+workspace, and Realtime tests are the verification boundary. Browser/manual
+startup request QA remains Andrew-owned and unverified here.
 
 ## 2026-09-26 7.15.53 Startup network correction
 
