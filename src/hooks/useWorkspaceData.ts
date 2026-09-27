@@ -137,6 +137,22 @@ type PagedFetchResult<T> = {
   error: { code?: string; message?: string } | null;
 };
 
+type CanonicalTaskSnapshotDiagnostics = {
+  onTaskRowsRequestStarted?: () => void;
+  onTaskRowsRequestResolved?: (rowCount: number, hasError: boolean) => void;
+  onTaskScheduleBoundaryRequestStarted?: (taskIdCount: number) => void;
+  onTaskScheduleBoundaryRequestResolved?: (rowCount: number, hasError: boolean) => void;
+  onError?: (stage: string, error: unknown) => void;
+};
+
+function getBootCoreDiagnosticErrorText(error: unknown) {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "object" && error !== null && "message" in error && typeof error.message === "string") {
+    return error.message;
+  }
+  return String(error);
+}
+
 export function startBackgroundTaskHistoryHydration(
   load: () => Promise<boolean>,
   {
@@ -181,17 +197,34 @@ export async function loadCanonicalTaskSnapshot<
 >(
   loadTaskRows: () => PromiseLike<PagedFetchResult<TaskRow>>,
   loadScheduleBoundaries: (taskIds: string[]) => PromiseLike<PagedFetchResult<BoundaryRow>>,
+  diagnostics?: CanonicalTaskSnapshotDiagnostics,
 ) {
-  const taskResult = await loadTaskRows();
+  diagnostics?.onTaskRowsRequestStarted?.();
+  let taskResult: PagedFetchResult<TaskRow>;
+  try {
+    taskResult = await loadTaskRows();
+  } catch (error) {
+    diagnostics?.onError?.("task-rows-request", error);
+    throw error;
+  }
+  diagnostics?.onTaskRowsRequestResolved?.(taskResult.data?.length ?? 0, Boolean(taskResult.error));
   if (taskResult.error) {
     return { taskResult, boundaryResult: null };
   }
 
   const taskRows = taskResult.data ?? [];
   const taskIds = taskRows.map((task) => task.id);
-  const boundaryResult = taskIds.length === 0
-    ? { data: [] as BoundaryRow[], error: null }
-    : await loadScheduleBoundaries(taskIds);
+  diagnostics?.onTaskScheduleBoundaryRequestStarted?.(taskIds.length);
+  let boundaryResult: PagedFetchResult<BoundaryRow>;
+  try {
+    boundaryResult = taskIds.length === 0
+      ? { data: [] as BoundaryRow[], error: null }
+      : await loadScheduleBoundaries(taskIds);
+  } catch (error) {
+    diagnostics?.onError?.("task-schedule-boundary-request", error);
+    throw error;
+  }
+  diagnostics?.onTaskScheduleBoundaryRequestResolved?.(boundaryResult.data?.length ?? 0, Boolean(boundaryResult.error));
   if (boundaryResult.error) {
     return { taskResult, boundaryResult };
   }
@@ -1175,6 +1208,14 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
     }
 
     async function loadCoreWorkspaceData({ silent = false, source = "refresh" }: { silent?: boolean; source?: string } = {}) {
+      const logBootCoreError = (stage: string, error: unknown) => {
+        console.error("[boot-core] error", {
+          message: getBootCoreDiagnosticErrorText(error),
+          source,
+          stage,
+        });
+      };
+      console.info("[boot-core] critical core load started", { silent, source });
       const taskListLoadGeneration = taskListDataGeneration.current + 1;
       taskListDataGeneration.current = taskListLoadGeneration;
       if (!silent) {
@@ -1183,15 +1224,51 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
 
       const loadStartedAt = performance.now();
       const criticalCoreStartedAt = isWorkspacePerformanceDiagnosticsEnabled() && typeof performance !== "undefined" ? performance.now() : 0;
+      console.info("[boot-core] profile request started", { source });
       const profileRequest = client
         .from("adhdice_user_profiles")
         .select(WORKSPACE_PROFILE_COLUMNS)
         .eq("user_id", userId)
-        .maybeSingle();
+        .maybeSingle()
+        .then((result) => {
+          console.info("[boot-core] profile request resolved", { hasError: Boolean(result.error), source });
+          return result;
+        }, (error) => {
+          logBootCoreError("profile-request", error);
+          throw error;
+        });
+      console.info("[boot-core] canonical task snapshot started", { source });
       const canonicalTaskSnapshotRequest = loadCanonicalTaskSnapshot(
         () => createTaskRowsRequest(),
         (taskIds) => loadTaskScheduleBoundaries(taskIds),
-      );
+        {
+          onTaskRowsRequestStarted: () => {
+            console.info("[boot-core] underlying task rows request started", { source });
+          },
+          onTaskRowsRequestResolved: (rowCount, hasError) => {
+            console.info("[boot-core] underlying task rows request resolved", { hasError, rowCount, source });
+          },
+          onTaskScheduleBoundaryRequestStarted: (taskIdCount) => {
+            console.info("[boot-core] task schedule-boundary request started", { source, taskIdCount });
+          },
+          onTaskScheduleBoundaryRequestResolved: (rowCount, hasError) => {
+            console.info("[boot-core] task schedule-boundary request resolved", { hasError, rowCount, source });
+          },
+          onError: logBootCoreError,
+        },
+      ).then((result) => {
+        console.info("[boot-core] canonical task snapshot resolved", {
+          scheduleBoundaryHasError: Boolean(result.boundaryResult?.error),
+          scheduleBoundaryRowCount: result.boundaryResult?.data?.length ?? 0,
+          source,
+          taskRowCount: result.taskResult.data?.length ?? 0,
+          taskRowsHaveError: Boolean(result.taskResult.error),
+        });
+        return result;
+      }, (error) => {
+        logBootCoreError("canonical-task-snapshot", error);
+        throw error;
+      });
       const criticalCoreRequest = Promise.all([
         canonicalTaskSnapshotRequest,
         profileRequest,
@@ -1243,7 +1320,21 @@ export function useWorkspaceData<TTaskGridItem extends TaskGridLayoutItem>({
           .eq("user_id", userId)
           .order("created_at", { ascending: true }),
       ]);
-      const [{ taskResult, boundaryResult: taskScheduleBoundariesResult }, profileResult] = await criticalCoreRequest;
+      const criticalCoreResult = await criticalCoreRequest.then((result) => {
+        console.info("[boot-core] critical Promise.all resolved", {
+          profileHasError: Boolean(result[1].error),
+          scheduleBoundaryHasError: Boolean(result[0].boundaryResult?.error),
+          scheduleBoundaryRowCount: result[0].boundaryResult?.data?.length ?? 0,
+          source,
+          taskRowCount: result[0].taskResult.data?.length ?? 0,
+          taskRowsHaveError: Boolean(result[0].taskResult.error),
+        });
+        return result;
+      }, (error) => {
+        logBootCoreError("critical-promise-all", error);
+        throw error;
+      });
+      const [{ taskResult, boundaryResult: taskScheduleBoundariesResult }, profileResult] = criticalCoreResult;
 
       if (!canApplyCoreWorkspaceResult()) {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {

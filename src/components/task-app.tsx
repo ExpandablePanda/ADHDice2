@@ -3135,18 +3135,76 @@ export function TaskApp() {
   useEffect(() => {
     const calculationToken = activeStatusCalculationTokenRef.current + 1;
     activeStatusCalculationTokenRef.current = calculationToken;
+    const committedBehaviorRevision = committedActiveStatusBehaviorRevisionRef.current;
+    const isGlobalBehaviorChange = committedBehaviorRevision !== null
+      && committedBehaviorRevision !== taskActiveStatusBehaviorRevision;
+    const getErrorDetails = (error: unknown) => {
+      if (error instanceof Error) {
+        return { message: error.message, name: error.name, stack: error.stack };
+      }
+      if (typeof error === "object" && error !== null) {
+        const details = error as { message?: unknown; name?: unknown; stack?: unknown };
+        return {
+          message: typeof details.message === "string" ? details.message : String(error),
+          name: typeof details.name === "string" ? details.name : "UnknownError",
+          stack: typeof details.stack === "string" ? details.stack : undefined,
+        };
+      }
+      return { message: String(error), name: typeof error, stack: undefined };
+    };
+    const logActiveStatusError = (stage: string, error: unknown) => {
+      console.error("[boot-active-status] error", {
+        calculationToken,
+        ...getErrorDetails(error),
+        stage,
+      });
+    };
+    const logEffectCleanup = (reason: string) => {
+      const wasCurrent = activeStatusCalculationTokenRef.current === calculationToken;
+      if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
+      console.info("[boot-active-status] effect cleanup/cancellation", {
+        calculationToken,
+        nextCalculationToken: activeStatusCalculationTokenRef.current,
+        reason,
+        wasCurrent,
+      });
+    };
+    console.info("[boot-active-status] effect entered", {
+      activeStatusInputRevision,
+      calculationToken,
+      committedBehaviorRevision,
+      historyTaskCount: Object.keys(taskHistoryByTaskId).length,
+      isBehaviorAuthorityReady,
+      isGlobalBehaviorChange,
+      isTaskHistoryLoaded,
+      isTaskTypeBehaviorProfilesLoading,
+      taskActiveStatusBehaviorRevision,
+      taskCount: tasks.length,
+      activeStatusReadPresent: activeStatusRead !== null,
+    });
     if (!isTaskHistoryLoaded) {
       committedActiveStatusBehaviorRevisionRef.current = null;
+      console.info("[boot-active-status] calculation skipped", {
+        calculationToken,
+        reason: "task-history-not-loaded",
+      });
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the user-scoped projection when History is unavailable.
+      console.info("[boot-active-status] before setActiveStatusRead", {
+        calculationToken,
+        mode: "clear",
+        reason: "task-history-not-loaded",
+      });
       setActiveStatusRead(null);
-      return () => {
-        if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
-      };
+      return () => logEffectCleanup("task-history-not-loaded");
     }
     if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
-      return () => {
-        if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
-      };
+      console.info("[boot-active-status] calculation skipped", {
+        calculationToken,
+        isBehaviorAuthorityReady,
+        isTaskTypeBehaviorProfilesLoading,
+        reason: "behavior-authority-not-ready",
+      });
+      return () => logEffectCleanup("behavior-authority-not-ready");
     }
 
     const activeStatusInput = {
@@ -3160,35 +3218,98 @@ export function TaskApp() {
       tasks,
       timezone: userTimeZone,
     };
-    const isGlobalBehaviorChange = committedActiveStatusBehaviorRevisionRef.current !== null
-      && committedActiveStatusBehaviorRevisionRef.current !== taskActiveStatusBehaviorRevision;
 
     if (isGlobalBehaviorChange) {
+      console.info("[boot-active-status] chunked calculation started", {
+        activeStatusInputRevision,
+        calculationToken,
+        committedBehaviorRevision,
+        isGlobalBehaviorChange,
+        taskActiveStatusBehaviorRevision,
+        taskCount: tasks.length,
+      });
       void resolveActiveTaskStatusesIncrementallyChunked(activeStatusInput, projectionCache, {
         budgetMs: 10,
         isCurrent: () => activeStatusCalculationTokenRef.current === calculationToken
           && latestActiveStatusInputRevisionRef.current === activeStatusInputRevision
           && latestActiveStatusBehaviorRevisionRef.current === taskActiveStatusBehaviorRevision,
       }).then((result) => {
-        if (!result.completed || activeStatusCalculationTokenRef.current !== calculationToken) return;
-        committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
-        if (isWorkspacePerformanceDiagnosticsEnabled()) {
-          console.info(`[workspace:active-status] mode=global-chunked tasks=${tasks.length} chunks=${result.chunks}`);
+        try {
+          const calculationTokenCurrent = activeStatusCalculationTokenRef.current === calculationToken;
+          const inputRevisionCurrent = latestActiveStatusInputRevisionRef.current === activeStatusInputRevision;
+          const behaviorRevisionCurrent = latestActiveStatusBehaviorRevisionRef.current === taskActiveStatusBehaviorRevision;
+          const staleReasons = [
+            !result.completed ? "incomplete" : null,
+            !calculationTokenCurrent ? "calculation-token" : null,
+            !inputRevisionCurrent ? "input-revision" : null,
+            !behaviorRevisionCurrent ? "behavior-revision" : null,
+          ].filter((reason): reason is string => reason !== null);
+          console.info("[boot-active-status] chunked calculation completed", {
+            calculationToken,
+            calculationTokenCurrent,
+            chunks: result.chunks,
+            completed: result.completed,
+            evaluatedTasks: result.evaluatedTasks,
+            inputRevisionCurrent,
+            rejectedAsStale: !result.completed || !calculationTokenCurrent,
+            reusedTasks: result.reusedTasks,
+            staleReasons,
+            statusCount: Object.keys(result.statusesByTaskId).length,
+            behaviorRevisionCurrent,
+          });
+          if (!result.completed || activeStatusCalculationTokenRef.current !== calculationToken) return;
+          committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+          if (isWorkspacePerformanceDiagnosticsEnabled()) {
+            console.info(`[workspace:active-status] mode=global-chunked tasks=${tasks.length} chunks=${result.chunks}`);
+          }
+          console.info("[boot-active-status] before setActiveStatusRead", {
+            calculationToken,
+            mode: "chunked",
+            statusCount: Object.keys(result.statusesByTaskId).length,
+          });
+          setActiveStatusRead(result);
+        } catch (error) {
+          logActiveStatusError("chunked-result-commit", error);
+          throw error;
         }
-        setActiveStatusRead(result);
+      }, (error) => {
+        logActiveStatusError("chunked-resolver", error);
+        throw error;
       });
     } else {
-      const result = resolveActiveTaskStatusesIncrementally(activeStatusInput, projectionCache);
-      committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
-      if (isWorkspacePerformanceDiagnosticsEnabled()) {
-        console.info(`[workspace:active-status] evaluatedTasks=${result.evaluatedTasks} reusedTasks=${result.reusedTasks}`);
+      try {
+        console.info("[boot-active-status] before resolveActiveTaskStatusesIncrementally", {
+          activeStatusInputRevision,
+          calculationToken,
+          committedBehaviorRevision,
+          isGlobalBehaviorChange,
+          taskActiveStatusBehaviorRevision,
+          taskCount: tasks.length,
+        });
+        const result = resolveActiveTaskStatusesIncrementally(activeStatusInput, projectionCache);
+        console.info("[boot-active-status] synchronous calculation returned", {
+          calculationToken,
+          evaluatedTasks: result.evaluatedTasks,
+          reusedTasks: result.reusedTasks,
+          statusCount: Object.keys(result.statusesByTaskId).length,
+        });
+        committedActiveStatusBehaviorRevisionRef.current = taskActiveStatusBehaviorRevision;
+        if (isWorkspacePerformanceDiagnosticsEnabled()) {
+          console.info(`[workspace:active-status] evaluatedTasks=${result.evaluatedTasks} reusedTasks=${result.reusedTasks}`);
+        }
+        console.info("[boot-active-status] before setActiveStatusRead", {
+          calculationToken,
+          mode: "synchronous",
+          statusCount: Object.keys(result.statusesByTaskId).length,
+        });
+        setActiveStatusRead(result);
+      } catch (error) {
+        logActiveStatusError("synchronous-resolver", error);
+        throw error;
       }
-      setActiveStatusRead(result);
     }
 
-    return () => {
-      if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
-    };
+    return () => logEffectCleanup("effect-cleanup-or-unmount");
     // Status evaluation is logical-day based. The minute clock must not clone
     // or replace the canonical Task collection while the logical day is stable.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -5125,6 +5246,41 @@ export function TaskApp() {
   const isInitialTaskStateProjectionReady = isTaskHistoryLoaded && isBehaviorAuthorityReady && activeStatusRead !== null;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
+  const bootGateDiagnosticState = useMemo(() => ({
+    isHudAppearanceReady,
+    isWorkspaceLoading,
+    isTaskResumeSyncPending,
+    isRestoringPersistedUiState,
+    isTaskHistoryLoaded,
+    isBehaviorAuthorityReady,
+    activeStatusReadReady: activeStatusRead !== null,
+    isAuthenticatedAppBootReady,
+    sessionUserPresent: Boolean(session?.user),
+  }), [
+    activeStatusRead,
+    isAuthenticatedAppBootReady,
+    isBehaviorAuthorityReady,
+    isHudAppearanceReady,
+    isRestoringPersistedUiState,
+    isTaskHistoryLoaded,
+    isTaskResumeSyncPending,
+    isWorkspaceLoading,
+    session?.user,
+  ]);
+  const previousBootGateDiagnosticKeyRef = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (!shouldBlockAuthenticatedAppBody) {
+      previousBootGateDiagnosticKeyRef.current = null;
+      return;
+    }
+
+    const diagnosticKey = JSON.stringify(bootGateDiagnosticState);
+    if (previousBootGateDiagnosticKeyRef.current === diagnosticKey) return;
+    previousBootGateDiagnosticKeyRef.current = diagnosticKey;
+    console.info("[boot-gate]", bootGateDiagnosticState);
+  }, [bootGateDiagnosticState, shouldBlockAuthenticatedAppBody]);
+
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
