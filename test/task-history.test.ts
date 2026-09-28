@@ -11,6 +11,7 @@ import {
   buildTaskDueDateSet,
   computeTaskHistoryStats,
   computeTaskSpecificHistoryStats,
+  formatTaskHistoryDelayLabel,
   formatTaskHistoryEntryLabel,
   getTaskFocusFilterFacts,
   getTaskHistoryLastDone,
@@ -972,6 +973,18 @@ test("permanent complete history rows render as marked complete", () => {
   assert.equal(formatTaskHistoryEntryLabel(completeEntry), "Marked Complete");
   assert.equal(formatTaskHistoryEntryLabel(doneEntry), "Done");
   assert.equal(completeEntry.counted_as_due_occurrence, false);
+});
+
+test("canonical Delayed History renders its derived duration and effective due date", () => {
+  assert.equal(formatTaskHistoryDelayLabel({
+    entry_date: "2026-08-30",
+    effective_due_on: "2026-09-02",
+  }), "Delayed 3 days · until Sep 2");
+  assert.equal(formatTaskHistoryDelayLabel({
+    entry_date: "2026-08-30",
+    effective_due_on: "2026-08-31",
+  }), "Delayed 1 day · until Aug 31");
+  assert.equal(formatTaskHistoryDelayLabel({ entry_date: "2026-08-30", effective_due_on: null }), "Delayed");
 });
 
 test("focus filter facts use today for one-off current occurrence and ignore stale raw missed state", () => {

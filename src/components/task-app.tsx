@@ -7329,9 +7329,8 @@ export function TaskApp() {
       if (!taskHistoryModalTaskId) {
         return false;
       }
-      if (status === "complete") {
-        if (entryDates.length !== 1) return false;
-        return (await updateTaskStatus(taskHistoryModalTask, "complete")) === true;
+      if (status === "complete" && entryDates.length !== 1) {
+        return false;
       }
       const pendingTaskIds = [taskHistoryModalTaskId];
       beginPendingTaskMutationScope(pendingTaskIds);

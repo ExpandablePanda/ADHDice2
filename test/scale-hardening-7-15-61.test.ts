@@ -102,11 +102,11 @@ test("7.15.61 migration limits database work to additive scale/RLS/index changes
   assert.doesNotMatch(migration, /\b(delete from|truncate|drop table)\b/i);
 });
 
-test("7.15.62 version surfaces and current-state release note are aligned", () => {
-  assert.match(appVersion, /APP_VERSION = "7\.15\.62"/);
-  assert.match(packageJson, /"version": "7\.15\.62"/);
-  assert.match(packageLock, /"version": "7\.15\.62"/);
-  assert.match(publicVersion, /"version": "7\.15\.62"/);
-  assert.match(currentState, /Current working app version: `7\.15\.62`/);
+test("7.16.0 version surfaces and current-state release note are aligned", () => {
+  assert.match(appVersion, /APP_VERSION = "7\.16\.0"/);
+  assert.match(packageJson, /"version": "7\.16\.0"/);
+  assert.match(packageLock, /"version": "7\.16\.0"/);
+  assert.match(publicVersion, /"version": "7\.16\.0"/);
+  assert.match(currentState, /Current working app version: `7\.16\.0`/);
   assert.match(currentState, /7\.15\.61 Supabase scale hardening and refresh diet/);
 });

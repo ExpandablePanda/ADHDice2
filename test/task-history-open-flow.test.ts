@@ -72,6 +72,17 @@ test("Task History outcome edits use one set_outcome replacement without pre-cle
   assert.doesNotMatch(flow, /currentTask/);
 });
 
+test("Task History Complete uses the selected date through the canonical History action path", () => {
+  const flowStart = appSource.indexOf('    onSetStatuses: async');
+  const flowEnd = appSource.indexOf('    onSetDelayedStatus:', flowStart);
+  const flow = appSource.slice(flowStart, flowEnd);
+  assert.match(flow, /status === "complete" && entryDates\.length !== 1/);
+  assert.doesNotMatch(flow, /updateTaskStatus\(taskHistoryModalTask, "complete"\)/);
+  assert.match(flow, /syncTaskHistoryEntries\(\s*taskHistoryModalTaskId,\s*status,\s*entryDates,/);
+  assert.match(flow, /status !== "clear"/);
+  assert.match(flow, /historicalOverride: true/);
+});
+
 test("Task History Not Due carries the committed canonical Task from clear into its Calendar override", () => {
   const clearStart = appSource.indexOf("async function clearTaskHistoryCalendarDate");
   const clearEnd = appSource.indexOf("\n\n  async function setTaskHistoryNotDue", clearStart);

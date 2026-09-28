@@ -5,14 +5,24 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.62`.
-- Current release group: `7.15.x`.
+- Current working app version: `7.16.0`.
+- Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-27 7.16.0 History correctness and Delay-history clarity
+
+History Complete now carries the selected logical date through the canonical
+Complete command, preserving permanent completion, recurrence, terminal-state,
+and reward handling. Delayed History displays its derived duration and
+effective due date from canonical `effective_due_on` data. No schema, migration,
+backfill, or live-data repair was added.
+
+Browser/manual QA remains Andrew-owned and unverified by source checks.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

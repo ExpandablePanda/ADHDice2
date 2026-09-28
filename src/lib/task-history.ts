@@ -301,6 +301,17 @@ export function formatTaskHistoryEntryLabel(entry: Pick<DbTaskHistory, "event_ty
     .join(" ");
 }
 
+export function formatTaskHistoryDelayLabel(entry: Pick<DbTaskHistory, "entry_date" | "effective_due_on">) {
+  if (!entry.effective_due_on) return "Delayed";
+  const delayDays = daysBetween(entry.entry_date, entry.effective_due_on);
+  const effectiveDueLabel = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(toDate(entry.effective_due_on));
+  return `Delayed ${delayDays} ${delayDays === 1 ? "day" : "days"} · until ${effectiveDueLabel}`;
+}
+
 function createHistoryWindowFlags(initialValue = false): Record<TaskHistoryWindowPreset, boolean> {
   return {
     "1": initialValue,
