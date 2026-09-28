@@ -65,6 +65,14 @@ export function resolveTaskContentFolderMoveTaskIds(
     : [contextTaskId];
 }
 
+export function taskNeedsContentFolderMove(
+  task: TaskContentFolderMembershipTask,
+  destinationFolderId: string | null,
+) {
+  if ((task.parent_task_id ?? null) !== null) return true;
+  return (task.task_content_folder_id ?? null) !== destinationFolderId;
+}
+
 export type TaskContentFolderMemberFact = {
   id: string;
   parent_task_id?: string | null;

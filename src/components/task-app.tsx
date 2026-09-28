@@ -156,6 +156,7 @@ import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useHomeRecordTargets } from "@/hooks/useHomeRecordTargets";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
+import { taskNeedsContentFolderMove } from "@/lib/task-content-folders";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
@@ -2974,9 +2975,23 @@ export function TaskApp() {
       return false;
     }
 
+    const tasksToMove = targetTasks.filter((task) => taskNeedsContentFolderMove(task, folderId));
+    const folderName = folderId
+      ? taskContentFolders.find((folder) => folder.id === folderId)?.name ?? "the selected Folder"
+      : "no Folder";
+    if (tasksToMove.length === 0) {
+      setMessage({
+        tone: "good",
+        text: folderId
+          ? `Selected Tasks are already in ${folderName}.`
+          : "Selected Tasks are already ungrouped.",
+      });
+      return true;
+    }
+
     let successCount = 0;
     let failedCount = 0;
-    for (const task of targetTasks) {
+    for (const task of tasksToMove) {
       try {
         if (await taskContentFolderActions.moveTaskToFolder(task, folderId)) {
           successCount += 1;
@@ -2988,9 +3003,6 @@ export function TaskApp() {
       }
     }
 
-    const folderName = folderId
-      ? taskContentFolders.find((folder) => folder.id === folderId)?.name ?? "the selected Folder"
-      : "no Folder";
     if (failedCount === 0) {
       setMessage({ tone: "good", text: `Moved ${successCount} selected Tasks to ${folderName}.` });
     } else if (successCount > 0) {
