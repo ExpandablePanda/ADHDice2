@@ -209,8 +209,9 @@ test("startup commits critical workspace state without requesting full canonical
   assert.ok(criticalCommitIndex >= 0);
   assert.doesNotMatch(coreLoader, /startBackgroundTaskHistoryHydration\(/);
   assert.doesNotMatch(coreLoader, /loadTaskHistory\(\{/);
-  assert.match(coreLoader, /tasksRef\.current = nextTasks/);
-  assert.match(coreLoader, /setTasks\(\(current\) => keepCurrentIfStructurallyEqual\(current, nextTasks\)\)/);
+  assert.doesNotMatch(coreLoader, /tasksRef\.current = nextTasks/);
+  assert.match(coreLoader, /setTasks\(\(current\) => \{[\s\S]*keepCurrentTaskArrayIfSemanticallyEqual\(current, nextTasks\)/);
+  assert.match(coreLoader, /tasksRef\.current = resolvedTasks/);
   assert.match(coreLoader, /onProfileLoaded\(profileResult\.data \?\? null, user\)/);
   assert.match(coreLoader, /setIsWorkspaceLoading\(false\)/);
   assert.doesNotMatch(coreLoader, /await loadTaskHistory\(\{ silent, source: "startup" \}\)/);
@@ -280,7 +281,11 @@ test("Task refresh paths use the same causal canonical snapshot loader", async (
   assert.match(latestBoundaryLoader, /client\.rpc\("adhdice_get_latest_task_schedule_boundaries", \{\s*p_entity_ids: taskIds,/);
   assert.match(latestBoundaryLoader, /fetchAllPagedRows/);
   assert.match(reload, /loadAllTaskRows/);
+  assert.match(reload, /keepCurrentTaskArrayIfSemanticallyEqual\(current, nextTasks\)/);
+  const targetedReconcile = source.slice(source.indexOf("async function reconcileTaskEntityBatch"), source.indexOf("const taskEntityReconciliationCoordinator"));
+  assert.match(targetedReconcile, /keepCurrentTaskArrayIfSemanticallyEqual\(current, latestMerge\.tasks\)/);
   assert.match(coreLoader, /loadAllCurrentTaskProjections\(trackPagedRead\("projections"\)\)/);
+  assert.match(coreLoader, /keepCurrentTaskArrayIfSemanticallyEqual\(current, nextTasks\)/);
   assert.doesNotMatch(reload, /Promise\.all\(\[\s*createTaskRowsRequest\(\)/);
   assert.doesNotMatch(coreLoader, /Promise\.all\(\[[\s\S]*createTaskRowsRequest\(\)[\s\S]*createTaskScheduleBoundariesRequest\(\)/);
 });

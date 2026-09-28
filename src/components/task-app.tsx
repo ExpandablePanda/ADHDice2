@@ -181,6 +181,10 @@ import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKe
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
+import {
+  keepCurrentActiveStatusResult,
+  keepCurrentTaskArrayIfSemanticallyEqual,
+} from "@/lib/task-state-identity";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
 import {
   createNavigatorSearchTargets,
@@ -2637,7 +2641,10 @@ export function TaskApp() {
         });
         if (sweep.committedTasks.length > 0) {
           const committedByTaskId = new Map(sweep.committedTasks.map((entry) => [entry.taskId, entry.task] as const));
-          setTasks((current) => sortTasksForUi(current.map((task) => committedByTaskId.get(task.id) ?? task)));
+          setTasks((current) => keepCurrentTaskArrayIfSemanticallyEqual(
+            current,
+            sortTasksForUi(current.map((task) => committedByTaskId.get(task.id) ?? task)),
+          ));
         }
         committedTaskPatches = sweep.committedTasks.length;
         didMutate = committedTaskPatches > 0;
@@ -3178,6 +3185,9 @@ export function TaskApp() {
   useEffect(() => {
     const calculationToken = activeStatusCalculationTokenRef.current + 1;
     activeStatusCalculationTokenRef.current = calculationToken;
+    const publishActiveStatusRead = (next: typeof activeStatusRead) => {
+      setActiveStatusRead((current) => keepCurrentActiveStatusResult(current, next));
+    };
     if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
@@ -3187,7 +3197,7 @@ export function TaskApp() {
     if (currentTaskProjectionFallbackTaskIds.length === 0) {
       committedActiveStatusBehaviorRevisionRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the legacy evaluator while projections are authoritative.
-      setActiveStatusRead(null);
+      publishActiveStatusRead(null);
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
@@ -3200,7 +3210,7 @@ export function TaskApp() {
     if (fallbackHistoryPending) {
       committedActiveStatusBehaviorRevisionRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the legacy evaluator until scoped fallback History is ready.
-      setActiveStatusRead(null);
+      publishActiveStatusRead(null);
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
@@ -3232,7 +3242,7 @@ export function TaskApp() {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
           console.info(`[workspace:active-status] mode=fallback-chunked tasks=${activeStatusInput.tasks.length} chunks=${result.chunks}`);
         }
-        setActiveStatusRead(result);
+        publishActiveStatusRead(result);
       });
     } else {
       const result = resolveActiveTaskStatusesIncrementally(activeStatusInput, projectionCache);
@@ -3240,7 +3250,7 @@ export function TaskApp() {
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[workspace:active-status] evaluatedTasks=${result.evaluatedTasks} reusedTasks=${result.reusedTasks}`);
       }
-      setActiveStatusRead(result);
+      publishActiveStatusRead(result);
     }
 
     return () => {
