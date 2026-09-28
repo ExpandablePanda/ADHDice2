@@ -73,6 +73,16 @@ test("Summary is derived from the active metadataTask and exposes every property
   assert.match(tableSource, /const metadataTask = overlayMode === "full" \? metadataTargetTask \?\? selectedTask : selectedTask/);
 });
 
+test("Tracking stays in the compact metadata grid while preserving its direct/effective switch semantics", () => {
+  const summaryBranch = tableSource.slice(tableSource.indexOf('if (metadataPanelId === "summary")'), tableSource.indexOf('} else if (metadataPanelId === "task_type")'));
+  assert.match(summaryBranch, /grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3[\s\S]*Tracking/);
+  assert.match(summaryBranch, /Excluded from tracking by a parent Task\./);
+  assert.match(summaryBranch, /aria-checked=\{metadataTask\.directlyExcludedFromTracking === true\}/);
+  assert.match(summaryBranch, /onTaskTrackingExclusionChange\(metadataTask\.id, nextExcluded\)/);
+  assert.match(summaryBranch, /role="switch"/);
+  assert.doesNotMatch(summaryBranch, /rounded-\[1rem\] border border-\[#e8e1f6\]/);
+});
+
 test("Task Settings exposes the compact TaskType selector and routes changes through the existing metadata callback", () => {
   const taskTypeBranch = tableSource.slice(tableSource.indexOf('metadataPanelId === "task_type"'), tableSource.indexOf('metadataPanelId === "due"'));
   assert.match(taskTypeBranch, /<TaskTypeSelect/);

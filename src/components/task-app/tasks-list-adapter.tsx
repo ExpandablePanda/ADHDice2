@@ -302,6 +302,7 @@ type TasksTableSourceProps = {
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
   onMoveFolder?: (folderId: string, destinationFolderId: string | null) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
+  onMoveTasksToContentFolder?: (taskIds: string[], folderId: string | null) => Promise<boolean> | boolean;
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: TaskEditorLinkedNote[];
   allTagOptions?: string[];
@@ -737,6 +738,7 @@ export function TasksTableAdapter({
           onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
           onMoveFolder={tableProps.onMoveFolder}
           onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
+          onMoveTasksToContentFolder={tableProps.onMoveTasksToContentFolder}
           onUnlinkTask={tableProps.onUnlinkTask}
           onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
           onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
@@ -3294,6 +3296,7 @@ function TasksSimpleList({
               onDeleteTaskContentFolder={tableProps.onDeleteTaskContentFolder}
               onMoveFolder={tableProps.onMoveFolder}
               onMoveTaskToContentFolder={tableProps.onMoveTaskToContentFolder}
+              onMoveTasksToContentFolder={tableProps.onMoveTasksToContentFolder}
               onUnlinkTask={tableProps.onUnlinkTask}
               onPromoteTaskToMilestone={tableProps.onPromoteTaskToMilestone}
               onDetachAndPromoteTaskToMilestone={tableProps.onDetachAndPromoteTaskToMilestone}
@@ -4062,9 +4065,15 @@ function TasksSimpleList({
                 await tableProps.onMoveTaskIntoParent?.(rowContextMenuTask.id, parentTaskId);
                 setRowContextMenu(null);
               } : undefined}
-              onMoveToTaskContentFolder={tableProps.onMoveTaskToContentFolder ? async (folderId) => {
-                await tableProps.onMoveTaskToContentFolder?.(rowContextMenuTask.id, folderId);
+              onMoveToTaskContentFolder={tableProps.onMoveTaskToContentFolder ? async (folderId, targetTaskIds) => {
                 setRowContextMenu(null);
+                if (targetTaskIds.length > 1 && tableProps.onMoveTasksToContentFolder) {
+                  await tableProps.onMoveTasksToContentFolder(targetTaskIds, folderId);
+                  return;
+                }
+                for (const targetTaskId of targetTaskIds) {
+                  await tableProps.onMoveTaskToContentFolder?.(targetTaskId, folderId);
+                }
               } : undefined}
               onOpenInNewTab={tableProps.onOpenTaskInNewTab ? () => {
                 tableProps.onOpenTaskInNewTab?.(rowContextMenuTask.id);
@@ -4149,6 +4158,7 @@ function TasksSimpleList({
               ]}
               quickEditTitle={selectedTaskIdSet.has(rowContextMenuTask.id) && selectedTaskIds.length > 1 ? `Quick edit ${selectedTaskIds.length} selected tasks` : "Quick edit"}
               selectedTaskCount={selectedTaskIds.length}
+              selectedTaskIds={selectedTaskIds}
               task={rowContextMenuTask}
             />
           ) : null}

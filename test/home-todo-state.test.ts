@@ -782,6 +782,17 @@ test("Home todo search sorts full hierarchy paths together", () => {
   assert.deepEqual(results.map((entry) => entry.task.id), ["a", "a-child", "b", "b-child"]);
 });
 
+test("Home To-do search includes existing members and guards duplicate adds", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  assert.match(source, /const isTodoSearch = activeHomeTab === "todo"/);
+  assert.match(source, /isHomeTodoTaskEligible\(task, tasks, taskById\) && \(isTodoSearch \|\| !selected\.has\(task\.id\)\)/);
+  assert.match(source, /isInTodo: isTodoSearch && selected\.has\(task\.id\)/);
+  assert.match(source, /taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]/);
+  assert.match(source, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
+  assert.match(source, /sortHomeTodoSearchResults\(tasks/);
+  assert.match(source, /In To-do/);
+});
+
 test("shared drag reorder moves Home task ids without mutating the source", () => {
   const source = ["a", "b", "c"];
   assert.deepEqual(reorderListItems(source, 0, 2), ["b", "c", "a"]);
@@ -920,8 +931,12 @@ test("Home todo renders seven flat sortable sections, settings, and the recovere
   assert.match(source, /routineTasks\.map/);
   assert.match(source, /No Routine tasks yet\./);
   assert.match(source, /activeHomeTab === "routine"/);
-  assert.match(source, /const selected = activeHomeTab === "todo" \? new Set\(reconciledTaskIds\) : routineTaskIdSet/);
+  assert.match(source, /const isTodoSearch = activeHomeTab === "todo"/);
+  assert.match(source, /isHomeTodoTaskEligible\(task, tasks, taskById\) && \(isTodoSearch \|\| !selected\.has\(task\.id\)\)/);
+  assert.match(source, /isInTodo: isTodoSearch && selected\.has\(task\.id\)/);
   assert.match(source, /async function addSearchResult\(taskId: string\)/);
+  assert.match(source, /taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]/);
+  assert.match(source, /In To-do/);
   assert.match(source, /onSetRoutineMembership\(taskId, true\)/);
   assert.match(source, /onSetRoutineMembership\(task\.id, false\)/);
   assert.match(source, /activeHomeTab === "todo"\s*\? \(taskId\) => updateTaskIds/);

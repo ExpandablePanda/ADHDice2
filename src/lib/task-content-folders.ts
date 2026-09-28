@@ -55,6 +55,16 @@ export type TaskContentFolderMenuOption = {
   label: string;
 };
 
+export function resolveTaskContentFolderMoveTaskIds(
+  contextTaskId: string,
+  selectedTaskIds: readonly string[],
+) {
+  const uniqueSelectedTaskIds = [...new Set(selectedTaskIds)];
+  return uniqueSelectedTaskIds.length > 1 && uniqueSelectedTaskIds.includes(contextTaskId)
+    ? uniqueSelectedTaskIds
+    : [contextTaskId];
+}
+
 export type TaskContentFolderMemberFact = {
   id: string;
   parent_task_id?: string | null;

@@ -457,13 +457,14 @@ export function HomePage({
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
-    const selected = activeHomeTab === "todo" ? new Set(reconciledTaskIds) : routineTaskIdSet;
+    const isTodoSearch = activeHomeTab === "todo";
+    const selected = isTodoSearch ? new Set(reconciledTaskIds) : routineTaskIdSet;
     return sortHomeTodoSearchResults(tasks
-      .filter((task) => !selected.has(task.id) && isHomeTodoTaskEligible(task, tasks, taskById))
+      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && (isTodoSearch || !selected.has(task.id)))
       .map((task) => {
         const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
         const searchable = getHomeTodoSearchText(task, hierarchy, listMembershipsByTaskId[task.id] ?? []);
-        return { hierarchy, searchable, task };
+        return { hierarchy, isInTodo: isTodoSearch && selected.has(task.id), searchable, task };
       })
       .filter((item) => item.searchable.includes(needle)));
   }, [activeHomeTab, listMembershipsByTaskId, query, reconciledTaskIds, routineTaskIdSet, taskById, tasks]);
@@ -701,7 +702,7 @@ export function HomePage({
       }
       return;
     }
-    updateTaskIds((taskIds) => [...taskIds, taskId]);
+    updateTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
   }
 
   useEffect(() => {
@@ -1710,7 +1711,7 @@ export function HomePage({
           ) : null}
           {isSearchOpen && query.trim() ? (
             <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
-              {searchResults.length ? searchResults.map(({ hierarchy, task }) => (
+              {searchResults.length ? searchResults.map(({ hierarchy, isInTodo, task }) => (
                 <button
                   className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f6f2ff] dark:hover:bg-white/8"
                   key={task.id}
@@ -1729,7 +1730,14 @@ export function HomePage({
                       </span>
                     ) : null}
                   </span>
-                  <Plus aria-hidden="true" className="h-4 w-4 shrink-0 text-[#6f57f6]" />
+                  {isInTodo ? (
+                    <span
+                      aria-label="Already in To-do"
+                      className="inline-flex shrink-0 items-center rounded-full border border-[#d8cff0] bg-[#f7f3ff] px-2 py-1 text-[11px] font-semibold text-[#6f57f6] dark:border-white/15 dark:bg-white/[0.06] dark:text-[#cabfff]"
+                    >
+                      In To-do
+                    </span>
+                  ) : <Plus aria-hidden="true" className="h-4 w-4 shrink-0 text-[#6f57f6]" />}
                 </button>
               )) : (
                 <p className="px-3 py-6 text-center text-sm text-[#837b9e]">No matching active tasks</p>

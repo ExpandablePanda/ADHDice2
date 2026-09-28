@@ -2957,6 +2957,41 @@ export function TaskApp() {
     const task = tasks.find((entry) => entry.id === taskId);
     return task ? taskContentFolderActions.moveTaskToFolder(task, folderId) : false;
   }, [taskContentFolderActions.moveTaskToFolder, tasks]);
+  const moveTasksToContentFolder = useCallback(async (taskIds: string[], folderId: string | null) => {
+    const targetTasks = [...new Set(taskIds)]
+      .map((taskId) => tasks.find((task) => task.id === taskId))
+      .filter((task): task is Task => Boolean(task));
+    if (targetTasks.length === 0) {
+      setMessage({ tone: "warn", text: "No eligible Tasks were selected for the Folder move." });
+      return false;
+    }
+
+    let successCount = 0;
+    let failedCount = 0;
+    for (const task of targetTasks) {
+      try {
+        if (await taskContentFolderActions.moveTaskToFolder(task, folderId)) {
+          successCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      } catch {
+        failedCount += 1;
+      }
+    }
+
+    const folderName = folderId
+      ? taskContentFolders.find((folder) => folder.id === folderId)?.name ?? "the selected Folder"
+      : "no Folder";
+    if (failedCount === 0) {
+      setMessage({ tone: "good", text: `Moved ${successCount} selected Tasks to ${folderName}.` });
+    } else if (successCount > 0) {
+      setMessage({ tone: "warn", text: `Moved ${successCount} selected Tasks to ${folderName}; ${failedCount} failed.` });
+    } else {
+      setMessage({ tone: "warn", text: `Unable to move selected Tasks to ${folderName}; ${failedCount} failed.` });
+    }
+    return failedCount === 0;
+  }, [setMessage, taskContentFolderActions.moveTaskToFolder, taskContentFolders, tasks]);
   const createTaskContentFolder = useCallback(async (taskId: string, name: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
     return task ? taskContentFolderActions.createFolderAndMoveTask(task, name) : false;
@@ -8449,6 +8484,7 @@ export function TaskApp() {
                   onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
                   onMoveTaskToContentFolder: moveTaskToContentFolder,
+                  onMoveTasksToContentFolder: moveTasksToContentFolder,
                   onMoveFolder: taskContentFolderActions.moveFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
@@ -8647,6 +8683,7 @@ export function TaskApp() {
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
                   onMoveFolder: taskContentFolderActions.moveFolder,
                   onMoveTaskToContentFolder: moveTaskToContentFolder,
+                  onMoveTasksToContentFolder: moveTasksToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,

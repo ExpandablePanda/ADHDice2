@@ -44,6 +44,7 @@ import {
   getActuallyEmptyTaskContentFolderIds,
   getTaskContentFolderMenuOptions,
   getTaskContentFolderMoveOptions,
+  resolveTaskContentFolderMoveTaskIds,
   shouldIncludeEmptyTaskContentFolders,
   type TaskContentFolderMemberSummary,
   type TaskContentFolderMenuOption,
@@ -512,7 +513,7 @@ type TaskRowContextMenuProps = {
   onDuplicateTask?: () => void;
   onEditTask?: () => void;
   onMoveIntoParent?: (parentTaskId: string) => void | Promise<void>;
-  onMoveToTaskContentFolder?: (folderId: string | null) => void | Promise<void>;
+  onMoveToTaskContentFolder?: (folderId: string | null, taskIds: string[]) => void | Promise<void>;
   onOpenInNewTab?: () => void;
   onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
   onOpenHistory?: () => void;
@@ -532,6 +533,7 @@ type TaskRowContextMenuProps = {
   quickEditItems?: TaskRowContextMenuQuickEditItem[];
   quickEditTitle?: string;
   selectedTaskCount: number;
+  selectedTaskIds?: string[];
   task: Pick<PrototypeTaskRow, "id" | "status" | "title" | "task_content_folder_id">;
 };
 
@@ -569,6 +571,7 @@ export function TaskRowContextMenu({
   quickEditItems = [],
   quickEditTitle = "Quick edit",
   selectedTaskCount,
+  selectedTaskIds = [],
   task,
 }: TaskRowContextMenuProps) {
   const [isChoosingParent, setIsChoosingParent] = useState(false);
@@ -714,7 +717,10 @@ export function TaskRowContextMenu({
                   className="w-full justify-between gap-2"
                   key={option.id ?? "no-folder"}
                   onClick={() => {
-                    void onMoveToTaskContentFolder?.(option.id);
+                    void onMoveToTaskContentFolder?.(
+                      option.id,
+                      resolveTaskContentFolderMoveTaskIds(task.id, selectedTaskIds),
+                    );
                     onDismiss();
                   }}
                 >
@@ -1382,6 +1388,7 @@ type TaskManagementTableV2Props = {
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
   onMoveFolder?: (folderId: string, destinationFolderId: string | null) => Promise<boolean>;
   onMoveTaskToContentFolder?: (taskId: string, folderId: string | null) => Promise<boolean> | boolean;
+  onMoveTasksToContentFolder?: (taskIds: string[], folderId: string | null) => Promise<boolean> | boolean;
   onUnlinkTask?: (taskId: string) => Promise<boolean> | boolean;
   onUnlinkTasks?: (taskIds: string[]) => Promise<boolean> | boolean;
   onPromoteTaskToMilestone?: (taskId: string) => void;
@@ -2748,6 +2755,7 @@ export function TaskManagementTableV2({
   onDeleteTaskContentFolder,
   onMoveFolder,
   onMoveTaskToContentFolder,
+  onMoveTasksToContentFolder,
   onUnlinkTask,
   onUnlinkTasks,
   onPromoteTaskToMilestone,
@@ -9704,9 +9712,15 @@ export function TaskManagementTableV2({
                 setRowContextMenu(null);
                 await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
               } : undefined}
-              onMoveToTaskContentFolder={onMoveTaskToContentFolder ? async (folderId) => {
+              onMoveToTaskContentFolder={onMoveTaskToContentFolder ? async (folderId, targetTaskIds) => {
                 setRowContextMenu(null);
-                await onMoveTaskToContentFolder(rowContextMenuTask.id, folderId);
+                if (targetTaskIds.length > 1 && onMoveTasksToContentFolder) {
+                  await onMoveTasksToContentFolder(targetTaskIds, folderId);
+                  return;
+                }
+                for (const targetTaskId of targetTaskIds) {
+                  await onMoveTaskToContentFolder(targetTaskId, folderId);
+                }
               } : undefined}
               onOpenInNewTab={onOpenTaskInNewTab ? () => {
                 setRowContextMenu(null);
@@ -9772,6 +9786,7 @@ export function TaskManagementTableV2({
               ]}
               quickEditTitle={rowContextMenuHasBatchQuickEdit ? `Quick edit ${rowContextMenuQuickEditTargetIds.length} selected tasks` : "Quick edit"}
               selectedTaskCount={selectedTaskIds.length}
+              selectedTaskIds={selectedTaskIds}
               task={rowContextMenuTask}
             />
           </div>
@@ -9978,39 +9993,37 @@ export function TaskManagementTableV2({
                             <span className="mt-0.5 block min-w-0 break-words text-sm text-[#2f294a] dark:text-white">{row.value}</span>
                           </div>
                         ))}
-                      </div>
-                      <div className="rounded-[1rem] border border-[#e8e1f6] bg-[#faf8ff] px-3 py-3 dark:border-white/10 dark:bg-white/[0.03]">
-                        <div className="flex items-start justify-between gap-3">
-                          <div className="min-w-0">
-                            <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#7e73a7] dark:text-white/45">Tracking</p>
-                            <p className="mt-1 text-sm text-[#51496f] dark:text-white/75">
+                        <div className="min-w-0 rounded-[0.8rem] border border-transparent px-2.5 py-1.5">
+                          <span className="block text-[11px] font-medium uppercase tracking-[0.14em] text-[#9b92be] dark:text-white/35">Tracking</span>
+                          <div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-1.5">
+                            <span className="min-w-0 break-words text-sm text-[#4e476f] dark:text-white/75">
                               {metadataTask.effectivelyExcludedFromTracking
                                 ? metadataTask.directlyExcludedFromTracking
                                   ? "Excluded from tracking for this Task."
                                   : "Excluded from tracking by a parent Task."
                                 : "This Task contributes to tracking."}
-                            </p>
+                            </span>
+                            {onTaskTrackingExclusionChange ? (
+                              <TaskTableChipButton
+                                aria-checked={metadataTask.directlyExcludedFromTracking === true}
+                                aria-label={`${metadataTask.directlyExcludedFromTracking ? "Include" : "Exclude"} this Task from tracking`}
+                                onClick={() => {
+                                  const nextExcluded = metadataTask.directlyExcludedFromTracking !== true;
+                                  patchTask(metadataTask.id, (task) => ({
+                                    ...task,
+                                    directlyExcludedFromTracking: nextExcluded,
+                                    effectivelyExcludedFromTracking: nextExcluded
+                                      || (task.effectivelyExcludedFromTracking === true && task.directlyExcludedFromTracking !== true),
+                                  }));
+                                  void onTaskTrackingExclusionChange(metadataTask.id, nextExcluded);
+                                }}
+                                role="switch"
+                                toneClassName={metadataTask.directlyExcludedFromTracking ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}
+                              >
+                                {metadataTask.directlyExcludedFromTracking ? "Include" : "Exclude"}
+                              </TaskTableChipButton>
+                            ) : null}
                           </div>
-                          {onTaskTrackingExclusionChange ? (
-                            <button
-                              aria-checked={metadataTask.directlyExcludedFromTracking === true}
-                              className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 ${metadataTask.directlyExcludedFromTracking ? "border-[#7d6cf5] bg-[#7d6cf5] text-white" : "border-[#d8cff0] bg-white text-[#6f57f6] dark:border-white/15 dark:bg-white/[0.05] dark:text-[#cabfff]"}`}
-                              onClick={() => {
-                                const nextExcluded = metadataTask.directlyExcludedFromTracking !== true;
-                                patchTask(metadataTask.id, (task) => ({
-                                  ...task,
-                                  directlyExcludedFromTracking: nextExcluded,
-                                  effectivelyExcludedFromTracking: nextExcluded
-                                    || (task.effectivelyExcludedFromTracking === true && task.directlyExcludedFromTracking !== true),
-                                }));
-                                void onTaskTrackingExclusionChange(metadataTask.id, nextExcluded);
-                              }}
-                              role="switch"
-                              type="button"
-                            >
-                              {metadataTask.directlyExcludedFromTracking ? "Include" : "Exclude"}
-                            </button>
-                          ) : null}
                         </div>
                       </div>
                     </div>

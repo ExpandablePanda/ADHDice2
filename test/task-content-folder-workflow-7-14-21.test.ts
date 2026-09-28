@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { resolveTaskContentFolderMoveTaskIds } from "../src/lib/task-content-folders.ts";
 
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
@@ -31,8 +32,22 @@ test("Table and List retain the exact Task to Folder callback wiring", () => {
   assert.doesNotMatch(appSource, new RegExp(["onMoveTask", "ContentFolder"].join("")));
   assert.match(tableSource, /onMoveTaskToContentFolder\?:/);
   assert.match(tableSource, /onMoveToTaskContentFolder=\{onMoveTaskToContentFolder/);
+  assert.match(tableSource, /onMoveTasksToContentFolder\?:/);
+  assert.match(tableSource, /selectedTaskIds=\{selectedTaskIds\}/);
   assert.match(listSource, /onMoveTaskToContentFolder\?:/);
   assert.match(listSource, /onMoveToTaskContentFolder=\{tableProps\.onMoveTaskToContentFolder/);
+  assert.match(listSource, /onMoveTasksToContentFolder\?:/);
+  assert.match(listSource, /selectedTaskIds=\{selectedTaskIds\}/);
+  assert.match(appSource, /onMoveTasksToContentFolder: moveTasksToContentFolder/);
+});
+
+test("Folder context targeting expands only an in-selection context Task and removes duplicate IDs", () => {
+  assert.deepEqual(resolveTaskContentFolderMoveTaskIds("B", ["A", "B", "C"]), ["A", "B", "C"]);
+  assert.deepEqual(resolveTaskContentFolderMoveTaskIds("D", ["A", "B", "C"]), ["D"]);
+  assert.deepEqual(resolveTaskContentFolderMoveTaskIds("B", ["A", "B", "B", "C"]), ["A", "B", "C"]);
+  assert.match(tableSource, /resolveTaskContentFolderMoveTaskIds\(task\.id, selectedTaskIds\)/);
+  assert.match(appSource, /for \(const task of targetTasks\)/);
+  assert.match(appSource, /failedCount/);
 });
 
 test("Create Folder performs assignment and compensates a failed move", () => {
