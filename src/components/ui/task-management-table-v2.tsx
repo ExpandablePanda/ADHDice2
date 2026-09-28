@@ -83,6 +83,7 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
+import { resolveTaskTableFreezeTransition } from "@/lib/task-table-freeze";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
 import { resolveTaskTypeRowPresentation, type TaskTypePresentation } from "@/lib/task-type-presentation";
 import { TaskTypeIdentity, TaskTypeSelect, TaskTypeTitleIcon } from "@/components/task-app/task-type-identity";
@@ -3243,13 +3244,15 @@ export function TaskManagementTableV2({
   }, []);
   const [frozenDisplayedTaskIds, setFrozenDisplayedTaskIds] = useState<string[] | null>(null);
   useEffect(() => {
-    if (selectedTaskIds.length === 0) {
-      setFrozenDisplayedTaskIds(null);
-      return;
+    const freezeTransition = resolveTaskTableFreezeTransition(
+      selectedTaskIds.length,
+      displayedTasks.map((task) => task.id),
+      frozenDisplayedTaskIds,
+    );
+    if (freezeTransition.shouldDispatch) {
+      setFrozenDisplayedTaskIds(freezeTransition.nextFrozenDisplayedTaskIds);
     }
-
-    setFrozenDisplayedTaskIds((current) => current ?? displayedTasks.map((task) => task.id));
-  }, [displayedTasks, selectedTaskIds.length]);
+  }, [displayedTasks, frozenDisplayedTaskIds, selectedTaskIds.length]);
   useEffect(() => {
     if (selectedTaskIds.length > 0) {
       cancelTableScrollTopHold();
