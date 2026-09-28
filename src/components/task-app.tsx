@@ -182,8 +182,9 @@ import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBu
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
 import {
-  keepCurrentActiveStatusResult,
+  keepCurrentTaskIdArrayIfUnchanged,
   keepCurrentTaskArrayIfSemanticallyEqual,
+  publishActiveStatusReadIfChanged,
 } from "@/lib/task-state-identity";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
 import {
@@ -3137,6 +3138,7 @@ export function TaskApp() {
     taskActiveStatusAuthorityReadinessRevision,
   );
   const [activeStatusRead, setActiveStatusRead] = useState<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
+  const activeStatusReadRef = useRef<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
   const activeStatusCalculationTokenRef = useRef(0);
   const committedActiveStatusBehaviorRevisionRef = useRef<string | null>(null);
   const latestActiveStatusInputRevisionRef = useRef(activeStatusInputRevision);
@@ -3154,11 +3156,17 @@ export function TaskApp() {
     }),
     [currentTaskProjectionReadContext, currentTaskProjectionsByTaskId, taskHistoryStreakSummaries, tasks, todayKey],
   );
+  const currentTaskProjectionFallbackTaskIdsRef = useRef<string[]>([]);
   const currentTaskProjectionFallbackTaskIds = useMemo(
-    () => [...new Set([
-      ...currentTaskProjectionFallbackResolution.staleProjectionTaskIds,
-      ...currentTaskProjectionFallbackResolution.missingProjectionTaskIds,
-    ])],
+    () => {
+      const nextTaskIds = [...new Set([
+        ...currentTaskProjectionFallbackResolution.staleProjectionTaskIds,
+        ...currentTaskProjectionFallbackResolution.missingProjectionTaskIds,
+      ])];
+      const stableTaskIds = keepCurrentTaskIdArrayIfUnchanged(currentTaskProjectionFallbackTaskIdsRef.current, nextTaskIds);
+      currentTaskProjectionFallbackTaskIdsRef.current = stableTaskIds;
+      return stableTaskIds;
+    },
     [currentTaskProjectionFallbackResolution.missingProjectionTaskIds, currentTaskProjectionFallbackResolution.staleProjectionTaskIds],
   );
   const projectionFallbackHistoryRequestedRef = useRef<Set<string>>(new Set());
@@ -3186,7 +3194,9 @@ export function TaskApp() {
     const calculationToken = activeStatusCalculationTokenRef.current + 1;
     activeStatusCalculationTokenRef.current = calculationToken;
     const publishActiveStatusRead = (next: typeof activeStatusRead) => {
-      setActiveStatusRead((current) => keepCurrentActiveStatusResult(current, next));
+      publishActiveStatusReadIfChanged(activeStatusReadRef, next, (value) => {
+        setActiveStatusRead(value);
+      });
     };
     if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
       return () => {

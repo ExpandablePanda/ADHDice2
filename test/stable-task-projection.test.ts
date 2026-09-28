@@ -159,7 +159,7 @@ test("global Active Status chunking yields and matches the canonical result", as
   assert.deepEqual(actual.dueOnByTaskId, expected.dueOnByTaskId);
 });
 
-test("incomplete Active Status work does not expose its partial map", async () => {
+test("stale chunked Active Status work does not expose its partial map", async () => {
   const tasks = [canonicalTask({ id: "task-a" }), canonicalTask({ id: "task-b" })];
   let current = true;
   const result = await resolveActiveTaskStatusesIncrementallyChunked({

@@ -19,6 +19,12 @@ export function keepCurrentTaskArrayIfSemanticallyEqual(current: Task[], next: T
   return areTaskCollectionsSemanticallyEqual(current, next) ? current : next;
 }
 
+export function keepCurrentTaskIdArrayIfUnchanged(current: string[], next: string[]) {
+  return current.length === next.length && current.every((taskId, index) => taskId === next[index])
+    ? current
+    : next;
+}
+
 function activeStatusSemanticValue(result: ActiveStatusResultLike | null) {
   if (result === null) return null;
   return {
@@ -38,4 +44,15 @@ export function areActiveStatusResultsSemanticallyEqual(
 
 export function keepCurrentActiveStatusResult<T extends ActiveStatusResultLike | null>(current: T, next: T) {
   return areActiveStatusResultsSemanticallyEqual(current, next) ? current : next;
+}
+
+export function publishActiveStatusReadIfChanged<T extends ActiveStatusResultLike | null>(
+  currentRef: { current: T },
+  next: T,
+  dispatch: (next: T) => void,
+) {
+  if (areActiveStatusResultsSemanticallyEqual(currentRef.current, next)) return false;
+  currentRef.current = next;
+  dispatch(next);
+  return true;
 }

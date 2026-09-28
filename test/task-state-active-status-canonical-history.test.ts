@@ -282,8 +282,13 @@ test("TaskApp gates initial Task presentation on projection readiness and scopes
   assert.match(activeStatusRead, /resolveActiveTaskStatusesIncrementallyChunked\(/);
   assert.match(activeStatusRead, /mode=fallback-chunked tasks=\$\{activeStatusInput\.tasks\.length\} chunks=\$\{result\.chunks\}/);
   assert.match(activeStatusRead, /activeStatusCalculationTokenRef/);
+  assert.match(activeStatusRead, /if \(!result\.completed \|\| activeStatusCalculationTokenRef\.current !== calculationToken\) return;/);
+  assert.match(activeStatusRead, /latestActiveStatusInputRevisionRef\.current === activeStatusInputRevision/);
+  assert.match(activeStatusRead, /latestActiveStatusBehaviorRevisionRef\.current === taskActiveStatusBehaviorRevision/);
   assert.match(activeStatusRead, /publishActiveStatusRead\(result\)/);
-  assert.match(activeStatusRead, /keepCurrentActiveStatusResult\(current, next\)/);
+  assert.match(activeStatusRead, /publishActiveStatusReadIfChanged\(activeStatusReadRef, next/);
+  assert.doesNotMatch(activeStatusRead, /setActiveStatusRead\(\(current\)/);
+  assert.match(taskAppSource, /keepCurrentTaskIdArrayIfUnchanged\(currentTaskProjectionFallbackTaskIdsRef\.current, nextTaskIds\)/);
   assert.match(taskAppSource, /const taskDisplayDueOnByTaskId = currentTaskProjectionReadResolution\.dueOnByTaskId/);
   assert.match(taskAppSource, /createProjectionDomainRevision\("active-task-read", \{[\s\S]*dueOnByTaskId:[\s\S]*statusesByTaskId:/);
   assert.match(taskAppSource, /projectTasksForActiveStatusRead\(tasks, taskDisplayStatusByTaskId, taskDisplayDueOnByTaskId\)/);
