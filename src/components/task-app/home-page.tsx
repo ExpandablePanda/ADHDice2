@@ -43,7 +43,15 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
-import type { HomeDailyProgress, HomeRecordChase, HomeRecordMetricKey } from "@/lib/home-progress";
+import {
+  filterHomeFinishedItems,
+  getHomeFinishedTodayFilterDetails,
+  toggleHomeFinishedTodayFilter,
+  type FinishedTodayFilter,
+  type HomeDailyProgress,
+  type HomeRecordChase,
+  type HomeRecordMetricKey,
+} from "@/lib/home-progress";
 import {
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
@@ -202,7 +210,16 @@ function HomeProgressDashboard({
   recordTargetsRecalculatedAt: string | null;
   recordTargetsSettingsMismatch: boolean;
 }) {
-  const [isFinishedDetailsOpen, setIsFinishedDetailsOpen] = useState(false);
+  const [finishedTodayFilter, setFinishedTodayFilter] = useState<FinishedTodayFilter | null>(null);
+  const selectedFinishedItems = finishedTodayFilter
+    ? filterHomeFinishedItems(dailyProgress.finishedItems, finishedTodayFilter)
+    : [];
+  const selectedFinishedTodayDetails = finishedTodayFilter
+    ? getHomeFinishedTodayFilterDetails(finishedTodayFilter)
+    : null;
+  const toggleFinishedTodayFilter = (filter: FinishedTodayFilter) => {
+    setFinishedTodayFilter((current) => toggleHomeFinishedTodayFilter(current, filter));
+  };
 
   return (
     <div className="mb-4 grid min-w-0 gap-3 sm:grid-cols-2" data-home-progress-dashboard>
@@ -229,26 +246,58 @@ function HomeProgressDashboard({
           <div className="mt-3">
             <button
               aria-controls="home-finished-today-details"
-              aria-expanded={isFinishedDetailsOpen}
+              aria-expanded={finishedTodayFilter === "all"}
+              aria-label={finishedTodayFilter === "all" ? "Hide all finished Tasks and Steps" : "Show all finished Tasks and Steps"}
+              aria-pressed={finishedTodayFilter === "all"}
               className="block w-full rounded-lg text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#8b78ed]"
-              onClick={() => setIsFinishedDetailsOpen((open) => !open)}
+              onClick={() => toggleFinishedTodayFilter("all")}
               type="button"
             >
               <p className="text-2xl font-bold leading-none text-[#30275a] dark:text-white">
                 {dailyProgress.total} <span className="text-sm font-medium text-[#7d7598] dark:text-white/55">finished today</span>
               </p>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[#746d90] dark:text-white/60">
-                <span>Done {dailyProgress.done}</span>
-                <span>Did My Best {dailyProgress.didMyBest}</span>
-                <span>Completed {dailyProgress.completed}</span>
-              </div>
             </button>
-            {isFinishedDetailsOpen ? (
+            <div className="mt-2 flex flex-wrap gap-x-1 gap-y-1 text-xs text-[#746d90] dark:text-white/60">
+              <button
+                aria-controls="home-finished-today-details"
+                aria-expanded={finishedTodayFilter === "done"}
+                aria-label={finishedTodayFilter === "done" ? `Hide Done Tasks and Steps (${dailyProgress.done})` : `Show Done Tasks and Steps (${dailyProgress.done})`}
+                aria-pressed={finishedTodayFilter === "done"}
+                className={`rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-[#faf8fe] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:hover:bg-white/5 ${finishedTodayFilter === "done" ? "font-semibold text-[#6f57f6] dark:text-[#b8aaff]" : ""}`}
+                onClick={() => toggleFinishedTodayFilter("done")}
+                type="button"
+              >
+                Done {dailyProgress.done}
+              </button>
+              <button
+                aria-controls="home-finished-today-details"
+                aria-expanded={finishedTodayFilter === "did_my_best"}
+                aria-label={finishedTodayFilter === "did_my_best" ? `Hide Did My Best Tasks and Steps (${dailyProgress.didMyBest})` : `Show Did My Best Tasks and Steps (${dailyProgress.didMyBest})`}
+                aria-pressed={finishedTodayFilter === "did_my_best"}
+                className={`rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-[#faf8fe] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:hover:bg-white/5 ${finishedTodayFilter === "did_my_best" ? "font-semibold text-[#6f57f6] dark:text-[#b8aaff]" : ""}`}
+                onClick={() => toggleFinishedTodayFilter("did_my_best")}
+                type="button"
+              >
+                Did My Best {dailyProgress.didMyBest}
+              </button>
+              <button
+                aria-controls="home-finished-today-details"
+                aria-expanded={finishedTodayFilter === "complete"}
+                aria-label={finishedTodayFilter === "complete" ? `Hide Completed Tasks and Steps (${dailyProgress.completed})` : `Show Completed Tasks and Steps (${dailyProgress.completed})`}
+                aria-pressed={finishedTodayFilter === "complete"}
+                className={`rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-[#faf8fe] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:hover:bg-white/5 ${finishedTodayFilter === "complete" ? "font-semibold text-[#6f57f6] dark:text-[#b8aaff]" : ""}`}
+                onClick={() => toggleFinishedTodayFilter("complete")}
+                type="button"
+              >
+                Completed {dailyProgress.completed}
+              </button>
+            </div>
+            {finishedTodayFilter && selectedFinishedTodayDetails ? (
               <div className="mt-3 border-t border-[#f0ecf8] pt-2.5 dark:border-white/8" id="home-finished-today-details">
-                <p className="text-[11px] font-medium text-[#8b82a7] dark:text-white/48">Finished Tasks and Steps</p>
-                {dailyProgress.finishedItems.length > 0 ? (
+                <p className="text-[11px] font-medium text-[#8b82a7] dark:text-white/48">{selectedFinishedTodayDetails.heading}</p>
+                {selectedFinishedItems.length > 0 ? (
                   <ul className="mt-1.5 grid max-h-48 gap-1 overflow-y-auto">
-                    {dailyProgress.finishedItems.map((item) => (
+                    {selectedFinishedItems.map((item) => (
                       <li className="flex items-center justify-between gap-3 rounded-md bg-[#faf8fe] px-2 py-1.5 text-xs dark:bg-white/5" key={item.taskId}>
                         <span className="min-w-0 truncate text-[#625b7b] dark:text-white/75">{item.title}</span>
                         <span className="shrink-0 text-[10px] text-[#8b82a7] dark:text-white/48">
@@ -258,7 +307,7 @@ function HomeProgressDashboard({
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-1.5 text-xs text-[#8b82a7] dark:text-white/48">No Tasks or Steps finished today.</p>
+                  <p className="mt-1.5 text-xs text-[#8b82a7] dark:text-white/48">{selectedFinishedTodayDetails.emptyState}</p>
                 )}
               </div>
             ) : null}

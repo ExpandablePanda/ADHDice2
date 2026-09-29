@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-27
+Last reviewed: 2026-09-29
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.62`.
+- Current working app version: `7.15.63`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.15.63 Side Finished Today outcome filters
+
+Side Home Finished Today now uses explicit All, Done, Did My Best, and
+Completed detail filters backed by each `finishedItems[].outcome` value.
+Overall counts, outcome precedence, Task/Step eligibility, and Records live
+values remain unchanged. Focused Home progress tests and targeted lint are the
+source verification boundary; browser/manual QA remains Andrew-owned and
+unverified.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

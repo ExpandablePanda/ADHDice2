@@ -11,11 +11,18 @@ export type HomeRecordMetricKey = typeof HOME_RECORD_METRIC_KEYS[number];
 
 export type HomeFinishedOutcome = "done" | "did_my_best" | "complete";
 
+export type FinishedTodayFilter = "all" | HomeFinishedOutcome;
+
 export type HomeFinishedItem = Readonly<{
   taskId: string;
   title: string;
   outcome: HomeFinishedOutcome;
   entityKind: "parent" | "step";
+}>;
+
+export type HomeFinishedTodayFilterDetails = Readonly<{
+  emptyState: string;
+  heading: string;
 }>;
 
 export type HomeDailyProgress = Readonly<{
@@ -63,6 +70,44 @@ const HOME_FINISHED_OUTCOME_RANK: Readonly<Record<HomeFinishedOutcome, number>> 
   did_my_best: 1,
   complete: 2,
 };
+
+const HOME_FINISHED_TODAY_FILTER_DETAILS: Readonly<Record<FinishedTodayFilter, HomeFinishedTodayFilterDetails>> = {
+  all: {
+    emptyState: "No Tasks or Steps finished today.",
+    heading: "Finished Tasks and Steps",
+  },
+  done: {
+    emptyState: "No Tasks or Steps marked Done today.",
+    heading: "Done Tasks and Steps",
+  },
+  did_my_best: {
+    emptyState: "No Tasks or Steps marked Did My Best today.",
+    heading: "Did My Best Tasks and Steps",
+  },
+  complete: {
+    emptyState: "No Tasks or Steps marked Complete today.",
+    heading: "Completed Tasks and Steps",
+  },
+};
+
+export function filterHomeFinishedItems(
+  items: readonly HomeFinishedItem[],
+  filter: FinishedTodayFilter,
+): readonly HomeFinishedItem[] {
+  if (filter === "all") return items;
+  return items.filter((item) => item.outcome === filter);
+}
+
+export function getHomeFinishedTodayFilterDetails(filter: FinishedTodayFilter): HomeFinishedTodayFilterDetails {
+  return HOME_FINISHED_TODAY_FILTER_DETAILS[filter];
+}
+
+export function toggleHomeFinishedTodayFilter(
+  current: FinishedTodayFilter | null,
+  next: FinishedTodayFilter,
+): FinishedTodayFilter | null {
+  return current === next ? null : next;
+}
 
 function homeFinishedOutcome(status: TaskHistory["status"]): HomeFinishedOutcome {
   if (status === "complete") return "complete";
