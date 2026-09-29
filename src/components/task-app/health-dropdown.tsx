@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDown } from "lucide-react";
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useId, useImperativeHandle, useRef, useState } from "react";
 
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { focusDropdownControl, revealDropdownOptionWithinPanel, shouldCloseDropdownOnFocusLeave, shouldCloseDropdownOnTab } from "@/lib/dropdown-interaction";
@@ -27,8 +27,13 @@ export type HealthAutocompleteSuggestion = {
   value: string;
 };
 
+export type HealthAutocompleteHandle = {
+  focus: () => void;
+};
+
 export function HealthAutocomplete({
   ariaLabel,
+  focusRef,
   id,
   onChange,
   onSelect,
@@ -37,6 +42,7 @@ export function HealthAutocomplete({
   value,
 }: {
   ariaLabel: string;
+  focusRef?: Ref<HealthAutocompleteHandle>;
   id?: string;
   onChange: (value: string) => void;
   onSelect?: (suggestion: HealthAutocompleteSuggestion) => void;
@@ -56,6 +62,10 @@ export function HealthAutocomplete({
     ? { label: suggestion, value: suggestion }
     : suggestion);
   const matchingSuggestions = normalizedSuggestions.filter((suggestion) => suggestion.label.toLocaleLowerCase().includes(value.trim().toLocaleLowerCase()));
+
+  useImperativeHandle(focusRef, () => ({
+    focus: () => inputRef.current?.focus(),
+  }), []);
 
   useEffect(() => {
     function handleOutsidePointerDown(event: PointerEvent) {

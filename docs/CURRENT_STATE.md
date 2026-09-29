@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-27
+Last reviewed: 2026-09-29
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.0`.
+- Current working app version: `7.16.6`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.16.6 Food Amount Enter focus handoff
+
+After a successful Amount-Enter save in the normal actual-food editor, focus
+returns through the HealthAutocomplete-owned input handle to the Food search
+input. Validation, composition, save/reset, meal context, plan/actual mode,
+Quick Entry, button submission, and editing-flow boundaries remain unchanged.
+Browser/manual QA remains Andrew-owned and unverified by source checks.
 
 ## 2026-09-27 7.16.0 History correctness and Delay-history clarity
 
