@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.65`.
+- Current working app version: `7.15.66`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -41,6 +41,15 @@ Routine settings can add or rename empty sections, and each top-level Routine's
 gear menu can move the group to another section without detaching children.
 Focused Home/Routine tests, targeted lint, and `git diff --check` are the source
 verification boundary; browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.66 Side Routine section action anchor correction
+
+The Home Routine `Move to section` action is now exposed only for top-level
+Routine group anchors. Steps and Substeps retain their existing child actions,
+while valid anchor destination, ordering, persistence, and V6 state behavior
+remain unchanged. Focused Home/Routine tests, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

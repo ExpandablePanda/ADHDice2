@@ -1349,7 +1349,7 @@ export function HomePage({
                   </div>
                   ) : (
                   <div className="grid gap-1">
-                    {isRoutine ? (
+                    {isRoutine && isRoutineGroupAnchor ? (
                       <button
                         aria-label={`Move ${task.title || "Untitled task"} to section`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"

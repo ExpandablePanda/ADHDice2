@@ -1127,7 +1127,9 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   const fastActionControlsSource = fastActionSource.slice(0, fastActionSource.indexOf("aria-label={`Collapse actions"));
   assert.doesNotMatch(fastActionControlsSource, /setIsFastActionMode\(false\)/);
   assert.match(actionsSource, /Move to day/);
-  assert.match(actionsSource, /Move to section/);
+  assert.match(actionsSource, /\{isRoutine && isRoutineGroupAnchor \?[\s\S]*Move to section/);
+  assert.doesNotMatch(actionsSource, /\{isRoutine \?[\s\S]*Move to section/);
+  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
   assert.match(actionsSource, /Move to Top/);
   assert.match(actionsSource, /Move to Bottom/);
   assert.match(actionsSource, /Remove from Home To-do/);
