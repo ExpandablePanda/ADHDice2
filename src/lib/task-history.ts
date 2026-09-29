@@ -75,6 +75,16 @@ export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
 }
 
+/** Return whether the canonical History outcome for a logical date is successful. */
+export function isTaskFinishedOnDate(
+  history: readonly DbTaskHistory[],
+  logicalDate: string,
+) {
+  const entry = deduplicateTaskHistoryByLogicalDate(history)
+    .find((candidate) => candidate.entry_date === logicalDate);
+  return entry ? isTaskCompletedForHistory(entry.status) : false;
+}
+
 export function isTaskHistoryStreakSuccessStatus(status: TaskStatus) {
   return status === "done" || status === "did_my_best";
 }

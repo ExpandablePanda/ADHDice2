@@ -35,6 +35,7 @@ function memberFact(id: string, displayStatus: TaskDisplayStatus, overrides: Par
     parent_task_id: null,
     task_content_folder_id: "folder-a",
     displayStatus,
+    finishedToday: displayStatus === "done" || displayStatus === "did_my_best" || displayStatus === "complete",
     isPinned: false,
     isRoutine: false,
     hasAttention: false,
@@ -262,9 +263,9 @@ test("actual Folder emptiness uses the broad top-level Task universe and ignores
 
 test("Folder member summaries use all direct members and keep Steps out of bulk state", () => {
   const summary = buildTaskContentFolderMemberSummary([
-    { id: "visible", task_content_folder_id: "folder-a", displayStatus: "done", isPinned: true, isRoutine: true, hasAttention: false },
-    { id: "hidden", task_content_folder_id: "folder-a", displayStatus: "pending", isPinned: false, isRoutine: false, hasAttention: true },
-    { id: "step", parent_task_id: "visible", task_content_folder_id: null, displayStatus: "done", isPinned: true, isRoutine: true, hasAttention: true },
+    { id: "visible", task_content_folder_id: "folder-a", displayStatus: "done", finishedToday: true, isPinned: true, isRoutine: true, hasAttention: false },
+    { id: "hidden", task_content_folder_id: "folder-a", displayStatus: "pending", finishedToday: false, isPinned: false, isRoutine: false, hasAttention: true },
+    { id: "step", parent_task_id: "visible", task_content_folder_id: null, displayStatus: "done", finishedToday: true, isPinned: true, isRoutine: true, hasAttention: true },
   ], "folder-a");
 
   assert.deepEqual(summary.memberTaskIds, ["visible", "hidden"]);
@@ -278,7 +279,7 @@ test("Folder member summaries use all direct members and keep Steps out of bulk 
   assert.deepEqual(getTaskContentFolderRoutineToggleTaskIds(summary), ["hidden"]);
 });
 
-test("Folder daily state treats every finished display status as finished", () => {
+test("Folder daily state treats every finished-today History fact as finished", () => {
   assert.equal(deriveTaskContentFolderDailyState([memberFact("done", "done")]), "finished");
   assert.equal(deriveTaskContentFolderDailyState([
     memberFact("done", "done"),
@@ -318,9 +319,9 @@ test("Folder daily state includes descendant Folder Tasks without a second nesti
 });
 
 test("Folder daily state follows the canonical display status when it changes", () => {
-  const member = memberFact("changing", "done");
+  const member = memberFact("changing", "done", { finishedToday: true });
   assert.equal(buildTaskContentFolderMemberSummary([member], "folder-a").dailyState, "finished");
-  assert.equal(buildTaskContentFolderMemberSummary([{ ...member, displayStatus: "upcoming" }], "folder-a").dailyState, "open");
+  assert.equal(buildTaskContentFolderMemberSummary([{ ...member, displayStatus: "upcoming", finishedToday: false }], "folder-a").dailyState, "open");
 });
 
 test("Folder Routine bulk toggling adds missing direct members and removes all when selected", () => {
@@ -364,7 +365,9 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   assert.match(app, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
   assert.match(list, /taskDisplayStatusByTaskId=\{tableProps\.rowContext\.taskDisplayStatusByTaskId\}/);
   assert.match(table, /displayStatus: taskDisplayStatusByTaskId\[task\.id\] \?\? task\.status/);
-  assert.match(list, /displayStatus: tableProps\.rowContext\.taskDisplayStatusByTaskId\[task\.id\] \?\? task\.status/);
+  assert.match(table, /finishedToday: task\.finishedToday/);
+  assert.match(list, /displayStatus: row\.status/);
+  assert.match(list, /finishedToday: row\.finishedToday/);
   assert.match(header, /data-folder-daily-state=\{summary\.dailyState\}/);
   assert.match(header, /data-\[folder-daily-state=finished\]:bg-\[#edf8f1\]/);
   assert.match(header, /data-\[folder-daily-state=open\]:bg-\[#fff8dc\]/);

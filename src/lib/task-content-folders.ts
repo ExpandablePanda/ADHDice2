@@ -1,5 +1,5 @@
 import type { TaskContentFolder, TaskUpdate } from "@/lib/database.types";
-import { isTaskFinishedStatusValue, isTaskOpenStatus } from "@/lib/task-buckets";
+import { isTaskOpenStatus } from "@/lib/task-buckets";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 
 export const TASK_CONTENT_FOLDER_NAME_MAX_LENGTH = 120;
@@ -80,6 +80,7 @@ export type TaskContentFolderMemberFact = {
   parent_task_id?: string | null;
   task_content_folder_id?: string | null;
   displayStatus: TaskDisplayStatus;
+  finishedToday: boolean;
   isPinned: boolean;
   isRoutine: boolean;
   hasAttention: boolean;
@@ -108,14 +109,11 @@ export function deriveTaskContentFolderDailyState(
   if (participatingMembers.length === 0) {
     return "neutral";
   }
-  if (participatingMembers.some((member) => (
-    member.displayStatus === "unscheduled" || isTaskOpenStatus(member.displayStatus)
-  ))) {
-    return "open";
-  }
-  return participatingMembers.every((member) => isTaskFinishedStatusValue(member.displayStatus))
-    ? "finished"
-    : "neutral";
+  if (participatingMembers.every((member) => member.finishedToday)) return "finished";
+  return participatingMembers.some((member) => (
+    !member.finishedToday
+    && (member.displayStatus === "unscheduled" || isTaskOpenStatus(member.displayStatus))
+  )) ? "open" : "neutral";
 }
 
 export type TaskContentFolderProjectionOptions = {

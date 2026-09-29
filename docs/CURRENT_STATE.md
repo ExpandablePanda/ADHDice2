@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.8`.
+- Current working app version: `7.16.9`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.16.9 Task Content Folder current-day completion correction
+
+Task Content Folder daily state now derives a separate `finishedToday` fact
+from the freshest deduplicated logical-date History outcome at the shared Task
+row boundary. Rolled-forward recurring Tasks therefore remain green after
+successful completion today, while genuinely open members remain orange. This
+corrects the 7.16.8 live-status versus current-day-History mismatch without
+changing Task, recurrence, History, or Folder persistence semantics. Browser/
+manual QA remains Andrew-owned and unverified by source checks.
 
 ## 2026-09-29 7.16.8 Task Content Folder daily-state colors
 

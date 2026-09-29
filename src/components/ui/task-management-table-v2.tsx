@@ -1200,6 +1200,7 @@ export type PrototypeTaskRow = {
   repeatMonthlyWeekday: number | null;
   subtasksAutoReset: boolean;
   status: TaskDisplayStatus;
+  finishedToday: boolean;
   subtasks: PrototypeTaskSubtask[];
   tags: string[];
   title: string;
@@ -1512,6 +1513,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyWeekday: null,
     subtasksAutoReset: false,
     status: "pending",
+    finishedToday: false,
     subtasks: [
       {
         children: [],
@@ -1554,6 +1556,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyWeekday: null,
     subtasksAutoReset: false,
     status: "in_progress",
+    finishedToday: false,
     subtasks: [
       {
         children: [
@@ -1604,6 +1607,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyWeekday: null,
     subtasksAutoReset: false,
     status: "pending",
+    finishedToday: false,
     subtasks: [],
     tags: ["ops", "maintenance"],
     title: "Maintenance cadence prototype",
@@ -3566,6 +3570,7 @@ export function TaskManagementTableV2({
       parent_task_id: task.parent_task_id,
       task_content_folder_id: task.task_content_folder_id,
       displayStatus: taskDisplayStatusByTaskId[task.id] ?? task.status,
+      finishedToday: task.finishedToday,
       isPinned: Boolean(task.pinnedAt),
       isRoutine: taskHasList(task, "Routine"),
       hasAttention: Boolean(attentionReasonByTaskId[task.id] ?? task.attentionReason),
@@ -5890,6 +5895,7 @@ export function TaskManagementTableV2({
       repeatMonthlyOrdinal: item.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: item.repeatMonthlyWeekday,
       status: item.status,
+      finishedToday: false,
       subtasks: [],
       subtasksAutoReset: false,
       tags: [...item.tags],

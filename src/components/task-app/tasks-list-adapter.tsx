@@ -2737,6 +2737,22 @@ function TasksSimpleList({
     : ROW_MODEL_WINDOW_SIZE + ROW_MODEL_OVERSCAN;
   const windowedTasks = useMemo(() => tasks.slice(0, rowWindowCount), [rowWindowCount, tasks]);
   const allFolderMemberTasks = tableProps.allTasks ?? tableProps.tasks;
+  const rowContext = tableProps.rowContext;
+  const getOrCreateTaskRow = useCallback(
+    (task: Task) => rowModelCache.getOrCreate(task, {
+      displayStatus: rowContext.taskDisplayStatusByTaskId[task.id],
+      focusedTaskIdSet: rowContext.focusedTaskIdSet,
+      linkedNotes: rowContext.linkedNotesByTaskId[task.id] ?? [],
+      listDefinitions: rowContext.listDefinitions,
+      listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
+      subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
+      taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
+      taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
+      attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
+      todayDateKey: rowContext.todayDateKey,
+    }),
+    [rowContext, rowModelCache],
+  );
   const actuallyEmptyTaskContentFolderIds = useMemo(
     () => getActuallyEmptyTaskContentFolderIds(allFolderMemberTasks, tableProps.taskContentFolders ?? []),
     [allFolderMemberTasks, tableProps.taskContentFolders],
@@ -2753,19 +2769,23 @@ function TasksSimpleList({
     [actuallyEmptyTaskContentFolderIds, selectedBucket, tableProps.currentListId, tableProps.searchActive, tableProps.statusFilterActive, tableProps.taskContentFolders, windowedTasks],
   );
   const folderMemberSummaryById = useMemo(() => {
-    const memberFacts = allFolderMemberTasks.map((task) => ({
-      id: task.id,
-      parent_task_id: task.parent_task_id,
-      task_content_folder_id: task.task_content_folder_id,
-      displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status,
-      isPinned: Boolean(task.pinned_at),
-      isRoutine: (tableProps.rowContext.listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"),
-      hasAttention: Boolean(tableProps.rowContext.taskAttentionReasonByTaskId[task.id]),
-    }));
+    const memberFacts = allFolderMemberTasks.map((task) => {
+      const row = getOrCreateTaskRow(task);
+      return {
+        id: task.id,
+        parent_task_id: task.parent_task_id,
+        task_content_folder_id: task.task_content_folder_id,
+        displayStatus: row.status,
+        finishedToday: row.finishedToday,
+        isPinned: Boolean(task.pinned_at),
+        isRoutine: (rowContext.listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"),
+        hasAttention: Boolean(rowContext.taskAttentionReasonByTaskId[task.id]),
+      };
+    });
     return new Map<string, TaskContentFolderMemberSummary>(
       (tableProps.taskContentFolders ?? []).map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id, tableProps.taskContentFolders ?? [])]),
     );
-  }, [allFolderMemberTasks, tableProps.rowContext.listMembershipsByTaskId, tableProps.rowContext.taskAttentionReasonByTaskId, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.taskContentFolders]);
+  }, [allFolderMemberTasks, getOrCreateTaskRow, rowContext, tableProps.taskContentFolders]);
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
@@ -2797,7 +2817,6 @@ function TasksSimpleList({
     observer.observe(sentinel);
     return () => observer.disconnect();
   }, [committedResultRevision, rowWindowCount, tasks.length, windowedTasks.length]);
-  const rowContext = tableProps.rowContext;
   const getPolicyFilteredTaskStatuses = (input: {
     customRulesetId?: string | null;
     dueOn: string | null;
@@ -2941,21 +2960,6 @@ function TasksSimpleList({
   const taskById = useMemo(
     () => new Map([...(tableProps.allTasks ?? tasks), ...tasks].map((task) => [task.id, task])),
     [tableProps.allTasks, tasks],
-  );
-  const getOrCreateTaskRow = useCallback(
-    (task: Task) => rowModelCache.getOrCreate(task, {
-      displayStatus: rowContext.taskDisplayStatusByTaskId[task.id],
-      focusedTaskIdSet: rowContext.focusedTaskIdSet,
-      linkedNotes: rowContext.linkedNotesByTaskId[task.id] ?? [],
-      listDefinitions: rowContext.listDefinitions,
-      listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
-      subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
-      taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
-      taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
-      attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
-      todayDateKey: rowContext.todayDateKey,
-    }),
-    [rowContext, rowModelCache],
   );
   const getRowById = useCallback(
     (taskId: string) => {

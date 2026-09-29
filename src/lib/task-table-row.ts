@@ -3,7 +3,7 @@ import type {
   Task,
   TaskHistory,
 } from "@/lib/database.types";
-import { getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
+import { getTaskHistoryLastDone, getTaskHistoryLastHandled, isTaskFinishedOnDate } from "@/lib/task-history";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskAttentionReason } from "@/lib/task-attention";
@@ -152,6 +152,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatMonthlyWeekday: task.repeat_monthly_weekday,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
     status: context.displayStatus ?? task.status,
+    finishedToday: isTaskFinishedOnDate(context.taskHistory, context.todayDateKey),
     subtasks: buildTaskTableSubtasks(context.subtasks),
     tags: task.tags ?? [],
     title: task.title,
