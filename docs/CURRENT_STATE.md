@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.63`.
+- Current working app version: `7.15.64`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -22,6 +22,15 @@ Overall counts, outcome precedence, Task/Step eligibility, and Records live
 values remain unchanged. Focused Home progress tests and targeted lint are the
 source verification boundary; browser/manual QA remains Andrew-owned and
 unverified.
+
+## 2026-09-29 7.15.64 Side Finished Today item opening
+
+Finished Today Task and Step detail rows now reuse Home's existing
+`onOpenTask` callback, opening the shared Edit Task overlay while Home remains
+the active page. Filtering, counts, outcome precedence, and existing Home
+To-do/Routine opening behavior are unchanged. Focused Home progress tests,
+targeted lint, and `git diff --check` are the source verification boundary;
+browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

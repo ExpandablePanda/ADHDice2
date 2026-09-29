@@ -192,6 +192,7 @@ function HomeProgressDashboard({
   homeRecordChases,
   homeHistoryError,
   homeHistoryStatus,
+  onOpenTask,
   onRetryHomeHistory,
   onOpenRecord,
   recordTargetsError,
@@ -203,6 +204,7 @@ function HomeProgressDashboard({
   homeRecordChases: HomeRecordChase[];
   homeHistoryError: string | null;
   homeHistoryStatus: HomeCurrentDayHistoryLoadStatus;
+  onOpenTask: (taskId: string) => void;
   onRetryHomeHistory: () => void;
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
@@ -298,11 +300,18 @@ function HomeProgressDashboard({
                 {selectedFinishedItems.length > 0 ? (
                   <ul className="mt-1.5 grid max-h-48 gap-1 overflow-y-auto">
                     {selectedFinishedItems.map((item) => (
-                      <li className="flex items-center justify-between gap-3 rounded-md bg-[#faf8fe] px-2 py-1.5 text-xs dark:bg-white/5" key={item.taskId}>
-                        <span className="min-w-0 truncate text-[#625b7b] dark:text-white/75">{item.title}</span>
-                        <span className="shrink-0 text-[10px] text-[#8b82a7] dark:text-white/48">
-                          {item.entityKind === "step" ? "Step" : "Task"} · {item.outcome === "did_my_best" ? "Did My Best" : item.outcome === "complete" ? "Completed" : "Done"}
-                        </span>
+                      <li key={item.taskId}>
+                        <button
+                          aria-label={`Open ${item.entityKind === "step" ? "Step" : "Task"} ${item.title || "Untitled"}`}
+                          className="flex w-full items-center justify-between gap-3 rounded-md bg-[#faf8fe] px-2 py-1.5 text-left text-xs outline-none transition-colors hover:bg-[#f4effd] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:bg-white/5 dark:hover:bg-white/8"
+                          onClick={() => onOpenTask(item.taskId)}
+                          type="button"
+                        >
+                          <span className="min-w-0 truncate text-[#625b7b] dark:text-white/75">{item.title}</span>
+                          <span className="shrink-0 text-[10px] text-[#8b82a7] dark:text-white/48">
+                            {item.entityKind === "step" ? "Step" : "Task"} · {item.outcome === "did_my_best" ? "Did My Best" : item.outcome === "complete" ? "Completed" : "Done"}
+                          </span>
+                        </button>
                       </li>
                     ))}
                   </ul>
@@ -1416,6 +1425,7 @@ export function HomePage({
         homeRecordChases={homeRecordChases}
         homeHistoryError={homeHistoryError}
         homeHistoryStatus={homeHistoryStatus}
+        onOpenTask={onOpenTask}
         onRetryHomeHistory={onRetryHomeHistory}
         onOpenRecord={onOpenRecord}
         recordTargetsError={recordTargetsError}

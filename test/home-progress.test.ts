@@ -208,6 +208,14 @@ test("Home production wiring keeps History readiness separate from the record ta
   assert.match(homeSource, /\{selectedFinishedItems\.map\(\(item\) =>/);
   assert.match(homeSource, /id="home-finished-today-details"/);
   assert.match(homeSource, /finishedItems/);
+  assert.match(homeSource, /<HomeProgressDashboard[\s\S]*?onOpenTask=\{onOpenTask\}/);
+  assert.match(homeSource, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
+  const dashboardSource = homeSource.slice(homeSource.indexOf("function HomeProgressDashboard"), homeSource.indexOf("export function HomePage"));
+  assert.match(dashboardSource, /onOpenTask,/);
+  assert.match(dashboardSource, /<li key=\{item\.taskId\}>\s*<button/);
+  assert.match(dashboardSource, /onClick=\{\(\) => onOpenTask\(item\.taskId\)\}/);
+  assert.match(dashboardSource, /aria-label=\{`Open \$\{item\.entityKind === "step" \? "Step" : "Task"\} \$\{item\.title \|\| "Untitled"\}`\}/);
+  assert.match(dashboardSource, /type="button"/);
   assert.match(homeSource, /Records to Beat/);
   assert.match(homeSource, /onOpenRecord\(chase\.metricKey\)/);
   assert.match(homeSource, /homeHistoryStatus === "idle" \|\| homeHistoryStatus === "loading"/);
@@ -220,6 +228,8 @@ test("Home production wiring keeps History readiness separate from the record ta
   assert.match(taskAppSource, /setActivePage\("Achievements"\)/);
   assert.match(taskAppSource, /initialRecordMetricKey=\{pendingProgressRecordMetricKey\}/);
   assert.match(taskAppSource, /onOpenTask=\{openTaskEditorFromId\}/);
+  assert.match(taskAppSource, /const openTaskEditorFromId = \(taskId: string\) => \{[\s\S]*?openSharedTaskEditor\(taskId, \{ preserveActivePage: true \}\);/);
+  assert.doesNotMatch(taskAppSource.slice(taskAppSource.indexOf("const openTaskEditorFromId"), taskAppSource.indexOf("const openTaskInSharedTasksEditorFromPaths")), /setActivePage|navigate/);
   assert.match(targetSource, /select\("metric_key,value,timezone,logical_day_start,recalculated_at"\)/);
   assert.match(targetSource, /\.in\("metric_key", \[\.\.\.HOME_RECORD_METRIC_KEYS\]\)/);
   assert.match(targetSource, /void loadForCurrentOwner\(\);/);
