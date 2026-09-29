@@ -1014,6 +1014,17 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.doesNotMatch(readFileSync(new URL("../src/lib/home-todo-state.ts", import.meta.url), "utf8"), /getLogicalDayKey/);
 });
 
+test("Home Routine section updates use canonical Routine ordering", () => {
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  const updateStart = hookSource.indexOf("const updateRoutineTaskSection");
+  const updateEnd = hookSource.indexOf("\n  return {", updateStart);
+  const updateSource = hookSource.slice(updateStart, updateEnd);
+
+  assert.match(updateSource, /moveHomeRoutineTaskIdToSection\(\s*current\.routineTaskIds,\s*currentRoutineState\.routineSectionIdByTaskId,/);
+  assert.doesNotMatch(updateSource, /currentRoutineState\.routineTaskIds/);
+  assert.match(updateSource, /nextRoutineState\.routineTaskIds\) === JSON\.stringify\(current\.routineTaskIds\)/);
+});
+
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
   const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   assert.match(source, /<TaskHomePage[\s\S]*onCreateTaskWithType=\{createHomeTodoTaskWithType\}/);

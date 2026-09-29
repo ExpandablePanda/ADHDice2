@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.66`.
+- Current working app version: `7.15.67`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -50,6 +50,14 @@ while valid anchor destination, ordering, persistence, and V6 state behavior
 remain unchanged. Focused Home/Routine tests, targeted lint, and
 `git diff --check` are the source verification boundary; browser/manual QA
 remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.67 Side Routine section move crash correction
+
+Home Routine section moves now pass the canonical `current.routineTaskIds`
+ordering into the existing move helper, preventing the undefined-ordering
+runtime crash while preserving section assignment behavior. Focused
+Home/Routine tests, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

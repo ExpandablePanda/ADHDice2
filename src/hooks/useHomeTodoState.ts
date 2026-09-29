@@ -336,13 +336,13 @@ export function useHomeTodoState(userId: string | null) {
       current.routineTaskIds,
     );
     const nextRoutineState = moveHomeRoutineTaskIdToSection(
-      currentRoutineState.routineTaskIds,
+      current.routineTaskIds,
       currentRoutineState.routineSectionIdByTaskId,
       taskId,
       sectionId,
     );
     if (
-      JSON.stringify(nextRoutineState.routineTaskIds) === JSON.stringify(currentRoutineState.routineTaskIds)
+      JSON.stringify(nextRoutineState.routineTaskIds) === JSON.stringify(current.routineTaskIds)
       && JSON.stringify(nextRoutineState.routineSectionIdByTaskId) === JSON.stringify(currentRoutineState.routineSectionIdByTaskId)
     ) return;
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
