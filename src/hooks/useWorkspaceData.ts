@@ -579,7 +579,9 @@ export function useWorkspaceData({
   useEffect(() => {
     activePageRef.current = activePage;
     if (activePage === "Notes") void loadNotesRef.current?.();
-    if (activePage === "Home") void homeCurrentDayHistoryRequestRef.current?.("navigation");
+    if (activePage === "Home" || activePage === "Tasks") {
+      void homeCurrentDayHistoryRequestRef.current?.("navigation");
+    }
   }, [activePage]);
 
   useEffect(() => {
@@ -595,7 +597,9 @@ export function useWorkspaceData({
         ownerId: currentUser.id,
         workspaceGeneration: workspaceGenerationRef.current,
       });
-      if (activePageRef.current === "Home") void homeCurrentDayHistoryRequestRef.current?.("logical-day", { force: true });
+      if (activePageRef.current === "Home" || activePageRef.current === "Tasks") {
+        void homeCurrentDayHistoryRequestRef.current?.("logical-day", { force: true });
+      }
       void taskActivitySummaryRuntimeRef.current?.request({
         client: supabase,
         logicalDate: todayKey,
@@ -766,7 +770,9 @@ export function useWorkspaceData({
       }, { force }) ?? false;
     }
     homeCurrentDayHistoryRequestRef.current = requestHomeCurrentDayHistory;
-    if (activePageRef.current === "Home") void requestHomeCurrentDayHistory("owner-ready");
+    if (activePageRef.current === "Home" || activePageRef.current === "Tasks") {
+      void requestHomeCurrentDayHistory("owner-ready");
+    }
     void taskActivitySummaryRuntimeRef.current?.request({
       client,
       logicalDate: todayKeyRef.current,

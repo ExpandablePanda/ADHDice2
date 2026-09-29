@@ -432,6 +432,7 @@ type TasksTableSourceProps = {
     taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
     taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
+    finishedTodayByTaskId?: Readonly<Record<string, boolean>>;
     todayDateKey: string;
   };
   onRequestedOpenTaskHandled?: (taskId: string) => void;
@@ -598,6 +599,7 @@ export function TasksTableAdapter({
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
         attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
+        finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
         todayDateKey: tableProps.rowContext.todayDateKey,
       }));
 
@@ -630,6 +632,7 @@ export function TasksTableAdapter({
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
         attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
+        finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
         todayDateKey: tableProps.rowContext.todayDateKey,
       })
       : null,
@@ -667,6 +670,7 @@ export function TasksTableAdapter({
               taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
               taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
               attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
+              finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
               todayDateKey: tableProps.rowContext.todayDateKey,
             }))}
           allListOptions={tableProps.allListOptions}
@@ -2749,6 +2753,7 @@ function TasksSimpleList({
       taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
       taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
       attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
+      finishedTodayByTaskId: rowContext.finishedTodayByTaskId,
       todayDateKey: rowContext.todayDateKey,
     }),
     [rowContext, rowModelCache],
@@ -3015,6 +3020,7 @@ function TasksSimpleList({
           taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
           taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
           attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
+          finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
           todayDateKey: tableProps.rowContext.todayDateKey,
         })),
       })
@@ -3460,6 +3466,7 @@ function TasksSimpleList({
           taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
           taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
           attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
+          finishedTodayByTaskId: rowContext.finishedTodayByTaskId,
           todayDateKey: rowContext.todayDateKey,
         });
         const categoryLabel = resolveTaskCategoryLabel({

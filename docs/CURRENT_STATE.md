@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.9`.
+- Current working app version: `7.16.10`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.16.10 Task Content Folder bounded current-day History authority
+
+The bounded current-logical-day History runtime is now requested for both Home
+and Tasks, while retaining its existing owner/date/generation fencing,
+single-flight behavior, rollover invalidation, and loaded-only refresh paths.
+Tasks share its `finishedToday` completion map with the common Table/List row
+model, so Folder daily state no longer depends on lazy full Task History.
+Home Finished Today remains on the same bounded data and unchanged behavior.
+Browser/manual QA remains Andrew-owned and unverified by source checks.
 
 ## 2026-09-29 7.16.9 Task Content Folder current-day completion correction
 

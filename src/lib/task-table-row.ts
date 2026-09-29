@@ -29,6 +29,7 @@ export type TaskTableRowContext = {
   attentionReason?: TaskAttentionReason | null;
   directlyExcludedFromTracking?: boolean;
   effectivelyExcludedFromTracking?: boolean;
+  finishedTodayByTaskId?: Readonly<Record<string, boolean>>;
   todayDateKey: string;
 };
 
@@ -49,6 +50,9 @@ export function createStableTaskRowModelCache() {
         attentionReason: context.attentionReason,
         directlyExcludedFromTracking: context.directlyExcludedFromTracking,
         effectivelyExcludedFromTracking: context.effectivelyExcludedFromTracking,
+        finishedToday: context.finishedTodayByTaskId === undefined
+          ? null
+          : context.finishedTodayByTaskId[task.id] === true,
         todayDateKey: context.todayDateKey,
       });
       const cached = rowsByTaskId.get(task.id);
@@ -152,7 +156,9 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatMonthlyWeekday: task.repeat_monthly_weekday,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
     status: context.displayStatus ?? task.status,
-    finishedToday: isTaskFinishedOnDate(context.taskHistory, context.todayDateKey),
+    finishedToday: context.finishedTodayByTaskId
+      ? context.finishedTodayByTaskId[task.id] === true
+      : isTaskFinishedOnDate(context.taskHistory, context.todayDateKey),
     subtasks: buildTaskTableSubtasks(context.subtasks),
     tags: task.tags ?? [],
     title: task.title,

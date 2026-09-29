@@ -322,6 +322,7 @@ import {
   buildTaskHistoryFacts,
   deduplicateTaskHistoryByLogicalDate,
   isTaskCompletedForHistory,
+  isTaskFinishedOnDate,
   isTaskHistoryStatus,
   mapTaskHistoryRow,
 } from "@/lib/task-history";
@@ -3051,6 +3052,15 @@ export function TaskApp() {
     }
     return grouped;
   }, [homeCurrentDayHistoryRows]);
+  const finishedTodayByTaskId = useMemo(() => {
+    if (!isHomeCurrentDayHistoryReady) return undefined;
+    return Object.fromEntries(
+      Object.entries(homeCurrentDayHistoryByTaskId).map(([taskId, rows]) => [
+        taskId,
+        isTaskFinishedOnDate(rows, todayKey),
+      ]),
+    );
+  }, [homeCurrentDayHistoryByTaskId, isHomeCurrentDayHistoryReady, todayKey]);
   const homeDailyProgress = useMemo(
     () => buildHomeDailyProgress({ taskHistoryByTaskId: homeCurrentDayHistoryByTaskId, tasks, todayKey }),
     [homeCurrentDayHistoryByTaskId, tasks, todayKey],
@@ -4251,6 +4261,7 @@ export function TaskApp() {
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: effectiveTaskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
+        finishedTodayByTaskId,
         directlyExcludedFromTracking: task.exclude_from_tracking === true,
         effectivelyExcludedFromTracking: trackingExclusionTaskIds.has(task.id),
         todayDateKey: todayKey,
@@ -4263,6 +4274,7 @@ export function TaskApp() {
       sharedTaskEditorOverlayTaskId,
       taskHistoryByTaskId,
       effectiveTaskHistoryStreakSummaries,
+      finishedTodayByTaskId,
       taskDisplayStatusByTaskId,
       taskAttentionReasonByTaskId,
       trackingExclusionTaskIds,
@@ -4462,6 +4474,7 @@ export function TaskApp() {
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
+    finishedTodayByTaskId,
     todayDateKey: todayKey,
   }), [
     availableTaskLists,
@@ -4469,6 +4482,7 @@ export function TaskApp() {
     manualMembershipsByTaskId,
     taskHistoryByTaskId,
     effectiveTaskHistoryStreakSummaries,
+    finishedTodayByTaskId,
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
