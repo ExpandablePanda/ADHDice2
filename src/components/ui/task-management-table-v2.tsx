@@ -15,6 +15,7 @@ import {
   CirclePlay,
   Copy,
   ChevronRight,
+  Ellipsis,
   Folder,
   Flame,
   Footprints,
@@ -90,7 +91,7 @@ import { TaskTypeIdentity, TaskTypeSelect, TaskTypeTitleIcon } from "@/component
 import { preserveCurrentTaskStatusForPresentation, resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask, taskManualActionForStatus } from "@/lib/task-state-engine/action-authority";
 import { getTaskEditorNavigationNeighbor, getTaskEditorNavigationPosition } from "@/lib/task-editor-navigation";
 import type { TaskBehaviorPolicyResolutionContext, TaskManualAction } from "@/lib/task-state-engine/behavior-policy";
-import { AdhdDropdownSelect, AdhdIconButton } from "@/components/ui-system";
+import { AdhdDropdownPanel, AdhdDropdownSelect, AdhdIconButton } from "@/components/ui-system";
 import {
   TASK_TABLE_BODY_MUTED_VALUE_CLASS as BODY_MUTED_VALUE_CLASS,
   TASK_TABLE_BODY_VALUE_CLASS as BODY_VALUE_CLASS,
@@ -2939,6 +2940,7 @@ export function TaskManagementTableV2({
   const [columnMenuPosition, setColumnMenuPosition] = useState<ColumnMenuPosition | null>(null);
   const [rowContextMenu, setRowContextMenu] = useState<RowContextMenuState | null>(null);
   const [contentFolderContextMenu, setContentFolderContextMenu] = useState<TaskContentFolderContextMenuState | null>(null);
+  const [openEditorUtilityMenuTaskId, setOpenEditorUtilityMenuTaskId] = useState<string | null>(null);
   const [activeTaskContentFolderEdit, setActiveTaskContentFolderEdit] = useState<TaskContentFolderEditSurface>(null);
   const [pendingCustomCadenceTaskId, setPendingCustomCadenceTaskId] = useState<string | null>(null);
   const [tableViewportMetrics, setTableViewportMetrics] = useState<TaskTableViewportMetrics>({ clientWidth: 0, scrollLeft: 0 });
@@ -3013,6 +3015,7 @@ export function TaskManagementTableV2({
   const shellRef = useRef<HTMLDivElement | null>(null);
   const inspectorPanelRef = useRef<HTMLDivElement | null>(null);
   const editorInteractionRef = useRef<HTMLDivElement | null>(null);
+  const editorUtilityMenuRef = useRef<HTMLDivElement | null>(null);
   const previousEditorNavigationRef = useRef<HTMLDivElement | null>(null);
   const nextEditorNavigationRef = useRef<HTMLDivElement | null>(null);
   const tableScrollContainerRef = useRef<HTMLDivElement | null>(null);
@@ -3753,6 +3756,7 @@ export function TaskManagementTableV2({
     editorNavigationTaskIdRef.current = requestedOpenTaskId;
     setSelectedTaskId(requestedOpenTaskId);
     setOverlayMode("full");
+    setOpenEditorUtilityMenuTaskId(null);
     setOpenColumnMenuId(null);
     setOverlayAnchor(null);
     acknowledgeNormalOpen();
@@ -4249,6 +4253,10 @@ export function TaskManagementTableV2({
       if (!rowContextMenuRef.current?.contains(target)) {
         setRowContextMenu(null);
       }
+
+      if (!editorUtilityMenuRef.current?.contains(target)) {
+        setOpenEditorUtilityMenuTaskId(null);
+      }
     };
 
     document.addEventListener("mousedown", handlePointerDown);
@@ -4258,6 +4266,10 @@ export function TaskManagementTableV2({
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
+        if (openEditorUtilityMenuTaskId) {
+          setOpenEditorUtilityMenuTaskId(null);
+          return;
+        }
         if (selectedTaskId && (enableInspector || allowInlineInspector)) {
           closeInspector();
         }
@@ -4270,7 +4282,7 @@ export function TaskManagementTableV2({
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [allowInlineInspector, enableInspector, selectedTaskId, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
+  }, [allowInlineInspector, enableInspector, openEditorUtilityMenuTaskId, selectedTaskId, dueDrafts, estimatedMinutesDrafts, notesDrafts, linkDrafts]);
 
   useEffect(() => {
     if (!pendingTableReveal) {
@@ -4807,6 +4819,7 @@ export function TaskManagementTableV2({
     setQuickEditTargetTaskIds(null);
     setOverlayMode("full");
     setOverlayAnchor(null);
+    setOpenEditorUtilityMenuTaskId(null);
     onInspectorClose?.();
   }
 
@@ -5571,6 +5584,7 @@ export function TaskManagementTableV2({
     setQuickEditTargetTaskIds(nextQuickEditTargetTaskIds);
     setSelectedTaskId(taskId);
     setOverlayMode(mode);
+    setOpenEditorUtilityMenuTaskId(null);
     setOpenColumnMenuId(null);
     if (mode === "full") {
       setPendingTableReveal(null);
@@ -5735,6 +5749,7 @@ export function TaskManagementTableV2({
     setRetainedMetadataTargetTask(null);
     pendingMetadataTargetTaskIdRef.current = null;
     setQuickEditTargetTaskIds(null);
+    setOpenEditorUtilityMenuTaskId(null);
     openInspector(nextTaskId, "full");
     onTaskEditorNavigate?.(nextTaskId);
   }
@@ -10550,6 +10565,7 @@ export function TaskManagementTableV2({
                   ? "min-w-0 w-full max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-4 py-4 shadow-[0_18px_45px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#1b1530]"
                   : "min-w-0 max-w-full rounded-[1.25rem] border border-[#ede7f7] bg-white px-5 py-4 dark:border-white/10 dark:bg-[#1b1530] lg:sticky lg:top-4 lg:self-start";
                 const titleInputClass = `${OVERLAY_INPUT_CLASS} h-11 rounded-[1rem] ${useMobileFullOverlay ? "text-[17px]" : "text-[18px]"}`;
+                const editorDeleteActionLabel = selectedTask.status === "trashed" ? "Delete permanently" : "Move to trash";
                 const metadataPanelClass = useMobileFullOverlay
                   ? "mt-5 min-w-0 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"
                   : "mt-4 rounded-[1rem] border border-[#efe9ff] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]";
@@ -10621,6 +10637,61 @@ export function TaskManagementTableV2({
                             taskId={selectedTask.id}
                           />
                         </label>
+                        {onOpenTaskHistory ? (
+                          <AdhdIconButton
+                            aria-label="Open task history"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              setOpenEditorUtilityMenuTaskId(null);
+                              onOpenTaskHistory?.(selectedTask.id);
+                            }}
+                            size="md"
+                            variant="rowToolbar"
+                          >
+                            <CalendarDays aria-hidden="true" />
+                          </AdhdIconButton>
+                        ) : null}
+                        {onOpenDeleteTask ? (
+                          <div className="relative shrink-0" data-full-editor-utility-menu="true" ref={editorUtilityMenuRef}>
+                            <AdhdIconButton
+                              aria-expanded={openEditorUtilityMenuTaskId === selectedTask.id}
+                              aria-haspopup="menu"
+                              aria-label="More task actions"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setOpenEditorUtilityMenuTaskId((current) => current === selectedTask.id ? null : selectedTask.id);
+                              }}
+                              selected={openEditorUtilityMenuTaskId === selectedTask.id}
+                              size="md"
+                              variant="rowToolbar"
+                            >
+                              <Ellipsis aria-hidden="true" />
+                            </AdhdIconButton>
+                            {openEditorUtilityMenuTaskId === selectedTask.id ? (
+                              <AdhdDropdownPanel
+                                aria-label="Task actions"
+                                className="left-auto right-0 p-1"
+                                role="menu"
+                                widthClassName="min-w-44"
+                              >
+                                <button
+                                  aria-label={editorDeleteActionLabel}
+                                  className="flex min-h-9 w-full items-center gap-2 rounded-[0.6rem] px-2.5 py-2 text-left text-sm font-medium text-[#d94e67] transition hover:bg-[#fff1f3] dark:text-[#ffb0c1] dark:hover:bg-[#3b1922]"
+                                  onClick={(event) => {
+                                    event.stopPropagation();
+                                    setOpenEditorUtilityMenuTaskId(null);
+                                    onOpenDeleteTask?.(selectedTask.id);
+                                  }}
+                                  role="menuitem"
+                                  type="button"
+                                >
+                                  <Trash2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
+                                  {editorDeleteActionLabel}
+                                </button>
+                              </AdhdDropdownPanel>
+                            ) : null}
+                          </div>
+                        ) : null}
                       </div>
                       {detachedTaskNotice ? <div className="mt-3">{detachedTaskNotice}</div> : null}
                       {stepsEditorNode}

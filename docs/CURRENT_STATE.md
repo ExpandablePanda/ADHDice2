@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.6`.
+- Current working app version: `7.16.7`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.16.7 Shared full Edit Task utility actions
+
+The shared full Edit Task title row now exposes Calendar History and a compact
+more-actions menu in both desktop and mobile render paths. History and Trash
+delegate to the existing TaskApp callbacks with the exact selected Task, Step,
+or Substep ID; active and trashed wording remains aligned with row actions. No
+History or deletion mutation behavior changed. Browser/manual QA remains
+Andrew-owned and unverified by source checks.
 
 ## 2026-09-29 7.16.6 Food Amount Enter focus handoff
 
