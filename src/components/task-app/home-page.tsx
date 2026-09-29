@@ -58,6 +58,7 @@ import {
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
   createHomeTodoTask,
+  reconcileHomeRoutineSectionAssignments,
   formatHomeRoutineDueLabel,
   getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
@@ -69,6 +70,7 @@ import {
   reconcileHomeTodoTaskIds,
   reconcileHomeRoutineTaskIds,
   sortHomeTodoSearchResults,
+  type HomeRoutineGroup,
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
 import {
@@ -108,7 +110,7 @@ const HOME_REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = 
   { label: "Months", value: "monthly" },
 ];
 type HomePanelTab = "todo" | "routine";
-type HomeRowActionMenuView = "actions" | "move-day";
+type HomeRowActionMenuView = "actions" | "move-day" | "move-routine-section";
 
 type HomeRowActionMenuState = {
   taskId: string;
@@ -432,7 +434,7 @@ export function HomePage({
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
-  const { state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutinesPerSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("todo");
@@ -457,7 +459,7 @@ export function HomePage({
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
   const [rowActionMenu, setRowActionMenu] = useState<HomeRowActionMenuState | null>(null);
   const [isFastActionMode, setIsFastActionMode] = useState(false);
-  const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
+  const [editingRoutineSectionId, setEditingRoutineSectionId] = useState<string | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
   const [routineChildDropTarget, setRoutineChildDropTarget] = useState<HomeRoutineChildDropTarget | null>(null);
@@ -530,10 +532,15 @@ export function HomePage({
     () => buildHomeTodoDaySections(todoTasks.map((task) => task.id), state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone, state.taskDayOffsets),
     [calendarNowMs, calendarTimeZone, state.taskDayOffsets, state.tasksPerDay, todoTasks],
   );
-  const routineSections = useMemo(
-    () => buildHomeRoutineSections(reconciledRoutineTaskIds, state.routinesPerSection, state.routineSectionNames),
-    [reconciledRoutineTaskIds, state.routineSectionNames, state.routinesPerSection],
+  const effectiveRoutineSectionState = useMemo(
+    () => reconcileHomeRoutineSectionAssignments(state.routineSections, state.routineSectionIdByTaskId, reconciledRoutineTaskIds),
+    [reconciledRoutineTaskIds, state.routineSectionIdByTaskId, state.routineSections],
   );
+  const routineSections = useMemo(
+    () => buildHomeRoutineSections(reconciledRoutineTaskIds, effectiveRoutineSectionState.routineSections, effectiveRoutineSectionState.routineSectionIdByTaskId),
+    [effectiveRoutineSectionState, reconciledRoutineTaskIds],
+  );
+  const routineGroupByAnchorId = useMemo(() => new Map(routineGroups.map((group) => [group.anchorId, group])), [routineGroups]);
   const dayTaskIds = daySections.flatMap((section) => section.taskIds);
   const sevenDayCapacity = dayTaskIds.length;
   const dayTasks = dayTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
@@ -848,23 +855,23 @@ export function HomePage({
 
   function beginRoutineSectionRename(section: typeof routineSections[number]) {
     routineSectionRenameCanceledRef.current = false;
-    setRoutineSectionNameDraft(state.routineSectionNames[String(section.sectionIndex)] ?? section.label);
-    setEditingRoutineSectionIndex(section.sectionIndex);
+    setRoutineSectionNameDraft(section.label);
+    setEditingRoutineSectionId(section.id);
   }
 
-  function saveRoutineSectionName(sectionIndex: number) {
+  function saveRoutineSectionName(sectionId: string) {
     if (routineSectionRenameCanceledRef.current) {
       routineSectionRenameCanceledRef.current = false;
       return;
     }
-    updateRoutineSectionName(sectionIndex, routineSectionNameDraft);
-    setEditingRoutineSectionIndex(null);
+    updateRoutineSectionName(sectionId, routineSectionNameDraft);
+    setEditingRoutineSectionId(null);
   }
 
   function renderRoutineSectionHeader(section: typeof routineSections[number]) {
-    const isEditing = editingRoutineSectionIndex === section.sectionIndex;
+    const isEditing = editingRoutineSectionId === section.id;
     return (
-      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 dark:border-white/10" data-sortable-drop-id={`routine-section-${section.sectionIndex}`} data-sortable-drop-index={section.startIndex} key={`home-routine-section-${section.sectionIndex}`}>
+      <div className={`mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 dark:border-white/10 ${section.sectionIndex === 0 ? "mt-3 border-t-0" : ""}`} key={`home-routine-section-${section.id}`}>
         <div>
           <div className="flex min-w-0 items-center gap-1">
             {isEditing ? (
@@ -872,16 +879,16 @@ export function HomePage({
                 aria-label={`Rename ${section.label}`}
                 autoFocus
                 className="health-input h-7 min-w-0 w-[min(14rem,60vw)] px-2 py-1 text-sm font-bold"
-                onBlur={() => saveRoutineSectionName(section.sectionIndex)}
+                onBlur={() => saveRoutineSectionName(section.id)}
                 onChange={(event) => setRoutineSectionNameDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    saveRoutineSectionName(section.sectionIndex);
+                    saveRoutineSectionName(section.id);
                   } else if (event.key === "Escape") {
                     event.preventDefault();
                     routineSectionRenameCanceledRef.current = true;
-                    setEditingRoutineSectionIndex(null);
+                    setEditingRoutineSectionId(null);
                   }
                 }}
                 value={routineSectionNameDraft}
@@ -1001,6 +1008,7 @@ export function HomePage({
     rowKey?: string,
     routineDepth = 0,
     isRoutineGroupAnchor = false,
+    routineSectionGroupIds?: readonly string[],
   ) {
     const isRoutine = mode === "routine";
     const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
@@ -1010,6 +1018,7 @@ export function HomePage({
     const fastActionOpen = isFastActionMode;
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
+    const currentRoutineSectionId = isRoutine ? effectiveRoutineSectionState.routineSectionIdByTaskId[task.id] : null;
     const durableTaskIndex = state.taskIds.indexOf(task.id);
     const renderedDayOffset = daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
@@ -1023,8 +1032,10 @@ export function HomePage({
     ];
     const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0;
     const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state.taskIds.length - 1 && renderedDayOffset === 7;
-    const isAtRoutineTop = isRoutine && index === 0;
-    const isAtRoutineBottom = isRoutine && index === routineGroups.length - 1;
+    const routineSectionIndex = isRoutine && routineSectionGroupIds ? routineSectionGroupIds.indexOf(task.id) : index;
+    const routineSectionLength = routineSectionGroupIds?.length ?? routineGroups.length;
+    const isAtRoutineTop = isRoutine && routineSectionIndex === 0;
+    const isAtRoutineBottom = isRoutine && routineSectionIndex === routineSectionLength - 1;
     return (
       <AdhdCard
         key={rowKey}
@@ -1258,12 +1269,50 @@ export function HomePage({
             )}
             {rowActionMenuOpen ? (
               <AdhdDropdownPanel
-                aria-label={rowActionMenuView === "move-day" ? `Move ${task.title || "Untitled task"} to day` : `${task.title || "Untitled task"} actions`}
+                aria-label={rowActionMenuView === "move-day"
+                  ? `Move ${task.title || "Untitled task"} to day`
+                  : rowActionMenuView === "move-routine-section"
+                    ? `Move ${task.title || "Untitled task"} to section`
+                    : `${task.title || "Untitled task"} actions`}
                 className="left-auto right-0 top-[calc(100%+0.35rem)] max-h-80 overflow-y-auto p-1.5"
                 role="menu"
                 widthClassName="min-w-56"
               >
-                {rowActionMenuView === "move-day" ? (
+                {rowActionMenuView === "move-routine-section" ? (
+                  <div className="grid gap-1">
+                    {routineSections.map((section) => {
+                      const isCurrentSection = currentRoutineSectionId === section.id;
+                      return (
+                        <button
+                          aria-checked={isCurrentSection}
+                          aria-label={`${section.label}${isCurrentSection ? ", current section" : ""}`}
+                          className="flex min-h-9 items-center justify-between gap-3 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] disabled:cursor-not-allowed disabled:opacity-45 dark:text-white/75 dark:hover:bg-white/[0.08]"
+                          disabled={isCurrentSection}
+                          key={section.id}
+                          onClick={() => {
+                            if (isCurrentSection) return;
+                            updateRoutineTaskSection(task.id, section.id);
+                            setRowActionMenu(null);
+                          }}
+                          role="menuitemradio"
+                          type="button"
+                        >
+                          <span>{section.label}</span>
+                          {isCurrentSection ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#6f57f6]">Current</span> : null}
+                        </button>
+                      );
+                    })}
+                    <button
+                      aria-label="Back to task actions"
+                      className="flex min-h-9 items-center rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#6f57f6] hover:bg-[#f7f3ff] dark:text-[#cabfff] dark:hover:bg-white/[0.08]"
+                      onClick={() => setRowActionMenu({ taskId: task.id, view: "actions" })}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Back
+                    </button>
+                  </div>
+                ) : rowActionMenuView === "move-day" ? (
                   <div className="grid gap-1">
                     {moveDayDestinations.map((destination) => {
                       const isCurrentDestination = renderedDayOffset === destination.dayOffset;
@@ -1298,8 +1347,19 @@ export function HomePage({
                       Back
                     </button>
                   </div>
-                ) : (
+                  ) : (
                   <div className="grid gap-1">
+                    {isRoutine ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to section`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={() => setRowActionMenu({ taskId: task.id, view: "move-routine-section" })}
+                        role="menuitem"
+                        type="button"
+                      >
+                        Move to section
+                      </button>
+                    ) : null}
                     {!isRoutine ? (
                       <button
                         aria-label={`Move ${task.title || "Untitled task"} to day`}
@@ -1489,20 +1549,28 @@ export function HomePage({
                 >
                   <div>
                     <h2 className="text-sm font-bold text-[#26324f] dark:text-white">{activeHomeTab === "todo" ? "To-do list settings" : "Routine settings"}</h2>
-                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">{activeHomeTab === "todo" ? "Tasks per day" : "Routines per section"}</p>
+                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">{activeHomeTab === "todo" ? "Tasks per day" : "Explicit Routine sections"}</p>
                   </div>
-                  <div className="flex flex-wrap gap-1.5" role="group" aria-label={activeHomeTab === "todo" ? "Tasks per day" : "Routines per section"}>
-                    {(activeHomeTab === "todo" ? [10, 11, 12, 13, 14, 15] : [1, 2, 3, 4, 5, 6]).map((capacity) => (
-                      <AdhdChip
-                        key={capacity}
-                        onClick={() => activeHomeTab === "todo" ? updateTasksPerDay(capacity) : updateRoutinesPerSection(capacity)}
-                        selected={activeHomeTab === "todo" ? state.tasksPerDay === capacity : state.routinesPerSection === capacity}
-                        type="button"
-                      >
-                        {capacity}
+                  {activeHomeTab === "todo" ? (
+                    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Tasks per day">
+                      {[10, 11, 12, 13, 14, 15].map((capacity) => (
+                        <AdhdChip
+                          key={capacity}
+                          onClick={() => updateTasksPerDay(capacity)}
+                          selected={state.tasksPerDay === capacity}
+                          type="button"
+                        >
+                          {capacity}
+                        </AdhdChip>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="grid gap-2" role="group" aria-label="Routine sections">
+                      <AdhdChip icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={createRoutineSection} type="button">
+                        New section
                       </AdhdChip>
-                    ))}
-                  </div>
+                    </div>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1847,33 +1915,44 @@ export function HomePage({
             </>
           ) : (
             <>
-              <SortableList
-                className={HOME_TODO_LIST_CLASS}
-                getId={(group) => group.anchorId}
-                getLabel={(group) => group.tasks[0]?.task.title || "Untitled task"}
-                items={routineGroups}
-                onReorder={(nextGroups) => updateRoutineTaskIds(() => nextGroups.map((group) => group.anchorId))}
-                renderAfterItems={routineSections
-                  .filter((section) => section.startIndex >= routineGroups.length)
-                  .map(renderRoutineSectionHeader)}
-                renderBeforeItem={(_, index) => routineSections
-                  .filter((section) => section.startIndex === index)
-                  .map(renderRoutineSectionHeader)}
-              >
-                {(group, index, handle) => (
-                  <div className="space-y-2">
-                    {group.tasks.map(({ depth, isAnchor, task }) => renderHomeTask(
-                      task,
-                      index,
-                      isAnchor ? handle : null,
-                      "routine",
-                      `${group.anchorId}-${task.id}`,
-                      depth,
-                      isAnchor,
-                    ))}
+              {routineSections.map((section) => {
+                const sectionRoutineGroups = section.groupIds
+                  .map((groupId) => routineGroupByAnchorId.get(groupId))
+                  .filter((group): group is HomeRoutineGroup => Boolean(group));
+                return (
+                  <div key={section.id}>
+                    {renderRoutineSectionHeader(section)}
+                    {sectionRoutineGroups.length ? (
+                      <SortableList
+                        className={HOME_TODO_LIST_CLASS}
+                        getId={(group) => group.anchorId}
+                        getLabel={(group) => group.tasks[0]?.task.title || "Untitled task"}
+                        items={sectionRoutineGroups}
+                        onReorder={(nextGroups) => updateRoutineTaskIds((taskIds) => mergeHomeTodoVisibleTaskIds(
+                          taskIds,
+                          section.groupIds,
+                          nextGroups.map((group) => group.anchorId),
+                        ))}
+                      >
+                        {(group, _index, handle) => (
+                          <div className="space-y-2">
+                            {group.tasks.map(({ depth, isAnchor, task }) => renderHomeTask(
+                              task,
+                              reconciledRoutineTaskIds.indexOf(group.anchorId),
+                              isAnchor ? handle : null,
+                              "routine",
+                              `${group.anchorId}-${task.id}`,
+                              depth,
+                              isAnchor,
+                              section.groupIds,
+                            ))}
+                          </div>
+                        )}
+                      </SortableList>
+                    ) : null}
                   </div>
-                )}
-              </SortableList>
+                );
+              })}
               {!routineGroups.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/[0.15] dark:bg-white/[0.03] dark:text-white/55">
                   No Routine tasks yet.

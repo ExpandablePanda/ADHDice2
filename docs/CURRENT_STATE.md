@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.64`.
+- Current working app version: `7.15.65`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -31,6 +31,16 @@ the active page. Filtering, counts, outcome precedence, and existing Home
 To-do/Routine opening behavior are unchanged. Focused Home progress tests,
 targeted lint, and `git diff --check` are the source verification boundary;
 browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.65 Side persistent Home Routine sections
+
+Home Routine now uses explicit persistent V6 sections with stable IDs and a
+separate section assignment map while retaining `routineTaskIds` as the
+canonical order. V5 chunk boundaries and custom names migrate deterministically;
+Routine settings can add or rename empty sections, and each top-level Routine's
+gear menu can move the group to another section without detaching children.
+Focused Home/Routine tests, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 
