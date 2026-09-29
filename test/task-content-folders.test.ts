@@ -6,14 +6,17 @@ import {
   buildTaskContentFolderAssignmentPatch,
   buildTaskContentFolderPresentation,
   countVisibleTaskContentFolderMembers,
+  deriveTaskContentFolderDailyState,
   getActuallyEmptyTaskContentFolderIds,
   getTaskContentFolderRoutineToggleTaskIds,
   normalizeTaskContentFolderRow,
   shouldIncludeEmptyTaskContentFolders,
+  type TaskContentFolderMemberFact,
   validateTaskContentFolderMembership,
 } from "../src/lib/task-content-folders.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 import { buildTaskTableRow } from "../src/lib/task-table-row.ts";
+import type { TaskDisplayStatus } from "../src/lib/task-display-status.ts";
 
 const folders = [
   { id: "folder-a", user_id: "user-1", name: "Website Redesign", icon_key: "folder", created_at: "2026-01-01", updated_at: "2026-01-01" },
@@ -25,6 +28,19 @@ const task = (id: string, folderId: string | null = null, parentTaskId: string |
   parent_task_id: parentTaskId,
   task_content_folder_id: folderId,
 });
+
+function memberFact(id: string, displayStatus: TaskDisplayStatus, overrides: Partial<TaskContentFolderMemberFact> = {}): TaskContentFolderMemberFact {
+  return {
+    id,
+    parent_task_id: null,
+    task_content_folder_id: "folder-a",
+    displayStatus,
+    isPinned: false,
+    isRoutine: false,
+    hasAttention: false,
+    ...overrides,
+  };
+}
 
 function renderTaskIds(
   presentation: Array<
@@ -246,9 +262,9 @@ test("actual Folder emptiness uses the broad top-level Task universe and ignores
 
 test("Folder member summaries use all direct members and keep Steps out of bulk state", () => {
   const summary = buildTaskContentFolderMemberSummary([
-    { id: "visible", task_content_folder_id: "folder-a", isPinned: true, isRoutine: true, hasAttention: false },
-    { id: "hidden", task_content_folder_id: "folder-a", isPinned: false, isRoutine: false, hasAttention: true },
-    { id: "step", parent_task_id: "visible", task_content_folder_id: null, isPinned: true, isRoutine: true, hasAttention: true },
+    { id: "visible", task_content_folder_id: "folder-a", displayStatus: "done", isPinned: true, isRoutine: true, hasAttention: false },
+    { id: "hidden", task_content_folder_id: "folder-a", displayStatus: "pending", isPinned: false, isRoutine: false, hasAttention: true },
+    { id: "step", parent_task_id: "visible", task_content_folder_id: null, displayStatus: "done", isPinned: true, isRoutine: true, hasAttention: true },
   ], "folder-a");
 
   assert.deepEqual(summary.memberTaskIds, ["visible", "hidden"]);
@@ -260,6 +276,51 @@ test("Folder member summaries use all direct members and keep Steps out of bulk 
   assert.equal(summary.allRoutine, false);
   assert.equal(summary.attentionCount, 1);
   assert.deepEqual(getTaskContentFolderRoutineToggleTaskIds(summary), ["hidden"]);
+});
+
+test("Folder daily state treats every finished display status as finished", () => {
+  assert.equal(deriveTaskContentFolderDailyState([memberFact("done", "done")]), "finished");
+  assert.equal(deriveTaskContentFolderDailyState([
+    memberFact("done", "done"),
+    memberFact("best", "did_my_best"),
+    memberFact("complete", "complete"),
+  ]), "finished");
+});
+
+test("Folder daily state treats any open display status, including unscheduled, as open", () => {
+  for (const status of ["pending", "in_progress", "delayed", "upcoming", "not_due", "missed", "unscheduled"] as const) {
+    assert.equal(deriveTaskContentFolderDailyState([memberFact(status, status)]), "open", status);
+  }
+  assert.equal(deriveTaskContentFolderDailyState([memberFact("done", "done"), memberFact("open", "pending")]), "open");
+  assert.equal(deriveTaskContentFolderDailyState([memberFact("done", "done"), memberFact("missed", "missed")]), "open");
+  assert.equal(deriveTaskContentFolderDailyState([memberFact("done", "done"), memberFact("in-progress", "in_progress")]), "open");
+});
+
+test("Folder daily state is neutral for empty or archived/trashed-only membership", () => {
+  assert.equal(deriveTaskContentFolderDailyState([]), "neutral");
+  assert.equal(deriveTaskContentFolderDailyState([
+    memberFact("archived", "archived"),
+    memberFact("trashed", "trashed"),
+  ]), "neutral");
+});
+
+test("Folder daily state includes descendant Folder Tasks without a second nesting algorithm", () => {
+  const nestedFolders = [
+    { ...folders[0], parent_folder_id: null },
+    { ...folders[1], parent_folder_id: "folder-a" },
+  ];
+  const descendantTask = memberFact("descendant", "did_my_best", { task_content_folder_id: "folder-b" });
+  assert.equal(buildTaskContentFolderMemberSummary([descendantTask], "folder-a", nestedFolders).dailyState, "finished");
+  assert.equal(buildTaskContentFolderMemberSummary([
+    memberFact("direct", "done"),
+    memberFact("descendant-open", "missed", { task_content_folder_id: "folder-b" }),
+  ], "folder-a", nestedFolders).dailyState, "open");
+});
+
+test("Folder daily state follows the canonical display status when it changes", () => {
+  const member = memberFact("changing", "done");
+  assert.equal(buildTaskContentFolderMemberSummary([member], "folder-a").dailyState, "finished");
+  assert.equal(buildTaskContentFolderMemberSummary([{ ...member, displayStatus: "upcoming" }], "folder-a").dailyState, "open");
 });
 
 test("Folder Routine bulk toggling adds missing direct members and removes all when selected", () => {
@@ -290,6 +351,8 @@ test("An empty Folder does not appear fully pinned or fully in Routine", () => {
 test("Table and List use the shared Folder projection and the Folder stays outside Task State", () => {
   const table = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
   const list = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
+  const app = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const header = readFileSync(new URL("../src/components/task-app/task-content-folder-editable-header.tsx", import.meta.url), "utf8");
   const domain = readFileSync(new URL("../src/lib/task-content-folders.ts", import.meta.url), "utf8");
   const tableRow = readFileSync(new URL("../src/lib/task-table-row.ts", import.meta.url), "utf8");
   const taskType = readFileSync(new URL("../src/lib/task-type.ts", import.meta.url), "utf8");
@@ -297,6 +360,14 @@ test("Table and List use the shared Folder projection and the Folder stays outsi
   assert.match(list, /buildTaskContentFolderPresentation/);
   assert.match(table, /buildTaskContentFolderMemberSummary/);
   assert.match(list, /buildTaskContentFolderMemberSummary/);
+  assert.match(table, /taskDisplayStatusByTaskId = \{\}/);
+  assert.match(app, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
+  assert.match(list, /taskDisplayStatusByTaskId=\{tableProps\.rowContext\.taskDisplayStatusByTaskId\}/);
+  assert.match(table, /displayStatus: taskDisplayStatusByTaskId\[task\.id\] \?\? task\.status/);
+  assert.match(list, /displayStatus: tableProps\.rowContext\.taskDisplayStatusByTaskId\[task\.id\] \?\? task\.status/);
+  assert.match(header, /data-folder-daily-state=\{summary\.dailyState\}/);
+  assert.match(header, /data-\[folder-daily-state=finished\]:bg-\[#edf8f1\]/);
+  assert.match(header, /data-\[folder-daily-state=open\]:bg-\[#fff8dc\]/);
   assert.match(table, /onToggleMemberPinned={onTaskPinToggle}/);
   assert.match(list, /onToggleMemberPinned={tableProps\.onTogglePinned}/);
   assert.match(table, /taskContentFolderPresentation\s*\.flatMap\(\(block\) =>/);

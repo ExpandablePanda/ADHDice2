@@ -672,6 +672,7 @@ export function TasksTableAdapter({
           allListOptions={tableProps.allListOptions}
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
+          taskDisplayStatusByTaskId={tableProps.rowContext.taskDisplayStatusByTaskId}
           attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}
@@ -2756,6 +2757,7 @@ function TasksSimpleList({
       id: task.id,
       parent_task_id: task.parent_task_id,
       task_content_folder_id: task.task_content_folder_id,
+      displayStatus: tableProps.rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status,
       isPinned: Boolean(task.pinned_at),
       isRoutine: (tableProps.rowContext.listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === "routine"),
       hasAttention: Boolean(tableProps.rowContext.taskAttentionReasonByTaskId[task.id]),
@@ -2763,7 +2765,7 @@ function TasksSimpleList({
     return new Map<string, TaskContentFolderMemberSummary>(
       (tableProps.taskContentFolders ?? []).map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id, tableProps.taskContentFolders ?? [])]),
     );
-  }, [allFolderMemberTasks, tableProps.rowContext.listMembershipsByTaskId, tableProps.rowContext.taskAttentionReasonByTaskId, tableProps.taskContentFolders]);
+  }, [allFolderMemberTasks, tableProps.rowContext.listMembershipsByTaskId, tableProps.rowContext.taskAttentionReasonByTaskId, tableProps.rowContext.taskDisplayStatusByTaskId, tableProps.taskContentFolders]);
   useEffect(() => {
     if (!tableProps.highlightedActiveTaskId || tableProps.highlightedScrollToken == null) {
       return;
@@ -3243,6 +3245,7 @@ function TasksSimpleList({
               allListOptions={tableProps.allListOptions}
               allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
               allTagOptions={tableProps.allTagOptions}
+              taskDisplayStatusByTaskId={tableProps.rowContext.taskDisplayStatusByTaskId}
               attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
               childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
               childTaskPreviewByParentTaskId={tableProps.childTaskPreviewByParentTaskId}

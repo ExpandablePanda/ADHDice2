@@ -7873,6 +7873,7 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
           attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}

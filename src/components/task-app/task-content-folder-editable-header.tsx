@@ -93,6 +93,7 @@ export function TaskContentFolderEditableHeader({
     anyPinned: false,
     anyRoutine: false,
     attentionCount: 0,
+    dailyState: "neutral",
     memberTaskIds: [],
     pinnedTaskIds: [],
     routineTaskIds: [],
@@ -266,7 +267,8 @@ export function TaskContentFolderEditableHeader({
 
   return (
     <div
-      className="relative flex w-full flex-col gap-1 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80"
+      className="relative flex w-full flex-col gap-1 rounded-[1rem] border border-[#e7defb] bg-[#faf8ff] px-3 py-2 text-left text-sm text-[#4b4469] transition hover:border-[#c9bbff] dark:border-white/10 dark:bg-white/[0.035] dark:text-white/80 data-[folder-daily-state=finished]:border-[#cfe7d7] data-[folder-daily-state=finished]:bg-[#edf8f1] data-[folder-daily-state=finished]:text-[#368155] data-[folder-daily-state=open]:border-[#f2df9d] data-[folder-daily-state=open]:bg-[#fff8dc] data-[folder-daily-state=open]:text-[#9a7418] dark:data-[folder-daily-state=finished]:border-[#284836] dark:data-[folder-daily-state=finished]:bg-[#13261a] dark:data-[folder-daily-state=finished]:text-[#a7d7b8] dark:data-[folder-daily-state=open]:border-[#66521d] dark:data-[folder-daily-state=open]:bg-[#342b12] dark:data-[folder-daily-state=open]:text-[#f3d38a]"
+      data-folder-daily-state={summary.dailyState}
       data-style-role="tasks.content-folder.header"
       style={{ marginLeft: depth ? `${depth * 1}rem` : undefined }}
       onClick={(event) => {

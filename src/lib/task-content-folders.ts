@@ -1,4 +1,6 @@
 import type { TaskContentFolder, TaskUpdate } from "@/lib/database.types";
+import { isTaskFinishedStatusValue, isTaskOpenStatus } from "@/lib/task-buckets";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 
 export const TASK_CONTENT_FOLDER_NAME_MAX_LENGTH = 120;
 
@@ -77,10 +79,13 @@ export type TaskContentFolderMemberFact = {
   id: string;
   parent_task_id?: string | null;
   task_content_folder_id?: string | null;
+  displayStatus: TaskDisplayStatus;
   isPinned: boolean;
   isRoutine: boolean;
   hasAttention: boolean;
 };
+
+export type TaskContentFolderDailyState = "finished" | "open" | "neutral";
 
 export type TaskContentFolderMemberSummary = {
   allPinned: boolean;
@@ -88,10 +93,30 @@ export type TaskContentFolderMemberSummary = {
   anyPinned: boolean;
   anyRoutine: boolean;
   attentionCount: number;
+  dailyState: TaskContentFolderDailyState;
   memberTaskIds: string[];
   pinnedTaskIds: string[];
   routineTaskIds: string[];
 };
+
+export function deriveTaskContentFolderDailyState(
+  members: readonly TaskContentFolderMemberFact[],
+): TaskContentFolderDailyState {
+  const participatingMembers = members.filter((member) => (
+    member.displayStatus !== "archived" && member.displayStatus !== "trashed"
+  ));
+  if (participatingMembers.length === 0) {
+    return "neutral";
+  }
+  if (participatingMembers.some((member) => (
+    member.displayStatus === "unscheduled" || isTaskOpenStatus(member.displayStatus)
+  ))) {
+    return "open";
+  }
+  return participatingMembers.every((member) => isTaskFinishedStatusValue(member.displayStatus))
+    ? "finished"
+    : "neutral";
+}
 
 export type TaskContentFolderProjectionOptions = {
   /** Allow persistent empty folders to remain visible in normal browsing. */
@@ -258,6 +283,7 @@ export function buildTaskContentFolderMemberSummary(
     anyPinned: pinnedTaskIds.length > 0,
     anyRoutine: routineTaskIds.length > 0,
     attentionCount: members.filter((task) => task.hasAttention).length,
+    dailyState: deriveTaskContentFolderDailyState(members),
     memberTaskIds,
     pinnedTaskIds,
     routineTaskIds,

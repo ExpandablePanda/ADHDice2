@@ -223,9 +223,9 @@ test("collapse is independent and parent collapse hides the complete subtree", (
 
 test("aggregate actions and counts include every descendant Task", () => {
   const summary = buildTaskContentFolderMemberSummary([
-    { ...task("b", "website"), isPinned: true, isRoutine: true, hasAttention: false },
-    { ...task("d", "client"), isPinned: false, isRoutine: true, hasAttention: true },
-    { ...task("c", "work"), isPinned: true, isRoutine: false, hasAttention: false },
+    { ...task("b", "website"), displayStatus: "done", isPinned: true, isRoutine: true, hasAttention: false },
+    { ...task("d", "client"), displayStatus: "done", isPinned: false, isRoutine: true, hasAttention: true },
+    { ...task("c", "work"), displayStatus: "done", isPinned: true, isRoutine: false, hasAttention: false },
   ], "work", folders);
   assert.deepEqual(summary.memberTaskIds, ["b", "d", "c"]);
   assert.deepEqual(summary.pinnedTaskIds, ["b", "c"]);

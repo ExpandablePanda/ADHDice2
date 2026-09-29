@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.7`.
+- Current working app version: `7.16.8`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.16.8 Task Content Folder daily-state colors
+
+Task Content Folder headers now derive a shared neutral/open/finished daily
+state from canonical member display statuses in both Table and List View.
+Finished headers use the success family, open headers use the warning family,
+and empty or archived/trashed-only Folders retain the neutral appearance. No
+Folder status is persisted. Browser/manual QA remains Andrew-owned and
+unverified by source checks.
 
 ## 2026-09-29 7.16.7 Shared full Edit Task utility actions
 

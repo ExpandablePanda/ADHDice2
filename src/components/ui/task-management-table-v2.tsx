@@ -1329,6 +1329,7 @@ type TaskManagementTableV2Props = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
+  taskDisplayStatusByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
   attentionReasonByTaskId?: Readonly<Record<string, TaskAttentionReason>>;
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
@@ -2699,6 +2700,7 @@ export function TaskManagementTableV2({
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
+  taskDisplayStatusByTaskId = {},
   attentionReasonByTaskId = {},
   childTaskCreationBlockedTaskIds = [],
   childTaskPreviewByParentTaskId = {},
@@ -3563,6 +3565,7 @@ export function TaskManagementTableV2({
       id: task.id,
       parent_task_id: task.parent_task_id,
       task_content_folder_id: task.task_content_folder_id,
+      displayStatus: taskDisplayStatusByTaskId[task.id] ?? task.status,
       isPinned: Boolean(task.pinnedAt),
       isRoutine: taskHasList(task, "Routine"),
       hasAttention: Boolean(attentionReasonByTaskId[task.id] ?? task.attentionReason),
@@ -3570,7 +3573,7 @@ export function TaskManagementTableV2({
     return new Map<string, TaskContentFolderMemberSummary>(
       taskContentFolders.map((folder) => [folder.id, buildTaskContentFolderMemberSummary(memberFacts, folder.id, taskContentFolders)]),
     );
-  }, [allFolderMemberRows, attentionReasonByTaskId, taskContentFolders]);
+  }, [allFolderMemberRows, attentionReasonByTaskId, taskContentFolders, taskDisplayStatusByTaskId]);
   useLayoutEffect(() => {
     startTableScrollTopHoldFrames(true);
   }, [displayedTasks, renderedTasks.length, startTableScrollTopHoldFrames]);
