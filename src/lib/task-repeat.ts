@@ -682,6 +682,7 @@ export function formatRepeatCompactLabel(
   });
   if (repeatFrequency === "monthly" || (isUntilComplete && repeatShape === "monthly")) {
     let monthlyLabel = "Monthly";
+    let hasMonthlyPattern = false;
     if (
       repeatMonthlyMode === "ordinal_weekday"
       && repeatMonthlyOrdinal
@@ -690,12 +691,22 @@ export function formatRepeatCompactLabel(
     ) {
       const ordinalLabel = formatMonthlyOrdinalLabel(repeatMonthlyOrdinal);
       const weekdayLabel = REPEAT_WEEKDAY_LABELS[repeatMonthlyWeekday] ?? null;
-      if (ordinalLabel && weekdayLabel) monthlyLabel = `${ordinalLabel} ${weekdayLabel}`;
+      if (ordinalLabel && weekdayLabel) {
+        monthlyLabel = `${ordinalLabel} ${weekdayLabel}`;
+        hasMonthlyPattern = true;
+      }
     }
     if (monthlyLabel === "Monthly" && Number.isInteger(repeatDayOfMonth) && (repeatDayOfMonth ?? 0) >= 1 && (repeatDayOfMonth ?? 0) <= 31) {
       monthlyLabel = formatOrdinalNumber(repeatDayOfMonth as number);
+      hasMonthlyPattern = true;
     }
-    return isUntilComplete ? `${monthlyLabel} · Until Complete` : monthlyLabel;
+    const monthlyInterval = Math.max(1, repeatInterval ?? 1) > 1
+      ? formatRepeatFrequencyLabel("monthly", repeatInterval)
+      : null;
+    const compactMonthlyLabel = monthlyInterval
+      ? hasMonthlyPattern ? `${monthlyInterval} · ${monthlyLabel}` : monthlyInterval
+      : monthlyLabel;
+    return isUntilComplete ? `${compactMonthlyLabel} · Until Complete` : compactMonthlyLabel;
   }
   if (isUntilComplete && repeatShape === "weekly") {
     return `${formatRepeatFrequencyLabel(

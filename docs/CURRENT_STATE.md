@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.19`.
+- Current working app version: `7.16.20`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.16.20 Compact monthly Repeat interval parity
+
+Compact monthly Repeat labels now retain intervals alongside day-of-month or
+ordinal weekday patterns, and continue to identify Until Complete schedules.
+Schedules without a specific monthly pattern retain the useful
+`Every N months` cadence label. Daily and Weekly Until Complete labels, recurrence
+persistence, canonical schedule boundaries, Task State runtime, and recurrence
+calculations are unchanged. Browser/manual QA remains Andrew-owned and
+unverified here.
 
 ## 2026-09-30 7.16.19 Compact Until Complete Repeat-label parity
 
