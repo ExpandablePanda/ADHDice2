@@ -202,7 +202,7 @@ const REPEAT_OPTIONS: Array<{ label: string; value: AgentPlanRepeatValue }> = [
   { label: "Daily", value: "daily" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
-  { label: "Custom Cadence", value: "custom" },
+  { label: "Custom", value: "custom" },
 ];
 
 function getIsoDateOffset(days: number) {

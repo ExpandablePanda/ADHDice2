@@ -11,7 +11,7 @@ import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { buildTaskTypeSelectionOptions } from "@/lib/task-type";
 import { formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass } from "@/lib/task-priority";
-import { normalizePresetRepeatSelection, type TaskRepeatEditorUnit, type TaskRepeatEditorValue } from "@/lib/task-repeat";
+import { formatMonthlyOrdinalLabel, normalizePresetRepeatSelection, type TaskRepeatCompletionMode, type TaskRepeatEditorUnit, type TaskRepeatEditorValue } from "@/lib/task-repeat";
 
 import { ModalShell } from "../modal-shell";
 import {
@@ -48,6 +48,7 @@ function updateRepeatDraft(current: BatchTaskEditDraft, selection: BatchTaskEdit
       ...current,
       repeatFrequency: selection,
       repeatCustomUnit: currentValue.repeatFrequency === "weekly" || currentValue.repeatFrequency === "monthly" ? currentValue.repeatFrequency : "daily",
+      repeatCustomCompletionMode: currentValue.repeatFrequency === "daily_until_complete" && currentValue.repeatInterval > 1 ? "until_complete" : "keep_repeating",
     };
   }
   const nextValue = normalizePresetRepeatSelection(selection, currentValue);
@@ -76,6 +77,7 @@ export type BatchTaskEditDraft = {
   repeatDaysOfWeek: number[];
   repeatFrequency: TaskRepeatFrequency | "weekdays" | "unchanged";
   repeatInterval: string;
+  repeatCustomCompletionMode: TaskRepeatCompletionMode;
   repeatCustomUnit: TaskRepeatEditorUnit;
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
@@ -273,9 +275,29 @@ export function TaskBatchEditModal({
               label="Repeat"
               onChange={(value) => setDraft((current) => updateRepeatDraft(current, value as BatchTaskEditDraft["repeatFrequency"]))}
               options={repeatOptions}
-              renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : value === "custom" ? "Custom cadence" : formatOptionLabel(value)}
+              renderValueLabel={(value) => value === "unchanged" ? "Leave unchanged" : value === "custom" ? "Custom" : formatOptionLabel(value)}
               value={draft.repeatFrequency}
             />
+            {draft.repeatFrequency === "custom" ? (
+              <div className="flex flex-wrap gap-2">
+                {([
+                  ["keep_repeating", "Keep repeating"],
+                  ["until_complete", "Until complete"],
+                ] as const).map(([mode, label]) => (
+                  <Pill
+                    key={mode}
+                    onClick={() => setDraft((current) => ({
+                      ...current,
+                      repeatCustomCompletionMode: mode,
+                      repeatCustomUnit: mode === "until_complete" ? "daily" : current.repeatCustomUnit,
+                    }))}
+                    selected={draft.repeatCustomCompletionMode === mode}
+                  >
+                    {label}
+                  </Pill>
+                ))}
+              </div>
+            ) : null}
             {draft.repeatFrequency === "custom" ? (
               <div className="sm:max-w-[12rem]">
                 <LabeledInput label="Repeat interval" onChange={(value) => setDraft((current) => ({ ...current, repeatInterval: value }))} placeholder="1" type="number" value={draft.repeatInterval} />
@@ -287,7 +309,7 @@ export function TaskBatchEditModal({
                   ["daily", "Days"],
                   ["weekly", "Weeks"],
                   ["monthly", "Months"],
-                ] as const).map(([unit, label]) => (
+                ] as const).filter(([unit]) => draft.repeatCustomCompletionMode !== "until_complete" || unit === "daily").map(([unit, label]) => (
                   <Pill key={unit} onClick={() => setDraft((current) => ({ ...current, repeatCustomUnit: unit }))} selected={draft.repeatCustomUnit === unit}>{label}</Pill>
                 ))}
               </div>
@@ -318,7 +340,7 @@ export function TaskBatchEditModal({
                 <div className="flex flex-wrap gap-2">
                   {([
                     ["day_of_month", "Day of month"],
-                    ["ordinal_weekday", "Ordinal weekday"],
+                    ["ordinal_weekday", "Week + weekday"],
                   ] as const).map(([mode, label]) => (
                     <Pill key={mode} onClick={() => setDraft((current) => ({ ...current, repeatMonthlyMode: mode }))} selected={draft.repeatMonthlyMode === mode}>{label}</Pill>
                   ))}
@@ -331,7 +353,7 @@ export function TaskBatchEditModal({
                   <div className="space-y-2">
                     <div className="flex flex-wrap gap-2">
                       {(["first", "second", "third", "fourth", "last"] as const).map((ordinal) => (
-                        <Pill key={ordinal} onClick={() => setDraft((current) => ({ ...current, repeatMonthlyOrdinal: ordinal }))} selected={draft.repeatMonthlyOrdinal === ordinal}>{formatOptionLabel(ordinal)}</Pill>
+                        <Pill key={ordinal} onClick={() => setDraft((current) => ({ ...current, repeatMonthlyOrdinal: ordinal }))} selected={draft.repeatMonthlyOrdinal === ordinal}>{formatMonthlyOrdinalLabel(ordinal)}</Pill>
                       ))}
                     </div>
                     <div className="flex flex-wrap gap-2">
@@ -396,6 +418,7 @@ function createEmptyBatchTaskEditDraft(): BatchTaskEditDraft {
     repeatDaysOfWeek: [],
     repeatFrequency: "unchanged",
     repeatInterval: "1",
+    repeatCustomCompletionMode: "keep_repeating",
     repeatCustomUnit: "daily",
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,

@@ -25,7 +25,7 @@ const REPEAT_OPTIONS: Array<{ label: string; value: PrototypeRepeat }> = [
   { label: "Daily", value: "daily" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
-  { label: "Custom Cadence", value: "custom" },
+  { label: "Custom", value: "custom" },
 ];
 
 const CHIP_BASE = "inline-flex items-center rounded-full px-3 py-1.5 text-[13px] font-semibold leading-none whitespace-nowrap";

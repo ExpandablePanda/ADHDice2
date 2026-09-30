@@ -218,6 +218,7 @@ export function useTaskBatchEditAction({
         };
         const nextRepeatValue = draft.repeatFrequency === "custom"
           ? buildCustomCadenceMutation({
+            completionMode: draft.repeatCustomCompletionMode,
             unit: draft.repeatCustomUnit,
             repeatInterval: Math.max(1, parsePositiveInteger(draft.repeatInterval) ?? 1),
             repeatDaysOfWeek: [...draft.repeatDaysOfWeek].sort((left, right) => left - right),

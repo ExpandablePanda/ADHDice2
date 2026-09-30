@@ -28,7 +28,7 @@ const REPEAT_PRESETS: ReadonlyArray<{ label: string; value: TaskRepeatSelection 
   { label: "Daily Until Complete", value: "daily_until_complete" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
-  { label: "Custom Cadence", value: "custom" },
+  { label: "Custom", value: "custom" },
 ];
 const REPEAT_UNITS: ReadonlyArray<{ label: string; value: TaskRepeatEditorUnit }> = [
   { label: "Days", value: "daily" },
@@ -106,17 +106,17 @@ export function TaskRepeatEditor({
 
   const commitCustomDraft = (nextDraft: TaskRepeatEditorDraft) => {
     const nextValue = buildCustomCadenceMutation(withPendingInterval(nextDraft), { dueOn });
-    emit(nextValue, "custom", { ...createTaskRepeatEditorDraft(nextValue), unit: nextDraft.unit });
+    emit(nextValue, "custom", {
+      ...createTaskRepeatEditorDraft(nextValue),
+      completionMode: nextDraft.completionMode,
+      unit: nextDraft.unit,
+    });
   };
 
   const handlePresetClick = (selection: TaskRepeatSelection) => {
     if (selection === "custom") {
       const nextDraft = createTaskRepeatEditorDraft(value);
-      setLocalEditorMode("custom");
-      setLocalDraft(nextDraft);
-      setLocalIntervalInput(String(Math.max(1, value.repeatInterval)));
-      setLocalDayOfMonthInput(value.repeatDayOfMonth ? String(value.repeatDayOfMonth) : "");
-      setLocalSessionSignature(currentValueSignature);
+      commitCustomDraft(nextDraft);
       return;
     }
     const nextValue = normalizePresetRepeatSelection(selection, draft, { dueOn });
@@ -157,8 +157,8 @@ export function TaskRepeatEditor({
   );
 
   const renderMonthlyControls = (isCustom: boolean) => (
-    <div className="space-y-2">
-      <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+    <div className="grid gap-1.5" data-repeat-editor-monthly-controls="true">
+      <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5" data-repeat-editor-monthly-mode="true">
         {REPEAT_MONTHLY_MODE_OPTIONS.map((option) => (
           <TaskTableChipButton
             key={`repeat-monthly-mode-${option.value}`}
@@ -211,7 +211,7 @@ export function TaskRepeatEditor({
         </div>
       ) : (
         <>
-          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5" data-repeat-editor-monthly-ordinal="true">
             {REPEAT_MONTHLY_ORDINAL_OPTIONS.map((option) => (
               <TaskTableChipButton
                 key={`repeat-monthly-ordinal-${option.value}`}
@@ -229,7 +229,7 @@ export function TaskRepeatEditor({
               </TaskTableChipButton>
             ))}
           </div>
-          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5" data-repeat-editor-monthly-weekday="true">
             {REPEAT_WEEKDAY_FULL_LABELS.map((label, weekday) => (
               <TaskTableChipButton
                 key={`repeat-monthly-weekday-${weekday}`}
@@ -254,7 +254,7 @@ export function TaskRepeatEditor({
   );
 
   return (
-    <div className={className ?? "space-y-2"}>
+    <div className={className ?? "space-y-2"} data-repeat-editor="true">
       <div className="flex flex-wrap gap-2">
         {REPEAT_PRESETS.map((option) => (
           <TaskTableChipButton
@@ -276,9 +276,31 @@ export function TaskRepeatEditor({
       {activeCategory === "weekly" ? renderWeekdayChips() : null}
       {activeCategory === "monthly" ? renderMonthlyControls(false) : null}
       {activeCategory === "custom" ? (
-        <div className="space-y-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
-          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom cadence</p>
-          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-1">
+        <div className="grid gap-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]" data-repeat-editor-custom="true">
+          <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom</p>
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5" data-repeat-editor-completion="true">
+            <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Completion</span>
+            {([
+              ["keep_repeating", "Keep repeating"],
+              ["until_complete", "Until complete"],
+            ] as const).map(([mode, label]) => (
+              <TaskTableChipButton
+                key={mode}
+                onClick={() => {
+                  const nextDraft = {
+                    ...draft,
+                    completionMode: mode,
+                    unit: mode === "until_complete" ? "daily" as const : draft.unit,
+                  };
+                  commitCustomDraft(nextDraft);
+                }}
+                toneClassName={selectedTone(draft.completionMode === mode, activeToneClassName, inactiveToneClassName)}
+              >
+                {label}
+              </TaskTableChipButton>
+            ))}
+          </div>
+          <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5" data-repeat-editor-cadence="true">
             <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Every</span>
             <input
               className={TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
@@ -292,7 +314,7 @@ export function TaskRepeatEditor({
               type="text"
               value={intervalInput}
             />
-            {REPEAT_UNITS.map((unit) => (
+            {REPEAT_UNITS.filter((unit) => draft.completionMode !== "until_complete" || unit.value === "daily").map((unit) => (
               <TaskTableChipButton
                 key={unit.value}
                 onClick={() => {

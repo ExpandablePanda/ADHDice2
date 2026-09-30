@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.14`.
+- Current working app version: `7.16.15`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,15 +14,18 @@ Role: active working
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
-## 2026-09-30 7.16.14 Simplified recurrence editing
+## 2026-09-30 7.16.15 Recurrence editor follow-up
 
 Repeat editing now uses one shared presentation-category and normalization
 authority across Table, List, shared Edit Task, Home creation, and batch edit.
 No Repeat, Daily, Daily Until Complete, Weekdays, Weekly, and Monthly are fixed
-interval-1 presets; Custom Cadence is the only interval editor. Existing
-intervaled daily, weekly, monthly, and legacy custom rows retain their runtime
-behavior and render as Custom Cadence without a read-time migration. Recurrence
-date calculation and Daily Until Complete state/history semantics are unchanged.
+interval-1 presets; Custom is the only interval editor. Monthly compact chips
+show the selected day or short ordinal weekday. Custom saves map to supported
+daily, weekly, monthly, or daily-until-complete canonical repeat values, and
+Every N days until complete is available only through Custom. Existing
+intervaled daily, weekly, monthly, daily-until-complete, and legacy custom rows
+retain their runtime behavior without a read-time migration. Recurrence date
+calculation and Daily Until Complete state/history semantics are unchanged.
 Browser/manual QA remains Andrew-owned and unverified here.
 
 ## 2026-09-29 7.16.11 Hierarchical Task selection correction

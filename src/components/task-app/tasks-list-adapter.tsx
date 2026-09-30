@@ -45,8 +45,7 @@ import { formatDueLabel, formatDueTimeLabel } from "@/lib/task-cockpit";
 import { isTaskOpen, isTaskVisibleInPrimaryViews } from "@/lib/task-buckets";
 import { TaskStatusCircleRail, formatTaskStatusLabel } from "./task-status-ui";
 import {
-  formatRepeatFrequencyLabel,
-  formatRepeatSummary,
+  formatRepeatCompactLabel,
 } from "@/lib/task-repeat";
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
@@ -1483,15 +1482,24 @@ function StepsCardPreview({
               selectedBucket,
             });
             const repeatSummary = childTask
-              ? formatRepeatSummary(childTask)
+              ? formatRepeatCompactLabel(
+                childTask.repeat_frequency,
+                childTask.repeat_interval,
+                childTask.repeat_days_of_week,
+                childTask.repeat_monthly_mode,
+                childTask.repeat_monthly_ordinal,
+                childTask.repeat_monthly_weekday,
+                childTask.repeat_day_of_month,
+              )
               : item.repeat !== "none"
-                ? formatRepeatFrequencyLabel(
+                ? formatRepeatCompactLabel(
                   item.repeat,
                   item.repeatInterval,
                   item.repeatDaysOfWeek,
                   item.repeatMonthlyMode,
                   item.repeatMonthlyOrdinal,
                   item.repeatMonthlyWeekday,
+                  item.repeatDayOfMonth,
                 )
                 : "";
             const visibleTags = item.tags.slice(0, 3);
@@ -3374,7 +3382,6 @@ function TasksSimpleList({
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;
         const isMetadataVisible = visibleMetadataTaskIds.has(task.id);
-        const repeatSummary = formatRepeatSummary(task);
         const taskRow = rowModelCache.getOrCreate(task, {
           displayStatus,
           focusedTaskIdSet: rowContext.focusedTaskIdSet,
@@ -3708,7 +3715,15 @@ function TasksSimpleList({
                     onClick={() => openQuickPanel(task.id, "repeat")}
                     toneClassName={repeatTone(task.repeat_frequency)}
                   >
-                    {repeatSummary ?? "No Repeat"}
+                    {formatRepeatCompactLabel(
+                      task.repeat_frequency,
+                      task.repeat_interval,
+                      task.repeat_days_of_week,
+                      task.repeat_monthly_mode,
+                      task.repeat_monthly_ordinal,
+                      task.repeat_monthly_weekday,
+                      task.repeat_day_of_month,
+                    )}
                   </MetadataChipButton>
                 </div>
                 <div className={`adhdice-scrollbar ${isMetadataVisible ? "block" : "hidden"} -mx-1 mt-2 -my-1 min-w-0 w-full overflow-x-auto px-1 py-1`}>

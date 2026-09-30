@@ -168,7 +168,7 @@ test("Summary formatting keeps configured values visible and uses displayed actu
   assert.equal(summary.Priority.value, "3");
   assert.equal(summary.Energy.value, "Medium");
   assert.match(summary.Due.value, /12-24-2026 · 6:00pm/);
-  assert.equal(summary.Repeat.value, "First Tuesday monthly");
+  assert.equal(summary.Repeat.value, "1st Tuesday monthly");
   assert.equal(summary.Estimated.value, "45m");
   assert.equal(summary.Actual.value, "22m");
   assert.equal(summary.Lists.value, "Work · Today");

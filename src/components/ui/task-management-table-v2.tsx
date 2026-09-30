@@ -76,7 +76,7 @@ import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/tas
 import { TaskHierarchyChevronButton } from "@/components/task-app/task-hierarchy-chevron-button";
 import { shouldExpandAllTaskHierarchies } from "@/lib/task-hierarchy-expansion";
 import {
-  formatRepeatFrequencyLabel,
+  formatRepeatCompactLabel,
   formatRepeatSummary,
   getTaskRepeatCategory,
   type TaskRepeatEditorValue,
@@ -1590,7 +1590,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     linkUrl: "",
     lists: ["Later"],
     linkedNotes: [],
-    notes: "Custom cadence draft for a longer-term maintenance loop.",
+    notes: "Custom repeat draft for a longer-term maintenance loop.",
     pinOrder: null,
     pinnedAt: null,
     priorities: ["4"],
@@ -1736,7 +1736,7 @@ const REPEAT_CATEGORY_OPTIONS: Array<{ label: string; value: TaskRepeatCategory 
   { label: "Weekdays", value: "weekdays" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
-  { label: "Custom Cadence", value: "custom" },
+  { label: "Custom", value: "custom" },
 ];
 const STATUS_OPTIONS = TASK_DISPLAY_STATUS_OPTIONS;
 
@@ -2053,13 +2053,14 @@ function formatChildTaskPreviewEstimate(minutes: number | null) {
 }
 
 function formatChildTaskPreviewRepeat(item: ChildTaskPreview) {
-  return formatRepeatFrequencyLabel(
+  return formatRepeatCompactLabel(
     item.repeat,
     item.repeatInterval,
     item.repeatDaysOfWeek,
     item.repeatMonthlyMode,
     item.repeatMonthlyOrdinal,
     item.repeatMonthlyWeekday,
+    item.repeatDayOfMonth,
   );
 }
 
@@ -7843,13 +7844,14 @@ export function TaskManagementTableV2({
         wrapMeasuredContent(
           <div>
             <span className={`${CHIP_BASE} ${repeatTone(task.repeat)}`}>
-              {formatRepeatFrequencyLabel(
+              {formatRepeatCompactLabel(
                 task.repeat,
                 task.repeatInterval,
                 task.repeatDaysOfWeek,
                 task.repeatMonthlyMode,
                 task.repeatMonthlyOrdinal,
                 task.repeatMonthlyWeekday,
+                task.repeatDayOfMonth,
               )}
             </span>
           </div>
