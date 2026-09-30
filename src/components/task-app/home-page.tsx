@@ -13,7 +13,7 @@ import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, Re
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { SortableList } from "@/components/ui/sortable-list";
-import { useHomeTodoState } from "@/hooks/useHomeTodoState";
+import type { HomeTodoStateController } from "@/hooks/useHomeTodoState";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { TaskAttentionChip } from "./task-attention-chip";
 import { PageShellHeader } from "./page-shell-header";
@@ -399,6 +399,7 @@ export function HomePage({
   behaviorPolicyLoading = false,
   behaviorPolicyLogicalDate,
   taskTypeOptions,
+  homeTodo,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   manualMembershipsByTaskId: Readonly<Record<string, readonly string[]>>;
@@ -432,9 +433,10 @@ export function HomePage({
   behaviorPolicyLoading?: boolean;
   behaviorPolicyLogicalDate: string;
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
+  homeTodo: HomeTodoStateController;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
-  const { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = homeTodo;
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("todo");

@@ -27,6 +27,7 @@ import {
   reconcileHomeRoutineSectionAssignments,
   reconcileHomeRoutineTaskIds,
   reconcileHomeTodoTaskIds,
+  setHomeTodoTaskMembership,
   shouldPersistHomeRoutineReconciliation,
   sortHomeTodoSearchResults,
   type HomeTodoTaskMetadata,
@@ -74,6 +75,45 @@ test("Home state V1/V4 payloads normalize to V6 with independent Routine default
     routineSections: [],
     routineSectionIdByTaskId: {},
   });
+});
+
+test("Home To-do membership appends, removes, deduplicates, and preserves unrelated V6 state", () => {
+  const state = normalizeHomeTodoState({
+    clientUpdatedAt: "2026-09-29T12:00:00.000Z",
+    schemaVersion: 6,
+    taskIds: ["existing", "other"],
+    taskDayOffsets: { existing: 2, other: 4 },
+    tasksPerDay: 15,
+    routineTaskIds: ["routine"],
+    routineSections: [{ id: "morning", name: "Morning" }],
+    routineSectionIdByTaskId: { routine: "morning" },
+  });
+
+  const included = normalizeHomeTodoState({
+    ...state,
+    taskIds: setHomeTodoTaskMembership(state.taskIds, "new-task", true),
+  });
+  assert.deepEqual(included.taskIds, ["existing", "other", "new-task"]);
+  assert.deepEqual(included.taskDayOffsets, state.taskDayOffsets);
+  assert.equal(included.tasksPerDay, state.tasksPerDay);
+  assert.deepEqual(included.routineTaskIds, state.routineTaskIds);
+  assert.deepEqual(included.routineSections, state.routineSections);
+  assert.deepEqual(included.routineSectionIdByTaskId, state.routineSectionIdByTaskId);
+  assert.deepEqual(setHomeTodoTaskMembership(included.taskIds, "existing", true), included.taskIds);
+  assert.deepEqual(setHomeTodoTaskMembership(included.taskIds, "new-task", true), ["existing", "other", "new-task"]);
+
+  const excluded = normalizeHomeTodoState({
+    ...included,
+    taskIds: setHomeTodoTaskMembership(included.taskIds, "existing", false),
+    taskDayOffsets: { ...included.taskDayOffsets, "new-task": 1 },
+  });
+  assert.deepEqual(excluded.taskIds, ["other", "new-task"]);
+  assert.deepEqual(excluded.taskDayOffsets, { other: 4, "new-task": 1 });
+  assert.deepEqual(excluded.routineTaskIds, state.routineTaskIds);
+  assert.deepEqual(excluded.routineSections, state.routineSections);
+  assert.deepEqual(excluded.routineSectionIdByTaskId, state.routineSectionIdByTaskId);
+  assert.deepEqual(setHomeTodoTaskMembership(excluded.taskIds, "missing", false), excluded.taskIds);
+  assert.deepEqual(setHomeTodoTaskMembership(["duplicate", "duplicate"], "duplicate", true), ["duplicate"]);
 });
 
 test("Home todo explicit day placement moves a task into an otherwise empty day", () => {
@@ -1080,6 +1120,21 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   assert.match(homeSource, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
   assert.match(homeSource, /taskHistoryStreakSummaries=\{effectiveTaskHistoryStreakSummaries\}/);
   assert.doesNotMatch(homeSource, /tasks=\{tasksForActiveStatusRead\}/);
+});
+
+test("TaskApp owns one Home To-do controller for Home and shared Task editors", () => {
+  const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  assert.equal((taskAppSource.match(/useHomeTodoState\(/g) ?? []).length, 1);
+  assert.doesNotMatch(homeSource, /useHomeTodoState\(/);
+  assert.match(taskAppSource, /const homeTodo = useHomeTodoState\(currentUserId\)/);
+  assert.match(taskAppSource, /<TaskHomePage[\s\S]*homeTodo=\{homeTodo\}/);
+  assert.match(taskAppSource, /homeTodoTaskIds=\{homeTodo\.state\.taskIds\}/);
+  assert.match(taskAppSource, /onSetHomeTodoMembership=\{homeTodo\.setHomeTodoMembership\}/);
+  assert.match(taskAppSource, /homeTodoTaskIds: homeTodo\.state\.taskIds/);
+  assert.match(taskAppSource, /onSetHomeTodoMembership: homeTodo\.setHomeTodoMembership/);
+  assert.match(hookSource, /const setHomeTodoMembership = useCallback\([\s\S]*?updateTaskIds\(\(taskIds\) => setHomeTodoTaskMembership\(taskIds, taskId, included\)\)/);
 });
 
 test("Home Routine child drag reuses TaskApp sibling reorder without changing Home state", () => {

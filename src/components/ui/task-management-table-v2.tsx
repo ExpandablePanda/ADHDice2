@@ -206,7 +206,7 @@ type StructuredFilters = {
 };
 type OverlayMode = "actual" | "delay" | "due" | "energy" | "estimated" | "full" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "tags";
 type OverlaySectionId = "actual" | "due" | "energyStatus" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "tags";
-export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags" | "task_type";
+export type MetadataPanelId = "actual" | "delay" | "due" | "energy" | "estimated" | "home_todo" | "link" | "lists" | "notes" | "priority" | "repeat" | "status" | "summary" | "tags" | "task_type";
 type ColumnAlignment = "center" | "left" | "right";
 export type RowContextMenuState = { left: number; taskId: string; top: number };
 type ColumnMenuPosition = { left: number; maxHeight: number; placement: "down" | "up"; top: number };
@@ -1444,6 +1444,8 @@ type TaskManagementTableV2Props = {
   onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onTaskTitleChange?: (taskId: string, title: string) => void;
   onTaskTrackingExclusionChange?: (taskId: string, excluded: boolean) => void | Promise<void>;
+  homeTodoTaskIds?: readonly string[];
+  onSetHomeTodoMembership?: (taskId: string, included: boolean) => void;
   onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onToggleTaskList?: (taskId: string, listId: string) => void;
   primaryBadgeLabel?: string;
@@ -2345,6 +2347,7 @@ export function buildTaskMetadataSummary(
     customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   },
   actualSeconds: number,
+  homeTodoIncluded = false,
 ): TaskMetadataSummaryRow[] {
   const priority = getTaskPrioritySelection(task.priorities);
   const notesPreview = task.notes.trim().replace(/\s+/g, " ");
@@ -2374,6 +2377,7 @@ export function buildTaskMetadataSummary(
     { label: "Estimated", panelId: "estimated", value: task.estimatedMinutes && task.estimatedMinutes > 0 ? formatDuration(task.estimatedMinutes) : "None" },
     { label: "Actual", panelId: "actual", value: formatActual(actualSeconds) },
     { label: "Lists", panelId: "lists", value: task.lists.length > 0 ? task.lists.join(" · ") : "None" },
+    { label: "Home To-do", panelId: "home_todo", value: homeTodoIncluded ? "Included" : "Not included" },
     { label: "Tags", panelId: "tags", value: task.tags.length > 0 ? task.tags.map((tag) => `#${tag.replace(/^#+/, "")}`).join(" · ") : "None" },
     { label: "Link", panelId: "link", value: linkValue },
     { label: "Notes", panelId: "notes", value: notesValue },
@@ -2810,6 +2814,8 @@ export function TaskManagementTableV2({
   onResetTaskBehaviorProfile,
   onTaskTitleChange,
   onTaskTrackingExclusionChange,
+  homeTodoTaskIds = [],
+  onSetHomeTodoMembership,
   onToggleTaskSelection,
   onToggleTaskList,
   shellClassName = "",
@@ -9906,6 +9912,7 @@ export function TaskManagementTableV2({
                   due: "Due",
                   energy: "Energy",
                   estimated: "Estimated Time",
+                  home_todo: "Home To-do",
                   link: "Link",
                   lists: "Lists",
                   notes: "Notes",
@@ -9916,7 +9923,8 @@ export function TaskManagementTableV2({
                   tags: "Tags",
                   task_type: "Task Type",
                 };
-                const metadataSummaryRows = buildTaskMetadataSummary({ ...metadataTask, customBehaviorRulesets }, getDisplayedActualSeconds(metadataTask));
+                const homeTodoIncluded = homeTodoTaskIds.includes(metadataTask.id);
+                const metadataSummaryRows = buildTaskMetadataSummary({ ...metadataTask, customBehaviorRulesets }, getDisplayedActualSeconds(metadataTask), homeTodoIncluded);
                 const activeMetadataPanelLabel = metadataPanelLabels[metadataPanelId] ?? "Meta Data";
                 function renderInlineTextChoices<T extends string>(
                   options: Array<{ label: string; value: T }>,
@@ -10012,6 +10020,36 @@ export function TaskManagementTableV2({
                             </button>
                           ) : null}
                         </div>
+                      </div>
+                    </div>
+                  );
+                } else if (metadataPanelId === "home_todo") {
+                  metadataPanelContent = (
+                    <div className="space-y-3">
+                      <p className="text-sm text-[#51496f] dark:text-white/75">Choose whether this exact Task appears in the Home To-do list.</p>
+                      <div className="flex flex-wrap gap-2">
+                        <TaskTableChipButton
+                          aria-pressed={homeTodoIncluded}
+                          disabled={!onSetHomeTodoMembership}
+                          onClick={() => {
+                            onSetHomeTodoMembership?.(metadataTask.id, true);
+                            returnFullMetadataToSummary();
+                          }}
+                          toneClassName={homeTodoIncluded ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}
+                        >
+                          Included
+                        </TaskTableChipButton>
+                        <TaskTableChipButton
+                          aria-pressed={!homeTodoIncluded}
+                          disabled={!onSetHomeTodoMembership}
+                          onClick={() => {
+                            onSetHomeTodoMembership?.(metadataTask.id, false);
+                            returnFullMetadataToSummary();
+                          }}
+                          toneClassName={!homeTodoIncluded ? ACTIVE_LIST_CHIP_CLASS : INACTIVE_CHIP_CLASS}
+                        >
+                          Not included
+                        </TaskTableChipButton>
                       </div>
                     </div>
                   );

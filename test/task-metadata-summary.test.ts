@@ -39,8 +39,8 @@ const baseTask = {
   title: "",
 };
 
-function summaryByLabel(task = baseTask, actualSeconds = task.actualSeconds) {
-  return Object.fromEntries(buildTaskMetadataSummary(task, actualSeconds).map((row) => [row.label, row]));
+function summaryByLabel(task = baseTask, actualSeconds = task.actualSeconds, homeTodoIncluded = false) {
+  return Object.fromEntries(buildTaskMetadataSummary(task, actualSeconds, homeTodoIncluded).map((row) => [row.label, row]));
 }
 
 test("MetadataPanelId remains available while the full inspector no longer renders a metadata navigation strip", () => {
@@ -166,6 +166,22 @@ test("Summary formatting keeps configured values visible and uses displayed actu
   assert.equal(summary.Tags.value, "#calls · #urgent");
   assert.equal(summary.Link.value, "Project brief");
   assert.equal(summary.Notes.value, "Needs final review · 2 linked notes");
+});
+
+test("Summary reports Home To-do membership and routes the exact Task through the shared editor", () => {
+  assert.equal(summaryByLabel(baseTask, 0, true)["Home To-do"].value, "Included");
+  assert.equal(summaryByLabel(baseTask, 0, false)["Home To-do"].value, "Not included");
+  assert.match(tableSource, /homeTodoTaskIds\.includes\(metadataTask\.id\)/);
+  assert.match(tableSource, /onSetHomeTodoMembership\?\.\(metadataTask\.id, true\)/);
+  assert.match(tableSource, /onSetHomeTodoMembership\?\.\(metadataTask\.id, false\)/);
+  assert.match(tableSource, /metadataPanelId === "home_todo"/);
+  assert.match(adapterSource, /homeTodoTaskIds=\{tableProps\.homeTodoTaskIds\}/);
+  assert.match(adapterSource, /onSetHomeTodoMembership=\{tableProps\.onSetHomeTodoMembership\}/);
+});
+
+test("Home To-do metadata is not represented as ordinary Task List membership", () => {
+  assert.doesNotMatch(tableSource, /toggleTaskManualListMembership\([^\n]*todo/);
+  assert.doesNotMatch(adapterSource, /onToggleTaskList=\{[^\n]*todo/);
 });
 
 test("Task metadata displays a named ruleset and neutral legacy fallback through the shared resolver", () => {

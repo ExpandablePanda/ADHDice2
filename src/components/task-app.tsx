@@ -263,6 +263,7 @@ import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import type { HomeTodoTaskMetadata } from "@/lib/home-todo-state";
+import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
@@ -1351,6 +1352,7 @@ export function TaskApp() {
     return deleted;
   }
   const currentUserId = session?.user?.id ?? null;
+  const homeTodo = useHomeTodoState(currentUserId);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
@@ -7807,6 +7809,7 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          homeTodoTaskIds={homeTodo.state.taskIds}
           attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
@@ -7898,6 +7901,7 @@ export function TaskApp() {
           onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
           onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
           onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
+          onSetHomeTodoMembership={homeTodo.setHomeTodoMembership}
           onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
           onUnlinkTask={unlinkSameTableTask}
           overlayOnly
@@ -8113,6 +8117,7 @@ export function TaskApp() {
             behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
             calendarNowMs={logicalDayNow}
             calendarTimeZone={userTimeZone}
+            homeTodo={homeTodo}
             tasks={tasks}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
@@ -8268,6 +8273,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  homeTodoTaskIds: homeTodo.state.taskIds,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
@@ -8361,6 +8367,7 @@ export function TaskApp() {
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
+                  onSetHomeTodoMembership: homeTodo.setHomeTodoMembership,
                   customBehaviorRulesets,
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,
@@ -8474,6 +8481,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  homeTodoTaskIds: homeTodo.state.taskIds,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
@@ -8558,6 +8566,7 @@ export function TaskApp() {
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
+                  onSetHomeTodoMembership: homeTodo.setHomeTodoMembership,
                   customBehaviorRulesets,
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,

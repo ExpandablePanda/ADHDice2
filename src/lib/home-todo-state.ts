@@ -488,6 +488,13 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
   };
 }
 
+export function setHomeTodoTaskMembership(taskIds: readonly string[], taskId: string, included: boolean): string[] {
+  const nextTaskIds = included
+    ? taskIds.includes(taskId) ? [...taskIds] : [...taskIds, taskId]
+    : taskIds.filter((candidate) => candidate !== taskId);
+  return Array.from(new Set(nextTaskIds));
+}
+
 export function isHomeTodoTaskEligible(
   task: Task,
   tasks: readonly Task[],

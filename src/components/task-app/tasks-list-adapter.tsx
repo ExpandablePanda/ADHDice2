@@ -370,6 +370,8 @@ type TasksTableSourceProps = {
   onSetLinkedNoteIds?: (taskId: string, linkedNoteIds: string[]) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetTaskType?: (taskId: string, taskType: TaskType, customRulesetId?: string | null) => void;
+  homeTodoTaskIds?: readonly string[];
+  onSetHomeTodoMembership?: (taskId: string, included: boolean) => void;
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   customBehaviorRulesetProfiles?: Readonly<Record<string, TaskBehaviorPolicy>>;
   taskTypeBehaviorProfiles?: TaskBehaviorProfiles;
@@ -761,6 +763,8 @@ export function TasksTableAdapter({
           onTaskLinkedNoteIdsChange={tableProps.onSetLinkedNoteIds}
           onTaskNotesChange={tableProps.onSetNotes}
           onTaskTypeChange={tableProps.onSetTaskType}
+          homeTodoTaskIds={tableProps.homeTodoTaskIds}
+          onSetHomeTodoMembership={tableProps.onSetHomeTodoMembership}
           customBehaviorRulesets={tableProps.customBehaviorRulesets}
           customBehaviorRulesetProfiles={tableProps.customBehaviorRulesetProfiles}
           taskTypeBehaviorProfiles={tableProps.taskTypeBehaviorProfiles}
@@ -3361,6 +3365,8 @@ function TasksSimpleList({
               onTaskSubtaskStatusChange={tableProps.onSetTaskSubtaskStatus}
               onTaskTagsChange={tableProps.onSetTags}
               onTaskTitleChange={tableProps.onSetTitle}
+              homeTodoTaskIds={tableProps.homeTodoTaskIds}
+              onSetHomeTodoMembership={tableProps.onSetHomeTodoMembership}
               onToggleTaskList={tableProps.onToggleTaskList}
               onToggleTaskSelection={tableProps.onToggleTaskSelection}
               overlayOnly

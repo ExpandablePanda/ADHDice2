@@ -12,6 +12,7 @@ import {
   normalizeHomeTodoState,
   moveHomeRoutineTaskIdToSection,
   reconcileHomeRoutineSectionAssignments,
+  setHomeTodoTaskMembership,
   type HomeTodoState,
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
@@ -201,6 +202,10 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
+  const setHomeTodoMembership = useCallback((taskId: string, included: boolean) => {
+    updateTaskIds((taskIds) => setHomeTodoTaskMembership(taskIds, taskId, included));
+  }, [updateTaskIds]);
+
   const updateTasksPerDay = useCallback((tasksPerDay: unknown) => {
     if (!userId) return;
     const current = stateRef.current;
@@ -360,5 +365,7 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
-  return { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay };
+  return { createRoutineSection, setHomeTodoMembership, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay };
 }
+
+export type HomeTodoStateController = ReturnType<typeof useHomeTodoState>;

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.68`.
+- Current working app version: `7.15.69`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.15.69 Side shared Home To-do Task metadata
+
+TaskApp now owns the single `useHomeTodoState` controller consumed by Home,
+the shared Edit Task metadata UI, and Table/List editor paths. Home To-do
+membership remains the JSON-backed V6 `taskIds` state, with an idempotent
+include/exclude operation that preserves Routine and scheduling metadata.
+The shared metadata summary reports Included or Not included and edits the
+exact Task ID without creating an ordinary Task List. Focused Home/Routine,
+metadata, and Table/List wiring tests plus targeted lint and `git diff --check`
+are the source verification boundary; browser/manual QA remains Andrew-owned
+and unverified.
 
 ## 2026-09-29 7.15.63 Side Finished Today outcome filters
 
