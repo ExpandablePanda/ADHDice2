@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.12`.
+- Current working app version: `7.16.13`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -24,6 +24,11 @@ Role: active working
 
 - In active multi-select mode, clicking a rendered Step or Substep row/title in Table or List now toggles that exact canonical child ID, including existing Shift/range behavior, instead of opening or entering rename.
 - Normal child-title rename behavior, active title inputs, and true metadata, hierarchy, drag, and action controls remain unchanged. Browser QA remains Andrew-owned and unverified here.
+
+## 2026-09-29 7.16.13 Canonical Table child row interaction ownership correction
+
+- Canonical Table Step/Substep mini rows now keep long-press, ordinary click, keyboard activation, and row context handling on the same outer rendered row element, so pointer capture and normal selection share one interaction owner.
+- List and legacy/source child-row paths remain unchanged. Existing child controls, title rename, selection helpers, and mutation authorities remain preserved. Browser QA remains Andrew-owned and unverified here.
 
 ## 2026-09-29 7.16.10 Task Content Folder bounded current-day History authority
 

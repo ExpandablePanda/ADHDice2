@@ -162,6 +162,17 @@ test("Table child long press selects the exact rendered child ID", () => {
   assert.match(tableSource, /data-same-table-step-row=\{item\.id\}[\s\S]*\.\.\.childTaskRowLongPressHandlers/);
 });
 
+test("canonical Table child rows own long press and click on the same element", () => {
+  assert.match(
+    tableSource,
+    /data-same-table-step-row=\{item\.id\}[\s\S]*\.\.\.childTaskRowLongPressHandlers[\s\S]*onClick=\{canOpenStepActions[\s\S]*toggleChildTaskSelection\(item\.id, event\.shiftKey\)[\s\S]*data-task-table-child-grid=\{item\.id\}/,
+  );
+  assert.doesNotMatch(
+    tableSource,
+    /data-task-table-child-grid=\{item\.id\}[\s\S]*onClick=\{canOpenStepActions[\s\S]*toggleChildTaskSelection\(item\.id, event\.shiftKey\)/,
+  );
+});
+
 test("List child long press selects the exact rendered child ID", () => {
   assert.match(listSource, /const childTaskRowLongPressHandlers = useTaskRowLongPress\(/);
   assert.match(listSource, /const taskId = target\.dataset\.sameTableStepRow/);

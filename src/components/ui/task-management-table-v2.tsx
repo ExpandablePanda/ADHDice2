@@ -9114,54 +9114,54 @@ export function TaskManagementTableV2({
             <Fragment key={item.id}>
               {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
               <div
-                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
+                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center ${canOpenStepActions ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""}`}
                 data-same-table-step-row={item.id}
                 {...childTaskRowLongPressHandlers}
-              >
-                <div
-                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS : ""} ${canOpenStepActions ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
-                  data-task-table-child-grid={item.id}
-                  onDragOver={(event) => updateChildTaskDropTarget(event, item)}
-                  onDrop={(event) => dropChildTaskOnItem(event, item)}
-                  onClick={canOpenStepActions ? (event) => {
-                    if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
-                      return;
-                    }
+                onClick={canOpenStepActions ? (event) => {
+                  if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    return;
+                  }
+                  event.stopPropagation();
+                  if (toggleChildTaskSelection(item.id, event.shiftKey)) {
+                    return;
+                  }
+                  openTaskInCurrentEditor(item.id);
+                } : undefined}
+                onDoubleClick={onToggleTaskSelection ? (event) => {
+                  if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    return;
+                  }
+                  event.preventDefault();
+                  event.stopPropagation();
+                  startTaskSelection(item.id, { additive: true });
+                } : undefined}
+                onContextMenu={(event) => {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  openRowContextMenu(item.id, event.clientX, event.clientY);
+                }}
+                onKeyDown={canOpenStepActions ? (event) => {
+                  if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    return;
+                  }
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
                     event.stopPropagation();
                     if (toggleChildTaskSelection(item.id, event.shiftKey)) {
                       return;
                     }
                     openTaskInCurrentEditor(item.id);
-                  } : undefined}
-                  onDoubleClick={onToggleTaskSelection ? (event) => {
-                    if (isKeyboardEventFromEditableTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
-                      return;
-                    }
-                    event.preventDefault();
-                    event.stopPropagation();
-                    startTaskSelection(item.id, { additive: true });
-                  } : undefined}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    event.stopPropagation();
-                    openRowContextMenu(item.id, event.clientX, event.clientY);
-                  }}
-                  onKeyDown={canOpenStepActions ? (event) => {
-                    if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
-                      return;
-                    }
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      if (toggleChildTaskSelection(item.id, event.shiftKey)) {
-                        return;
-                      }
-                      openTaskInCurrentEditor(item.id);
-                    }
-                  } : undefined}
-                  role={canOpenStepActions ? "button" : undefined}
+                  }
+                } : undefined}
+                role={canOpenStepActions ? "button" : undefined}
+                tabIndex={canOpenStepActions ? 0 : undefined}
+              >
+                <div
+                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                  data-task-table-child-grid={item.id}
+                  onDragOver={(event) => updateChildTaskDropTarget(event, item)}
+                  onDrop={(event) => dropChildTaskOnItem(event, item)}
                   style={{ gridTemplateColumns }}
-                  tabIndex={canOpenStepActions ? 0 : undefined}
                 >
                   {visibleHeaderColumns.map((column) => (
                     <div
