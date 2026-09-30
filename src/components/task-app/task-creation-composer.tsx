@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { TaskTypeSelect } from "./task-type-identity";
-import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
+import type { TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
 import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
 import {
   getSelectedTaskPriorityToneClass,
@@ -22,7 +22,7 @@ import {
   isWeekdaysRepeatSelection,
 } from "@/lib/task-repeat";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
-import type { TaskCreationDraft, TaskCreationMetadata } from "@/lib/task-creation";
+import type { TaskChildCreationResult, TaskCreationDraft, TaskCreationMetadata, TaskCreationSubmission } from "@/lib/task-creation";
 import {
   CompactRepeatCadenceControls,
   dedupeTaskTagLabels,
@@ -57,14 +57,18 @@ export function TaskCreationComposer({
   onCancel,
   onCreate,
   onCreated,
+  submitLabel = "Add",
   taskTypeOptions,
+  titleLabel = "Task title",
 }: {
   allTags: string[];
   initialTaskTypeSelection?: string;
   onCancel: () => void;
-  onCreate: (draft: TaskCreationDraft) => Promise<Task | null>;
-  onCreated?: (task: Task) => void;
+  onCreate: (draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
+  onCreated?: () => void;
+  submitLabel?: string;
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
+  titleLabel?: string;
 }) {
   const [title, setTitle] = useState("");
   const [taskTypeSelection, setTaskTypeSelection] = useState(initialTaskTypeSelection);
@@ -81,6 +85,7 @@ export function TaskCreationComposer({
   const [tagDraft, setTagDraft] = useState("");
   const [priority, setPriority] = useState<TaskPriorityLevelOption>("0");
   const [isCreating, setIsCreating] = useState(false);
+  const [creationError, setCreationError] = useState<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
@@ -169,6 +174,7 @@ export function TaskCreationComposer({
   function handleCancel() {
     if (isCreating) return;
     resetDraft();
+    setCreationError(null);
     onCancel();
   }
 
@@ -177,15 +183,23 @@ export function TaskCreationComposer({
     if (isCreating || !title.trim()) return;
 
     setIsCreating(true);
+    setCreationError(null);
     try {
       const createdTask = await onCreate({
         metadata: buildMetadata(),
         taskTypeSelection,
         title: title.trim(),
       });
+      if (createdTask && "error" in createdTask) {
+        if (createdTask.error || !createdTask.taskId) {
+          setCreationError(createdTask.error ?? `Unable to add ${titleLabel.toLowerCase()}.`);
+          return;
+        }
+      }
       if (createdTask) {
         resetDraft();
-        onCreated?.(createdTask);
+        setCreationError(null);
+        onCreated?.();
       }
     } finally {
       setIsCreating(false);
@@ -198,13 +212,13 @@ export function TaskCreationComposer({
       onSubmit={handleSubmit}
     >
       <label className="min-w-[min(100%,16rem)] flex-1">
-        <span className="sr-only">Task title</span>
+        <span className="sr-only">{titleLabel}</span>
         <input
           autoComplete="off"
           className="health-input"
           disabled={isCreating}
           onChange={(event) => setTitle(event.target.value)}
-          placeholder="Task title"
+          placeholder={titleLabel}
           ref={titleInputRef}
           required
           value={title}
@@ -361,9 +375,40 @@ export function TaskCreationComposer({
         </div>
       </fieldset>
       <div className="flex shrink-0 gap-1.5">
-        <AdhdChip disabled={isCreating} selected type="submit">{isCreating ? "Adding…" : "Add"}</AdhdChip>
+        <AdhdChip disabled={isCreating} selected type="submit">{isCreating ? "Adding…" : submitLabel}</AdhdChip>
         <AdhdChip disabled={isCreating} onClick={handleCancel}>Cancel</AdhdChip>
       </div>
+      {creationError ? <p className="w-full text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p> : null}
     </form>
+  );
+}
+
+export function TaskChildCreationComposer({
+  allTags,
+  childLabel,
+  onCancel,
+  onCreateChildTask,
+  onCreated,
+  parentTaskId,
+  taskTypeOptions,
+}: {
+  allTags: string[];
+  childLabel: "Step" | "Substep";
+  onCancel: () => void;
+  onCreateChildTask: (parentTaskId: string, title: string, taskTypeSelectionValue: string, metadata: TaskCreationMetadata) => Promise<TaskChildCreationResult>;
+  onCreated?: () => void;
+  parentTaskId: string;
+  taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
+}) {
+  return (
+    <TaskCreationComposer
+      allTags={allTags}
+      onCancel={onCancel}
+      onCreate={(draft) => onCreateChildTask(parentTaskId, draft.title, draft.taskTypeSelection, draft.metadata)}
+      onCreated={onCreated}
+      submitLabel={`Add ${childLabel}`}
+      taskTypeOptions={taskTypeOptions}
+      titleLabel={`${childLabel} title`}
+    />
   );
 }

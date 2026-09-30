@@ -89,7 +89,6 @@ import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
-import { TaskCreationComposer } from "./task-app/task-creation-composer";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
@@ -105,7 +104,7 @@ import {
   parsePositiveInteger,
   type TaskDraft,
 } from "./task-app/task-editor-model";
-import type { TaskCreationDraft } from "@/lib/task-creation";
+import type { TaskCreationMetadata } from "@/lib/task-creation";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
@@ -1353,8 +1352,6 @@ export function TaskApp() {
     return deleted;
   }
   const currentUserId = session?.user?.id ?? null;
-  const [isTaskCreationComposerOpen, setIsTaskCreationComposerOpen] = useState(false);
-  const [taskCreationInitialTypeSelection, setTaskCreationInitialTypeSelection] = useState("task");
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
@@ -5241,9 +5238,11 @@ export function TaskApp() {
   ), [createTaskAndOpenSharedEditor]);
 
   const openInlineNewListTaskComposer = useCallback(() => {
-    setTaskCreationInitialTypeSelection("task");
-    setIsTaskCreationComposerOpen(true);
-  }, []);
+    void createTaskAndOpenSharedEditor(
+      buildNewTaskDraft("New Task"),
+      { routeToCurrentBucket: true },
+    );
+  }, [createTaskAndOpenSharedEditor]);
 
   const openTaskComposerForType = useCallback((selectionValue: string) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
@@ -5252,21 +5251,8 @@ export function TaskApp() {
       return;
     }
 
-    setTaskCreationInitialTypeSelection(selectionValue);
-    setIsTaskCreationComposerOpen(true);
-  }, [customBehaviorRulesets, setMessage]);
-
-  const createTaskFromComposer = useCallback(async (draft: TaskCreationDraft) => {
-    const selection = resolveTaskTypeSelection(draft.taskTypeSelection, customBehaviorRulesets);
-    if (!selection) {
-      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
-      return null;
-    }
-
-    return createTaskAndOpenSharedEditor({
-      ...buildNewTaskDraft(draft.title),
-      ...draft.metadata,
-      ...buildTaskPriorityUpdate(draft.metadata.priority_level),
+    void createTaskAndOpenSharedEditor({
+      ...buildNewTaskDraft("New Task"),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     }, { routeToCurrentBucket: true });
@@ -5702,10 +5688,11 @@ export function TaskApp() {
   }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
-  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task") => {
+  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task", metadata?: TaskCreationMetadata) => {
     const taskTypeSelection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     const result = buildChildTaskCreationDraft({
       blockedParentTaskIds: childTaskCreationBlockedTaskIds,
+      metadata,
       parentTaskId,
       taskTypeSelection,
       title,
@@ -8091,19 +8078,6 @@ export function TaskApp() {
         <section className="w-full pb-28">
 
         {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
-        {isTaskCreationComposerOpen ? (
-          <div className="mb-3 w-full" data-task-creation-composer>
-            <TaskCreationComposer
-              key={taskCreationInitialTypeSelection}
-              allTags={allTaskTags}
-              initialTaskTypeSelection={taskCreationInitialTypeSelection}
-              onCancel={() => setIsTaskCreationComposerOpen(false)}
-              onCreate={createTaskFromComposer}
-              onCreated={() => setIsTaskCreationComposerOpen(false)}
-              taskTypeOptions={taskTypeOptions}
-            />
-          </div>
-        ) : null}
 
         <ErrorBoundary
           key={shouldDeferPageRender ? "restoring-page" : activePage}

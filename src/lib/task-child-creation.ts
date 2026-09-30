@@ -1,4 +1,6 @@
 import type { TaskInsert } from "@/lib/database.types";
+import { buildTaskPriorityUpdate } from "@/lib/task-priority";
+import type { TaskCreationMetadata } from "@/lib/task-creation";
 import type { TaskTypeSelection } from "@/lib/task-type";
 
 export type ChildTaskCreationDraft = Omit<TaskInsert, "user_id">;
@@ -9,6 +11,7 @@ export type ChildTaskCreationDraftResult =
 
 type BuildChildTaskCreationDraftInput = {
   blockedParentTaskIds?: readonly string[];
+  metadata?: TaskCreationMetadata;
   parentTaskId: string | null | undefined;
   taskTypeSelection?: TaskTypeSelection | null;
   title: string;
@@ -16,6 +19,7 @@ type BuildChildTaskCreationDraftInput = {
 
 export function buildChildTaskCreationDraft({
   blockedParentTaskIds = [],
+  metadata,
   parentTaskId,
   taskTypeSelection = { customRulesetId: null, taskType: "task" },
   title,
@@ -52,7 +56,6 @@ export function buildChildTaskCreationDraft({
       is_urgent: false,
       notes: null,
       one_step_at_a_time: false,
-      parent_task_id: parentTaskId,
       priority: "normal",
       repeat_day_of_month: null,
       repeat_days_of_week: [],
@@ -61,10 +64,15 @@ export function buildChildTaskCreationDraft({
       status: "pending",
       subtasks_auto_reset: false,
       tags: [],
+      trashed_at: null,
+      ...(metadata ? {
+        ...metadata,
+        ...buildTaskPriorityUpdate(metadata.priority_level),
+      } : {}),
       custom_ruleset_id: taskTypeSelection.customRulesetId,
       task_type: taskTypeSelection.taskType,
+      parent_task_id: parentTaskId,
       title: trimmedTitle,
-      trashed_at: null,
     },
     error: null,
     ok: true,

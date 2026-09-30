@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.70`.
+- Current working app version: `7.15.71`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,19 +14,20 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
-## 2026-09-29 7.15.70 Side rich Table/List Task creation
+## 2026-09-29 7.15.71 Side creation-flow correction
 
-The misunderstood 7.15.69 Home To-do membership metadata feature was removed.
-HomePage again owns its existing `useHomeTodoState(userId)` instance, and Home
-To-do remains the JSON-backed V6 organizational state rather than an ordinary
-Task List. Table View and List View New Task actions now open the shared
-creation composer before persistence. The composer reuses Home's creation
-metadata behavior for title, Task Type, due date/time, priority, repeat and
-cadence details, and saved tags; Add uses canonical Task creation and then
-opens the existing shared Edit Task UI, while Cancel creates nothing.
-Focused Home/Routine, creation, Table/List wiring, targeted lint, and
-`git diff --check` are the source verification boundary; browser/manual QA
-remains Andrew-owned and unverified.
+The misunderstood 7.15.69 Home To-do membership metadata feature remains
+removed. HomePage owns its existing `useHomeTodoState(userId)` instance, and
+Home To-do remains the JSON-backed V6 organizational state rather than an
+ordinary Task List. Ordinary Table View and List View New Task actions are
+restored to canonical create-then-open-full-Edit-Task behavior, including
+keyboard and Task Type creation actions. The shared rich Home-style creation
+composer is now used for Add Step and Add Substep row creation, preserving
+the clicked parent while accepting title, Task Type, due date/time, priority,
+repeat/cadence details, and saved tags. Add uses canonical child creation;
+Cancel creates nothing. Focused creation, hierarchy, Home/Routine, targeted
+lint, and `git diff --check` are the source verification boundary;
+browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-09-29 7.15.63 Side Finished Today outcome filters
 

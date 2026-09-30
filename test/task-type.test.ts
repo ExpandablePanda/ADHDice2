@@ -155,15 +155,10 @@ test("Table and List child creators expose shared Task Type choices and pass the
   assert.match(appSource, /const taskTypeSelection = resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
   assert.match(appSource, /taskTypeSelection,\s*title/);
   assert.match(appSource, /invalid_task_type/);
-  assert.match(tableSource, /<TaskTypeSelect[\s\S]*options=\{taskTypeFilterOptions\}/);
-  assert.match(listSource, /<TaskTypeSelect[\s\S]*options=\{taskTypeOptions\}/);
-  assert.match(tableSource, /onCreateChildTask\(parentTaskId, nextTitle, tableStepDraftTaskTypeValues/);
-  assert.match(listSource, /onCreateChildTask\(parentTaskId, nextTitle, taskTypeSelectionValue\)/);
-  assert.match(listSource, /onCreateChildTask\?\.\(parentTaskId, title, substepTaskTypeSelectionValue\)/);
-  assert.match(tableSource, /setTaskTypeSelectionValue\("task"\)/);
-  assert.match(tableSource, /setTableStepDraftTaskTypeValues\(\(current\) =>/);
-  assert.match(listSource, /setSubstepTaskTypeSelectionValue\("task"\)/);
-  assert.match(listSource, /setParentStepTaskTypeSelectionValues\(\(current\) =>/);
+  assert.match(tableSource, /<TaskChildCreationComposer/);
+  assert.match(listSource, /<TaskChildCreationComposer/);
+  assert.match(tableSource, /onCreateChildTask=\{onCreateChildTask/);
+  assert.match(listSource, /onCreateChildTask=\{onCreateChildTask/);
   assert.doesNotMatch(appSource.slice(appSource.indexOf("const createChildTaskFromPreview"), appSource.indexOf("const openChildTaskFromPreview")), /updateTask\(/);
 });
 
@@ -199,9 +194,9 @@ test("Tasks New menu uses shared Task Type choices and canonical typed creation"
   assert.match(creationHandler, /resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
   assert.match(creationHandler, /custom_ruleset_id: selection\.customRulesetId/);
   assert.match(creationHandler, /task_type: selection\.taskType/);
-  assert.match(creationHandler, /setTaskCreationInitialTypeSelection\(selectionValue\)/);
-  assert.match(creationHandler, /setIsTaskCreationComposerOpen\(true\)/);
-  assert.doesNotMatch(creationHandler, /buildNewTaskDraft\("New Task"\)/);
+  assert.match(creationHandler, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.match(creationHandler, /routeToCurrentBucket: true/);
+  assert.doesNotMatch(creationHandler, /TaskCreationComposer|setTaskCreationInitialTypeSelection|setIsTaskCreationComposerOpen/);
   assert.doesNotMatch(creationHandler, /updateTask\(/);
 });
 

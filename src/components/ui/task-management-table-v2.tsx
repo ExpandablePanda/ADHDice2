@@ -112,8 +112,6 @@ import {
   normalizeTaskTagValue,
   ScrollUpButton,
   TaskCurrentStreakChip,
-  TaskInlineChildDraft,
-  TaskInlineChildDraftInput,
   TaskHierarchySearchChip,
   TASK_TABLE_SELECTED_TASK_SURFACE_CLASS,
   TaskTableChipButton,
@@ -131,6 +129,8 @@ import {
   TASK_TABLE_GRID_ORIGIN_PX,
 } from "@/lib/task-table-alignment";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
+import { TaskChildCreationComposer } from "@/components/task-app/task-creation-composer";
+import type { TaskCreationMetadata } from "@/lib/task-creation";
 import {
   buildTaskContentFolderContextMenuState,
   TaskContentFolderContextMenu,
@@ -1354,7 +1354,7 @@ type TaskManagementTableV2Props = {
   shellClassName?: string;
   showHeader?: boolean;
   onClearSelection?: () => void;
-  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string, metadata?: TaskCreationMetadata) => Promise<{ error: string | null; taskId: string | null }>;
   onCreateTaskList?: (name: string) => Promise<{ id: string; persisted: boolean } | false> | { id: string; persisted: boolean } | false;
   onOpenBatchDelete?: () => void;
   onOpenBatchEdit?: () => void;
@@ -2132,7 +2132,7 @@ function SameTableStepCreationControl({
   childLabel?: "Step" | "Substep";
   creationBlocked?: boolean;
   iconOnly?: boolean;
-  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
+  onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string, metadata?: TaskCreationMetadata) => Promise<{ error: string | null; taskId: string | null }>;
   parentTaskId: string;
   taskTypeOptions: ReadonlyArray<import("@/lib/task-type").TaskTypeSelectionOption>;
 }) {
@@ -2917,13 +2917,14 @@ export function TaskManagementTableV2({
   const [childTaskDropTarget, setChildTaskDropTarget] = useState<ChildTaskDropTarget | null>(null);
   const childTaskDragStateRef = useRef<ChildTaskDragState | null>(null);
   const childTaskDropTargetRef = useRef<ChildTaskDropTarget | null>(null);
+  const [tableStepComposerParentId, setTableStepComposerParentId] = useState<string | null>(null);
+  const [tableStepComposerChildLabels, setTableStepComposerChildLabels] = useState<Record<string, "Step" | "Substep">>({});
   const [tableStepDraftParentId, setTableStepDraftParentId] = useState<string | null>(null);
   const [tableStepTitleDrafts, setTableStepTitleDrafts] = useState<Record<string, string>>({});
   const [tableStepCreationErrorByParentId, setTableStepCreationErrorByParentId] = useState<Record<string, string | null>>({});
   const [tableStepDraftChildLabels, setTableStepDraftChildLabels] = useState<Record<string, "Step" | "Substep">>({});
   const [tableStepDraftTaskTypeValues, setTableStepDraftTaskTypeValues] = useState<Record<string, string>>({});
   const tableStepDraftInputRef = useRef<HTMLInputElement | null>(null);
-  const taskTypeInteractionParentIdRef = useRef<string | null>(null);
   const [pendingSubtaskAutoExpandByTaskId, setPendingSubtaskAutoExpandByTaskId] = useState<Record<string, boolean>>({});
   const [hiddenSubtaskIds, setHiddenSubtaskIds] = useState<Record<string, boolean>>({});
   const [openColumnMenuId, setOpenColumnMenuId] = useState<SortColumnId | null>(null);
@@ -2963,10 +2964,6 @@ export function TaskManagementTableV2({
       tableStepDraftInputRef.current?.focus();
     }
   }, [tableStepDraftParentId]);
-
-  useEffect(() => () => {
-    taskTypeInteractionParentIdRef.current = null;
-  }, []);
 
   useEffect(() => {
     return () => clearStatusRailLongPress();
@@ -5870,12 +5867,59 @@ export function TaskManagementTableV2({
     };
   }
 
+  function beginTableStepComposer(parentTaskId: string, childLabel: "Step" | "Substep" = "Step") {
+    if (!onCreateChildTask || childTaskCreationBlockedTaskIds.includes(parentTaskId)) {
+      return;
+    }
+
+    setExpandedStepsByTaskId((current) => ({
+      ...current,
+      [parentTaskId]: true,
+    }));
+    setTableStepComposerChildLabels((current) => ({ ...current, [parentTaskId]: childLabel }));
+    setTableStepComposerParentId(parentTaskId);
+  }
+
+  function cancelTableStepComposer(parentTaskId: string) {
+    setTableStepComposerParentId((current) => (current === parentTaskId ? null : current));
+    setTableStepComposerChildLabels((current) => {
+      const next = { ...current };
+      delete next[parentTaskId];
+      return next;
+    });
+  }
+
+  function renderTableStepCreationComposer(parentTaskId: string) {
+    const childLabel = tableStepComposerChildLabels[parentTaskId] ?? "Step";
+    return (
+      <div
+        className={`${TASK_TABLE_GRID_ORIGIN_CLASS} w-max min-w-full rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-left transition dark:bg-[#181226]`}
+        data-table-step-draft-row={parentTaskId}
+        onClick={(event) => event.stopPropagation()}
+        style={{ gridColumn: "1 / -1" }}
+      >
+        <TaskChildCreationComposer
+          allTags={allTagOptions}
+          childLabel={childLabel}
+          key={`${parentTaskId}:${childLabel}`}
+          onCancel={() => cancelTableStepComposer(parentTaskId)}
+          onCreateChildTask={onCreateChildTask ?? (async () => ({ error: "Child task creation is unavailable.", taskId: null }))}
+          onCreated={() => {
+            cancelTableStepComposer(parentTaskId);
+            setExpandedStepsByTaskId((current) => ({ ...current, [parentTaskId]: true }));
+          }}
+          parentTaskId={parentTaskId}
+          taskTypeOptions={taskTypeFilterOptions}
+        />
+      </div>
+    );
+  }
+
   function beginTableStepDraft(parentTaskId: string, childLabel: "Step" | "Substep" = "Step") {
     if (!onCreateChildTask || childTaskCreationBlockedTaskIds.includes(parentTaskId)) {
       return;
     }
 
-    taskTypeInteractionParentIdRef.current = null;
     setExpandedStepsByTaskId((current) => ({
       ...current,
       [parentTaskId]: true,
@@ -5895,9 +5939,6 @@ export function TaskManagementTableV2({
   }
 
   function cancelTableStepDraft(parentTaskId: string) {
-    if (taskTypeInteractionParentIdRef.current === parentTaskId) {
-      taskTypeInteractionParentIdRef.current = null;
-    }
     setTableStepDraftParentId((current) => (current === parentTaskId ? null : current));
     setTableStepCreationErrorByParentId((current) => ({
       ...current,
@@ -7543,7 +7584,7 @@ export function TaskManagementTableV2({
               {onCreateChildTask ? (
                 <ChildTypeChooser
                   childLabel="Step"
-                  onChooseTask={() => beginTableStepDraft(task.id)}
+                  onChooseTask={() => beginTableStepComposer(task.id)}
                 />
               ) : null}
               {onOpenTaskHistory ? (
@@ -8520,7 +8561,7 @@ export function TaskManagementTableV2({
             {onCreateChildTask ? (
               <ChildTypeChooser
                 childLabel="Step"
-                onChooseTask={() => beginTableStepDraft(item.id)}
+                onChooseTask={() => beginTableStepComposer(item.id, "Substep")}
               />
             ) : null}
             {onTaskPinToggle ? (
@@ -8806,133 +8847,6 @@ export function TaskManagementTableV2({
     );
   };
 
-  const renderTableStepDraftCell = (parentTaskId: string, columnId: TaskManagementTableColumnId) => {
-    const draft = tableStepTitleDrafts[parentTaskId] ?? "";
-    const creationError = tableStepCreationErrorByParentId[parentTaskId];
-    const childLabel = tableStepDraftChildLabels[parentTaskId] ?? "Step";
-    const draftTaskTypeSelectionValue = tableStepDraftTaskTypeValues[parentTaskId] ?? "task";
-    const draftTaskTypeOption = taskTypeFilterOptions.find((option) => option.value === draftTaskTypeSelectionValue)
-      ?? resolveTaskTypeSelectionOption("task", null, customBehaviorRulesets);
-
-    if (columnId === "status_icon") {
-      return <div className="flex self-center">{renderTableCurrentStatusCircle("pending")}</div>;
-    }
-
-    if (columnId === "title") {
-      return (
-        <div className="flex w-full min-w-0 items-center gap-1.5 text-left" style={{ paddingLeft: "0.2rem" }}>
-          <span className="h-4 w-px flex-none rounded-full bg-[#e8e0f8] dark:bg-white/10" aria-hidden="true" />
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <TaskInlineChildDraftInput
-                ariaLabel={`New ${childLabel.toLowerCase()} title`}
-                childLabel={childLabel}
-                inputRef={tableStepDraftParentId === parentTaskId ? tableStepDraftInputRef : undefined}
-                onBlur={(event) => {
-                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
-                    return;
-                  }
-                  if (event.relatedTarget instanceof HTMLElement && event.relatedTarget.closest("[data-task-type-select], [data-task-type-select-menu]")) {
-                    return;
-                  }
-                  if (draft.trim()) {
-                    void commitTableStepDraft(parentTaskId);
-                    return;
-                  }
-                  cancelTableStepDraft(parentTaskId);
-                }}
-                onCancel={() => cancelTableStepDraft(parentTaskId)}
-                onChange={(value) => {
-                  setTableStepTitleDrafts((current) => ({
-                    ...current,
-                    [parentTaskId]: value,
-                  }));
-                  if (creationError) {
-                    setTableStepCreationErrorByParentId((current) => ({
-                      ...current,
-                      [parentTaskId]: null,
-                    }));
-                  }
-                }}
-                onCommit={() => commitTableStepDraft(parentTaskId)}
-                placeholder={`${childLabel} title...`}
-                value={draft}
-              />
-              <TaskTypeSelect
-                ariaLabel={`${childLabel} Task Type`}
-                className="mt-0"
-                label={`${childLabel} Task Type`}
-                onInteractionStart={() => {
-                  taskTypeInteractionParentIdRef.current = parentTaskId;
-                }}
-                onInteractionEnd={() => {
-                  if (taskTypeInteractionParentIdRef.current === parentTaskId) {
-                    taskTypeInteractionParentIdRef.current = null;
-                  }
-                }}
-                onChange={(value) => setTableStepDraftTaskTypeValues((current) => ({ ...current, [parentTaskId]: value }))}
-                options={taskTypeFilterOptions}
-                size="compact"
-                value={draftTaskTypeSelectionValue}
-              />
-            </div>
-            {creationError ? (
-              <p className="mt-1 text-[11px] font-medium text-[#d94e67] dark:text-[#ff9eaf]">{creationError}</p>
-            ) : (
-              <p className="mt-0.5 text-[10px] font-semibold uppercase tracking-[0.12em] text-[#9b92be] dark:text-white/35">{childLabel}</p>
-            )}
-          </div>
-        </div>
-      );
-    }
-
-    if (columnId === "status") {
-      return (
-        <div>
-          <span className={`${CHIP_BASE} ${statusTone("pending")}`}>Pending</span>
-        </div>
-      );
-    }
-
-    if (columnId === "task_type") {
-      return <TaskTypeIdentity compact option={draftTaskTypeOption} />;
-    }
-
-    if (columnId === "due") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No date</span>;
-    }
-
-    if (columnId === "estimated") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS} gap-1.5`}><Clock3 className="h-3.25 w-3.25" />No est</span>;
-    }
-
-    if (columnId === "actual") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS} gap-1.5`}><Clock3 className="h-3.25 w-3.25" />0m</span>;
-    }
-
-    if (columnId === "tags") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}># Tag</span>;
-    }
-
-    if (columnId === "link") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No link</span>;
-    }
-
-    if (columnId === "notes") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No notes</span>;
-    }
-
-    if (columnId === "priority" || columnId === "energy") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>None</span>;
-    }
-
-    if (columnId === "repeat") {
-      return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>No Repeat</span>;
-    }
-
-    return <span className={`${CHIP_BASE} ${INACTIVE_CHIP_CLASS}`}>-</span>;
-  };
-
   const renderChildTaskMiniRows = (task: PrototypeTaskRow, group: ChildTaskPreviewGroup | undefined) => {
     const activeHierarchyParentMatch = statusFilterActive
       ? statusMatchedStepParentTaskIdSet.has(task.id)
@@ -8949,8 +8863,8 @@ export function TaskManagementTableV2({
     const visibleItems = childTaskPreviewVisibility.visibleItems;
     const groupedItems = groupChildTaskPreviewItemsByStoredCompletion(visibleItems);
     const isDraftingCompletedBranch = Boolean(
-      tableStepDraftParentId
-      && groupedItems.completedItems.some((item) => item.id === tableStepDraftParentId),
+      tableStepComposerParentId
+      && groupedItems.completedItems.some((item) => item.id === tableStepComposerParentId),
     );
     const isCompletedStepsExpanded = childFilterIsActive
       || expandedCompletedStepsByTaskId[task.id] === true
@@ -8963,8 +8877,8 @@ export function TaskManagementTableV2({
       ? renderCompletedStepsHeader(task.id, groupedItems.completedStepCount, isCompletedStepsExpanded)
       : null;
     const canOpenStepActions = allowInlineInspector || Boolean(onOpenChildTask);
-    const isDraftingStepForTask = tableStepDraftParentId === task.id;
-    const isDraftingSubstepForVisibleItem = Boolean(tableStepDraftParentId && displayedItems.some((item) => item.id === tableStepDraftParentId));
+    const isDraftingStepForTask = tableStepComposerParentId === task.id;
+    const isDraftingSubstepForVisibleItem = Boolean(tableStepComposerParentId && displayedItems.some((item) => item.id === tableStepComposerParentId));
 
     if (visibleItems.length === 0 && !group?.summary.hasInvalidDescendants && !isDraftingStepForTask && !isDraftingSubstepForVisibleItem) {
       return null;
@@ -8977,24 +8891,7 @@ export function TaskManagementTableV2({
             {formatInvalidChildLinkCount(group?.summary.invalidChildLinkCount ?? 0)}
           </div>
         ) : null}
-        {isDraftingStepForTask ? (
-          <form
-            className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]`}
-            data-table-step-draft-row={task.id}
-            onClick={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
-              event.preventDefault();
-              void commitTableStepDraft(task.id);
-            }}
-            style={{ gridTemplateColumns }}
-          >
-            {visibleHeaderColumns.map((column) => (
-              <div className={`flex min-h-full min-w-0 overflow-hidden ${getChildColumnAlignmentClass(column.id)}`} key={`${task.id}-draft-${column.id}`}>
-                {renderTableStepDraftCell(task.id, column.id)}
-              </div>
-            ))}
-          </form>
-        ) : null}
+        {isDraftingStepForTask ? renderTableStepCreationComposer(task.id) : null}
         {displayedItems.map((item, itemIndex) => {
           const inlineStepTask = childPreviewToPrototypeTaskRow(item);
           const childTaskTypeOption = resolveTaskTypeSelectionOption(item.taskType, item.customRulesetId, customBehaviorRulesets);
@@ -9071,24 +8968,7 @@ export function TaskManagementTableV2({
                 </div>
               </div>
               {renderInlineActionRow(inlineStepTask)}
-              {tableStepDraftParentId === item.id ? (
-                <form
-                  className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-center transition dark:bg-[#181226]`}
-                  data-table-step-draft-row={item.id}
-                  onClick={(event) => event.stopPropagation()}
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    void commitTableStepDraft(item.id);
-                  }}
-                  style={{ gridTemplateColumns }}
-                >
-                  {visibleHeaderColumns.map((column) => (
-                    <div className={`flex min-h-full min-w-0 overflow-hidden ${getChildColumnAlignmentClass(column.id)}`} key={`${item.id}-draft-${column.id}`}>
-                      {renderTableStepDraftCell(item.id, column.id)}
-                    </div>
-                  ))}
-                </form>
-              ) : null}
+              {tableStepComposerParentId === item.id ? renderTableStepCreationComposer(item.id) : null}
             </Fragment>
           );
         })}
@@ -9489,7 +9369,7 @@ export function TaskManagementTableV2({
               const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false)
                 || activeHierarchyParentTaskIdSet.has(task.id)
                 || highlightedTaskIdSet.has(task.id);
-              const hasTableStepDraft = tableStepDraftParentId === task.id;
+              const hasTableStepDraft = tableStepComposerParentId === task.id;
               const sourceStepsExpanded = hasStepPreview
                 ? stepsExpanded
                 : (expandedSubtasksByTaskId[task.id] ?? false);

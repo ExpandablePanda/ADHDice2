@@ -16,26 +16,23 @@ test("7.15.69 Home To-do metadata plumbing is removed and Home owns V6 state", (
   }
 });
 
-test("Table and List New Task open one pre-create composer without a placeholder", () => {
+test("Table and List New Task restore the canonical full-editor flow", () => {
   const app = read("../src/components/task-app.tsx");
   const composer = read("../src/components/task-app/task-creation-composer.tsx");
   assert.match(app, /const openInlineNewListTaskComposer = useCallback\(\(\) => \{/);
-  assert.match(app, /setTaskCreationInitialTypeSelection\("task"\)/);
-  assert.match(app, /setIsTaskCreationComposerOpen\(true\)/);
-  assert.doesNotMatch(app, /openInlineNewListTaskComposer[\s\S]*buildNewTaskDraft\("New Task"\)/);
-  assert.match(app, /onCreate=\{createTaskFromComposer\}/);
-  assert.match(app, /onCreated=\{\(\) => setIsTaskCreationComposerOpen\(false\)\}/);
-  assert.match(app, /onCancel=\{\(\) => setIsTaskCreationComposerOpen\(false\)\}/);
+  assert.match(app, /openInlineNewListTaskComposer[\s\S]*createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.match(app, /openInlineNewListTaskComposer[\s\S]*routeToCurrentBucket: true/);
+  assert.doesNotMatch(app, /isTaskCreationComposerOpen|taskCreationInitialTypeSelection|createTaskFromComposer/);
   assert.match(composer, /if \(isCreating \|\| !title\.trim\(\)\) return;/);
   assert.match(composer, /const createdTask = await onCreate\(/);
-  assert.match(composer, /if \(createdTask\) \{[\s\S]*resetDraft\(\);[\s\S]*onCreated\?\.\(createdTask\)/);
+  assert.match(composer, /if \(createdTask && "error" in createdTask\)/);
+  assert.match(composer, /resetDraft\(\);[\s\S]*onCreated\?\.\(\)/);
   assert.match(composer, /function resetDraft\(\)/);
   assert.match(composer, /function handleCancel\(\)/);
-  assert.match(composer, /resetDraft\(\);\s*onCancel\(\);/);
+  assert.match(composer, /resetDraft\(\);[\s\S]*onCancel\(\);/);
 });
 
-test("shared creation composer forwards Home metadata semantics to canonical Task creation", () => {
-  const app = read("../src/components/task-app.tsx");
+test("shared creation composer exposes Home metadata semantics for Home and child creation", () => {
   const composer = read("../src/components/task-app/task-creation-composer.tsx");
   for (const label of ["Task title", "Task Type", "Due date", "Due time", "Priority", "Repeat", "Tags", "Add", "Cancel"]) {
     assert.match(composer, new RegExp(label));
@@ -50,14 +47,13 @@ test("shared creation composer forwards Home metadata semantics to canonical Tas
   ]) {
     assert.match(composer, new RegExp(field));
   }
-  assert.match(app, /buildNewTaskDraft\(draft\.title\)/);
-  assert.match(app, /\.\.\.draft\.metadata/);
-  assert.match(app, /buildTaskPriorityUpdate\(draft\.metadata\.priority_level\)/);
-  assert.match(app, /openExistingTaskEditor\(createdTask\)/);
-  assert.match(app, /routeToCurrentBucket: true/);
+  assert.match(composer, /export function TaskChildCreationComposer/);
+  assert.match(composer, /submitLabel=\{`Add \$\{childLabel\}`\}/);
+  assert.match(composer, /titleLabel=\{`\$\{childLabel\} title`\}/);
+  assert.match(composer, /onCreateChildTask\(parentTaskId, draft\.title, draft\.taskTypeSelection, draft\.metadata\)/);
 });
 
-test("Table, List, Task Type menu, and keyboard New Task share the corrected composer", () => {
+test("Table, List, Task Type menu, and keyboard New Task share the corrected full-editor route", () => {
   const app = read("../src/components/task-app.tsx");
   const tasksPage = read("../src/components/task-app/tasks-page.tsx");
   assert.match(app, /onOpenComposer: openInlineNewListTaskComposer/);
@@ -66,7 +62,10 @@ test("Table, List, Task Type menu, and keyboard New Task share the corrected com
   assert.match(tasksPage, /onOpenTaskComposerForType\(option\.value\)/);
   assert.match(app, /onOpenTaskComposerForType: openTaskComposerForType/);
   assert.match(app, /void openInlineNewListTaskComposer\(\)/);
-  assert.doesNotMatch(app, /onOpenComposer: \(\) => createTaskAndOpenSharedEditor/);
+  assert.match(app, /onOpenComposer: openInlineNewListTaskComposer/);
+  assert.match(app, /const openTaskComposerForType = useCallback\(\(selectionValue: string\) =>/);
+  assert.match(app, /openTaskComposerForType[\s\S]*createTaskAndOpenSharedEditor\([\s\S]*task_type: selection\.taskType/);
+  assert.doesNotMatch(app, /onOpenComposer: \(\) => <TaskCreationComposer/);
 });
 
 test("Home keeps its own creation behavior while reusing the shared form", () => {

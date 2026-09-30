@@ -22,3 +22,10 @@ export type TaskCreationDraft = {
   taskTypeSelection: string;
   title: string;
 };
+
+export type TaskChildCreationResult = {
+  error: string | null;
+  taskId: string | null;
+};
+
+export type TaskCreationSubmission = Task | TaskChildCreationResult | null;

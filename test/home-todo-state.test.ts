@@ -1059,9 +1059,8 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   assert.match(source, /<TaskHomePage[\s\S]*onCreateTaskWithType=\{createHomeTodoTaskWithType\}/);
   assert.match(source, /<TaskHomePage[\s\S]*taskTypeOptions=\{taskTypeOptions\}/);
-  assert.match(source, /const createTaskFromComposer = useCallback/);
-  assert.match(source, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\(draft\.title\)/);
-  assert.match(source, /\.\.\.draft\.metadata/);
+  assert.doesNotMatch(source, /const createTaskFromComposer = useCallback/);
+  assert.doesNotMatch(source, /createTaskAndOpenSharedEditor\([\s\S]*draft\.metadata/);
   const homeCreationStart = source.indexOf("const createHomeTodoTaskWithType");
   const homeCreationEnd = source.indexOf("const taskTypeOptions", homeCreationStart);
   const homeCreation = source.slice(homeCreationStart, homeCreationEnd);
