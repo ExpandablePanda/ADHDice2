@@ -333,6 +333,48 @@
     outline-offset: 2px;
   }
 
+  [data-task-creation-composer] input.task-creation-title-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  [data-task-creation-composer] input.task-creation-title-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
+    border-color: var(--border-soft) !important;
+    outline: none !important;
+    box-shadow: none !important;
+    outline-offset: 0;
+  }
+
+  [data-task-creation-composer] input.task-creation-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  [data-task-creation-composer] input.task-creation-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
+    border-color: #e5e0f5 !important;
+    background: #fbfaff !important;
+    color: #2f294a !important;
+    outline: none !important;
+    box-shadow: none !important;
+    outline-offset: 0;
+  }
+
+  [data-theme="dark"] [data-task-creation-composer] input.task-creation-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  [data-theme="dark"] [data-task-creation-composer] input.task-creation-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
+    border-color: rgb(255 255 255 / 15%) !important;
+    background: rgb(255 255 255 / 8%) !important;
+    color: white !important;
+  }
+
+  [data-task-creation-composer] input.task-creation-cadence-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  [data-task-creation-composer] input.task-creation-cadence-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
+    border-color: #e4deef !important;
+    background: #f4f5f8 !important;
+    color: #68738c !important;
+    outline: none !important;
+    box-shadow: none !important;
+    outline-offset: 0;
+  }
+
+  [data-theme="dark"] [data-task-creation-composer] input.task-creation-cadence-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+  [data-theme="dark"] [data-task-creation-composer] input.task-creation-cadence-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
+    border-color: rgb(255 255 255 / 10%) !important;
+    background: rgb(255 255 255 / 8%) !important;
+    color: rgb(255 255 255 / 60%) !important;
+  }
+
   .ui-pill-button-light {
     border-radius: var(--radius-pill);
     background: var(--surface-muted);

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.73`.
+- Current working app version: `7.15.74`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.15.74 Side shared creation shell and focus correction
+
+The shared TaskCreationComposer is now shellless on Home New Task as well as
+inline Step/Substep creation, while preserving the existing child
+`max-w-[52rem]` wrappers and internal field spacing. Composer text, date, time,
+tag, and cadence inputs locally suppress the purple focus outline, focus glow,
+and focus border change without modifying the global input focus rules.
+Energy, creation metadata, hierarchy, and canonical creation paths are
+unchanged. Focused composer checks, targeted lint, and `git diff --check` are
+the source verification boundary; browser/manual QA remains Andrew-owned and
+unverified.
 
 ## 2026-09-29 7.15.73 Side shared creation Energy and child shell correction
 

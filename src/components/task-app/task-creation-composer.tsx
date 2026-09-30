@@ -70,7 +70,6 @@ export function TaskCreationComposer({
   onCancel,
   onCreate,
   onCreated,
-  presentation = "default",
   submitLabel = "Add",
   taskTypeOptions,
   titleLabel = "Task title",
@@ -80,7 +79,6 @@ export function TaskCreationComposer({
   onCancel: () => void;
   onCreate: (draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
   onCreated?: () => void;
-  presentation?: "default" | "inline-child";
   submitLabel?: string;
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
   titleLabel?: string;
@@ -226,16 +224,15 @@ export function TaskCreationComposer({
 
   return (
     <form
-      className={presentation === "inline-child"
-        ? "flex flex-wrap items-end gap-2 bg-white dark:bg-[#181226]"
-        : "flex flex-wrap items-end gap-2 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-2.5 dark:border-white/10 dark:bg-white/[0.03]"}
+      className="flex flex-wrap items-end gap-2 bg-white dark:bg-[#181226]"
+      data-task-creation-composer
       onSubmit={handleSubmit}
     >
       <label className="min-w-[min(100%,16rem)] flex-1">
         <span className="sr-only">{titleLabel}</span>
         <input
           autoComplete="off"
-          className="health-input"
+          className="health-input task-creation-title-input"
           disabled={isCreating}
           onChange={(event) => setTitle(event.target.value)}
           placeholder={titleLabel}
@@ -261,7 +258,7 @@ export function TaskCreationComposer({
             <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Due date</span>
             <input
               aria-label="Due date"
-              className={TASK_TABLE_INPUT_CLASS}
+              className={`${TASK_TABLE_INPUT_CLASS} task-creation-input`}
               onChange={(event) => {
                 setDueOn(event.target.value);
                 if (!event.target.value) setDueTime("");
@@ -272,7 +269,7 @@ export function TaskCreationComposer({
           </label>
           <label className="grid min-w-0 gap-1">
             <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Due time</span>
-            <input aria-label="Due time" className={TASK_TABLE_INPUT_CLASS} onChange={(event) => setDueTime(event.target.value)} type="time" value={dueTime} />
+            <input aria-label="Due time" className={`${TASK_TABLE_INPUT_CLASS} task-creation-input`} onChange={(event) => setDueTime(event.target.value)} type="time" value={dueTime} />
           </label>
         </div>
         <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,1.6fr)]">
@@ -321,6 +318,7 @@ export function TaskCreationComposer({
                       return parsed === null ? "" : String(parsed);
                     }),
                     onChange: (event) => setRepeatDayOfMonth(event.target.value.replace(/[^\d]/g, "").slice(0, 2)),
+                    className: "task-creation-cadence-input",
                     type: "text",
                     value: repeatDayOfMonth,
                   }}
@@ -330,6 +328,7 @@ export function TaskCreationComposer({
                     min: 1,
                     onBlur: () => setRepeatInterval((current) => String(parsePositiveInteger(current) ?? 1)),
                     onChange: (event) => setRepeatInterval(event.target.value.replace(/[^\d]/g, "")),
+                    className: "task-creation-cadence-input",
                     type: "text",
                     value: repeatInterval,
                   }}
@@ -383,7 +382,7 @@ export function TaskCreationComposer({
           <div className="flex min-w-0 flex-wrap items-center gap-2">
             <input
               aria-label="Search or add a tag"
-              className={`${TASK_TABLE_INPUT_CLASS} min-w-[12rem] flex-1 sm:min-w-[16rem]`}
+              className={`${TASK_TABLE_INPUT_CLASS} task-creation-input min-w-[12rem] flex-1 sm:min-w-[16rem]`}
               onChange={(event) => setTagDraft(event.target.value)}
               onKeyDown={(event) => {
                 if (event.key !== "Enter" || !tagDraft.trim()) return;
@@ -436,7 +435,6 @@ export function TaskChildCreationComposer({
       onCancel={onCancel}
       onCreate={(draft) => onCreateChildTask(parentTaskId, draft.title, draft.taskTypeSelection, draft.metadata)}
       onCreated={onCreated}
-      presentation="inline-child"
       submitLabel={`Add ${childLabel}`}
       taskTypeOptions={taskTypeOptions}
       titleLabel={`${childLabel} title`}

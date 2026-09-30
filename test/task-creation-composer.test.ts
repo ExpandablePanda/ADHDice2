@@ -51,9 +51,17 @@ test("shared creation composer exposes Home metadata semantics for Home and chil
   assert.match(composer, /submitLabel=\{`Add \$\{childLabel\}`\}/);
   assert.match(composer, /titleLabel=\{`\$\{childLabel\} title`\}/);
   assert.match(composer, /onCreateChildTask\(parentTaskId, draft\.title, draft\.taskTypeSelection, draft\.metadata\)/);
-  assert.match(composer, /presentation="inline-child"/);
-  assert.match(composer, /rounded-\[1rem\] border border-\[#e4def2\]/);
-  assert.match(composer, /presentation === "inline-child"[\s\S]*bg-white/);
+});
+
+test("shared creation composer is shellless and locally suppresses input focus styling", () => {
+  const composer = read("../src/components/task-app/task-creation-composer.tsx");
+  const globals = read("../src/app/globals.css");
+  assert.match(composer, /data-task-creation-composer/);
+  assert.match(composer, /className="flex flex-wrap items-end gap-2 bg-white dark:bg-\[#181226\]"/);
+  assert.doesNotMatch(composer, /presentation|rounded-\[1rem\] border border-\[#e4def2\] bg-\[#fcfbff\] p-2\.5/);
+  assert.match(globals, /\[data-task-creation-composer\][\s\S]*task-creation-title-input[\s\S]*outline: none !important/);
+  assert.match(globals, /\[data-task-creation-composer\][\s\S]*task-creation-input[\s\S]*border-color: #e5e0f5 !important/);
+  assert.match(globals, /input\.health-input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="range"\]\):focus-visible[\s\S]*border-color: var\(--accent\) !important/);
 });
 
 test("Table, List, Task Type menu, and keyboard New Task share the corrected full-editor route", () => {
