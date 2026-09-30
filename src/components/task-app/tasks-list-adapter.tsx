@@ -1201,6 +1201,17 @@ function StepsCardPreview({
       });
     },
   });
+  const toggleChildTaskSelection = (taskId: string, range = false) => {
+    if (selectedTaskIds.length === 0 || !onToggleTaskSelection) {
+      return false;
+    }
+    onToggleTaskSelection(taskId, {
+      additive: true,
+      range,
+      visibleTaskIds: getVisibleTaskIds(),
+    });
+    return true;
+  };
 
   const beginTaskTypeInteraction = (parentTaskId: string) => {
     taskTypeInteractionParentIdRef.current = parentTaskId;
@@ -1543,12 +1554,7 @@ function StepsCardPreview({
                   event.stopPropagation();
                   onClearRowContextMenu?.();
                   closeQuickPanel();
-                  if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                    onToggleTaskSelection(item.id, {
-                      additive: true,
-                      range: event.shiftKey,
-                      visibleTaskIds: getVisibleTaskIds(),
-                    });
+                  if (toggleChildTaskSelection(item.id, event.shiftKey)) {
                     return;
                   }
                   onOpenStep(item.id);
@@ -1563,12 +1569,7 @@ function StepsCardPreview({
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     event.stopPropagation();
-                    if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                      onToggleTaskSelection(item.id, {
-                        additive: true,
-                        range: event.shiftKey,
-                        visibleTaskIds: getVisibleTaskIds(),
-                      });
+                    if (toggleChildTaskSelection(item.id, event.shiftKey)) {
                       return;
                     }
                     onOpenStep(item.id);
@@ -1602,6 +1603,9 @@ function StepsCardPreview({
                                 className="block min-w-0 appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                                 onClick={(event) => {
                                   event.stopPropagation();
+                                  if (toggleChildTaskSelection(item.id, event.shiftKey)) {
+                                    return;
+                                  }
                                   setEditingStepTitleId(item.id);
                                   setStepTitleDraft(item.id, item.title);
                                 }}

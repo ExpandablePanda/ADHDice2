@@ -185,11 +185,41 @@ test("selection count uses the unified canonical selection length", () => {
 });
 
 test("active List child clicks toggle selection instead of opening", () => {
-  assert.match(listSource, /selectedTaskIds\.length > 0 && onToggleTaskSelection[\s\S]*onToggleTaskSelection\(item\.id, \{[\s\S]*range: event\.shiftKey[\s\S]*getVisibleTaskIds\(\)/);
+  assert.match(listSource, /const toggleChildTaskSelection = \(taskId: string, range = false\)[\s\S]*onToggleTaskSelection\(taskId, \{[\s\S]*additive: true[\s\S]*visibleTaskIds/);
+  assert.match(listSource, /toggleChildTaskSelection\(item\.id, event\.shiftKey\)/);
+});
+
+test("Table child title clicks prioritize active selection over rename", () => {
+  assert.match(tableSource, /function toggleChildTaskSelection\(taskId: string, range = false\)[\s\S]*startTaskSelection\(taskId, \{ additive: true, range \}\)/);
+  assert.match(tableSource, /data-step-title-edit=\{item\.id\}[\s\S]*toggleChildTaskSelection\(item\.id, event\.shiftKey\)[\s\S]*setEditingTaskTitleId\(item\.id\)/);
+  assert.match(tableSource, /pendingEditorChildTitleRenameRef\.current = \{ taskId: item\.id, title: item\.title \}/);
+});
+
+test("List child title clicks prioritize active selection over rename", () => {
+  assert.match(listSource, /data-step-title-edit=\{item\.id\}[\s\S]*toggleChildTaskSelection\(item\.id, event\.shiftKey\)[\s\S]*setEditingStepTitleId\(item\.id\)/);
+  assert.match(listSource, /if \(toggleChildTaskSelection\(item\.id, event\.shiftKey\)\) \{[\s\S]*return;\n\s+\}/);
+});
+
+test("child selection toggles selected IDs and preserves shared range semantics", () => {
+  assert.match(selectionHookSource, /else if \(baseSelectedTaskIds\.includes\(taskId\)\)[\s\S]*filter\(\(currentTaskId\) => currentTaskId !== taskId\)/);
+  assert.match(tableSource, /toggleChildTaskSelection\(item\.id, event\.shiftKey\)/);
+  assert.match(listSource, /toggleChildTaskSelection\(item\.id, event\.shiftKey\)/);
+});
+
+test("Andrew QA sequence adds Step then Substep without another long press", () => {
+  assert.match(tableSource, /childTaskRowLongPressHandlers[\s\S]*toggleChildTaskSelection\(item\.id, event\.shiftKey\)/);
+  assert.match(listSource, /childTaskRowLongPressHandlers[\s\S]*toggleChildTaskSelection\(item\.id, event\.shiftKey\)/);
+  assert.match(selectionHookSource, /baseSelectedTaskIds\.includes\(taskId\)/);
+});
+
+test("child action controls remain outside title selection handling", () => {
+  assert.match(tableSource, /aria-label=\{`Change status for[\s\S]*event\.stopPropagation\(\);[\s\S]*setActiveMetadataPanelByTaskId/);
+  assert.match(tableSource, /aria-label=\{`\$\{isCollapsed \? "Expand" : "Collapse"\}[\s\S]*setCollapsedChildTaskIds/);
+  assert.match(listSource, /data-step-title-edit=\{item\.id\}[\s\S]*TaskTitleDraftInput/);
 });
 
 test("hierarchical range selection uses the same visible sequence", () => {
-  assert.match(tableSource, /startTaskSelection\(item\.id, \{ additive: true, range: event\.shiftKey \}\)/);
+  assert.match(tableSource, /toggleChildTaskSelection\(item\.id, event\.shiftKey\)/);
   assert.match(listSource, /visibleTaskIds: getRenderedListTaskIds\(\)/);
   assert.match(selectionHookSource, /const rangeIds = visibleTaskIds\.slice\(from, to \+ 1\)/);
 });

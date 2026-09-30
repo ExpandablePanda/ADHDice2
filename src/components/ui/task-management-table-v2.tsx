@@ -7165,6 +7165,14 @@ export function TaskManagementTableV2({
     });
   }
 
+  function toggleChildTaskSelection(taskId: string, range = false) {
+    if (selectedTaskIds.length === 0 || !onToggleTaskSelection) {
+      return false;
+    }
+    startTaskSelection(taskId, { additive: true, range });
+    return true;
+  }
+
   function openRowPrimaryAction(taskId: string, sourceElement: HTMLElement) {
     if (onOpenTaskEditor) {
       onOpenTaskEditor(taskId, effectiveDisplayedTasks.map((task) => task.id));
@@ -8096,6 +8104,9 @@ export function TaskManagementTableV2({
                   return;
                 }
                 event.stopPropagation();
+                if (toggleChildTaskSelection(item.id, event.shiftKey)) {
+                  return;
+                }
                 openTaskInCurrentEditor(item.id);
               } : undefined}
               onKeyDown={canSelectChildTask ? (event) => {
@@ -8105,6 +8116,9 @@ export function TaskManagementTableV2({
                 if (event.key === "Enter" || event.key === " ") {
                   event.preventDefault();
                   event.stopPropagation();
+                  if (toggleChildTaskSelection(item.id, event.shiftKey)) {
+                    return;
+                  }
                   openTaskInCurrentEditor(item.id);
                 }
               } : undefined}
@@ -8164,10 +8178,16 @@ export function TaskManagementTableV2({
                           className="block min-w-0 max-w-full flex-[0_1_auto] appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                           onClick={(event) => {
                             event.stopPropagation();
+                            if (toggleChildTaskSelection(item.id, event.shiftKey)) {
+                              return;
+                            }
                             handoffEditorChildTitleRename(item.id, item.title);
                           }}
                           onPointerDown={(event) => {
                             event.stopPropagation();
+                            if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                              return;
+                            }
                             pendingEditorChildTitleRenameRef.current = { taskId: item.id, title: item.title };
                           }}
                           type="button"
@@ -8553,6 +8573,9 @@ export function TaskManagementTableV2({
                     className="block min-w-0 max-w-full flex-[0_1_auto] appearance-none border-0 bg-transparent p-0 text-left shadow-none outline-none transition hover:opacity-85 focus-visible:rounded-[0.5rem] focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90"
                     onClick={(event) => {
                       event.stopPropagation();
+                      if (toggleChildTaskSelection(item.id, event.shiftKey)) {
+                        return;
+                      }
                       setEditingTaskTitleId(item.id);
                       setTitleDraft(item.id, item.title);
                     }}
@@ -9105,8 +9128,7 @@ export function TaskManagementTableV2({
                       return;
                     }
                     event.stopPropagation();
-                    if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                      startTaskSelection(item.id, { additive: true, range: event.shiftKey });
+                    if (toggleChildTaskSelection(item.id, event.shiftKey)) {
                       return;
                     }
                     openTaskInCurrentEditor(item.id);
@@ -9131,8 +9153,7 @@ export function TaskManagementTableV2({
                     if (event.key === "Enter" || event.key === " ") {
                       event.preventDefault();
                       event.stopPropagation();
-                      if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                        startTaskSelection(item.id, { additive: true, range: event.shiftKey });
+                      if (toggleChildTaskSelection(item.id, event.shiftKey)) {
                         return;
                       }
                       openTaskInCurrentEditor(item.id);
@@ -9248,8 +9269,7 @@ export function TaskManagementTableV2({
                     return;
                   }
                   event.stopPropagation();
-                  if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                    startTaskSelection(row.subtask.id, { additive: true, range: event.shiftKey });
+                  if (toggleChildTaskSelection(row.subtask.id, event.shiftKey)) {
                     return;
                   }
                   openTaskInCurrentEditor(row.subtask.id);
@@ -9261,8 +9281,7 @@ export function TaskManagementTableV2({
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 event.stopPropagation();
-                if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
-                  startTaskSelection(row.subtask.id, { additive: true, range: event.shiftKey });
+                if (toggleChildTaskSelection(row.subtask.id, event.shiftKey)) {
                   return;
                 }
                 openTaskInCurrentEditor(row.subtask.id);

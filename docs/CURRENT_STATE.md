@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.11`.
+- Current working app version: `7.16.12`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -19,6 +19,11 @@ Role: active working
 - Steps and Substeps now enter the shared selection mode through the existing long-press interaction in both Table and List surfaces, while interactive child controls and drag gestures remain excluded.
 - Table and List Select All Visible and range selection now use the ordered rendered Task/Step/Substep IDs, and selected valid entities remain batch targets after becoming hidden or collapsed.
 - Table metadata batches continue to resolve canonical valid targets and invoke the existing per-Task status and recurrence authorities. Browser QA remains Andrew-owned and unverified here.
+
+## 2026-09-29 7.16.12 Child title selection-priority correction
+
+- In active multi-select mode, clicking a rendered Step or Substep row/title in Table or List now toggles that exact canonical child ID, including existing Shift/range behavior, instead of opening or entering rename.
+- Normal child-title rename behavior, active title inputs, and true metadata, hierarchy, drag, and action controls remain unchanged. Browser QA remains Andrew-owned and unverified here.
 
 ## 2026-09-29 7.16.10 Task Content Folder bounded current-day History authority
 
