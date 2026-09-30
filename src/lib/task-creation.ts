@@ -3,6 +3,7 @@ import type { TaskPriorityLevel } from "@/lib/task-priority";
 
 export type TaskCreationMetadata = Pick<
   Task,
+  | "energy"
   | "due_on"
   | "due_time"
   | "repeat_frequency"

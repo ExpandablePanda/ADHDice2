@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.72`.
+- Current working app version: `7.15.73`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.15.73 Side shared creation Energy and child shell correction
+
+The shared Task creation metadata and composer now include canonical Task Energy
+(`none`, `low`, `medium`, `high`) for Home New Task and inline Step/Substep
+creation. The child composer requests a shellless presentation with a plain
+white surface while retaining its responsive `max-w-[52rem]` wrapper and
+left-aligned natural field wrapping. Child draft construction persists the
+selected Energy while continuing to reassert the clicked `parent_task_id`.
+Focused composer/child-creation checks, targeted lint, and `git diff --check`
+are the source verification boundary; browser/manual QA remains Andrew-owned
+and unverified.
 
 ## 2026-09-29 7.15.72 Side child composer width correction
 

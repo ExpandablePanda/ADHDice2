@@ -34,14 +34,14 @@ test("Table and List New Task restore the canonical full-editor flow", () => {
 
 test("shared creation composer exposes Home metadata semantics for Home and child creation", () => {
   const composer = read("../src/components/task-app/task-creation-composer.tsx");
-  for (const label of ["Task title", "Task Type", "Due date", "Due time", "Priority", "Repeat", "Tags", "Add", "Cancel"]) {
+  for (const label of ["Task title", "Task Type", "Due date", "Due time", "Priority", "Energy", "Repeat", "Tags", "Add", "Cancel"]) {
     assert.match(composer, new RegExp(label));
   }
   for (const repeatLabel of ["No Repeat", "Daily", "Daily Until Complete", "Weekly", "Monthly", "Custom Cadence", "Weekdays"]) {
     assert.match(composer, new RegExp(repeatLabel));
   }
   for (const field of [
-    "due_on", "due_time", "priority_level", "repeat_day_of_month", "repeat_days_of_week",
+    "due_on", "due_time", "energy", "priority_level", "repeat_day_of_month", "repeat_days_of_week",
     "repeat_frequency", "repeat_interval", "repeat_monthly_mode", "repeat_monthly_ordinal",
     "repeat_monthly_weekday", "tags",
   ]) {
@@ -51,6 +51,9 @@ test("shared creation composer exposes Home metadata semantics for Home and chil
   assert.match(composer, /submitLabel=\{`Add \$\{childLabel\}`\}/);
   assert.match(composer, /titleLabel=\{`\$\{childLabel\} title`\}/);
   assert.match(composer, /onCreateChildTask\(parentTaskId, draft\.title, draft\.taskTypeSelection, draft\.metadata\)/);
+  assert.match(composer, /presentation="inline-child"/);
+  assert.match(composer, /rounded-\[1rem\] border border-\[#e4def2\]/);
+  assert.match(composer, /presentation === "inline-child"[\s\S]*bg-white/);
 });
 
 test("Table, List, Task Type menu, and keyboard New Task share the corrected full-editor route", () => {

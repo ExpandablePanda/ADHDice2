@@ -8,6 +8,7 @@ test("rich Step/Substep creation preserves all selected metadata and the clicked
   const metadata = {
     due_on: "2026-10-04",
     due_time: "09:30",
+    energy: "high",
     priority_level: 5,
     repeat_day_of_month: null,
     repeat_days_of_week: [1, 3, 5],
@@ -34,7 +35,7 @@ test("rich Step/Substep creation preserves all selected metadata and the clicked
     custom_ruleset_id: "practice",
     due_on: "2026-10-04",
     due_time: "09:30",
-    energy: "none",
+    energy: "high",
     estimated_minutes: null,
     external_link_label: null,
     external_link_url: null,

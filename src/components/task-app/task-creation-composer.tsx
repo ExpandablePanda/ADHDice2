@@ -5,7 +5,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { TaskTypeSelect } from "./task-type-identity";
-import type { TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
+import type { TaskEnergy, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal } from "@/lib/database.types";
 import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
 import {
   getSelectedTaskPriorityToneClass,
@@ -50,6 +50,19 @@ const REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = [
   { label: "Weeks", value: "weekly" },
   { label: "Months", value: "monthly" },
 ];
+const ENERGY_OPTIONS: ReadonlyArray<{ label: string; value: TaskEnergy }> = [
+  { label: "None", value: "none" },
+  { label: "Low", value: "low" },
+  { label: "Medium", value: "medium" },
+  { label: "High", value: "high" },
+];
+
+function energyTone(energy: TaskEnergy) {
+  if (energy === "high") return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
+  if (energy === "medium") return "border-[#f2df9b] bg-[#fff6df] text-[#b77900] dark:border-[#6b5317] dark:bg-[#44350d] dark:text-[#ffd56b]";
+  if (energy === "low") return "border-[#c7eedc] bg-[#e8fbf2] text-[#119a69] dark:border-[#275443] dark:bg-[#16352c] dark:text-[#7de4b8]";
+  return "border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60";
+}
 
 export function TaskCreationComposer({
   allTags,
@@ -57,6 +70,7 @@ export function TaskCreationComposer({
   onCancel,
   onCreate,
   onCreated,
+  presentation = "default",
   submitLabel = "Add",
   taskTypeOptions,
   titleLabel = "Task title",
@@ -66,6 +80,7 @@ export function TaskCreationComposer({
   onCancel: () => void;
   onCreate: (draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
   onCreated?: () => void;
+  presentation?: "default" | "inline-child";
   submitLabel?: string;
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
   titleLabel?: string;
@@ -84,6 +99,7 @@ export function TaskCreationComposer({
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
   const [priority, setPriority] = useState<TaskPriorityLevelOption>("0");
+  const [energy, setEnergy] = useState<TaskEnergy>("none");
   const [isCreating, setIsCreating] = useState(false);
   const [creationError, setCreationError] = useState<string | null>(null);
   const titleInputRef = useRef<HTMLInputElement | null>(null);
@@ -142,6 +158,7 @@ export function TaskCreationComposer({
     return {
       due_on: dueOn || null,
       due_time: dueOn ? (dueTime || null) : null,
+      energy,
       priority_level: Number.parseInt(priority, 10) as TaskPriorityLevel,
       repeat_day_of_month: repeatDay,
       repeat_days_of_week: repeatFrequency === "weekly" || repeatFrequency === "custom" ? [...repeatDaysOfWeek] : [],
@@ -169,6 +186,7 @@ export function TaskCreationComposer({
     setTags([]);
     setTagDraft("");
     setPriority("0");
+    setEnergy("none");
   }
 
   function handleCancel() {
@@ -208,7 +226,9 @@ export function TaskCreationComposer({
 
   return (
     <form
-      className="flex flex-wrap items-end gap-2 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-2.5 dark:border-white/10 dark:bg-white/[0.03]"
+      className={presentation === "inline-child"
+        ? "flex flex-wrap items-end gap-2 bg-white dark:bg-[#181226]"
+        : "flex flex-wrap items-end gap-2 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-2.5 dark:border-white/10 dark:bg-white/[0.03]"}
       onSubmit={handleSubmit}
     >
       <label className="min-w-[min(100%,16rem)] flex-1">
@@ -255,13 +275,23 @@ export function TaskCreationComposer({
             <input aria-label="Due time" className={TASK_TABLE_INPUT_CLASS} onChange={(event) => setDueTime(event.target.value)} type="time" value={dueTime} />
           </label>
         </div>
-        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
+        <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,1.6fr)]">
           <div className="grid min-w-0 gap-1">
             <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Priority</span>
             <div className="flex flex-wrap gap-2">
               {TASK_PRIORITY_LEVEL_OPTIONS.map((value) => (
                 <TaskTableChipButton key={value} onClick={() => setPriority(value)} toneClassName={priority === value ? getSelectedTaskPriorityToneClass(value) : getTaskPriorityToneClass(value)}>
                   {value}
+                </TaskTableChipButton>
+              ))}
+            </div>
+          </div>
+          <div className="grid min-w-0 gap-1">
+            <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Energy</span>
+            <div className="flex flex-wrap gap-2">
+              {ENERGY_OPTIONS.map((option) => (
+                <TaskTableChipButton key={option.value} onClick={() => setEnergy(option.value)} toneClassName={energy === option.value ? energyTone(option.value) : TASK_TABLE_INACTIVE_CHIP_CLASS}>
+                  {option.label}
                 </TaskTableChipButton>
               ))}
             </div>
@@ -406,6 +436,7 @@ export function TaskChildCreationComposer({
       onCancel={onCancel}
       onCreate={(draft) => onCreateChildTask(parentTaskId, draft.title, draft.taskTypeSelection, draft.metadata)}
       onCreated={onCreated}
+      presentation="inline-child"
       submitLabel={`Add ${childLabel}`}
       taskTypeOptions={taskTypeOptions}
       titleLabel={`${childLabel} title`}
