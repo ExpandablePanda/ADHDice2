@@ -608,6 +608,20 @@ test("Home V6 normalization preserves stable IDs and explicit empty sections", (
   assert.deepEqual(buildHomeRoutineSections(normalized.routineTaskIds, normalized.routineSections, normalized.routineSectionIdByTaskId).map((section) => section.groupIds), [["a"], []]);
 });
 
+test("Home V6 preserves Routine assignments outside Home To-do membership", () => {
+  const sections = [{ id: "breakfast", name: "Breakfast" }, { id: "test-3", name: "Test Section 3" }];
+  for (const taskIds of [[], ["unrelated-todo"]]) {
+    const normalized = normalizeHomeTodoState({
+      schemaVersion: 6,
+      taskIds,
+      routineTaskIds: ["vacuum"],
+      routineSections: sections,
+      routineSectionIdByTaskId: { vacuum: "test-3" },
+    });
+    assert.deepEqual(normalized.routineSectionIdByTaskId, { vacuum: "test-3" });
+  }
+});
+
 test("Home V6 assignments have one section per Routine and safe stale fallback", () => {
   const state = normalizeHomeTodoState({
     schemaVersion: 6,
@@ -629,6 +643,22 @@ test("Home Routine section moves append to the destination and no-op in the curr
     routineTaskIds,
     routineSectionIdByTaskId: assignments,
   });
+});
+
+test("Home Routine section moves survive V6 normalization", () => {
+  const state = normalizeHomeTodoState({
+    schemaVersion: 6,
+    taskIds: [],
+    routineTaskIds: ["a", "b", "c"],
+    routineSections: [{ id: "breakfast", name: "Breakfast" }, { id: "test-3", name: "Test Section 3" }],
+    routineSectionIdByTaskId: { a: "breakfast", b: "breakfast", c: "test-3" },
+  });
+  const moved = moveHomeRoutineTaskIdToSection(state.routineTaskIds, state.routineSectionIdByTaskId, "a", "test-3");
+  const normalized = normalizeHomeTodoState({ ...state, ...moved });
+  const rendered = buildHomeRoutineSections(normalized.routineTaskIds, normalized.routineSections, normalized.routineSectionIdByTaskId);
+
+  assert.equal(normalized.routineSectionIdByTaskId.a, "test-3");
+  assert.deepEqual(rendered.map((section) => section.groupIds), [["b"], ["c", "a"]]);
 });
 
 test("Home Routine membership reconciliation removes stale assignments and gives new members the last section", () => {

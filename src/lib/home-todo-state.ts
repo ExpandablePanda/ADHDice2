@@ -452,6 +452,7 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
   const routineTaskIds = Array.isArray(candidate.routineTaskIds)
     ? normalizeHomeRoutineTaskIds(candidate.routineTaskIds)
     : [];
+  const routineTaskIdSet = new Set(routineTaskIds);
   const routinesPerSection = isHomeTodoRoutinesPerSection(candidate.routinesPerSection)
     ? candidate.routinesPerSection
     : normalizeHomeTodoRoutinesPerSection(candidate.routinesPerPhase);
@@ -462,7 +463,7 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
       routineSections: normalizeHomeRoutineSectionDefinitions(candidate.routineSections),
       routineSectionIdByTaskId: candidate.routineSectionIdByTaskId && typeof candidate.routineSectionIdByTaskId === "object" && !Array.isArray(candidate.routineSectionIdByTaskId)
         ? Object.fromEntries(Object.entries(candidate.routineSectionIdByTaskId as Record<string, unknown>).filter(([taskId, sectionId]) => (
-          taskIdSet.has(taskId) && typeof sectionId === "string" && sectionId.trim().length > 0
+          routineTaskIdSet.has(taskId) && typeof sectionId === "string" && sectionId.trim().length > 0
         )).map(([taskId, sectionId]) => [taskId, (sectionId as string).trim()]))
         : {},
     }
