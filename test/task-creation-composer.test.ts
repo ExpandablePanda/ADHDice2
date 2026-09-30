@@ -67,6 +67,28 @@ test("shared creation composer is shellless and locally suppresses input focus s
   assert.match(globals, /input\.health-input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="range"\]\):focus-visible[\s\S]*border-color: var\(--accent\) !important/);
 });
 
+test("composer keyboard focus uses control-native emphasis without changing selection wiring", () => {
+  const composer = read("../src/components/task-app/task-creation-composer.tsx");
+  const globals = read("../src/app/globals.css");
+  assert.match(composer, /data-task-creation-composer/);
+  assert.match(composer, /<TaskTypeSelect[\s\S]*openOnFocus/);
+  assert.match(globals, /\[data-task-creation-composer\] button:focus,[\s\S]*button:focus-visible \{[\s\S]*outline: none !important[\s\S]*box-shadow: none !important/);
+  assert.match(globals, /\[data-task-creation-composer\] button:focus-visible,[\s\S]*button:focus-visible > span\[class\*="rounded-full"\][\s\S]*background: #f1ecff !important/);
+  assert.match(composer, /onClick=\{\(\) => setPriority\(value\)\}/);
+  assert.match(composer, /onClick=\{\(\) => setEnergy\(option\.value\)\}/);
+});
+
+test("Task Type open-on-focus is opt-in and keeps the default selector behavior", () => {
+  const taskTypeSelect = read("../src/components/task-app/task-type-identity.tsx");
+  assert.match(taskTypeSelect, /openOnFocus = false/);
+  assert.match(taskTypeSelect, /openOnFocus\?: boolean/);
+  assert.match(taskTypeSelect, /if \(openOnFocus && !isOpen\) openMenu\(\)/);
+  assert.match(taskTypeSelect, /if \(event\.key === "Tab"\)[\s\S]*if \(isOpen\) closeMenu\(\)/);
+  assert.match(taskTypeSelect, /event\.key === "ArrowDown" \|\| event\.key === "ArrowUp"/);
+  assert.match(taskTypeSelect, /event\.key === "Enter" \|\| event\.key === " "/);
+  assert.doesNotMatch(taskTypeSelect, /openOnFocus: true/);
+});
+
 test("Table, List, Task Type menu, and keyboard New Task share the corrected full-editor route", () => {
   const app = read("../src/components/task-app.tsx");
   const tasksPage = read("../src/components/task-app/tasks-page.tsx");

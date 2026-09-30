@@ -367,6 +367,26 @@
     color: rgb(255 255 255 / 60%) !important;
   }
 
+  [data-task-creation-composer] button:focus,
+  [data-task-creation-composer] button:focus-visible {
+    outline: none !important;
+    box-shadow: none !important;
+  }
+
+  [data-task-creation-composer] button:focus-visible,
+  [data-task-creation-composer] button:focus-visible > span[class*="rounded-full"] {
+    border-color: #b9a8ff !important;
+    background: #f1ecff !important;
+    color: #6f57f6 !important;
+  }
+
+  [data-theme="dark"] [data-task-creation-composer] button:focus-visible,
+  [data-theme="dark"] [data-task-creation-composer] button:focus-visible > span[class*="rounded-full"] {
+    border-color: #7f67ff !important;
+    background: #22193f !important;
+    color: #cabfff !important;
+  }
+
   .ui-pill-button-light {
     border-radius: var(--radius-pill);
     background: var(--surface-muted);

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.75`.
+- Current working app version: `7.15.76`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.15.76 Side TaskCreationComposer keyboard focus correction
+
+Keyboard focus inside the shared TaskCreationComposer now uses the focused
+control's native interactive emphasis instead of browser blue/purple focus
+rectangles. Inputs retain their neutral focus behavior, while chips and action
+buttons receive composer-local emphasis without changing their selected values.
+Task Type can open on focus only when the opt-in `openOnFocus` prop is requested
+by TaskCreationComposer; its default focus/open behavior remains unchanged.
+Focused composer contracts, targeted lint, and `git diff --check` are the
+source verification boundary. Browser/manual QA remains Andrew-owned and
+unverified.
 
 ## 2026-09-30 7.15.75 Side TaskCreationComposer focus and spacing correction
 

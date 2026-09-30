@@ -118,6 +118,7 @@ export function TaskTypeSelect({
   className,
   disabled = false,
   label,
+  openOnFocus = false,
   onInteractionEnd,
   onInteractionStart,
   onChange,
@@ -129,6 +130,7 @@ export function TaskTypeSelect({
   className?: string;
   disabled?: boolean;
   label: string;
+  openOnFocus?: boolean;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
   onChange: (value: string) => void;
@@ -143,6 +145,7 @@ export function TaskTypeSelect({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const interactionEndFrameRef = useRef<number | null>(null);
+  const pointerFocusRef = useRef(false);
   const onInteractionEndRef = useRef(onInteractionEnd);
   const selectedOption = options.find((option) => option.value === value) ?? options[0];
   const selectedOptionIndex = getTaskTypeSelectInitialActiveOptionIndex(options, value) ?? 0;
@@ -262,9 +265,9 @@ export function TaskTypeSelect({
 
   if (!selectedOption) return null;
   const isCompact = size === "compact";
-  const triggerClassName = isCompact
+  const triggerClassName = `${isCompact
     ? "inline-flex min-h-7 min-w-[7rem] max-w-[13rem] w-auto items-center justify-between gap-1.5 rounded-full border border-[#e5e0f5] bg-white px-2 py-1 text-left text-xs font-medium text-[#2f294a] outline-none transition hover:border-[#cfc2fb] focus:border-[#b9a8ff] focus:ring-2 focus:ring-[#d9d0ff]/45 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/8 dark:text-white dark:hover:border-white/25 dark:focus:border-[#6d56d6]"
-    : "flex min-h-10 w-full items-center justify-between gap-3 rounded-[0.95rem] border border-[#e5e0f5] bg-white px-3 py-2 text-left text-sm text-[#2f294a] outline-none transition hover:border-[#cfc2fb] focus:border-[#b9a8ff] focus:ring-2 focus:ring-[#d9d0ff]/45 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/8 dark:text-white dark:hover:border-white/25 dark:focus:border-[#6d56d6]";
+    : "flex min-h-10 w-full items-center justify-between gap-3 rounded-[0.95rem] border border-[#e5e0f5] bg-white px-3 py-2 text-left text-sm text-[#2f294a] outline-none transition hover:border-[#cfc2fb] focus:border-[#b9a8ff] focus:ring-2 focus:ring-[#d9d0ff]/45 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/8 dark:text-white dark:hover:border-white/25 dark:focus:border-[#6d56d6]"} ${openOnFocus && isOpen ? "border-[#b9a8ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#7f67ff] dark:bg-[#22193f] dark:text-[#cabfff]" : ""}`;
   const panel = isOpen && menuPosition && typeof document !== "undefined" ? (
     <AdhdDropdownPanel
       aria-label={`${label} options`}
@@ -312,6 +315,13 @@ export function TaskTypeSelect({
         aria-label={ariaLabel ?? label}
         className={triggerClassName}
         disabled={disabled}
+        onFocus={() => {
+          if (pointerFocusRef.current) {
+            pointerFocusRef.current = false;
+            return;
+          }
+          if (openOnFocus && !isOpen) openMenu();
+        }}
         onKeyDown={(event) => {
           if (event.key === "Tab") {
             if (isOpen) closeMenu();
@@ -352,8 +362,15 @@ export function TaskTypeSelect({
             selectActiveOption();
           }
         }}
-        onPointerDown={handleInteractionPointerDown}
+        onPointerDown={() => {
+          pointerFocusRef.current = true;
+          handleInteractionPointerDown();
+        }}
+        onPointerUp={() => {
+          pointerFocusRef.current = false;
+        }}
         onClick={() => {
+          pointerFocusRef.current = false;
           if (isOpen) {
             closeMenu(true);
             return;

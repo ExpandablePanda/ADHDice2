@@ -248,6 +248,7 @@ export function TaskCreationComposer({
           disabled={isCreating}
           label="Task Type"
           onChange={setTaskTypeSelection}
+          openOnFocus
           options={taskTypeOptions}
           value={taskTypeSelection}
         />
