@@ -2,21 +2,201 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 
-import { getTaskRepeatCategory, isWeekdaysRepeatSelection } from "../src/lib/task-repeat.ts";
+import { createTask } from "../src/lib/task-buckets.ts";
+import {
+  buildCustomCadenceMutation,
+  calcNextDueDateFromDate,
+  formatRepeatFrequencyLabel,
+  formatRepeatSummary,
+  getTaskRepeatCategory,
+  normalizePresetRepeatSelection,
+  taskRepeatEditorValueToUpdate,
+  isWeekdaysRepeatSelection,
+} from "../src/lib/task-repeat.ts";
 
 test("exact Weekdays is its own structured Repeat category", () => {
   assert.equal(isWeekdaysRepeatSelection("weekly", [1, 2, 3, 4, 5], 1), true);
   assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5], 1), "weekdays");
   assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5, 6], 1), "weekly");
-  assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5], 2), "weekly");
+  assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5], 2), "custom");
 });
 test("Repeat has normal Weekdays category controls and no dedicated Weekdays-first sort", () => {
   const source = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+  const editorSource = readFileSync(new URL("../src/components/ui/task-repeat-editor.tsx", import.meta.url), "utf8");
   const canonicalSource = readFileSync(new URL("../src/lib/task-app-derived.ts", import.meta.url), "utf8");
   const searchSource = readFileSync(new URL("../src/lib/task-search-selector.ts", import.meta.url), "utf8");
-  assert.match(source, /value: "weekdays"/);
+  assert.match(editorSource, /handlePresetClick\("weekdays"\)/);
   assert.match(source, /structuredFilters\.repeat\.includes\(getTaskRepeatCategory/);
   assert.match(canonicalSource, /getTaskRepeatCategory\(task\.repeat_frequency, task\.repeat_days_of_week, task\.repeat_interval\)/);
   assert.match(searchSource, /getTaskRepeatCategory\(task\.repeat_frequency, task\.repeat_days_of_week, task\.repeat_interval\)/);
   assert.doesNotMatch(source, /repeat_weekdays_first|Weekdays first/);
+});
+
+test("repeat categories distinguish fixed presets from legacy intervaled schedules", () => {
+  assert.equal(getTaskRepeatCategory("none", [], 1), "none");
+  assert.equal(getTaskRepeatCategory("daily", [], 1), "daily");
+  assert.equal(getTaskRepeatCategory("daily", [], 3), "custom");
+  assert.equal(getTaskRepeatCategory("daily_until_complete", [], 1), "daily_until_complete");
+  assert.equal(getTaskRepeatCategory("daily_until_complete", [], 2), "custom");
+  assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5], 1), "weekdays");
+  assert.equal(getTaskRepeatCategory("weekly", [2, 4], 1), "weekly");
+  assert.equal(getTaskRepeatCategory("weekly", [2, 4], 2), "custom");
+  assert.equal(getTaskRepeatCategory("monthly", [], 1), "monthly");
+  assert.equal(getTaskRepeatCategory("monthly", [], 3), "custom");
+  assert.equal(getTaskRepeatCategory("custom", [], 1), "custom");
+});
+
+test("preset normalization resets incompatible recurrence fields immediately", () => {
+  const current = {
+    repeatFrequency: "weekly" as const,
+    repeatInterval: 4,
+    repeatDaysOfWeek: [2, 4],
+    repeatDayOfMonth: 17,
+    repeatMonthlyMode: "ordinal_weekday" as const,
+    repeatMonthlyOrdinal: "third" as const,
+    repeatMonthlyWeekday: 2,
+  };
+  const original = { ...current, repeatDaysOfWeek: [...current.repeatDaysOfWeek] };
+
+  assert.deepEqual(normalizePresetRepeatSelection("none", current), {
+    repeatFrequency: "none",
+    repeatInterval: 1,
+    repeatDaysOfWeek: [],
+    repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  });
+  assert.deepEqual(normalizePresetRepeatSelection("daily", current).repeatInterval, 1);
+  assert.deepEqual(normalizePresetRepeatSelection("daily_until_complete", current).repeatInterval, 1);
+  assert.deepEqual(normalizePresetRepeatSelection("weekdays", current).repeatDaysOfWeek, [1, 2, 3, 4, 5]);
+  assert.deepEqual(normalizePresetRepeatSelection("weekly", { repeatDaysOfWeek: [] }, { dueOn: "2026-08-04" }).repeatDaysOfWeek, [2]);
+  assert.deepEqual(normalizePresetRepeatSelection("weekly", { repeatFrequency: "daily", repeatDaysOfWeek: [5] }, { dueOn: "2026-08-04" }).repeatDaysOfWeek, [2]);
+  assert.deepEqual(normalizePresetRepeatSelection("monthly", { repeatFrequency: "daily", repeatMonthlyMode: "ordinal_weekday", repeatMonthlyOrdinal: "last", repeatMonthlyWeekday: 6 }, { dueOn: "2026-08-17" }).repeatDayOfMonth, 17);
+  assert.deepEqual(normalizePresetRepeatSelection("monthly", {
+    repeatFrequency: "monthly",
+    repeatMonthlyMode: "ordinal_weekday",
+    repeatMonthlyOrdinal: "third",
+    repeatMonthlyWeekday: 2,
+  }).repeatMonthlyOrdinal, "third");
+  assert.deepEqual(current, original);
+});
+
+test("custom cadence helpers persist unit-specific canonical values", () => {
+  const days = buildCustomCadenceMutation({
+    unit: "daily",
+    repeatInterval: 3,
+    repeatDaysOfWeek: [2, 4],
+    repeatDayOfMonth: 15,
+    repeatMonthlyMode: "ordinal_weekday",
+    repeatMonthlyOrdinal: "third",
+    repeatMonthlyWeekday: 1,
+  });
+  assert.equal(days.repeatFrequency, "daily");
+  assert.equal(days.repeatInterval, 3);
+  assert.deepEqual(taskRepeatEditorValueToUpdate(days), {
+    repeat_frequency: "daily",
+    repeat_interval: 3,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  });
+
+  const weeks = buildCustomCadenceMutation({
+    unit: "weekly",
+    repeatInterval: 2,
+    repeatDaysOfWeek: [2, 4],
+    repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  });
+  assert.deepEqual(weeks, {
+    repeatFrequency: "weekly",
+    repeatInterval: 2,
+    repeatDaysOfWeek: [2, 4],
+    repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  });
+
+  const dayOfMonth = buildCustomCadenceMutation({
+    unit: "monthly",
+    repeatInterval: 3,
+    repeatDaysOfWeek: [],
+    repeatDayOfMonth: 15,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  });
+  assert.equal(dayOfMonth.repeatFrequency, "monthly");
+  assert.equal(dayOfMonth.repeatInterval, 3);
+  assert.equal(dayOfMonth.repeatDayOfMonth, 15);
+  assert.equal(dayOfMonth.repeatMonthlyMode, "day_of_month");
+
+  const ordinal = buildCustomCadenceMutation({
+    unit: "monthly",
+    repeatInterval: 3,
+    repeatDaysOfWeek: [],
+    repeatDayOfMonth: 15,
+    repeatMonthlyMode: "ordinal_weekday",
+    repeatMonthlyOrdinal: "third",
+    repeatMonthlyWeekday: 1,
+  });
+  assert.deepEqual({
+    repeatMonthlyMode: ordinal.repeatMonthlyMode,
+    repeatMonthlyOrdinal: ordinal.repeatMonthlyOrdinal,
+    repeatMonthlyWeekday: ordinal.repeatMonthlyWeekday,
+  }, {
+    repeatMonthlyMode: "ordinal_weekday",
+    repeatMonthlyOrdinal: "third",
+    repeatMonthlyWeekday: 1,
+  });
+});
+
+test("repeat formatters agree with the presentation category", () => {
+  assert.equal(formatRepeatFrequencyLabel("daily", 1), "Daily");
+  assert.equal(formatRepeatFrequencyLabel("daily", 3), "Every 3 days");
+  assert.equal(formatRepeatFrequencyLabel("weekly", 1, [1, 2, 3, 4, 5]), "Weekdays");
+  assert.equal(formatRepeatFrequencyLabel("weekly", 2, [2, 4]), "Every 2 weeks (Tue, Thu)");
+  assert.equal(formatRepeatFrequencyLabel("monthly", 3), "Every 3 months");
+  assert.equal(formatRepeatFrequencyLabel("monthly", 3, [], "ordinal_weekday", "third", 1), "Every 3 months (Third Monday)");
+  assert.doesNotMatch(formatRepeatFrequencyLabel("monthly", 4), /Monthly ·/);
+  assert.equal(formatRepeatSummary({
+    repeat_frequency: "weekly",
+    repeat_interval: 2,
+    repeat_days_of_week: [2, 4],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  }), "Every 2 weeks (Tue, Thu)");
+});
+
+test("repeat date calculation keeps interval semantics independent of presentation category", () => {
+  const base = {
+    due_on: "2026-08-15",
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month" as const,
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  };
+  const task = (overrides: Partial<Parameters<typeof createTask>[0]>) => createTask({
+    created_at: "2026-08-15T08:00:00.000Z",
+    id: "repeat-date-test",
+    sort_order: 1,
+    status: "pending",
+    title: "Repeat date test",
+    ...base,
+    ...overrides,
+  });
+  assert.equal(calcNextDueDateFromDate(task({ repeat_frequency: "daily", repeat_interval: 1 }), "2026-08-15"), "2026-08-16");
+  assert.equal(calcNextDueDateFromDate(task({ repeat_frequency: "daily", repeat_interval: 3 }), "2026-08-15"), "2026-08-18");
+  assert.equal(calcNextDueDateFromDate(task({ repeat_frequency: "weekly", repeat_interval: 1, repeat_days_of_week: [2] }), "2026-08-17"), "2026-08-18");
+  assert.equal(calcNextDueDateFromDate(task({ repeat_frequency: "monthly", repeat_interval: 1 }), "2026-08-15"), "2026-09-15");
+  assert.equal(calcNextDueDateFromDate(task({ repeat_frequency: "monthly", repeat_interval: 3 }), "2026-08-15"), "2026-11-15");
 });

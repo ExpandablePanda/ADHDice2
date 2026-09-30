@@ -113,8 +113,7 @@ test("full-editor finishing actions return to Summary while intermediate editors
   assert.ok(metadataBranch.includes('setTaskPriorities(metadataTask.id, []); returnFullMetadataToSummary()'));
   assert.ok(metadataBranch.includes('setTaskEnergy(metadataTask.id, option.value); returnFullMetadataToSummary()'));
   assert.match(metadataBranch, /setTaskDisplayStatus\(metadataTask\.id, status\);\s*returnFullMetadataToSummary\(\)/);
-  assert.match(metadataBranch, /value === "none" \|\| value === "daily" \|\| value === "daily_until_complete"/);
-  assert.match(metadataBranch, /setTaskRepeat\(metadataTask\.id, "weekly", \{ repeatDaysOfWeek/);
+  assert.match(metadataBranch, /<TaskRepeatEditor/);
   assert.match(metadataBranch, /commitTaskLink\(metadataTask\.id\); returnFullMetadataToSummary\(\)/);
   assert.match(metadataBranch, /clearTaskNotes\(metadataTask\.id\); returnFullMetadataToSummary\(\)/);
   assert.match(metadataBranch, /onKeyDown=\{\(event\) => \{ if \(event\.key !== "Enter"\) return; event\.preventDefault\(\); applyMetadataEstimatedMinutes\(\); \}\}/);

@@ -20,6 +20,12 @@ import {
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, type TaskStateRuntimeAction } from "@/lib/task-state-runtime-actions";
 import { resolveTaskTypeSelection } from "@/lib/task-type";
 import {
+  buildCustomCadenceMutation,
+  normalizePresetRepeatSelection,
+  taskRepeatEditorValueToUpdate,
+  type TaskRepeatEditorValue,
+} from "@/lib/task-repeat";
+import {
   executeTaskStateRuntimeAction,
   type TaskStateRuntimeExecutionResult,
   type TaskStateRuntimeLocalTask,
@@ -201,16 +207,38 @@ export function useTaskBatchEditAction({
       }
 
       if (draft.repeatFrequency !== "unchanged") {
-        updateValues.repeat_frequency = draft.repeatFrequency;
-        updateValues.repeat_interval = draft.repeatFrequency === "none"
-          ? 1
-          : Math.max(1, parsePositiveInteger(draft.repeatInterval) ?? 1);
-        updateValues.repeat_days_of_week = draft.repeatFrequency === "weekly" || draft.repeatFrequency === "custom"
-          ? [...draft.repeatDaysOfWeek].sort((left, right) => left - right)
-          : [];
-        updateValues.repeat_day_of_month = draft.repeatFrequency === "monthly" || draft.repeatFrequency === "custom"
-          ? parseDayOfMonth(draft.repeatDayOfMonth)
-          : null;
+        const currentRepeatValue: TaskRepeatEditorValue = {
+          repeatFrequency: task.repeat_frequency,
+          repeatInterval: task.repeat_interval,
+          repeatDaysOfWeek: task.repeat_days_of_week,
+          repeatDayOfMonth: task.repeat_day_of_month,
+          repeatMonthlyMode: task.repeat_monthly_mode,
+          repeatMonthlyOrdinal: task.repeat_monthly_ordinal,
+          repeatMonthlyWeekday: task.repeat_monthly_weekday,
+        };
+        const nextRepeatValue = draft.repeatFrequency === "custom"
+          ? buildCustomCadenceMutation({
+            unit: draft.repeatCustomUnit,
+            repeatInterval: Math.max(1, parsePositiveInteger(draft.repeatInterval) ?? 1),
+            repeatDaysOfWeek: [...draft.repeatDaysOfWeek].sort((left, right) => left - right),
+            repeatDayOfMonth: parseDayOfMonth(draft.repeatDayOfMonth),
+            repeatMonthlyMode: draft.repeatMonthlyMode,
+            repeatMonthlyOrdinal: draft.repeatMonthlyOrdinal,
+            repeatMonthlyWeekday: draft.repeatMonthlyWeekday,
+          }, { dueOn: task.due_on })
+          : normalizePresetRepeatSelection(
+            draft.repeatFrequency,
+            {
+              ...currentRepeatValue,
+              repeatDaysOfWeek: draft.repeatDaysOfWeek,
+              repeatDayOfMonth: parseDayOfMonth(draft.repeatDayOfMonth),
+              repeatMonthlyMode: draft.repeatMonthlyMode,
+              repeatMonthlyOrdinal: draft.repeatMonthlyOrdinal,
+              repeatMonthlyWeekday: draft.repeatMonthlyWeekday,
+            },
+            { dueOn: task.due_on },
+          );
+        Object.assign(updateValues, taskRepeatEditorValueToUpdate(nextRepeatValue));
       }
 
       const occurrenceSensitive = isOccurrenceSensitiveTaskMutation({

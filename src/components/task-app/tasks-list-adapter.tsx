@@ -47,10 +47,6 @@ import { TaskStatusCircleRail, formatTaskStatusLabel } from "./task-status-ui";
 import {
   formatRepeatFrequencyLabel,
   formatRepeatSummary,
-  isWeekdaysRepeatSelection,
-  REPEAT_MONTHLY_MODE_OPTIONS,
-  REPEAT_MONTHLY_ORDINAL_OPTIONS,
-  REPEAT_WEEKDAY_FULL_LABELS,
 } from "@/lib/task-repeat";
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion } from "@/lib/task-child-preview-collapse";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
@@ -65,7 +61,6 @@ import {
   TASK_TABLE_TITLE_CELL_CLASS,
   TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE,
   TASK_TABLE_VISIBLE_TITLE_TEXT_CLASS,
-  CompactRepeatCadenceControls,
   TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
   TASK_LIST_QUICK_PANEL_TEXT_INPUT_CLASS,
   TaskHierarchySearchChip,
@@ -76,6 +71,8 @@ import {
   TaskSelectionToolbar,
   useTaskRowLongPress,
 } from "@/components/ui/task-table-primitives";
+import { TaskRepeatEditor } from "@/components/ui/task-repeat-editor";
+import type { TaskRepeatEditorValue } from "@/lib/task-repeat";
 import { AdhdIconButton } from "@/components/ui-system/index";
 import { TaskTypeSelect } from "./task-type-identity";
 import { TaskHierarchyChevronButton } from "./task-hierarchy-chevron-button";
@@ -182,38 +179,12 @@ type ChildTaskDropTarget = { placement: TaskSiblingDropPlacement; taskId: string
 const PRIORITY_OPTIONS = [
   ...TASK_PRIORITY_LEVEL_OPTIONS.map((value) => ({ label: value, value })),
 ];
-const REPEAT_OPTIONS = [
-  { label: "No Repeat", value: "none" as const },
-  { label: "Daily", value: "daily" as const },
-  { label: "Daily Until Complete", value: "daily_until_complete" as const },
-  { label: "Weekly", value: "weekly" as const },
-  { label: "Monthly", value: "monthly" as const },
-  { label: "Custom Cadence", value: "custom" as const },
-];
-const REPEAT_WEEKDAY_OPTIONS = [
-  { label: "Sun", value: 0 },
-  { label: "Mon", value: 1 },
-  { label: "Tue", value: 2 },
-  { label: "Wed", value: 3 },
-  { label: "Thu", value: 4 },
-  { label: "Fri", value: 5 },
-  { label: "Sat", value: 6 },
-];
-const WEEKDAYS_REPEAT_DAYS = [1, 2, 3, 4, 5] as const;
-
 function getDelayAnchorDate(dueOn: string | null, todayDateKey: string) {
   if (!dueOn) {
     return todayDateKey;
   }
   return dueOn > todayDateKey ? dueOn : todayDateKey;
 }
-const REPEAT_MONTHLY_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label, value }));
-const COMPACT_REPEAT_UNITS: Array<{ label: string; value: PrototypeTaskRow["repeat"] }> = [
-  { label: "Days", value: "daily" },
-  { label: "Weeks", value: "weekly" },
-  { label: "Months", value: "monthly" },
-];
-
 function priorityTone(priority: TaskPriorityLevelOption) {
   return getTaskPriorityToneClass(priority);
 }
@@ -1996,8 +1967,16 @@ function StepsCardPreview({
                 ) : null}
                 {activePanelMode === "repeat" ? (
                   <RepeatQuickPanel
+                    dueOn={item.dueOn}
                     onClose={closeQuickPanel}
-                    onSave={(repeat, cadence) => onSetRepeat?.(item.id, repeat, cadence)}
+                    onSave={(value) => onSetRepeat?.(item.id, value.repeatFrequency, {
+                      repeatDayOfMonth: value.repeatDayOfMonth,
+                      repeatDaysOfWeek: value.repeatDaysOfWeek,
+                      repeatInterval: value.repeatInterval,
+                      repeatMonthlyMode: value.repeatMonthlyMode,
+                      repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
+                      repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+                    })}
                     repeatDayOfMonth={item.repeatDayOfMonth}
                     repeatDaysOfWeek={item.repeatDaysOfWeek}
                     repeatFrequency={item.repeat}
@@ -2347,6 +2326,7 @@ function PriorityQuickPanel({
 }
 
 function RepeatQuickPanel({
+  dueOn,
   onClose,
   onSave,
   repeatDayOfMonth,
@@ -2357,8 +2337,9 @@ function RepeatQuickPanel({
   repeatMonthlyOrdinal,
   repeatMonthlyWeekday,
 }: {
+  dueOn: string | null;
   onClose: () => void;
-  onSave: (repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
+  onSave: (value: TaskRepeatEditorValue) => void;
   repeatDayOfMonth: number | null;
   repeatDaysOfWeek: number[];
   repeatFrequency: PrototypeTaskRow["repeat"];
@@ -2367,152 +2348,23 @@ function RepeatQuickPanel({
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
 }) {
-  const [intervalDraft, setIntervalDraft] = useState(String(Math.max(1, repeatInterval)));
-  const [dayOfMonthDraft, setDayOfMonthDraft] = useState(repeatDayOfMonth ? String(repeatDayOfMonth) : "");
-  const [monthlyMode, setMonthlyMode] = useState<TaskRepeatMonthlyMode>(repeatMonthlyMode);
-  const [monthlyOrdinal, setMonthlyOrdinal] = useState<TaskRepeatMonthlyOrdinal | null>(repeatMonthlyOrdinal);
-  const [monthlyWeekday, setMonthlyWeekday] = useState<number | null>(repeatMonthlyWeekday);
-  const isWeekdaysPresetSelected = isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, Math.max(1, repeatInterval));
-
-  useEffect(() => {
-    setIntervalDraft(String(Math.max(1, repeatInterval)));
-    setDayOfMonthDraft(repeatDayOfMonth ? String(repeatDayOfMonth) : "");
-    setMonthlyMode(repeatMonthlyMode);
-    setMonthlyOrdinal(repeatMonthlyOrdinal);
-    setMonthlyWeekday(repeatMonthlyWeekday);
-  }, [repeatDayOfMonth, repeatInterval, repeatMonthlyMode, repeatMonthlyOrdinal, repeatMonthlyWeekday]);
-
-  const applyCadence = (
-    nextRepeat: PrototypeTaskRow["repeat"],
-    nextDays = repeatDaysOfWeek,
-    nextDayOfMonth = repeatDayOfMonth,
-    nextMonthlyMode = monthlyMode,
-    nextMonthlyOrdinal = monthlyOrdinal,
-    nextMonthlyWeekday = monthlyWeekday,
-  ) => {
-    const parsedInterval = Number.parseInt(intervalDraft, 10);
-    const parsedDayOfMonth = Number.parseInt(dayOfMonthDraft, 10);
-    const resolvedMonthlyMode = nextRepeat === "monthly" ? nextMonthlyMode : "day_of_month";
-    const resolvedMonthlyOrdinal = nextRepeat === "monthly" && resolvedMonthlyMode === "ordinal_weekday"
-      ? nextMonthlyOrdinal ?? "first"
-      : null;
-    const resolvedMonthlyWeekday = nextRepeat === "monthly" && resolvedMonthlyMode === "ordinal_weekday"
-      ? nextMonthlyWeekday ?? 1
-      : null;
-    onSave(nextRepeat, {
-      repeatDayOfMonth: nextRepeat === "monthly" && resolvedMonthlyMode === "day_of_month"
-        ? (Number.isFinite(parsedDayOfMonth) && parsedDayOfMonth >= 1 && parsedDayOfMonth <= 31 ? parsedDayOfMonth : nextDayOfMonth ?? null)
-        : null,
-      repeatDaysOfWeek: nextRepeat === "weekly" || nextRepeat === "custom" ? nextDays : [],
-      repeatInterval: Number.isFinite(parsedInterval) && parsedInterval > 0 ? parsedInterval : 1,
-      repeatMonthlyMode: resolvedMonthlyMode,
-      repeatMonthlyOrdinal: resolvedMonthlyOrdinal,
-      repeatMonthlyWeekday: resolvedMonthlyWeekday,
-    });
-  };
-
-  const applyWeekdaysPreset = () => {
-    setIntervalDraft("1");
-    onSave("weekly", {
-      repeatDayOfMonth: repeatDayOfMonth ?? null,
-      repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS],
-      repeatInterval: 1,
-      repeatMonthlyMode: "day_of_month",
-      repeatMonthlyOrdinal: null,
-      repeatMonthlyWeekday: null,
-    });
-  };
-
   return (
     <TaskListQuickPanelShell onClose={onClose} title="Repeat">
-      <div className="flex flex-wrap gap-2">
-        {REPEAT_OPTIONS.map((option) => (
-          <QuickChipOption
-            active={repeatFrequency === option.value}
-            activeToneClassName={repeatTone(option.value)}
-            key={option.value}
-            onClick={() => applyCadence(option.value)}
-          >
-            {option.label}
-          </QuickChipOption>
-        ))}
-        <QuickChipOption
-          active={isWeekdaysPresetSelected}
-          activeToneClassName={repeatTone("weekly")}
-          onClick={applyWeekdaysPreset}
-        >
-          Weekdays
-        </QuickChipOption>
-      </div>
-      {repeatFrequency !== "none" ? (
-        <div className="mt-3 space-y-2">
-          <CompactRepeatCadenceControls
-            activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
-            dayInputProps={{
-              inputMode: "numeric",
-              max: 31,
-              min: 1,
-              onBlur: () => applyCadence(repeatFrequency, repeatDaysOfWeek, null),
-              onChange: (event) => setDayOfMonthDraft(event.target.value.replace(/[^\d]/g, "").slice(0, 2)),
-              type: "text",
-              value: dayOfMonthDraft,
-            }}
-            inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
-            intervalInputProps={{
-              inputMode: "numeric",
-              min: 1,
-              onBlur: () => applyCadence(repeatFrequency),
-              onChange: (event) => setIntervalDraft(event.target.value.replace(/[^\d]/g, "")),
-              type: "text",
-              value: intervalDraft,
-            }}
-            monthlyMode={monthlyMode}
-            monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
-            monthlyOrdinal={monthlyOrdinal}
-            monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
-            monthlyWeekday={monthlyWeekday}
-            onMonthlyModeClick={(value) => {
-              const nextOrdinal = value === "ordinal_weekday" ? (monthlyOrdinal ?? "first") : null;
-              const nextWeekday = value === "ordinal_weekday" ? (monthlyWeekday ?? 1) : null;
-              setMonthlyMode(value);
-              setMonthlyOrdinal(nextOrdinal);
-              setMonthlyWeekday(nextWeekday);
-              applyCadence(repeatFrequency, repeatDaysOfWeek, repeatDayOfMonth, value, nextOrdinal, nextWeekday);
-            }}
-            onMonthlyOrdinalClick={(value) => {
-              const nextWeekday = monthlyWeekday ?? 1;
-              setMonthlyMode("ordinal_weekday");
-              setMonthlyOrdinal(value);
-              setMonthlyWeekday(nextWeekday);
-              applyCadence(repeatFrequency, repeatDaysOfWeek, repeatDayOfMonth, "ordinal_weekday", value, nextWeekday);
-            }}
-            onMonthlyWeekdayClick={(value) => {
-              const nextOrdinal = monthlyOrdinal ?? "first";
-              setMonthlyMode("ordinal_weekday");
-              setMonthlyOrdinal(nextOrdinal);
-              setMonthlyWeekday(value);
-              applyCadence(repeatFrequency, repeatDaysOfWeek, repeatDayOfMonth, "ordinal_weekday", nextOrdinal, value);
-            }}
-            onRepeatUnitClick={(repeatUnit) => applyCadence(repeatUnit)}
-            onWeekdayClick={(weekday) => {
-              const nextDays = repeatDaysOfWeek.includes(weekday)
-                ? repeatDaysOfWeek.filter((entry) => entry !== weekday)
-                : [...repeatDaysOfWeek, weekday].sort((left, right) => left - right);
-              applyCadence(repeatFrequency, nextDays);
-            }}
-            repeat={repeatFrequency}
-            repeatDaysOfWeek={repeatDaysOfWeek}
-            repeatUnits={COMPACT_REPEAT_UNITS}
-            showInterval
-            showMonthDay={repeatFrequency === "monthly" && monthlyMode !== "ordinal_weekday"}
-            showMonthlyMode={repeatFrequency === "monthly"}
-            showMonthlyOrdinals={repeatFrequency === "monthly" && monthlyMode === "ordinal_weekday"}
-            showMonthlyWeekdays={repeatFrequency === "monthly" && monthlyMode === "ordinal_weekday"}
-            showWeekdays={repeatFrequency === "weekly" || repeatFrequency === "custom"}
-            weekdayOptions={repeatFrequency === "monthly" && monthlyMode === "ordinal_weekday" ? REPEAT_MONTHLY_WEEKDAY_OPTIONS : REPEAT_WEEKDAY_OPTIONS}
-          />
-        </div>
-      ) : null}
+      <TaskRepeatEditor
+        activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
+        dueOn={dueOn}
+        inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+        onChange={onSave}
+        value={{
+          repeatFrequency,
+          repeatInterval,
+          repeatDaysOfWeek,
+          repeatDayOfMonth,
+          repeatMonthlyMode,
+          repeatMonthlyOrdinal,
+          repeatMonthlyWeekday,
+        }}
+      />
     </TaskListQuickPanelShell>
   );
 }
@@ -3957,8 +3809,16 @@ function TasksSimpleList({
             ) : null}
             {activePanelMode === "repeat" ? (
               <RepeatQuickPanel
+                dueOn={task.due_on}
                 onClose={closeQuickPanel}
-                onSave={(repeat, cadence) => tableProps.onSetRepeat?.(task.id, repeat, cadence)}
+                onSave={(value) => tableProps.onSetRepeat?.(task.id, value.repeatFrequency, {
+                  repeatDayOfMonth: value.repeatDayOfMonth,
+                  repeatDaysOfWeek: value.repeatDaysOfWeek,
+                  repeatInterval: value.repeatInterval,
+                  repeatMonthlyMode: value.repeatMonthlyMode,
+                  repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
+                  repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+                })}
                 repeatDayOfMonth={task.repeat_day_of_month}
                 repeatDaysOfWeek={task.repeat_days_of_week ?? []}
                 repeatFrequency={task.repeat_frequency}

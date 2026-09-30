@@ -1,7 +1,21 @@
 import { formatDateKey, shiftDateKey } from "./date-key.ts";
-import type { Task, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "./database.types.ts";
+import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "./database.types.ts";
 
-export type TaskRepeatCategory = Task["repeat_frequency"] | "weekdays";
+export type TaskRepeatCategory = "none" | "daily" | "daily_until_complete" | "weekdays" | "weekly" | "monthly" | "custom";
+export type TaskRepeatEditorUnit = "daily" | "weekly" | "monthly";
+export type TaskRepeatEditorValue = {
+  repeatFrequency: TaskRepeatFrequency;
+  repeatInterval: number;
+  repeatDaysOfWeek: number[];
+  repeatDayOfMonth: number | null;
+  repeatMonthlyMode: TaskRepeatMonthlyMode;
+  repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
+  repeatMonthlyWeekday: number | null;
+};
+export type TaskRepeatEditorDraft = TaskRepeatEditorValue & {
+  unit: TaskRepeatEditorUnit;
+};
+export type TaskRepeatSelection = TaskRepeatCategory;
 
 type ResolveRecurringLiveStatusOptions = {
   currentDayKey: string;
@@ -67,7 +81,7 @@ function getMonthlyOrdinalOccurrenceDate(year: number, monthIndex: number, ordin
 }
 
 function getMonthlyOccurrenceDate(task: Pick<Task, "due_on" | "repeat_day_of_month" | "repeat_monthly_mode" | "repeat_monthly_ordinal" | "repeat_monthly_weekday">, year: number, monthIndex: number, fallbackDateKey: string) {
-  if (isOrdinalMonthlyRepeatTask(task)) {
+  if (isOrdinalMonthlyRepeatTask(task) && task.repeat_monthly_ordinal && task.repeat_monthly_weekday !== null) {
     return getMonthlyOrdinalOccurrenceDate(
       year,
       monthIndex,
@@ -96,7 +110,7 @@ function formatOrdinalMonthlySummary(task: Pick<Task, "repeat_interval" | "repea
     return null;
   }
   return task.repeat_interval > 1
-    ? `${ordinalLabel} ${weekdayLabel} every ${task.repeat_interval} months`
+    ? `Every ${task.repeat_interval} months (${ordinalLabel} ${weekdayLabel})`
     : `${ordinalLabel} ${weekdayLabel} monthly`;
 }
 
@@ -106,6 +120,202 @@ export function isDailyUntilCompleteRepeatFrequency(repeatFrequency: Task["repea
 
 export function isDailyCadenceRepeatFrequency(repeatFrequency: Task["repeat_frequency"]) {
   return repeatFrequency === "daily" || repeatFrequency === "daily_until_complete" || repeatFrequency === "custom";
+}
+
+function normalizeRepeatInterval(value: number | null | undefined) {
+  return Number.isInteger(value) && (value ?? 0) > 0 ? value as number : 1;
+}
+
+function normalizeRepeatDays(days: number[] | null | undefined) {
+  return [...new Set((days ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort((left, right) => left - right);
+}
+
+function getDateWeekday(dueOn: string | null | undefined) {
+  if (!dueOn) {
+    return null;
+  }
+  const date = new Date(`${dueOn}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date.getDay();
+}
+
+function getDateDayOfMonth(dueOn: string | null | undefined) {
+  if (!dueOn) {
+    return null;
+  }
+  const date = new Date(`${dueOn}T12:00:00`);
+  return Number.isNaN(date.getTime()) ? null : date.getDate();
+}
+
+function resolveWeekdaySelection(
+  days: number[] | null | undefined,
+  dueOn: string | null | undefined,
+  fallbackWeekday: number = 1,
+) {
+  const normalizedDays = normalizeRepeatDays(days);
+  if (normalizedDays.length > 0) {
+    return normalizedDays;
+  }
+  const dueWeekday = getDateWeekday(dueOn);
+  return [dueWeekday ?? fallbackWeekday];
+}
+
+function resolveMonthlySelection(
+  current: Partial<TaskRepeatEditorValue>,
+  dueOn: string | null | undefined,
+) {
+  const mode = current.repeatMonthlyMode === "ordinal_weekday" ? "ordinal_weekday" : "day_of_month" as const;
+  if (mode === "ordinal_weekday") {
+    return {
+      repeatDayOfMonth: null,
+      repeatMonthlyMode: mode,
+      repeatMonthlyOrdinal: current.repeatMonthlyOrdinal ?? "first",
+      repeatMonthlyWeekday: current.repeatMonthlyWeekday ?? getDateWeekday(dueOn) ?? 1,
+    } satisfies Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">;
+  }
+  return {
+    repeatDayOfMonth: current.repeatDayOfMonth && current.repeatDayOfMonth >= 1 && current.repeatDayOfMonth <= 31
+      ? current.repeatDayOfMonth
+      : getDateDayOfMonth(dueOn) ?? 1,
+    repeatMonthlyMode: mode,
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  } satisfies Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">;
+}
+
+function clearMonthlyFields() {
+  return {
+    repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month" as const,
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  };
+}
+
+function clearWeeklyFields() {
+  return {
+    repeatDaysOfWeek: [],
+  };
+}
+
+export function createTaskRepeatEditorDraft(value: TaskRepeatEditorValue): TaskRepeatEditorDraft {
+  const unit = value.repeatFrequency === "weekly"
+    ? "weekly"
+    : value.repeatFrequency === "monthly"
+      ? "monthly"
+      : "daily";
+  return {
+    ...value,
+    repeatDaysOfWeek: normalizeRepeatDays(value.repeatDaysOfWeek),
+    repeatInterval: normalizeRepeatInterval(value.repeatInterval),
+    unit,
+  };
+}
+
+export function normalizePresetRepeatSelection(
+  selection: Exclude<TaskRepeatSelection, "custom" | "weekdays"> | "weekdays",
+  current: Partial<TaskRepeatEditorValue> = {},
+  options: { dueOn?: string | null; fallbackWeekday?: number } = {},
+): TaskRepeatEditorValue {
+  if (selection === "none") {
+    return {
+      repeatFrequency: "none",
+      repeatInterval: 1,
+      ...clearWeeklyFields(),
+      ...clearMonthlyFields(),
+    };
+  }
+
+  if (selection === "daily" || selection === "daily_until_complete") {
+    return {
+      repeatFrequency: selection,
+      repeatInterval: 1,
+      ...clearWeeklyFields(),
+      ...clearMonthlyFields(),
+    };
+  }
+
+  if (selection === "weekdays") {
+    return {
+      repeatFrequency: "weekly",
+      repeatInterval: 1,
+      repeatDaysOfWeek: [...WEEKDAYS_REPEAT_DAYS],
+      ...clearMonthlyFields(),
+    };
+  }
+
+  if (selection === "weekly") {
+    return {
+      repeatFrequency: "weekly",
+      repeatInterval: 1,
+      repeatDaysOfWeek: resolveWeekdaySelection(
+        current.repeatFrequency === undefined || current.repeatFrequency === "weekly" ? current.repeatDaysOfWeek : [],
+        options.dueOn,
+        options.fallbackWeekday,
+      ),
+      ...clearMonthlyFields(),
+    };
+  }
+
+  const monthly = resolveMonthlySelection(
+    current.repeatFrequency === undefined || current.repeatFrequency === "monthly" ? current : {},
+    options.dueOn,
+  );
+  return {
+    repeatFrequency: "monthly",
+    repeatInterval: 1,
+    ...clearWeeklyFields(),
+    ...monthly,
+  };
+}
+
+export function buildCustomCadenceMutation(
+  draft: Pick<TaskRepeatEditorDraft, "unit" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">,
+  options: { dueOn?: string | null; fallbackWeekday?: number } = {},
+): TaskRepeatEditorValue {
+  const repeatInterval = normalizeRepeatInterval(draft.repeatInterval);
+  if (draft.unit === "daily") {
+    return {
+      repeatFrequency: "daily",
+      repeatInterval,
+      ...clearWeeklyFields(),
+      ...clearMonthlyFields(),
+    };
+  }
+
+  if (draft.unit === "weekly") {
+    return {
+      repeatFrequency: "weekly",
+      repeatInterval,
+      repeatDaysOfWeek: resolveWeekdaySelection(draft.repeatDaysOfWeek, options.dueOn, options.fallbackWeekday),
+      ...clearMonthlyFields(),
+    };
+  }
+
+  const monthly = resolveMonthlySelection(draft, options.dueOn);
+  return {
+    repeatFrequency: "monthly",
+    repeatInterval,
+    ...clearWeeklyFields(),
+    ...monthly,
+  };
+}
+
+export function taskRepeatEditorValueToUpdate(value: TaskRepeatEditorValue) {
+  return {
+    repeat_frequency: value.repeatFrequency,
+    repeat_interval: normalizeRepeatInterval(value.repeatInterval),
+    repeat_days_of_week: normalizeRepeatDays(value.repeatDaysOfWeek),
+    repeat_day_of_month: value.repeatFrequency === "monthly" && value.repeatMonthlyMode === "day_of_month"
+      ? value.repeatDayOfMonth
+      : null,
+    repeat_monthly_mode: value.repeatFrequency === "monthly" ? value.repeatMonthlyMode : "day_of_month" as const,
+    repeat_monthly_ordinal: value.repeatFrequency === "monthly" && value.repeatMonthlyMode === "ordinal_weekday"
+      ? value.repeatMonthlyOrdinal
+      : null,
+    repeat_monthly_weekday: value.repeatFrequency === "monthly" && value.repeatMonthlyMode === "ordinal_weekday"
+      ? value.repeatMonthlyWeekday
+      : null,
+  };
 }
 
 export function calcNextDueDate(task: Task): string | null {
@@ -261,7 +471,9 @@ export function formatRepeatSummary(task: Pick<Task, "repeat_frequency" | "repea
       : `Monthly${daySummary}`;
   }
 
-  return "Custom repeat";
+  return task.repeat_frequency === "custom"
+    ? `Every ${Math.max(1, task.repeat_interval)} days`
+    : "Custom Cadence";
 }
 
 export function isWeekdaysRepeatSelection(
@@ -281,9 +493,18 @@ export function getTaskRepeatCategory(
   repeatDaysOfWeek: number[] | null | undefined,
   repeatInterval: number | null | undefined,
 ): TaskRepeatCategory {
-  return isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, repeatInterval)
-    ? "weekdays"
-    : repeatFrequency;
+  const normalizedInterval = Math.max(1, repeatInterval ?? 1);
+  if (repeatFrequency === "daily" || repeatFrequency === "weekly" || repeatFrequency === "monthly") {
+    return normalizedInterval > 1
+      ? "custom"
+      : repeatFrequency === "weekly" && isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, repeatInterval)
+        ? "weekdays"
+        : repeatFrequency;
+  }
+  if (repeatFrequency === "daily_until_complete") {
+    return normalizedInterval === 1 ? "daily_until_complete" : "custom";
+  }
+  return repeatFrequency;
 }
 
 export function formatRepeatFrequencyLabel(
@@ -296,16 +517,22 @@ export function formatRepeatFrequencyLabel(
 ) {
   if (repeatFrequency === "none") return "No Repeat";
   if (repeatFrequency === "daily") {
-    return Math.max(1, repeatInterval ?? 1) > 1 ? `Daily · ${Math.max(1, repeatInterval ?? 1)}` : "Daily";
+    return Math.max(1, repeatInterval ?? 1) > 1 ? `Every ${Math.max(1, repeatInterval ?? 1)} days` : "Daily";
   }
   if (repeatFrequency === "daily_until_complete") {
-    return Math.max(1, repeatInterval ?? 1) > 1 ? `Daily Until Complete · ${Math.max(1, repeatInterval ?? 1)}` : "Daily Until Complete";
+    return Math.max(1, repeatInterval ?? 1) > 1 ? `Every ${Math.max(1, repeatInterval ?? 1)} days until complete` : "Daily Until Complete";
   }
   if (repeatFrequency === "weekly") {
     if (isWeekdaysRepeatSelection(repeatFrequency, repeatDaysOfWeek, repeatInterval)) {
       return "Weekdays";
     }
-    return Math.max(1, repeatInterval ?? 1) > 1 ? `Weekly · ${Math.max(1, repeatInterval ?? 1)}` : "Weekly";
+    const weekdayLabels = (repeatDaysOfWeek ?? [])
+      .map((day) => REPEAT_WEEKDAY_LABELS[day] ?? null)
+      .filter((value): value is (typeof REPEAT_WEEKDAY_LABELS)[number] => value !== null);
+    const weekdaySummary = weekdayLabels.length > 0 ? ` (${weekdayLabels.join(", ")})` : "";
+    return Math.max(1, repeatInterval ?? 1) > 1
+      ? `Every ${Math.max(1, repeatInterval ?? 1)} weeks${weekdaySummary}`
+      : `Weekly${weekdaySummary}`;
   }
   if (repeatFrequency === "monthly") {
     if (
@@ -318,11 +545,11 @@ export function formatRepeatFrequencyLabel(
       const weekdayLabel = formatWeekdayLongLabel(repeatMonthlyWeekday);
       if (ordinalLabel && weekdayLabel) {
         return Math.max(1, repeatInterval ?? 1) > 1
-          ? `${ordinalLabel} ${weekdayLabel} every ${Math.max(1, repeatInterval ?? 1)} months`
+          ? `Every ${Math.max(1, repeatInterval ?? 1)} months (${ordinalLabel} ${weekdayLabel})`
           : `${ordinalLabel} ${weekdayLabel} monthly`;
       }
     }
-    return Math.max(1, repeatInterval ?? 1) > 1 ? `Monthly · ${Math.max(1, repeatInterval ?? 1)}` : "Monthly";
+    return Math.max(1, repeatInterval ?? 1) > 1 ? `Every ${Math.max(1, repeatInterval ?? 1)} months` : "Monthly";
   }
   if (repeatFrequency === "custom") {
     return "Custom Cadence";

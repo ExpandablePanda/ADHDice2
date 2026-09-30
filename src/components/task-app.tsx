@@ -277,7 +277,7 @@ import type { CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/t
 import { loadCanonicalTaskScheduleBoundary, type CanonicalReadClient } from "@/lib/task-state-canonical/read-model";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
-import { calcNextDueDateFromDate } from "@/lib/task-repeat";
+import { calcNextDueDateFromDate, normalizePresetRepeatSelection, taskRepeatEditorValueToUpdate, type TaskRepeatEditorValue } from "@/lib/task-repeat";
 import {
   buildStableCanonicalTaskIndex,
   buildTaskAppStructuralData,
@@ -7763,25 +7763,59 @@ export function TaskApp() {
     : null;
   const pendingDetachMilestoneTask = pendingDetachMilestoneTaskId ? tasks.find((task) => task.id === pendingDetachMilestoneTaskId) ?? null : null;
   const handleSharedTaskRepeatChange: NonNullable<ComponentProps<typeof TaskManagementTableV2>["onTaskRepeatChange"]> = (taskId, repeat, cadence) => {
-    void updateTask(taskId, {
-      repeat_frequency: repeat,
-      repeat_day_of_month: repeat === "monthly" && cadence?.repeatMonthlyMode !== "ordinal_weekday"
-        ? cadence?.repeatDayOfMonth ?? null
-        : null,
-      repeat_days_of_week: repeat === "weekly" || repeat === "custom"
-        ? cadence?.repeatDaysOfWeek ?? []
-        : [],
-      repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence?.repeatInterval ?? 1),
-      repeat_monthly_mode: repeat === "monthly"
-        ? cadence?.repeatMonthlyMode ?? "day_of_month"
-        : "day_of_month",
-      repeat_monthly_ordinal: repeat === "monthly" && cadence?.repeatMonthlyMode === "ordinal_weekday"
-        ? cadence.repeatMonthlyOrdinal ?? "first"
-        : null,
-      repeat_monthly_weekday: repeat === "monthly" && cadence?.repeatMonthlyMode === "ordinal_weekday"
-        ? cadence.repeatMonthlyWeekday ?? 1
-        : null,
-    });
+    const dueOn = tasks.find((task) => task.id === taskId)?.due_on;
+    const value: TaskRepeatEditorValue = cadence
+      ? {
+        repeatFrequency: repeat,
+        repeatInterval: cadence.repeatInterval ?? 1,
+        repeatDaysOfWeek: cadence.repeatDaysOfWeek ?? [],
+        repeatDayOfMonth: cadence.repeatDayOfMonth ?? null,
+        repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
+        repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
+        repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+      }
+      : repeat === "custom"
+        ? {
+          repeatFrequency: "daily",
+          repeatInterval: 1,
+          repeatDaysOfWeek: [],
+          repeatDayOfMonth: null,
+          repeatMonthlyMode: "day_of_month",
+          repeatMonthlyOrdinal: null,
+          repeatMonthlyWeekday: null,
+        }
+        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+    void updateTask(taskId, taskRepeatEditorValueToUpdate(value));
+  };
+
+  const applyTaskRepeatEditorValue = (
+    taskId: string,
+    repeat: TaskRepeatFrequency,
+    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">>,
+  ) => {
+    const dueOn = tasks.find((task) => task.id === taskId)?.due_on;
+    const value: TaskRepeatEditorValue = cadence
+      ? {
+        repeatFrequency: repeat,
+        repeatInterval: cadence.repeatInterval ?? 1,
+        repeatDaysOfWeek: cadence.repeatDaysOfWeek ?? [],
+        repeatDayOfMonth: cadence.repeatDayOfMonth ?? null,
+        repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
+        repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
+        repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+      }
+      : repeat === "custom"
+        ? {
+          repeatFrequency: "daily",
+          repeatInterval: 1,
+          repeatDaysOfWeek: [],
+          repeatDayOfMonth: null,
+          repeatMonthlyMode: "day_of_month",
+          repeatMonthlyOrdinal: null,
+          repeatMonthlyWeekday: null,
+        }
+        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+    void updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 
   const completeFlow = (() => {
@@ -8461,31 +8495,7 @@ export function TaskApp() {
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
-                    void updateTask(taskId, {
-                      repeat_frequency: repeat,
-                      ...(cadence
-                        ? {
-                          repeat_day_of_month: repeat === "monthly" && cadence.repeatMonthlyMode !== "ordinal_weekday"
-                            ? cadence.repeatDayOfMonth
-                            : null,
-                          repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
-                          repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
-                          repeat_monthly_mode: repeat === "monthly"
-                            ? (cadence.repeatMonthlyMode ?? "day_of_month")
-                            : "day_of_month",
-                          repeat_monthly_ordinal: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyOrdinal ?? "first")
-                            : null,
-                          repeat_monthly_weekday: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyWeekday ?? 1)
-                            : null,
-                        }
-                        : {
-                          repeat_monthly_mode: repeat === "monthly" ? "day_of_month" : "day_of_month",
-                          repeat_monthly_ordinal: null,
-                          repeat_monthly_weekday: null,
-                        }),
-                    });
+                    applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
@@ -8659,31 +8669,7 @@ export function TaskApp() {
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
-                    void updateTask(taskId, {
-                      repeat_frequency: repeat,
-                      ...(cadence
-                        ? {
-                          repeat_day_of_month: repeat === "monthly" && cadence.repeatMonthlyMode !== "ordinal_weekday"
-                            ? cadence.repeatDayOfMonth
-                            : null,
-                          repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
-                          repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
-                          repeat_monthly_mode: repeat === "monthly"
-                            ? (cadence.repeatMonthlyMode ?? "day_of_month")
-                            : "day_of_month",
-                          repeat_monthly_ordinal: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyOrdinal ?? "first")
-                            : null,
-                          repeat_monthly_weekday: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyWeekday ?? 1)
-                            : null,
-                        }
-                        : {
-                          repeat_monthly_mode: repeat === "monthly" ? "day_of_month" : "day_of_month",
-                          repeat_monthly_ordinal: null,
-                          repeat_monthly_weekday: null,
-                        }),
-                    });
+                    applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);

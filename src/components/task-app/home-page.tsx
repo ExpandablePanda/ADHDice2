@@ -35,13 +35,7 @@ import {
   type TaskPriorityLevel,
   type TaskPriorityLevelOption,
 } from "@/lib/task-priority";
-import {
-  REPEAT_MONTHLY_MODE_OPTIONS,
-  REPEAT_MONTHLY_ORDINAL_OPTIONS,
-  REPEAT_WEEKDAY_FULL_LABELS,
-  WEEKDAYS_REPEAT_DAYS,
-  isWeekdaysRepeatSelection,
-} from "@/lib/task-repeat";
+import type { TaskRepeatEditorValue } from "@/lib/task-repeat";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { HomeDailyProgress, HomeRecordChase, HomeRecordMetricKey } from "@/lib/home-progress";
 import {
@@ -64,7 +58,6 @@ import {
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
 import {
-  CompactRepeatCadenceControls,
   dedupeTaskTagLabels,
   formatNewTaskTagLabel,
   TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
@@ -77,6 +70,7 @@ import {
   TASK_TABLE_CHIP_BASE_CLASS,
   TaskCurrentStreakChip,
 } from "@/components/ui/task-table-primitives";
+import { TaskRepeatEditor } from "@/components/ui/task-repeat-editor";
 
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
@@ -84,21 +78,6 @@ const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
 const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 const HOME_GEAR_LONG_PRESS_MS = 475;
 const HOME_GEAR_LONG_PRESS_MOVE_PX = 8;
-const HOME_REPEAT_OPTIONS: ReadonlyArray<{ label: string; value: TaskRepeatFrequency }> = [
-  { label: "No Repeat", value: "none" },
-  { label: "Daily", value: "daily" },
-  { label: "Daily Until Complete", value: "daily_until_complete" },
-  { label: "Weekly", value: "weekly" },
-  { label: "Monthly", value: "monthly" },
-  { label: "Custom Cadence", value: "custom" },
-];
-const HOME_REPEAT_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label: label.slice(0, 3), value }));
-const HOME_REPEAT_MONTHLY_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label, value }));
-const HOME_REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = [
-  { label: "Days", value: "daily" },
-  { label: "Weeks", value: "weekly" },
-  { label: "Months", value: "monthly" },
-];
 type HomePanelTab = "todo" | "routine";
 type HomeRowActionMenuView = "actions" | "move-day";
 
@@ -584,28 +563,14 @@ export function HomePage({
     event.stopPropagation();
   }
 
-  function selectNewTaskRepeatFrequency(nextFrequency: TaskRepeatFrequency) {
-    setNewTaskRepeatFrequency(nextFrequency);
-    setNewTaskRepeatInterval((current) => String(parsePositiveInteger(current) ?? 1));
-    if (nextFrequency !== "weekly" && nextFrequency !== "custom") {
-      setNewTaskRepeatDaysOfWeek([]);
-    }
-    if (nextFrequency !== "monthly") {
-      setNewTaskRepeatDayOfMonth("");
-      setNewTaskRepeatMonthlyMode("day_of_month");
-      setNewTaskRepeatMonthlyOrdinal(null);
-      setNewTaskRepeatMonthlyWeekday(null);
-    }
-  }
-
-  function applyNewTaskWeekdaysPreset() {
-    setNewTaskRepeatFrequency("weekly");
-    setNewTaskRepeatInterval("1");
-    setNewTaskRepeatDaysOfWeek([...WEEKDAYS_REPEAT_DAYS]);
-    setNewTaskRepeatDayOfMonth("");
-    setNewTaskRepeatMonthlyMode("day_of_month");
-    setNewTaskRepeatMonthlyOrdinal(null);
-    setNewTaskRepeatMonthlyWeekday(null);
+  function applyNewTaskRepeatValue(value: TaskRepeatEditorValue) {
+    setNewTaskRepeatFrequency(value.repeatFrequency);
+    setNewTaskRepeatInterval(String(Math.max(1, value.repeatInterval)));
+    setNewTaskRepeatDaysOfWeek([...value.repeatDaysOfWeek]);
+    setNewTaskRepeatDayOfMonth(value.repeatDayOfMonth ? String(value.repeatDayOfMonth) : "");
+    setNewTaskRepeatMonthlyMode(value.repeatMonthlyMode);
+    setNewTaskRepeatMonthlyOrdinal(value.repeatMonthlyOrdinal);
+    setNewTaskRepeatMonthlyWeekday(value.repeatMonthlyWeekday);
   }
 
   function addNewTaskTag(rawTag: string) {
@@ -1551,95 +1516,21 @@ export function HomePage({
                   </div>
                   <div className="grid min-w-0 gap-1">
                     <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Repeat</span>
-                    <div className="flex flex-wrap gap-2">
-                      {HOME_REPEAT_OPTIONS.map((option) => (
-                        <TaskTableChipButton
-                          key={option.value}
-                          onClick={() => selectNewTaskRepeatFrequency(option.value)}
-                          toneClassName={newTaskRepeatFrequency === option.value && option.value !== "none"
-                            ? TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS
-                            : TASK_TABLE_INACTIVE_CHIP_CLASS}
-                        >
-                          {option.label}
-                        </TaskTableChipButton>
-                      ))}
-                      <TaskTableChipButton
-                        onClick={applyNewTaskWeekdaysPreset}
-                        toneClassName={isWeekdaysRepeatSelection(newTaskRepeatFrequency, newTaskRepeatDaysOfWeek, parsePositiveInteger(newTaskRepeatInterval) ?? 1)
-                          ? TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS
-                          : TASK_TABLE_INACTIVE_CHIP_CLASS}
-                      >
-                        Weekdays
-                      </TaskTableChipButton>
-                    </div>
-                    {newTaskRepeatFrequency !== "none" ? (
-                      <div className="mt-1 space-y-2">
-                        <CompactRepeatCadenceControls
-                          activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
-                          dayInputProps={{
-                            inputMode: "numeric",
-                            max: 31,
-                            min: 1,
-                            onBlur: () => setNewTaskRepeatDayOfMonth((current) => {
-                              const parsed = parseDayOfMonth(current);
-                              return parsed === null ? "" : String(parsed);
-                            }),
-                            onChange: (event) => setNewTaskRepeatDayOfMonth(event.target.value.replace(/[^\d]/g, "").slice(0, 2)),
-                            type: "text",
-                            value: newTaskRepeatDayOfMonth,
-                          }}
-                          inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
-                          intervalInputProps={{
-                            inputMode: "numeric",
-                            min: 1,
-                            onBlur: () => setNewTaskRepeatInterval((current) => String(parsePositiveInteger(current) ?? 1)),
-                            onChange: (event) => setNewTaskRepeatInterval(event.target.value.replace(/[^\d]/g, "")),
-                            type: "text",
-                            value: newTaskRepeatInterval,
-                          }}
-                          monthlyMode={newTaskRepeatMonthlyMode}
-                          monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
-                          monthlyOrdinal={newTaskRepeatMonthlyOrdinal}
-                          monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
-                          monthlyWeekday={newTaskRepeatMonthlyWeekday}
-                          onMonthlyModeClick={(value) => {
-                            const nextOrdinal = value === "ordinal_weekday" ? (newTaskRepeatMonthlyOrdinal ?? "first") : null;
-                            const nextWeekday = value === "ordinal_weekday" ? (newTaskRepeatMonthlyWeekday ?? 1) : null;
-                            setNewTaskRepeatMonthlyMode(value);
-                            setNewTaskRepeatMonthlyOrdinal(nextOrdinal);
-                            setNewTaskRepeatMonthlyWeekday(nextWeekday);
-                          }}
-                          onMonthlyOrdinalClick={(value) => {
-                            setNewTaskRepeatMonthlyMode("ordinal_weekday");
-                            setNewTaskRepeatMonthlyOrdinal(value);
-                            setNewTaskRepeatMonthlyWeekday(newTaskRepeatMonthlyWeekday ?? 1);
-                          }}
-                          onMonthlyWeekdayClick={(value) => {
-                            setNewTaskRepeatMonthlyMode("ordinal_weekday");
-                            setNewTaskRepeatMonthlyOrdinal(newTaskRepeatMonthlyOrdinal ?? "first");
-                            setNewTaskRepeatMonthlyWeekday(value);
-                          }}
-                          onRepeatUnitClick={selectNewTaskRepeatFrequency}
-                          onWeekdayClick={(weekday) => setNewTaskRepeatDaysOfWeek((current) => (
-                            current.includes(weekday)
-                              ? current.filter((value) => value !== weekday)
-                              : [...current, weekday].sort((left, right) => left - right)
-                          ))}
-                          repeat={newTaskRepeatFrequency}
-                          repeatDaysOfWeek={newTaskRepeatDaysOfWeek}
-                          repeatUnits={HOME_REPEAT_UNITS}
-                          showInterval
-                          showMonthDay={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode !== "ordinal_weekday"}
-                          showMonthlyMode={newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom"}
-                          showMonthlyOrdinals={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode === "ordinal_weekday"}
-                          showMonthlyWeekdays={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode === "ordinal_weekday"}
-                          showWeekdays={newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom"}
-                          weekdayOptions={newTaskRepeatMonthlyMode === "ordinal_weekday"
-                            ? HOME_REPEAT_MONTHLY_WEEKDAY_OPTIONS
-                            : HOME_REPEAT_WEEKDAY_OPTIONS}
-                        />
-                      </div>
-                    ) : null}
+                    <TaskRepeatEditor
+                      activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
+                      dueOn={newTaskDueOn || null}
+                      inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
+                      onChange={applyNewTaskRepeatValue}
+                      value={{
+                        repeatFrequency: newTaskRepeatFrequency,
+                        repeatInterval: parsePositiveInteger(newTaskRepeatInterval) ?? 1,
+                        repeatDaysOfWeek: newTaskRepeatDaysOfWeek,
+                        repeatDayOfMonth: parseDayOfMonth(newTaskRepeatDayOfMonth),
+                        repeatMonthlyMode: newTaskRepeatMonthlyMode,
+                        repeatMonthlyOrdinal: newTaskRepeatMonthlyOrdinal,
+                        repeatMonthlyWeekday: newTaskRepeatMonthlyWeekday,
+                      }}
+                    />
                   </div>
                 </div>
                 <div className="grid min-w-0 gap-2">
