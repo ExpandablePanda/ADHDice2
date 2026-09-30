@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-27
+Last reviewed: 2026-09-30
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.62`.
+- Current working app version: `7.15.63`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.15.63 Current Projection stale-fence SQLSTATE repair
+
+The source-only migration `supabase/patch_task_current_projection_writer_stale_fence_7_15_63.sql`
+replaces the latest V3 Current Task projection writer definition. Its seven
+intentional stale/race rejection branches now use PostgreSQL user-defined
+SQLSTATE `P0001` instead of the transaction serialization-failure code, while
+preserving the existing messages, validations, source-fence checks, V2/V3
+version safeguards, permissions, monotonic write guard, and bounded one-retry
+runtime semantics. `staleFenceError(...)` was not changed because its existing
+message classification remains the retry authority. The migration has not
+been applied to live Supabase; no browser or live transaction verification was
+performed. Other application-level `40001` uses remain unchanged outside this
+writer repair.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

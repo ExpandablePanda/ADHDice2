@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
@@ -15,6 +15,8 @@ import type { TaskCurrentProjection } from "../src/lib/database.types.ts";
 
 const commandSql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
 const persistenceSql = readFileSync(new URL("../supabase/patch_task_current_projection_persistence_7_15_14.sql", import.meta.url), "utf8");
+const v3WriterSql = readFileSync(new URL("../supabase/patch_task_current_projection_v3_7_15_33.sql", import.meta.url), "utf8");
+const currentWriterSql = readFileSync(new URL("../supabase/patch_task_current_projection_writer_stale_fence_7_15_63.sql", import.meta.url), "utf8");
 const verificationSql = readFileSync(new URL("../supabase/verify_task_current_projection_7_15_16.sql", import.meta.url), "utf8");
 const readModelSource = readFileSync(new URL("../src/lib/task-state-canonical/read-model.ts", import.meta.url), "utf8");
 const rebuildSource = readFileSync(new URL("../src/lib/task-current-projection-rebuild.ts", import.meta.url), "utf8");
@@ -31,6 +33,8 @@ const invalidationFunction = functionSource(
   persistenceSql,
   "adhdice_invalidate_task_current_projection_on_canonical_revision",
 );
+const v3WriterFunction = functionSource(v3WriterSql, "adhdice_upsert_task_current_projection");
+const currentWriterFunction = functionSource(currentWriterSql, "adhdice_upsert_task_current_projection");
 const repositoryRoot = process.cwd();
 const psql = process.env.ADHDICE_SQL_COMPILE_PSQL_BIN ?? "psql";
 const psqlDirectory = dirname(psql);
@@ -209,6 +213,36 @@ test("trusted projection writer is valid-only, fenced, monotonic, and browser-in
   assert.match(persistenceSql, /grant execute on function public\.adhdice_invalidate_task_current_projection_on_canonical_revision\(\)\s+to service_role/i);
 });
 
+test("7.15.63 is the current V3 writer source and removes application-generated serialization failures", () => {
+  const writerMigrations = readdirSync(join(repositoryRoot, "supabase"))
+    .filter((file) => file.endsWith(".sql"))
+    .filter((file) => readFileSync(join(repositoryRoot, "supabase", file), "utf8")
+      .includes("create or replace function public.adhdice_upsert_task_current_projection"))
+    .sort();
+  assert.equal(writerMigrations.at(-1), "patch_task_current_projection_writer_stale_fence_7_15_63.sql");
+  assert.doesNotMatch(currentWriterSql, /\b40001\b/);
+  assert.equal((currentWriterFunction.match(/using errcode = 'P0001'/g) ?? []).length, 7);
+  assert.equal(
+    currentWriterFunction,
+    v3WriterFunction.replaceAll("using errcode = '40001'", "using errcode = 'P0001'"),
+  );
+  for (const message of [
+    "Current Task projection canonical Task revision is stale.",
+    "Current Task projection History sync epoch is stale.",
+    "Current Task projection entity History frontier is stale.",
+    "Current Task projection logical-day settings revision is stale.",
+    "Current Task projection logical date is stale.",
+    "Current Task projection schedule or behavior source fence is stale.",
+    "Current Task projection candidate is older than the stored projection or would downgrade the current algorithm.",
+  ]) {
+    assert.ok(currentWriterFunction.includes(message), `missing stale-fence message: ${message}`);
+  }
+  assert.match(currentWriterFunction, /projection_algorithm_version in \('task-current-projection-algorithm-v2', 'task-current-projection-algorithm-v3'\)/i);
+  assert.match(currentWriterFunction, /where projection\.updated_at <= excluded\.updated_at/i);
+  assert.match(currentWriterSql, /revoke all on function public\.adhdice_upsert_task_current_projection\(uuid, jsonb\)[\s\S]*from public, anon, authenticated/i);
+  assert.match(currentWriterSql, /grant execute on function public\.adhdice_upsert_task_current_projection\(uuid, jsonb\)[\s\S]*to service_role/i);
+});
+
 test("deployment verification is read-only and covers the 7.15.16 install contract", () => {
   assert.match(verificationSql, /to_regclass\('public\.adhdice_task_current_projections'\)/i);
   assert.match(verificationSql, /projection_rows_before_backfill/i);
@@ -246,13 +280,30 @@ test("stale writer fences are retryable and do not become a canonical failure", 
     taskId: "task-1",
     dependencies: dependencies(async () => ({
       data: null,
-      error: { code: "40001", message: "Current Task projection entity History frontier is stale." },
+      error: { code: "P0001", message: "Current Task projection entity History frontier is stale." },
     })),
   });
   assert.deepEqual(result, {
     status: "retryable",
     reason: "stale_projection_fence",
     message: "Current Task projection entity History frontier is stale.",
+  });
+});
+
+test("a non-stale writer failure with the replacement code remains failed", async () => {
+  const result = await rebuildCurrentTaskProjection({
+    adminClient,
+    userId: "owner-1",
+    taskId: "task-1",
+    dependencies: dependencies(async () => ({
+      data: null,
+      error: { code: "P0001", message: "Current Task projection candidate is malformed." },
+    })),
+  });
+  assert.deepEqual(result, {
+    status: "failed",
+    reason: "projection_write_failed",
+    message: "Current Task projection candidate is malformed.",
   });
 });
 
@@ -278,7 +329,7 @@ test("schedule and behavior source-fence races reject the old calculated candida
       dependencies: {
         ...dependencies(async (_client, _userId, candidate) => candidate[field] === expectedCurrentFence
           ? { data: { state: "written" }, error: null }
-          : { data: null, error: { code: "40001", message: `${field} source fence is stale.` } }),
+          : { data: null, error: { code: "P0001", message: `${field} source fence is stale.` } }),
         loadSourceFences: async () => calculatedFences,
         buildProjection: (input: BuildCurrentTaskProjectionInput) => ({
           ...projection,
