@@ -849,6 +849,87 @@ test("saved Daily Until Complete Done History advances one occurrence without co
   assert.notEqual(result?.persistableTaskPatch.status, "complete");
 });
 
+test("canonical direct input preserves fixed weekly and monthly Until Complete recurrence", () => {
+  const directContext = {
+    behaviorPolicyRevisions: { task: [{ ...STANDARD_TASK_BEHAVIOR_POLICY, effectiveFromLogicalDate: "2026-07-01" }] },
+    behaviorProfiles: { task: STANDARD_TASK_BEHAVIOR_POLICY },
+    behaviorSelectionsByTaskId: {},
+    namedCustomRulesetBehaviorPolicyRevisions: {},
+    ...context,
+  };
+  const weeklyTask = task({
+    due_on: "2026-08-06",
+    id: "fixed-weekly-duc",
+    repeat_days_of_week: [4],
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 2,
+    task_type: "task",
+    canonicalization_status: "canonical_proven",
+    container_state: "active",
+    entity_kind: "parent",
+    terminal_state: "active",
+    workflow_state: "none",
+    canonical_schedule_boundary: {
+      anchor_confidence: "proven",
+      anchor_date: "2026-08-06",
+      one_time_due_on: null,
+      repeat_day_of_month: null,
+      repeat_days_of_week: [4],
+      repeat_frequency: "daily_until_complete",
+      repeat_interval: 2,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      schedule_model: "fixed",
+    },
+  });
+  const monthlyTask = task({
+    due_on: "2026-08-28",
+    id: "fixed-monthly-duc",
+    repeat_day_of_month: 28,
+    repeat_frequency: "daily_until_complete",
+    task_type: "task",
+    canonicalization_status: "canonical_proven",
+    container_state: "active",
+    entity_kind: "parent",
+    terminal_state: "active",
+    workflow_state: "none",
+    canonical_schedule_boundary: {
+      anchor_confidence: "proven",
+      anchor_date: "2026-08-28",
+      one_time_due_on: null,
+      repeat_day_of_month: 28,
+      repeat_days_of_week: [],
+      repeat_frequency: "daily_until_complete",
+      repeat_interval: 1,
+      repeat_monthly_mode: "day_of_month",
+      repeat_monthly_ordinal: null,
+      repeat_monthly_weekday: null,
+      schedule_model: "fixed",
+    },
+  });
+
+  const weeklyInput = buildDirectTaskStateEngineInput(weeklyTask, [], directContext);
+  assert.deepEqual(weeklyInput.task.recurrence, {
+    anchorDate: "2026-08-06",
+    intervalWeeks: 2,
+    kind: "weekly",
+    untilComplete: true,
+    weekdays: [4],
+  });
+  const monthlyInput = buildDirectTaskStateEngineInput(monthlyTask, [], directContext);
+  assert.deepEqual(monthlyInput.task.recurrence, {
+    anchorDate: "2026-08-28",
+    dayOfMonth: 28,
+    intervalMonths: 1,
+    kind: "monthly",
+    mode: "day_of_month",
+    ordinal: null,
+    untilComplete: true,
+    weekday: null,
+  });
+});
+
 test("Daily Until Complete accepts Done through the shared action authority", () => {
   const result = evaluateTaskActionAuthority({
     ...context,

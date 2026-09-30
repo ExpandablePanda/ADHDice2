@@ -33,12 +33,15 @@ function pending(value: TaskRepeatReconciliationValue, generation = 1): PendingT
 test("Repeat editors use the exact Monthly mode copy and preserve the stored enum", () => {
   assert.match(repeatEditorSource, /REPEAT_MONTHLY_MODE_OPTIONS/);
   assert.match(batchEditorSource, /\["ordinal_weekday", "X of Every Month"\]/);
+  assert.match(batchEditorSource, /getTaskRepeatEditorUnit\(currentValue\)/);
   assert.doesNotMatch(repeatEditorSource, /Week \+ weekday/);
   assert.doesNotMatch(batchEditorSource, /Week \+ weekday/);
   assert.match(repeatEditorSource, /data-repeat-editor-monthly-mode/);
   assert.match(repeatEditorSource, /data-repeat-editor-monthly-ordinal/);
   assert.match(repeatEditorSource, /data-repeat-editor-monthly-weekday/);
   assert.match(repeatEditorSource, /className="grid gap-2" data-repeat-editor-monthly-controls/);
+  assert.match(repeatEditorSource, /embedded = false/);
+  assert.match(repeatEditorSource, /embedded \? "grid gap-2"/);
   assert.match(repeatEditorSource, /ordinal_weekday/);
 });
 
@@ -98,4 +101,8 @@ test("Table Repeat edits record pending values before invoking persistence and r
   assert.match(editSource, /persistenceResult\.then/);
   assert.match(editSource, /clearPendingTaskRepeat/);
   assert.match(tableSource, /layout=\{overlayMode === "repeat" \? "stack" : "row"\}/);
+  assert.match(tableSource, /className="w-full max-w-full space-y-2"/);
+  assert.match(tableSource, /embedded/);
+  assert.doesNotMatch(repeatEditorSource, /draft\.completionMode !== "until_complete" \|\| unit\.value === "daily"/);
+  assert.doesNotMatch(batchEditorSource, /draft\.repeatCustomCompletionMode !== "until_complete" \|\| unit === "daily"/);
 });

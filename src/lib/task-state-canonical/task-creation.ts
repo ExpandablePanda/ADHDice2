@@ -6,6 +6,7 @@ import type {
   TaskStatus,
 } from "../database.types";
 import { logicalDateForTimestamp } from "../task-state-engine/calendar.ts";
+import { isFixedUntilCompleteRepeatTask } from "../task-repeat.ts";
 import { parseTaskType } from "../task-type.ts";
 import type { CanonicalEntityKind } from "./types.ts";
 
@@ -249,9 +250,17 @@ export function buildCanonicalTaskCreationPlan(input: {
   const frequency = draft.repeat_frequency ?? "none";
   const scheduleModel = frequency === "none"
     ? draft.due_on === null ? "unscheduled" : "one_time"
-    : frequency === "weekly" || frequency === "monthly" ? "fixed" : "rolling";
+    : frequency === "weekly" || frequency === "monthly"
+      || (frequency === "daily_until_complete" && isFixedUntilCompleteRepeatTask({
+        repeat_frequency: frequency,
+        repeat_days_of_week: draft.repeat_days_of_week ?? [],
+        repeat_day_of_month: draft.repeat_day_of_month ?? null,
+        repeat_monthly_mode: draft.repeat_monthly_mode ?? "day_of_month",
+      }))
+      ? "fixed"
+      : "rolling";
   if (scheduleModel === "one_time" && !isDate(draft.due_on)) fail("INVALID_ONE_TIME_SCHEDULE", "A one-time Task requires a valid due date.");
-  if ((frequency === "weekly" || frequency === "monthly") && !isDate(draft.due_on)) {
+  if ((scheduleModel === "fixed") && !isDate(draft.due_on)) {
     fail("RECURRENCE_ANCHOR_UNPROVEN", "Weekly and monthly Tasks require a due date anchor.");
   }
   if (frequency === "weekly" && (draft.repeat_days_of_week ?? []).length === 0) {

@@ -2523,7 +2523,7 @@ function textSortValue(task: PrototypeTaskRow, columnId: SortColumnId, customBeh
     case "energy":
       return task.energy;
     case "repeat":
-      return REPEAT_CATEGORY_OPTIONS.find((option) => option.value === getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval))?.label ?? task.repeat;
+      return REPEAT_CATEGORY_OPTIONS.find((option) => option.value === getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval, task.repeatDayOfMonth, task.repeatMonthlyMode))?.label ?? task.repeat;
     default:
       return "";
   }
@@ -2558,7 +2558,7 @@ function energySortValue(task: PrototypeTaskRow) {
 }
 
 function repeatSortValue(task: PrototypeTaskRow) {
-  return REPEAT_SORT_ORDER.indexOf(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval));
+  return REPEAT_SORT_ORDER.indexOf(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval, task.repeatDayOfMonth, task.repeatMonthlyMode));
 }
 
 function statusOrderValue(task: PrototypeTaskRow) {
@@ -3192,7 +3192,7 @@ export function TaskManagementTableV2({
       && (structuredFilters.status.length === 0 || structuredFilters.status.includes(task.status))
       && (structuredFilters.priority.length === 0 || task.priorities.some((priority) => structuredFilters.priority.includes(priority)))
       && (structuredFilters.energy.length === 0 || structuredFilters.energy.includes(task.energy))
-      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval)))
+      && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval, task.repeatDayOfMonth, task.repeatMonthlyMode)))
       && matchesTaskTypeSelections(task.taskType, task.customRulesetId, structuredFilters.task_type));
 
     const nextDisplayedTasks = sortState
@@ -6282,9 +6282,10 @@ export function TaskManagementTableV2({
     if (overlayMode === "repeat") {
       return [(
         <TaskRepeatEditor
-          activeToneClassName={repeatTone(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval))}
-          className="w-fit max-w-full"
+          activeToneClassName={repeatTone(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval, task.repeatDayOfMonth, task.repeatMonthlyMode))}
+          className="w-full max-w-full space-y-2"
           dueOn={task.dueOn || null}
+          embedded
           inactiveToneClassName={INACTIVE_CHIP_CLASS}
           key="repeat-editor"
           onChange={(value) => setTaskRepeatValue(task.id, value)}
@@ -10303,7 +10304,7 @@ export function TaskManagementTableV2({
                 } else if (metadataPanelId === "repeat") {
                   metadataPanelContent = (
                     <TaskRepeatEditor
-                      activeToneClassName={repeatTone(getTaskRepeatCategory(metadataTask.repeat, metadataTask.repeatDaysOfWeek, metadataTask.repeatInterval))}
+                      activeToneClassName={repeatTone(getTaskRepeatCategory(metadataTask.repeat, metadataTask.repeatDaysOfWeek, metadataTask.repeatInterval, metadataTask.repeatDayOfMonth, metadataTask.repeatMonthlyMode))}
                       dueOn={metadataTask.dueOn || null}
                       inactiveToneClassName={INACTIVE_CHIP_CLASS}
                       onChange={(value) => setTaskRepeatValue(metadataTask.id, value)}
@@ -11005,7 +11006,7 @@ export function TaskManagementTableV2({
                       Repeat
                     </div>
                     <TaskRepeatEditor
-                      activeToneClassName={repeatTone(getTaskRepeatCategory(selectedTask.repeat, selectedTask.repeatDaysOfWeek, selectedTask.repeatInterval))}
+                      activeToneClassName={repeatTone(getTaskRepeatCategory(selectedTask.repeat, selectedTask.repeatDaysOfWeek, selectedTask.repeatInterval, selectedTask.repeatDayOfMonth, selectedTask.repeatMonthlyMode))}
                       dueOn={selectedTask.dueOn || null}
                       inactiveToneClassName={INACTIVE_CHIP_CLASS}
                       onChange={(value) => setTaskRepeatValue(selectedTask.id, value)}

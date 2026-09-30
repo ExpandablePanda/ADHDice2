@@ -39,8 +39,8 @@ test("Repeat has normal Weekdays category controls and no dedicated Weekdays-fir
   assert.doesNotMatch(editorSource, /Custom Cadence|Custom cadence/);
   assert.doesNotMatch(batchSource, /Custom Cadence|Custom cadence|Ordinal weekday/);
   assert.match(source, /structuredFilters\.repeat\.includes\(getTaskRepeatCategory/);
-  assert.match(canonicalSource, /getTaskRepeatCategory\(task\.repeat_frequency, task\.repeat_days_of_week, task\.repeat_interval\)/);
-  assert.match(searchSource, /getTaskRepeatCategory\(task\.repeat_frequency, task\.repeat_days_of_week, task\.repeat_interval\)/);
+  assert.match(canonicalSource, /getTaskRepeatCategory\(task\.repeat_frequency, task\.repeat_days_of_week, task\.repeat_interval, task\.repeat_day_of_month, task\.repeat_monthly_mode\)/);
+  assert.match(searchSource, /getTaskRepeatCategory\(task\.repeat_frequency, task\.repeat_days_of_week, task\.repeat_interval, task\.repeat_day_of_month, task\.repeat_monthly_mode\)/);
   assert.doesNotMatch(source, /repeat_weekdays_first|Weekdays first/);
 });
 
@@ -50,6 +50,8 @@ test("repeat categories distinguish fixed presets from legacy intervaled schedul
   assert.equal(getTaskRepeatCategory("daily", [], 3), "custom");
   assert.equal(getTaskRepeatCategory("daily_until_complete", [], 1), "daily_until_complete");
   assert.equal(getTaskRepeatCategory("daily_until_complete", [], 2), "custom");
+  assert.equal(getTaskRepeatCategory("daily_until_complete", [], 1, 28), "custom");
+  assert.equal(getTaskRepeatCategory("daily_until_complete", [4], 2), "custom");
   assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5], 1), "weekdays");
   assert.equal(getTaskRepeatCategory("weekly", [2, 4], 1), "weekly");
   assert.equal(getTaskRepeatCategory("weekly", [2, 4], 2), "custom");
@@ -190,7 +192,7 @@ test("custom cadence helpers persist unit-specific canonical values", () => {
     repeat_frequency: "daily_until_complete",
     repeat_interval: 3,
     repeat_days_of_week: [],
-    repeat_day_of_month: null,
+    repeat_day_of_month: 15,
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
@@ -204,6 +206,73 @@ test("custom cadence helpers persist unit-specific canonical values", () => {
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
   }).completionMode, "until_complete");
+  assert.equal(createTaskRepeatEditorDraft({
+    repeatFrequency: "daily_until_complete",
+    repeatInterval: 2,
+    repeatDaysOfWeek: [4],
+    repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  }).unit, "weekly");
+  assert.equal(createTaskRepeatEditorDraft({
+    repeatFrequency: "daily_until_complete",
+    repeatInterval: 1,
+    repeatDaysOfWeek: [],
+    repeatDayOfMonth: 28,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  }).unit, "monthly");
+});
+
+test("custom Until complete preserves weekly and monthly recurrence fields", () => {
+  const weekly = buildCustomCadenceMutation({
+    completionMode: "until_complete",
+    unit: "weekly",
+    repeatInterval: 2,
+    repeatDaysOfWeek: [4],
+    repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  });
+  assert.equal(weekly.repeatFrequency, "daily_until_complete");
+  assert.deepEqual(taskRepeatEditorValueToUpdate(weekly), {
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 2,
+    repeat_days_of_week: [4],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  });
+  const weeklyAction = classifyTaskStateRuntimeAction({
+    replayIdentity: "duc-weekly",
+    task: { canonical_revision: 1, due_on: "2026-06-04", id: "duc-weekly", repeat_frequency: "daily", status: "pending" },
+    values: taskRepeatEditorValueToUpdate(weekly),
+  });
+  assert.equal(weeklyAction.intent?.schedule.schedule_model, "fixed");
+
+  const monthly = buildCustomCadenceMutation({
+    completionMode: "until_complete",
+    unit: "monthly",
+    repeatInterval: 1,
+    repeatDaysOfWeek: [],
+    repeatDayOfMonth: 28,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+  });
+  assert.equal(monthly.repeatFrequency, "daily_until_complete");
+  assert.equal(monthly.repeatDayOfMonth, 28);
+  assert.equal(taskRepeatEditorValueToUpdate(monthly).repeat_day_of_month, 28);
+  const monthlyAction = classifyTaskStateRuntimeAction({
+    replayIdentity: "duc-monthly",
+    task: { canonical_revision: 1, due_on: "2026-06-28", id: "duc-monthly", repeat_frequency: "daily", status: "pending" },
+    values: taskRepeatEditorValueToUpdate(monthly),
+  });
+  assert.equal(monthlyAction.intent?.schedule.schedule_model, "fixed");
 });
 
 test("custom repeat updates are canonical set_repeat payloads", () => {
@@ -260,6 +329,15 @@ test("repeat formatters agree with the presentation category", () => {
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
   }), "Every 2 weeks (Tue, Thu)");
+  assert.equal(formatRepeatSummary({
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: 28,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  }), "Monthly on 28 until complete");
 });
 
 test("compact monthly repeat labels include the selected pattern", () => {
@@ -267,6 +345,8 @@ test("compact monthly repeat labels include the selected pattern", () => {
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "day_of_month", null, null, 15), "15th");
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "ordinal_weekday", "second", 2), "2nd Tue");
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "ordinal_weekday", "last", 1), "Last Mon");
+  assert.equal(formatRepeatCompactLabel("daily_until_complete", 1, [], "day_of_month", null, null, 28), "28th");
+  assert.equal(formatRepeatCompactLabel("daily_until_complete", 2, [], "ordinal_weekday", "second", 4), "2nd Thu");
   assert.notEqual(formatRepeatCompactLabel("monthly", 1, [], "day_of_month", null, null, 30), "Monthly");
   assert.equal(taskRepeatEditorValueToUpdate({
     repeatFrequency: "custom",

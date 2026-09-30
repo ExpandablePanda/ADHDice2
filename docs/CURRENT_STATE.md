@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.16`.
+- Current working app version: `7.16.17`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -39,6 +39,18 @@ intervaled daily, weekly, monthly, daily-until-complete, and legacy custom rows
 retain their runtime behavior without a read-time migration. Recurrence date
 calculation and Daily Until Complete state/history semantics are unchanged.
 Browser/manual QA remains Andrew-owned and unverified here.
+
+## 2026-09-30 7.16.17 Custom Until Complete cadence correction
+
+Custom `Until complete` now retains the selected daily, weekly, or monthly
+cadence fields instead of collapsing every choice to daily. Weekly and monthly
+fixed cadences are projected through the existing canonical schedule boundary
+and recurrence/history authorities, including examples such as every second
+Thursday or every month on the 28th until complete. Table Repeat editing keeps
+the stacked logical-row spacing and removes the nested purple custom shell in
+the inline action row; batch editing keeps all custom units available after
+selecting `Until complete`. Browser/manual QA remains Andrew-owned and
+unverified here.
 
 ## 2026-09-29 7.16.11 Hierarchical Task selection correction
 

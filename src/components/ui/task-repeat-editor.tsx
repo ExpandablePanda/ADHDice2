@@ -49,7 +49,7 @@ function valueSignature(value: TaskRepeatEditorValue) {
 }
 
 function editorCategory(value: TaskRepeatEditorValue): TaskRepeatCategory {
-  return getTaskRepeatCategory(value.repeatFrequency, value.repeatDaysOfWeek, value.repeatInterval);
+  return getTaskRepeatCategory(value.repeatFrequency, value.repeatDaysOfWeek, value.repeatInterval, value.repeatDayOfMonth, value.repeatMonthlyMode);
 }
 
 function selectedTone(active: boolean, activeToneClassName: string, inactiveToneClassName: string) {
@@ -60,6 +60,7 @@ export function TaskRepeatEditor({
   activeToneClassName,
   className,
   dueOn,
+  embedded = false,
   inactiveToneClassName,
   onChange,
   onPresetApplied,
@@ -68,6 +69,7 @@ export function TaskRepeatEditor({
   activeToneClassName: string;
   className?: string;
   dueOn?: string | null;
+  embedded?: boolean;
   inactiveToneClassName: string;
   onChange: (value: TaskRepeatEditorValue) => void;
   onPresetApplied?: (selection: TaskRepeatSelection, value: TaskRepeatEditorValue) => void;
@@ -276,7 +278,7 @@ export function TaskRepeatEditor({
       {activeCategory === "weekly" ? renderWeekdayChips() : null}
       {activeCategory === "monthly" ? renderMonthlyControls(false) : null}
       {activeCategory === "custom" ? (
-        <div className="grid gap-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]" data-repeat-editor-custom="true">
+        <div className={embedded ? "grid gap-2" : "grid gap-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"} data-repeat-editor-custom="true">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom</p>
           <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5" data-repeat-editor-completion="true">
             <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Completion</span>
@@ -290,7 +292,6 @@ export function TaskRepeatEditor({
                   const nextDraft = {
                     ...draft,
                     completionMode: mode,
-                    unit: mode === "until_complete" ? "daily" as const : draft.unit,
                   };
                   commitCustomDraft(nextDraft);
                 }}
@@ -314,7 +315,7 @@ export function TaskRepeatEditor({
               type="text"
               value={intervalInput}
             />
-            {REPEAT_UNITS.filter((unit) => draft.completionMode !== "until_complete" || unit.value === "daily").map((unit) => (
+            {REPEAT_UNITS.map((unit) => (
               <TaskTableChipButton
                 key={unit.value}
                 onClick={() => {

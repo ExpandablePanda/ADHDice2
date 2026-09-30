@@ -587,21 +587,21 @@ export function HomePage({
 
   function buildNewTaskMetadata(): HomeTodoTaskMetadata {
     const repeatInterval = parsePositiveInteger(newTaskRepeatInterval) ?? 1;
-    const repeatDayOfMonth = newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "day_of_month"
+    const repeatDayOfMonth = (newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "daily_until_complete") && newTaskRepeatMonthlyMode === "day_of_month"
       ? parseDayOfMonth(newTaskRepeatDayOfMonth)
       : null;
-    const isMonthlyOrdinal = newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday";
+    const isMonthlyOrdinal = (newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "daily_until_complete") && newTaskRepeatMonthlyMode === "ordinal_weekday";
     return {
       due_on: newTaskDueOn || null,
       due_time: newTaskDueOn ? (newTaskDueTime || null) : null,
       priority_level: Number.parseInt(newTaskPriority, 10) as TaskPriorityLevel,
       repeat_day_of_month: repeatDayOfMonth,
-      repeat_days_of_week: newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom"
+      repeat_days_of_week: newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom" || newTaskRepeatFrequency === "daily_until_complete"
         ? [...newTaskRepeatDaysOfWeek]
         : [],
       repeat_frequency: newTaskRepeatFrequency,
       repeat_interval: repeatInterval,
-      repeat_monthly_mode: newTaskRepeatFrequency === "monthly" ? newTaskRepeatMonthlyMode : "day_of_month",
+      repeat_monthly_mode: newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "daily_until_complete" ? newTaskRepeatMonthlyMode : "day_of_month",
       repeat_monthly_ordinal: isMonthlyOrdinal ? (newTaskRepeatMonthlyOrdinal ?? "first") : null,
       repeat_monthly_weekday: isMonthlyOrdinal ? (newTaskRepeatMonthlyWeekday ?? 1) : null,
       tags: [...newTaskTags],

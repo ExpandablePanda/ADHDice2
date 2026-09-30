@@ -11,7 +11,7 @@ import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { buildTaskTypeSelectionOptions } from "@/lib/task-type";
 import { formatTaskPriorityMenuLabel, getSelectedTaskPriorityToneClass, getTaskPriorityToneClass } from "@/lib/task-priority";
-import { formatMonthlyOrdinalLabel, normalizePresetRepeatSelection, type TaskRepeatCompletionMode, type TaskRepeatEditorUnit, type TaskRepeatEditorValue } from "@/lib/task-repeat";
+import { formatMonthlyOrdinalLabel, getTaskRepeatEditorUnit, normalizePresetRepeatSelection, type TaskRepeatCompletionMode, type TaskRepeatEditorUnit, type TaskRepeatEditorValue } from "@/lib/task-repeat";
 
 import { ModalShell } from "../modal-shell";
 import {
@@ -47,8 +47,8 @@ function updateRepeatDraft(current: BatchTaskEditDraft, selection: BatchTaskEdit
     return {
       ...current,
       repeatFrequency: selection,
-      repeatCustomUnit: currentValue.repeatFrequency === "weekly" || currentValue.repeatFrequency === "monthly" ? currentValue.repeatFrequency : "daily",
-      repeatCustomCompletionMode: currentValue.repeatFrequency === "daily_until_complete" && currentValue.repeatInterval > 1 ? "until_complete" : "keep_repeating",
+      repeatCustomUnit: getTaskRepeatEditorUnit(currentValue),
+      repeatCustomCompletionMode: currentValue.repeatFrequency === "daily_until_complete" ? "until_complete" : "keep_repeating",
     };
   }
   const nextValue = normalizePresetRepeatSelection(selection, currentValue);
@@ -289,7 +289,6 @@ export function TaskBatchEditModal({
                     onClick={() => setDraft((current) => ({
                       ...current,
                       repeatCustomCompletionMode: mode,
-                      repeatCustomUnit: mode === "until_complete" ? "daily" : current.repeatCustomUnit,
                     }))}
                     selected={draft.repeatCustomCompletionMode === mode}
                   >
@@ -309,7 +308,7 @@ export function TaskBatchEditModal({
                   ["daily", "Days"],
                   ["weekly", "Weeks"],
                   ["monthly", "Months"],
-                ] as const).filter(([unit]) => draft.repeatCustomCompletionMode !== "until_complete" || unit === "daily").map(([unit, label]) => (
+                ] as const).map(([unit, label]) => (
                   <Pill key={unit} onClick={() => setDraft((current) => ({ ...current, repeatCustomUnit: unit }))} selected={draft.repeatCustomUnit === unit}>{label}</Pill>
                 ))}
               </div>

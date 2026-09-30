@@ -4,6 +4,7 @@ import type { CanonicalTaskScheduleBoundary } from "../task-state-canonical/type
 import { occurrenceIdentity } from "./recurrence.ts";
 import { logicalDateForTimestamp } from "./calendar.ts";
 import { normalizeTaskType } from "../task-type-domain.ts";
+import { isFixedUntilCompleteRepeatTask } from "../task-repeat.ts";
 import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "./behavior-policy.ts";
 import type {
   TaskCalendarOverride,
@@ -90,6 +91,33 @@ export function isCanonicalInactiveTask(task: CanonicalProjectedTaskState) {
 
 export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
   if (boundary.schedule_model === "unscheduled" || boundary.schedule_model === "one_time") return { kind: "none" };
+  const fixedUntilComplete = boundary.repeat_frequency === "daily_until_complete" && isFixedUntilCompleteRepeatTask({
+    repeat_frequency: boundary.repeat_frequency,
+    repeat_days_of_week: boundary.repeat_days_of_week,
+    repeat_day_of_month: boundary.repeat_day_of_month,
+    repeat_monthly_mode: boundary.repeat_monthly_mode,
+  });
+  if (boundary.schedule_model === "fixed" && (boundary.repeat_frequency === "weekly" || (fixedUntilComplete && boundary.repeat_days_of_week.length > 0))) {
+    return {
+      kind: "weekly",
+      intervalWeeks: boundary.repeat_interval,
+      weekdays: boundary.repeat_days_of_week,
+      ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+      anchorDate: boundary.anchor_date,
+    };
+  }
+  if (boundary.schedule_model === "fixed" && (boundary.repeat_frequency === "monthly" || fixedUntilComplete)) {
+    return {
+      kind: "monthly",
+      intervalMonths: boundary.repeat_interval,
+      mode: boundary.repeat_monthly_mode,
+      dayOfMonth: boundary.repeat_day_of_month,
+      ordinal: boundary.repeat_monthly_ordinal,
+      weekday: boundary.repeat_monthly_weekday,
+      ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+      anchorDate: boundary.anchor_date,
+    };
+  }
   if (boundary.schedule_model === "rolling") {
     return {
       kind: "rolling",
@@ -125,15 +153,17 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
 
 function recurrenceFromTask(task: Task): TaskRecurrence {
   if (task.repeat_frequency === "none") return { kind: "none" };
-  if (task.repeat_frequency === "weekly") {
+  const fixedUntilComplete = isFixedUntilCompleteRepeatTask(task);
+  if (task.repeat_frequency === "weekly" || (task.repeat_frequency === "daily_until_complete" && fixedUntilComplete && task.repeat_days_of_week.length > 0)) {
     return {
       kind: "weekly",
       intervalWeeks: task.repeat_interval,
       weekdays: task.repeat_days_of_week,
+      ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
     };
   }
-  if (task.repeat_frequency === "monthly") {
+  if (task.repeat_frequency === "monthly" || (task.repeat_frequency === "daily_until_complete" && fixedUntilComplete)) {
     return {
       kind: "monthly",
       intervalMonths: task.repeat_interval,
@@ -141,6 +171,7 @@ function recurrenceFromTask(task: Task): TaskRecurrence {
       dayOfMonth: task.repeat_day_of_month,
       ordinal: task.repeat_monthly_ordinal,
       weekday: task.repeat_monthly_weekday,
+      ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
     };
   }
