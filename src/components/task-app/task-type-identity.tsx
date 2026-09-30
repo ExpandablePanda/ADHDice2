@@ -300,7 +300,7 @@ export function TaskTypeSelect({
     if (!isOpen || activeOptionIndex === null) return;
     const activeOption = menuRef.current?.querySelector<HTMLElement>(
       `[data-task-type-select-option-index="${activeOptionIndex}"]`,
-    );
+    ) ?? null;
     revealDropdownOptionWithinPanel(activeOption, menuRef.current);
   }, [activeOptionIndex, isOpen, menuPosition]);
 

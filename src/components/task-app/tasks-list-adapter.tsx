@@ -1053,12 +1053,9 @@ function StepsCardPreview({
   onToggleFocusToday,
   onTogglePinned,
   onToggleTaskList,
+  onToggleTaskSelection,
   onToggleExpanded,
   onToggleAllExpanded,
-  parentStepCreationError,
-  parentStepDraftInputRef,
-  parentStepDraftValue,
-  parentStepTaskTypeSelectionValue,
   selectedTaskIds,
   selectedBucket,
   showParentStepDraft,
@@ -1118,10 +1115,6 @@ function StepsCardPreview({
   onToggleTaskList?: (taskId: string, listId: string) => void;
   onToggleExpanded?: () => void;
   onToggleAllExpanded?: () => void;
-  parentStepCreationError?: string | null;
-  parentStepDraftInputRef?: RefObject<HTMLInputElement | null>;
-  parentStepDraftValue: string;
-  parentStepTaskTypeSelectionValue: string;
   selectedTaskIds: string[];
   selectedBucket: string;
   showParentStepDraft: boolean;
