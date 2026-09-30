@@ -61,7 +61,7 @@ test("repeat categories distinguish fixed presets from legacy intervaled schedul
 test("monthly editor copy uses short plain-language labels", () => {
   assert.deepEqual(REPEAT_MONTHLY_MODE_OPTIONS, [
     { label: "Day of month", value: "day_of_month" },
-    { label: "Week + weekday", value: "ordinal_weekday" },
+    { label: "X of Every Month", value: "ordinal_weekday" },
   ]);
   assert.deepEqual(REPEAT_MONTHLY_ORDINAL_OPTIONS.map((option) => option.label), ["1st", "2nd", "3rd", "4th", "Last"]);
 });

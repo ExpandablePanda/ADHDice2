@@ -32,7 +32,7 @@ export const REPEAT_WEEKDAY_FULL_LABELS = ["Sunday", "Monday", "Tuesday", "Wedne
 export const WEEKDAYS_REPEAT_DAYS = [1, 2, 3, 4, 5] as const;
 export const REPEAT_MONTHLY_MODE_OPTIONS: Array<{ label: string; value: TaskRepeatMonthlyMode }> = [
   { label: "Day of month", value: "day_of_month" },
-  { label: "Week + weekday", value: "ordinal_weekday" },
+  { label: "X of Every Month", value: "ordinal_weekday" },
 ];
 export const REPEAT_MONTHLY_ORDINAL_OPTIONS: Array<{ label: string; value: TaskRepeatMonthlyOrdinal }> = [
   { label: "1st", value: "first" },

@@ -157,7 +157,7 @@ export function TaskRepeatEditor({
   );
 
   const renderMonthlyControls = (isCustom: boolean) => (
-    <div className="grid gap-1.5" data-repeat-editor-monthly-controls="true">
+    <div className="grid gap-2" data-repeat-editor-monthly-controls="true">
       <div className="flex flex-nowrap items-center gap-1.5 overflow-x-auto pb-0.5" data-repeat-editor-monthly-mode="true">
         {REPEAT_MONTHLY_MODE_OPTIONS.map((option) => (
           <TaskTableChipButton

@@ -81,6 +81,11 @@ import {
   getTaskRepeatCategory,
   type TaskRepeatEditorValue,
 } from "@/lib/task-repeat";
+import {
+  reconcilePendingTaskRepeats,
+  type PendingTaskRepeat,
+  type TaskRepeatReconciliationValue,
+} from "@/lib/task-repeat-reconciliation";
 import { getTrashDaysRemaining } from "@/lib/task-trash";
 import { resolveTaskTableFreezeTransition } from "@/lib/task-table-freeze";
 import { buildTaskTypeSelectionOptions, formatTaskTypeLabel, matchesTaskTypeSelections, normalizeTaskType, resolveTaskTypeSelection, resolveTaskTypeSelectionOption, taskTypeSelectionValue } from "@/lib/task-type";
@@ -143,6 +148,9 @@ import type { TaskBehaviorProfiles, TaskBehaviorPolicy, TaskBehaviorPolicyField 
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
+type PendingTableTaskRepeat = PendingTaskRepeat & {
+  rollbackValue: TaskRepeatReconciliationValue;
+};
 type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "weekly";
 export type TaskDueChangeHandler = (
   taskId: string,
@@ -1424,7 +1432,7 @@ type TaskManagementTableV2Props = {
   onTaskPinToggle?: (taskId: string) => void;
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
-  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void;
+  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void | Promise<boolean>;
   onTaskStatusChange?: (taskId: string, status: TaskStatus, scrollAnchorTaskIds?: string[], options?: TableStatusChangeOptions) => void;
   onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
@@ -2285,6 +2293,18 @@ function taskRepeatEditorValue(task: PrototypeTaskRow): TaskRepeatEditorValue {
   };
 }
 
+function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">): TaskRepeatReconciliationValue {
+  return {
+    repeat: task.repeat,
+    repeatDayOfMonth: task.repeatDayOfMonth,
+    repeatDaysOfWeek: [...task.repeatDaysOfWeek],
+    repeatInterval: task.repeatInterval,
+    repeatMonthlyMode: task.repeatMonthlyMode,
+    repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
+    repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+  };
+}
+
 function inlineAccordionButtonClass() {
   return `${CONTROL_FONT_CLASS} shrink-0 appearance-none bg-transparent p-0 border-0 shadow-none`;
 }
@@ -3024,6 +3044,8 @@ export function TaskManagementTableV2({
   const statusRailLongPressTimeoutRef = useRef<number | null>(null);
   const statusRailLongPressTriggeredRef = useRef(false);
   const dueMutationGenerationRef = useRef(new Map<string, number>());
+  const repeatMutationGenerationRef = useRef(new Map<string, number>());
+  const pendingRepeatByTaskIdRef = useRef(new Map<string, PendingTableTaskRepeat>());
   const recentInlineCommitRef = useRef<Map<string, { expiresAt: number; value: string }>>(new Map());
   const selectMetadataPanel = useCallback((taskId: string, panelId: MetadataPanelId) => {
     setActiveMetadataPanelByTaskId((current) => current[taskId] === panelId
@@ -3862,17 +3884,25 @@ export function TaskManagementTableV2({
   const activeTimerTask = activeTimer ? tasks.find((task) => task.id === activeTimer.taskId) ?? null : null;
 
   useEffect(() => {
-    const nextRows = rows.map((row) => ({
+    const incomingRows = rows.map((row) => ({
       ...row,
       subtasks: filterPrototypeSubtasks(row.subtasks, hiddenSubtaskIds),
     }));
-    const nextSignature = buildPrototypeRowsSignature(nextRows);
+    const reconciledRows = reconcilePendingTaskRepeats(incomingRows, pendingRepeatByTaskIdRef.current);
+    for (const settled of reconciledRows.settled) {
+      const pendingRepeat = pendingRepeatByTaskIdRef.current.get(settled.taskId);
+      if (pendingRepeat?.generation === settled.generation) {
+        pendingRepeatByTaskIdRef.current.delete(settled.taskId);
+      }
+    }
+
+    const nextSignature = buildPrototypeRowsSignature(reconciledRows.nextRows);
     if (lastRowsSignatureRef.current === nextSignature) {
       return;
     }
 
     lastRowsSignatureRef.current = nextSignature;
-    setTasks(nextRows);
+    setTasks(reconciledRows.nextRows);
   }, [hiddenSubtaskIds, rows]);
 
   useEffect(() => {
@@ -5134,14 +5164,40 @@ export function TaskManagementTableV2({
     }
   }
 
+  function getAuthoritativeRepeatRow(taskId: string) {
+    const directlyResolvedRow = getRowById?.(taskId);
+    if (directlyResolvedRow) {
+      return directlyResolvedRow;
+    }
+    const liveRows = getAllRows?.() ?? allRows ?? rows;
+    return liveRows.find((row) => row.id === taskId) ?? null;
+  }
+
+  function clearPendingTaskRepeat(taskId: string, generation: number) {
+    const pendingRepeat = pendingRepeatByTaskIdRef.current.get(taskId);
+    if (!pendingRepeat || pendingRepeat.generation !== generation) {
+      return;
+    }
+
+    pendingRepeatByTaskIdRef.current.delete(taskId);
+    const authoritativeRow = getAuthoritativeRepeatRow(taskId);
+    const rollbackValue = authoritativeRow
+      ? taskRepeatReconciliationValue(authoritativeRow)
+      : pendingRepeat.rollbackValue;
+    patchTask(taskId, (task) => ({
+      ...task,
+      ...rollbackValue,
+      repeatDaysOfWeek: [...rollbackValue.repeatDaysOfWeek],
+    }));
+  }
+
   function setTaskRepeatValue(taskId: string, value: TaskRepeatEditorValue) {
     const currentTask = getTaskById(taskId);
     if (!currentTask) {
       return;
     }
     const targetTaskIds = resolveTableActionTargetTaskIds(taskId);
-    patchTasks(targetTaskIds, (task) => ({
-      ...task,
+    const repeatValue: TaskRepeatReconciliationValue = {
       repeat: value.repeatFrequency,
       repeatDayOfMonth: value.repeatDayOfMonth,
       repeatDaysOfWeek: [...value.repeatDaysOfWeek],
@@ -5149,18 +5205,56 @@ export function TaskManagementTableV2({
       repeatMonthlyMode: value.repeatMonthlyMode,
       repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+    };
+    for (const targetTaskId of targetTaskIds) {
+      const targetTask = getTaskById(targetTaskId);
+      if (!targetTask) {
+        continue;
+      }
+      const previousPendingRepeat = pendingRepeatByTaskIdRef.current.get(targetTaskId);
+      const generation = (repeatMutationGenerationRef.current.get(targetTaskId) ?? 0) + 1;
+      repeatMutationGenerationRef.current.set(targetTaskId, generation);
+      pendingRepeatByTaskIdRef.current.set(targetTaskId, {
+        generation,
+        rollbackValue: previousPendingRepeat?.rollbackValue ?? taskRepeatReconciliationValue(targetTask),
+        value: {
+          ...repeatValue,
+          repeatDaysOfWeek: [...repeatValue.repeatDaysOfWeek],
+        },
+      });
+    }
+    patchTasks(targetTaskIds, (task) => ({
+      ...task,
+      ...repeatValue,
+      repeatDaysOfWeek: [...repeatValue.repeatDaysOfWeek],
     }));
     // Repeat changes also fan out through the existing per-task save callback so
     // recurrence/history behavior stays owned by the normal single-row path.
     for (const targetTaskId of targetTaskIds) {
-      onTaskRepeatChange?.(targetTaskId, value.repeatFrequency, {
-        repeatDayOfMonth: value.repeatDayOfMonth,
-        repeatDaysOfWeek: [...value.repeatDaysOfWeek],
-        repeatInterval: value.repeatInterval,
-        repeatMonthlyMode: value.repeatMonthlyMode,
-        repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
-        repeatMonthlyWeekday: value.repeatMonthlyWeekday,
-      });
+      const generation = repeatMutationGenerationRef.current.get(targetTaskId) ?? 0;
+      let persistenceResult: void | Promise<boolean>;
+      try {
+        persistenceResult = onTaskRepeatChange?.(targetTaskId, value.repeatFrequency, {
+          repeatDayOfMonth: value.repeatDayOfMonth,
+          repeatDaysOfWeek: [...value.repeatDaysOfWeek],
+          repeatInterval: value.repeatInterval,
+          repeatMonthlyMode: value.repeatMonthlyMode,
+          repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
+          repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+        });
+      } catch {
+        clearPendingTaskRepeat(targetTaskId, generation);
+        continue;
+      }
+      if (persistenceResult !== undefined) {
+        void persistenceResult.then((succeeded) => {
+          if (!succeeded) {
+            clearPendingTaskRepeat(targetTaskId, generation);
+          }
+        }, () => {
+          clearPendingTaskRepeat(targetTaskId, generation);
+        });
+      }
     }
   }
 
@@ -6453,6 +6547,7 @@ export function TaskManagementTableV2({
                           : overlayMode === "notes"
                             ? "Notes actions"
                             : "List actions"}
+        layout={overlayMode === "repeat" ? "stack" : "row"}
         onClose={closeInspector}
         containerRef={(node) => {
           activeInlineActionRowRef.current = node;

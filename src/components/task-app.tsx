@@ -7785,7 +7785,7 @@ export function TaskApp() {
           repeatMonthlyWeekday: null,
         }
         : normalizePresetRepeatSelection(repeat, {}, { dueOn });
-    void updateTask(taskId, taskRepeatEditorValueToUpdate(value));
+    return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 
   const applyTaskRepeatEditorValue = (
@@ -7815,7 +7815,7 @@ export function TaskApp() {
           repeatMonthlyWeekday: null,
         }
         : normalizePresetRepeatSelection(repeat, {}, { dueOn });
-    void updateTask(taskId, taskRepeatEditorValueToUpdate(value));
+    return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 
   const completeFlow = (() => {
@@ -8495,7 +8495,7 @@ export function TaskApp() {
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
-                    applyTaskRepeatEditorValue(taskId, repeat, cadence);
+                    return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
@@ -8669,7 +8669,7 @@ export function TaskApp() {
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
-                    applyTaskRepeatEditorValue(taskId, repeat, cadence);
+                    return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);

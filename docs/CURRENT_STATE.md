@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-29
+Last reviewed: 2026-09-30
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.15`.
+- Current working app version: `7.16.16`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.16.16 Repeat action-row and optimistic-chip reconciliation
+
+Table Repeat editing now uses a stacked inline action-row layout for the
+multi-row recurrence editor, while other Table action rows retain their
+horizontal layout. The Monthly ordinal mode is labeled `X of Every Month` in
+the shared and batch editors without changing the stored `ordinal_weekday`
+enum or recurrence semantics. Table Repeat edits now keep a generation-fenced
+optimistic Repeat-field overlay until authoritative rows match, accepting
+unrelated upstream row changes and clearing/rolling back through the existing
+boolean persistence result on failure. Browser/manual QA remains Andrew-owned
+and unverified here.
 
 ## 2026-09-30 7.16.15 Recurrence editor follow-up
 

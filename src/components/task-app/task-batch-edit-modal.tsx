@@ -340,7 +340,7 @@ export function TaskBatchEditModal({
                 <div className="flex flex-wrap gap-2">
                   {([
                     ["day_of_month", "Day of month"],
-                    ["ordinal_weekday", "Week + weekday"],
+                    ["ordinal_weekday", "X of Every Month"],
                   ] as const).map(([mode, label]) => (
                     <Pill key={mode} onClick={() => setDraft((current) => ({ ...current, repeatMonthlyMode: mode }))} selected={draft.repeatMonthlyMode === mode}>{label}</Pill>
                   ))}

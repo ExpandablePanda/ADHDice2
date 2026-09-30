@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { getTaskTableInlineActionRowContentClass } from "../src/components/ui/task-table-primitives.tsx";
 
 const primitivesSource = readFileSync(new URL("../src/components/ui/task-table-primitives.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
@@ -60,4 +61,13 @@ test("Table child Task Type interaction belongs to TaskTypeSelect and leaves the
   assert.match(taskTypeSource, /onInteractionStart=\{\(\) => \{\s*taskTypeInteractionParentIdRef\.current = parentTaskId;/);
   assert.match(taskTypeSource, /onInteractionEnd=\{\(\) => \{[\s\S]*taskTypeInteractionParentIdRef\.current = null;/);
   assert.match(taskTypeSource, /onChange=\{\(value\) => setTableStepDraftTaskTypeValues/);
+});
+
+test("Table inline action rows keep horizontal layout by default and stack Repeat content explicitly", () => {
+  assert.equal(getTaskTableInlineActionRowContentClass("auto", "row"), "flex min-w-max items-start gap-1.5");
+  assert.equal(getTaskTableInlineActionRowContentClass("visible", "row"), "flex w-full items-start gap-1.5");
+  assert.equal(getTaskTableInlineActionRowContentClass("auto", "stack"), "grid w-full gap-2");
+  assert.match(tableSource, /layout=\{overlayMode === "repeat" \? "stack" : "row"\}/);
+  assert.match(primitivesSource, /layout\?: TaskTableInlineActionRowLayout/);
+  assert.match(primitivesSource, /return "grid w-full gap-2"/);
 });
