@@ -3396,25 +3396,38 @@ export function TaskManagementTableV2({
   const visibleTaskIds = useMemo(
     () => effectiveDisplayedTasks.flatMap((task) => {
       const stepPreviewGroup = childTaskPreviewByParentTaskId[task.id];
+      const hasStepPreview = Boolean(stepPreviewGroup && (stepPreviewGroup.items.length > 0 || stepPreviewGroup.summary.hasInvalidDescendants));
       const stepsExpanded = (expandedStepsByTaskId[task.id] ?? false) || activeHierarchyParentTaskIdSet.has(task.id);
-      if (!stepPreviewGroup || !stepsExpanded) {
+      const visibleSubtasks = filterPrototypeSubtasks(task.subtasks, hiddenSubtaskIds);
+      const hasSourceStepRows = visibleSubtasks.length > 0;
+      const sourceStepsExpanded = hasStepPreview ? stepsExpanded : (expandedSubtasksByTaskId[task.id] ?? false);
+      if (!sourceStepsExpanded) {
         return [task.id];
       }
 
-      const statusFilteredItems = activeHierarchyParentTaskIdSet.has(task.id)
-        ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup.items, activeHierarchyChildTaskIdSet)
-        : stepPreviewGroup.items;
-      const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(
-        statusFilteredItems,
-        activeHierarchyParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
-      );
-      const groupedItems = groupChildTaskPreviewItemsByStoredCompletion(childTaskPreviewVisibility.visibleItems);
-      const renderedItems = activeHierarchyParentTaskIdSet.has(task.id) || expandedCompletedStepsByTaskId[task.id]
-        ? [...groupedItems.normalItems, ...groupedItems.completedItems]
-        : groupedItems.normalItems;
-      return [task.id, ...renderedItems.map((item) => item.id)];
+      const renderedTaskIds = [task.id];
+      if (hasStepPreview) {
+        const statusFilteredItems = activeHierarchyParentTaskIdSet.has(task.id)
+          ? filterChildTaskPreviewItemsToMatchingHierarchy(stepPreviewGroup.items, activeHierarchyChildTaskIdSet)
+          : stepPreviewGroup.items;
+        const childTaskPreviewVisibility = buildChildTaskPreviewVisibility(
+          statusFilteredItems,
+          activeHierarchyParentTaskIdSet.has(task.id) ? new Set<string>() : collapsedChildTaskIdSet,
+        );
+        const groupedItems = groupChildTaskPreviewItemsByStoredCompletion(childTaskPreviewVisibility.visibleItems);
+        const renderedItems = activeHierarchyParentTaskIdSet.has(task.id) || expandedCompletedStepsByTaskId[task.id]
+          ? [...groupedItems.normalItems, ...groupedItems.completedItems]
+          : groupedItems.normalItems;
+        renderedTaskIds.push(...renderedItems.map((item) => item.id));
+      }
+
+      if (hasSourceStepRows) {
+        renderedTaskIds.push(...flattenPrototypeSubtasksForMiniRows(visibleSubtasks).map((row) => row.subtask.id));
+      }
+
+      return renderedTaskIds;
     }),
-    [activeHierarchyChildTaskIdSet, activeHierarchyParentTaskIdSet, childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, effectiveDisplayedTasks, expandedCompletedStepsByTaskId, expandedStepsByTaskId],
+    [activeHierarchyChildTaskIdSet, activeHierarchyParentTaskIdSet, childTaskPreviewByParentTaskId, collapsedChildTaskIdSet, effectiveDisplayedTasks, expandedCompletedStepsByTaskId, expandedStepsByTaskId, expandedSubtasksByTaskId, hiddenSubtaskIds],
   );
   const visibleTaskIdSet = useMemo(
     () => new Set(visibleTaskIds),
@@ -3426,6 +3439,22 @@ export function TaskManagementTableV2({
     }),
     onLongPress: (target) => {
       const taskId = target.dataset.taskTableRow;
+      if (!taskId) {
+        return;
+      }
+      clearPendingRowClick();
+      setRowContextMenu(null);
+      if (!selectedTaskIdSet.has(taskId)) {
+        startTaskSelection(taskId, { additive: true });
+      }
+    },
+  });
+  const childTaskRowLongPressHandlers = useTaskRowLongPress({
+    isInteractiveTarget: (target) => isTaskTableChildRowInteractiveTarget(target, {
+      isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId),
+    }),
+    onLongPress: (target) => {
+      const taskId = target.dataset.sameTableStepRow;
       if (!taskId) {
         return;
       }
@@ -4649,25 +4678,47 @@ export function TaskManagementTableV2({
     return BATCH_QUICK_EDIT_MODES.includes(mode);
   }
 
+  function getKnownTaskIds() {
+    const knownTaskIds = new Set<string>(tasks.map((task) => task.id));
+    for (const row of allRows ?? []) {
+      knownTaskIds.add(row.id);
+    }
+    for (const row of getAllRows?.() ?? []) {
+      knownTaskIds.add(row.id);
+    }
+    for (const group of Object.values(childTaskPreviewByParentTaskId)) {
+      for (const item of group.items) {
+        knownTaskIds.add(item.id);
+      }
+    }
+    return knownTaskIds;
+  }
+
+  function getValidSelectedTaskIds() {
+    const knownTaskIds = getKnownTaskIds();
+    return Array.from(new Set(selectedTaskIds.filter((taskId) => knownTaskIds.has(taskId))));
+  }
+
   function getQuickEditTargetTaskIds(taskId: string) {
     const candidateIds = quickEditTargetTaskIds?.length ? quickEditTargetTaskIds : [taskId];
-    return Array.from(new Set(candidateIds.filter((candidateId): candidateId is string => Boolean(candidateId))));
+    const knownTaskIds = getKnownTaskIds();
+    return Array.from(new Set(candidateIds.filter((candidateId): candidateId is string => Boolean(candidateId) && knownTaskIds.has(candidateId))));
   }
 
   function resolveTableMetadataTargetTaskIds(clickedTaskId: string) {
     if (quickEditTargetTaskIds?.length) {
       return getQuickEditTargetTaskIds(clickedTaskId);
     }
-    if (metadataTargetTaskId === clickedTaskId) {
+    if (metadataTargetTaskId === clickedTaskId && (!selectedTaskIdSet.has(clickedTaskId) || selectedTaskIds.length <= 1)) {
       return [clickedTaskId];
     }
     if (!selectedTaskIdSet.has(clickedTaskId) || selectedTaskIds.length <= 1) {
       return [clickedTaskId];
     }
 
-    const visibleSelectedTaskIds = selectedTaskIds.filter((taskId) => visibleTaskIdSet.has(taskId));
-    if (visibleSelectedTaskIds.length > 1) {
-      return Array.from(new Set(visibleSelectedTaskIds));
+    const validSelectedTaskIds = getValidSelectedTaskIds();
+    if (validSelectedTaskIds.length > 1) {
+      return validSelectedTaskIds;
     }
 
     return [clickedTaskId];
@@ -4681,9 +4732,9 @@ export function TaskManagementTableV2({
       return [clickedTaskId];
     }
 
-    const visibleSelectedTaskIds = selectedTaskIds.filter((taskId) => visibleTaskIdSet.has(taskId));
-    if (visibleSelectedTaskIds.length > 1) {
-      return Array.from(new Set(visibleSelectedTaskIds));
+    const validSelectedTaskIds = getValidSelectedTaskIds();
+    if (validSelectedTaskIds.length > 1) {
+      return validSelectedTaskIds;
     }
 
     return [clickedTaskId];
@@ -9042,6 +9093,7 @@ export function TaskManagementTableV2({
               <div
                 className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
                 data-same-table-step-row={item.id}
+                {...childTaskRowLongPressHandlers}
               >
                 <div
                   className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS : ""} ${canOpenStepActions ? "cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90" : ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
@@ -9186,17 +9238,22 @@ export function TaskManagementTableV2({
           const sourceTaskRowPresentation = resolveTaskTypeRowPresentation(sourceTaskTypeOption);
           const sourceTaskSurface = sourceTaskRowPresentation.tableRowSurfaceClassName;
           return (
-          <div
-            className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
-            data-same-table-step-row={row.subtask.id}
-            key={row.subtask.id}
-            onClick={(event) => {
-              if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
-                return;
-              }
-              event.stopPropagation();
-              openTaskInCurrentEditor(row.subtask.id);
-            }}
+              <div
+                className={`${CONTROL_FONT_CLASS} block w-max min-w-full rounded-[1.15rem] text-center`}
+                data-same-table-step-row={row.subtask.id}
+                key={row.subtask.id}
+                {...childTaskRowLongPressHandlers}
+                onClick={(event) => {
+                  if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
+                    return;
+                  }
+                  event.stopPropagation();
+                  if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                    startTaskSelection(row.subtask.id, { additive: true, range: event.shiftKey });
+                    return;
+                  }
+                  openTaskInCurrentEditor(row.subtask.id);
+                }}
             onKeyDown={(event) => {
               if (isTaskTableChildRowInteractiveTarget(event.target, { isTextEditingActive: Boolean(editingTaskTitleId || editingSubtaskId) })) {
                 return;
@@ -9204,6 +9261,10 @@ export function TaskManagementTableV2({
               if (event.key === "Enter" || event.key === " ") {
                 event.preventDefault();
                 event.stopPropagation();
+                if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                  startTaskSelection(row.subtask.id, { additive: true, range: event.shiftKey });
+                  return;
+                }
                 openTaskInCurrentEditor(row.subtask.id);
               }
             }}
@@ -9211,7 +9272,7 @@ export function TaskManagementTableV2({
             tabIndex={0}
           >
             <div
-              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${sourceTaskSurface}`}
+              className={`${TASK_TABLE_GRID_ORIGIN_CLASS} grid w-max min-w-full items-center gap-0 rounded-[1.15rem] border py-1.5 pl-[3px] pr-0 text-center transition ${sourceTaskSurface} ${selectedTaskIdSet.has(row.subtask.id) ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS : ""}`}
               data-task-table-source-step-grid={row.subtask.id}
               style={{ gridTemplateColumns }}
             >

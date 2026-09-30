@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.10`.
+- Current working app version: `7.16.11`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,12 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.16.11 Hierarchical Task selection correction
+
+- Steps and Substeps now enter the shared selection mode through the existing long-press interaction in both Table and List surfaces, while interactive child controls and drag gestures remain excluded.
+- Table and List Select All Visible and range selection now use the ordered rendered Task/Step/Substep IDs, and selected valid entities remain batch targets after becoming hidden or collapsed.
+- Table metadata batches continue to resolve canonical valid targets and invoke the existing per-Task status and recurrence authorities. Browser QA remains Andrew-owned and unverified here.
 
 ## 2026-09-29 7.16.10 Task Content Folder bounded current-day History authority
 

@@ -1057,7 +1057,9 @@ function StepsCardPreview({
   listDefinitions,
   listMembershipsByTaskId,
   parentTaskId,
+  getVisibleTaskIds,
   onCreateChildTask,
+  onClearRowContextMenu,
   onDeleteStep,
   onOpenHistory,
   onOpenStep,
@@ -1086,6 +1088,7 @@ function StepsCardPreview({
   parentStepDraftInputRef,
   parentStepDraftValue,
   parentStepTaskTypeSelectionValue,
+  selectedTaskIds,
   selectedBucket,
   showParentStepDraft,
   todayDateKey,
@@ -1114,10 +1117,13 @@ function StepsCardPreview({
   listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
   parentTaskId: string;
   onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string) => Promise<{ error: string | null; taskId: string | null }>;
+  getVisibleTaskIds: () => string[];
+  onClearRowContextMenu?: () => void;
   onDeleteStep?: (taskId: string) => void;
   onOpenHistory?: (taskId: string) => void;
   onOpenStep: (taskId: string) => void;
   onOpenQuickPanel: (taskId: string, mode: ListQuickPanelMode) => void;
+  onToggleTaskSelection?: (taskId: string, options?: { additive?: boolean; range?: boolean; visibleTaskIds?: string[] }) => void;
   onRenameStep?: (taskId: string, title: string) => void;
   onReorderStep?: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onDelayTaskUntil?: (taskId: string, dueOn: string | null) => Promise<boolean> | boolean;
@@ -1148,6 +1154,7 @@ function StepsCardPreview({
   parentStepDraftInputRef?: RefObject<HTMLInputElement | null>;
   parentStepDraftValue: string;
   parentStepTaskTypeSelectionValue: string;
+  selectedTaskIds: string[];
   selectedBucket: string;
   showParentStepDraft: boolean;
   todayDateKey: string;
@@ -1178,6 +1185,22 @@ function StepsCardPreview({
   const [substepTaskTypeSelectionValue, setSubstepTaskTypeSelectionValue] = useState("task");
   const taskTypeInteractionParentIdRef = useRef<string | null>(null);
   const taskTypeOptions = useMemo(() => buildTaskTypeSelectionOptions(customBehaviorRulesets), [customBehaviorRulesets]);
+  const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
+  const childTaskRowLongPressHandlers = useTaskRowLongPress({
+    isInteractiveTarget: shouldIgnoreListOverlayOpen,
+    onLongPress: (target) => {
+      const taskId = target.dataset.sameTableStepRow;
+      if (!taskId || selectedTaskIdSet.has(taskId)) {
+        return;
+      }
+      onClearRowContextMenu?.();
+      closeQuickPanel();
+      onToggleTaskSelection?.(taskId, {
+        additive: true,
+        visibleTaskIds: getVisibleTaskIds(),
+      });
+    },
+  });
 
   const beginTaskTypeInteraction = (parentTaskId: string) => {
     taskTypeInteractionParentIdRef.current = parentTaskId;
@@ -1508,8 +1531,9 @@ function StepsCardPreview({
               <Fragment key={item.id}>
               {itemIndex === groupedItems.normalItems.length ? completedStepsHeader : null}
               <li
-                className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition ${childTaskSurface} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
+                className={`cursor-pointer rounded-[0.95rem] border px-1.5 py-2.5 transition ${childTaskSurface} ${selectedTaskIdSet.has(item.id) ? TASK_TABLE_SELECTED_TASK_SURFACE_CLASS : ""} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:focus-visible:ring-[#3b2f68]/90 ${getHighlightedListRowClassName(item.id, highlightedActiveTaskId, highlightedTaskIdSet) || ""} ${childTaskDragState?.taskId === item.id ? "opacity-60" : ""} ${getChildTaskDropIndicatorClassName(item.id)}`}
                 data-same-table-step-row={item.id}
+                {...childTaskRowLongPressHandlers}
                 onDragOver={(event) => updateChildTaskDropTarget(event, item)}
                 onDrop={(event) => dropChildTaskOnItem(event, item)}
                 onClick={(event) => {
@@ -1517,6 +1541,16 @@ function StepsCardPreview({
                     return;
                   }
                   event.stopPropagation();
+                  onClearRowContextMenu?.();
+                  closeQuickPanel();
+                  if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                    onToggleTaskSelection(item.id, {
+                      additive: true,
+                      range: event.shiftKey,
+                      visibleTaskIds: getVisibleTaskIds(),
+                    });
+                    return;
+                  }
                   onOpenStep(item.id);
                 }}
                 onKeyDown={(event) => {
@@ -1529,6 +1563,14 @@ function StepsCardPreview({
                   if (event.key === "Enter" || event.key === " ") {
                     event.preventDefault();
                     event.stopPropagation();
+                    if (selectedTaskIds.length > 0 && onToggleTaskSelection) {
+                      onToggleTaskSelection(item.id, {
+                        additive: true,
+                        range: event.shiftKey,
+                        visibleTaskIds: getVisibleTaskIds(),
+                      });
+                      return;
+                    }
                     onOpenStep(item.id);
                   }
                 }}
@@ -2865,6 +2907,24 @@ function TasksSimpleList({
     [tableProps.runningTaskTimers],
   );
   const visibleTaskIds = useMemo(() => tasks.map((task) => task.id), [tasks]);
+  const getRenderedListTaskIds = useCallback(() => {
+    const shellElement = listShellRef.current;
+    if (!shellElement) {
+      return visibleTaskIds;
+    }
+
+    const seenTaskIds = new Set<string>();
+    return Array.from(
+      shellElement.querySelectorAll<HTMLElement>("[data-task-list-row], [data-same-table-step-row]"),
+    ).flatMap((element) => {
+      const taskId = element.dataset.taskListRow ?? element.dataset.sameTableStepRow;
+      if (!taskId || seenTaskIds.has(taskId)) {
+        return [];
+      }
+      seenTaskIds.add(taskId);
+      return [taskId];
+    });
+  }, [visibleTaskIds]);
   const toggleTaskMetadata = (taskId: string) => {
     setVisibleMetadataTaskIds((current) => {
       const next = new Set(current);
@@ -2929,7 +2989,10 @@ function TasksSimpleList({
   };
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const taskRowLongPressHandlers = useTaskRowLongPress({
-    isInteractiveTarget: shouldIgnoreListOverlayOpen,
+    isInteractiveTarget: (target) => (
+      shouldIgnoreListOverlayOpen(target)
+      || (target instanceof HTMLElement && Boolean(target.closest("[data-same-table-step-row]")))
+    ),
     onLongPress: (target) => {
       const taskId = target.dataset.taskListRow;
       if (!taskId) {
@@ -2940,7 +3003,7 @@ function TasksSimpleList({
       if (!selectedTaskIdSet.has(taskId)) {
         tableProps.onToggleTaskSelection?.(taskId, {
           additive: true,
-          visibleTaskIds,
+          visibleTaskIds: getRenderedListTaskIds(),
         });
       }
     },
@@ -3402,7 +3465,7 @@ function TasksSimpleList({
             onDeleteSelected={selectedTaskIds.length > 1 ? tableProps.onOpenBatchDelete : undefined}
             onEditSelected={selectedTaskIds.length > 1 ? tableProps.onOpenBatchEdit : undefined}
             onEditTask={selectedTaskIds.length === 1 && tableProps.onOpenTaskEditor ? () => tableProps.onOpenTaskEditor?.(selectedTaskIds[0]!, visibleTaskIds) : undefined}
-            onSelectAllVisible={tableProps.onSelectAllVisible ? () => tableProps.onSelectAllVisible?.(visibleTaskIds) : undefined}
+            onSelectAllVisible={tableProps.onSelectAllVisible ? () => tableProps.onSelectAllVisible?.(getRenderedListTaskIds()) : undefined}
             selectedCount={selectedTaskIds.length}
           />
             {taskContentFolderPresentation
@@ -3546,7 +3609,7 @@ function TasksSimpleList({
                   tableProps.onToggleTaskSelection(task.id, {
                     additive: true,
                     range: event.shiftKey,
-                    visibleTaskIds,
+                    visibleTaskIds: getRenderedListTaskIds(),
                   });
                   return;
                 }
@@ -3576,7 +3639,7 @@ function TasksSimpleList({
                           tableProps.onToggleTaskSelection(task.id, {
                             additive: true,
                             range: event.shiftKey,
-                            visibleTaskIds,
+                            visibleTaskIds: getRenderedListTaskIds(),
                           });
                           return;
                         }
@@ -3960,6 +4023,7 @@ function TasksSimpleList({
                 customBehaviorRulesets={tableProps.customBehaviorRulesets}
                 currentListLabel={currentListLabel}
                 group={effectiveStepPreviewGroup}
+                getVisibleTaskIds={getRenderedListTaskIds}
                 isExpanded={isStepSectionExpanded}
                 matchingChildTaskIds={!showAllSearchStepsByTaskId[getShowAllSearchStepsKey(task.id)] && activeHierarchyParentMatch
                   ? activeHierarchyChildTaskIds
@@ -3975,6 +4039,7 @@ function TasksSimpleList({
                 listDefinitions={rowContext.listDefinitions}
                 listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
                 onCreateChildTask={tableProps.onCreateChildTask}
+                onClearRowContextMenu={() => setRowContextMenu(null)}
                 onDeleteStep={tableProps.onOpenDeleteTask}
                 onOpenHistory={tableProps.onOpenTaskHistory}
                 onDelayTaskUntil={tableProps.onDelayTaskUntil}
@@ -4004,6 +4069,7 @@ function TasksSimpleList({
                 isManualActionAllowed={(item, action) => isListManualActionAllowedForIdentity({ customRulesetId: item.customRulesetId, id: item.id, taskType: item.taskType ?? "task" }, action)}
                 onToggleFocusToday={onToggleFocusToday}
                 onTogglePinned={tableProps.onTogglePinned}
+                onToggleTaskSelection={tableProps.onToggleTaskSelection}
                 onToggleTaskList={tableProps.onToggleTaskList}
                 onToggleExpanded={() => {
                   if (searchMatchedStepParentTaskIdSet.has(task.id)) {
@@ -4020,6 +4086,7 @@ function TasksSimpleList({
                 parentStepDraftValue={parentStepTitleDrafts[task.id] ?? ""}
                 parentStepTaskTypeSelectionValue={parentStepTaskTypeSelectionValues[task.id] ?? "task"}
                 selectedBucket={selectedBucket}
+                selectedTaskIds={selectedTaskIds}
                 showParentStepDraft={parentStepDraftTaskId === task.id}
                 todayDateKey={rowContext.todayDateKey}
                 onCancelParentStepDraft={() => {
@@ -4147,13 +4214,13 @@ function TasksSimpleList({
               moveIntoParentOptions={rowContextMenuMoveIntoParentOptions}
               taskContentFolderOptions={rowContextMenuTaskContentFolderOptions}
               onSelectAllVisible={tableProps.onSelectAllVisible ? () => {
-                tableProps.onSelectAllVisible?.(visibleTaskIds);
+                tableProps.onSelectAllVisible?.(getRenderedListTaskIds());
                 setRowContextMenu(null);
               } : undefined}
               onToggleTaskSelection={tableProps.onToggleTaskSelection ? () => {
                 tableProps.onToggleTaskSelection?.(rowContextMenuTask.id, {
                   additive: true,
-                  visibleTaskIds,
+                  visibleTaskIds: getRenderedListTaskIds(),
                 });
                 setRowContextMenu(null);
               } : undefined}
