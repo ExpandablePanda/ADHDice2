@@ -218,7 +218,7 @@ test("Task Type keyboard navigation keeps focus on the trigger and never commits
   assert.match(taskTypeSelectSource, /selectActiveOption\(\)/);
   assert.match(taskTypeSelectSource, /onChange\(option\.value\);[\s\S]*closeMenu\(true\)/);
   assert.match(taskTypeSelectSource, /data-task-type-select-option-index=\{optionIndex\}/);
-  assert.match(taskTypeSelectSource, /scrollIntoView\?\.\(\{ block: "nearest" \}\)/);
+  assert.match(taskTypeSelectSource, /revealDropdownOptionWithinPanel\(activeOption, menuRef\.current\)/);
   assert.match(taskTypeSelectSource, /aria-activedescendant=\{isOpen && activeOptionIndex !== null/);
   assert.match(taskTypeSelectSource, /aria-controls=\{menuId\}/);
   assert.match(taskTypeSelectSource, /role="combobox"/);
@@ -245,7 +245,7 @@ test("Task Type menu placement stays viewport-safe and flips above when needed",
       { height: 140 },
       "compact",
     ),
-    { left: 152, top: 126, width: 160 },
+    { left: 152, maxHeight: 140, top: 126, width: 160 },
   );
   assert.deepEqual(
     getTaskTypeSelectMenuPosition(
@@ -254,7 +254,19 @@ test("Task Type menu placement stays viewport-safe and flips above when needed",
       { height: 120 },
       "compact",
     ),
-    { left: 20, top: 314, width: 200 },
+    { left: 20, maxHeight: 120, top: 314, width: 200 },
+  );
+});
+
+test("Task Type menu placement clamps its panel when neither side has the preferred height", () => {
+  assert.deepEqual(
+    getTaskTypeSelectMenuPosition(
+      { bottom: 112, left: 20, top: 82, width: 180 },
+      { height: 160, width: 320 },
+      { height: 288 },
+      "default",
+    ),
+    { left: 20, maxHeight: 68, top: 8, width: 180 },
   );
 });
 

@@ -384,7 +384,19 @@
     color: #6f57f6 !important;
   }
 
+  [data-task-creation-composer] button[data-task-icon-surface]:focus-visible {
+    border-color: #b9a8ff !important;
+    background: #f1ecff !important;
+    color: #6f57f6 !important;
+  }
+
   [data-theme="dark"] [data-task-creation-composer] button[data-task-chip-button]:focus-visible > [data-task-chip-surface] {
+    border-color: #7f67ff !important;
+    background: #22193f !important;
+    color: #cabfff !important;
+  }
+
+  [data-theme="dark"] [data-task-creation-composer] button[data-task-icon-surface]:focus-visible {
     border-color: #7f67ff !important;
     background: #22193f !important;
     color: #cabfff !important;

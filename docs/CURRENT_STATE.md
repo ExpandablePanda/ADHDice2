@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.77`.
+- Current working app version: `7.15.78`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.15.78 Side Task Type placement and composer surface focus correction
+
+TaskTypeSelect now measures its portaled panel, clamps its available height to
+the viewport, flips toward the side with more room, and reveals active options
+within the panel without scrolling the document. TaskCreationComposer focus
+styling targets semantic chip and icon surfaces so keyboard focus fills the
+rounded control instead of applying a wrapper overlay. Focused composer and
+placement contracts, targeted lint, and `git diff --check` are the source
+verification boundary. Browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-09-30 7.15.77 Side Task Type and composer focus correction
 

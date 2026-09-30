@@ -78,6 +78,8 @@ test("composer keyboard focus uses control-native emphasis without changing sele
   assert.match(globals, /button\[data-task-chip-button\]:focus-visible \{[\s\S]*background: transparent !important/);
   assert.match(primitives, /data-task-chip-button="true"/);
   assert.match(primitives, /data-task-chip-surface="true"/);
+  assert.match(globals, /button\[data-task-icon-surface\]:focus-visible/);
+  assert.match(read("../src/components/ui-system/adhd-icon-button.tsx"), /data-task-icon-surface="true"/);
   assert.match(composer, /onClick=\{\(\) => setPriority\(value\)\}/);
   assert.match(composer, /onClick=\{\(\) => setEnergy\(option\.value\)\}/);
 });

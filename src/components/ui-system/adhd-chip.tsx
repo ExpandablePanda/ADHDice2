@@ -138,10 +138,11 @@ export function AdhdChip({
         TASK_TABLE_CONTROL_FONT_CLASS,
         "inline-flex shrink-0 items-center appearance-none border-0 bg-transparent p-0 shadow-none",
       )}
+      data-task-chip-button="true"
       type={props.type ?? "button"}
       {...props}
     >
-      <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, iconPaddingClass ?? trailingIconPaddingClass, trailingIcon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, className)} data-style-component="AdhdChip" data-style-role="ui.chip">
+      <span className={joinClasses(TASK_TABLE_CHIP_BASE_CLASS, resolvedToneClassName, iconPaddingClass ?? trailingIconPaddingClass, trailingIcon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, className)} data-style-component="AdhdChip" data-style-role="ui.chip" data-task-chip-surface="true">
         <span className={joinClasses("inline-flex items-center", icon ? TASK_TABLE_ICON_LABEL_GAP_CLASS : null, contentClassName)} data-style-part="label">
           {icon ? <AdhdChipIcon icon={icon} iconName={iconName} /> : null}
           <StyleLabTextPart>{children}</StyleLabTextPart>

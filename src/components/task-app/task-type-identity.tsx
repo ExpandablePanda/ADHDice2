@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AdhdDropdownPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
+import { revealDropdownOptionWithinPanel } from "@/lib/dropdown-interaction";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import { resolveTaskTypeAccent, type TaskTypePresentation } from "@/lib/task-type-presentation";
 
@@ -57,6 +58,7 @@ export type TaskTypeSelectSize = "default" | "compact";
 
 type TaskTypeSelectMenuPosition = {
   left: number;
+  maxHeight: number;
   top: number;
   width: number;
 };
@@ -103,16 +105,22 @@ export function getTaskTypeSelectMenuPosition(
     size === "compact" ? TASK_TYPE_SELECT_COMPACT_MENU_WIDTH : triggerRect.width,
   );
   const width = Math.min(panel.width ?? preferredWidth, maxWidth);
-  const height = panel.height ?? (size === "compact" ? TASK_TYPE_SELECT_COMPACT_MENU_HEIGHT : TASK_TYPE_SELECT_DEFAULT_MENU_HEIGHT);
+  const preferredHeight = panel.height ?? (size === "compact" ? TASK_TYPE_SELECT_COMPACT_MENU_HEIGHT : TASK_TYPE_SELECT_DEFAULT_MENU_HEIGHT);
   const left = Math.max(
     TASK_TYPE_SELECT_VIEWPORT_MARGIN,
     Math.min(triggerRect.left, viewport.width - width - TASK_TYPE_SELECT_VIEWPORT_MARGIN),
   );
   const belowTop = triggerRect.bottom + TASK_TYPE_SELECT_MENU_GAP;
-  const top = belowTop + height <= viewport.height - TASK_TYPE_SELECT_VIEWPORT_MARGIN
-    ? belowTop
-    : Math.max(TASK_TYPE_SELECT_VIEWPORT_MARGIN, triggerRect.top - height - TASK_TYPE_SELECT_MENU_GAP);
-  return { left, top, width };
+  const spaceBelow = Math.max(0, viewport.height - TASK_TYPE_SELECT_VIEWPORT_MARGIN - belowTop);
+  const spaceAbove = Math.max(0, triggerRect.top - TASK_TYPE_SELECT_VIEWPORT_MARGIN - TASK_TYPE_SELECT_MENU_GAP);
+  const opensBelow = spaceBelow >= preferredHeight || spaceBelow >= spaceAbove;
+  const maxHeight = Math.max(1, Math.min(preferredHeight, opensBelow ? spaceBelow : spaceAbove));
+  const preferredTop = opensBelow ? belowTop : triggerRect.top - TASK_TYPE_SELECT_MENU_GAP - maxHeight;
+  const top = Math.max(
+    TASK_TYPE_SELECT_VIEWPORT_MARGIN,
+    Math.min(preferredTop, viewport.height - TASK_TYPE_SELECT_VIEWPORT_MARGIN - maxHeight),
+  );
+  return { left, maxHeight, top, width };
 }
 
 export function TaskTypeSelect({
@@ -221,12 +229,19 @@ export function TaskTypeSelect({
         return;
       }
       const rect = trigger.getBoundingClientRect();
-      setMenuPosition(getTaskTypeSelectMenuPosition(
+      const nextPosition = getTaskTypeSelectMenuPosition(
         rect,
         { height: window.innerHeight, width: window.innerWidth },
         { height: menuRef.current?.offsetHeight, width: menuRef.current?.offsetWidth },
         size,
-      ));
+      );
+      setMenuPosition((currentPosition) => currentPosition
+        && currentPosition.left === nextPosition.left
+        && currentPosition.maxHeight === nextPosition.maxHeight
+        && currentPosition.top === nextPosition.top
+        && currentPosition.width === nextPosition.width
+        ? currentPosition
+        : nextPosition);
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -255,14 +270,38 @@ export function TaskTypeSelect({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [isOpen, size]);
+  }, [isOpen, menuPosition, size]);
+
+  useLayoutEffect(() => {
+    if (!isOpen || !menuRef.current || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const nextPosition = getTaskTypeSelectMenuPosition(
+        rect,
+        { height: window.innerHeight, width: window.innerWidth },
+        { height: menuRef.current?.offsetHeight, width: menuRef.current?.offsetWidth },
+        size,
+      );
+      setMenuPosition((currentPosition) => currentPosition
+        && currentPosition.left === nextPosition.left
+        && currentPosition.maxHeight === nextPosition.maxHeight
+        && currentPosition.top === nextPosition.top
+        && currentPosition.width === nextPosition.width
+        ? currentPosition
+        : nextPosition);
+    });
+    observer.observe(menuRef.current);
+    return () => observer.disconnect();
+  }, [isOpen, menuPosition, size]);
 
   useEffect(() => {
     if (!isOpen || activeOptionIndex === null) return;
     const activeOption = menuRef.current?.querySelector<HTMLElement>(
       `[data-task-type-select-option-index="${activeOptionIndex}"]`,
     );
-    activeOption?.scrollIntoView?.({ block: "nearest" });
+    revealDropdownOptionWithinPanel(activeOption, menuRef.current);
   }, [activeOptionIndex, isOpen, menuPosition]);
 
   if (!selectedOption) return null;
@@ -283,7 +322,7 @@ export function TaskTypeSelect({
       }}
       ref={menuRef}
       role="listbox"
-      style={{ left: menuPosition.left, position: "fixed", top: menuPosition.top, width: menuPosition.width, zIndex: 160 }}
+      style={{ left: menuPosition.left, maxHeight: menuPosition.maxHeight, position: "fixed", top: menuPosition.top, width: menuPosition.width, zIndex: 160 }}
       widthClassName="w-auto"
     >
       <div className={`grid ${isCompact ? "gap-0.5" : "gap-1"}`}>
