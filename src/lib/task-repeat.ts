@@ -168,6 +168,12 @@ function normalizeRepeatDays(days: number[] | null | undefined) {
   return [...new Set((days ?? []).filter((day) => Number.isInteger(day) && day >= 0 && day <= 6))].sort((left, right) => left - right);
 }
 
+function isWeekdaysDaySet(days: number[] | null | undefined) {
+  const normalizedDays = normalizeRepeatDays(days);
+  return normalizedDays.length === WEEKDAYS_REPEAT_DAYS.length
+    && WEEKDAYS_REPEAT_DAYS.every((day, index) => normalizedDays[index] === day);
+}
+
 function getDateWeekday(dueOn: string | null | undefined) {
   if (!dueOn) {
     return null;
@@ -190,7 +196,7 @@ function resolveWeekdaySelection(
   fallbackWeekday: number = 1,
 ) {
   const normalizedDays = normalizeRepeatDays(days);
-  if (normalizedDays.length > 0) {
+  if (normalizedDays.length > 0 && !isWeekdaysDaySet(normalizedDays)) {
     return normalizedDays;
   }
   const dueWeekday = getDateWeekday(dueOn);
@@ -547,11 +553,9 @@ export function isWeekdaysRepeatSelection(
   repeatDaysOfWeek: number[] | null | undefined,
   repeatInterval: number | null | undefined,
 ) {
-  const normalizedDays = repeatDaysOfWeek ?? [];
   return repeatFrequency === "weekly"
     && Math.max(1, repeatInterval ?? 1) === 1
-    && normalizedDays.length === WEEKDAYS_REPEAT_DAYS.length
-    && WEEKDAYS_REPEAT_DAYS.every((day, index) => normalizedDays[index] === day);
+    && isWeekdaysDaySet(repeatDaysOfWeek);
 }
 
 export function getTaskRepeatCategory(

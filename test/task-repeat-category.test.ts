@@ -104,6 +104,60 @@ test("preset normalization resets incompatible recurrence fields immediately", (
   assert.deepEqual(current, original);
 });
 
+test("Weekly separates from the semantic Weekdays day set", () => {
+  const weekdays = normalizePresetRepeatSelection("weekdays", {}, { dueOn: "2026-08-05" });
+  const weekly = normalizePresetRepeatSelection("weekly", weekdays, { dueOn: "2026-08-05" });
+  assert.deepEqual(weekly.repeatDaysOfWeek, [3]);
+  assert.equal(getTaskRepeatCategory(weekly.repeatFrequency, weekly.repeatDaysOfWeek, weekly.repeatInterval), "weekly");
+
+  const weekdaysAgain = normalizePresetRepeatSelection("weekdays", weekly, { dueOn: "2026-08-05" });
+  assert.deepEqual(weekdaysAgain.repeatDaysOfWeek, [1, 2, 3, 4, 5]);
+  assert.equal(getTaskRepeatCategory(weekdaysAgain.repeatFrequency, weekdaysAgain.repeatDaysOfWeek, weekdaysAgain.repeatInterval), "weekdays");
+
+  const customWeekdays = normalizePresetRepeatSelection("weekly", {
+    repeatFrequency: "weekly",
+    repeatInterval: 3,
+    repeatDaysOfWeek: [5, 1, 4, 2, 3],
+  }, { dueOn: "2026-08-05" });
+  assert.deepEqual(customWeekdays.repeatDaysOfWeek, [3]);
+  assert.equal(getTaskRepeatCategory(customWeekdays.repeatFrequency, customWeekdays.repeatDaysOfWeek, customWeekdays.repeatInterval), "weekly");
+
+  const ordinaryWeekly = normalizePresetRepeatSelection("weekly", {
+    repeatFrequency: "weekly",
+    repeatInterval: 2,
+    repeatDaysOfWeek: [2, 4],
+  });
+  assert.deepEqual(ordinaryWeekly.repeatDaysOfWeek, [2, 4]);
+});
+
+test("repeat editor updates retain explicit nullable clears for canonical set_repeat", () => {
+  const daily = normalizePresetRepeatSelection("daily", {
+    repeatFrequency: "monthly",
+    repeatDayOfMonth: 5,
+    repeatMonthlyMode: "ordinal_weekday",
+    repeatMonthlyOrdinal: "third",
+    repeatMonthlyWeekday: 3,
+  });
+  const values = taskRepeatEditorValueToUpdate(daily);
+  const action = classifyTaskStateRuntimeAction({
+    replayIdentity: "repeat-null-clears",
+    task: { canonical_revision: 1, due_on: "2026-08-05", id: "repeat-null-clears", repeat_frequency: "monthly", status: "pending" },
+    values,
+  });
+  assert.equal(action.kind, "canonical_action");
+  assert.deepEqual(action.intent?.schedule, {
+    schedule_model: "rolling",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    anchor_date: "2026-08-05",
+  });
+});
+
 test("custom cadence helpers persist unit-specific canonical values", () => {
   const days = buildCustomCadenceMutation({
     unit: "daily",

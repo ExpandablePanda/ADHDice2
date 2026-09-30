@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.17`.
+- Current working app version: `7.16.18`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,23 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.16.18 Repeat preset separation and schedule null clearing
+
+The fixed Weekly preset now detects the semantic Monday-Friday day set and
+selects the due-date weekday (or the existing fallback weekday), so Weekdays
+and Weekly remain distinct without adding a persisted repeat enum. Legitimate
+multi-day Weekly selections remain preserved, while Weekdays still writes the
+Monday-Friday set.
+
+The canonical `task-state-command` schedule-boundary builder now distinguishes
+omitted nullable schedule fields from explicit `null`. Monthly day/ordinal/
+weekday metadata and `due_time` therefore clear when the client supplies null,
+while omitted fields inherit the prior boundary. Client payload assertions and
+real command-construction regression coverage preserve the existing repeat,
+schedule, history, occurrence, and reward authorities. No SQL/schema change or
+Edge deployment was made. Browser/manual QA remains Andrew-owned and
+unverified here.
 
 ## 2026-09-30 7.16.16 Repeat action-row and optimistic-chip reconciliation
 
