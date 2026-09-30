@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.76`.
+- Current working app version: `7.15.77`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.15.77 Side Task Type and composer focus correction
+
+TaskTypeSelect dropdown options now explicitly render only the Task Type
+icon/title; Task Type descriptions remain available to descriptive surfaces
+such as settings. TaskCreationComposer keyboard focus now suppresses focus
+color on the outer button wrapper and applies the composer-local emphasis only
+to the semantic rounded chip surface. Task Type open-on-focus behavior remains
+opt-in and unchanged. Focused UI contracts, targeted lint, and
+`git diff --check` are the source verification boundary. Browser/manual QA
+remains Andrew-owned and unverified.
 
 ## 2026-09-30 7.15.76 Side TaskCreationComposer keyboard focus correction
 

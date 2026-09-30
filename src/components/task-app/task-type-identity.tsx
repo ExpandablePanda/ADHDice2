@@ -15,6 +15,7 @@ export function TaskTypeIdentity({
   label,
   option,
   selected = false,
+  showDescription = true,
 }: {
   compact?: boolean;
   description?: string;
@@ -22,9 +23,10 @@ export function TaskTypeIdentity({
   label?: string;
   option: Pick<TaskTypeSelectionOption, "label" | "iconKey" | "accentKey" | "description">;
   selected?: boolean;
+  showDescription?: boolean;
 }) {
   const accent = resolveTaskTypeAccent(option.accentKey);
-  const detail = description ?? option.description;
+  const detail = showDescription ? description ?? option.description : undefined;
   return (
     <span className={`inline-flex min-w-0 items-center ${dense ? "gap-1" : "gap-1.5"} ${compact ? "" : "rounded-[0.7rem] border px-2 py-1"} ${compact ? "text-inherit" : accent.className}`}>
       <span aria-hidden="true" className={`inline-flex shrink-0 items-center justify-center ${dense ? "h-4 w-4 rounded-[0.25rem]" : "h-5 w-5 rounded-md"} ${selected ? "bg-white/15 text-white" : accent.iconClassName}`}>
@@ -298,7 +300,7 @@ export function TaskTypeSelect({
             role="option"
             type="button"
           >
-            <TaskTypeIdentity compact={isCompact} dense={isCompact} option={option} />
+            <TaskTypeIdentity compact={isCompact} dense={isCompact} option={option} showDescription={false} />
           </button>
         ))}
       </div>

@@ -373,15 +373,18 @@
     box-shadow: none !important;
   }
 
-  [data-task-creation-composer] button:focus-visible,
-  [data-task-creation-composer] button:focus-visible > span[class*="rounded-full"] {
+  [data-task-creation-composer] button[data-task-chip-button]:focus,
+  [data-task-creation-composer] button[data-task-chip-button]:focus-visible {
+    background: transparent !important;
+  }
+
+  [data-task-creation-composer] button[data-task-chip-button]:focus-visible > [data-task-chip-surface] {
     border-color: #b9a8ff !important;
     background: #f1ecff !important;
     color: #6f57f6 !important;
   }
 
-  [data-theme="dark"] [data-task-creation-composer] button:focus-visible,
-  [data-theme="dark"] [data-task-creation-composer] button:focus-visible > span[class*="rounded-full"] {
+  [data-theme="dark"] [data-task-creation-composer] button[data-task-chip-button]:focus-visible > [data-task-chip-surface] {
     border-color: #7f67ff !important;
     background: #22193f !important;
     color: #cabfff !important;

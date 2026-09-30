@@ -69,13 +69,26 @@ test("shared creation composer is shellless and locally suppresses input focus s
 
 test("composer keyboard focus uses control-native emphasis without changing selection wiring", () => {
   const composer = read("../src/components/task-app/task-creation-composer.tsx");
+  const primitives = read("../src/components/ui/task-table-primitives.tsx");
   const globals = read("../src/app/globals.css");
   assert.match(composer, /data-task-creation-composer/);
   assert.match(composer, /<TaskTypeSelect[\s\S]*openOnFocus/);
   assert.match(globals, /\[data-task-creation-composer\] button:focus,[\s\S]*button:focus-visible \{[\s\S]*outline: none !important[\s\S]*box-shadow: none !important/);
-  assert.match(globals, /\[data-task-creation-composer\] button:focus-visible,[\s\S]*button:focus-visible > span\[class\*="rounded-full"\][\s\S]*background: #f1ecff !important/);
+  assert.match(globals, /button\[data-task-chip-button\]:focus-visible > \[data-task-chip-surface\][\s\S]*background: #f1ecff !important/);
+  assert.match(globals, /button\[data-task-chip-button\]:focus-visible \{[\s\S]*background: transparent !important/);
+  assert.match(primitives, /data-task-chip-button="true"/);
+  assert.match(primitives, /data-task-chip-surface="true"/);
   assert.match(composer, /onClick=\{\(\) => setPriority\(value\)\}/);
   assert.match(composer, /onClick=\{\(\) => setEnergy\(option\.value\)\}/);
+});
+
+test("Task Type selector options are title/icon only while descriptions remain available", () => {
+  const identity = read("../src/components/task-app/task-type-identity.tsx");
+  const settings = read("../src/components/task-app/task-type-behavior-settings.tsx");
+  assert.match(identity, /showDescription = true/);
+  assert.match(identity, /const detail = showDescription \? description \?\? option\.description : undefined/);
+  assert.match(identity, /<TaskTypeIdentity compact=\{isCompact\} dense=\{isCompact\} option=\{option\} showDescription=\{false\}/);
+  assert.match(settings, /<TaskTypeIdentity option=\{selectedOption\} \/>/);
 });
 
 test("Task Type open-on-focus is opt-in and keeps the default selector behavior", () => {
