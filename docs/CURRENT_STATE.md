@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.20`.
+- Current working app version: `7.16.21`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.16.21 Side and 7.16 consolidation checkpoint
+
+The completed `codex/Side` Home progress, persistent Routine sections, shared
+Task creation composer, rich child creation, Task Type focus/placement, and
+Home state/UI helper work are consolidated into `codex/7.16`. Current 7.16
+History, Folder, hierarchy selection, full Edit Task, recurrence, Table
+reconciliation, Active Status, and Health fixes remain preserved. No SQL,
+schema, Supabase, or Edge deployment change was made. Browser/manual QA remains
+Andrew-owned and unverified here.
 
 ## 2026-09-30 7.16.20 Compact monthly Repeat interval parity
 
@@ -160,6 +170,152 @@ effective due date from canonical `effective_due_on` data. No schema, migration,
 backfill, or live-data repair was added.
 
 Browser/manual QA remains Andrew-owned and unverified by source checks.
+
+## 2026-09-30 7.15.78 Side Task Type placement and composer surface focus correction
+
+TaskTypeSelect now measures its portaled panel, clamps its available height to
+the viewport, flips toward the side with more room, and reveals active options
+within the panel without scrolling the document. TaskCreationComposer focus
+styling targets semantic chip and icon surfaces so keyboard focus fills the
+rounded control instead of applying a wrapper overlay. Focused composer and
+placement contracts, targeted lint, and `git diff --check` are the source
+verification boundary. Browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-30 7.15.77 Side Task Type and composer focus correction
+
+TaskTypeSelect dropdown options now explicitly render only the Task Type
+icon/title; Task Type descriptions remain available to descriptive surfaces
+such as settings. TaskCreationComposer keyboard focus now suppresses focus
+color on the outer button wrapper and applies the composer-local emphasis only
+to the semantic rounded chip surface. Task Type open-on-focus behavior remains
+opt-in and unchanged. Focused UI contracts, targeted lint, and
+`git diff --check` are the source verification boundary. Browser/manual QA
+remains Andrew-owned and unverified.
+
+## 2026-09-30 7.15.76 Side TaskCreationComposer keyboard focus correction
+
+Keyboard focus inside the shared TaskCreationComposer now uses the focused
+control's native interactive emphasis instead of browser blue/purple focus
+rectangles. Inputs retain their neutral focus behavior, while chips and action
+buttons receive composer-local emphasis without changing their selected values.
+Task Type can open on focus only when the opt-in `openOnFocus` prop is requested
+by TaskCreationComposer; its default focus/open behavior remains unchanged.
+Focused composer contracts, targeted lint, and `git diff --check` are the
+source verification boundary. Browser/manual QA remains Andrew-owned and
+unverified.
+
+## 2026-09-30 7.15.75 Side TaskCreationComposer focus and spacing correction
+
+The composer title now uses the neutral Task input class rather than
+`health-input`, so global Health focus styling cannot add its purple treatment.
+The remaining composer-scoped input focus reset covers the title, date, time,
+tag, and cadence fields while preserving their resting appearance. Home
+To-do New Task now has a simple `mt-3` separation below Search without
+reintroducing a shell; child positioning and `max-w-[52rem]` remain unchanged.
+Focused composer checks, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.74 Side shared creation shell and focus correction
+
+The shared TaskCreationComposer is now shellless on Home New Task as well as
+inline Step/Substep creation, while preserving the existing child
+`max-w-[52rem]` wrappers and internal field spacing. Composer text, date, time,
+tag, and cadence inputs locally suppress the purple focus outline, focus glow,
+and focus border change without modifying the global input focus rules.
+Energy, creation metadata, hierarchy, and canonical creation paths are
+unchanged. Focused composer checks, targeted lint, and `git diff --check` are
+the source verification boundary; browser/manual QA remains Andrew-owned and
+unverified.
+
+## 2026-09-29 7.15.73 Side shared creation Energy and child shell correction
+
+The shared Task creation metadata and composer now include canonical Task Energy
+(`none`, `low`, `medium`, `high`) for Home New Task and inline Step/Substep
+creation. The child composer requests a shellless presentation with a plain
+white surface while retaining its responsive `max-w-[52rem]` wrapper and
+left-aligned natural field wrapping. Child draft construction persists the
+selected Energy while continuing to reassert the clicked `parent_task_id`.
+Focused composer/child-creation checks, targeted lint, and `git diff --check`
+are the source verification boundary; browser/manual QA remains Andrew-owned
+and unverified.
+
+## 2026-09-29 7.15.72 Side child composer width correction
+
+The shared rich Add Step/Add Substep composer remains behaviorally unchanged,
+but its Table and List containers now use a responsive `max-w-[52rem]` width
+boundary. The composer stays left-aligned with the Task/Step content area,
+wraps its fields within that compact surface, and no longer spans the full
+Table width. Focused child-composer wiring, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.71 Side creation-flow correction
+
+The misunderstood 7.15.69 Home To-do membership metadata feature remains
+removed. HomePage owns its existing `useHomeTodoState(userId)` instance, and
+Home To-do remains the JSON-backed V6 organizational state rather than an
+ordinary Task List. Ordinary Table View and List View New Task actions are
+restored to canonical create-then-open-full-Edit-Task behavior, including
+keyboard and Task Type creation actions. The shared rich Home-style creation
+composer is now used for Add Step and Add Substep row creation, preserving
+the clicked parent while accepting title, Task Type, due date/time, priority,
+repeat/cadence details, and saved tags. Add uses canonical child creation;
+Cancel creates nothing. Focused creation, hierarchy, Home/Routine, targeted
+lint, and `git diff --check` are the source verification boundary;
+browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.63 Side Finished Today outcome filters
+
+Side Home Finished Today now uses explicit All, Done, Did My Best, and
+Completed detail filters backed by each `finishedItems[].outcome` value.
+Overall counts, outcome precedence, Task/Step eligibility, and Records live
+values remain unchanged. Focused Home progress tests and targeted lint are the
+source verification boundary; browser/manual QA remains Andrew-owned and
+unverified.
+
+## 2026-09-29 7.15.64 Side Finished Today item opening
+
+Finished Today Task and Step detail rows now reuse Home's existing
+`onOpenTask` callback, opening the shared Edit Task overlay while Home remains
+the active page. Filtering, counts, outcome precedence, and existing Home
+To-do/Routine opening behavior are unchanged. Focused Home progress tests,
+targeted lint, and `git diff --check` are the source verification boundary;
+browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.65 Side persistent Home Routine sections
+
+Home Routine now uses explicit persistent V6 sections with stable IDs and a
+separate section assignment map while retaining `routineTaskIds` as the
+canonical order. V5 chunk boundaries and custom names migrate deterministically;
+Routine settings can add or rename empty sections, and each top-level Routine's
+gear menu can move the group to another section without detaching children.
+Focused Home/Routine tests, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.66 Side Routine section action anchor correction
+
+The Home Routine `Move to section` action is now exposed only for top-level
+Routine group anchors. Steps and Substeps retain their existing child actions,
+while valid anchor destination, ordering, persistence, and V6 state behavior
+remain unchanged. Focused Home/Routine tests, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.67 Side Routine section move crash correction
+
+Home Routine section moves now pass the canonical `current.routineTaskIds`
+ordering into the existing move helper, preventing the undefined-ordering
+runtime crash while preserving section assignment behavior. Focused
+Home/Routine tests, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.68 Side Routine assignment normalization correction
+
+V6 Routine section assignments now validate against `routineTaskIds` rather than
+Home To-do `taskIds`, preserving non-To-do Routine moves into non-first sections
+through normalization. Focused Home/Routine tests, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

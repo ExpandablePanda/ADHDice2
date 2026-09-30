@@ -461,6 +461,7 @@ export function TaskTableChipButton({
         TASK_TABLE_CONTROL_FONT_CLASS,
         "inline-flex shrink-0 items-center appearance-none bg-transparent p-0 border-0 shadow-none",
       )}
+      data-task-chip-button="true"
       type={type}
       {...props}
     >
@@ -472,6 +473,7 @@ export function TaskTableChipButton({
         )}
         data-style-component={styleComponent}
         data-style-role={styleRole}
+        data-task-chip-surface="true"
       >
         {stylePart ? (
           <span className="inline-flex items-center" data-style-part={stylePart}>

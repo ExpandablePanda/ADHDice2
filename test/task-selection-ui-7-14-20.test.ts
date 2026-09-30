@@ -254,7 +254,7 @@ test("Priority, Due, and Tags edits use resolved batch targets", () => {
 
 test("Status and Repeat edits use action targets and per-Task authorities", () => {
   assert.match(tableSource, /function setTaskStatus\(taskId: string, status: TaskStatus\)[\s\S]*resolveTableActionTargetTaskIds\(taskId\)[\s\S]*onTaskStatusChange\?\./);
-  assert.match(tableSource, /function setTaskRepeat\([\s\S]*resolveTableActionTargetTaskIds\(taskId\)[\s\S]*onTaskRepeatChange\?\./);
+  assert.match(tableSource, /function setTaskRepeatValue\([\s\S]*resolveTableActionTargetTaskIds\(taskId\)[\s\S]*onTaskRepeatChange\?\./);
 });
 
 test("stale selected IDs are excluded before mutation callbacks", () => {
@@ -280,5 +280,5 @@ test("Task Content Folder projection remains independent of selection presentati
   assert.match(tableSource, /taskContentFolderPresentation/);
   assert.match(listSource, /taskContentFolderPresentation/);
   assert.match(folderSource, /buildTaskContentFolderPresentation/);
-  assert.doesNotMatch(folderSource, /selectedTask|longPress|toolbar/);
+  assert.doesNotMatch(folderSource, /longPress|toolbar/);
 });

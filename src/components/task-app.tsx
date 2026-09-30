@@ -104,6 +104,7 @@ import {
   parsePositiveInteger,
   type TaskDraft,
 } from "./task-app/task-editor-model";
+import type { TaskCreationMetadata } from "@/lib/task-creation";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
@@ -5317,18 +5318,21 @@ export function TaskApp() {
     )
   ), [createTaskAndOpenSharedEditor]);
 
-  const openInlineNewListTaskComposer = useCallback(async () => {
-    await createTaskAndOpenSharedEditor(buildNewTaskDraft("New Task"), { routeToCurrentBucket: true });
+  const openInlineNewListTaskComposer = useCallback(() => {
+    void createTaskAndOpenSharedEditor(
+      buildNewTaskDraft("New Task"),
+      { routeToCurrentBucket: true },
+    );
   }, [createTaskAndOpenSharedEditor]);
 
-  const openTaskComposerForType = useCallback(async (selectionValue: string) => {
+  const openTaskComposerForType = useCallback((selectionValue: string) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
       return;
     }
 
-    await createTaskAndOpenSharedEditor({
+    void createTaskAndOpenSharedEditor({
       ...buildNewTaskDraft("New Task"),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
@@ -5765,10 +5769,11 @@ export function TaskApp() {
   }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
-  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task") => {
+  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task", metadata?: TaskCreationMetadata) => {
     const taskTypeSelection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     const result = buildChildTaskCreationDraft({
       blockedParentTaskIds: childTaskCreationBlockedTaskIds,
+      metadata,
       parentTaskId,
       taskTypeSelection,
       title,

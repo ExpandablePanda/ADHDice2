@@ -5,11 +5,12 @@ import { getTaskTableInlineActionRowContentClass } from "../src/components/ui/ta
 
 const primitivesSource = readFileSync(new URL("../src/components/ui/task-table-primitives.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+const composerSource = readFileSync(new URL("../src/components/task-app/task-creation-composer.tsx", import.meta.url), "utf8");
 const inputStart = primitivesSource.indexOf("export function TaskInlineChildDraftInput");
 const inputEnd = primitivesSource.indexOf("export function TaskInlineChildDraft", inputStart + 1);
 const inputSource = primitivesSource.slice(inputStart, inputEnd);
-const tableStepDraftStart = tableSource.indexOf("const renderTableStepDraftCell");
-const tableStepDraftEnd = tableSource.indexOf("const renderChildTaskMiniRows", tableStepDraftStart);
+const tableStepDraftStart = tableSource.indexOf("function renderTableStepCreationComposer");
+const tableStepDraftEnd = tableSource.indexOf("function beginTableStepDraft", tableStepDraftStart);
 const tableStepDraftSource = tableSource.slice(tableStepDraftStart, tableStepDraftEnd);
 
 assert.ok(inputStart >= 0, "TaskInlineChildDraftInput should be discoverable");
@@ -39,28 +40,20 @@ test("child creation input separates taller geometry from compact rename geometr
 });
 
 test("Table Step and Substep title-cell drafts retain the shared input and creation wiring", () => {
-  assert.match(tableStepDraftSource, /const childLabel = tableStepDraftChildLabels\[parentTaskId\] \?\? "Step"/);
-  assert.match(tableStepDraftSource, /<TaskInlineChildDraftInput[\s\S]*onCommit=\{\(\) => commitTableStepDraft\(parentTaskId\)\}/);
-  assert.match(tableStepDraftSource, /placeholder=\{`\$\{childLabel\} title\.\.\.`\}/);
-  assert.match(tableStepDraftSource, /onChange=\{\(value\) => \{/);
+  assert.match(tableStepDraftSource, /const childLabel = tableStepComposerChildLabels\[parentTaskId\] \?\? "Step"/);
+  assert.match(tableStepDraftSource, /<TaskChildCreationComposer[\s\S]*parentTaskId=\{parentTaskId\}/);
+  assert.match(tableStepDraftSource, /onCreateChildTask=\{onCreateChildTask/);
+  assert.match(tableSource, /data-full-editor-child-draft-row=\{item\.id\}/);
+  assert.match(tableSource, /placeholder="Substep title\.\.\."/);
   assert.match(tableSource, /<TaskTitleDraftInput[\s\S]*className=\{`\$\{TASK_TABLE_INLINE_RENAME_EDITOR_CLASS\}/);
   assert.equal((tableSource.match(/style=\{TASK_TABLE_TITLE_RENAME_INPUT_TYPOGRAPHY_STYLE\}/g) ?? []).length, 4);
   assert.match(tableSource, /TASK_TABLE_INLINE_RENAME_EDITOR_CLASS/);
 });
 
 test("Table child Task Type interaction belongs to TaskTypeSelect and leaves the title input API unchanged", () => {
-  const titleDraftStart = tableStepDraftSource.indexOf("<TaskInlineChildDraftInput");
-  const titleDraftEnd = tableStepDraftSource.indexOf("/>", titleDraftStart) + 2;
-  const taskTypeStart = tableStepDraftSource.indexOf("<TaskTypeSelect");
-  const taskTypeEnd = tableStepDraftSource.indexOf("/>", taskTypeStart) + 2;
-  const titleDraftSource = tableStepDraftSource.slice(titleDraftStart, titleDraftEnd);
-  const taskTypeSource = tableStepDraftSource.slice(taskTypeStart, taskTypeEnd);
-
   assert.doesNotMatch(inputSource, /onInteractionStart|onInteractionEnd/);
-  assert.doesNotMatch(titleDraftSource, /onInteractionStart|onInteractionEnd/);
-  assert.match(taskTypeSource, /onInteractionStart=\{\(\) => \{\s*taskTypeInteractionParentIdRef\.current = parentTaskId;/);
-  assert.match(taskTypeSource, /onInteractionEnd=\{\(\) => \{[\s\S]*taskTypeInteractionParentIdRef\.current = null;/);
-  assert.match(taskTypeSource, /onChange=\{\(value\) => setTableStepDraftTaskTypeValues/);
+  assert.match(composerSource, /<TaskTypeSelect[\s\S]*onChange=\{setTaskTypeSelection\}[\s\S]*openOnFocus/);
+  assert.match(tableStepDraftSource, /<TaskChildCreationComposer/);
 });
 
 test("Table inline action rows keep horizontal layout by default and stack Repeat content explicitly", () => {

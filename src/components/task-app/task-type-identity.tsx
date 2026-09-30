@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { AdhdDropdownPanel } from "@/components/ui-system";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
+import { revealDropdownOptionWithinPanel } from "@/lib/dropdown-interaction";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import { resolveTaskTypeAccent, type TaskTypePresentation } from "@/lib/task-type-presentation";
 
@@ -15,6 +16,7 @@ export function TaskTypeIdentity({
   label,
   option,
   selected = false,
+  showDescription = true,
 }: {
   compact?: boolean;
   description?: string;
@@ -22,9 +24,10 @@ export function TaskTypeIdentity({
   label?: string;
   option: Pick<TaskTypeSelectionOption, "label" | "iconKey" | "accentKey" | "description">;
   selected?: boolean;
+  showDescription?: boolean;
 }) {
   const accent = resolveTaskTypeAccent(option.accentKey);
-  const detail = description ?? option.description;
+  const detail = showDescription ? description ?? option.description : undefined;
   return (
     <span className={`inline-flex min-w-0 items-center ${dense ? "gap-1" : "gap-1.5"} ${compact ? "" : "rounded-[0.7rem] border px-2 py-1"} ${compact ? "text-inherit" : accent.className}`}>
       <span aria-hidden="true" className={`inline-flex shrink-0 items-center justify-center ${dense ? "h-4 w-4 rounded-[0.25rem]" : "h-5 w-5 rounded-md"} ${selected ? "bg-white/15 text-white" : accent.iconClassName}`}>
@@ -55,6 +58,7 @@ export type TaskTypeSelectSize = "default" | "compact";
 
 type TaskTypeSelectMenuPosition = {
   left: number;
+  maxHeight: number;
   top: number;
   width: number;
 };
@@ -101,16 +105,22 @@ export function getTaskTypeSelectMenuPosition(
     size === "compact" ? TASK_TYPE_SELECT_COMPACT_MENU_WIDTH : triggerRect.width,
   );
   const width = Math.min(panel.width ?? preferredWidth, maxWidth);
-  const height = panel.height ?? (size === "compact" ? TASK_TYPE_SELECT_COMPACT_MENU_HEIGHT : TASK_TYPE_SELECT_DEFAULT_MENU_HEIGHT);
+  const preferredHeight = panel.height ?? (size === "compact" ? TASK_TYPE_SELECT_COMPACT_MENU_HEIGHT : TASK_TYPE_SELECT_DEFAULT_MENU_HEIGHT);
   const left = Math.max(
     TASK_TYPE_SELECT_VIEWPORT_MARGIN,
     Math.min(triggerRect.left, viewport.width - width - TASK_TYPE_SELECT_VIEWPORT_MARGIN),
   );
   const belowTop = triggerRect.bottom + TASK_TYPE_SELECT_MENU_GAP;
-  const top = belowTop + height <= viewport.height - TASK_TYPE_SELECT_VIEWPORT_MARGIN
-    ? belowTop
-    : Math.max(TASK_TYPE_SELECT_VIEWPORT_MARGIN, triggerRect.top - height - TASK_TYPE_SELECT_MENU_GAP);
-  return { left, top, width };
+  const spaceBelow = Math.max(0, viewport.height - TASK_TYPE_SELECT_VIEWPORT_MARGIN - belowTop);
+  const spaceAbove = Math.max(0, triggerRect.top - TASK_TYPE_SELECT_VIEWPORT_MARGIN - TASK_TYPE_SELECT_MENU_GAP);
+  const opensBelow = spaceBelow >= preferredHeight || spaceBelow >= spaceAbove;
+  const maxHeight = Math.max(1, Math.min(preferredHeight, opensBelow ? spaceBelow : spaceAbove));
+  const preferredTop = opensBelow ? belowTop : triggerRect.top - TASK_TYPE_SELECT_MENU_GAP - maxHeight;
+  const top = Math.max(
+    TASK_TYPE_SELECT_VIEWPORT_MARGIN,
+    Math.min(preferredTop, viewport.height - TASK_TYPE_SELECT_VIEWPORT_MARGIN - maxHeight),
+  );
+  return { left, maxHeight, top, width };
 }
 
 export function TaskTypeSelect({
@@ -118,6 +128,7 @@ export function TaskTypeSelect({
   className,
   disabled = false,
   label,
+  openOnFocus = false,
   onInteractionEnd,
   onInteractionStart,
   onChange,
@@ -129,6 +140,7 @@ export function TaskTypeSelect({
   className?: string;
   disabled?: boolean;
   label: string;
+  openOnFocus?: boolean;
   onInteractionEnd?: () => void;
   onInteractionStart?: () => void;
   onChange: (value: string) => void;
@@ -143,6 +155,7 @@ export function TaskTypeSelect({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const interactionEndFrameRef = useRef<number | null>(null);
+  const pointerFocusRef = useRef(false);
   const onInteractionEndRef = useRef(onInteractionEnd);
   const selectedOption = options.find((option) => option.value === value) ?? options[0];
   const selectedOptionIndex = getTaskTypeSelectInitialActiveOptionIndex(options, value) ?? 0;
@@ -216,12 +229,19 @@ export function TaskTypeSelect({
         return;
       }
       const rect = trigger.getBoundingClientRect();
-      setMenuPosition(getTaskTypeSelectMenuPosition(
+      const nextPosition = getTaskTypeSelectMenuPosition(
         rect,
         { height: window.innerHeight, width: window.innerWidth },
         { height: menuRef.current?.offsetHeight, width: menuRef.current?.offsetWidth },
         size,
-      ));
+      );
+      setMenuPosition((currentPosition) => currentPosition
+        && currentPosition.left === nextPosition.left
+        && currentPosition.maxHeight === nextPosition.maxHeight
+        && currentPosition.top === nextPosition.top
+        && currentPosition.width === nextPosition.width
+        ? currentPosition
+        : nextPosition);
     };
 
     const handlePointerDown = (event: PointerEvent) => {
@@ -250,21 +270,45 @@ export function TaskTypeSelect({
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [isOpen, size]);
+  }, [isOpen, menuPosition, size]);
+
+  useLayoutEffect(() => {
+    if (!isOpen || !menuRef.current || typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(() => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const nextPosition = getTaskTypeSelectMenuPosition(
+        rect,
+        { height: window.innerHeight, width: window.innerWidth },
+        { height: menuRef.current?.offsetHeight, width: menuRef.current?.offsetWidth },
+        size,
+      );
+      setMenuPosition((currentPosition) => currentPosition
+        && currentPosition.left === nextPosition.left
+        && currentPosition.maxHeight === nextPosition.maxHeight
+        && currentPosition.top === nextPosition.top
+        && currentPosition.width === nextPosition.width
+        ? currentPosition
+        : nextPosition);
+    });
+    observer.observe(menuRef.current);
+    return () => observer.disconnect();
+  }, [isOpen, menuPosition, size]);
 
   useEffect(() => {
     if (!isOpen || activeOptionIndex === null) return;
     const activeOption = menuRef.current?.querySelector<HTMLElement>(
       `[data-task-type-select-option-index="${activeOptionIndex}"]`,
     );
-    activeOption?.scrollIntoView?.({ block: "nearest" });
+    revealDropdownOptionWithinPanel(activeOption, menuRef.current);
   }, [activeOptionIndex, isOpen, menuPosition]);
 
   if (!selectedOption) return null;
   const isCompact = size === "compact";
-  const triggerClassName = isCompact
+  const triggerClassName = `${isCompact
     ? "inline-flex min-h-7 min-w-[7rem] max-w-[13rem] w-auto items-center justify-between gap-1.5 rounded-full border border-[#e5e0f5] bg-white px-2 py-1 text-left text-xs font-medium text-[#2f294a] outline-none transition hover:border-[#cfc2fb] focus:border-[#b9a8ff] focus:ring-2 focus:ring-[#d9d0ff]/45 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/8 dark:text-white dark:hover:border-white/25 dark:focus:border-[#6d56d6]"
-    : "flex min-h-10 w-full items-center justify-between gap-3 rounded-[0.95rem] border border-[#e5e0f5] bg-white px-3 py-2 text-left text-sm text-[#2f294a] outline-none transition hover:border-[#cfc2fb] focus:border-[#b9a8ff] focus:ring-2 focus:ring-[#d9d0ff]/45 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/8 dark:text-white dark:hover:border-white/25 dark:focus:border-[#6d56d6]";
+    : "flex min-h-10 w-full items-center justify-between gap-3 rounded-[0.95rem] border border-[#e5e0f5] bg-white px-3 py-2 text-left text-sm text-[#2f294a] outline-none transition hover:border-[#cfc2fb] focus:border-[#b9a8ff] focus:ring-2 focus:ring-[#d9d0ff]/45 disabled:cursor-not-allowed disabled:opacity-55 dark:border-white/15 dark:bg-white/8 dark:text-white dark:hover:border-white/25 dark:focus:border-[#6d56d6]"} ${openOnFocus && isOpen ? "border-[#b9a8ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#7f67ff] dark:bg-[#22193f] dark:text-[#cabfff]" : ""}`;
   const panel = isOpen && menuPosition && typeof document !== "undefined" ? (
     <AdhdDropdownPanel
       aria-label={`${label} options`}
@@ -278,7 +322,7 @@ export function TaskTypeSelect({
       }}
       ref={menuRef}
       role="listbox"
-      style={{ left: menuPosition.left, position: "fixed", top: menuPosition.top, width: menuPosition.width, zIndex: 160 }}
+      style={{ left: menuPosition.left, maxHeight: menuPosition.maxHeight, position: "fixed", top: menuPosition.top, width: menuPosition.width, zIndex: 160 }}
       widthClassName="w-auto"
     >
       <div className={`grid ${isCompact ? "gap-0.5" : "gap-1"}`}>
@@ -295,7 +339,7 @@ export function TaskTypeSelect({
             role="option"
             type="button"
           >
-            <TaskTypeIdentity compact={isCompact} dense={isCompact} option={option} />
+            <TaskTypeIdentity compact={isCompact} dense={isCompact} option={option} showDescription={false} />
           </button>
         ))}
       </div>
@@ -312,6 +356,13 @@ export function TaskTypeSelect({
         aria-label={ariaLabel ?? label}
         className={triggerClassName}
         disabled={disabled}
+        onFocus={() => {
+          if (pointerFocusRef.current) {
+            pointerFocusRef.current = false;
+            return;
+          }
+          if (openOnFocus && !isOpen) openMenu();
+        }}
         onKeyDown={(event) => {
           if (event.key === "Tab") {
             if (isOpen) closeMenu();
@@ -352,8 +403,15 @@ export function TaskTypeSelect({
             selectActiveOption();
           }
         }}
-        onPointerDown={handleInteractionPointerDown}
+        onPointerDown={() => {
+          pointerFocusRef.current = true;
+          handleInteractionPointerDown();
+        }}
+        onPointerUp={() => {
+          pointerFocusRef.current = false;
+        }}
         onClick={() => {
+          pointerFocusRef.current = false;
           if (isOpen) {
             closeMenu(true);
             return;
