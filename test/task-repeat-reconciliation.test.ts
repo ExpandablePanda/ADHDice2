@@ -85,6 +85,7 @@ test("a newer Repeat generation remains authoritative over an older upstream res
 
 test("compact Repeat chips reflect each optimistic editor pattern immediately", () => {
   assert.equal(formatRepeatCompactLabel("daily", 1), "Daily");
+  assert.equal(formatRepeatCompactLabel("weekly", 1, [4]), "Weekly (Thu)");
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "day_of_month", null, null, 15), "15th");
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "ordinal_weekday", "second", 2), "2nd Tue");
   assert.equal(formatRepeatCompactLabel("custom", 3), "Custom");

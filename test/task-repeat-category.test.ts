@@ -399,8 +399,19 @@ test("compact monthly repeat labels include the selected pattern", () => {
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "day_of_month", null, null, 15), "15th");
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "ordinal_weekday", "second", 2), "2nd Tue");
   assert.equal(formatRepeatCompactLabel("monthly", 1, [], "ordinal_weekday", "last", 1), "Last Mon");
-  assert.equal(formatRepeatCompactLabel("daily_until_complete", 1, [], "day_of_month", null, null, 28), "28th");
-  assert.equal(formatRepeatCompactLabel("daily_until_complete", 2, [], "ordinal_weekday", "second", 4), "2nd Thu");
+  const monthlyUntilComplete = formatRepeatCompactLabel("daily_until_complete", 1, [], "day_of_month", null, null, 15);
+  assert.match(monthlyUntilComplete, /^15th/);
+  assert.match(monthlyUntilComplete, /Until Complete/);
+  assert.equal(formatRepeatCompactLabel("daily_until_complete", 2, [], "day_of_month", null, null, 15), "15th · Until Complete");
+  assert.equal(formatRepeatCompactLabel("monthly", 1, [], "ordinal_weekday", "third", 3), "3rd Wed");
+  const ordinalMonthlyUntilComplete = formatRepeatCompactLabel("daily_until_complete", 1, [], "ordinal_weekday", "third", 3);
+  assert.match(ordinalMonthlyUntilComplete, /^3rd Wed/);
+  assert.match(ordinalMonthlyUntilComplete, /Until Complete/);
+  const weeklyUntilComplete = formatRepeatCompactLabel("daily_until_complete", 1, [4]);
+  assert.equal(weeklyUntilComplete, "Weekly (Thu) · Until Complete");
+  assert.equal(formatRepeatCompactLabel("daily_until_complete", 2, [4]), "Every 2 weeks (Thu) · Until Complete");
+  assert.equal(formatRepeatCompactLabel("daily_until_complete", 1), "Daily Until Complete");
+  assert.equal(formatRepeatCompactLabel("daily_until_complete", 3), "Every 3 days · Until Complete");
   assert.notEqual(formatRepeatCompactLabel("monthly", 1, [], "day_of_month", null, null, 30), "Monthly");
   assert.equal(taskRepeatEditorValueToUpdate({
     repeatFrequency: "custom",

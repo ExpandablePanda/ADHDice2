@@ -673,13 +673,15 @@ export function formatRepeatCompactLabel(
   repeatDayOfMonth?: number | null,
 ) {
   if (repeatFrequency === "none") return "No Repeat";
+  const isUntilComplete = repeatFrequency === "daily_until_complete";
   const repeatShape = repeatShapeForFields({
     repeatFrequency: repeatFrequency as TaskRepeatFrequency,
     repeatDaysOfWeek: repeatDaysOfWeek ?? [],
     repeatDayOfMonth: repeatDayOfMonth ?? null,
     repeatMonthlyMode: repeatMonthlyMode ?? "day_of_month",
   });
-  if (repeatFrequency === "monthly" || (repeatFrequency === "daily_until_complete" && repeatShape === "monthly")) {
+  if (repeatFrequency === "monthly" || (isUntilComplete && repeatShape === "monthly")) {
+    let monthlyLabel = "Monthly";
     if (
       repeatMonthlyMode === "ordinal_weekday"
       && repeatMonthlyOrdinal
@@ -688,12 +690,28 @@ export function formatRepeatCompactLabel(
     ) {
       const ordinalLabel = formatMonthlyOrdinalLabel(repeatMonthlyOrdinal);
       const weekdayLabel = REPEAT_WEEKDAY_LABELS[repeatMonthlyWeekday] ?? null;
-      if (ordinalLabel && weekdayLabel) return `${ordinalLabel} ${weekdayLabel}`;
+      if (ordinalLabel && weekdayLabel) monthlyLabel = `${ordinalLabel} ${weekdayLabel}`;
     }
-    if (Number.isInteger(repeatDayOfMonth) && (repeatDayOfMonth ?? 0) >= 1 && (repeatDayOfMonth ?? 0) <= 31) {
-      return formatOrdinalNumber(repeatDayOfMonth as number);
+    if (monthlyLabel === "Monthly" && Number.isInteger(repeatDayOfMonth) && (repeatDayOfMonth ?? 0) >= 1 && (repeatDayOfMonth ?? 0) <= 31) {
+      monthlyLabel = formatOrdinalNumber(repeatDayOfMonth as number);
     }
-    return "Monthly";
+    return isUntilComplete ? `${monthlyLabel} · Until Complete` : monthlyLabel;
+  }
+  if (isUntilComplete && repeatShape === "weekly") {
+    return `${formatRepeatFrequencyLabel(
+      "weekly",
+      repeatInterval,
+      repeatDaysOfWeek,
+      repeatMonthlyMode,
+      repeatMonthlyOrdinal,
+      repeatMonthlyWeekday,
+      repeatDayOfMonth,
+    )} · Until Complete`;
+  }
+  if (isUntilComplete && repeatShape === "daily") {
+    return Math.max(1, repeatInterval ?? 1) > 1
+      ? `${formatRepeatFrequencyLabel("daily", repeatInterval)} · Until Complete`
+      : "Daily Until Complete";
   }
   if (repeatFrequency === "custom") return "Custom";
   return formatRepeatFrequencyLabel(
