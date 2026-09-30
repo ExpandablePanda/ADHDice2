@@ -1,7 +1,7 @@
 import type { Task } from "@/lib/database.types";
 import { getCalendarDayKey } from "@/lib/logical-day";
-import type { TaskPriorityLevel } from "@/lib/task-priority";
 import type { TaskListMembership } from "@/lib/task-lists";
+import type { TaskCreationMetadata } from "@/lib/task-creation";
 import { formatDueTimeLabel } from "@/lib/task-cockpit";
 import { shiftDateKey } from "@/lib/date-key";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
@@ -113,21 +113,7 @@ export type HomeRoutineGroup = {
   tasks: HomeRoutineTask[];
 };
 
-export type HomeTodoTaskMetadata = Pick<
-  Task,
-  | "due_on"
-  | "due_time"
-  | "repeat_frequency"
-  | "repeat_interval"
-  | "repeat_days_of_week"
-  | "repeat_day_of_month"
-  | "repeat_monthly_mode"
-  | "repeat_monthly_ordinal"
-  | "repeat_monthly_weekday"
-  | "tags"
-> & {
-  priority_level: TaskPriorityLevel;
-};
+export type HomeTodoTaskMetadata = TaskCreationMetadata;
 
 export type HomeTodoTaskCreator = (
   title: string,
@@ -486,13 +472,6 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
     routineSections: normalizedRoutineSections.routineSections,
     routineSectionIdByTaskId: normalizedRoutineSections.routineSectionIdByTaskId,
   };
-}
-
-export function setHomeTodoTaskMembership(taskIds: readonly string[], taskId: string, included: boolean): string[] {
-  const nextTaskIds = included
-    ? taskIds.includes(taskId) ? [...taskIds] : [...taskIds, taskId]
-    : taskIds.filter((candidate) => candidate !== taskId);
-  return Array.from(new Set(nextTaskIds));
 }
 
 export function isHomeTodoTaskEligible(

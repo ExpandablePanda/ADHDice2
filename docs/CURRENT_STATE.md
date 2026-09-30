@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.69`.
+- Current working app version: `7.15.70`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,17 +14,19 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
-## 2026-09-29 7.15.69 Side shared Home To-do Task metadata
+## 2026-09-29 7.15.70 Side rich Table/List Task creation
 
-TaskApp now owns the single `useHomeTodoState` controller consumed by Home,
-the shared Edit Task metadata UI, and Table/List editor paths. Home To-do
-membership remains the JSON-backed V6 `taskIds` state, with an idempotent
-include/exclude operation that preserves Routine and scheduling metadata.
-The shared metadata summary reports Included or Not included and edits the
-exact Task ID without creating an ordinary Task List. Focused Home/Routine,
-metadata, and Table/List wiring tests plus targeted lint and `git diff --check`
-are the source verification boundary; browser/manual QA remains Andrew-owned
-and unverified.
+The misunderstood 7.15.69 Home To-do membership metadata feature was removed.
+HomePage again owns its existing `useHomeTodoState(userId)` instance, and Home
+To-do remains the JSON-backed V6 organizational state rather than an ordinary
+Task List. Table View and List View New Task actions now open the shared
+creation composer before persistence. The composer reuses Home's creation
+metadata behavior for title, Task Type, due date/time, priority, repeat and
+cadence details, and saved tags; Add uses canonical Task creation and then
+opens the existing shared Edit Task UI, while Cancel creates nothing.
+Focused Home/Routine, creation, Table/List wiring, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
 
 ## 2026-09-29 7.15.63 Side Finished Today outcome filters
 

@@ -63,7 +63,7 @@ test("Home and Table request the shared overlay without changing the active page
   const childAction = table.slice(table.indexOf("function openTaskInCurrentEditor"), table.indexOf("function openTableStepActions"));
   assert.match(homeBranch, /onOpenTask=\{openTaskEditorFromId\}/);
   assert.doesNotMatch(homeBranch, /setActivePage|TaskEditFlows/);
-  assert.match(tableProps, /onOpenTaskEditor: openSharedTaskEditor/);
+  assert.match(tableProps, /onOpenTaskEditor: \(taskId, navigationTaskIds\) => openSharedTaskEditor\(taskId, \{/);
   for (const action of [detailsAction, rowAction, childAction]) {
     assert.match(action, /if \(onOpenTaskEditor\) \{\s*onOpenTaskEditor\(taskId\);\s*return;/);
   }
@@ -72,12 +72,13 @@ test("Home and Table request the shared overlay without changing the active page
 test("inline New Task routes the created parent to the shared full editor", async () => {
   const app = await source("../src/components/task-app.tsx");
   const composer = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const duplicateTaskInPlace"));
-  assert.match(composer, /createTaskAndOpenSharedEditor\(buildNewTaskDraft\("New Task"\)/);
-  assert.match(composer, /routeToCurrentBucket: true/);
+  assert.match(composer, /setTaskCreationInitialTypeSelection\("task"\)/);
+  assert.match(composer, /setIsTaskCreationComposerOpen\(true\)/);
+  assert.doesNotMatch(composer, /buildNewTaskDraft\("New Task"\)/);
   const helper = app.slice(app.indexOf("const createTaskAndOpenSharedEditor"), app.indexOf("const openCalendarDateTaskEditor"));
   assert.match(helper, /openExistingTaskEditor\(createdTask\)/);
   assert.doesNotMatch(composer, /setRequestedListOverlayTaskId\(createdTask\.id\)/);
-  assert.match(composer, /\}, \[createTaskAndOpenSharedEditor\]\);/);
+  assert.match(composer, /const createTaskFromComposer = useCallback/);
 });
 
 test("normal and explicit field opens keep task identity separate from monotonic focus identity", async () => {

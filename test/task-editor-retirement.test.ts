@@ -46,8 +46,14 @@ test("all migrated creation routes create canonically before opening the shared 
   assert.match(calendar, /routeToCurrentBucket: true/);
 
   const normal = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const duplicateTaskInPlace"));
-  assert.match(normal, /createTaskAndOpenSharedEditor\(buildNewTaskDraft\("New Task"\)/);
-  assert.match(normal, /routeToCurrentBucket: true/);
+  assert.match(normal, /setTaskCreationInitialTypeSelection\("task"\)/);
+  assert.match(normal, /setIsTaskCreationComposerOpen\(true\)/);
+  assert.doesNotMatch(normal, /buildNewTaskDraft\("New Task"\)/);
+
+  const creation = app.slice(app.indexOf("const createTaskFromComposer"), app.indexOf("const createHomeTodoTaskWithType"));
+  assert.match(creation, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\(draft\.title\)/);
+  assert.match(creation, /\.\.\.draft\.metadata/);
+  assert.match(creation, /routeToCurrentBucket: true/);
 
   const health = app.slice(app.indexOf("const openHealthReminderTemplate"), app.indexOf("const openScratchLinkedTaskTemplate"));
   assert.match(health, /estimated_minutes: template\.estimatedMinutes/);

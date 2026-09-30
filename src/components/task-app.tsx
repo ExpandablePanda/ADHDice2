@@ -89,6 +89,7 @@ import { MilestoneInspectorSection } from "./task-app/milestone-detail-section";
 import { MilestoneLifecycleModal, type MilestoneLifecycleAction } from "./task-app/milestone-lifecycle-modal";
 import { CompletedMilestonesWorkspace } from "./task-app/completed-milestones-workspace";
 import { DuplicateTaskGroupsAdapter, TasksListAdapter, TasksTableAdapter } from "./task-app/tasks-list-adapter";
+import { TaskCreationComposer } from "./task-app/task-creation-composer";
 import { TasksNonListShell } from "./task-app/tasks-non-list-shell";
 import { TaskCalendarView } from "./task-app/task-calendar-view";
 import { HudCommandCenter, HudRuntimeClock } from "./task-app/hud-command-center";
@@ -104,6 +105,7 @@ import {
   parsePositiveInteger,
   type TaskDraft,
 } from "./task-app/task-editor-model";
+import type { TaskCreationDraft } from "@/lib/task-creation";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
@@ -263,7 +265,6 @@ import { getDefaultFocusCategories } from "@/lib/task-focus-labels";
 import { formatActualSecondsLabel } from "@/lib/task-formatting";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import type { HomeTodoTaskMetadata } from "@/lib/home-todo-state";
-import { useHomeTodoState } from "@/hooks/useHomeTodoState";
 import { buildTaskPriorityUpdate, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createTaskStateReplayIdentity, isTaskStateRuntimeLifecycleTransition, TASK_STATE_OWNED_UPDATE_FIELDS, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import type { TaskStateRuntimeLocalTask } from "@/lib/task-state-runtime-executor";
@@ -1352,7 +1353,8 @@ export function TaskApp() {
     return deleted;
   }
   const currentUserId = session?.user?.id ?? null;
-  const homeTodo = useHomeTodoState(currentUserId);
+  const [isTaskCreationComposerOpen, setIsTaskCreationComposerOpen] = useState(false);
+  const [taskCreationInitialTypeSelection, setTaskCreationInitialTypeSelection] = useState("task");
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
@@ -5238,19 +5240,33 @@ export function TaskApp() {
     )
   ), [createTaskAndOpenSharedEditor]);
 
-  const openInlineNewListTaskComposer = useCallback(async () => {
-    await createTaskAndOpenSharedEditor(buildNewTaskDraft("New Task"), { routeToCurrentBucket: true });
-  }, [createTaskAndOpenSharedEditor]);
+  const openInlineNewListTaskComposer = useCallback(() => {
+    setTaskCreationInitialTypeSelection("task");
+    setIsTaskCreationComposerOpen(true);
+  }, []);
 
-  const openTaskComposerForType = useCallback(async (selectionValue: string) => {
+  const openTaskComposerForType = useCallback((selectionValue: string) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
       return;
     }
 
-    await createTaskAndOpenSharedEditor({
-      ...buildNewTaskDraft("New Task"),
+    setTaskCreationInitialTypeSelection(selectionValue);
+    setIsTaskCreationComposerOpen(true);
+  }, [customBehaviorRulesets, setMessage]);
+
+  const createTaskFromComposer = useCallback(async (draft: TaskCreationDraft) => {
+    const selection = resolveTaskTypeSelection(draft.taskTypeSelection, customBehaviorRulesets);
+    if (!selection) {
+      setMessage({ tone: "warn", text: "That Task Type is no longer available." });
+      return null;
+    }
+
+    return createTaskAndOpenSharedEditor({
+      ...buildNewTaskDraft(draft.title),
+      ...draft.metadata,
+      ...buildTaskPriorityUpdate(draft.metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     }, { routeToCurrentBucket: true });
@@ -7809,7 +7825,6 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
-          homeTodoTaskIds={homeTodo.state.taskIds}
           attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
@@ -7901,7 +7916,6 @@ export function TaskApp() {
           onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
           onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
           onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
-          onSetHomeTodoMembership={homeTodo.setHomeTodoMembership}
           onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
           onUnlinkTask={unlinkSameTableTask}
           overlayOnly
@@ -8077,6 +8091,19 @@ export function TaskApp() {
         <section className="w-full pb-28">
 
         {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
+        {isTaskCreationComposerOpen ? (
+          <div className="mb-3 w-full" data-task-creation-composer>
+            <TaskCreationComposer
+              key={taskCreationInitialTypeSelection}
+              allTags={allTaskTags}
+              initialTaskTypeSelection={taskCreationInitialTypeSelection}
+              onCancel={() => setIsTaskCreationComposerOpen(false)}
+              onCreate={createTaskFromComposer}
+              onCreated={() => setIsTaskCreationComposerOpen(false)}
+              taskTypeOptions={taskTypeOptions}
+            />
+          </div>
+        ) : null}
 
         <ErrorBoundary
           key={shouldDeferPageRender ? "restoring-page" : activePage}
@@ -8117,7 +8144,6 @@ export function TaskApp() {
             behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
             calendarNowMs={logicalDayNow}
             calendarTimeZone={userTimeZone}
-            homeTodo={homeTodo}
             tasks={tasks}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
@@ -8273,7 +8299,6 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
-                  homeTodoTaskIds: homeTodo.state.taskIds,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
@@ -8367,7 +8392,6 @@ export function TaskApp() {
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
-                  onSetHomeTodoMembership: homeTodo.setHomeTodoMembership,
                   customBehaviorRulesets,
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,
@@ -8481,7 +8505,6 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
-                  homeTodoTaskIds: homeTodo.state.taskIds,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
@@ -8566,7 +8589,6 @@ export function TaskApp() {
                   onSetLinkedNoteIds: (taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); },
                   onSetNotes: (taskId, notes) => { void updateTask(taskId, { notes: notes || null }); },
                   onSetTaskType: (taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); },
-                  onSetHomeTodoMembership: homeTodo.setHomeTodoMembership,
                   customBehaviorRulesets,
                   customBehaviorRulesetProfiles,
                   taskTypeBehaviorProfiles,

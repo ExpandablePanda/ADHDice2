@@ -1,0 +1,24 @@
+import type { Task } from "@/lib/database.types";
+import type { TaskPriorityLevel } from "@/lib/task-priority";
+
+export type TaskCreationMetadata = Pick<
+  Task,
+  | "due_on"
+  | "due_time"
+  | "repeat_frequency"
+  | "repeat_interval"
+  | "repeat_days_of_week"
+  | "repeat_day_of_month"
+  | "repeat_monthly_mode"
+  | "repeat_monthly_ordinal"
+  | "repeat_monthly_weekday"
+  | "tags"
+> & {
+  priority_level: TaskPriorityLevel;
+};
+
+export type TaskCreationDraft = {
+  metadata: TaskCreationMetadata;
+  taskTypeSelection: string;
+  title: string;
+};

@@ -27,7 +27,6 @@ import {
   reconcileHomeRoutineSectionAssignments,
   reconcileHomeRoutineTaskIds,
   reconcileHomeTodoTaskIds,
-  setHomeTodoTaskMembership,
   shouldPersistHomeRoutineReconciliation,
   sortHomeTodoSearchResults,
   type HomeTodoTaskMetadata,
@@ -75,45 +74,6 @@ test("Home state V1/V4 payloads normalize to V6 with independent Routine default
     routineSections: [],
     routineSectionIdByTaskId: {},
   });
-});
-
-test("Home To-do membership appends, removes, deduplicates, and preserves unrelated V6 state", () => {
-  const state = normalizeHomeTodoState({
-    clientUpdatedAt: "2026-09-29T12:00:00.000Z",
-    schemaVersion: 6,
-    taskIds: ["existing", "other"],
-    taskDayOffsets: { existing: 2, other: 4 },
-    tasksPerDay: 15,
-    routineTaskIds: ["routine"],
-    routineSections: [{ id: "morning", name: "Morning" }],
-    routineSectionIdByTaskId: { routine: "morning" },
-  });
-
-  const included = normalizeHomeTodoState({
-    ...state,
-    taskIds: setHomeTodoTaskMembership(state.taskIds, "new-task", true),
-  });
-  assert.deepEqual(included.taskIds, ["existing", "other", "new-task"]);
-  assert.deepEqual(included.taskDayOffsets, state.taskDayOffsets);
-  assert.equal(included.tasksPerDay, state.tasksPerDay);
-  assert.deepEqual(included.routineTaskIds, state.routineTaskIds);
-  assert.deepEqual(included.routineSections, state.routineSections);
-  assert.deepEqual(included.routineSectionIdByTaskId, state.routineSectionIdByTaskId);
-  assert.deepEqual(setHomeTodoTaskMembership(included.taskIds, "existing", true), included.taskIds);
-  assert.deepEqual(setHomeTodoTaskMembership(included.taskIds, "new-task", true), ["existing", "other", "new-task"]);
-
-  const excluded = normalizeHomeTodoState({
-    ...included,
-    taskIds: setHomeTodoTaskMembership(included.taskIds, "existing", false),
-    taskDayOffsets: { ...included.taskDayOffsets, "new-task": 1 },
-  });
-  assert.deepEqual(excluded.taskIds, ["other", "new-task"]);
-  assert.deepEqual(excluded.taskDayOffsets, { other: 4, "new-task": 1 });
-  assert.deepEqual(excluded.routineTaskIds, state.routineTaskIds);
-  assert.deepEqual(excluded.routineSections, state.routineSections);
-  assert.deepEqual(excluded.routineSectionIdByTaskId, state.routineSectionIdByTaskId);
-  assert.deepEqual(setHomeTodoTaskMembership(excluded.taskIds, "missing", false), excluded.taskIds);
-  assert.deepEqual(setHomeTodoTaskMembership(["duplicate", "duplicate"], "duplicate", true), ["duplicate"]);
 });
 
 test("Home todo explicit day placement moves a task into an otherwise empty day", () => {
@@ -912,6 +872,7 @@ test("shared drag reorder moves Home task ids without mutating the source", () =
 
 test("Home todo renders explicit Routine sections, settings, and the recovered task behavior", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const creationComposerSource = readFileSync(new URL("../src/components/task-app/task-creation-composer.tsx", import.meta.url), "utf8");
   const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const sharedIconButton = readFileSync(new URL("../src/components/ui-system/adhd-icon-button.tsx", import.meta.url), "utf8");
   const sortableSource = readFileSync(new URL("../src/components/ui/sortable-list.tsx", import.meta.url), "utf8");
@@ -1055,28 +1016,27 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /onSetRoutineMembership\(taskId, true\)/);
   assert.match(source, /onSetRoutineMembership\(task\.id, false\)/);
   assert.match(source, /activeHomeTab === "todo"\s*\? \(taskId\) => updateTaskIds/);
-  assert.match(source, /onSubmit=\{handleCreateTask\}/);
-  assert.match(source, /const \[newTaskTypeSelection, setNewTaskTypeSelection\] = useState\("task"\)/);
-  assert.match(source, /<TaskTypeSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{newTaskTypeSelection\}/);
+  assert.match(source, /<TaskCreationComposer[\s\S]*onCreate=\{handleCreateTask\}/);
+  assert.match(creationComposerSource, /const \[taskTypeSelection, setTaskTypeSelection\] = useState\(initialTaskTypeSelection\)/);
+  assert.match(creationComposerSource, /<TaskTypeSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{taskTypeSelection\}/);
   assert.doesNotMatch(source, /EditorCollapsibleSection/);
   assert.doesNotMatch(source, /CompactDateTimeField/);
   assert.doesNotMatch(source, /CompactSelectField/);
   assert.doesNotMatch(source, /TagChipInput/);
   assert.doesNotMatch(source, /Task details|TASK DETAILS/);
-  assert.match(source, /aria-label="Due date"[\s\S]*className=\{TASK_TABLE_INPUT_CLASS\}/);
-  assert.match(source, /aria-label="Due time"[\s\S]*className=\{TASK_TABLE_INPUT_CLASS\}/);
-  assert.match(source, /<TaskTableChipButton[\s\S]*setNewTaskPriority/);
-  assert.match(source, /getSelectedTaskPriorityToneClass/);
-  assert.match(source, /TASK_PRIORITY_LEVEL_OPTIONS/);
-  assert.match(source, /<CompactRepeatCadenceControls/);
-  assert.match(source, /Search or add a tag/);
-  assert.match(source, /TASK_TABLE_ACTIVE_LIST_CHIP_CLASS/);
-  assert.match(source, /dedupeTaskTagLabels/);
-  assert.match(source, /buildNewTaskMetadata\(\)/);
-  assert.match(source, /setNewTaskTypeSelection\("task"\)/);
-  assert.match(source, /New task/);
-  assert.match(source, /type="submit"/);
-  assert.match(source, /Cancel/);
+  assert.match(creationComposerSource, /aria-label="Due date"[\s\S]*className=\{TASK_TABLE_INPUT_CLASS\}/);
+  assert.match(creationComposerSource, /aria-label="Due time"[\s\S]*className=\{TASK_TABLE_INPUT_CLASS\}/);
+  assert.match(creationComposerSource, /<TaskTableChipButton[\s\S]*setPriority/);
+  assert.match(creationComposerSource, /getSelectedTaskPriorityToneClass/);
+  assert.match(creationComposerSource, /TASK_PRIORITY_LEVEL_OPTIONS/);
+  assert.match(creationComposerSource, /<CompactRepeatCadenceControls/);
+  assert.match(creationComposerSource, /Search or add a tag/);
+  assert.match(creationComposerSource, /TASK_TABLE_ACTIVE_LIST_CHIP_CLASS/);
+  assert.match(creationComposerSource, /dedupeTaskTagLabels/);
+  assert.match(creationComposerSource, /buildMetadata\(\)/);
+  assert.match(creationComposerSource, /initialTaskTypeSelection = "task"/);
+  assert.match(creationComposerSource, /type="submit"/);
+  assert.match(creationComposerSource, /Cancel/);
   assert.match(source, /setIsSearchOpen\(true\)/);
   assert.match(source, /setQuery\(""\)/);
   assert.doesNotMatch(source, /font-semibold leading-5/);
@@ -1099,7 +1059,9 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   assert.match(source, /<TaskHomePage[\s\S]*onCreateTaskWithType=\{createHomeTodoTaskWithType\}/);
   assert.match(source, /<TaskHomePage[\s\S]*taskTypeOptions=\{taskTypeOptions\}/);
-  assert.match(source, /createTaskAndOpenSharedEditor\(buildNewTaskDraft\("New Task"\)/);
+  assert.match(source, /const createTaskFromComposer = useCallback/);
+  assert.match(source, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\(draft\.title\)/);
+  assert.match(source, /\.\.\.draft\.metadata/);
   const homeCreationStart = source.indexOf("const createHomeTodoTaskWithType");
   const homeCreationEnd = source.indexOf("const taskTypeOptions", homeCreationStart);
   const homeCreation = source.slice(homeCreationStart, homeCreationEnd);
@@ -1120,21 +1082,6 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   assert.match(homeSource, /taskDisplayStatusByTaskId=\{taskDisplayStatusByTaskId\}/);
   assert.match(homeSource, /taskHistoryStreakSummaries=\{effectiveTaskHistoryStreakSummaries\}/);
   assert.doesNotMatch(homeSource, /tasks=\{tasksForActiveStatusRead\}/);
-});
-
-test("TaskApp owns one Home To-do controller for Home and shared Task editors", () => {
-  const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-  const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
-  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
-  assert.equal((taskAppSource.match(/useHomeTodoState\(/g) ?? []).length, 1);
-  assert.doesNotMatch(homeSource, /useHomeTodoState\(/);
-  assert.match(taskAppSource, /const homeTodo = useHomeTodoState\(currentUserId\)/);
-  assert.match(taskAppSource, /<TaskHomePage[\s\S]*homeTodo=\{homeTodo\}/);
-  assert.match(taskAppSource, /homeTodoTaskIds=\{homeTodo\.state\.taskIds\}/);
-  assert.match(taskAppSource, /onSetHomeTodoMembership=\{homeTodo\.setHomeTodoMembership\}/);
-  assert.match(taskAppSource, /homeTodoTaskIds: homeTodo\.state\.taskIds/);
-  assert.match(taskAppSource, /onSetHomeTodoMembership: homeTodo\.setHomeTodoMembership/);
-  assert.match(hookSource, /const setHomeTodoMembership = useCallback\([\s\S]*?updateTaskIds\(\(taskIds\) => setHomeTodoTaskMembership\(taskIds, taskId, included\)\)/);
 });
 
 test("Home Routine child drag reuses TaskApp sibling reorder without changing Home state", () => {
