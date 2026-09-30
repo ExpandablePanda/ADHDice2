@@ -1,5 +1,6 @@
 import type { Task, TaskUpdate } from "@/lib/database.types";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
+import { isFixedUntilCompleteRepeatTask } from "@/lib/task-repeat";
 import type { CanonicalTaskStateColumns } from "@/lib/task-state-canonical/types";
 import type { TaskStateCommandIntent, TaskStateScheduleChangeIntent } from "@/lib/task-state-command-client";
 
@@ -82,7 +83,16 @@ function canonicalScheduleModel(task: TaskRuntimeTask, values: TaskUpdate): Task
   const repeatFrequency = values.repeat_frequency ?? task.repeat_frequency ?? "none";
   const dueOn = Object.hasOwn(values, "due_on") ? values.due_on : task.due_on;
   if (repeatFrequency === "none") return dueOn ? "one_time" : "unscheduled";
-  if (repeatFrequency === "daily" || repeatFrequency === "custom" || repeatFrequency === "daily_until_complete") return "rolling";
+  if (repeatFrequency === "daily_until_complete") {
+    const repeatTask = {
+      repeat_frequency: repeatFrequency,
+      repeat_days_of_week: values.repeat_days_of_week ?? task.repeat_days_of_week ?? [],
+      repeat_day_of_month: Object.hasOwn(values, "repeat_day_of_month") ? values.repeat_day_of_month ?? null : task.repeat_day_of_month ?? null,
+      repeat_monthly_mode: Object.hasOwn(values, "repeat_monthly_mode") ? values.repeat_monthly_mode ?? "day_of_month" : task.repeat_monthly_mode ?? "day_of_month",
+    } satisfies Pick<Task, "repeat_frequency" | "repeat_days_of_week" | "repeat_day_of_month" | "repeat_monthly_mode">;
+    return isFixedUntilCompleteRepeatTask(repeatTask) ? "fixed" : "rolling";
+  }
+  if (repeatFrequency === "daily" || repeatFrequency === "custom") return "rolling";
   if (repeatFrequency === "weekly" || repeatFrequency === "monthly") return "fixed";
   return null;
 }

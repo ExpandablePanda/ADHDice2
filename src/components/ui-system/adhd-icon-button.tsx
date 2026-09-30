@@ -131,6 +131,7 @@ export const AdhdIconButton = forwardRef<HTMLButtonElement, AdhdIconButtonProps>
       )}
       data-style-component="AdhdIconButton"
       data-style-role="ui.icon-button"
+      data-task-icon-surface="true"
       type={type ?? "button"}
       {...props}
       ref={ref}

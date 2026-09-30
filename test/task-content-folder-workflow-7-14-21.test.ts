@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { existsSync, readFileSync } from "node:fs";
 import test from "node:test";
+import { resolveTaskContentFolderMoveTaskIds, taskNeedsContentFolderMove } from "../src/lib/task-content-folders.ts";
 
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
@@ -31,8 +32,59 @@ test("Table and List retain the exact Task to Folder callback wiring", () => {
   assert.doesNotMatch(appSource, new RegExp(["onMoveTask", "ContentFolder"].join("")));
   assert.match(tableSource, /onMoveTaskToContentFolder\?:/);
   assert.match(tableSource, /onMoveToTaskContentFolder=\{onMoveTaskToContentFolder/);
+  assert.match(tableSource, /onMoveTasksToContentFolder\?:/);
+  assert.match(tableSource, /selectedTaskIds=\{selectedTaskIds\}/);
   assert.match(listSource, /onMoveTaskToContentFolder\?:/);
   assert.match(listSource, /onMoveToTaskContentFolder=\{tableProps\.onMoveTaskToContentFolder/);
+  assert.match(listSource, /onMoveTasksToContentFolder\?:/);
+  assert.match(listSource, /selectedTaskIds=\{selectedTaskIds\}/);
+  assert.match(appSource, /onMoveTasksToContentFolder: moveTasksToContentFolder/);
+});
+
+test("Folder context targeting expands only an in-selection context Task and removes duplicate IDs", () => {
+  assert.deepEqual(resolveTaskContentFolderMoveTaskIds("B", ["A", "B", "C"]), ["A", "B", "C"]);
+  assert.deepEqual(resolveTaskContentFolderMoveTaskIds("D", ["A", "B", "C"]), ["D"]);
+  assert.deepEqual(resolveTaskContentFolderMoveTaskIds("B", ["A", "B", "B", "C"]), ["A", "B", "C"]);
+  assert.match(tableSource, /resolveTaskContentFolderMoveTaskIds\(task\.id, selectedTaskIds\)/);
+  assert.match(appSource, /for \(const task of tasksToMove\)/);
+  assert.match(appSource, /failedCount/);
+});
+
+test("Batch Folder moves persist only Tasks that need a hierarchy change", () => {
+  const selectedTasks = [
+    { id: "A", parent_task_id: null, task_content_folder_id: "folder-x" },
+    { id: "B", parent_task_id: null, task_content_folder_id: "folder-x" },
+    { id: "C", parent_task_id: null, task_content_folder_id: "folder-x" },
+    { id: "D", parent_task_id: null, task_content_folder_id: "folder-y" },
+    { id: "E", parent_task_id: null, task_content_folder_id: null },
+  ];
+  assert.deepEqual(
+    selectedTasks.filter((task) => taskNeedsContentFolderMove(task, "folder-x")).map((task) => task.id),
+    ["D", "E"],
+  );
+  assert.match(appSource, /const tasksToMove = targetTasks\.filter\(\(task\) => taskNeedsContentFolderMove\(task, folderId\)\);/);
+  assert.match(appSource, /for \(const task of tasksToMove\)/);
+  assert.doesNotMatch(appSource, /for \(const task of targetTasks\)/);
+  assert.match(appSource, /taskContentFolderActions\.moveTaskToFolder\(task, folderId\)/);
+});
+
+test("An all-correct Folder batch performs no persistence and reports a successful no-op", () => {
+  const selectedTasks = [
+    { id: "A", parent_task_id: null, task_content_folder_id: "folder-x" },
+    { id: "B", parent_task_id: null, task_content_folder_id: "folder-x" },
+  ];
+  assert.deepEqual(selectedTasks.filter((task) => taskNeedsContentFolderMove(task, "folder-x")), []);
+  assert.match(appSource, /if \(tasksToMove\.length === 0\) \{[\s\S]*tone: "good"[\s\S]*Selected Tasks are already in/);
+  assert.match(appSource, /if \(tasksToMove\.length === 0\) \{[\s\S]*return true;/);
+});
+
+test("Folder move filtering handles ungrouped, cross-Folder, and child Tasks", () => {
+  assert.equal(taskNeedsContentFolderMove({ parent_task_id: null, task_content_folder_id: null }, "folder-x"), true);
+  assert.equal(taskNeedsContentFolderMove({ parent_task_id: null, task_content_folder_id: "folder-y" }, "folder-x"), true);
+  assert.equal(taskNeedsContentFolderMove({ parent_task_id: null, task_content_folder_id: "folder-x" }, "folder-x"), false);
+  assert.equal(taskNeedsContentFolderMove({ parent_task_id: null, task_content_folder_id: null }, null), false);
+  assert.equal(taskNeedsContentFolderMove({ parent_task_id: "parent-a", task_content_folder_id: null }, "folder-x"), true);
+  assert.equal(taskNeedsContentFolderMove({ parent_task_id: "parent-a", task_content_folder_id: "folder-x" }, null), true);
 });
 
 test("Create Folder performs assignment and compensates a failed move", () => {

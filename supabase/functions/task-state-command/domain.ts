@@ -281,6 +281,14 @@ function currentBoundary(readModel: CanonicalTaskStateReadModel): CanonicalTaskS
   return boundary;
 }
 
+function nullableScheduleField<T>(
+  schedule: ScheduleChangeIntent,
+  previousValue: T,
+  field: keyof ScheduleChangeIntent,
+): T {
+  return Object.hasOwn(schedule, field) ? schedule[field] as T : previousValue;
+}
+
 function materializeDelayOccurrence(readModel: CanonicalTaskStateReadModel, base: ReturnType<typeof commandBase>, now: string): CanonicalTaskOccurrence {
   const boundary = currentBoundary(readModel);
   if (boundary.schedule_model === "unscheduled") throw new Error("Delay requires a scheduled canonical occurrence.");
@@ -367,12 +375,12 @@ function serverScheduleBoundary(
     repeat_frequency: repeatFrequency,
     repeat_interval: schedule.repeat_interval ?? previous.repeat_interval,
     repeat_days_of_week: schedule.repeat_days_of_week ?? previous.repeat_days_of_week,
-    repeat_day_of_month: schedule.repeat_day_of_month ?? previous.repeat_day_of_month,
+    repeat_day_of_month: nullableScheduleField(schedule, previous.repeat_day_of_month, "repeat_day_of_month"),
     repeat_monthly_mode: schedule.repeat_monthly_mode ?? previous.repeat_monthly_mode,
-    repeat_monthly_ordinal: schedule.repeat_monthly_ordinal ?? previous.repeat_monthly_ordinal,
-    repeat_monthly_weekday: schedule.repeat_monthly_weekday ?? previous.repeat_monthly_weekday,
+    repeat_monthly_ordinal: nullableScheduleField(schedule, previous.repeat_monthly_ordinal, "repeat_monthly_ordinal"),
+    repeat_monthly_weekday: nullableScheduleField(schedule, previous.repeat_monthly_weekday, "repeat_monthly_weekday"),
     one_time_due_on: scheduleModel === "one_time" ? schedule.one_time_due_on ?? null : null,
-    due_time: schedule.due_time ?? previous.due_time,
+    due_time: nullableScheduleField(schedule, previous.due_time, "due_time"),
     anchor_date: anchorDate,
     anchor_kind: hasExplicitAnchor ? "user_selected" : recurring ? previous.anchor_kind : "unknown",
     anchor_confidence: hasExplicitAnchor ? "proven" : recurring ? previous.anchor_confidence : "unavailable",

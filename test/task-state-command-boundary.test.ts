@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, validateTaskStateCommandIntent, type ScheduleChangeIntent } from "../supabase/functions/task-state-command/domain.ts";
 import { normalizeTaskStateCommand, planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalLogicalDayContext, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
@@ -96,6 +96,105 @@ test("explicit Unscheduled marker survives Edge validation and canonical command
   assert.equal(command.type, "schedule_change");
   assert.equal(command.manual_action, "unscheduled_status");
   assert.equal(normalizeTaskStateCommand(command).payload.manual_action, "unscheduled_status");
+});
+
+function monthlyBoundary(overrides: Partial<CanonicalTaskScheduleBoundary> = {}) {
+  return {
+    id: "previous-boundary",
+    user_id: "owner-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    effective_from_logical_date: "2026-08-10",
+    boundary_sequence: 4,
+    boundary_type: "initial",
+    schedule_model: "fixed",
+    repeat_frequency: "monthly",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: 5,
+    repeat_monthly_mode: "ordinal_weekday",
+    repeat_monthly_ordinal: "third",
+    repeat_monthly_weekday: 3,
+    one_time_due_on: null,
+    due_time: "09:30",
+    anchor_date: "2026-08-10",
+    anchor_kind: "user_selected",
+    anchor_confidence: "proven",
+    ...overrides,
+  } as CanonicalTaskScheduleBoundary;
+}
+
+function scheduleCommand(schedule: ScheduleChangeIntent, replayIdentity: string) {
+  return buildTrustedTaskStateCommand({
+    intent: {
+      type: "set_repeat",
+      task_id: "task-1",
+      replay_identity: replayIdentity,
+      expected_revision: 3,
+      schedule,
+    },
+    userId: "owner-1",
+    readModel: {
+      ...readModel,
+      scheduleBoundaries: [monthlyBoundary()],
+    } as unknown as CanonicalTaskStateReadModel,
+    logicalDay,
+    now: "2026-08-10T12:00:00.000Z",
+  });
+}
+
+test("schedule-boundary construction treats explicit null as a clear", () => {
+  const clearMonthly: ScheduleChangeIntent = {
+    schedule_model: "rolling",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+  };
+  const cases: ScheduleChangeIntent[] = [
+    clearMonthly,
+    { ...clearMonthly, repeat_frequency: "daily_until_complete" },
+    { ...clearMonthly, schedule_model: "fixed", repeat_frequency: "weekly", repeat_days_of_week: [3] },
+    { ...clearMonthly, schedule_model: "fixed", repeat_frequency: "weekly", repeat_days_of_week: [1, 2, 3, 4, 5] },
+  ];
+
+  for (const [index, schedule] of cases.entries()) {
+    const boundary = scheduleCommand(schedule, `clear-monthly-${index}`).scheduleBoundary;
+    assert.equal(boundary?.repeat_day_of_month, null);
+    assert.equal(boundary?.repeat_monthly_ordinal, null);
+    assert.equal(boundary?.repeat_monthly_weekday, null);
+  }
+});
+
+test("ordinal Monthly replacement clears day-of-month while omitted fields inherit", () => {
+  const boundary = scheduleCommand({
+    schedule_model: "fixed",
+    repeat_frequency: "monthly",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "ordinal_weekday",
+    repeat_monthly_ordinal: "third",
+    repeat_monthly_weekday: 3,
+  }, "ordinal-monthly").scheduleBoundary;
+  assert.equal(boundary?.repeat_day_of_month, null);
+  assert.equal(boundary?.repeat_monthly_ordinal, "third");
+  assert.equal(boundary?.repeat_monthly_weekday, 3);
+
+  const omitted = scheduleCommand({ schedule_model: "fixed", repeat_frequency: "weekly" }, "omitted-fields").scheduleBoundary;
+  assert.equal(omitted?.repeat_day_of_month, 5);
+  assert.equal(omitted?.repeat_monthly_ordinal, "third");
+  assert.equal(omitted?.repeat_monthly_weekday, 3);
+});
+
+test("due_time preserves omission and clears explicit null", () => {
+  const omitted = scheduleCommand({ schedule_model: "fixed", repeat_frequency: "weekly" }, "omitted-time").scheduleBoundary;
+  assert.equal(omitted?.due_time, "09:30");
+  const cleared = scheduleCommand({ schedule_model: "fixed", repeat_frequency: "weekly", due_time: null }, "cleared-time").scheduleBoundary;
+  assert.equal(cleared?.due_time, null);
 });
 
 test("accepted intent digest survives replay rebuilds with newer canonical and server-derived state", () => {

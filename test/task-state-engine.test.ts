@@ -310,6 +310,31 @@ test("Delayed resolves the occurrence through one coherent engine plan", () => {
   assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, missed.occurrenceIdentity);
 });
 
+test("canonical Delayed remains Delayed before effective due, then follows the existing Open and post-due behavior", () => {
+  const delayed = history("2026-08-30", "delayed", {
+    effectiveDueOn: "2026-09-02",
+    occurrenceDueOn: "2026-08-30",
+    occurrenceIdentity: "task:task-1:occurrence:2026-08-30",
+  });
+  const sourceTask = task({ activeStatus: "delayed", dueOn: "2026-09-02" });
+
+  assert.equal(evaluateTaskState(input({
+    now: "2026-09-01T12:00:00.000Z",
+    task: sourceTask,
+    history: [delayed],
+  })).activeStatus, "delayed");
+  assert.equal(evaluateTaskState(input({
+    now: "2026-09-02T12:00:00.000Z",
+    task: sourceTask,
+    history: [delayed],
+  })).activeStatus, "pending", "pending is the internal Open projection on the effective due date");
+  assert.equal(evaluateTaskState(input({
+    now: "2026-09-03T12:00:00.000Z",
+    task: sourceTask,
+    history: [delayed],
+  })).activeStatus, "missed", "post-due unresolved behavior remains Missed");
+});
+
 test("open scheduled tasks derive continuous Missed without advancing due_on or writing History", () => {
   const result = evaluateTaskState(input({
     task: task({ dueOn: "2026-07-28", recurrence: { kind: "rolling", intervalDays: 5 } }),

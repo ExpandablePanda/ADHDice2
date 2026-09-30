@@ -1,6 +1,6 @@
 import type { Task, TaskHistory as DbTaskHistory, TaskStatus } from "./database.types.ts";
 import { shiftDateKey } from "./date-key.ts";
-import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, resolveRecurringLiveStatusFromNextDueDate } from "./task-repeat.ts";
+import { calcNextDueDateFromDate, isDailyCadenceRepeatFrequency, isFixedUntilCompleteRepeatTask, resolveRecurringLiveStatusFromNextDueDate } from "./task-repeat.ts";
 import { shouldExposeHistoryEventTimestamp } from "./task-history-cutover.ts";
 import { isScheduledOccurrence, scheduledOccurrences } from "./task-state-engine/recurrence.ts";
 import type { TaskCalendarOverride, TaskEffectiveTimelineDay, TaskRecurrence } from "./task-state-engine/types.ts";
@@ -73,6 +73,16 @@ export async function fetchTaskHistoryForTaskIdsInBatches(
 
 export function isTaskCompletedForHistory(status: TaskStatus) {
   return status === "done" || status === "did_my_best" || status === "complete";
+}
+
+/** Return whether the canonical History outcome for a logical date is successful. */
+export function isTaskFinishedOnDate(
+  history: readonly DbTaskHistory[],
+  logicalDate: string,
+) {
+  const entry = deduplicateTaskHistoryByLogicalDate(history)
+    .find((candidate) => candidate.entry_date === logicalDate);
+  return entry ? isTaskCompletedForHistory(entry.status) : false;
 }
 
 export function isTaskHistoryStreakSuccessStatus(status: TaskStatus) {
@@ -299,6 +309,17 @@ export function formatTaskHistoryEntryLabel(entry: Pick<DbTaskHistory, "event_ty
     .split("_")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(" ");
+}
+
+export function formatTaskHistoryDelayLabel(entry: Pick<DbTaskHistory, "entry_date" | "effective_due_on">) {
+  if (!entry.effective_due_on) return "Delayed";
+  const delayDays = daysBetween(entry.entry_date, entry.effective_due_on);
+  const effectiveDueLabel = new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    timeZone: "UTC",
+  }).format(toDate(entry.effective_due_on));
+  return `Delayed ${delayDays} ${delayDays === 1 ? "day" : "days"} · until ${effectiveDueLabel}`;
 }
 
 function createHistoryWindowFlags(initialValue = false): Record<TaskHistoryWindowPreset, boolean> {
@@ -860,15 +881,16 @@ function isWithinLastWindow(dateKey: string, todayDateKey: string, dayCount: num
 
 function fixedRecurrenceForTask(task: Task): Extract<TaskRecurrence, { kind: "weekly" | "monthly" }> | null {
   const interval = Math.max(1, task.repeat_interval ?? 1);
-  if (task.repeat_frequency === "weekly") {
+  if (task.repeat_frequency === "weekly" || (isFixedUntilCompleteRepeatTask(task) && task.repeat_days_of_week.length > 0)) {
     return {
       kind: "weekly",
       intervalWeeks: interval,
       weekdays: task.repeat_days_of_week ?? [],
+      ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
     };
   }
-  if (task.repeat_frequency === "monthly") {
+  if (task.repeat_frequency === "monthly" || isFixedUntilCompleteRepeatTask(task)) {
     return {
       kind: "monthly",
       intervalMonths: interval,
@@ -876,6 +898,7 @@ function fixedRecurrenceForTask(task: Task): Extract<TaskRecurrence, { kind: "we
       dayOfMonth: task.repeat_day_of_month,
       ordinal: task.repeat_monthly_ordinal,
       weekday: task.repeat_monthly_weekday,
+      ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
     };
   }
@@ -926,16 +949,12 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
 
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
-  if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
+  if (isDailyCadenceRepeatFrequency(task.repeat_frequency) && !isFixedUntilCompleteRepeatTask(task)) {
     const distance = daysBetween(anchorDateKey, dateKey);
     return ((distance % interval) + interval) % interval === 0;
   }
 
-  if (task.repeat_frequency === "weekly") {
-    return isFixedTaskDueOnDate(task, dateKey, false);
-  }
-
-  if (task.repeat_frequency === "monthly") {
+  if (fixedRecurrenceForTask(task)) {
     return isFixedTaskDueOnDate(task, dateKey, false);
   }
 
@@ -965,7 +984,7 @@ function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
 
   const interval = Math.max(1, task.repeat_interval ?? 1);
 
-  if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
+  if (isDailyCadenceRepeatFrequency(task.repeat_frequency) && !isFixedUntilCompleteRepeatTask(task)) {
     const distance = daysBetween(anchorDateKey, dateKey);
     return ((distance % interval) + interval) % interval === 0;
   }
@@ -1018,7 +1037,7 @@ export function buildTaskDueDateSet(task: Task, startDateKey: string, endDateKey
 
   let cursor = startDateKey;
   while (compareDateKeys(cursor, endDateKey) <= 0) {
-    const isHistoricalFixedDueDate = (task.repeat_frequency === "weekly" || task.repeat_frequency === "monthly")
+    const isHistoricalFixedDueDate = fixedRecurrenceForTask(task) !== null
       && isHistoricalRecurringDueDate(task, cursor);
     if (isTaskDueOnDate(task, cursor) || isHistoricalFixedDueDate) {
       dueDates.add(cursor);

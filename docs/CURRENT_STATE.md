@@ -1,18 +1,331 @@
 # Current State
 
-Last reviewed: 2026-09-27
+Last reviewed: 2026-09-30
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.62`.
-- Current release group: `7.15.x`.
+- Current working app version: `7.16.21`.
+- Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.16.21 iOS native-development consolidation checkpoint
+
+Main 7.16.21 is merged into `ios/native-development`; 7.16.21 is now the
+shared application authority. Native HealthKit and iOS functionality remains
+preserved, including the native plugin, incremental sync, lifecycle, and
+persistence seams. No production SQL, Supabase, or Edge deployment occurred.
+Capacitor sync and the signing-free iOS simulator build passed; real-device
+HealthKit/device QA remains a verification gate. Browser/manual QA remains
+Andrew-owned and unverified here.
+
+## 2026-09-30 7.16.21 Side and 7.16 consolidation checkpoint
+
+The completed `codex/Side` Home progress, persistent Routine sections, shared
+Task creation composer, rich child creation, Task Type focus/placement, and
+Home state/UI helper work are consolidated into `codex/7.16`. Current 7.16
+History, Folder, hierarchy selection, full Edit Task, recurrence, Table
+reconciliation, Active Status, and Health fixes remain preserved. No SQL,
+schema, Supabase, or Edge deployment change was made. Browser/manual QA remains
+Andrew-owned and unverified here.
+
+## 2026-09-30 7.16.20 Compact monthly Repeat interval parity
+
+Compact monthly Repeat labels now retain intervals alongside day-of-month or
+ordinal weekday patterns, and continue to identify Until Complete schedules.
+Schedules without a specific monthly pattern retain the useful
+`Every N months` cadence label. Daily and Weekly Until Complete labels, recurrence
+persistence, canonical schedule boundaries, Task State runtime, and recurrence
+calculations are unchanged. Browser/manual QA remains Andrew-owned and
+unverified here.
+
+## 2026-09-30 7.16.19 Compact Until Complete Repeat-label parity
+
+The shared compact Repeat formatter now preserves the selected cadence or
+monthly pattern while identifying Until Complete schedules. Monthly day and
+ordinal labels, fixed Weekly labels, and intervaled Daily labels append
+`Until Complete`; ordinary Daily, Weekly, and Monthly labels remain unchanged.
+Repeat persistence, canonical schedule boundaries, Task State runtime, and
+recurrence calculations are unchanged. Browser/manual QA remains Andrew-owned
+and unverified here.
+
+## 2026-09-30 7.16.18 Repeat preset separation and schedule null clearing
+
+The fixed Weekly preset now detects the semantic Monday-Friday day set and
+selects the due-date weekday (or the existing fallback weekday), so Weekdays
+and Weekly remain distinct without adding a persisted repeat enum. Legitimate
+multi-day Weekly selections remain preserved, while Weekdays still writes the
+Monday-Friday set.
+
+The canonical `task-state-command` schedule-boundary builder now distinguishes
+omitted nullable schedule fields from explicit `null`. Monthly day/ordinal/
+weekday metadata and `due_time` therefore clear when the client supplies null,
+while omitted fields inherit the prior boundary. Client payload assertions and
+real command-construction regression coverage preserve the existing repeat,
+schedule, history, occurrence, and reward authorities. No SQL/schema change or
+Edge deployment was made. Browser/manual QA remains Andrew-owned and
+unverified here.
+
+## 2026-09-30 7.16.16 Repeat action-row and optimistic-chip reconciliation
+
+Table Repeat editing now uses a stacked inline action-row layout for the
+multi-row recurrence editor, while other Table action rows retain their
+horizontal layout. The Monthly ordinal mode is labeled `X of Every Month` in
+the shared and batch editors without changing the stored `ordinal_weekday`
+enum or recurrence semantics. Table Repeat edits now keep a generation-fenced
+optimistic Repeat-field overlay until authoritative rows match, accepting
+unrelated upstream row changes and clearing/rolling back through the existing
+boolean persistence result on failure. Browser/manual QA remains Andrew-owned
+and unverified here.
+
+## 2026-09-30 7.16.15 Recurrence editor follow-up
+
+Repeat editing now uses one shared presentation-category and normalization
+authority across Table, List, shared Edit Task, Home creation, and batch edit.
+No Repeat, Daily, Daily Until Complete, Weekdays, Weekly, and Monthly are fixed
+interval-1 presets; Custom is the only interval editor. Monthly compact chips
+show the selected day or short ordinal weekday. Custom saves map to supported
+daily, weekly, monthly, or daily-until-complete canonical repeat values, and
+Every N days until complete is available only through Custom. Existing
+intervaled daily, weekly, monthly, daily-until-complete, and legacy custom rows
+retain their runtime behavior without a read-time migration. Recurrence date
+calculation and Daily Until Complete state/history semantics are unchanged.
+Browser/manual QA remains Andrew-owned and unverified here.
+
+## 2026-09-30 7.16.17 Custom Until Complete cadence correction
+
+Custom `Until complete` now retains the selected daily, weekly, or monthly
+cadence fields instead of collapsing every choice to daily. Weekly and monthly
+fixed cadences are projected through the existing canonical schedule boundary
+and recurrence/history authorities, including examples such as every second
+Thursday or every month on the 28th until complete. Table Repeat editing keeps
+the stacked logical-row spacing and removes the nested purple custom shell in
+the inline action row; batch editing keeps all custom units available after
+selecting `Until complete`. Browser/manual QA remains Andrew-owned and
+unverified here.
+
+## 2026-09-29 7.16.11 Hierarchical Task selection correction
+
+- Steps and Substeps now enter the shared selection mode through the existing long-press interaction in both Table and List surfaces, while interactive child controls and drag gestures remain excluded.
+- Table and List Select All Visible and range selection now use the ordered rendered Task/Step/Substep IDs, and selected valid entities remain batch targets after becoming hidden or collapsed.
+- Table metadata batches continue to resolve canonical valid targets and invoke the existing per-Task status and recurrence authorities. Browser QA remains Andrew-owned and unverified here.
+
+## 2026-09-29 7.16.12 Child title selection-priority correction
+
+- In active multi-select mode, clicking a rendered Step or Substep row/title in Table or List now toggles that exact canonical child ID, including existing Shift/range behavior, instead of opening or entering rename.
+- Normal child-title rename behavior, active title inputs, and true metadata, hierarchy, drag, and action controls remain unchanged. Browser QA remains Andrew-owned and unverified here.
+
+## 2026-09-29 7.16.13 Canonical Table child row interaction ownership correction
+
+- Canonical Table Step/Substep mini rows now keep long-press, ordinary click, keyboard activation, and row context handling on the same outer rendered row element, so pointer capture and normal selection share one interaction owner.
+- List and legacy/source child-row paths remain unchanged. Existing child controls, title rename, selection helpers, and mutation authorities remain preserved. Browser QA remains Andrew-owned and unverified here.
+
+## 2026-09-29 7.16.10 Task Content Folder bounded current-day History authority
+
+The bounded current-logical-day History runtime is now requested for both Home
+and Tasks, while retaining its existing owner/date/generation fencing,
+single-flight behavior, rollover invalidation, and loaded-only refresh paths.
+Tasks share its `finishedToday` completion map with the common Table/List row
+model, so Folder daily state no longer depends on lazy full Task History.
+Home Finished Today remains on the same bounded data and unchanged behavior.
+Browser/manual QA remains Andrew-owned and unverified by source checks.
+
+## 2026-09-29 7.16.9 Task Content Folder current-day completion correction
+
+Task Content Folder daily state now derives a separate `finishedToday` fact
+from the freshest deduplicated logical-date History outcome at the shared Task
+row boundary. Rolled-forward recurring Tasks therefore remain green after
+successful completion today, while genuinely open members remain orange. This
+corrects the 7.16.8 live-status versus current-day-History mismatch without
+changing Task, recurrence, History, or Folder persistence semantics. Browser/
+manual QA remains Andrew-owned and unverified by source checks.
+
+## 2026-09-29 7.16.8 Task Content Folder daily-state colors
+
+Task Content Folder headers now derive a shared neutral/open/finished daily
+state from canonical member display statuses in both Table and List View.
+Finished headers use the success family, open headers use the warning family,
+and empty or archived/trashed-only Folders retain the neutral appearance. No
+Folder status is persisted. Browser/manual QA remains Andrew-owned and
+unverified by source checks.
+
+## 2026-09-29 7.16.7 Shared full Edit Task utility actions
+
+The shared full Edit Task title row now exposes Calendar History and a compact
+more-actions menu in both desktop and mobile render paths. History and Trash
+delegate to the existing TaskApp callbacks with the exact selected Task, Step,
+or Substep ID; active and trashed wording remains aligned with row actions. No
+History or deletion mutation behavior changed. Browser/manual QA remains
+Andrew-owned and unverified by source checks.
+
+## 2026-09-29 7.16.6 Food Amount Enter focus handoff
+
+After a successful Amount-Enter save in the normal actual-food editor, focus
+returns through the HealthAutocomplete-owned input handle to the Food search
+input. Validation, composition, save/reset, meal context, plan/actual mode,
+Quick Entry, button submission, and editing-flow boundaries remain unchanged.
+Browser/manual QA remains Andrew-owned and unverified by source checks.
+
+## 2026-09-27 7.16.0 History correctness and Delay-history clarity
+
+History Complete now carries the selected logical date through the canonical
+Complete command, preserving permanent completion, recurrence, terminal-state,
+and reward handling. Delayed History displays its derived duration and
+effective due date from canonical `effective_due_on` data. No schema, migration,
+backfill, or live-data repair was added.
+
+Browser/manual QA remains Andrew-owned and unverified by source checks.
+
+## 2026-09-30 7.15.78 Side Task Type placement and composer surface focus correction
+
+TaskTypeSelect now measures its portaled panel, clamps its available height to
+the viewport, flips toward the side with more room, and reveals active options
+within the panel without scrolling the document. TaskCreationComposer focus
+styling targets semantic chip and icon surfaces so keyboard focus fills the
+rounded control instead of applying a wrapper overlay. Focused composer and
+placement contracts, targeted lint, and `git diff --check` are the source
+verification boundary. Browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-30 7.15.77 Side Task Type and composer focus correction
+
+TaskTypeSelect dropdown options now explicitly render only the Task Type
+icon/title; Task Type descriptions remain available to descriptive surfaces
+such as settings. TaskCreationComposer keyboard focus now suppresses focus
+color on the outer button wrapper and applies the composer-local emphasis only
+to the semantic rounded chip surface. Task Type open-on-focus behavior remains
+opt-in and unchanged. Focused UI contracts, targeted lint, and
+`git diff --check` are the source verification boundary. Browser/manual QA
+remains Andrew-owned and unverified.
+
+## 2026-09-30 7.15.76 Side TaskCreationComposer keyboard focus correction
+
+Keyboard focus inside the shared TaskCreationComposer now uses the focused
+control's native interactive emphasis instead of browser blue/purple focus
+rectangles. Inputs retain their neutral focus behavior, while chips and action
+buttons receive composer-local emphasis without changing their selected values.
+Task Type can open on focus only when the opt-in `openOnFocus` prop is requested
+by TaskCreationComposer; its default focus/open behavior remains unchanged.
+Focused composer contracts, targeted lint, and `git diff --check` are the
+source verification boundary. Browser/manual QA remains Andrew-owned and
+unverified.
+
+## 2026-09-30 7.15.75 Side TaskCreationComposer focus and spacing correction
+
+The composer title now uses the neutral Task input class rather than
+`health-input`, so global Health focus styling cannot add its purple treatment.
+The remaining composer-scoped input focus reset covers the title, date, time,
+tag, and cadence fields while preserving their resting appearance. Home
+To-do New Task now has a simple `mt-3` separation below Search without
+reintroducing a shell; child positioning and `max-w-[52rem]` remain unchanged.
+Focused composer checks, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.74 Side shared creation shell and focus correction
+
+The shared TaskCreationComposer is now shellless on Home New Task as well as
+inline Step/Substep creation, while preserving the existing child
+`max-w-[52rem]` wrappers and internal field spacing. Composer text, date, time,
+tag, and cadence inputs locally suppress the purple focus outline, focus glow,
+and focus border change without modifying the global input focus rules.
+Energy, creation metadata, hierarchy, and canonical creation paths are
+unchanged. Focused composer checks, targeted lint, and `git diff --check` are
+the source verification boundary; browser/manual QA remains Andrew-owned and
+unverified.
+
+## 2026-09-29 7.15.73 Side shared creation Energy and child shell correction
+
+The shared Task creation metadata and composer now include canonical Task Energy
+(`none`, `low`, `medium`, `high`) for Home New Task and inline Step/Substep
+creation. The child composer requests a shellless presentation with a plain
+white surface while retaining its responsive `max-w-[52rem]` wrapper and
+left-aligned natural field wrapping. Child draft construction persists the
+selected Energy while continuing to reassert the clicked `parent_task_id`.
+Focused composer/child-creation checks, targeted lint, and `git diff --check`
+are the source verification boundary; browser/manual QA remains Andrew-owned
+and unverified.
+
+## 2026-09-29 7.15.72 Side child composer width correction
+
+The shared rich Add Step/Add Substep composer remains behaviorally unchanged,
+but its Table and List containers now use a responsive `max-w-[52rem]` width
+boundary. The composer stays left-aligned with the Task/Step content area,
+wraps its fields within that compact surface, and no longer spans the full
+Table width. Focused child-composer wiring, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.71 Side creation-flow correction
+
+The misunderstood 7.15.69 Home To-do membership metadata feature remains
+removed. HomePage owns its existing `useHomeTodoState(userId)` instance, and
+Home To-do remains the JSON-backed V6 organizational state rather than an
+ordinary Task List. Ordinary Table View and List View New Task actions are
+restored to canonical create-then-open-full-Edit-Task behavior, including
+keyboard and Task Type creation actions. The shared rich Home-style creation
+composer is now used for Add Step and Add Substep row creation, preserving
+the clicked parent while accepting title, Task Type, due date/time, priority,
+repeat/cadence details, and saved tags. Add uses canonical child creation;
+Cancel creates nothing. Focused creation, hierarchy, Home/Routine, targeted
+lint, and `git diff --check` are the source verification boundary;
+browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.63 Side Finished Today outcome filters
+
+Side Home Finished Today now uses explicit All, Done, Did My Best, and
+Completed detail filters backed by each `finishedItems[].outcome` value.
+Overall counts, outcome precedence, Task/Step eligibility, and Records live
+values remain unchanged. Focused Home progress tests and targeted lint are the
+source verification boundary; browser/manual QA remains Andrew-owned and
+unverified.
+
+## 2026-09-29 7.15.64 Side Finished Today item opening
+
+Finished Today Task and Step detail rows now reuse Home's existing
+`onOpenTask` callback, opening the shared Edit Task overlay while Home remains
+the active page. Filtering, counts, outcome precedence, and existing Home
+To-do/Routine opening behavior are unchanged. Focused Home progress tests,
+targeted lint, and `git diff --check` are the source verification boundary;
+browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.65 Side persistent Home Routine sections
+
+Home Routine now uses explicit persistent V6 sections with stable IDs and a
+separate section assignment map while retaining `routineTaskIds` as the
+canonical order. V5 chunk boundaries and custom names migrate deterministically;
+Routine settings can add or rename empty sections, and each top-level Routine's
+gear menu can move the group to another section without detaching children.
+Focused Home/Routine tests, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.66 Side Routine section action anchor correction
+
+The Home Routine `Move to section` action is now exposed only for top-level
+Routine group anchors. Steps and Substeps retain their existing child actions,
+while valid anchor destination, ordering, persistence, and V6 state behavior
+remain unchanged. Focused Home/Routine tests, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.67 Side Routine section move crash correction
+
+Home Routine section moves now pass the canonical `current.routineTaskIds`
+ordering into the existing move helper, preventing the undefined-ordering
+runtime crash while preserving section assignment behavior. Focused
+Home/Routine tests, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-29 7.15.68 Side Routine assignment normalization correction
+
+V6 Routine section assignments now validate against `routineTaskIds` rather than
+Home To-do `taskIds`, preserving non-To-do Routine moves into non-first sections
+through normalization. Focused Home/Routine tests, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
 
 ## 2026-09-27 7.15.62 Shared branch consolidation
 

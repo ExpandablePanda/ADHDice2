@@ -197,12 +197,25 @@ export function TaskCurrentStreakChip({ className, currentStreak }: { className?
 
 export type TaskTableViewportMetrics = { clientWidth: number; scrollLeft: number };
 
+export type TaskTableInlineActionRowLayout = "row" | "stack";
+
+export function getTaskTableInlineActionRowContentClass(
+  contentOverflow: "auto" | "visible",
+  layout: TaskTableInlineActionRowLayout,
+) {
+  if (layout === "stack") {
+    return "grid w-full gap-2";
+  }
+  return contentOverflow === "visible" ? "flex w-full items-start gap-1.5" : "flex min-w-max items-start gap-1.5";
+}
+
 export function TaskTableInlineActionRow({
   ariaLabel,
   children,
   className,
   contentOverflow = "auto",
   heading,
+  layout = "row",
   onClose,
   containerRef,
   rowId,
@@ -213,6 +226,7 @@ export function TaskTableInlineActionRow({
   className?: string;
   contentOverflow?: "auto" | "visible";
   heading: ReactNode;
+  layout?: TaskTableInlineActionRowLayout;
   onClose?: () => void;
   containerRef?: Ref<HTMLDivElement>;
   rowId?: string;
@@ -259,7 +273,7 @@ export function TaskTableInlineActionRow({
           ) : null}
         </div>
         <div className={contentOverflow === "visible" ? "overflow-visible" : "overflow-x-auto"}>
-          <div className={contentOverflow === "visible" ? "flex w-full items-start gap-1.5" : "flex min-w-max items-start gap-1.5"}>
+          <div className={getTaskTableInlineActionRowContentClass(contentOverflow, layout)}>
             {children}
           </div>
         </div>
@@ -447,6 +461,7 @@ export function TaskTableChipButton({
         TASK_TABLE_CONTROL_FONT_CLASS,
         "inline-flex shrink-0 items-center appearance-none bg-transparent p-0 border-0 shadow-none",
       )}
+      data-task-chip-button="true"
       type={type}
       {...props}
     >
@@ -458,6 +473,7 @@ export function TaskTableChipButton({
         )}
         data-style-component={styleComponent}
         data-style-role={styleRole}
+        data-task-chip-surface="true"
       >
         {stylePart ? (
           <span className="inline-flex items-center" data-style-part={stylePart}>

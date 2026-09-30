@@ -18,6 +18,7 @@ import {
   resolveRecurringLiveStatusFromNextDueDate,
   shouldReconcileOverdueTaskMisses,
 } from "../src/lib/task-repeat.ts";
+import { buildTaskDueDateSet } from "../src/lib/task-history.ts";
 import { formatTaskMetaLine } from "../src/lib/task-formatting.ts";
 import { TASK_FILTER_STATUS_OPTIONS } from "../src/lib/task-filter-state.ts";
 import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-days.ts";
@@ -102,6 +103,37 @@ test("daily until complete repeat helpers advance like daily and expose the lock
   assert.equal(calcNextDueDate(task), "2026-05-21");
 });
 
+test("until complete custom keeps fixed weekly and monthly schedules", () => {
+  const weekly = createTask({
+    created_at: "2026-05-20T09:00:00.000Z",
+    due_on: "2026-06-04",
+    id: "task-weekly-until-complete",
+    repeat_days_of_week: [4],
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 2,
+    sort_order: 1,
+    status: "pending",
+    title: "Every other Thursday until complete",
+  });
+  assert.equal(calcNextDueDate(weekly), "2026-06-18");
+  assert.deepEqual(buildTaskDueDateSet(weekly, "2026-06-04", "2026-07-03"), new Set(["2026-06-04", "2026-06-18", "2026-07-02"]));
+  assert.deepEqual(buildDailyUntilCompleteMissedDateKeys(weekly, "2026-06-08", null), []);
+
+  const monthly = createTask({
+    created_at: "2026-05-20T09:00:00.000Z",
+    due_on: "2026-06-28",
+    id: "task-monthly-until-complete",
+    repeat_day_of_month: 28,
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    sort_order: 1,
+    status: "pending",
+    title: "Every month on the 28th until complete",
+  });
+  assert.equal(calcNextDueDate(monthly), "2026-07-28");
+  assert.equal(buildTaskDueDateSet(monthly, "2026-06-28", "2026-07-28").has("2026-07-28"), true);
+});
+
 test("ordinal monthly repeat helpers summarize and advance to the next matching weekday", () => {
   const task = createTask({
     created_at: "2026-05-20T09:00:00.000Z",
@@ -118,7 +150,7 @@ test("ordinal monthly repeat helpers summarize and advance to the next matching 
     title: "First Tuesday",
   });
 
-  assert.equal(formatRepeatSummary(task), "First Tuesday monthly");
+  assert.equal(formatRepeatSummary(task), "1st Tuesday monthly");
   assert.equal(calcNextDueDate(task), "2026-07-07");
 });
 
@@ -386,7 +418,7 @@ test("Tasks workspace registers the focused context action and Table sort/column
   const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
   const adapterSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
   assert.match(tableSource, /value: "weekdays"/);
-  assert.match(tableSource, /getTaskRepeatCategory\(task\.repeat, task\.repeatDaysOfWeek, task\.repeatInterval\)/);
+  assert.match(tableSource, /getTaskRepeatCategory\(task\.repeat, task\.repeatDaysOfWeek, task\.repeatInterval, task\.repeatDayOfMonth, task\.repeatMonthlyMode\)/);
   assert.doesNotMatch(tableSource, /repeat_weekdays_first|Weekdays first/);
   assert.match(tableSource, /id: "last_handled", label: "Last Handled"/);
   assert.match(tableSource, /No handled/);

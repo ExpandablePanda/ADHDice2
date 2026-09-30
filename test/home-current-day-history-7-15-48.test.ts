@@ -167,7 +167,7 @@ test("Home runtime retains same-owner/day last-known-good rows on refresh error"
   assert.equal(runtime.getState().rows[0]?.status, "did_my_best");
 });
 
-test("Home production wiring uses bounded readiness and preserves the explicit full-History infrastructure", async () => {
+test("Home and Tasks share bounded current-day readiness without changing full-History infrastructure", async () => {
   const [appSource, homeSource, workspaceSource, runtimeSource] = await Promise.all([
     readFile(new URL("../src/components/task-app.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8"),
@@ -175,7 +175,7 @@ test("Home production wiring uses bounded readiness and preserves the explicit f
     readFile(new URL("../src/lib/home-current-day-history-runtime.ts", import.meta.url), "utf8"),
   ]);
   assert.match(workspaceSource, /homeCurrentDayHistoryRuntimeRef/);
-  assert.match(workspaceSource, /activePage === "Home".*homeCurrentDayHistoryRequestRef/s);
+  assert.match(workspaceSource, /activePage === "Home" \|\| activePage === "Tasks"/);
   assert.match(workspaceSource, /reason: "logical-day"/);
   assert.match(workspaceSource, /reason: "history-realtime"/);
   assert.match(workspaceSource, /`workspace-\$\{source\}`/);

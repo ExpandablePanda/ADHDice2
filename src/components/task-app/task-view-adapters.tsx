@@ -17,6 +17,7 @@ import {
   buildTaskHistoryRowProjections,
   computeTaskSpecificHistoryStats,
   deduplicateTaskHistoryByLogicalDate,
+  formatTaskHistoryDelayLabel,
   getTaskHistoryLastDone,
 } from "@/lib/task-history";
 import {
@@ -660,6 +661,7 @@ export function TaskHistoryModal({
     const state = entry?.status ?? calendarRead?.states[dateKey] ?? "not_due";
     if (state === "blank") return "Blank";
     if (state === "complete" && entry?.event_type === "completed_permanently") return "Marked Complete";
+    if (state === "delayed" && entry) return formatTaskHistoryDelayLabel(entry);
     return formatTaskStatusLabel(state);
   }
 
@@ -824,7 +826,7 @@ export function TaskHistoryModal({
         </>,
         key: row.logicalDate,
         label: formatTaskHistoryCalendarDay(row.logicalDate, stateEngineContext?.timezone ?? "UTC"),
-        status: <span className={`text-xs font-semibold ${taskHistoryStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : formatTaskStatusLabel(row.status)}</span>,
+        status: <span className={`text-xs font-semibold ${taskHistoryStatusClass(row.status)}`}>{row.status === "complete" && row.entry?.event_type === "completed_permanently" ? "Marked Complete" : row.status === "delayed" && row.entry ? formatTaskHistoryDelayLabel(row.entry) : formatTaskStatusLabel(row.status)}</span>,
       }))}
       historySummary={[
         { label: lastDoneLabel, value: lastDone ? formatCalendarDate(lastDone.dateKey) : "None" },

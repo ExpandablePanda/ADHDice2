@@ -2,7 +2,13 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { Task, TaskHistory } from "../src/lib/database.types.ts";
-import { buildHomeDailyProgress, buildHomeRecordChases } from "../src/lib/home-progress.ts";
+import {
+  buildHomeDailyProgress,
+  buildHomeRecordChases,
+  filterHomeFinishedItems,
+  getHomeFinishedTodayFilterDetails,
+  toggleHomeFinishedTodayFilter,
+} from "../src/lib/home-progress.ts";
 
 function task(id: string, parentTaskId: string | null = null): Task {
   return { id, parent_task_id: parentTaskId, repeat_frequency: "daily", title: id, user_id: "user-1" } as Task;
@@ -123,6 +129,45 @@ test("tracking exclusions still remove excluded Tasks and their Steps from Home 
   assert.deepEqual(result.recordLiveValues, { parent_tasks_day: 1, permanent_completes_day: 0, steps_day: 0 });
 });
 
+test("Finished Today filters use authoritative outcomes while preserving Tasks and Steps", () => {
+  const result = progress([task("parent"), task("step", "parent"), task("complete")], [
+    history("done-row", "parent", "done"),
+    history("best-row", "step", "did_my_best"),
+    history("complete-row", "complete", "complete", { event_type: "completed_permanently" }),
+  ]);
+
+  assert.equal(result.total, 3);
+  assert.deepEqual(new Set(filterHomeFinishedItems(result.finishedItems, "all").map((item) => item.taskId)), new Set(["parent", "step", "complete"]));
+  assert.deepEqual(filterHomeFinishedItems(result.finishedItems, "done").map((item) => item.taskId), ["parent"]);
+  assert.deepEqual(filterHomeFinishedItems(result.finishedItems, "did_my_best").map((item) => item.taskId), ["step"]);
+  assert.deepEqual(filterHomeFinishedItems(result.finishedItems, "complete").map((item) => item.taskId), ["complete"]);
+  assert.deepEqual(
+    { done: result.done, didMyBest: result.didMyBest, completed: result.completed },
+    { done: 1, didMyBest: 1, completed: 1 },
+  );
+  assert.equal(result.recordLiveValues.parent_tasks_day, 1);
+  assert.equal(result.recordLiveValues.steps_day, 1);
+  assert.equal(result.recordLiveValues.permanent_completes_day, 1);
+});
+
+test("Finished Today filter transitions and detail copy keep the same surface outcome-specific", () => {
+  assert.equal(toggleHomeFinishedTodayFilter(null, "all"), "all");
+  assert.equal(toggleHomeFinishedTodayFilter("all", "done"), "done");
+  assert.equal(toggleHomeFinishedTodayFilter("done", "done"), null);
+  assert.deepEqual(getHomeFinishedTodayFilterDetails("all"), {
+    emptyState: "No Tasks or Steps finished today.",
+    heading: "Finished Tasks and Steps",
+  });
+  assert.deepEqual(getHomeFinishedTodayFilterDetails("did_my_best"), {
+    emptyState: "No Tasks or Steps marked Did My Best today.",
+    heading: "Did My Best Tasks and Steps",
+  });
+  assert.deepEqual(getHomeFinishedTodayFilterDetails("complete"), {
+    emptyState: "No Tasks or Steps marked Complete today.",
+    heading: "Completed Tasks and Steps",
+  });
+});
+
 test("record chase states calculate below, tied, new, and first-record messages", () => {
   const liveValues = { parent_tasks_day: 8, steps_day: 12, permanent_completes_day: 15 } as const;
   const rows = buildHomeRecordChases(liveValues, { parent_tasks_day: 12, steps_day: 12, permanent_completes_day: 13 });
@@ -149,8 +194,28 @@ test("Home production wiring keeps History readiness separate from the record ta
   const targetSource = readFileSync(new URL("../src/hooks/useHomeRecordTargets.ts", import.meta.url), "utf8");
   assert.match(homeSource, /Finished Today/);
   assert.match(homeSource, /finished today/);
-  assert.match(homeSource, /isFinishedDetailsOpen/);
+  assert.doesNotMatch(homeSource, /isFinishedDetailsOpen/);
+  assert.match(homeSource, /finishedTodayFilter/);
+  assert.match(homeSource, /filterHomeFinishedItems/);
+  assert.match(homeSource, /toggleHomeFinishedTodayFilter/);
+  assert.match(homeSource, /aria-expanded=\{finishedTodayFilter === "all"\}/);
+  assert.match(homeSource, /aria-expanded=\{finishedTodayFilter === "done"\}/);
+  assert.match(homeSource, /aria-expanded=\{finishedTodayFilter === "did_my_best"\}/);
+  assert.match(homeSource, /aria-expanded=\{finishedTodayFilter === "complete"\}/);
+  assert.match(homeSource, /onClick=\{\(\) => toggleFinishedTodayFilter\("done"\)\}/);
+  assert.match(homeSource, /onClick=\{\(\) => toggleFinishedTodayFilter\("did_my_best"\)\}/);
+  assert.match(homeSource, /onClick=\{\(\) => toggleFinishedTodayFilter\("complete"\)\}/);
+  assert.match(homeSource, /\{selectedFinishedItems\.map\(\(item\) =>/);
+  assert.match(homeSource, /id="home-finished-today-details"/);
   assert.match(homeSource, /finishedItems/);
+  assert.match(homeSource, /<HomeProgressDashboard[\s\S]*?onOpenTask=\{onOpenTask\}/);
+  assert.match(homeSource, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
+  const dashboardSource = homeSource.slice(homeSource.indexOf("function HomeProgressDashboard"), homeSource.indexOf("export function HomePage"));
+  assert.match(dashboardSource, /onOpenTask,/);
+  assert.match(dashboardSource, /<li key=\{item\.taskId\}>\s*<button/);
+  assert.match(dashboardSource, /onClick=\{\(\) => onOpenTask\(item\.taskId\)\}/);
+  assert.match(dashboardSource, /aria-label=\{`Open \$\{item\.entityKind === "step" \? "Step" : "Task"\} \$\{item\.title \|\| "Untitled"\}`\}/);
+  assert.match(dashboardSource, /type="button"/);
   assert.match(homeSource, /Records to Beat/);
   assert.match(homeSource, /onOpenRecord\(chase\.metricKey\)/);
   assert.match(homeSource, /homeHistoryStatus === "idle" \|\| homeHistoryStatus === "loading"/);
@@ -163,6 +228,8 @@ test("Home production wiring keeps History readiness separate from the record ta
   assert.match(taskAppSource, /setActivePage\("Achievements"\)/);
   assert.match(taskAppSource, /initialRecordMetricKey=\{pendingProgressRecordMetricKey\}/);
   assert.match(taskAppSource, /onOpenTask=\{openTaskEditorFromId\}/);
+  assert.match(taskAppSource, /const openTaskEditorFromId = \(taskId: string\) => \{[\s\S]*?openSharedTaskEditor\(taskId, \{ preserveActivePage: true \}\);/);
+  assert.doesNotMatch(taskAppSource.slice(taskAppSource.indexOf("const openTaskEditorFromId"), taskAppSource.indexOf("const openTaskInSharedTasksEditorFromPaths")), /setActivePage|navigate/);
   assert.match(targetSource, /select\("metric_key,value,timezone,logical_day_start,recalculated_at"\)/);
   assert.match(targetSource, /\.in\("metric_key", \[\.\.\.HOME_RECORD_METRIC_KEYS\]\)/);
   assert.match(targetSource, /void loadForCurrentOwner\(\);/);

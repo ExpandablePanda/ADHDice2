@@ -562,7 +562,7 @@ function matchesCanonicalTableColumnFilters(
   if (filters.priority.length > 0 && !filters.priority.includes(String(getTaskPriorityLevel(task)) as TaskPriorityLevelOption)) return false;
   if (
     filters.repeat.length > 0
-    && !filters.repeat.includes(getTaskRepeatCategory(task.repeat_frequency, task.repeat_days_of_week, task.repeat_interval))
+    && !filters.repeat.includes(getTaskRepeatCategory(task.repeat_frequency, task.repeat_days_of_week, task.repeat_interval, task.repeat_day_of_month, task.repeat_monthly_mode))
   ) return false;
   if (!matchesTaskTypeSelections(task.task_type, task.custom_ruleset_id, filters.taskType ?? [])) return false;
 

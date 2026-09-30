@@ -1,7 +1,7 @@
 import type { Task } from "@/lib/database.types";
 import { getCalendarDayKey } from "@/lib/logical-day";
-import type { TaskPriorityLevel } from "@/lib/task-priority";
 import type { TaskListMembership } from "@/lib/task-lists";
+import type { TaskCreationMetadata } from "@/lib/task-creation";
 import { formatDueTimeLabel } from "@/lib/task-cockpit";
 import { shiftDateKey } from "@/lib/date-key";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
@@ -33,11 +33,28 @@ export type HomeTodoStateV5 = {
   routineSectionNames: Record<string, string>;
 };
 
+export type HomeRoutineSectionDefinition = {
+  id: string;
+  name: string;
+};
+
+export type HomeTodoStateV6 = {
+  clientUpdatedAt: string;
+  schemaVersion: 6;
+  taskIds: string[];
+  taskDayOffsets: Record<string, number>;
+  tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routineSections: HomeRoutineSectionDefinition[];
+  routineSectionIdByTaskId: Record<string, string>;
+};
+
 export type HomeTodoStateV2 = HomeTodoStateV4;
-export type HomeTodoState = HomeTodoStateV5;
+export type HomeTodoState = HomeTodoStateV6;
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
+  schemaVersion?: unknown;
   taskIds?: unknown;
   taskDayOffsets?: unknown;
   tasksPerDay?: unknown;
@@ -45,6 +62,8 @@ type HomeTodoStateCandidate = {
   routinesPerSection?: unknown;
   routinesPerPhase?: unknown;
   routineSectionNames?: unknown;
+  routineSections?: unknown;
+  routineSectionIdByTaskId?: unknown;
 };
 
 export const HOME_TODO_TASKS_PER_DAY_OPTIONS = [10, 11, 12, 13, 14, 15] as const;
@@ -55,15 +74,15 @@ export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTION
 export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
 export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV5 = {
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV6 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 5,
+  schemaVersion: 6,
   taskIds: [],
   taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
   routineTaskIds: [],
-  routinesPerSection: DEFAULT_HOME_TODO_ROUTINES_PER_SECTION,
-  routineSectionNames: {},
+  routineSections: [],
+  routineSectionIdByTaskId: {},
 };
 
 export type HomeTodoDaySection<T = string> = {
@@ -75,6 +94,7 @@ export type HomeTodoDaySection<T = string> = {
 };
 
 export type HomeRoutineSection<T = string> = {
+  id: string;
   groupIds: T[];
   label: string;
   sectionIndex: number;
@@ -93,21 +113,7 @@ export type HomeRoutineGroup = {
   tasks: HomeRoutineTask[];
 };
 
-export type HomeTodoTaskMetadata = Pick<
-  Task,
-  | "due_on"
-  | "due_time"
-  | "repeat_frequency"
-  | "repeat_interval"
-  | "repeat_days_of_week"
-  | "repeat_day_of_month"
-  | "repeat_monthly_mode"
-  | "repeat_monthly_ordinal"
-  | "repeat_monthly_weekday"
-  | "tags"
-> & {
-  priority_level: TaskPriorityLevel;
-};
+export type HomeTodoTaskMetadata = TaskCreationMetadata;
 
 export type HomeTodoTaskCreator = (
   title: string,
@@ -143,13 +149,119 @@ export function normalizeHomeTodoRoutineSectionNames(value: unknown): Record<str
   }).map(([key, name]) => [key, (name as string).trim()]));
 }
 
+const DEFAULT_HOME_ROUTINE_SECTION_ID = "routine-section-default";
+
+function normalizeHomeRoutineSectionName(value: unknown, fallback: string) {
+  const name = typeof value === "string" ? value.trim() : "";
+  return name || fallback;
+}
+
+export function getHomeRoutineSectionDefaultName(sections: readonly HomeRoutineSectionDefinition[]) {
+  const existingNames = new Set(sections.map((section) => section.name));
+  if (!existingNames.has("New Section")) return "New Section";
+  let suffix = 2;
+  while (existingNames.has(`New Section ${suffix}`)) suffix += 1;
+  return `New Section ${suffix}`;
+}
+
+export function createHomeRoutineSectionId(existingIds: readonly string[] = []) {
+  const existingIdSet = new Set(existingIds);
+  const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  let id = `routine-section-${randomId}`;
+  let suffix = 2;
+  while (existingIdSet.has(id)) {
+    id = `routine-section-${randomId}-${suffix}`;
+    suffix += 1;
+  }
+  return id;
+}
+
+function normalizeHomeRoutineSectionDefinitions(value: unknown): HomeRoutineSectionDefinition[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const sections: HomeRoutineSectionDefinition[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const candidate = entry as { id?: unknown; name?: unknown };
+    if (typeof candidate.id !== "string" || !candidate.id.trim()) continue;
+    const id = candidate.id.trim();
+    if (seen.has(id)) continue;
+    seen.add(id);
+    sections.push({
+      id,
+      name: normalizeHomeRoutineSectionName(candidate.name, `Section ${sections.length + 1}`),
+    });
+  }
+  return sections;
+}
+
+function migrateHomeRoutineSections(
+  routineTaskIds: readonly string[],
+  routinesPerSection: HomeTodoRoutinesPerSection,
+  routineSectionNames: Readonly<Record<string, string>>,
+) {
+  const namedSectionIndexes = Object.keys(routineSectionNames)
+    .map((key) => Number(key))
+    .filter((index) => Number.isSafeInteger(index) && index >= 0);
+  const sectionCount = Math.max(
+    routineTaskIds.length ? Math.ceil(routineTaskIds.length / routinesPerSection) : 0,
+    namedSectionIndexes.length ? Math.max(...namedSectionIndexes) + 1 : 0,
+  );
+  const routineSections = Array.from({ length: sectionCount }, (_, sectionIndex) => ({
+    id: `routine-section-${sectionIndex}`,
+    name: routineSectionNames[String(sectionIndex)] ?? `Section ${sectionIndex + 1}`,
+  }));
+  const routineSectionIdByTaskId = Object.fromEntries(routineTaskIds.map((taskId, index) => [
+    taskId,
+    routineSections[Math.floor(index / routinesPerSection)]?.id ?? routineSections[0]?.id ?? DEFAULT_HOME_ROUTINE_SECTION_ID,
+  ]));
+  return { routineSections, routineSectionIdByTaskId };
+}
+
+function ensureRoutineSectionsForTaskIds(
+  routineTaskIds: readonly string[],
+  routineSections: HomeRoutineSectionDefinition[],
+  routineSectionIdByTaskId: Record<string, string>,
+  fallbackToLastSection: boolean,
+) {
+  const sections = routineSections.length || !routineTaskIds.length
+    ? routineSections
+    : [{ id: DEFAULT_HOME_ROUTINE_SECTION_ID, name: "Section 1" }];
+  const validSectionIds = new Set(sections.map((section) => section.id));
+  const fallbackSectionId = (fallbackToLastSection ? sections[sections.length - 1] : sections[0])?.id;
+  const assignments: Record<string, string> = {};
+  for (const taskId of routineTaskIds) {
+    const assignedSectionId = routineSectionIdByTaskId[taskId];
+    assignments[taskId] = assignedSectionId && validSectionIds.has(assignedSectionId)
+      ? assignedSectionId
+      : fallbackSectionId ?? DEFAULT_HOME_ROUTINE_SECTION_ID;
+  }
+  return {
+    routineSections: sections,
+    routineSectionIdByTaskId: assignments,
+  };
+}
+
+export function reconcileHomeRoutineSectionAssignments(
+  routineSections: readonly HomeRoutineSectionDefinition[],
+  routineSectionIdByTaskId: Readonly<Record<string, string>>,
+  routineTaskIds: readonly string[],
+) {
+  return ensureRoutineSectionsForTaskIds(
+    routineTaskIds,
+    normalizeHomeRoutineSectionDefinitions(routineSections),
+    { ...routineSectionIdByTaskId },
+    true,
+  );
+}
+
 export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
   return state.taskIds.length > 0
     || Object.keys(state.taskDayOffsets).length > 0
     || state.tasksPerDay !== DEFAULT_HOME_TODO_TASKS_PER_DAY
     || state.routineTaskIds.length > 0
-    || state.routinesPerSection !== DEFAULT_HOME_TODO_ROUTINES_PER_SECTION
-    || Object.keys(state.routineSectionNames).length > 0;
+    || state.routineSections.length > 0
+    || Object.keys(state.routineSectionIdByTaskId).length > 0;
 }
 
 export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
@@ -241,21 +353,29 @@ export function buildHomeTodoDaySections<T>(
 
 export function buildHomeRoutineSections<T>(
   routineTaskIds: readonly T[],
-  routinesPerSection: unknown = DEFAULT_HOME_TODO_ROUTINES_PER_SECTION,
-  routineSectionNames: Readonly<Record<string, string>> = {},
+  routineSections: readonly HomeRoutineSectionDefinition[] = [],
+  routineSectionIdByTaskId: Readonly<Record<string, string>> = {},
 ): HomeRoutineSection<T>[] {
-  const normalizedRoutinesPerSection = normalizeHomeTodoRoutinesPerSection(routinesPerSection);
-  const sections: HomeRoutineSection<T>[] = [];
-  for (let startIndex = 0; startIndex < routineTaskIds.length; startIndex += normalizedRoutinesPerSection) {
-    const sectionIndex = sections.length;
-    sections.push({
-      groupIds: routineTaskIds.slice(startIndex, startIndex + normalizedRoutinesPerSection),
-      label: routineSectionNames[String(sectionIndex)]?.trim() || `Section ${sectionIndex + 1}`,
-      sectionIndex,
-      startIndex,
-    });
+  const normalizedSections = ensureRoutineSectionsForTaskIds(
+    routineTaskIds.map((taskId) => String(taskId)),
+    normalizeHomeRoutineSectionDefinitions(routineSections),
+    { ...routineSectionIdByTaskId },
+    false,
+  ).routineSections;
+  const groupIdsBySectionId = new Map(normalizedSections.map((section) => [section.id, [] as T[]]));
+  const fallbackSectionId = normalizedSections[0]?.id;
+  for (const taskId of routineTaskIds) {
+    const sectionId = routineSectionIdByTaskId[String(taskId)] ?? fallbackSectionId;
+    const groupIds = sectionId ? groupIdsBySectionId.get(sectionId) ?? groupIdsBySectionId.get(fallbackSectionId ?? "") : undefined;
+    groupIds?.push(taskId);
   }
-  return sections;
+  let startIndex = 0;
+  return normalizedSections.map((section, sectionIndex) => {
+    const groupIds = groupIdsBySectionId.get(section.id) ?? [];
+    const view = { id: section.id, groupIds, label: section.name, sectionIndex, startIndex };
+    startIndex += groupIds.length;
+    return view;
+  });
 }
 
 export function formatHomeRoutineDueLabel(task: Pick<Task, "due_on" | "due_time">) {
@@ -293,7 +413,7 @@ export async function createHomeTodoTask(
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV5 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
@@ -318,20 +438,39 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV5 {
   const routineTaskIds = Array.isArray(candidate.routineTaskIds)
     ? normalizeHomeRoutineTaskIds(candidate.routineTaskIds)
     : [];
+  const routineTaskIdSet = new Set(routineTaskIds);
   const routinesPerSection = isHomeTodoRoutinesPerSection(candidate.routinesPerSection)
     ? candidate.routinesPerSection
     : normalizeHomeTodoRoutinesPerSection(candidate.routinesPerPhase);
+  const legacyRoutineSectionNames = normalizeHomeTodoRoutineSectionNames(candidate.routineSectionNames);
+  const hasV6RoutinePayload = Array.isArray(candidate.routineSections) || Number(candidate.schemaVersion) >= 6;
+  const migratedRoutineSections = hasV6RoutinePayload
+    ? {
+      routineSections: normalizeHomeRoutineSectionDefinitions(candidate.routineSections),
+      routineSectionIdByTaskId: candidate.routineSectionIdByTaskId && typeof candidate.routineSectionIdByTaskId === "object" && !Array.isArray(candidate.routineSectionIdByTaskId)
+        ? Object.fromEntries(Object.entries(candidate.routineSectionIdByTaskId as Record<string, unknown>).filter(([taskId, sectionId]) => (
+          routineTaskIdSet.has(taskId) && typeof sectionId === "string" && sectionId.trim().length > 0
+        )).map(([taskId, sectionId]) => [taskId, (sectionId as string).trim()]))
+        : {},
+    }
+    : migrateHomeRoutineSections(routineTaskIds, routinesPerSection, legacyRoutineSectionNames);
+  const normalizedRoutineSections = ensureRoutineSectionsForTaskIds(
+    routineTaskIds,
+    migratedRoutineSections.routineSections,
+    migratedRoutineSections.routineSectionIdByTaskId,
+    false,
+  );
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 5,
+    schemaVersion: 6,
     taskIds,
     taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
     routineTaskIds,
-    routinesPerSection,
-    routineSectionNames: normalizeHomeTodoRoutineSectionNames(candidate.routineSectionNames),
+    routineSections: normalizedRoutineSections.routineSections,
+    routineSectionIdByTaskId: normalizedRoutineSections.routineSectionIdByTaskId,
   };
 }
 
@@ -430,6 +569,35 @@ export function reconcileHomeRoutineTaskIds(
     next.push(taskId);
   }
   return next;
+}
+
+export function moveHomeRoutineTaskIdToSection(
+  routineTaskIds: readonly string[],
+  routineSectionIdByTaskId: Readonly<Record<string, string>>,
+  taskId: string,
+  destinationSectionId: string,
+) {
+  const from = routineTaskIds.indexOf(taskId);
+  if (from < 0 || routineSectionIdByTaskId[taskId] === destinationSectionId) {
+    return {
+      routineTaskIds: [...routineTaskIds],
+      routineSectionIdByTaskId: { ...routineSectionIdByTaskId },
+    };
+  }
+
+  const nextRoutineTaskIds = routineTaskIds.filter((candidate) => candidate !== taskId);
+  const destinationIndexes = nextRoutineTaskIds
+    .map((candidate, index) => routineSectionIdByTaskId[candidate] === destinationSectionId ? index : -1)
+    .filter((index) => index >= 0);
+  const insertIndex = destinationIndexes.length ? destinationIndexes[destinationIndexes.length - 1]! + 1 : nextRoutineTaskIds.length;
+  nextRoutineTaskIds.splice(insertIndex, 0, taskId);
+  return {
+    routineTaskIds: nextRoutineTaskIds,
+    routineSectionIdByTaskId: {
+      ...routineSectionIdByTaskId,
+      [taskId]: destinationSectionId,
+    },
+  };
 }
 
 function normalizeHomeRoutineTaskIds(value: readonly unknown[]) {

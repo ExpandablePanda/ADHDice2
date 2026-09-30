@@ -105,6 +105,7 @@ import {
   parsePositiveInteger,
   type TaskDraft,
 } from "./task-app/task-editor-model";
+import type { TaskCreationMetadata } from "@/lib/task-creation";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
@@ -161,6 +162,7 @@ import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useHomeRecordTargets } from "@/hooks/useHomeRecordTargets";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
+import { taskNeedsContentFolderMove } from "@/lib/task-content-folders";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
@@ -186,6 +188,11 @@ import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKe
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
+import {
+  keepCurrentTaskIdArrayIfUnchanged,
+  keepCurrentTaskArrayIfSemanticallyEqual,
+  publishActiveStatusReadIfChanged,
+} from "@/lib/task-state-identity";
 import { hasActiveTaskFilters, resetTaskFiltersPreservingView } from "@/lib/task-filter-state";
 import {
   createNavigatorSearchTargets,
@@ -276,7 +283,7 @@ import type { CanonicalTaskCalendarOverride } from "@/lib/task-state-canonical/t
 import { loadCanonicalTaskScheduleBoundary, type CanonicalReadClient } from "@/lib/task-state-canonical/read-model";
 import { buildTaskSiblingReorderPlan, type TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { HudWidgetType } from "@/lib/task-hud-layout";
-import { calcNextDueDateFromDate } from "@/lib/task-repeat";
+import { calcNextDueDateFromDate, normalizePresetRepeatSelection, taskRepeatEditorValueToUpdate, type TaskRepeatEditorValue } from "@/lib/task-repeat";
 import {
   buildStableCanonicalTaskIndex,
   buildTaskAppStructuralData,
@@ -321,6 +328,7 @@ import {
   buildTaskHistoryFacts,
   deduplicateTaskHistoryByLogicalDate,
   isTaskCompletedForHistory,
+  isTaskFinishedOnDate,
   isTaskHistoryStatus,
   mapTaskHistoryRow,
 } from "@/lib/task-history";
@@ -2716,7 +2724,10 @@ export function TaskApp() {
         });
         if (sweep.committedTasks.length > 0) {
           const committedByTaskId = new Map(sweep.committedTasks.map((entry) => [entry.taskId, entry.task] as const));
-          setTasks((current) => sortTasksForUi(current.map((task) => committedByTaskId.get(task.id) ?? task)));
+          setTasks((current) => keepCurrentTaskArrayIfSemanticallyEqual(
+            current,
+            sortTasksForUi(current.map((task) => committedByTaskId.get(task.id) ?? task)),
+          ));
         }
         committedTaskPatches = sweep.committedTasks.length;
         didMutate = committedTaskPatches > 0;
@@ -3036,6 +3047,52 @@ export function TaskApp() {
     const task = tasks.find((entry) => entry.id === taskId);
     return task ? taskContentFolderActions.moveTaskToFolder(task, folderId) : false;
   }, [taskContentFolderActions.moveTaskToFolder, tasks]);
+  const moveTasksToContentFolder = useCallback(async (taskIds: string[], folderId: string | null) => {
+    const targetTasks = [...new Set(taskIds)]
+      .map((taskId) => tasks.find((task) => task.id === taskId))
+      .filter((task): task is Task => Boolean(task));
+    if (targetTasks.length === 0) {
+      setMessage({ tone: "warn", text: "No eligible Tasks were selected for the Folder move." });
+      return false;
+    }
+
+    const tasksToMove = targetTasks.filter((task) => taskNeedsContentFolderMove(task, folderId));
+    const folderName = folderId
+      ? taskContentFolders.find((folder) => folder.id === folderId)?.name ?? "the selected Folder"
+      : "no Folder";
+    if (tasksToMove.length === 0) {
+      setMessage({
+        tone: "good",
+        text: folderId
+          ? `Selected Tasks are already in ${folderName}.`
+          : "Selected Tasks are already ungrouped.",
+      });
+      return true;
+    }
+
+    let successCount = 0;
+    let failedCount = 0;
+    for (const task of tasksToMove) {
+      try {
+        if (await taskContentFolderActions.moveTaskToFolder(task, folderId)) {
+          successCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      } catch {
+        failedCount += 1;
+      }
+    }
+
+    if (failedCount === 0) {
+      setMessage({ tone: "good", text: `Moved ${successCount} selected Tasks to ${folderName}.` });
+    } else if (successCount > 0) {
+      setMessage({ tone: "warn", text: `Moved ${successCount} selected Tasks to ${folderName}; ${failedCount} failed.` });
+    } else {
+      setMessage({ tone: "warn", text: `Unable to move selected Tasks to ${folderName}; ${failedCount} failed.` });
+    }
+    return failedCount === 0;
+  }, [setMessage, taskContentFolderActions.moveTaskToFolder, taskContentFolders, tasks]);
   const createTaskContentFolder = useCallback(async (taskId: string, name: string) => {
     const task = tasks.find((entry) => entry.id === taskId);
     return task ? taskContentFolderActions.createFolderAndMoveTask(task, name) : false;
@@ -3075,6 +3132,15 @@ export function TaskApp() {
     }
     return grouped;
   }, [homeCurrentDayHistoryRows]);
+  const finishedTodayByTaskId = useMemo(() => {
+    if (!isHomeCurrentDayHistoryReady) return undefined;
+    return Object.fromEntries(
+      Object.entries(homeCurrentDayHistoryByTaskId).map(([taskId, rows]) => [
+        taskId,
+        isTaskFinishedOnDate(rows, todayKey),
+      ]),
+    );
+  }, [homeCurrentDayHistoryByTaskId, isHomeCurrentDayHistoryReady, todayKey]);
   const homeDailyProgress = useMemo(
     () => buildHomeDailyProgress({ taskHistoryByTaskId: homeCurrentDayHistoryByTaskId, tasks, todayKey }),
     [homeCurrentDayHistoryByTaskId, tasks, todayKey],
@@ -3174,6 +3240,7 @@ export function TaskApp() {
     taskActiveStatusAuthorityReadinessRevision,
   );
   const [activeStatusRead, setActiveStatusRead] = useState<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
+  const activeStatusReadRef = useRef<Awaited<ReturnType<typeof resolveActiveTaskStatusesIncrementally>> | null>(null);
   const activeStatusCalculationTokenRef = useRef(0);
   const committedActiveStatusBehaviorRevisionRef = useRef<string | null>(null);
   const latestActiveStatusInputRevisionRef = useRef(activeStatusInputRevision);
@@ -3191,11 +3258,17 @@ export function TaskApp() {
     }),
     [currentTaskProjectionReadContext, currentTaskProjectionsByTaskId, taskHistoryStreakSummaries, tasks, todayKey],
   );
+  const currentTaskProjectionFallbackTaskIdsRef = useRef<string[]>([]);
   const currentTaskProjectionFallbackTaskIds = useMemo(
-    () => [...new Set([
-      ...currentTaskProjectionFallbackResolution.staleProjectionTaskIds,
-      ...currentTaskProjectionFallbackResolution.missingProjectionTaskIds,
-    ])],
+    () => {
+      const nextTaskIds = [...new Set([
+        ...currentTaskProjectionFallbackResolution.staleProjectionTaskIds,
+        ...currentTaskProjectionFallbackResolution.missingProjectionTaskIds,
+      ])];
+      const stableTaskIds = keepCurrentTaskIdArrayIfUnchanged(currentTaskProjectionFallbackTaskIdsRef.current, nextTaskIds);
+      currentTaskProjectionFallbackTaskIdsRef.current = stableTaskIds;
+      return stableTaskIds;
+    },
     [currentTaskProjectionFallbackResolution.missingProjectionTaskIds, currentTaskProjectionFallbackResolution.staleProjectionTaskIds],
   );
   const projectionFallbackHistoryRequestedRef = useRef<Set<string>>(new Set());
@@ -3222,6 +3295,11 @@ export function TaskApp() {
   useEffect(() => {
     const calculationToken = activeStatusCalculationTokenRef.current + 1;
     activeStatusCalculationTokenRef.current = calculationToken;
+    const publishActiveStatusRead = (next: typeof activeStatusRead) => {
+      publishActiveStatusReadIfChanged(activeStatusReadRef, next, (value) => {
+        setActiveStatusRead(value);
+      });
+    };
     if (!isBehaviorAuthorityReady || isTaskTypeBehaviorProfilesLoading) {
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
@@ -3231,7 +3309,7 @@ export function TaskApp() {
     if (currentTaskProjectionFallbackTaskIds.length === 0) {
       committedActiveStatusBehaviorRevisionRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the legacy evaluator while projections are authoritative.
-      setActiveStatusRead(null);
+      publishActiveStatusRead(null);
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
@@ -3244,7 +3322,7 @@ export function TaskApp() {
     if (fallbackHistoryPending) {
       committedActiveStatusBehaviorRevisionRef.current = null;
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Clear the legacy evaluator until scoped fallback History is ready.
-      setActiveStatusRead(null);
+      publishActiveStatusRead(null);
       return () => {
         if (activeStatusCalculationTokenRef.current === calculationToken) activeStatusCalculationTokenRef.current += 1;
       };
@@ -3276,7 +3354,7 @@ export function TaskApp() {
         if (isWorkspacePerformanceDiagnosticsEnabled()) {
           console.info(`[workspace:active-status] mode=fallback-chunked tasks=${activeStatusInput.tasks.length} chunks=${result.chunks}`);
         }
-        setActiveStatusRead(result);
+        publishActiveStatusRead(result);
       });
     } else {
       const result = resolveActiveTaskStatusesIncrementally(activeStatusInput, projectionCache);
@@ -3284,7 +3362,7 @@ export function TaskApp() {
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[workspace:active-status] evaluatedTasks=${result.evaluatedTasks} reusedTasks=${result.reusedTasks}`);
       }
-      setActiveStatusRead(result);
+      publishActiveStatusRead(result);
     }
 
     return () => {
@@ -4263,6 +4341,7 @@ export function TaskApp() {
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
         taskHistoryStreakSummary: effectiveTaskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
+        finishedTodayByTaskId,
         directlyExcludedFromTracking: task.exclude_from_tracking === true,
         effectivelyExcludedFromTracking: trackingExclusionTaskIds.has(task.id),
         todayDateKey: todayKey,
@@ -4275,6 +4354,7 @@ export function TaskApp() {
       sharedTaskEditorOverlayTaskId,
       taskHistoryByTaskId,
       effectiveTaskHistoryStreakSummaries,
+      finishedTodayByTaskId,
       taskDisplayStatusByTaskId,
       taskAttentionReasonByTaskId,
       trackingExclusionTaskIds,
@@ -4474,6 +4554,7 @@ export function TaskApp() {
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
     taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
+    finishedTodayByTaskId,
     todayDateKey: todayKey,
   }), [
     availableTaskLists,
@@ -4481,6 +4562,7 @@ export function TaskApp() {
     manualMembershipsByTaskId,
     taskHistoryByTaskId,
     effectiveTaskHistoryStreakSummaries,
+    finishedTodayByTaskId,
     taskLinkedNotesByTaskId,
     taskListMembershipsByTaskId,
     taskSubtasksByTaskId,
@@ -5315,18 +5397,21 @@ export function TaskApp() {
     )
   ), [createTaskAndOpenSharedEditor]);
 
-  const openInlineNewListTaskComposer = useCallback(async () => {
-    await createTaskAndOpenSharedEditor(buildNewTaskDraft("New Task"), { routeToCurrentBucket: true });
+  const openInlineNewListTaskComposer = useCallback(() => {
+    void createTaskAndOpenSharedEditor(
+      buildNewTaskDraft("New Task"),
+      { routeToCurrentBucket: true },
+    );
   }, [createTaskAndOpenSharedEditor]);
 
-  const openTaskComposerForType = useCallback(async (selectionValue: string) => {
+  const openTaskComposerForType = useCallback((selectionValue: string) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
       return;
     }
 
-    await createTaskAndOpenSharedEditor({
+    void createTaskAndOpenSharedEditor({
       ...buildNewTaskDraft("New Task"),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
@@ -5763,10 +5848,11 @@ export function TaskApp() {
   }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
-  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task") => {
+  const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task", metadata?: TaskCreationMetadata) => {
     const taskTypeSelection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     const result = buildChildTaskCreationDraft({
       blockedParentTaskIds: childTaskCreationBlockedTaskIds,
+      metadata,
       parentTaskId,
       taskTypeSelection,
       title,
@@ -7408,9 +7494,8 @@ export function TaskApp() {
       if (!taskHistoryModalTaskId) {
         return false;
       }
-      if (status === "complete") {
-        if (entryDates.length !== 1) return false;
-        return (await updateTaskStatus(taskHistoryModalTask, "complete")) === true;
+      if (status === "complete" && entryDates.length !== 1) {
+        return false;
       }
       const pendingTaskIds = [taskHistoryModalTaskId];
       beginPendingTaskMutationScope(pendingTaskIds);
@@ -7762,25 +7847,59 @@ export function TaskApp() {
     : null;
   const pendingDetachMilestoneTask = pendingDetachMilestoneTaskId ? tasks.find((task) => task.id === pendingDetachMilestoneTaskId) ?? null : null;
   const handleSharedTaskRepeatChange: NonNullable<ComponentProps<typeof TaskManagementTableV2>["onTaskRepeatChange"]> = (taskId, repeat, cadence) => {
-    void updateTask(taskId, {
-      repeat_frequency: repeat,
-      repeat_day_of_month: repeat === "monthly" && cadence?.repeatMonthlyMode !== "ordinal_weekday"
-        ? cadence?.repeatDayOfMonth ?? null
-        : null,
-      repeat_days_of_week: repeat === "weekly" || repeat === "custom"
-        ? cadence?.repeatDaysOfWeek ?? []
-        : [],
-      repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence?.repeatInterval ?? 1),
-      repeat_monthly_mode: repeat === "monthly"
-        ? cadence?.repeatMonthlyMode ?? "day_of_month"
-        : "day_of_month",
-      repeat_monthly_ordinal: repeat === "monthly" && cadence?.repeatMonthlyMode === "ordinal_weekday"
-        ? cadence.repeatMonthlyOrdinal ?? "first"
-        : null,
-      repeat_monthly_weekday: repeat === "monthly" && cadence?.repeatMonthlyMode === "ordinal_weekday"
-        ? cadence.repeatMonthlyWeekday ?? 1
-        : null,
-    });
+    const dueOn = tasks.find((task) => task.id === taskId)?.due_on;
+    const value: TaskRepeatEditorValue = cadence
+      ? {
+        repeatFrequency: repeat,
+        repeatInterval: cadence.repeatInterval ?? 1,
+        repeatDaysOfWeek: cadence.repeatDaysOfWeek ?? [],
+        repeatDayOfMonth: cadence.repeatDayOfMonth ?? null,
+        repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
+        repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
+        repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+      }
+      : repeat === "custom"
+        ? {
+          repeatFrequency: "daily",
+          repeatInterval: 1,
+          repeatDaysOfWeek: [],
+          repeatDayOfMonth: null,
+          repeatMonthlyMode: "day_of_month",
+          repeatMonthlyOrdinal: null,
+          repeatMonthlyWeekday: null,
+        }
+        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+    return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
+  };
+
+  const applyTaskRepeatEditorValue = (
+    taskId: string,
+    repeat: TaskRepeatFrequency,
+    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">>,
+  ) => {
+    const dueOn = tasks.find((task) => task.id === taskId)?.due_on;
+    const value: TaskRepeatEditorValue = cadence
+      ? {
+        repeatFrequency: repeat,
+        repeatInterval: cadence.repeatInterval ?? 1,
+        repeatDaysOfWeek: cadence.repeatDaysOfWeek ?? [],
+        repeatDayOfMonth: cadence.repeatDayOfMonth ?? null,
+        repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
+        repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
+        repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+      }
+      : repeat === "custom"
+        ? {
+          repeatFrequency: "daily",
+          repeatInterval: 1,
+          repeatDaysOfWeek: [],
+          repeatDayOfMonth: null,
+          repeatMonthlyMode: "day_of_month",
+          repeatMonthlyOrdinal: null,
+          repeatMonthlyWeekday: null,
+        }
+        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+    return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 
   const completeFlow = (() => {
@@ -7886,6 +8005,7 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
           attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
           childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
@@ -8459,31 +8579,7 @@ export function TaskApp() {
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
-                    void updateTask(taskId, {
-                      repeat_frequency: repeat,
-                      ...(cadence
-                        ? {
-                          repeat_day_of_month: repeat === "monthly" && cadence.repeatMonthlyMode !== "ordinal_weekday"
-                            ? cadence.repeatDayOfMonth
-                            : null,
-                          repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
-                          repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
-                          repeat_monthly_mode: repeat === "monthly"
-                            ? (cadence.repeatMonthlyMode ?? "day_of_month")
-                            : "day_of_month",
-                          repeat_monthly_ordinal: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyOrdinal ?? "first")
-                            : null,
-                          repeat_monthly_weekday: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyWeekday ?? 1)
-                            : null,
-                        }
-                        : {
-                          repeat_monthly_mode: repeat === "monthly" ? "day_of_month" : "day_of_month",
-                          repeat_monthly_ordinal: null,
-                          repeat_monthly_weekday: null,
-                        }),
-                    });
+                    return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
@@ -8529,6 +8625,7 @@ export function TaskApp() {
                   onUpdateTaskContentFolderIcon: taskContentFolderActions.updateFolderIcon,
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
                   onMoveTaskToContentFolder: moveTaskToContentFolder,
+                  onMoveTasksToContentFolder: moveTasksToContentFolder,
                   onMoveFolder: taskContentFolderActions.moveFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
@@ -8656,31 +8753,7 @@ export function TaskApp() {
                   onSetPriority: applyTaskPriorityChange,
                   onTogglePinned: (taskId) => { void toggleTaskPinned(taskId); },
                   onSetRepeat: (taskId, repeat, cadence) => {
-                    void updateTask(taskId, {
-                      repeat_frequency: repeat,
-                      ...(cadence
-                        ? {
-                          repeat_day_of_month: repeat === "monthly" && cadence.repeatMonthlyMode !== "ordinal_weekday"
-                            ? cadence.repeatDayOfMonth
-                            : null,
-                          repeat_days_of_week: repeat === "weekly" || repeat === "custom" ? cadence.repeatDaysOfWeek : [],
-                          repeat_interval: repeat === "none" ? 1 : Math.max(1, cadence.repeatInterval),
-                          repeat_monthly_mode: repeat === "monthly"
-                            ? (cadence.repeatMonthlyMode ?? "day_of_month")
-                            : "day_of_month",
-                          repeat_monthly_ordinal: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyOrdinal ?? "first")
-                            : null,
-                          repeat_monthly_weekday: repeat === "monthly" && cadence.repeatMonthlyMode === "ordinal_weekday"
-                            ? (cadence.repeatMonthlyWeekday ?? 1)
-                            : null,
-                        }
-                        : {
-                          repeat_monthly_mode: repeat === "monthly" ? "day_of_month" : "day_of_month",
-                          repeat_monthly_ordinal: null,
-                          repeat_monthly_weekday: null,
-                        }),
-                    });
+                    return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
@@ -8727,6 +8800,7 @@ export function TaskApp() {
                   onDeleteTaskContentFolder: taskContentFolderActions.deleteFolder,
                   onMoveFolder: taskContentFolderActions.moveFolder,
                   onMoveTaskToContentFolder: moveTaskToContentFolder,
+                  onMoveTasksToContentFolder: moveTasksToContentFolder,
                   rowContext: taskRowContext,
                   taskTableLayoutPreferences,
                   onTaskTableLayoutPreferencesChange: setTaskTableLayoutPreferences,

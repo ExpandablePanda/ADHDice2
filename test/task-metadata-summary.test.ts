@@ -73,6 +73,16 @@ test("Summary is derived from the active metadataTask and exposes every property
   assert.match(tableSource, /const metadataTask = overlayMode === "full" \? metadataTargetTask \?\? selectedTask : selectedTask/);
 });
 
+test("Tracking stays in the compact metadata grid while preserving its direct/effective switch semantics", () => {
+  const summaryBranch = tableSource.slice(tableSource.indexOf('if (metadataPanelId === "summary")'), tableSource.indexOf('} else if (metadataPanelId === "task_type")'));
+  assert.match(summaryBranch, /grid min-w-0 grid-cols-1 gap-1 sm:grid-cols-2 xl:grid-cols-3[\s\S]*Tracking/);
+  assert.match(summaryBranch, /Excluded from tracking by a parent Task\./);
+  assert.match(summaryBranch, /aria-checked=\{metadataTask\.directlyExcludedFromTracking === true\}/);
+  assert.match(summaryBranch, /onTaskTrackingExclusionChange\(metadataTask\.id, nextExcluded\)/);
+  assert.match(summaryBranch, /role="switch"/);
+  assert.doesNotMatch(summaryBranch, /rounded-\[1rem\] border border-\[#e8e1f6\]/);
+});
+
 test("Task Settings exposes the compact TaskType selector and routes changes through the existing metadata callback", () => {
   const taskTypeBranch = tableSource.slice(tableSource.indexOf('metadataPanelId === "task_type"'), tableSource.indexOf('metadataPanelId === "due"'));
   assert.match(taskTypeBranch, /<TaskTypeSelect/);
@@ -103,8 +113,7 @@ test("full-editor finishing actions return to Summary while intermediate editors
   assert.ok(metadataBranch.includes('setTaskPriorities(metadataTask.id, []); returnFullMetadataToSummary()'));
   assert.ok(metadataBranch.includes('setTaskEnergy(metadataTask.id, option.value); returnFullMetadataToSummary()'));
   assert.match(metadataBranch, /setTaskDisplayStatus\(metadataTask\.id, status\);\s*returnFullMetadataToSummary\(\)/);
-  assert.match(metadataBranch, /value === "none" \|\| value === "daily" \|\| value === "daily_until_complete"/);
-  assert.match(metadataBranch, /setTaskRepeat\(metadataTask\.id, "weekly", \{ repeatDaysOfWeek/);
+  assert.match(metadataBranch, /<TaskRepeatEditor/);
   assert.match(metadataBranch, /commitTaskLink\(metadataTask\.id\); returnFullMetadataToSummary\(\)/);
   assert.match(metadataBranch, /clearTaskNotes\(metadataTask\.id\); returnFullMetadataToSummary\(\)/);
   assert.match(metadataBranch, /onKeyDown=\{\(event\) => \{ if \(event\.key !== "Enter"\) return; event\.preventDefault\(\); applyMetadataEstimatedMinutes\(\); \}\}/);
@@ -159,7 +168,7 @@ test("Summary formatting keeps configured values visible and uses displayed actu
   assert.equal(summary.Priority.value, "3");
   assert.equal(summary.Energy.value, "Medium");
   assert.match(summary.Due.value, /12-24-2026 · 6:00pm/);
-  assert.equal(summary.Repeat.value, "First Tuesday monthly");
+  assert.equal(summary.Repeat.value, "1st Tuesday monthly");
   assert.equal(summary.Estimated.value, "45m");
   assert.equal(summary.Actual.value, "22m");
   assert.equal(summary.Lists.value, "Work · Today");

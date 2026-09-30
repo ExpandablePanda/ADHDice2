@@ -117,6 +117,6 @@ test("canonical Repeat filtering matches the visible Repeat frequency", () => {
 
 test("ordinary Weekly tasks are not classified as Weekdays", () => {
   assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5, 6], 1), "weekly");
-  assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5], 2), "weekly");
-  assert.equal(formatRepeatFrequencyLabel("weekly", 1, [1, 3]), "Weekly");
+  assert.equal(getTaskRepeatCategory("weekly", [1, 2, 3, 4, 5], 2), "custom");
+  assert.equal(formatRepeatFrequencyLabel("weekly", 1, [1, 3]), "Weekly (Mon, Wed)");
 });

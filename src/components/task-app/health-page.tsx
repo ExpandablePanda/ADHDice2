@@ -212,7 +212,7 @@ import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS, HEALTH_PAGE_SHELL_IDS, getHealthPageShellKey } from "@/lib/page-shell-layout";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthLibraryPanel } from "./health-library-panel";
-import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
+import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_CONTROL_CLASS, HEALTH_COMPACT_INPUT_CLASS, type HealthAutocompleteHandle } from "./health-dropdown";
 import { HealthCalorieLineChart } from "./health-calorie-line-chart";
 import { HealthSleepLineChart } from "./health-sleep-line-chart";
 import { HealthWaterPanel } from "./health-water-panel";
@@ -1391,6 +1391,7 @@ export function HealthPage({
   const importAbortRef = useRef<AbortController | null>(null);
   const barcodeLookupGenerationRef = useRef(0);
   const mealSaveInFlightRef = useRef(false);
+  const mealFoodAutocompleteRef = useRef<HealthAutocompleteHandle | null>(null);
   const journalReflectionRef = useRef<HTMLTextAreaElement | null>(null);
   const journalTagCaretRef = useRef<number | null>(null);
   const journalLibraryRef = useRef<HTMLDivElement | null>(null);
@@ -2583,15 +2584,15 @@ export function HealthPage({
     }
   }
 
-  async function handleSaveMeal() {
+  async function handleSaveMeal(): Promise<boolean> {
     const calculation = mealCalculation;
     if (!activeMealEntrySlot) {
-      return;
+      return false;
     }
     const selectedMealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
     const loggedAt = buildHealthMealLoggedAt(selectedMealDate, mealDraft.time);
     if (!calculation || !loggedAt || (mealEditorMode === "actual" && isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time))) {
-      return;
+      return false;
     }
 
     let sourceFoodId = mealDraft.sourceFoodId;
@@ -2619,7 +2620,7 @@ export function HealthPage({
       );
       const savedLibraryFood = await saveFavoriteFood(libraryInput);
       if (!savedLibraryFood) {
-        return;
+        return false;
       }
       sourceFoodId = existingLibraryFood?.id ?? libraryInput.id;
     } else if (isQuickEntryOpen) {
@@ -2664,35 +2665,37 @@ export function HealthPage({
         food_snapshot: foodSnapshot,
         nutrition_snapshot: calculation.nutrientTotals,
       });
-    if (saved) {
-      if (mealEditorMode === "plan" && editingMealPlanId) {
-        setEditingMealPlanId(null);
-        setMealEditorMode("actual");
-        setActiveMealEntrySlot(null);
-        setIsQuickEntryOpen(false);
-        return;
-      }
-      setMealDraft((current) => {
-        const nextDraft = {
-          ...resetMealDraftForNextItem(current),
-          date: selectedMealDate,
-          mealSlot: activeMealEntrySlot,
-        };
-        return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
-      });
-      setCustomFoodSearchQuery("");
-      setBarcodeLookupError("");
-      setSaveQuickEntryToLibrary(false);
+    if (!saved) {
+      return false;
     }
+    if (mealEditorMode === "plan" && editingMealPlanId) {
+      setEditingMealPlanId(null);
+      setMealEditorMode("actual");
+      setActiveMealEntrySlot(null);
+      setIsQuickEntryOpen(false);
+      return true;
+    }
+    setMealDraft((current) => {
+      const nextDraft = {
+        ...resetMealDraftForNextItem(current),
+        date: selectedMealDate,
+        mealSlot: activeMealEntrySlot,
+      };
+      return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
+    });
+    setCustomFoodSearchQuery("");
+    setBarcodeLookupError("");
+    setSaveQuickEntryToLibrary(false);
+    return true;
   }
 
-  async function submitMeal() {
+  async function submitMeal(): Promise<boolean> {
     if (!canSaveMeal || mealSaveInFlightRef.current) {
-      return;
+      return false;
     }
     mealSaveInFlightRef.current = true;
     try {
-      await handleSaveMeal();
+      return await handleSaveMeal();
     } finally {
       mealSaveInFlightRef.current = false;
     }
@@ -3236,6 +3239,7 @@ export function HealthPage({
           <Field label="Food">
             <HealthAutocomplete
               ariaLabel="Search custom foods"
+              focusRef={mealFoodAutocompleteRef}
               onChange={setCustomFoodSearchQuery}
               onSelect={(suggestion) => {
                 const selected = mealFoodSuggestions.find((candidate) => candidate.value === suggestion.value);
@@ -3272,7 +3276,12 @@ export function HealthPage({
                   }
                   event.preventDefault();
                   if (canSaveMeal) {
-                    void submitMeal();
+                    const shouldRefocusFood = mealEditorMode === "actual" && !isQuickEntryOpen && editingMealId === null && editingMealPlanId === null;
+                    void submitMeal().then((saved) => {
+                      if (saved && shouldRefocusFood) {
+                        mealFoodAutocompleteRef.current?.focus();
+                      }
+                    });
                   }
                 }}
                 placeholder="1"

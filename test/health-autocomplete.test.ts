@@ -27,3 +27,9 @@ test("HealthAutocomplete keeps pointer selection predictable and Escape closes s
   assert.match(autocompleteSource, /onMouseDown=\{\(event\) => event\.preventDefault\(\)\}/);
   assert.match(keyHandlerSource, /event\.key === "Escape"[\s\S]*setIsOpen\(false\)/);
 });
+
+test("HealthAutocomplete exposes a React-owned input focus handle", () => {
+  assert.match(source, /export type HealthAutocompleteHandle = \{\s+focus: \(\) => void;\s+\};/);
+  assert.match(autocompleteSource, /focusRef\?: Ref<HealthAutocompleteHandle>/);
+  assert.match(autocompleteSource, /useImperativeHandle\(focusRef, \(\) => \(\{\s+focus: \(\) => inputRef\.current\?\.focus\(\),/);
+});

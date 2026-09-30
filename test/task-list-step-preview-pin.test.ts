@@ -28,16 +28,18 @@ test("StepsCardPreview binds optional custom Task Type rulesets before building 
 test("TasksSimpleList forwards pinning and preserves child creation wiring", () => {
   assert.match(source, /<StepsCardPreview[\s\S]*?onTogglePinned=\{tableProps\.onTogglePinned\}/);
   assert.match(source, /<StepsCardPreview[\s\S]*?onCreateChildTask=\{tableProps\.onCreateChildTask\}/);
-  assert.match(previewSource, /const result = await onCreateChildTask\?\.\(parentTaskId, title, substepTaskTypeSelectionValue\);/);
+  assert.match(previewSource, /<TaskChildCreationComposer/);
+  assert.match(previewSource, /onCreateChildTask=\{onCreateChildTask\}/);
+  assert.match(previewSource, /childLabel="Substep"/);
+  assert.match(previewSource, /className="mt-2 min-w-0 w-full max-w-\[52rem\] pl-8"/);
 });
 
-test("List Step and Substep drafts guard blur with the shared Task Type interaction lifecycle", () => {
-  assert.match(previewSource, /const taskTypeInteractionParentIdRef = useRef<string \| null>\(null\)/);
-  assert.match(previewSource, /if \(taskTypeInteractionParentIdRef\.current === parentTaskId\) return;/);
-  assert.match(previewSource, /if \(taskTypeInteractionParentIdRef\.current === item\.id\) return;/);
-  assert.equal((previewSource.match(/onInteractionStart=\{\(\) => beginTaskTypeInteraction/g) ?? []).length, 2);
-  assert.equal((previewSource.match(/onInteractionEnd=\{\(\) => endTaskTypeInteraction/g) ?? []).length, 2);
-  assert.match(previewSource, /const commitSubstepDraft = async \(parentTaskId: string\) => \{\s*endTaskTypeInteraction\(parentTaskId\);/);
-  assert.match(previewSource, /const cancelSubstepDraft = \(parentTaskId = substepDraftParentId\) => \{[\s\S]*endTaskTypeInteraction\(parentTaskId\)/);
+test("List Step and Substep drafts use one rich child composer and preserve the clicked parent", () => {
+  assert.match(previewSource, /childLabel="Step"/);
+  assert.match(previewSource, /childLabel="Substep"/);
+  assert.match(previewSource, /parentTaskId=\{parentTaskId\}/);
+  assert.match(previewSource, /parentTaskId=\{item\.id\}/);
+  assert.match(previewSource, /setSubstepDraftParentId\(item\.id\)/);
+  assert.match(previewSource, /className="mt-2 min-w-0 w-full max-w-\[52rem\] rounded/);
   assert.match(source, /<StepsCardPreview[\s\S]*parentTaskId=\{task\.id\}/);
 });

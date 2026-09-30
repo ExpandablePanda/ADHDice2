@@ -1,14 +1,14 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
-import { TaskTypeSelect } from "./task-type-identity";
+import { TaskCreationComposer } from "./task-creation-composer";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
@@ -20,36 +20,31 @@ import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
-import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "@/lib/database.types";
+import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
 import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-history-runtime";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
-import { parseDayOfMonth, parsePositiveInteger } from "./task-editor-model";
-import {
-  getSelectedTaskPriorityToneClass,
-  getTaskPriorityToneClass,
-  TASK_PRIORITY_LEVEL_OPTIONS,
-  type TaskPriorityLevel,
-  type TaskPriorityLevelOption,
-} from "@/lib/task-priority";
-import {
-  REPEAT_MONTHLY_MODE_OPTIONS,
-  REPEAT_MONTHLY_ORDINAL_OPTIONS,
-  REPEAT_WEEKDAY_FULL_LABELS,
-  WEEKDAYS_REPEAT_DAYS,
-  isWeekdaysRepeatSelection,
-} from "@/lib/task-repeat";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
-import type { HomeDailyProgress, HomeRecordChase, HomeRecordMetricKey } from "@/lib/home-progress";
+import type { TaskCreationDraft } from "@/lib/task-creation";
+import {
+  filterHomeFinishedItems,
+  getHomeFinishedTodayFilterDetails,
+  toggleHomeFinishedTodayFilter,
+  type FinishedTodayFilter,
+  type HomeDailyProgress,
+  type HomeRecordChase,
+  type HomeRecordMetricKey,
+} from "@/lib/home-progress";
 import {
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
   createHomeTodoTask,
+  reconcileHomeRoutineSectionAssignments,
   formatHomeRoutineDueLabel,
   getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
@@ -61,19 +56,11 @@ import {
   reconcileHomeTodoTaskIds,
   reconcileHomeRoutineTaskIds,
   sortHomeTodoSearchResults,
+  type HomeRoutineGroup,
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
 import {
-  CompactRepeatCadenceControls,
-  dedupeTaskTagLabels,
-  formatNewTaskTagLabel,
-  TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
-  TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
-  TASK_TABLE_INACTIVE_CHIP_CLASS,
-  TASK_TABLE_INPUT_CLASS,
   TASK_TABLE_LIST_CHIP_CLASS,
-  normalizeTaskTagValue,
-  TaskTableChipButton,
   TASK_TABLE_CHIP_BASE_CLASS,
   TaskCurrentStreakChip,
 } from "@/components/ui/task-table-primitives";
@@ -84,23 +71,8 @@ const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
 const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 const HOME_GEAR_LONG_PRESS_MS = 475;
 const HOME_GEAR_LONG_PRESS_MOVE_PX = 8;
-const HOME_REPEAT_OPTIONS: ReadonlyArray<{ label: string; value: TaskRepeatFrequency }> = [
-  { label: "No Repeat", value: "none" },
-  { label: "Daily", value: "daily" },
-  { label: "Daily Until Complete", value: "daily_until_complete" },
-  { label: "Weekly", value: "weekly" },
-  { label: "Monthly", value: "monthly" },
-  { label: "Custom Cadence", value: "custom" },
-];
-const HOME_REPEAT_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label: label.slice(0, 3), value }));
-const HOME_REPEAT_MONTHLY_WEEKDAY_OPTIONS = REPEAT_WEEKDAY_FULL_LABELS.map((label, value) => ({ label, value }));
-const HOME_REPEAT_UNITS: Array<{ label: string; value: TaskRepeatFrequency }> = [
-  { label: "Days", value: "daily" },
-  { label: "Weeks", value: "weekly" },
-  { label: "Months", value: "monthly" },
-];
 type HomePanelTab = "todo" | "routine";
-type HomeRowActionMenuView = "actions" | "move-day";
+type HomeRowActionMenuView = "actions" | "move-day" | "move-routine-section";
 
 type HomeRowActionMenuState = {
   taskId: string;
@@ -184,6 +156,7 @@ function HomeProgressDashboard({
   homeRecordChases,
   homeHistoryError,
   homeHistoryStatus,
+  onOpenTask,
   onRetryHomeHistory,
   onOpenRecord,
   recordTargetsError,
@@ -195,6 +168,7 @@ function HomeProgressDashboard({
   homeRecordChases: HomeRecordChase[];
   homeHistoryError: string | null;
   homeHistoryStatus: HomeCurrentDayHistoryLoadStatus;
+  onOpenTask: (taskId: string) => void;
   onRetryHomeHistory: () => void;
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
@@ -202,7 +176,16 @@ function HomeProgressDashboard({
   recordTargetsRecalculatedAt: string | null;
   recordTargetsSettingsMismatch: boolean;
 }) {
-  const [isFinishedDetailsOpen, setIsFinishedDetailsOpen] = useState(false);
+  const [finishedTodayFilter, setFinishedTodayFilter] = useState<FinishedTodayFilter | null>(null);
+  const selectedFinishedItems = finishedTodayFilter
+    ? filterHomeFinishedItems(dailyProgress.finishedItems, finishedTodayFilter)
+    : [];
+  const selectedFinishedTodayDetails = finishedTodayFilter
+    ? getHomeFinishedTodayFilterDetails(finishedTodayFilter)
+    : null;
+  const toggleFinishedTodayFilter = (filter: FinishedTodayFilter) => {
+    setFinishedTodayFilter((current) => toggleHomeFinishedTodayFilter(current, filter));
+  };
 
   return (
     <div className="mb-4 grid min-w-0 gap-3 sm:grid-cols-2" data-home-progress-dashboard>
@@ -229,36 +212,75 @@ function HomeProgressDashboard({
           <div className="mt-3">
             <button
               aria-controls="home-finished-today-details"
-              aria-expanded={isFinishedDetailsOpen}
+              aria-expanded={finishedTodayFilter === "all"}
+              aria-label={finishedTodayFilter === "all" ? "Hide all finished Tasks and Steps" : "Show all finished Tasks and Steps"}
+              aria-pressed={finishedTodayFilter === "all"}
               className="block w-full rounded-lg text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-[#8b78ed]"
-              onClick={() => setIsFinishedDetailsOpen((open) => !open)}
+              onClick={() => toggleFinishedTodayFilter("all")}
               type="button"
             >
               <p className="text-2xl font-bold leading-none text-[#30275a] dark:text-white">
                 {dailyProgress.total} <span className="text-sm font-medium text-[#7d7598] dark:text-white/55">finished today</span>
               </p>
-              <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1.5 text-xs text-[#746d90] dark:text-white/60">
-                <span>Done {dailyProgress.done}</span>
-                <span>Did My Best {dailyProgress.didMyBest}</span>
-                <span>Completed {dailyProgress.completed}</span>
-              </div>
             </button>
-            {isFinishedDetailsOpen ? (
+            <div className="mt-2 flex flex-wrap gap-x-1 gap-y-1 text-xs text-[#746d90] dark:text-white/60">
+              <button
+                aria-controls="home-finished-today-details"
+                aria-expanded={finishedTodayFilter === "done"}
+                aria-label={finishedTodayFilter === "done" ? `Hide Done Tasks and Steps (${dailyProgress.done})` : `Show Done Tasks and Steps (${dailyProgress.done})`}
+                aria-pressed={finishedTodayFilter === "done"}
+                className={`rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-[#faf8fe] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:hover:bg-white/5 ${finishedTodayFilter === "done" ? "font-semibold text-[#6f57f6] dark:text-[#b8aaff]" : ""}`}
+                onClick={() => toggleFinishedTodayFilter("done")}
+                type="button"
+              >
+                Done {dailyProgress.done}
+              </button>
+              <button
+                aria-controls="home-finished-today-details"
+                aria-expanded={finishedTodayFilter === "did_my_best"}
+                aria-label={finishedTodayFilter === "did_my_best" ? `Hide Did My Best Tasks and Steps (${dailyProgress.didMyBest})` : `Show Did My Best Tasks and Steps (${dailyProgress.didMyBest})`}
+                aria-pressed={finishedTodayFilter === "did_my_best"}
+                className={`rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-[#faf8fe] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:hover:bg-white/5 ${finishedTodayFilter === "did_my_best" ? "font-semibold text-[#6f57f6] dark:text-[#b8aaff]" : ""}`}
+                onClick={() => toggleFinishedTodayFilter("did_my_best")}
+                type="button"
+              >
+                Did My Best {dailyProgress.didMyBest}
+              </button>
+              <button
+                aria-controls="home-finished-today-details"
+                aria-expanded={finishedTodayFilter === "complete"}
+                aria-label={finishedTodayFilter === "complete" ? `Hide Completed Tasks and Steps (${dailyProgress.completed})` : `Show Completed Tasks and Steps (${dailyProgress.completed})`}
+                aria-pressed={finishedTodayFilter === "complete"}
+                className={`rounded-md px-1.5 py-1 outline-none transition-colors hover:bg-[#faf8fe] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:hover:bg-white/5 ${finishedTodayFilter === "complete" ? "font-semibold text-[#6f57f6] dark:text-[#b8aaff]" : ""}`}
+                onClick={() => toggleFinishedTodayFilter("complete")}
+                type="button"
+              >
+                Completed {dailyProgress.completed}
+              </button>
+            </div>
+            {finishedTodayFilter && selectedFinishedTodayDetails ? (
               <div className="mt-3 border-t border-[#f0ecf8] pt-2.5 dark:border-white/8" id="home-finished-today-details">
-                <p className="text-[11px] font-medium text-[#8b82a7] dark:text-white/48">Finished Tasks and Steps</p>
-                {dailyProgress.finishedItems.length > 0 ? (
+                <p className="text-[11px] font-medium text-[#8b82a7] dark:text-white/48">{selectedFinishedTodayDetails.heading}</p>
+                {selectedFinishedItems.length > 0 ? (
                   <ul className="mt-1.5 grid max-h-48 gap-1 overflow-y-auto">
-                    {dailyProgress.finishedItems.map((item) => (
-                      <li className="flex items-center justify-between gap-3 rounded-md bg-[#faf8fe] px-2 py-1.5 text-xs dark:bg-white/5" key={item.taskId}>
-                        <span className="min-w-0 truncate text-[#625b7b] dark:text-white/75">{item.title}</span>
-                        <span className="shrink-0 text-[10px] text-[#8b82a7] dark:text-white/48">
-                          {item.entityKind === "step" ? "Step" : "Task"} · {item.outcome === "did_my_best" ? "Did My Best" : item.outcome === "complete" ? "Completed" : "Done"}
-                        </span>
+                    {selectedFinishedItems.map((item) => (
+                      <li key={item.taskId}>
+                        <button
+                          aria-label={`Open ${item.entityKind === "step" ? "Step" : "Task"} ${item.title || "Untitled"}`}
+                          className="flex w-full items-center justify-between gap-3 rounded-md bg-[#faf8fe] px-2 py-1.5 text-left text-xs outline-none transition-colors hover:bg-[#f4effd] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#8b78ed] dark:bg-white/5 dark:hover:bg-white/8"
+                          onClick={() => onOpenTask(item.taskId)}
+                          type="button"
+                        >
+                          <span className="min-w-0 truncate text-[#625b7b] dark:text-white/75">{item.title}</span>
+                          <span className="shrink-0 text-[10px] text-[#8b82a7] dark:text-white/48">
+                            {item.entityKind === "step" ? "Step" : "Task"} · {item.outcome === "did_my_best" ? "Did My Best" : item.outcome === "complete" ? "Completed" : "Done"}
+                          </span>
+                        </button>
                       </li>
                     ))}
                   </ul>
                 ) : (
-                  <p className="mt-1.5 text-xs text-[#8b82a7] dark:text-white/48">No Tasks or Steps finished today.</p>
+                  <p className="mt-1.5 text-xs text-[#8b82a7] dark:text-white/48">{selectedFinishedTodayDetails.emptyState}</p>
                 )}
               </div>
             ) : null}
@@ -374,37 +396,21 @@ export function HomePage({
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
-  const { state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutinesPerSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("todo");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const [newTaskTitle, setNewTaskTitle] = useState("");
-  const [newTaskTypeSelection, setNewTaskTypeSelection] = useState("task");
-  const [newTaskDueOn, setNewTaskDueOn] = useState("");
-  const [newTaskDueTime, setNewTaskDueTime] = useState("");
-  const [newTaskRepeatFrequency, setNewTaskRepeatFrequency] = useState<TaskRepeatFrequency>("none");
-  const [newTaskRepeatInterval, setNewTaskRepeatInterval] = useState("1");
-  const [newTaskRepeatDaysOfWeek, setNewTaskRepeatDaysOfWeek] = useState<number[]>([]);
-  const [newTaskRepeatDayOfMonth, setNewTaskRepeatDayOfMonth] = useState("");
-  const [newTaskRepeatMonthlyMode, setNewTaskRepeatMonthlyMode] = useState<TaskRepeatMonthlyMode>("day_of_month");
-  const [newTaskRepeatMonthlyOrdinal, setNewTaskRepeatMonthlyOrdinal] = useState<TaskRepeatMonthlyOrdinal | null>(null);
-  const [newTaskRepeatMonthlyWeekday, setNewTaskRepeatMonthlyWeekday] = useState<number | null>(null);
-  const [newTaskTags, setNewTaskTags] = useState<string[]>([]);
-  const [newTaskTagDraft, setNewTaskTagDraft] = useState("");
-  const [newTaskPriority, setNewTaskPriority] = useState<TaskPriorityLevelOption>("0");
-  const [isCreating, setIsCreating] = useState(false);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
   const [rowActionMenu, setRowActionMenu] = useState<HomeRowActionMenuState | null>(null);
   const [isFastActionMode, setIsFastActionMode] = useState(false);
-  const [editingRoutineSectionIndex, setEditingRoutineSectionIndex] = useState<number | null>(null);
+  const [editingRoutineSectionId, setEditingRoutineSectionId] = useState<string | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
   const [routineChildDropTarget, setRoutineChildDropTarget] = useState<HomeRoutineChildDropTarget | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
-  const newTaskInputRef = useRef<HTMLInputElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const rowActionMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -447,23 +453,17 @@ export function HomePage({
     [routineGroups],
   );
   const routineTaskIdSet = useMemo(() => new Set(routineTasks.map((task) => task.id)), [routineTasks]);
-  const normalizedNewTaskTagDraft = normalizeTaskTagValue(newTaskTagDraft);
-  const selectedNewTaskTagSet = new Set(newTaskTags.map((tag) => normalizeTaskTagValue(tag)));
-  const dedupedNewTaskTagOptions = dedupeTaskTagLabels(allTags);
-  const availableNewTaskTagOptions = dedupedNewTaskTagOptions
-    .filter((tag) => !selectedNewTaskTagSet.has(normalizeTaskTagValue(tag)))
-    .filter((tag) => !normalizedNewTaskTagDraft || normalizeTaskTagValue(tag).includes(normalizedNewTaskTagDraft));
-  const exactNewTaskTagMatch = dedupedNewTaskTagOptions.find((tag) => normalizeTaskTagValue(tag) === normalizedNewTaskTagDraft) ?? null;
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
-    const selected = activeHomeTab === "todo" ? new Set(reconciledTaskIds) : routineTaskIdSet;
+    const isTodoSearch = activeHomeTab === "todo";
+    const selected = isTodoSearch ? new Set(reconciledTaskIds) : routineTaskIdSet;
     return sortHomeTodoSearchResults(tasks
-      .filter((task) => !selected.has(task.id) && isHomeTodoTaskEligible(task, tasks, taskById))
+      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && (isTodoSearch || !selected.has(task.id)))
       .map((task) => {
         const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
         const searchable = getHomeTodoSearchText(task, hierarchy, listMembershipsByTaskId[task.id] ?? []);
-        return { hierarchy, searchable, task };
+        return { hierarchy, isInTodo: isTodoSearch && selected.has(task.id), searchable, task };
       })
       .filter((item) => item.searchable.includes(needle)));
   }, [activeHomeTab, listMembershipsByTaskId, query, reconciledTaskIds, routineTaskIdSet, taskById, tasks]);
@@ -472,19 +472,20 @@ export function HomePage({
     () => buildHomeTodoDaySections(todoTasks.map((task) => task.id), state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone, state.taskDayOffsets),
     [calendarNowMs, calendarTimeZone, state.taskDayOffsets, state.tasksPerDay, todoTasks],
   );
-  const routineSections = useMemo(
-    () => buildHomeRoutineSections(reconciledRoutineTaskIds, state.routinesPerSection, state.routineSectionNames),
-    [reconciledRoutineTaskIds, state.routineSectionNames, state.routinesPerSection],
+  const effectiveRoutineSectionState = useMemo(
+    () => reconcileHomeRoutineSectionAssignments(state.routineSections, state.routineSectionIdByTaskId, reconciledRoutineTaskIds),
+    [reconciledRoutineTaskIds, state.routineSectionIdByTaskId, state.routineSections],
   );
+  const routineSections = useMemo(
+    () => buildHomeRoutineSections(reconciledRoutineTaskIds, effectiveRoutineSectionState.routineSections, effectiveRoutineSectionState.routineSectionIdByTaskId),
+    [effectiveRoutineSectionState, reconciledRoutineTaskIds],
+  );
+  const routineGroupByAnchorId = useMemo(() => new Map(routineGroups.map((group) => [group.anchorId, group])), [routineGroups]);
   const dayTaskIds = daySections.flatMap((section) => section.taskIds);
   const sevenDayCapacity = dayTaskIds.length;
   const dayTasks = dayTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
   const doLaterTasks = laterTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
   const visibleTasks = isDoLaterOpen ? [...dayTasks, ...doLaterTasks] : dayTasks;
-
-  useEffect(() => {
-    if (isCreateOpen) newTaskInputRef.current?.focus();
-  }, [isCreateOpen]);
 
   useEffect(() => {
     if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
@@ -583,112 +584,23 @@ export function HomePage({
     event.stopPropagation();
   }
 
-  function selectNewTaskRepeatFrequency(nextFrequency: TaskRepeatFrequency) {
-    setNewTaskRepeatFrequency(nextFrequency);
-    setNewTaskRepeatInterval((current) => String(parsePositiveInteger(current) ?? 1));
-    if (nextFrequency !== "weekly" && nextFrequency !== "custom") {
-      setNewTaskRepeatDaysOfWeek([]);
+  async function handleCreateTask(draft: TaskCreationDraft) {
+    const createdTask = await createHomeTodoTask(
+      draft.title,
+      draft.taskTypeSelection,
+      onCreateTaskWithType,
+      activeHomeTab === "todo"
+        ? (taskId) => updateTaskIds((taskIds) => [...taskIds, taskId])
+        : () => {},
+      draft.metadata,
+    );
+    if (createdTask && activeHomeTab === "routine") {
+      await onSetRoutineMembership(createdTask.id, true);
     }
-    if (nextFrequency !== "monthly") {
-      setNewTaskRepeatDayOfMonth("");
-      setNewTaskRepeatMonthlyMode("day_of_month");
-      setNewTaskRepeatMonthlyOrdinal(null);
-      setNewTaskRepeatMonthlyWeekday(null);
-    }
-  }
-
-  function applyNewTaskWeekdaysPreset() {
-    setNewTaskRepeatFrequency("weekly");
-    setNewTaskRepeatInterval("1");
-    setNewTaskRepeatDaysOfWeek([...WEEKDAYS_REPEAT_DAYS]);
-    setNewTaskRepeatDayOfMonth("");
-    setNewTaskRepeatMonthlyMode("day_of_month");
-    setNewTaskRepeatMonthlyOrdinal(null);
-    setNewTaskRepeatMonthlyWeekday(null);
-  }
-
-  function addNewTaskTag(rawTag: string) {
-    const normalizedTag = formatNewTaskTagLabel(rawTag);
-    if (!normalizedTag) return;
-    setNewTaskTags((current) => dedupeTaskTagLabels([...current, normalizedTag]));
-    setNewTaskTagDraft("");
-  }
-
-  function removeNewTaskTag(tagToRemove: string) {
-    const normalizedTagToRemove = normalizeTaskTagValue(tagToRemove);
-    setNewTaskTags((current) => current.filter((tag) => normalizeTaskTagValue(tag) !== normalizedTagToRemove));
-  }
-
-  function buildNewTaskMetadata(): HomeTodoTaskMetadata {
-    const repeatInterval = parsePositiveInteger(newTaskRepeatInterval) ?? 1;
-    const repeatDayOfMonth = newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "day_of_month"
-      ? parseDayOfMonth(newTaskRepeatDayOfMonth)
-      : null;
-    const isMonthlyOrdinal = newTaskRepeatFrequency === "monthly" && newTaskRepeatMonthlyMode === "ordinal_weekday";
-    return {
-      due_on: newTaskDueOn || null,
-      due_time: newTaskDueOn ? (newTaskDueTime || null) : null,
-      priority_level: Number.parseInt(newTaskPriority, 10) as TaskPriorityLevel,
-      repeat_day_of_month: repeatDayOfMonth,
-      repeat_days_of_week: newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom"
-        ? [...newTaskRepeatDaysOfWeek]
-        : [],
-      repeat_frequency: newTaskRepeatFrequency,
-      repeat_interval: repeatInterval,
-      repeat_monthly_mode: newTaskRepeatFrequency === "monthly" ? newTaskRepeatMonthlyMode : "day_of_month",
-      repeat_monthly_ordinal: isMonthlyOrdinal ? (newTaskRepeatMonthlyOrdinal ?? "first") : null,
-      repeat_monthly_weekday: isMonthlyOrdinal ? (newTaskRepeatMonthlyWeekday ?? 1) : null,
-      tags: [...newTaskTags],
-    };
-  }
-
-  function resetNewTaskComposer() {
-    setNewTaskTitle("");
-    setNewTaskTypeSelection("task");
-    setNewTaskDueOn("");
-    setNewTaskDueTime("");
-    setNewTaskRepeatFrequency("none");
-    setNewTaskRepeatInterval("1");
-    setNewTaskRepeatDaysOfWeek([]);
-    setNewTaskRepeatDayOfMonth("");
-    setNewTaskRepeatMonthlyMode("day_of_month");
-    setNewTaskRepeatMonthlyOrdinal(null);
-    setNewTaskRepeatMonthlyWeekday(null);
-    setNewTaskTags([]);
-    setNewTaskTagDraft("");
-    setNewTaskPriority("0");
-  }
-
-  async function handleCreateTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (isCreating) return;
-
-    setIsCreating(true);
-    try {
-      const createdTask = await createHomeTodoTask(
-        newTaskTitle,
-        newTaskTypeSelection,
-        onCreateTaskWithType,
-        activeHomeTab === "todo"
-          ? (taskId) => updateTaskIds((taskIds) => [...taskIds, taskId])
-          : () => {},
-        buildNewTaskMetadata(),
-      );
-      if (createdTask) {
-        if (activeHomeTab === "routine") {
-          await onSetRoutineMembership(createdTask.id, true);
-        }
-        resetNewTaskComposer();
-        setIsCreateOpen(false);
-      }
-    } finally {
-      setIsCreating(false);
-    }
+    return createdTask;
   }
 
   function cancelCreateTask() {
-    if (isCreating) return;
-    resetNewTaskComposer();
     setIsCreateOpen(false);
   }
 
@@ -701,7 +613,7 @@ export function HomePage({
       }
       return;
     }
-    updateTaskIds((taskIds) => [...taskIds, taskId]);
+    updateTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
   }
 
   useEffect(() => {
@@ -790,23 +702,23 @@ export function HomePage({
 
   function beginRoutineSectionRename(section: typeof routineSections[number]) {
     routineSectionRenameCanceledRef.current = false;
-    setRoutineSectionNameDraft(state.routineSectionNames[String(section.sectionIndex)] ?? section.label);
-    setEditingRoutineSectionIndex(section.sectionIndex);
+    setRoutineSectionNameDraft(section.label);
+    setEditingRoutineSectionId(section.id);
   }
 
-  function saveRoutineSectionName(sectionIndex: number) {
+  function saveRoutineSectionName(sectionId: string) {
     if (routineSectionRenameCanceledRef.current) {
       routineSectionRenameCanceledRef.current = false;
       return;
     }
-    updateRoutineSectionName(sectionIndex, routineSectionNameDraft);
-    setEditingRoutineSectionIndex(null);
+    updateRoutineSectionName(sectionId, routineSectionNameDraft);
+    setEditingRoutineSectionId(null);
   }
 
   function renderRoutineSectionHeader(section: typeof routineSections[number]) {
-    const isEditing = editingRoutineSectionIndex === section.sectionIndex;
+    const isEditing = editingRoutineSectionId === section.id;
     return (
-      <div className="mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 first:mt-3 first:border-t-0 dark:border-white/10" data-sortable-drop-id={`routine-section-${section.sectionIndex}`} data-sortable-drop-index={section.startIndex} key={`home-routine-section-${section.sectionIndex}`}>
+      <div className={`mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 dark:border-white/10 ${section.sectionIndex === 0 ? "mt-3 border-t-0" : ""}`} key={`home-routine-section-${section.id}`}>
         <div>
           <div className="flex min-w-0 items-center gap-1">
             {isEditing ? (
@@ -814,16 +726,16 @@ export function HomePage({
                 aria-label={`Rename ${section.label}`}
                 autoFocus
                 className="health-input h-7 min-w-0 w-[min(14rem,60vw)] px-2 py-1 text-sm font-bold"
-                onBlur={() => saveRoutineSectionName(section.sectionIndex)}
+                onBlur={() => saveRoutineSectionName(section.id)}
                 onChange={(event) => setRoutineSectionNameDraft(event.target.value)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter") {
                     event.preventDefault();
-                    saveRoutineSectionName(section.sectionIndex);
+                    saveRoutineSectionName(section.id);
                   } else if (event.key === "Escape") {
                     event.preventDefault();
                     routineSectionRenameCanceledRef.current = true;
-                    setEditingRoutineSectionIndex(null);
+                    setEditingRoutineSectionId(null);
                   }
                 }}
                 value={routineSectionNameDraft}
@@ -943,6 +855,7 @@ export function HomePage({
     rowKey?: string,
     routineDepth = 0,
     isRoutineGroupAnchor = false,
+    routineSectionGroupIds?: readonly string[],
   ) {
     const isRoutine = mode === "routine";
     const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
@@ -952,6 +865,7 @@ export function HomePage({
     const fastActionOpen = isFastActionMode;
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
+    const currentRoutineSectionId = isRoutine ? effectiveRoutineSectionState.routineSectionIdByTaskId[task.id] : null;
     const durableTaskIndex = state.taskIds.indexOf(task.id);
     const renderedDayOffset = daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
@@ -965,8 +879,10 @@ export function HomePage({
     ];
     const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0;
     const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state.taskIds.length - 1 && renderedDayOffset === 7;
-    const isAtRoutineTop = isRoutine && index === 0;
-    const isAtRoutineBottom = isRoutine && index === routineGroups.length - 1;
+    const routineSectionIndex = isRoutine && routineSectionGroupIds ? routineSectionGroupIds.indexOf(task.id) : index;
+    const routineSectionLength = routineSectionGroupIds?.length ?? routineGroups.length;
+    const isAtRoutineTop = isRoutine && routineSectionIndex === 0;
+    const isAtRoutineBottom = isRoutine && routineSectionIndex === routineSectionLength - 1;
     return (
       <AdhdCard
         key={rowKey}
@@ -1200,12 +1116,50 @@ export function HomePage({
             )}
             {rowActionMenuOpen ? (
               <AdhdDropdownPanel
-                aria-label={rowActionMenuView === "move-day" ? `Move ${task.title || "Untitled task"} to day` : `${task.title || "Untitled task"} actions`}
+                aria-label={rowActionMenuView === "move-day"
+                  ? `Move ${task.title || "Untitled task"} to day`
+                  : rowActionMenuView === "move-routine-section"
+                    ? `Move ${task.title || "Untitled task"} to section`
+                    : `${task.title || "Untitled task"} actions`}
                 className="left-auto right-0 top-[calc(100%+0.35rem)] max-h-80 overflow-y-auto p-1.5"
                 role="menu"
                 widthClassName="min-w-56"
               >
-                {rowActionMenuView === "move-day" ? (
+                {rowActionMenuView === "move-routine-section" ? (
+                  <div className="grid gap-1">
+                    {routineSections.map((section) => {
+                      const isCurrentSection = currentRoutineSectionId === section.id;
+                      return (
+                        <button
+                          aria-checked={isCurrentSection}
+                          aria-label={`${section.label}${isCurrentSection ? ", current section" : ""}`}
+                          className="flex min-h-9 items-center justify-between gap-3 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] disabled:cursor-not-allowed disabled:opacity-45 dark:text-white/75 dark:hover:bg-white/[0.08]"
+                          disabled={isCurrentSection}
+                          key={section.id}
+                          onClick={() => {
+                            if (isCurrentSection) return;
+                            updateRoutineTaskSection(task.id, section.id);
+                            setRowActionMenu(null);
+                          }}
+                          role="menuitemradio"
+                          type="button"
+                        >
+                          <span>{section.label}</span>
+                          {isCurrentSection ? <span className="shrink-0 text-[10px] font-bold uppercase tracking-[0.08em] text-[#6f57f6]">Current</span> : null}
+                        </button>
+                      );
+                    })}
+                    <button
+                      aria-label="Back to task actions"
+                      className="flex min-h-9 items-center rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#6f57f6] hover:bg-[#f7f3ff] dark:text-[#cabfff] dark:hover:bg-white/[0.08]"
+                      onClick={() => setRowActionMenu({ taskId: task.id, view: "actions" })}
+                      role="menuitem"
+                      type="button"
+                    >
+                      Back
+                    </button>
+                  </div>
+                ) : rowActionMenuView === "move-day" ? (
                   <div className="grid gap-1">
                     {moveDayDestinations.map((destination) => {
                       const isCurrentDestination = renderedDayOffset === destination.dayOffset;
@@ -1240,8 +1194,19 @@ export function HomePage({
                       Back
                     </button>
                   </div>
-                ) : (
+                  ) : (
                   <div className="grid gap-1">
+                    {isRoutine && isRoutineGroupAnchor ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to section`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={() => setRowActionMenu({ taskId: task.id, view: "move-routine-section" })}
+                        role="menuitem"
+                        type="button"
+                      >
+                        Move to section
+                      </button>
+                    ) : null}
                     {!isRoutine ? (
                       <button
                         aria-label={`Move ${task.title || "Untitled task"} to day`}
@@ -1367,6 +1332,7 @@ export function HomePage({
         homeRecordChases={homeRecordChases}
         homeHistoryError={homeHistoryError}
         homeHistoryStatus={homeHistoryStatus}
+        onOpenTask={onOpenTask}
         onRetryHomeHistory={onRetryHomeHistory}
         onOpenRecord={onOpenRecord}
         recordTargetsError={recordTargetsError}
@@ -1430,20 +1396,28 @@ export function HomePage({
                 >
                   <div>
                     <h2 className="text-sm font-bold text-[#26324f] dark:text-white">{activeHomeTab === "todo" ? "To-do list settings" : "Routine settings"}</h2>
-                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">{activeHomeTab === "todo" ? "Tasks per day" : "Routines per section"}</p>
+                    <p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">{activeHomeTab === "todo" ? "Tasks per day" : "Explicit Routine sections"}</p>
                   </div>
-                  <div className="flex flex-wrap gap-1.5" role="group" aria-label={activeHomeTab === "todo" ? "Tasks per day" : "Routines per section"}>
-                    {(activeHomeTab === "todo" ? [10, 11, 12, 13, 14, 15] : [1, 2, 3, 4, 5, 6]).map((capacity) => (
-                      <AdhdChip
-                        key={capacity}
-                        onClick={() => activeHomeTab === "todo" ? updateTasksPerDay(capacity) : updateRoutinesPerSection(capacity)}
-                        selected={activeHomeTab === "todo" ? state.tasksPerDay === capacity : state.routinesPerSection === capacity}
-                        type="button"
-                      >
-                        {capacity}
+                  {activeHomeTab === "todo" ? (
+                    <div className="flex flex-wrap gap-1.5" role="group" aria-label="Tasks per day">
+                      {[10, 11, 12, 13, 14, 15].map((capacity) => (
+                        <AdhdChip
+                          key={capacity}
+                          onClick={() => updateTasksPerDay(capacity)}
+                          selected={state.tasksPerDay === capacity}
+                          type="button"
+                        >
+                          {capacity}
+                        </AdhdChip>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="grid gap-2" role="group" aria-label="Routine sections">
+                      <AdhdChip icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={createRoutineSection} type="button">
+                        New section
                       </AdhdChip>
-                    ))}
-                  </div>
+                    </div>
+                  )}
                 </div>
               ) : null}
             </div>
@@ -1453,10 +1427,8 @@ export function HomePage({
           <div className="flex flex-wrap items-end justify-between gap-2">
             <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Search tasks</span>
             <AdhdChip
-              disabled={isCreating}
               onClick={() => {
                 setIsSearchOpen(false);
-                setNewTaskTypeSelection("task");
                 setIsCreateOpen(true);
               }}
               selected={isCreateOpen}
@@ -1480,237 +1452,19 @@ export function HomePage({
             </span>
           </label>
           {isCreateOpen ? (
-            <form
-              className="mt-3 flex flex-wrap items-end gap-2 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-2.5 dark:border-white/10 dark:bg-white/[0.03]"
-              onSubmit={handleCreateTask}
-            >
-              <label className="min-w-[min(100%,16rem)] flex-1">
-                <span className="sr-only">Task title</span>
-                <input
-                  autoComplete="off"
-                  className="health-input"
-                  disabled={isCreating}
-                  onChange={(event) => setNewTaskTitle(event.target.value)}
-                  placeholder="Task title"
-                  ref={newTaskInputRef}
-                  value={newTaskTitle}
-                />
-              </label>
-              <label className="w-full sm:w-44 sm:shrink-0">
-                <span className="sr-only">Task Type</span>
-                <TaskTypeSelect
-                  ariaLabel="Task Type"
-                  disabled={isCreating}
-                  label="Task Type"
-                  onChange={setNewTaskTypeSelection}
-                  options={taskTypeOptions}
-                  value={newTaskTypeSelection}
-                />
-              </label>
-              <fieldset className="grid w-full min-w-0 gap-3" disabled={isCreating}>
-                <div className="grid min-w-0 gap-2 sm:grid-cols-2">
-                  <label className="grid min-w-0 gap-1">
-                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Due date</span>
-                    <input
-                      aria-label="Due date"
-                      className={TASK_TABLE_INPUT_CLASS}
-                      onChange={(event) => {
-                        setNewTaskDueOn(event.target.value);
-                        if (!event.target.value) setNewTaskDueTime("");
-                      }}
-                      type="date"
-                      value={newTaskDueOn}
-                    />
-                  </label>
-                  <label className="grid min-w-0 gap-1">
-                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Due time</span>
-                    <input
-                      aria-label="Due time"
-                      className={TASK_TABLE_INPUT_CLASS}
-                      onChange={(event) => setNewTaskDueTime(event.target.value)}
-                      type="time"
-                      value={newTaskDueTime}
-                    />
-                  </label>
-                </div>
-                <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,0.7fr)_minmax(0,1.3fr)]">
-                  <div className="grid min-w-0 gap-1">
-                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Priority</span>
-                    <div className="flex flex-wrap gap-2">
-                      {TASK_PRIORITY_LEVEL_OPTIONS.map((value) => (
-                        <TaskTableChipButton
-                          key={value}
-                          onClick={() => setNewTaskPriority(value)}
-                          toneClassName={newTaskPriority === value ? getSelectedTaskPriorityToneClass(value) : getTaskPriorityToneClass(value)}
-                        >
-                          {value}
-                        </TaskTableChipButton>
-                      ))}
-                    </div>
-                  </div>
-                  <div className="grid min-w-0 gap-1">
-                    <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Repeat</span>
-                    <div className="flex flex-wrap gap-2">
-                      {HOME_REPEAT_OPTIONS.map((option) => (
-                        <TaskTableChipButton
-                          key={option.value}
-                          onClick={() => selectNewTaskRepeatFrequency(option.value)}
-                          toneClassName={newTaskRepeatFrequency === option.value && option.value !== "none"
-                            ? TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS
-                            : TASK_TABLE_INACTIVE_CHIP_CLASS}
-                        >
-                          {option.label}
-                        </TaskTableChipButton>
-                      ))}
-                      <TaskTableChipButton
-                        onClick={applyNewTaskWeekdaysPreset}
-                        toneClassName={isWeekdaysRepeatSelection(newTaskRepeatFrequency, newTaskRepeatDaysOfWeek, parsePositiveInteger(newTaskRepeatInterval) ?? 1)
-                          ? TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS
-                          : TASK_TABLE_INACTIVE_CHIP_CLASS}
-                      >
-                        Weekdays
-                      </TaskTableChipButton>
-                    </div>
-                    {newTaskRepeatFrequency !== "none" ? (
-                      <div className="mt-1 space-y-2">
-                        <CompactRepeatCadenceControls
-                          activeToneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}
-                          dayInputProps={{
-                            inputMode: "numeric",
-                            max: 31,
-                            min: 1,
-                            onBlur: () => setNewTaskRepeatDayOfMonth((current) => {
-                              const parsed = parseDayOfMonth(current);
-                              return parsed === null ? "" : String(parsed);
-                            }),
-                            onChange: (event) => setNewTaskRepeatDayOfMonth(event.target.value.replace(/[^\d]/g, "").slice(0, 2)),
-                            type: "text",
-                            value: newTaskRepeatDayOfMonth,
-                          }}
-                          inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
-                          intervalInputProps={{
-                            inputMode: "numeric",
-                            min: 1,
-                            onBlur: () => setNewTaskRepeatInterval((current) => String(parsePositiveInteger(current) ?? 1)),
-                            onChange: (event) => setNewTaskRepeatInterval(event.target.value.replace(/[^\d]/g, "")),
-                            type: "text",
-                            value: newTaskRepeatInterval,
-                          }}
-                          monthlyMode={newTaskRepeatMonthlyMode}
-                          monthlyModeOptions={REPEAT_MONTHLY_MODE_OPTIONS}
-                          monthlyOrdinal={newTaskRepeatMonthlyOrdinal}
-                          monthlyOrdinalOptions={REPEAT_MONTHLY_ORDINAL_OPTIONS}
-                          monthlyWeekday={newTaskRepeatMonthlyWeekday}
-                          onMonthlyModeClick={(value) => {
-                            const nextOrdinal = value === "ordinal_weekday" ? (newTaskRepeatMonthlyOrdinal ?? "first") : null;
-                            const nextWeekday = value === "ordinal_weekday" ? (newTaskRepeatMonthlyWeekday ?? 1) : null;
-                            setNewTaskRepeatMonthlyMode(value);
-                            setNewTaskRepeatMonthlyOrdinal(nextOrdinal);
-                            setNewTaskRepeatMonthlyWeekday(nextWeekday);
-                          }}
-                          onMonthlyOrdinalClick={(value) => {
-                            setNewTaskRepeatMonthlyMode("ordinal_weekday");
-                            setNewTaskRepeatMonthlyOrdinal(value);
-                            setNewTaskRepeatMonthlyWeekday(newTaskRepeatMonthlyWeekday ?? 1);
-                          }}
-                          onMonthlyWeekdayClick={(value) => {
-                            setNewTaskRepeatMonthlyMode("ordinal_weekday");
-                            setNewTaskRepeatMonthlyOrdinal(newTaskRepeatMonthlyOrdinal ?? "first");
-                            setNewTaskRepeatMonthlyWeekday(value);
-                          }}
-                          onRepeatUnitClick={selectNewTaskRepeatFrequency}
-                          onWeekdayClick={(weekday) => setNewTaskRepeatDaysOfWeek((current) => (
-                            current.includes(weekday)
-                              ? current.filter((value) => value !== weekday)
-                              : [...current, weekday].sort((left, right) => left - right)
-                          ))}
-                          repeat={newTaskRepeatFrequency}
-                          repeatDaysOfWeek={newTaskRepeatDaysOfWeek}
-                          repeatUnits={HOME_REPEAT_UNITS}
-                          showInterval
-                          showMonthDay={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode !== "ordinal_weekday"}
-                          showMonthlyMode={newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom"}
-                          showMonthlyOrdinals={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode === "ordinal_weekday"}
-                          showMonthlyWeekdays={(newTaskRepeatFrequency === "monthly" || newTaskRepeatFrequency === "custom") && newTaskRepeatMonthlyMode === "ordinal_weekday"}
-                          showWeekdays={newTaskRepeatFrequency === "weekly" || newTaskRepeatFrequency === "custom"}
-                          weekdayOptions={newTaskRepeatMonthlyMode === "ordinal_weekday"
-                            ? HOME_REPEAT_MONTHLY_WEEKDAY_OPTIONS
-                            : HOME_REPEAT_WEEKDAY_OPTIONS}
-                        />
-                      </div>
-                    ) : null}
-                  </div>
-                </div>
-                <div className="grid min-w-0 gap-2">
-                  <span className="text-[11px] font-medium text-[#9b92be] dark:text-white/35">Tags</span>
-                  <div className="flex flex-wrap gap-2">
-                    {newTaskTags.length > 0 ? newTaskTags.map((tag) => (
-                      <TaskTableChipButton
-                        key={tag}
-                        onClick={() => removeNewTaskTag(tag)}
-                        toneClassName={TASK_TABLE_ACTIVE_LIST_CHIP_CLASS}
-                      >
-                        #{tag}
-                        <X className="ml-1 h-3.5 w-3.5" />
-                      </TaskTableChipButton>
-                    )) : (
-                      <span className="text-sm text-[#7d7597] dark:text-white/55">No tags on this task yet.</span>
-                    )}
-                  </div>
-                  <div className="flex min-w-0 flex-wrap items-center gap-2">
-                    <input
-                      aria-label="Search or add a tag"
-                      className={`${TASK_TABLE_INPUT_CLASS} min-w-[12rem] flex-1 sm:min-w-[16rem]`}
-                      onChange={(event) => setNewTaskTagDraft(event.target.value)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        if (!newTaskTagDraft.trim()) return;
-                        event.preventDefault();
-                        addNewTaskTag(exactNewTaskTagMatch ?? newTaskTagDraft);
-                      }}
-                      placeholder="Search or add a tag"
-                      type="text"
-                      value={newTaskTagDraft}
-                    />
-                    {exactNewTaskTagMatch ? (
-                      <TaskTableChipButton onClick={() => addNewTaskTag(exactNewTaskTagMatch)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
-                        Use #{exactNewTaskTagMatch}
-                      </TaskTableChipButton>
-                    ) : null}
-                    {normalizedNewTaskTagDraft && !exactNewTaskTagMatch ? (
-                      <TaskTableChipButton onClick={() => addNewTaskTag(newTaskTagDraft)} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS}>
-                        {`Add "${formatNewTaskTagLabel(newTaskTagDraft)}"`}
-                      </TaskTableChipButton>
-                    ) : null}
-                  </div>
-                  {availableNewTaskTagOptions.length > 0 ? (
-                    <div className="flex flex-wrap gap-2">
-                      {availableNewTaskTagOptions.map((tag) => (
-                        <TaskTableChipButton key={tag} onClick={() => addNewTaskTag(tag)} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}>
-                          #{tag}
-                        </TaskTableChipButton>
-                      ))}
-                    </div>
-                  ) : (
-                    <span className="text-sm text-[#7d7597] dark:text-white/55">
-                      {normalizedNewTaskTagDraft ? "No matching saved tags." : "No saved tags yet."}
-                    </span>
-                  )}
-                </div>
-              </fieldset>
-              <div className="flex shrink-0 gap-1.5">
-                <AdhdChip disabled={isCreating} selected type="submit">
-                  {isCreating ? "Adding…" : "Add"}
-                </AdhdChip>
-                <AdhdChip disabled={isCreating} onClick={cancelCreateTask}>
-                  Cancel
-                </AdhdChip>
-              </div>
-            </form>
+            <div className="mt-3">
+              <TaskCreationComposer
+                allTags={allTags}
+                onCancel={cancelCreateTask}
+                onCreate={handleCreateTask}
+                onCreated={() => setIsCreateOpen(false)}
+                taskTypeOptions={taskTypeOptions}
+              />
+            </div>
           ) : null}
           {isSearchOpen && query.trim() ? (
             <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
-              {searchResults.length ? searchResults.map(({ hierarchy, task }) => (
+              {searchResults.length ? searchResults.map(({ hierarchy, isInTodo, task }) => (
                 <button
                   className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f6f2ff] dark:hover:bg-white/8"
                   key={task.id}
@@ -1729,7 +1483,14 @@ export function HomePage({
                       </span>
                     ) : null}
                   </span>
-                  <Plus aria-hidden="true" className="h-4 w-4 shrink-0 text-[#6f57f6]" />
+                  {isInTodo ? (
+                    <span
+                      aria-label="Already in To-do"
+                      className="inline-flex shrink-0 items-center rounded-full border border-[#d8cff0] bg-[#f7f3ff] px-2 py-1 text-[11px] font-semibold text-[#6f57f6] dark:border-white/15 dark:bg-white/[0.06] dark:text-[#cabfff]"
+                    >
+                      In To-do
+                    </span>
+                  ) : <Plus aria-hidden="true" className="h-4 w-4 shrink-0 text-[#6f57f6]" />}
                 </button>
               )) : (
                 <p className="px-3 py-6 text-center text-sm text-[#837b9e]">No matching active tasks</p>
@@ -1788,33 +1549,44 @@ export function HomePage({
             </>
           ) : (
             <>
-              <SortableList
-                className={HOME_TODO_LIST_CLASS}
-                getId={(group) => group.anchorId}
-                getLabel={(group) => group.tasks[0]?.task.title || "Untitled task"}
-                items={routineGroups}
-                onReorder={(nextGroups) => updateRoutineTaskIds(() => nextGroups.map((group) => group.anchorId))}
-                renderAfterItems={routineSections
-                  .filter((section) => section.startIndex >= routineGroups.length)
-                  .map(renderRoutineSectionHeader)}
-                renderBeforeItem={(_, index) => routineSections
-                  .filter((section) => section.startIndex === index)
-                  .map(renderRoutineSectionHeader)}
-              >
-                {(group, index, handle) => (
-                  <div className="space-y-2">
-                    {group.tasks.map(({ depth, isAnchor, task }) => renderHomeTask(
-                      task,
-                      index,
-                      isAnchor ? handle : null,
-                      "routine",
-                      `${group.anchorId}-${task.id}`,
-                      depth,
-                      isAnchor,
-                    ))}
+              {routineSections.map((section) => {
+                const sectionRoutineGroups = section.groupIds
+                  .map((groupId) => routineGroupByAnchorId.get(groupId))
+                  .filter((group): group is HomeRoutineGroup => Boolean(group));
+                return (
+                  <div key={section.id}>
+                    {renderRoutineSectionHeader(section)}
+                    {sectionRoutineGroups.length ? (
+                      <SortableList
+                        className={HOME_TODO_LIST_CLASS}
+                        getId={(group) => group.anchorId}
+                        getLabel={(group) => group.tasks[0]?.task.title || "Untitled task"}
+                        items={sectionRoutineGroups}
+                        onReorder={(nextGroups) => updateRoutineTaskIds((taskIds) => mergeHomeTodoVisibleTaskIds(
+                          taskIds,
+                          section.groupIds,
+                          nextGroups.map((group) => group.anchorId),
+                        ))}
+                      >
+                        {(group, _index, handle) => (
+                          <div className="space-y-2">
+                            {group.tasks.map(({ depth, isAnchor, task }) => renderHomeTask(
+                              task,
+                              reconciledRoutineTaskIds.indexOf(group.anchorId),
+                              isAnchor ? handle : null,
+                              "routine",
+                              `${group.anchorId}-${task.id}`,
+                              depth,
+                              isAnchor,
+                              section.groupIds,
+                            ))}
+                          </div>
+                        )}
+                      </SortableList>
+                    ) : null}
                   </div>
-                )}
-              </SortableList>
+                );
+              })}
               {!routineGroups.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/[0.15] dark:bg-white/[0.03] dark:text-white/55">
                   No Routine tasks yet.

@@ -119,6 +119,7 @@ import {
   type CanonicalTaskEntitySnapshotBoundaryRow,
   type CanonicalTaskEntitySnapshotRow,
 } from "@/lib/task-realtime-reconciliation";
+import { keepCurrentTaskArrayIfSemanticallyEqual } from "@/lib/task-state-identity";
 import {
   createAdhdiceRealtimeChannelDebugId,
   describeAdhdiceRealtimeSubscriptionError,
@@ -578,7 +579,9 @@ export function useWorkspaceData({
   useEffect(() => {
     activePageRef.current = activePage;
     if (activePage === "Notes") void loadNotesRef.current?.();
-    if (activePage === "Home") void homeCurrentDayHistoryRequestRef.current?.("navigation");
+    if (activePage === "Home" || activePage === "Tasks") {
+      void homeCurrentDayHistoryRequestRef.current?.("navigation");
+    }
   }, [activePage]);
 
   useEffect(() => {
@@ -594,7 +597,9 @@ export function useWorkspaceData({
         ownerId: currentUser.id,
         workspaceGeneration: workspaceGenerationRef.current,
       });
-      if (activePageRef.current === "Home") void homeCurrentDayHistoryRequestRef.current?.("logical-day", { force: true });
+      if (activePageRef.current === "Home" || activePageRef.current === "Tasks") {
+        void homeCurrentDayHistoryRequestRef.current?.("logical-day", { force: true });
+      }
       void taskActivitySummaryRuntimeRef.current?.request({
         client: supabase,
         logicalDate: todayKey,
@@ -765,7 +770,9 @@ export function useWorkspaceData({
       }, { force }) ?? false;
     }
     homeCurrentDayHistoryRequestRef.current = requestHomeCurrentDayHistory;
-    if (activePageRef.current === "Home") void requestHomeCurrentDayHistory("owner-ready");
+    if (activePageRef.current === "Home" || activePageRef.current === "Tasks") {
+      void requestHomeCurrentDayHistory("owner-ready");
+    }
     void taskActivitySummaryRuntimeRef.current?.request({
       client,
       logicalDate: todayKeyRef.current,
@@ -1182,9 +1189,12 @@ export function useWorkspaceData({
               updatedAt: fetchedTriggerTask.updated_at,
             });
           }
-          tasksRef.current = nextTasks;
           startTransition(() => {
-            setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
+            setTasks((current) => {
+              const resolvedTasks = keepCurrentTaskArrayIfSemanticallyEqual(current, nextTasks);
+              tasksRef.current = resolvedTasks;
+              return resolvedTasks;
+            });
           });
           if (isWorkspacePerformanceDiagnosticsEnabled() && source === "rollover") {
             console.info("[workspace] Task rows reloaded source=rollover.");
@@ -1312,12 +1322,13 @@ export function useWorkspaceData({
       );
       const authoritativeById = new Map(authoritativeTasks.map((task) => [task.id, task]));
       const localTasksBeforeMerge = tasksRef.current;
-      const { tasks: nextTasks, outcomes } = mergeTaskEntitySnapshot(localTasksBeforeMerge, taskIds, authoritativeTasks);
-      tasksRef.current = nextTasks;
+      const { outcomes } = mergeTaskEntitySnapshot(localTasksBeforeMerge, taskIds, authoritativeTasks);
       startTransition(() => {
         setTasks((current) => {
           const latestMerge = mergeTaskEntitySnapshot(current, taskIds, authoritativeTasks);
-          return keepCurrentIfStructurallyEqual(current, latestMerge.tasks);
+          const resolvedTasks = keepCurrentTaskArrayIfSemanticallyEqual(current, latestMerge.tasks);
+          tasksRef.current = resolvedTasks;
+          return resolvedTasks;
         });
       });
 
@@ -2719,7 +2730,6 @@ export function useWorkspaceData({
         taskResult.data ?? [],
         (taskScheduleBoundariesResult?.data ?? []) as CanonicalTaskScheduleBoundary[],
       );
-      tasksRef.current = nextTasks;
       const activeTaskIds = new Set(nextTasks.filter(isActiveCanonicalTaskEntityRow).map((task) => task.id));
       const activeCurrentTaskProjections = Object.fromEntries(
         Object.entries(currentTaskProjectionsByTaskIdRef.current).filter(([taskId]) => activeTaskIds.has(taskId)),
@@ -2730,7 +2740,11 @@ export function useWorkspaceData({
       );
       currentTaskProjectionsByTaskIdRef.current = nextProjectionMap;
       startTransition(() => {
-        setTasks((current) => keepCurrentIfStructurallyEqual(current, nextTasks));
+        setTasks((current) => {
+          const resolvedTasks = keepCurrentTaskArrayIfSemanticallyEqual(current, nextTasks);
+          tasksRef.current = resolvedTasks;
+          return resolvedTasks;
+        });
         setCurrentTaskProjectionsByTaskId((current) => keepCurrentIfStructurallyEqual(current, nextProjectionMap));
         currentTaskProjectionReadContextRef.current = nextCurrentTaskProjectionReadContext;
         setCurrentTaskProjectionReadContext(nextCurrentTaskProjectionReadContext);

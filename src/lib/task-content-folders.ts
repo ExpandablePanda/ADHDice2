@@ -1,4 +1,6 @@
 import type { TaskContentFolder, TaskUpdate } from "@/lib/database.types";
+import { isTaskOpenStatus } from "@/lib/task-buckets";
+import type { TaskDisplayStatus } from "@/lib/task-display-status";
 
 export const TASK_CONTENT_FOLDER_NAME_MAX_LENGTH = 120;
 
@@ -55,14 +57,36 @@ export type TaskContentFolderMenuOption = {
   label: string;
 };
 
+export function resolveTaskContentFolderMoveTaskIds(
+  contextTaskId: string,
+  selectedTaskIds: readonly string[],
+) {
+  const uniqueSelectedTaskIds = [...new Set(selectedTaskIds)];
+  return uniqueSelectedTaskIds.length > 1 && uniqueSelectedTaskIds.includes(contextTaskId)
+    ? uniqueSelectedTaskIds
+    : [contextTaskId];
+}
+
+export function taskNeedsContentFolderMove(
+  task: TaskContentFolderMembershipTask,
+  destinationFolderId: string | null,
+) {
+  if ((task.parent_task_id ?? null) !== null) return true;
+  return (task.task_content_folder_id ?? null) !== destinationFolderId;
+}
+
 export type TaskContentFolderMemberFact = {
   id: string;
   parent_task_id?: string | null;
   task_content_folder_id?: string | null;
+  displayStatus: TaskDisplayStatus;
+  finishedToday: boolean;
   isPinned: boolean;
   isRoutine: boolean;
   hasAttention: boolean;
 };
+
+export type TaskContentFolderDailyState = "finished" | "open" | "neutral";
 
 export type TaskContentFolderMemberSummary = {
   allPinned: boolean;
@@ -70,10 +94,27 @@ export type TaskContentFolderMemberSummary = {
   anyPinned: boolean;
   anyRoutine: boolean;
   attentionCount: number;
+  dailyState: TaskContentFolderDailyState;
   memberTaskIds: string[];
   pinnedTaskIds: string[];
   routineTaskIds: string[];
 };
+
+export function deriveTaskContentFolderDailyState(
+  members: readonly TaskContentFolderMemberFact[],
+): TaskContentFolderDailyState {
+  const participatingMembers = members.filter((member) => (
+    member.displayStatus !== "archived" && member.displayStatus !== "trashed"
+  ));
+  if (participatingMembers.length === 0) {
+    return "neutral";
+  }
+  if (participatingMembers.every((member) => member.finishedToday)) return "finished";
+  return participatingMembers.some((member) => (
+    !member.finishedToday
+    && (member.displayStatus === "unscheduled" || isTaskOpenStatus(member.displayStatus))
+  )) ? "open" : "neutral";
+}
 
 export type TaskContentFolderProjectionOptions = {
   /** Allow persistent empty folders to remain visible in normal browsing. */
@@ -240,6 +281,7 @@ export function buildTaskContentFolderMemberSummary(
     anyPinned: pinnedTaskIds.length > 0,
     anyRoutine: routineTaskIds.length > 0,
     attentionCount: members.filter((task) => task.hasAttention).length,
+    dailyState: deriveTaskContentFolderDailyState(members),
     memberTaskIds,
     pinnedTaskIds,
     routineTaskIds,

@@ -119,6 +119,40 @@ test("canonical History Calendar outcome uses set_outcome and never writes legac
   assert.equal(localTask.status, "done");
 });
 
+test("canonical History Complete carries the selected logical date and terminal reward through the command", async () => {
+  const task = canonicalTask("canonical-calendar-complete");
+  let actionType = "";
+  let actionLogicalDate = "";
+  let rewardCalls = 0;
+  let localTask = task;
+  const actions = useTaskHistoryActions({
+    canonicalCommandExecutor: async (action, currentTask) => {
+      actionType = action.actionType;
+      actionLogicalDate = action.intent?.logical_date ?? "";
+      return commandResult(currentTask, "complete");
+    },
+    client: { from: () => { throw new Error("legacy History write"); } } as never,
+    currentDayKey: "2026-08-20",
+    currentUserId: "user-1",
+    loadTaskHistoryForTasks: async () => ({
+      [task.id]: { status: "ready", history: [] },
+    }),
+    onTasksCompleted: async (candidates) => { rewardCalls += candidates.length; },
+    setMessage: () => {},
+    setTaskHistory: () => {},
+    setTasks: (updater) => { localTask = (typeof updater === "function" ? updater([localTask]) : updater)[0] as TaskStateRuntimeLocalTask; },
+    sortTasksForUi: (tasks) => tasks,
+    tasks: [task],
+    timezone: "UTC",
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(task.id, "complete", ["2026-08-17"], { historicalOverride: true }), true);
+  assert.equal(actionType, "complete_task");
+  assert.equal(actionLogicalDate, "2026-08-17");
+  assert.equal(localTask.status, "complete");
+  assert.equal(rewardCalls, 1);
+});
+
 test("multi-date History sync threads revisions and reconciles once after the sequence", async () => {
   const task = canonicalTask("multi-date-calendar");
   const dates = ["2026-08-19", "2026-08-17", "2026-08-18"];

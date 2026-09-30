@@ -150,10 +150,21 @@ test("Amount Enter fast-submits actual and plan food, while invalid or composing
   assert.match(inlineEditorSource, /event\.key !== "Enter"/);
   assert.match(inlineEditorSource, /event\.isComposing/);
   assert.match(inlineEditorSource, /event\.preventDefault\(\)/);
-  assert.match(inlineEditorSource, /if \(canSaveMeal\) \{\s+void submitMeal\(\);/);
-  assert.match(submitSource, /if \(!canSaveMeal \|\| mealSaveInFlightRef\.current\)/);
+  assert.match(inlineEditorSource, /if \(canSaveMeal\) \{\s+const shouldRefocusFood = mealEditorMode === "actual" && !isQuickEntryOpen && editingMealId === null && editingMealPlanId === null;\s+void submitMeal\(\)\.then\(\(saved\) => \{\s+if \(saved && shouldRefocusFood\) \{\s+mealFoodAutocompleteRef\.current\?\.focus\(\);/);
+  assert.match(submitSource, /if \(!canSaveMeal \|\| mealSaveInFlightRef\.current\) \{\s+return false;/);
+  assert.match(submitSource, /return await handleSaveMeal\(\);/);
   assert.match(inlineEditorSource, /: isQuickEntryOpen \? "Add Quick Entry" : "Add Food"/);
   assert.match(inlineEditorSource, /editingMealPlanId \? "Save Plan" : "Add to Plan"/);
+});
+
+test("Food refocus is success-only and keyboard-only", () => {
+  const saveButtonSource = inlineEditorSource.slice(inlineEditorSource.indexOf('<button className="ui-pill-button-strong-light'));
+  assert.match(inlineEditorSource, /focusRef=\{mealFoodAutocompleteRef\}/);
+  assert.match(saveSource, /if \(!saved\) \{\s+return false;\s+\}/);
+  assert.match(saveSource, /return true;/);
+  assert.match(inlineEditorSource, /if \(saved && shouldRefocusFood\) \{\s+mealFoodAutocompleteRef\.current\?\.focus\(\);/);
+  assert.match(saveButtonSource, /onClick=\{\(\) => \{ void submitMeal\(\); \}\}/);
+  assert.doesNotMatch(saveButtonSource, /mealFoodAutocompleteRef|\.focus/);
 });
 
 test("Done is the plan action and planned time no longer disables it", () => {
@@ -250,7 +261,7 @@ test("selected ledger date and active section are the canonical new-entry author
 });
 
 test("successful save preserves context, clears food fields, and keeps the inline editor open", () => {
-  assert.match(saveSource, /if \(saved\) \{/);
+  assert.match(saveSource, /if \(!saved\) \{\s+return false;\s+\}/);
   assert.match(saveSource, /setMealDraft\(\(current\) => \{[\s\S]*?resetMealDraftForNextItem\(current\)/);
   assert.match(saveSource, /date: selectedMealDate,/);
   assert.match(saveSource, /mealSlot: activeMealEntrySlot,/);
@@ -263,7 +274,7 @@ test("successful save preserves context, clears food fields, and keeps the inlin
 test("failed canonical saves leave the inline draft intact", () => {
   assert.match(saveSource, /addMealEntry\(\{/);
   assert.equal((saveSource.match(/resetMealDraftForNextItem/g) ?? []).length, 2);
-  assert.match(saveSource, /if \(saved\) \{/);
+  assert.match(saveSource, /if \(!saved\) \{\s+return false;\s+\}/);
 });
 
 test("Done closes only the active inline editor", () => {
