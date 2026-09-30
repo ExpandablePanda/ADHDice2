@@ -5893,7 +5893,7 @@ export function TaskManagementTableV2({
     const childLabel = tableStepComposerChildLabels[parentTaskId] ?? "Step";
     return (
       <div
-        className={`${TASK_TABLE_GRID_ORIGIN_CLASS} w-max min-w-full rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-left transition dark:bg-[#181226]`}
+        className={`${TASK_TABLE_GRID_ORIGIN_CLASS} min-w-0 w-full max-w-[52rem] rounded-[1.15rem] border border-transparent bg-white py-1 pl-[3px] pr-0 text-left transition dark:bg-[#181226]`}
         data-table-step-draft-row={parentTaskId}
         onClick={(event) => event.stopPropagation()}
         style={{ gridColumn: "1 / -1" }}

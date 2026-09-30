@@ -31,6 +31,7 @@ test("TasksSimpleList forwards pinning and preserves child creation wiring", () 
   assert.match(previewSource, /<TaskChildCreationComposer/);
   assert.match(previewSource, /onCreateChildTask=\{onCreateChildTask\}/);
   assert.match(previewSource, /childLabel="Substep"/);
+  assert.match(previewSource, /className="mt-2 min-w-0 w-full max-w-\[52rem\] pl-8"/);
 });
 
 test("List Step and Substep drafts use one rich child composer and preserve the clicked parent", () => {
@@ -39,5 +40,6 @@ test("List Step and Substep drafts use one rich child composer and preserve the 
   assert.match(previewSource, /parentTaskId=\{parentTaskId\}/);
   assert.match(previewSource, /parentTaskId=\{item\.id\}/);
   assert.match(previewSource, /setSubstepDraftParentId\(item\.id\)/);
+  assert.match(previewSource, /className="mt-2 min-w-0 w-full max-w-\[52rem\] rounded/);
   assert.match(source, /<StepsCardPreview[\s\S]*parentTaskId=\{task\.id\}/);
 });

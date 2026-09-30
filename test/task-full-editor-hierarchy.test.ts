@@ -145,6 +145,7 @@ test("row child creation uses the clicked row ID and renders the shared rich com
   assert.match(tableStepCreationComposerSource, /childLabel=\{childLabel\}/);
   assert.match(tableStepCreationComposerSource, /allTags=\{allTagOptions\}/);
   assert.match(tableStepCreationComposerSource, /taskTypeOptions=\{taskTypeFilterOptions\}/);
+  assert.match(tableStepCreationComposerSource, /min-w-0 w-full max-w-\[52rem\]/);
   assert.match(tableSource, /beginTableStepComposer\(task\.id\)/);
   assert.match(tableSource, /beginTableStepComposer\(item\.id, "Substep"\)/);
   assert.match(editorChildRowsSource, /data-full-editor-child-draft-row=\{item\.id\}/);

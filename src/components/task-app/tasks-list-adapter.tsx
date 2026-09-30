@@ -1331,7 +1331,7 @@ function StepsCardPreview({
       {!isExpanded ? null : (
         <>
       {showParentStepDraft && onCreateChildTask ? (
-        <div className="mt-2 rounded-[0.95rem] border border-[#e7defc] bg-[#fcfbff] px-3 py-3 dark:border-[#41306c] dark:bg-[#18112d]" onClick={(event) => event.stopPropagation()}>
+        <div className="mt-2 min-w-0 w-full max-w-[52rem] rounded-[0.95rem] border border-[#e7defc] bg-[#fcfbff] px-3 py-3 dark:border-[#41306c] dark:bg-[#18112d]" onClick={(event) => event.stopPropagation()}>
           <TaskChildCreationComposer
             allTags={allTagOptions}
             childLabel="Step"
@@ -1752,7 +1752,7 @@ function StepsCardPreview({
                     </div>
                   </div>
                 {substepDraftParentId === item.id && onCreateChildTask ? (
-                  <div className="mt-2 pl-8" onClick={(event) => event.stopPropagation()}>
+                  <div className="mt-2 min-w-0 w-full max-w-[52rem] pl-8" onClick={(event) => event.stopPropagation()}>
                     <TaskChildCreationComposer
                       allTags={allTagOptions}
                       childLabel="Substep"

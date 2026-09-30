@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.71`.
+- Current working app version: `7.15.72`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-29 7.15.72 Side child composer width correction
+
+The shared rich Add Step/Add Substep composer remains behaviorally unchanged,
+but its Table and List containers now use a responsive `max-w-[52rem]` width
+boundary. The composer stays left-aligned with the Task/Step content area,
+wraps its fields within that compact surface, and no longer spans the full
+Table width. Focused child-composer wiring, targeted lint, and
+`git diff --check` are the source verification boundary; browser/manual QA
+remains Andrew-owned and unverified.
 
 ## 2026-09-29 7.15.71 Side creation-flow correction
 
