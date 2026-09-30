@@ -232,7 +232,7 @@ export function TaskCreationComposer({
         <span className="sr-only">{titleLabel}</span>
         <input
           autoComplete="off"
-          className="health-input task-creation-title-input"
+          className={`${TASK_TABLE_INPUT_CLASS} task-creation-input h-12`}
           disabled={isCreating}
           onChange={(event) => setTitle(event.target.value)}
           placeholder={titleLabel}

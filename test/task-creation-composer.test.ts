@@ -55,11 +55,14 @@ test("shared creation composer exposes Home metadata semantics for Home and chil
 
 test("shared creation composer is shellless and locally suppresses input focus styling", () => {
   const composer = read("../src/components/task-app/task-creation-composer.tsx");
+  const home = read("../src/components/task-app/home-page.tsx");
   const globals = read("../src/app/globals.css");
   assert.match(composer, /data-task-creation-composer/);
   assert.match(composer, /className="flex flex-wrap items-end gap-2 bg-white dark:bg-\[#181226\]"/);
-  assert.doesNotMatch(composer, /presentation|rounded-\[1rem\] border border-\[#e4def2\] bg-\[#fcfbff\] p-2\.5/);
-  assert.match(globals, /\[data-task-creation-composer\][\s\S]*task-creation-title-input[\s\S]*outline: none !important/);
+  assert.match(composer, /className=\{`\$\{TASK_TABLE_INPUT_CLASS\} task-creation-input h-12`\}/);
+  assert.doesNotMatch(composer, /health-input|task-creation-title-input|presentation|rounded-\[1rem\] border border-\[#e4def2\] bg-\[#fcfbff\] p-2\.5/);
+  assert.match(home, /\{isCreateOpen \? \([\s\S]*<div className="mt-3">[\s\S]*<TaskCreationComposer/);
+  assert.doesNotMatch(globals, /task-creation-title-input/);
   assert.match(globals, /\[data-task-creation-composer\][\s\S]*task-creation-input[\s\S]*border-color: #e5e0f5 !important/);
   assert.match(globals, /input\.health-input:not\(\[type="checkbox"\]\):not\(\[type="radio"\]\):not\(\[type="range"\]\):focus-visible[\s\S]*border-color: var\(--accent\) !important/);
 });

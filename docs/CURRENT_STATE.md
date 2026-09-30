@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.15.74`.
+- Current working app version: `7.15.75`.
 - Current release group: `7.15.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.15.75 Side TaskCreationComposer focus and spacing correction
+
+The composer title now uses the neutral Task input class rather than
+`health-input`, so global Health focus styling cannot add its purple treatment.
+The remaining composer-scoped input focus reset covers the title, date, time,
+tag, and cadence fields while preserving their resting appearance. Home
+To-do New Task now has a simple `mt-3` separation below Search without
+reintroducing a shell; child positioning and `max-w-[52rem]` remain unchanged.
+Focused composer checks, targeted lint, and `git diff --check` are the source
+verification boundary; browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-09-29 7.15.74 Side shared creation shell and focus correction
 

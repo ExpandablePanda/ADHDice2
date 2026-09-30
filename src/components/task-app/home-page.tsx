@@ -1451,13 +1451,15 @@ export function HomePage({
             </span>
           </label>
           {isCreateOpen ? (
-            <TaskCreationComposer
-              allTags={allTags}
-              onCancel={cancelCreateTask}
-              onCreate={handleCreateTask}
-              onCreated={() => setIsCreateOpen(false)}
-              taskTypeOptions={taskTypeOptions}
-            />
+            <div className="mt-3">
+              <TaskCreationComposer
+                allTags={allTags}
+                onCancel={cancelCreateTask}
+                onCreate={handleCreateTask}
+                onCreated={() => setIsCreateOpen(false)}
+                taskTypeOptions={taskTypeOptions}
+              />
+            </div>
           ) : null}
           {isSearchOpen && query.trim() ? (
             <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">

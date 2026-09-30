@@ -333,14 +333,6 @@
     outline-offset: 2px;
   }
 
-  [data-task-creation-composer] input.task-creation-title-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
-  [data-task-creation-composer] input.task-creation-title-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
-    border-color: var(--border-soft) !important;
-    outline: none !important;
-    box-shadow: none !important;
-    outline-offset: 0;
-  }
-
   [data-task-creation-composer] input.task-creation-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
   [data-task-creation-composer] input.task-creation-input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus-visible {
     border-color: #e5e0f5 !important;
