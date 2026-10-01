@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.22`.
+- Current working app version: `7.16.23`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.16.23 Quota recurrence canonical/deployment corrections
+
+Quota recurrence now treats the canonical quota-period ledger plus canonical
+History as the balance authority. Natural period rollover persists one
+idempotent `period_close` fact, Clear Balance persists one idempotent
+append-only adjustment fact, and cached Task balance fields remain
+rebuildable projections. Facts are loaded by the canonical read model and
+included in current-projection source fencing. The first partial period is
+bounded by eligible logical-day capacity since its schedule boundary; later
+complete periods use configured quota. Reward entitlement persistence now
+requires the planner's explicit reward-eligible decision, so voluntary
+Balance-off surplus outcomes do not create rewards, banked rolls, or quota
+increments.
+
+The deployable source package is
+`supabase/patch_task_quota_recurrence_runtime_7_16_23.sql`. It installs the
+quota-aware Task State command RPC, canonical Task creation RPC, quota ledger
+constraints and projection fence after the 7.16.22 quota migration. The
+canonical bootstrap schema and consolidated `schema.sql` contain the same
+quota-period structures, owner-safe relationships, indexes, grants, and RLS
+assumptions. SQL remains source-only and has NOT been applied; Edge functions
+have NOT been deployed. Browser/manual and live Supabase QA remain pending.
 
 ## 2026-09-30 7.16.22 X Per Week / X Per Month quota recurrence
 

@@ -584,6 +584,54 @@ create table if not exists public.adhdice_task_schedule_boundaries (
   )
 );
 
+create table if not exists public.adhdice_task_quota_period_facts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entity_id uuid not null,
+  entity_kind text not null check (entity_kind in ('parent', 'step', 'substep')),
+  schedule_boundary_id uuid not null,
+  period_kind text not null check (period_kind in ('week', 'month')),
+  period_key text not null check (char_length(trim(period_key)) > 0),
+  period_start date not null,
+  period_end date not null,
+  base_quota integer not null check (base_quota between 1 and 31),
+  incoming_balance integer not null default 0,
+  successful_days integer not null default 0 check (successful_days >= 0),
+  next_balance integer not null default 0,
+  balance_enabled boolean not null,
+  event_kind text not null check (event_kind in ('period_close', 'clear_balance')),
+  command_id uuid,
+  idempotence_identity text not null check (char_length(trim(idempotence_identity)) > 0),
+  source text not null default 'task_state_command' check (char_length(trim(source)) > 0),
+  revision bigint not null default 1 check (revision >= 1),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint adhdice_task_quota_period_facts_id_key unique (user_id, id),
+  constraint adhdice_task_quota_period_facts_identity_key unique (user_id, idempotence_identity),
+  constraint adhdice_task_quota_period_facts_period_key check (
+    (period_kind = 'week' and period_key = to_char(period_start, 'YYYY-MM-DD'))
+    or (period_kind = 'month' and period_key = to_char(period_start, 'YYYY-MM'))
+  ),
+  constraint adhdice_task_quota_period_facts_period_check check (period_start <= period_end),
+  constraint adhdice_task_quota_period_facts_balance_check check (
+    balance_enabled or (incoming_balance = 0 and next_balance = 0)
+  ),
+  constraint adhdice_task_quota_period_facts_clear_check check (
+    event_kind <> 'clear_balance' or next_balance = 0
+  )
+);
+
+create unique index if not exists adhdice_task_quota_period_facts_period_close_key
+  on public.adhdice_task_quota_period_facts (
+    user_id, entity_id, period_kind, period_key, schedule_boundary_id
+  ) where event_kind = 'period_close';
+
+create index if not exists adhdice_task_quota_period_facts_entity_period_idx
+  on public.adhdice_task_quota_period_facts (user_id, entity_id, period_start, created_at, id);
+
+create index if not exists adhdice_task_quota_period_facts_boundary_period_idx
+  on public.adhdice_task_quota_period_facts (user_id, schedule_boundary_id, period_start, created_at, id);
+
 create table if not exists public.adhdice_task_occurrences (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -990,6 +1038,28 @@ begin
       on delete restrict;
   end if;
 
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_entity_fkey') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_entity_fkey
+      foreign key (user_id, entity_id)
+      references public.adhdice_clean_tasks (user_id, id)
+      on delete restrict;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_boundary_fkey') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_boundary_fkey
+      foreign key (user_id, schedule_boundary_id)
+      references public.adhdice_task_schedule_boundaries (user_id, id)
+      on delete restrict;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_command_fkey') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_command_fkey
+      foreign key (user_id, command_id)
+      references public.adhdice_task_command_operations (user_id, command_id)
+      on delete restrict;
+  end if;
+
   if not exists (select 1 from pg_constraint where conname = 'adhdice_task_occurrences_entity_fkey') then
     alter table public.adhdice_task_occurrences
       add constraint adhdice_task_occurrences_entity_fkey
@@ -1268,6 +1338,12 @@ create trigger adhdice_task_schedule_boundaries_set_updated_at
   before update on public.adhdice_task_schedule_boundaries
   for each row execute function public.adhdice_task_state_set_updated_at();
 
+drop trigger if exists adhdice_task_quota_period_facts_set_updated_at
+  on public.adhdice_task_quota_period_facts;
+create trigger adhdice_task_quota_period_facts_set_updated_at
+  before update on public.adhdice_task_quota_period_facts
+  for each row execute function public.adhdice_task_state_set_updated_at();
+
 drop trigger if exists adhdice_task_occurrences_set_updated_at
   on public.adhdice_task_occurrences;
 create trigger adhdice_task_occurrences_set_updated_at
@@ -1313,6 +1389,7 @@ create trigger adhdice_task_reward_claim_consumptions_set_updated_at
 alter table public.adhdice_task_state_schema_contract enable row level security;
 alter table public.adhdice_task_command_operations enable row level security;
 alter table public.adhdice_task_schedule_boundaries enable row level security;
+alter table public.adhdice_task_quota_period_facts enable row level security;
 alter table public.adhdice_task_occurrences enable row level security;
 alter table public.adhdice_task_occurrence_effective_overrides enable row level security;
 alter table public.adhdice_task_history_facts enable row level security;
@@ -1330,6 +1407,12 @@ create policy "Users can read canonical command operations"
 drop policy if exists "Users can read canonical schedule boundaries" on public.adhdice_task_schedule_boundaries;
 create policy "Users can read canonical schedule boundaries"
   on public.adhdice_task_schedule_boundaries
+  for select to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users can read canonical quota period facts" on public.adhdice_task_quota_period_facts;
+create policy "Users can read canonical quota period facts"
+  on public.adhdice_task_quota_period_facts
   for select to authenticated
   using ((select auth.uid()) = user_id);
 
@@ -1378,6 +1461,7 @@ create policy "Users can read canonical reward claim consumptions"
 revoke all on table public.adhdice_task_state_schema_contract from public, anon, authenticated;
 revoke all on table public.adhdice_task_command_operations from public, anon, authenticated;
 revoke all on table public.adhdice_task_schedule_boundaries from public, anon, authenticated;
+revoke all on table public.adhdice_task_quota_period_facts from public, anon, authenticated;
 revoke all on table public.adhdice_task_occurrences from public, anon, authenticated;
 revoke all on table public.adhdice_task_occurrence_effective_overrides from public, anon, authenticated;
 revoke all on table public.adhdice_task_history_facts from public, anon, authenticated;
@@ -1388,6 +1472,7 @@ revoke all on table public.adhdice_task_reward_claim_consumptions from public, a
 
 grant select on table public.adhdice_task_command_operations to authenticated;
 grant select on table public.adhdice_task_schedule_boundaries to authenticated;
+grant select on table public.adhdice_task_quota_period_facts to authenticated;
 grant select on table public.adhdice_task_occurrences to authenticated;
 grant select on table public.adhdice_task_occurrence_effective_overrides to authenticated;
 grant select on table public.adhdice_task_history_facts to authenticated;

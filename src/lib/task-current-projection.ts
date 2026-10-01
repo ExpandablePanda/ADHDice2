@@ -215,6 +215,25 @@ function scheduleFence(readModel: CanonicalTaskStateReadModel) {
       .map(canonicalOverrideSemantics),
     calendar_overrides: sortByStable(readModel.calendarOverrides, (row) => [row.logical_date, row.id])
       .map(canonicalCalendarOverrideSemantics),
+    quota_period_facts: sortByStable(readModel.quotaPeriodFacts ?? [], (row) => [row.period_start, row.created_at, row.id])
+      .map((row) => ({
+        id: row.id,
+        entity_id: row.entity_id,
+        period_kind: row.period_kind,
+        period_key: row.period_key,
+        period_start: row.period_start,
+        period_end: row.period_end,
+        schedule_boundary_id: row.schedule_boundary_id,
+        base_quota: row.base_quota,
+        incoming_balance: row.incoming_balance,
+        successful_days: row.successful_days,
+        next_balance: row.next_balance,
+        balance_enabled: row.balance_enabled,
+        event_kind: row.event_kind,
+        command_id: row.command_id,
+        idempotence_identity: row.idempotence_identity,
+        revision: row.revision,
+      })),
   });
 }
 
@@ -459,6 +478,7 @@ function validateInputs(
     ...readModel.occurrenceEffectiveOverrides,
     ...readModel.historyFacts,
     ...readModel.calendarOverrides,
+    ...(readModel.quotaPeriodFacts ?? []),
     ...readModel.commandOperations,
   ];
   for (const row of scopedRows) {

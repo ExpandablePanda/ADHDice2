@@ -1,3 +1,100 @@
+-- ADHDice 7.16.23 quota recurrence runtime/deployment correction.
+--
+-- Apply only after patch_task_quota_recurrence_7_16_22.sql. This source-only
+-- package installs the ledger constraints, quota-aware Task State command RPC,
+-- canonical creation RPC, and projection source-fence correction together.
+-- It has not been applied to any environment.
+
+begin;
+
+alter table public.adhdice_task_quota_period_facts
+  add column if not exists period_kind text,
+  add column if not exists period_key text,
+  add column if not exists period_start date,
+  add column if not exists period_end date,
+  add column if not exists base_quota integer,
+  add column if not exists incoming_balance integer,
+  add column if not exists successful_days integer,
+  add column if not exists next_balance integer,
+  add column if not exists balance_enabled boolean,
+  add column if not exists event_kind text,
+  add column if not exists command_id uuid,
+  add column if not exists idempotence_identity text,
+  add column if not exists source text,
+  add column if not exists schedule_boundary_id uuid,
+  add column if not exists revision bigint not null default 1,
+  add column if not exists updated_at timestamptz not null default now();
+
+alter table public.adhdice_task_quota_period_facts
+  alter column schedule_boundary_id set not null;
+
+do $ddl$
+begin
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_period_check') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_period_check check (period_start <= period_end);
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_period_key') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_period_key check (
+        (period_kind = 'week' and period_key = to_char(period_start, 'YYYY-MM-DD'))
+        or (period_kind = 'month' and period_key = to_char(period_start, 'YYYY-MM'))
+      );
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_balance_check') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_balance_check check (
+        balance_enabled or (incoming_balance = 0 and next_balance = 0)
+      );
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_clear_check') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_clear_check check (
+        event_kind <> 'clear_balance' or next_balance = 0
+      );
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_entity_fkey') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_entity_fkey
+      foreign key (user_id, entity_id)
+      references public.adhdice_clean_tasks (user_id, id)
+      on delete restrict;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_boundary_fkey') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_boundary_fkey
+      foreign key (user_id, schedule_boundary_id)
+      references public.adhdice_task_schedule_boundaries (user_id, id)
+      on delete restrict;
+  end if;
+  if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_command_fkey') then
+    alter table public.adhdice_task_quota_period_facts
+      add constraint adhdice_task_quota_period_facts_command_fkey
+      foreign key (user_id, command_id)
+      references public.adhdice_task_command_operations (user_id, command_id)
+      on delete restrict;
+  end if;
+end;
+$ddl$;
+
+create unique index if not exists adhdice_task_quota_period_facts_period_close_key
+  on public.adhdice_task_quota_period_facts (
+    user_id, entity_id, period_kind, period_key, schedule_boundary_id
+  ) where event_kind = 'period_close';
+create index if not exists adhdice_task_quota_period_facts_entity_period_idx
+  on public.adhdice_task_quota_period_facts (user_id, entity_id, period_start, created_at, id);
+create index if not exists adhdice_task_quota_period_facts_boundary_period_idx
+  on public.adhdice_task_quota_period_facts (user_id, schedule_boundary_id, period_start, created_at, id);
+
+alter table public.adhdice_task_quota_period_facts enable row level security;
+drop policy if exists "Users can read canonical quota period facts" on public.adhdice_task_quota_period_facts;
+create policy "Users can read canonical quota period facts"
+  on public.adhdice_task_quota_period_facts
+  for select to authenticated
+  using ((select auth.uid()) = user_id);
+revoke all on table public.adhdice_task_quota_period_facts from public, anon, authenticated;
+grant select on table public.adhdice_task_quota_period_facts to authenticated;
+
 -- M3A: canonical Task State command persistence foundation.
 --
 -- Authored for separate review and deployment.  This file is intentionally
@@ -1410,3 +1507,613 @@ $function$;
 
 revoke all on function public.adhdice_execute_task_state_command(uuid, jsonb) from public, anon, authenticated;
 grant execute on function public.adhdice_execute_task_state_command(uuid, jsonb) to service_role;
+
+-- ADHDice 7.7.39 / M3B: trusted canonical Task creation.
+--
+-- This is intentionally a narrow service-role-only creation RPC.  It is not a
+-- general canonical patch surface and it does not create History or rewards.
+-- The authenticated Edge function derives the owner and sends a validated
+-- TypeScript creation plan.  This function inserts the Task and its initial
+-- schedule boundary in one transaction.
+
+create or replace function public.adhdice_create_canonical_task(
+  p_user_id uuid,
+  p_plan jsonb
+)
+returns jsonb
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+declare
+  v_task_input public.adhdice_clean_tasks%rowtype;
+  v_task public.adhdice_clean_tasks%rowtype;
+  v_profile public.adhdice_user_profiles%rowtype;
+  v_canonical jsonb;
+  v_schedule jsonb;
+  v_parent_task public.adhdice_clean_tasks%rowtype;
+  v_boundary public.adhdice_task_schedule_boundaries%rowtype;
+  v_now timestamptz := clock_timestamp();
+  v_entity_kind text;
+  v_terminal_state text;
+  v_container_state text;
+  v_prior_container_state text;
+  v_prior_container_state_status text;
+  v_workflow_state text;
+  v_workflow_revision bigint;
+  v_canonical_revision bigint;
+  v_effective_from date;
+  v_schedule_model text;
+  v_repeat_frequency text;
+  v_repeat_interval integer;
+  v_repeat_days smallint[];
+  v_repeat_day_of_month integer;
+  v_repeat_monthly_mode text;
+  v_repeat_monthly_ordinal text;
+  v_repeat_monthly_weekday smallint;
+  v_repeat_quota_count integer;
+  v_repeat_quota_balance_enabled boolean;
+  v_one_time_due_on date;
+  v_due_time time;
+  v_anchor_date date;
+  v_anchor_kind text;
+  v_anchor_confidence text;
+  v_historical_scope_known boolean;
+  v_prospective_only boolean;
+  v_settings_revision bigint;
+  v_timezone text;
+  v_day_start_time time;
+  v_source text;
+begin
+  if current_user <> 'service_role' then
+    raise exception 'Canonical Task creation requires the trusted service-role boundary.'
+      using errcode = '42501';
+  end if;
+  if p_user_id is null then
+    raise exception 'Canonical Task creation owner is required.' using errcode = '22023';
+  end if;
+  if p_plan is null or jsonb_typeof(p_plan) <> 'object' then
+    raise exception 'Canonical Task creation plan must be an object.' using errcode = '22023';
+  end if;
+  if exists (
+    select 1
+    from jsonb_object_keys(p_plan) as key_name(key)
+    where key not in ('task', 'canonical', 'schedule')
+  ) then
+    raise exception 'Canonical Task creation plan contains unsupported fields.' using errcode = '22023';
+  end if;
+  if jsonb_typeof(p_plan->'task') <> 'object'
+     or jsonb_typeof(p_plan->'canonical') <> 'object'
+     or jsonb_typeof(p_plan->'schedule') <> 'object' then
+    raise exception 'Canonical Task creation plan is incomplete.' using errcode = '22023';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_object_keys(p_plan->'task') as key_name(key)
+    where key not in (
+      'parent_task_id', 'title', 'task_type', 'notes', 'status', 'priority', 'priority_level', 'energy',
+      'is_urgent', 'is_important', 'due_on', 'active_status_logical_date', 'active_occurrence_due_on',
+      'scheduled_on', 'due_time', 'estimated_minutes', 'actual_seconds', 'tags', 'external_link_label',
+      'external_link_url', 'one_step_at_a_time', 'subtasks_auto_reset', 'repeat_frequency',
+      'repeat_interval', 'repeat_days_of_week', 'repeat_day_of_month', 'repeat_monthly_mode',
+      'repeat_monthly_ordinal', 'repeat_monthly_weekday', 'pinned_at', 'pin_order', 'sort_order',
+      'completed_at', 'trashed_at', 'repeat_quota_count', 'repeat_quota_balance_enabled'
+    )
+  ) then
+    raise exception 'Canonical Task creation task input contains privileged or unsupported fields.' using errcode = '22023';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_object_keys(p_plan->'canonical') as key_name(key)
+    where key not in (
+      'entity_kind', 'terminal_state', 'container_state', 'prior_container_state',
+      'prior_container_state_status', 'workflow_state', 'workflow_revision', 'canonical_revision'
+    )
+  ) then
+    raise exception 'Canonical Task creation canonical input contains unsupported fields.' using errcode = '22023';
+  end if;
+
+  if exists (
+    select 1
+    from jsonb_object_keys(p_plan->'schedule') as key_name(key)
+    where key not in (
+      'effective_from_logical_date', 'schedule_model', 'repeat_frequency', 'repeat_interval',
+      'repeat_days_of_week', 'repeat_day_of_month', 'repeat_monthly_mode', 'repeat_monthly_ordinal',
+      'repeat_monthly_weekday', 'one_time_due_on', 'due_time', 'anchor_date', 'anchor_kind',
+      'anchor_confidence', 'historical_scope_known', 'prospective_only', 'logical_day_settings_revision',
+      'timezone', 'day_start_time', 'source', 'repeat_quota_count', 'repeat_quota_balance_enabled'
+    )
+  ) then
+    raise exception 'Canonical Task creation schedule input contains unsupported fields.' using errcode = '22023';
+  end if;
+
+  select * into v_profile
+  from public.adhdice_user_profiles
+  where user_id = p_user_id;
+  if not found then
+    raise exception 'Canonical logical-day profile is unavailable.' using errcode = '22023';
+  end if;
+
+  v_task_input := jsonb_populate_record(null::public.adhdice_clean_tasks, p_plan->'task');
+  if nullif(btrim(v_task_input.title), '') is null then
+    raise exception 'A non-empty Task title is required.' using errcode = '22023';
+  end if;
+  if coalesce(v_task_input.status, 'pending'::public.adhdice_clean_task_status)
+      not in ('pending', 'upcoming', 'not_due', 'archived') then
+    raise exception 'This Task snapshot cannot be initialized without handled provenance.' using errcode = '22023';
+  end if;
+  if v_task_input.completed_at is not null or v_task_input.trashed_at is not null then
+    raise exception 'Terminal or Trash timestamps require canonical provenance.' using errcode = '22023';
+  end if;
+  if v_task_input.active_status_logical_date is not null or v_task_input.active_occurrence_due_on is not null then
+    raise exception 'Initial canonical Task status projections must be null.' using errcode = '22023';
+  end if;
+
+  v_canonical := p_plan->'canonical';
+  v_entity_kind := v_canonical->>'entity_kind';
+  v_terminal_state := v_canonical->>'terminal_state';
+  v_container_state := v_canonical->>'container_state';
+  v_prior_container_state := v_canonical->>'prior_container_state';
+  v_prior_container_state_status := v_canonical->>'prior_container_state_status';
+  v_workflow_state := v_canonical->>'workflow_state';
+  v_workflow_revision := (v_canonical->>'workflow_revision')::bigint;
+  v_canonical_revision := (v_canonical->>'canonical_revision')::bigint;
+
+  if v_entity_kind not in ('parent', 'step', 'substep')
+     or v_terminal_state <> 'active'
+     or v_workflow_state <> 'none'
+     or v_workflow_revision <> 1
+     or v_canonical_revision <> 1
+     or v_prior_container_state is not null
+     or v_prior_container_state_status <> 'not_applicable' then
+    raise exception 'Initial canonical Task state is invalid.' using errcode = '22023';
+  end if;
+  if v_container_state not in ('active', 'archived') then
+    raise exception 'Initial canonical Task container state is invalid.' using errcode = '22023';
+  end if;
+  if (v_task_input.status = 'archived' and v_container_state <> 'archived')
+     or (v_task_input.status is distinct from 'archived' and v_container_state <> 'active') then
+    raise exception 'Initial canonical container state does not match the Task snapshot.' using errcode = '22023';
+  end if;
+
+  if v_task_input.parent_task_id is null then
+    if v_entity_kind <> 'parent' then
+      raise exception 'A root Task must use the parent canonical entity kind.' using errcode = '22023';
+    end if;
+  else
+    select * into v_parent_task
+    from public.adhdice_clean_tasks
+    where user_id = p_user_id and id = v_task_input.parent_task_id;
+    if not found then
+      raise exception 'The Task parent was not found for this owner.' using errcode = '23503';
+    end if;
+    if (v_parent_task.parent_task_id is null and v_entity_kind <> 'step')
+       or (v_parent_task.parent_task_id is not null and v_entity_kind <> 'substep') then
+      raise exception 'The canonical Task entity kind does not match its parent relationship.' using errcode = '22023';
+    end if;
+  end if;
+
+  v_schedule := p_plan->'schedule';
+  if jsonb_typeof(v_schedule->'repeat_days_of_week') <> 'array' then
+    raise exception 'Canonical Task repeat weekdays must be an array.' using errcode = '22023';
+  end if;
+  v_effective_from := (v_schedule->>'effective_from_logical_date')::date;
+  v_schedule_model := v_schedule->>'schedule_model';
+  v_repeat_frequency := v_schedule->>'repeat_frequency';
+  v_repeat_interval := (v_schedule->>'repeat_interval')::integer;
+  v_repeat_days := array(
+    select value::smallint
+    from jsonb_array_elements_text(v_schedule->'repeat_days_of_week') as item(value)
+  );
+  v_repeat_day_of_month := nullif(v_schedule->>'repeat_day_of_month', '')::integer;
+  v_repeat_monthly_mode := v_schedule->>'repeat_monthly_mode';
+  v_repeat_monthly_ordinal := v_schedule->>'repeat_monthly_ordinal';
+  v_repeat_monthly_weekday := nullif(v_schedule->>'repeat_monthly_weekday', '')::smallint;
+  v_repeat_quota_count := nullif(v_schedule->>'repeat_quota_count', '')::integer;
+  v_repeat_quota_balance_enabled := coalesce((v_schedule->>'repeat_quota_balance_enabled')::boolean, false);
+  v_one_time_due_on := nullif(v_schedule->>'one_time_due_on', '')::date;
+  v_due_time := nullif(v_schedule->>'due_time', '')::time;
+  v_anchor_date := nullif(v_schedule->>'anchor_date', '')::date;
+  v_anchor_kind := v_schedule->>'anchor_kind';
+  v_anchor_confidence := v_schedule->>'anchor_confidence';
+  v_historical_scope_known := (v_schedule->>'historical_scope_known')::boolean;
+  v_prospective_only := (v_schedule->>'prospective_only')::boolean;
+  v_settings_revision := (v_schedule->>'logical_day_settings_revision')::bigint;
+  v_timezone := v_schedule->>'timezone';
+  v_day_start_time := (v_schedule->>'day_start_time')::time;
+  v_source := v_schedule->>'source';
+
+  if v_schedule_model not in ('unscheduled', 'one_time', 'rolling', 'fixed')
+     or v_repeat_frequency not in ('none', 'daily', 'weekly', 'monthly', 'custom', 'daily_until_complete', 'per_week', 'per_month')
+     or v_repeat_interval < 1
+     or cardinality(v_repeat_days) > 7
+     or not (v_repeat_days <@ array[0, 1, 2, 3, 4, 5, 6]::smallint[])
+     or v_repeat_monthly_mode not in ('day_of_month', 'ordinal_weekday')
+     or (v_repeat_monthly_ordinal is not null and v_repeat_monthly_ordinal not in ('first', 'second', 'third', 'fourth', 'last'))
+     or (v_repeat_monthly_weekday is not null and v_repeat_monthly_weekday not between 0 and 6)
+     or v_anchor_kind not in ('user_selected', 'unknown')
+     or v_anchor_confidence not in ('proven', 'unavailable')
+     or v_source not in ('task_creation', 'task_import') then
+    raise exception 'Canonical Task schedule is invalid.' using errcode = '22023';
+  end if;
+  if (v_repeat_frequency = 'per_week' and (v_repeat_quota_count is null or v_repeat_quota_count not between 1 and 7))
+     or (v_repeat_frequency = 'per_month' and (v_repeat_quota_count is null or v_repeat_quota_count not between 1 and 31))
+     or (v_repeat_frequency not in ('per_week', 'per_month')
+         and (v_repeat_quota_count is not null or v_repeat_quota_balance_enabled)) then
+    raise exception 'Canonical Task quota recurrence fields are invalid.' using errcode = '22023';
+  end if;
+  if v_repeat_frequency not in ('per_week', 'per_month')
+     and (v_task_input.repeat_quota_count is not null or v_task_input.repeat_quota_balance_enabled is true) then
+    raise exception 'Canonical Task quota fields cannot be supplied for a non-quota repeat.' using errcode = '22023';
+  end if;
+  if v_repeat_frequency in ('per_week', 'per_month')
+     and v_task_input.repeat_quota_count is not null
+     and v_task_input.repeat_quota_count is distinct from v_repeat_quota_count then
+    raise exception 'Canonical Task task and schedule quota counts must match.' using errcode = '22023';
+  end if;
+  if v_repeat_frequency in ('per_week', 'per_month')
+     and v_task_input.repeat_quota_balance_enabled is not null
+     and v_task_input.repeat_quota_balance_enabled is distinct from v_repeat_quota_balance_enabled then
+    raise exception 'Canonical Task task and schedule quota balance settings must match.' using errcode = '22023';
+  end if;
+  if (v_schedule_model = 'unscheduled' and (v_repeat_frequency <> 'none' or v_one_time_due_on is not null or v_anchor_date is not null))
+     or (v_schedule_model = 'one_time' and (v_repeat_frequency <> 'none' or v_one_time_due_on is null))
+     or (v_schedule_model in ('rolling', 'fixed') and v_repeat_frequency = 'none') then
+    raise exception 'Canonical Task schedule model does not match its repeat metadata.' using errcode = '22023';
+  end if;
+  if (v_anchor_confidence = 'proven' and v_anchor_date is null)
+     or (v_anchor_confidence = 'unavailable' and v_anchor_date is not null)
+     or (v_anchor_kind = 'unknown' and v_anchor_date is not null) then
+    raise exception 'Canonical Task schedule anchor is invalid.' using errcode = '22023';
+  end if;
+  if v_historical_scope_known is distinct from false or v_prospective_only is distinct from true then
+    raise exception 'New Task schedule provenance must be prospective and retain no invented historical scope.' using errcode = '22023';
+  end if;
+  if v_timezone is distinct from v_profile.timezone
+     or v_day_start_time is distinct from v_profile.day_start_time::time
+     or v_settings_revision is distinct from v_profile.settings_revision then
+    raise exception 'Canonical logical-day settings do not match the owner profile.' using errcode = '22023';
+  end if;
+
+  insert into public.adhdice_clean_tasks (
+    user_id, parent_task_id, revision, title, task_type, notes, status, priority, priority_level, energy,
+    is_urgent, is_important, due_on, active_status_logical_date, active_occurrence_due_on,
+    scheduled_on, due_time, estimated_minutes, actual_seconds, tags, external_link_label,
+    external_link_url, one_step_at_a_time, subtasks_auto_reset, repeat_frequency, repeat_interval,
+    repeat_days_of_week, repeat_day_of_month, repeat_monthly_mode, repeat_monthly_ordinal,
+    repeat_quota_count, repeat_quota_balance_enabled, repeat_quota_balance, repeat_quota_balance_period,
+    repeat_monthly_weekday, pinned_at, pin_order, sort_order, completed_at, trashed_at,
+    canonicalization_status, entity_kind, terminal_state, container_state, prior_container_state,
+    prior_container_state_status, terminal_completed_at, container_trashed_at, workflow_state,
+    workflow_started_at, workflow_logical_date, workflow_occurrence_id, workflow_command_id,
+    workflow_revision, canonical_revision, canonical_created_at, canonical_updated_at,
+    projection_source_canonical_revision, projection_source_fingerprint, projection_version
+  )
+  values (
+    p_user_id, v_task_input.parent_task_id, 1, btrim(v_task_input.title), coalesce(v_task_input.task_type, 'task'), v_task_input.notes,
+    coalesce(v_task_input.status, 'pending'::public.adhdice_clean_task_status),
+    coalesce(v_task_input.priority, 'normal'::public.adhdice_clean_task_priority),
+    coalesce(v_task_input.priority_level, 0), coalesce(v_task_input.energy, 'none'::public.adhdice_clean_task_energy),
+    coalesce(v_task_input.is_urgent, false), coalesce(v_task_input.is_important, false), v_task_input.due_on,
+    null, null, v_task_input.scheduled_on, v_task_input.due_time, v_task_input.estimated_minutes,
+    coalesce(v_task_input.actual_seconds, 0), coalesce(v_task_input.tags, '{}'::text[]),
+    v_task_input.external_link_label, v_task_input.external_link_url,
+    coalesce(v_task_input.one_step_at_a_time, false), coalesce(v_task_input.subtasks_auto_reset, false),
+    coalesce(v_task_input.repeat_frequency, 'none'::public.adhdice_clean_task_repeat_frequency),
+    coalesce(v_task_input.repeat_interval, 1), coalesce(v_task_input.repeat_days_of_week, '{}'::smallint[]),
+    v_task_input.repeat_day_of_month, coalesce(v_task_input.repeat_monthly_mode, 'day_of_month'::public.adhdice_clean_task_repeat_monthly_mode),
+    v_task_input.repeat_monthly_ordinal, v_task_input.repeat_monthly_weekday,
+    case when v_repeat_frequency in ('per_week', 'per_month') then v_repeat_quota_count else null end,
+    case when v_repeat_frequency in ('per_week', 'per_month') then v_repeat_quota_balance_enabled else false end,
+    case when v_repeat_frequency in ('per_week', 'per_month') and v_repeat_quota_balance_enabled then 0 else null end,
+    case when v_repeat_frequency = 'per_week' and v_repeat_quota_balance_enabled then v_effective_from - ((extract(isodow from v_effective_from)::integer - 1) % 7)
+         when v_repeat_frequency = 'per_month' and v_repeat_quota_balance_enabled then date_trunc('month', v_effective_from)::date
+         else null end::text,
+    v_task_input.pinned_at,
+    v_task_input.pin_order, coalesce(v_task_input.sort_order, 0), null, null,
+    'canonical_runtime', v_entity_kind, v_terminal_state, v_container_state, null, v_prior_container_state_status,
+    null, null, v_workflow_state, null, null, null, null, v_workflow_revision, v_canonical_revision,
+    v_now, v_now, v_canonical_revision, 'canonical-task-create-v1:' || md5(p_plan::text), 'task-state-create-v1'
+  )
+  returning * into v_task;
+
+  insert into public.adhdice_task_schedule_boundaries (
+    user_id, entity_id, entity_kind, effective_from_logical_date, boundary_sequence, boundary_type,
+    schedule_model, repeat_frequency, repeat_interval, repeat_days_of_week, repeat_day_of_month,
+    repeat_monthly_mode, repeat_monthly_ordinal, repeat_monthly_weekday, repeat_quota_count,
+    repeat_quota_balance_enabled, one_time_due_on, due_time,
+    anchor_date, anchor_kind, anchor_confidence, historical_scope_known, prospective_only,
+    prior_boundary_id, affected_occurrence_id, logical_day_settings_revision, timezone, day_start_time,
+    actor_kind, actor_id, source, command_id, idempotence_identity, migration_operation_id,
+    migration_version, classifier_version, schema_contract_version, source_task_revision, revision,
+    created_at, updated_at
+  )
+  values (
+    p_user_id, v_task.id, v_entity_kind, v_effective_from, 1, 'initial', v_schedule_model,
+    v_repeat_frequency, v_repeat_interval, v_repeat_days, v_repeat_day_of_month, v_repeat_monthly_mode,
+    v_repeat_monthly_ordinal, v_repeat_monthly_weekday, v_repeat_quota_count,
+    v_repeat_quota_balance_enabled, v_one_time_due_on, v_due_time, v_anchor_date,
+    v_anchor_kind, v_anchor_confidence, v_historical_scope_known, v_prospective_only, null, null,
+    v_settings_revision, v_timezone, v_day_start_time, 'user', p_user_id, v_source, null,
+    'task-create:' || v_task.id::text, null, null, null, 'task-state-schema-v1', 1, 1, v_now, v_now
+  )
+  returning * into v_boundary;
+
+  return jsonb_build_object(
+    'task', to_jsonb(v_task),
+    'canonical_schedule_boundary', to_jsonb(v_boundary)
+  );
+end;
+$function$;
+
+revoke all on function public.adhdice_create_canonical_task(uuid, jsonb) from public, anon, authenticated;
+grant execute on function public.adhdice_create_canonical_task(uuid, jsonb) to service_role;
+
+create or replace function public.adhdice_get_task_current_projection_source_fences(
+  p_user_id uuid,
+  p_entity_id uuid,
+  p_projected_logical_date date
+)
+returns table(
+  schedule_boundary_revision text,
+  behavior_policy_revision text
+)
+language plpgsql
+security invoker
+set search_path = public, pg_temp
+as $function$
+declare
+  v_task public.adhdice_clean_tasks%rowtype;
+  v_schedule_payload jsonb;
+  v_behavior_payload jsonb;
+  v_tracking_payload jsonb;
+  v_tracking_malformed boolean;
+begin
+  if current_user <> 'service_role' then
+    raise exception 'Current Task projection source fences are backend-only.'
+      using errcode = '42501';
+  end if;
+  if p_user_id is null or p_entity_id is null or p_projected_logical_date is null then
+    raise exception 'Current Task projection source-fence identity is required.'
+      using errcode = '22023';
+  end if;
+
+  select task.* into v_task
+    from public.adhdice_clean_tasks task
+   where task.user_id = p_user_id
+     and task.id = p_entity_id
+     and task.permanently_deleted_at is null;
+  if not found then
+    raise exception 'Current Task projection source-fence Task is missing or not owned by the backend request.'
+      using errcode = '42501';
+  end if;
+
+  with recursive ancestry as (
+    select task.id,
+           task.user_id,
+           task.parent_task_id,
+           task.exclude_from_tracking,
+           array[task.id]::uuid[] as path,
+           false as cycle_detected,
+           0 as depth
+      from public.adhdice_clean_tasks task
+     where task.user_id = p_user_id
+       and task.id = p_entity_id
+    union all
+    select parent.id,
+           parent.user_id,
+           parent.parent_task_id,
+           parent.exclude_from_tracking,
+           ancestry.path || parent.id,
+           parent.id = any(ancestry.path),
+           ancestry.depth + 1
+      from ancestry
+      join public.adhdice_clean_tasks parent
+        on parent.user_id = p_user_id
+       and parent.id = ancestry.parent_task_id
+     where ancestry.parent_task_id is not null
+       and not ancestry.cycle_detected
+       and ancestry.depth < 256
+  )
+  select
+    coalesce(bool_or(
+      ancestry.cycle_detected
+      or (ancestry.parent_task_id is not null and not exists (
+        select 1
+          from public.adhdice_clean_tasks missing_parent
+         where missing_parent.user_id = p_user_id
+           and missing_parent.id = ancestry.parent_task_id
+      ))
+      or (ancestry.depth >= 256 and ancestry.parent_task_id is not null)
+    ), false),
+    coalesce(jsonb_agg(
+      jsonb_build_object(
+        'id', ancestry.id,
+        'parent_task_id', ancestry.parent_task_id,
+        'exclude_from_tracking', ancestry.exclude_from_tracking
+      ) order by ancestry.depth
+    ), '[]'::jsonb)
+    into v_tracking_malformed, v_tracking_payload
+    from ancestry;
+
+  if v_tracking_malformed then
+    raise exception 'Current Task projection tracking hierarchy is malformed.'
+      using errcode = '55000';
+  end if;
+
+  v_schedule_payload := pg_catalog.jsonb_build_object(
+    'version', 'task-current-projection-schedule-fence-v2',
+    'user_id', p_user_id,
+    'entity_id', p_entity_id,
+    'boundaries', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(boundary) - array['created_at', 'updated_at']::text[]
+        order by boundary.boundary_sequence, boundary.id
+      )
+        from public.adhdice_task_schedule_boundaries boundary
+       where boundary.user_id = p_user_id
+         and boundary.entity_id = p_entity_id
+    ), '[]'::jsonb),
+    'quota_period_facts', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(fact) - array['created_at', 'updated_at']::text[]
+        order by fact.period_start, fact.created_at, fact.id
+      )
+        from public.adhdice_task_quota_period_facts fact
+       where fact.user_id = p_user_id
+         and fact.entity_id = p_entity_id
+    ), '[]'::jsonb),
+    'occurrences', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(occurrence) - array['created_at', 'updated_at']::text[]
+        order by occurrence.scheduled_due_on, occurrence.id
+      )
+        from public.adhdice_task_occurrences occurrence
+       where occurrence.user_id = p_user_id
+         and occurrence.entity_id = p_entity_id
+         and occurrence.resolution_state <> 'superseded'
+    ), '[]'::jsonb),
+    'occurrence_effective_overrides', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(override_row) - array['created_at', 'updated_at']::text[]
+        order by override_row.action_logical_date, override_row.override_sequence, override_row.id
+      )
+        from public.adhdice_task_occurrence_effective_overrides override_row
+       where override_row.user_id = p_user_id
+         and override_row.entity_id = p_entity_id
+    ), '[]'::jsonb),
+    'active_calendar_overrides', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(calendar_row) - array['created_at', 'updated_at']::text[]
+        order by calendar_row.logical_date, calendar_row.id
+      )
+        from public.adhdice_task_calendar_overrides calendar_row
+       where calendar_row.user_id = p_user_id
+         and calendar_row.entity_id = p_entity_id
+         and calendar_row.is_active
+    ), '[]'::jsonb)
+  );
+
+  with relevant_selections as (
+    select selection.*
+      from public.adhdice_task_behavior_selections selection
+     where selection.user_id = p_user_id
+       and selection.task_id = p_entity_id
+       and (
+         selection.effective_from_logical_date <= p_projected_logical_date
+         or selection.effective_from_logical_date = (
+           select min(first_selection.effective_from_logical_date)
+             from public.adhdice_task_behavior_selections first_selection
+            where first_selection.user_id = p_user_id
+              and first_selection.task_id = p_entity_id
+         )
+       )
+  ), relevant_rulesets as (
+    select v_task.custom_ruleset_id as ruleset_id
+     where v_task.custom_ruleset_id is not null
+    union
+    select selection.custom_ruleset_id
+      from relevant_selections selection
+     where selection.custom_ruleset_id is not null
+  )
+  select pg_catalog.jsonb_build_object(
+    'version', 'task-current-projection-behavior-fence-v3',
+    'user_id', p_user_id,
+    'entity_id', p_entity_id,
+    'projected_logical_date', p_projected_logical_date,
+    'tracking_ancestry', v_tracking_payload,
+    'effective_tracking_exclusion', exists (
+      select 1
+        from pg_catalog.jsonb_array_elements(v_tracking_payload) as ancestry_row(row_json)
+       where (ancestry_row.row_json->>'exclude_from_tracking')::boolean is true
+    ),
+    'task_identity', pg_catalog.jsonb_build_object(
+      'task_type', v_task.task_type,
+      'custom_ruleset_id', v_task.custom_ruleset_id
+    ),
+    'selections', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(selection) - array['created_at', 'updated_at']::text[]
+        order by selection.effective_from_logical_date, selection.id
+      )
+        from relevant_selections selection
+    ), '[]'::jsonb),
+    'task_type_behavior_profiles', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(profile) - array['created_at', 'updated_at']::text[]
+        order by profile.task_type, profile.effective_from_logical_date
+      )
+        from public.adhdice_task_type_behavior_profiles profile
+       where profile.user_id = p_user_id
+         and profile.task_type = 'task'
+         and (
+           profile.effective_from_logical_date <= p_projected_logical_date
+           or profile.effective_from_logical_date = (
+             select min(first_profile.effective_from_logical_date)
+               from public.adhdice_task_type_behavior_profiles first_profile
+              where first_profile.user_id = p_user_id
+                and first_profile.task_type = 'task'
+           )
+         )
+         and (
+           v_task.task_type = 'task'
+           or exists (
+             select 1
+               from relevant_selections selection
+              where selection.task_type = 'task'
+           )
+         )
+    ), '[]'::jsonb),
+    'named_custom_ruleset_identities', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.jsonb_build_object(
+          'id', ruleset.id,
+          'user_id', ruleset.user_id,
+          'task_type', ruleset.task_type,
+          'deleted_at', ruleset.deleted_at
+        )
+        order by ruleset.id
+      )
+        from public.adhdice_custom_behavior_rulesets ruleset
+       where ruleset.user_id = p_user_id
+         and ruleset.id in (select relevant_rulesets.ruleset_id from relevant_rulesets)
+    ), '[]'::jsonb),
+    'named_custom_ruleset_revisions', coalesce((
+      select pg_catalog.jsonb_agg(
+        pg_catalog.to_jsonb(revision) - array['created_at', 'updated_at']::text[]
+        order by revision.ruleset_id, revision.effective_from_logical_date
+      )
+        from public.adhdice_custom_behavior_ruleset_revisions revision
+       where revision.ruleset_id in (select relevant_rulesets.ruleset_id from relevant_rulesets)
+         and (
+           revision.effective_from_logical_date <= p_projected_logical_date
+           or revision.effective_from_logical_date = (
+             select min(first_revision.effective_from_logical_date)
+               from public.adhdice_custom_behavior_ruleset_revisions first_revision
+              where first_revision.ruleset_id = revision.ruleset_id
+           )
+         )
+    ), '[]'::jsonb)
+  ) into v_behavior_payload;
+
+  return query
+  select 'sha256:' || pg_catalog.encode(
+           extensions.digest(v_schedule_payload::text, 'sha256'::text),
+           'hex'
+         ),
+         'sha256:' || pg_catalog.encode(
+           extensions.digest(v_behavior_payload::text, 'sha256'::text),
+           'hex'
+         );
+end;
+$function$;
+
+drop trigger if exists adhdice_task_quota_period_facts_invalidate_task_current_projection
+  on public.adhdice_task_quota_period_facts;
+create trigger adhdice_task_quota_period_facts_invalidate_task_current_projection
+after insert or update or delete on public.adhdice_task_quota_period_facts
+for each row execute function public.adhdice_invalidate_task_current_projection_entity_trigger();
+
+commit;

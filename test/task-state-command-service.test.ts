@@ -1163,6 +1163,66 @@ test("rolling and fixed schedule plans preserve their model authority", () => {
   assert.deepEqual(fixed.normalizedResult.scheduleBoundary?.repeat_days_of_week, [1, 3, 5]);
 });
 
+test("quota schedule changes start a new prospective balance projection", () => {
+  const quotaState = state({
+    repeat_frequency: "per_week",
+    repeat_quota_count: 3,
+    repeat_quota_balance_enabled: true,
+    repeat_quota_balance: -4,
+    repeat_quota_balance_period: "2026-08-10",
+  });
+  quotaState.engineInput = {
+    ...quotaState.engineInput!,
+    task: {
+      ...quotaState.engineInput!.task,
+      dueOn: "2026-08-10",
+      recurrence: {
+        kind: "quota",
+        period: "week",
+        count: 3,
+        balanceEnabled: true,
+        activationDate: "2026-08-10",
+        scheduleBoundaryId: "boundary-old-quota",
+      },
+    },
+  };
+
+  let sequence = 0;
+  const plan = (schedule: Partial<CanonicalTaskScheduleBoundary>) => planTaskStateCommand(quotaState, command({
+    type: "schedule_change",
+    changeKind: "repeat",
+    commandId: `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`,
+    scheduleBoundary: {
+      ...boundary("fixed"),
+      id: "boundary-new-quota",
+      repeat_frequency: "per_week",
+      repeat_quota_count: 3,
+      repeat_quota_balance_enabled: true,
+      ...schedule,
+    },
+  }));
+
+  const switchedPeriod = plan({
+    repeat_frequency: "per_month",
+    repeat_quota_count: 5,
+  });
+  assert.equal(switchedPeriod.normalizedResult.compatibilityProjection.repeatQuotaBalance, 0);
+  assert.equal(switchedPeriod.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, "2026-08");
+  assert.equal(switchedPeriod.normalizedResult.scheduleBoundary?.repeat_frequency, "per_month");
+
+  const changedCount = plan({ repeat_quota_count: 5 });
+  assert.equal(changedCount.normalizedResult.compatibilityProjection.repeatQuotaBalance, 0);
+  assert.equal(changedCount.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, "2026-08-10");
+
+  const balanceOff = plan({ repeat_quota_balance_enabled: false });
+  assert.equal(balanceOff.normalizedResult.compatibilityProjection.repeatQuotaBalance, 0);
+  assert.equal(balanceOff.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, null);
+
+  const normal = plan({ repeat_frequency: "none", repeat_quota_count: null, repeat_quota_balance_enabled: false });
+  assert.equal(normal.normalizedResult.compatibilityProjection.repeatQuotaBalance, null);
+  assert.equal(normal.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, null);
+});
+
 function trustedReadModel(row: CanonicalTaskRow, schedule: CanonicalTaskScheduleBoundary) {
   return {
     task: row,

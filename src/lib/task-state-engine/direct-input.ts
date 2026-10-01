@@ -98,6 +98,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       count: boundary.repeat_quota_count ?? (boundary.repeat_frequency === "per_week" ? 1 : 1),
       balanceEnabled: boundary.repeat_quota_balance_enabled === true,
       activationDate: boundary.effective_from_logical_date,
+      scheduleBoundaryId: boundary.id,
     };
   }
   const fixedUntilComplete = boundary.repeat_frequency === "daily_until_complete" && isFixedUntilCompleteRepeatTask({
@@ -231,7 +232,7 @@ function buildTaskStateEngineInput(
   task: CanonicalProjectedTaskState,
   history: readonly TaskHistory[],
   context: DirectTaskStateContext,
-  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd" | "quotaPeriodFacts"> = {},
   mode: "canonical" | "compatibility",
 ): TaskStateEngineInput {
   const boundary = task.canonical_schedule_boundary ?? null;
@@ -267,8 +268,10 @@ function buildTaskStateEngineInput(
   const recurrence = recurrenceFromAuthority.kind === "quota"
     ? {
         ...recurrenceFromAuthority,
-        incomingBalance: task.repeat_quota_balance ?? 0,
-        incomingBalancePeriodKey: task.repeat_quota_balance_period ?? null,
+        ...(mode === "compatibility" ? {
+          incomingBalance: task.repeat_quota_balance ?? 0,
+          incomingBalancePeriodKey: task.repeat_quota_balance_period ?? null,
+        } : {}),
       }
     : recurrenceFromAuthority;
   const dueOn = boundary
@@ -319,7 +322,7 @@ function buildTaskStateEngineInput(
         ? task.active_occurrence_due_on
         : task.active_occurrence_due_on,
       recurrence,
-      ...(recurrence.kind === "quota"
+      ...(recurrence.kind === "quota" && mode === "compatibility"
         ? {
           quotaIncomingBalance: task.repeat_quota_balance ?? 0,
           quotaIncomingBalancePeriodKey: task.repeat_quota_balance_period ?? null,
@@ -339,7 +342,7 @@ export function buildDirectTaskStateEngineInput(
   task: CanonicalProjectedTaskState,
   history: readonly TaskHistory[],
   context: DirectTaskStateContext,
-  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd" | "quotaPeriodFacts"> = {},
 ): TaskStateEngineInput {
   return buildTaskStateEngineInput(task, history, context, options, "canonical");
 }
@@ -352,7 +355,7 @@ export function buildCompatibilityTaskStateEngineInput(
   task: CanonicalProjectedTaskState,
   history: readonly TaskHistory[],
   context: DirectTaskStateContext,
-  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd" | "quotaPeriodFacts"> = {},
 ): TaskStateEngineInput {
   return buildTaskStateEngineInput(task, history, context, options, "compatibility");
 }

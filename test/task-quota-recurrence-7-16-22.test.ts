@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { STANDARD_TASK_BEHAVIOR_POLICY } from "../src/lib/task-state-engine/behavior-policy.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
-import { quotaDateIsMandatory, quotaNextBalance, quotaPeriodBounds, quotaPeriodEvaluation } from "../src/lib/task-state-engine/quota.ts";
+import { quotaDateIsMandatory, quotaNextBalance, quotaPeriodBounds, quotaPeriodEvaluation, quotaPeriodFactFor } from "../src/lib/task-state-engine/quota.ts";
 import { canTaskDelay, getSelectableTaskStatusesForRepeatFrequency, getTaskHistoryCalendarActionStatuses } from "../src/lib/task-complete.ts";
 import type { TaskStateEngineInput, TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
 
@@ -341,6 +341,129 @@ test("quota activation does not retroactively miss dates before its boundary", (
     action: { type: "reconcile_rollover" },
   });
   assert.equal(result.proposedHistoryChanges.some((change) => change.type === "insert" && change.row.logicalDate < "2026-10-01"), false);
+});
+
+test("first partial weekly quota uses only physical capacity since activation", () => {
+  const recurrence = { kind: "quota" as const, period: "week" as const, count: 3, balanceEnabled: true, activationDate: "2026-10-03" };
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-03" }).baseQuota, 2);
+  assert.equal(quotaPeriodEvaluation({
+    recurrence: { ...recurrence, activationDate: "2026-10-04" },
+    logicalDate: "2026-10-04",
+  }).baseQuota, 1);
+});
+
+test("first partial monthly quota uses only physical capacity since activation", () => {
+  const recurrence = { kind: "quota" as const, period: "month" as const, count: 10, balanceEnabled: true, activationDate: "2026-01-28" };
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-01-28" }).baseQuota, 4);
+  assert.equal(quotaPeriodEvaluation({
+    recurrence: { ...recurrence, count: 31, activationDate: "2026-02-20" },
+    logicalDate: "2026-02-20",
+  }).baseQuota, 9);
+});
+
+test("a later complete period returns to configured quota capacity", () => {
+  const recurrence = { kind: "quota" as const, period: "week" as const, count: 3, balanceEnabled: true, activationDate: "2026-10-03" };
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-03" }).baseQuota, 2);
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-05" }).baseQuota, 3);
+});
+
+test("canonical quota facts override a stale Task-row incoming balance", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-09-28",
+    scheduleBoundaryId: "boundary-a",
+    incomingBalance: -99,
+  };
+  const fact = quotaPeriodFactFor({
+    recurrence: { ...recurrence, incomingBalance: 0 },
+    periodDate: "2026-10-04",
+    history: [historyRow("2026-10-03"), historyRow("2026-10-04")],
+    eventKind: "period_close",
+    idempotenceIdentity: "close-a",
+  });
+  assert.equal(fact.nextBalance, -1);
+  const next = quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-05", quotaPeriodFacts: [{
+    ...fact,
+    scheduleBoundaryId: "boundary-a",
+    id: "fact-a",
+    createdAt: "2026-10-05T00:00:00.000Z",
+  }] });
+  assert.equal(next.incomingBalance, -1);
+});
+
+test("a canonical clear fact reconstructs zero without deleting History", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-09-28",
+    scheduleBoundaryId: "boundary-a",
+  };
+  const clear = quotaPeriodFactFor({
+    recurrence,
+    periodDate: "2026-10-05",
+    history: [historyRow("2026-10-05")],
+    eventKind: "clear_balance",
+    idempotenceIdentity: "clear-a",
+  });
+  assert.equal(quotaPeriodEvaluation({
+    recurrence,
+    logicalDate: "2026-10-05",
+    history: [historyRow("2026-10-05")],
+    quotaPeriodFacts: [{ ...clear, id: "clear-fact", createdAt: "2026-10-05T01:00:00.000Z" }],
+  }).incomingBalance, 0);
+});
+
+test("canonical balance reconstruction follows period chronology across out-of-order facts", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-09-28",
+    scheduleBoundaryId: "boundary-quota",
+  };
+  const evaluation = quotaPeriodEvaluation({
+    recurrence,
+    logicalDate: "2026-10-12",
+    quotaPeriodFacts: [
+      {
+        id: "close-later-period-written-first",
+        scheduleBoundaryId: "boundary-quota",
+        periodKind: "week",
+        periodKey: "2026-10-05",
+        periodStart: "2026-10-05",
+        periodEnd: "2026-10-11",
+        baseQuota: 3,
+        incomingBalance: -1,
+        successfulDays: 4,
+        nextBalance: 0,
+        balanceEnabled: true,
+        eventKind: "period_close",
+        createdAt: "2026-10-12T00:00:00.000Z",
+      },
+      {
+        id: "close-earlier-period-written-later",
+        scheduleBoundaryId: "boundary-quota",
+        periodKind: "week",
+        periodKey: "2026-09-28",
+        periodStart: "2026-09-28",
+        periodEnd: "2026-10-04",
+        baseQuota: 3,
+        incomingBalance: 0,
+        successfulDays: 5,
+        nextBalance: 2,
+        balanceEnabled: true,
+        eventKind: "period_close",
+        createdAt: "2026-10-13T00:00:00.000Z",
+      },
+    ],
+  });
+  assert.equal(evaluation.incomingBalance, 0);
 });
 
 test("one successful quota action is reward eligible once", () => {

@@ -189,6 +189,7 @@ export type CanonicalTaskQuotaPeriodFact = {
   period_key: string;
   period_start: string;
   period_end: string;
+  schedule_boundary_id: string;
   base_quota: number;
   incoming_balance: number;
   successful_days: number;
@@ -198,7 +199,9 @@ export type CanonicalTaskQuotaPeriodFact = {
   command_id: string | null;
   idempotence_identity: string;
   source: string;
+  revision: number;
   created_at: string;
+  updated_at: string;
 };
 
 export type CanonicalOccurrenceResolutionState = "unresolved" | "resolved" | "superseded";

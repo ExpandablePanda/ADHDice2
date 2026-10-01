@@ -57,9 +57,30 @@ export type TaskRecurrence =
       count: number;
       balanceEnabled: boolean;
       activationDate?: string | null;
+      scheduleBoundaryId?: string | null;
       incomingBalance?: number | null;
       incomingBalancePeriodKey?: string | null;
     };
+
+export type TaskQuotaPeriodFact = {
+  id?: string;
+  entityId?: string;
+  scheduleBoundaryId?: string | null;
+  periodKind: "week" | "month";
+  periodKey: string;
+  periodStart: string;
+  periodEnd: string;
+  baseQuota: number;
+  incomingBalance: number;
+  successfulDays: number;
+  nextBalance: number;
+  balanceEnabled: boolean;
+  eventKind: "period_close" | "clear_balance";
+  commandId?: string | null;
+  idempotenceIdentity?: string;
+  createdAt?: string;
+  revision?: number;
+};
 
 export type TaskStateSnapshot = {
   id: string;
@@ -220,6 +241,8 @@ export type TaskStateEngineInput = {
   currentBehaviorPolicyEffectiveFromLogicalDate?: string;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
+  /** Canonical quota ledger evidence; the Task-row balance is only a projection. */
+  quotaPeriodFacts?: TaskQuotaPeriodFact[];
   now: string | Date;
   timezone: string;
   logicalDayRollover: string;

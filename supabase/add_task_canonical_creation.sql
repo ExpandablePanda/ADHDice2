@@ -41,6 +41,8 @@ declare
   v_repeat_monthly_mode text;
   v_repeat_monthly_ordinal text;
   v_repeat_monthly_weekday smallint;
+  v_repeat_quota_count integer;
+  v_repeat_quota_balance_enabled boolean;
   v_one_time_due_on date;
   v_due_time time;
   v_anchor_date date;
@@ -86,7 +88,7 @@ begin
       'external_link_url', 'one_step_at_a_time', 'subtasks_auto_reset', 'repeat_frequency',
       'repeat_interval', 'repeat_days_of_week', 'repeat_day_of_month', 'repeat_monthly_mode',
       'repeat_monthly_ordinal', 'repeat_monthly_weekday', 'pinned_at', 'pin_order', 'sort_order',
-      'completed_at', 'trashed_at'
+      'completed_at', 'trashed_at', 'repeat_quota_count', 'repeat_quota_balance_enabled'
     )
   ) then
     raise exception 'Canonical Task creation task input contains privileged or unsupported fields.' using errcode = '22023';
@@ -111,7 +113,7 @@ begin
       'repeat_days_of_week', 'repeat_day_of_month', 'repeat_monthly_mode', 'repeat_monthly_ordinal',
       'repeat_monthly_weekday', 'one_time_due_on', 'due_time', 'anchor_date', 'anchor_kind',
       'anchor_confidence', 'historical_scope_known', 'prospective_only', 'logical_day_settings_revision',
-      'timezone', 'day_start_time', 'source'
+      'timezone', 'day_start_time', 'source', 'repeat_quota_count', 'repeat_quota_balance_enabled'
     )
   ) then
     raise exception 'Canonical Task creation schedule input contains unsupported fields.' using errcode = '22023';
@@ -199,6 +201,8 @@ begin
   v_repeat_monthly_mode := v_schedule->>'repeat_monthly_mode';
   v_repeat_monthly_ordinal := v_schedule->>'repeat_monthly_ordinal';
   v_repeat_monthly_weekday := nullif(v_schedule->>'repeat_monthly_weekday', '')::smallint;
+  v_repeat_quota_count := nullif(v_schedule->>'repeat_quota_count', '')::integer;
+  v_repeat_quota_balance_enabled := coalesce((v_schedule->>'repeat_quota_balance_enabled')::boolean, false);
   v_one_time_due_on := nullif(v_schedule->>'one_time_due_on', '')::date;
   v_due_time := nullif(v_schedule->>'due_time', '')::time;
   v_anchor_date := nullif(v_schedule->>'anchor_date', '')::date;
@@ -212,7 +216,7 @@ begin
   v_source := v_schedule->>'source';
 
   if v_schedule_model not in ('unscheduled', 'one_time', 'rolling', 'fixed')
-     or v_repeat_frequency not in ('none', 'daily', 'weekly', 'monthly', 'custom', 'daily_until_complete')
+     or v_repeat_frequency not in ('none', 'daily', 'weekly', 'monthly', 'custom', 'daily_until_complete', 'per_week', 'per_month')
      or v_repeat_interval < 1
      or cardinality(v_repeat_days) > 7
      or not (v_repeat_days <@ array[0, 1, 2, 3, 4, 5, 6]::smallint[])
@@ -223,6 +227,26 @@ begin
      or v_anchor_confidence not in ('proven', 'unavailable')
      or v_source not in ('task_creation', 'task_import') then
     raise exception 'Canonical Task schedule is invalid.' using errcode = '22023';
+  end if;
+  if (v_repeat_frequency = 'per_week' and (v_repeat_quota_count is null or v_repeat_quota_count not between 1 and 7))
+     or (v_repeat_frequency = 'per_month' and (v_repeat_quota_count is null or v_repeat_quota_count not between 1 and 31))
+     or (v_repeat_frequency not in ('per_week', 'per_month')
+         and (v_repeat_quota_count is not null or v_repeat_quota_balance_enabled)) then
+    raise exception 'Canonical Task quota recurrence fields are invalid.' using errcode = '22023';
+  end if;
+  if v_repeat_frequency not in ('per_week', 'per_month')
+     and (v_task_input.repeat_quota_count is not null or v_task_input.repeat_quota_balance_enabled is true) then
+    raise exception 'Canonical Task quota fields cannot be supplied for a non-quota repeat.' using errcode = '22023';
+  end if;
+  if v_repeat_frequency in ('per_week', 'per_month')
+     and v_task_input.repeat_quota_count is not null
+     and v_task_input.repeat_quota_count is distinct from v_repeat_quota_count then
+    raise exception 'Canonical Task task and schedule quota counts must match.' using errcode = '22023';
+  end if;
+  if v_repeat_frequency in ('per_week', 'per_month')
+     and v_task_input.repeat_quota_balance_enabled is not null
+     and v_task_input.repeat_quota_balance_enabled is distinct from v_repeat_quota_balance_enabled then
+    raise exception 'Canonical Task task and schedule quota balance settings must match.' using errcode = '22023';
   end if;
   if (v_schedule_model = 'unscheduled' and (v_repeat_frequency <> 'none' or v_one_time_due_on is not null or v_anchor_date is not null))
      or (v_schedule_model = 'one_time' and (v_repeat_frequency <> 'none' or v_one_time_due_on is null))
@@ -249,6 +273,7 @@ begin
     scheduled_on, due_time, estimated_minutes, actual_seconds, tags, external_link_label,
     external_link_url, one_step_at_a_time, subtasks_auto_reset, repeat_frequency, repeat_interval,
     repeat_days_of_week, repeat_day_of_month, repeat_monthly_mode, repeat_monthly_ordinal,
+    repeat_quota_count, repeat_quota_balance_enabled, repeat_quota_balance, repeat_quota_balance_period,
     repeat_monthly_weekday, pinned_at, pin_order, sort_order, completed_at, trashed_at,
     canonicalization_status, entity_kind, terminal_state, container_state, prior_container_state,
     prior_container_state_status, terminal_completed_at, container_trashed_at, workflow_state,
@@ -269,7 +294,14 @@ begin
     coalesce(v_task_input.repeat_frequency, 'none'::public.adhdice_clean_task_repeat_frequency),
     coalesce(v_task_input.repeat_interval, 1), coalesce(v_task_input.repeat_days_of_week, '{}'::smallint[]),
     v_task_input.repeat_day_of_month, coalesce(v_task_input.repeat_monthly_mode, 'day_of_month'::public.adhdice_clean_task_repeat_monthly_mode),
-    v_task_input.repeat_monthly_ordinal, v_task_input.repeat_monthly_weekday, v_task_input.pinned_at,
+    v_task_input.repeat_monthly_ordinal, v_task_input.repeat_monthly_weekday,
+    case when v_repeat_frequency in ('per_week', 'per_month') then v_repeat_quota_count else null end,
+    case when v_repeat_frequency in ('per_week', 'per_month') then v_repeat_quota_balance_enabled else false end,
+    case when v_repeat_frequency in ('per_week', 'per_month') and v_repeat_quota_balance_enabled then 0 else null end,
+    case when v_repeat_frequency = 'per_week' and v_repeat_quota_balance_enabled then v_effective_from - ((extract(isodow from v_effective_from)::integer - 1) % 7)
+         when v_repeat_frequency = 'per_month' and v_repeat_quota_balance_enabled then date_trunc('month', v_effective_from)::date
+         else null end::text,
+    v_task_input.pinned_at,
     v_task_input.pin_order, coalesce(v_task_input.sort_order, 0), null, null,
     'canonical_runtime', v_entity_kind, v_terminal_state, v_container_state, null, v_prior_container_state_status,
     null, null, v_workflow_state, null, null, null, null, v_workflow_revision, v_canonical_revision,
@@ -280,7 +312,8 @@ begin
   insert into public.adhdice_task_schedule_boundaries (
     user_id, entity_id, entity_kind, effective_from_logical_date, boundary_sequence, boundary_type,
     schedule_model, repeat_frequency, repeat_interval, repeat_days_of_week, repeat_day_of_month,
-    repeat_monthly_mode, repeat_monthly_ordinal, repeat_monthly_weekday, one_time_due_on, due_time,
+    repeat_monthly_mode, repeat_monthly_ordinal, repeat_monthly_weekday, repeat_quota_count,
+    repeat_quota_balance_enabled, one_time_due_on, due_time,
     anchor_date, anchor_kind, anchor_confidence, historical_scope_known, prospective_only,
     prior_boundary_id, affected_occurrence_id, logical_day_settings_revision, timezone, day_start_time,
     actor_kind, actor_id, source, command_id, idempotence_identity, migration_operation_id,
@@ -290,7 +323,8 @@ begin
   values (
     p_user_id, v_task.id, v_entity_kind, v_effective_from, 1, 'initial', v_schedule_model,
     v_repeat_frequency, v_repeat_interval, v_repeat_days, v_repeat_day_of_month, v_repeat_monthly_mode,
-    v_repeat_monthly_ordinal, v_repeat_monthly_weekday, v_one_time_due_on, v_due_time, v_anchor_date,
+    v_repeat_monthly_ordinal, v_repeat_monthly_weekday, v_repeat_quota_count,
+    v_repeat_quota_balance_enabled, v_one_time_due_on, v_due_time, v_anchor_date,
     v_anchor_kind, v_anchor_confidence, v_historical_scope_known, v_prospective_only, null, null,
     v_settings_revision, v_timezone, v_day_start_time, 'user', p_user_id, v_source, null,
     'task-create:' || v_task.id::text, null, null, null, 'task-state-schema-v1', 1, 1, v_now, v_now

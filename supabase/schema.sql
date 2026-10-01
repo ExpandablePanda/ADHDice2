@@ -73,6 +73,54 @@ create table public.adhdice_clean_tasks (
     check (task_type in ('task', 'custom'))
 );
 
+-- Canonical quota ledger structure. Owner-safe boundary/command foreign keys
+-- are attached by add_task_state_canonical_schema.sql after those tables exist.
+create table public.adhdice_task_quota_period_facts (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  entity_id uuid not null,
+  entity_kind text not null check (entity_kind in ('parent', 'step', 'substep')),
+  schedule_boundary_id uuid not null,
+  period_kind text not null check (period_kind in ('week', 'month')),
+  period_key text not null check (char_length(trim(period_key)) > 0),
+  period_start date not null,
+  period_end date not null,
+  base_quota integer not null check (base_quota between 1 and 31),
+  incoming_balance integer not null default 0,
+  successful_days integer not null default 0 check (successful_days >= 0),
+  next_balance integer not null default 0,
+  balance_enabled boolean not null,
+  event_kind text not null check (event_kind in ('period_close', 'clear_balance')),
+  command_id uuid,
+  idempotence_identity text not null check (char_length(trim(idempotence_identity)) > 0),
+  source text not null default 'task_state_command' check (char_length(trim(source)) > 0),
+  revision bigint not null default 1 check (revision >= 1),
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint adhdice_task_quota_period_facts_id_key unique (user_id, id),
+  constraint adhdice_task_quota_period_facts_identity_key unique (user_id, idempotence_identity),
+  constraint adhdice_task_quota_period_facts_period_key check (
+    (period_kind = 'week' and period_key = to_char(period_start, 'YYYY-MM-DD'))
+    or (period_kind = 'month' and period_key = to_char(period_start, 'YYYY-MM'))
+  ),
+  constraint adhdice_task_quota_period_facts_period_check check (period_start <= period_end),
+  constraint adhdice_task_quota_period_facts_balance_check check (
+    balance_enabled or (incoming_balance = 0 and next_balance = 0)
+  ),
+  constraint adhdice_task_quota_period_facts_clear_check check (
+    event_kind <> 'clear_balance' or next_balance = 0
+  )
+);
+
+create unique index if not exists adhdice_task_quota_period_facts_period_close_key
+  on public.adhdice_task_quota_period_facts (
+    user_id, entity_id, period_kind, period_key, schedule_boundary_id
+  ) where event_kind = 'period_close';
+create index if not exists adhdice_task_quota_period_facts_entity_period_idx
+  on public.adhdice_task_quota_period_facts (user_id, entity_id, period_start, created_at, id);
+create index if not exists adhdice_task_quota_period_facts_boundary_period_idx
+  on public.adhdice_task_quota_period_facts (user_id, schedule_boundary_id, period_start, created_at, id);
+
 create table public.adhdice_task_type_behavior_profiles (
   user_id uuid not null references auth.users(id) on delete cascade,
   task_type text not null,
@@ -197,6 +245,12 @@ alter table public.adhdice_clean_tasks
     foreign key (user_id, task_content_folder_id)
     references public.adhdice_task_content_folders(user_id, id)
     on delete set null (task_content_folder_id);
+
+alter table public.adhdice_task_quota_period_facts
+  add constraint adhdice_task_quota_period_facts_entity_fkey
+  foreign key (user_id, entity_id)
+  references public.adhdice_clean_tasks (user_id, id)
+  on delete restrict;
 
 -- 7.15.12 Phase 1E current Task read projection foundation. This is a
 -- rebuildable, non-authoritative read model; canonical Task/History/schedule
@@ -1402,6 +1456,7 @@ create index adhdice_health_achievement_awards_user_earned_idx
   on public.adhdice_health_achievement_awards (user_id, earned_at desc);
 
 alter table public.adhdice_clean_tasks enable row level security;
+alter table public.adhdice_task_quota_period_facts enable row level security;
 alter table public.adhdice_task_type_behavior_profiles enable row level security;
 alter table public.adhdice_custom_behavior_rulesets enable row level security;
 alter table public.adhdice_custom_behavior_ruleset_revisions enable row level security;
@@ -1467,6 +1522,8 @@ grant select, insert, update, delete on table public.adhdice_health_journal_sign
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_values to authenticated;
 grant select, insert, update, delete on table public.adhdice_health_journal_signal_occurrences to authenticated;
 revoke all on table public.adhdice_task_type_behavior_profiles from anon, authenticated;
+revoke all on table public.adhdice_task_quota_period_facts from anon, authenticated;
+grant select on table public.adhdice_task_quota_period_facts to authenticated;
 grant select, insert, update, delete on table public.adhdice_task_type_behavior_profiles to authenticated;
 revoke all on table public.adhdice_task_content_folders from anon, authenticated;
 grant select, insert, update, delete on table public.adhdice_task_content_folders to authenticated;
@@ -1481,6 +1538,11 @@ revoke all on function public.adhdice_delete_custom_behavior_ruleset(uuid) from 
 grant execute on function public.adhdice_delete_custom_behavior_ruleset(uuid) to authenticated;
 revoke all on function public.adhdice_delete_task_content_folder(uuid) from public, anon, authenticated;
 grant execute on function public.adhdice_delete_task_content_folder(uuid) to authenticated;
+
+create policy "Users can read their own quota period facts"
+  on public.adhdice_task_quota_period_facts
+  for select to authenticated
+  using ((select auth.uid()) = user_id);
 
 create policy "Users can read their own clean tasks"
   on public.adhdice_clean_tasks

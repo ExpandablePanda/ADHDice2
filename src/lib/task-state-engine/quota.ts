@@ -11,6 +11,7 @@ import type {
   TaskStateEngineInput,
   TaskStateEngineResult,
   TaskStateHistoryRow,
+  TaskQuotaPeriodFact,
 } from "./types.ts";
 import { occurrenceIdentity } from "./recurrence.ts";
 import type { TaskBehaviorPolicy } from "./behavior-policy.ts";
@@ -23,6 +24,7 @@ export type QuotaRecurrence = {
   count: number;
   balanceEnabled: boolean;
   activationDate?: string | null;
+  scheduleBoundaryId?: string | null;
   incomingBalance?: number | null;
   incomingBalancePeriodKey?: string | null;
 };
@@ -65,8 +67,15 @@ export function quotaPeriodBounds(dateKey: string, period: QuotaPeriod): QuotaPe
   return { key: start.slice(0, 7), start, end, capacity: parseDateKey(end).getUTCDate() };
 }
 
-export function quotaBaseQuota(recurrence: Pick<QuotaRecurrence, "period" | "count">, bounds: QuotaPeriodBounds) {
-  return Math.min(Math.max(1, recurrence.count), bounds.capacity);
+export function quotaBaseQuota(
+  recurrence: Pick<QuotaRecurrence, "period" | "count"> & { activationDate?: string | null },
+  bounds: QuotaPeriodBounds,
+) {
+  const activationDate = recurrence.activationDate ?? null;
+  if (activationDate && activationDate > bounds.end) return 0;
+  const effectiveStart = activationDate && activationDate > bounds.start ? activationDate : bounds.start;
+  const effectiveCapacity = daysBetween(effectiveStart, bounds.end) + 1;
+  return Math.min(Math.max(1, recurrence.count), effectiveCapacity);
 }
 
 function eligibleStart(recurrence: QuotaRecurrence, bounds: QuotaPeriodBounds) {
@@ -92,19 +101,53 @@ function nextPeriodDate(bounds: QuotaPeriodBounds) {
   return shiftDateKey(bounds.end, 1);
 }
 
-function incomingBalanceForPeriod(recurrence: QuotaRecurrence, target: QuotaPeriodBounds, history: readonly TaskStateHistoryRow[]) {
+function factAppliesToRecurrence(fact: TaskQuotaPeriodFact, recurrence: QuotaRecurrence) {
+  return !recurrence.scheduleBoundaryId || fact.scheduleBoundaryId === recurrence.scheduleBoundaryId;
+}
+
+function factOrder(left: TaskQuotaPeriodFact, right: TaskQuotaPeriodFact) {
+  return (left.createdAt ?? "").localeCompare(right.createdAt ?? "")
+    || (left.revision ?? 0) - (right.revision ?? 0)
+    || (left.id ?? "").localeCompare(right.id ?? "");
+}
+
+function incomingBalanceForPeriod(
+  recurrence: QuotaRecurrence,
+  target: QuotaPeriodBounds,
+  history: readonly TaskStateHistoryRow[],
+  facts: readonly TaskQuotaPeriodFact[] = [],
+) {
   if (!recurrence.balanceEnabled) return 0;
-  const initialDate = recurrence.incomingBalancePeriodKey
-    ? recurrence.period === "week"
-      ? recurrence.incomingBalancePeriodKey
-      : `${recurrence.incomingBalancePeriodKey}-01`
-    : recurrence.activationDate ?? target.start;
+  const relevantFacts = facts
+    .filter((fact) => fact.balanceEnabled && factAppliesToRecurrence(fact, recurrence))
+    .sort(factOrder);
+  const periodFacts = relevantFacts.filter((fact) => fact.periodKind === recurrence.period);
+  const targetFacts = periodFacts.filter((fact) => fact.periodKey === target.key);
+  const latestTargetClear = targetFacts.filter((fact) => fact.eventKind === "clear_balance").at(-1);
+  if (latestTargetClear) return 0;
+
+  const priorFact = periodFacts
+    .filter((fact) => fact.periodEnd < target.start)
+    .sort((left, right) => left.periodEnd.localeCompare(right.periodEnd) || factOrder(left, right))
+    .at(-1);
+  const initialDate = priorFact
+    ? nextPeriodDate(quotaPeriodBounds(priorFact.periodStart, recurrence.period))
+    : recurrence.incomingBalancePeriodKey
+      ? recurrence.period === "week"
+        ? recurrence.incomingBalancePeriodKey
+        : `${recurrence.incomingBalancePeriodKey}-01`
+      : recurrence.activationDate ?? target.start;
   let cursor = quotaPeriodBounds(initialDate, recurrence.period);
   if (target.key < cursor.key) return 0;
-  let incoming = recurrence.incomingBalance ?? 0;
+  let incoming = priorFact?.nextBalance ?? recurrence.incomingBalance ?? 0;
   while (cursor.key < target.key) {
     const baseQuota = quotaBaseQuota(recurrence, cursor);
-    incoming = incoming + successfulDaysForPeriod(history, cursor) - baseQuota;
+    const closeFact = periodFacts.find((fact) => fact.periodKey === cursor.key && fact.eventKind === "period_close");
+    incoming = closeFact
+      ? closeFact.nextBalance
+      : incoming + successfulDaysForPeriod(history, cursor) - baseQuota;
+    const clearFact = periodFacts.filter((fact) => fact.periodKey === cursor.key && fact.eventKind === "clear_balance").at(-1);
+    if (clearFact) incoming = 0;
     cursor = quotaPeriodBounds(nextPeriodDate(cursor), recurrence.period);
   }
   return incoming;
@@ -114,6 +157,7 @@ export function quotaPeriodEvaluation(input: {
   recurrence: QuotaRecurrence;
   logicalDate: string;
   history?: readonly TaskStateHistoryRow[];
+  quotaPeriodFacts?: readonly TaskQuotaPeriodFact[];
 }): QuotaPeriodEvaluation {
   const bounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
   const start = eligibleStart(input.recurrence, bounds);
@@ -124,7 +168,7 @@ export function quotaPeriodEvaluation(input: {
       : daysBetween(input.logicalDate, bounds.end) + 1;
   const history = input.history ?? [];
   const successesThisPeriod = distinctSuccessDates(history, bounds, input.logicalDate).size;
-  const incomingBalance = incomingBalanceForPeriod(input.recurrence, bounds, history);
+  const incomingBalance = incomingBalanceForPeriod(input.recurrence, bounds, history, input.quotaPeriodFacts);
   const baseQuota = quotaBaseQuota(input.recurrence, bounds);
   const requiredThisPeriod = Math.max(0, baseQuota - incomingBalance);
   const remainingRequired = Math.max(0, requiredThisPeriod - successesThisPeriod);
@@ -155,6 +199,7 @@ export function quotaDateIsMandatory(input: {
   recurrence: QuotaRecurrence;
   logicalDate: string;
   history?: readonly TaskStateHistoryRow[];
+  quotaPeriodFacts?: readonly TaskQuotaPeriodFact[];
 }) {
   const bounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
   const start = eligibleStart(input.recurrence, bounds);
@@ -166,12 +211,61 @@ export function quotaNextBalance(input: {
   recurrence: QuotaRecurrence;
   periodDate: string;
   history?: readonly TaskStateHistoryRow[];
+  quotaPeriodFacts?: readonly TaskQuotaPeriodFact[];
 }) {
   return quotaPeriodEvaluation({
     recurrence: input.recurrence,
     logicalDate: quotaPeriodBounds(input.periodDate, input.recurrence.period).end,
     history: input.history,
+    quotaPeriodFacts: input.quotaPeriodFacts,
   }).nextBalance;
+}
+
+export type QuotaPeriodFactDraft = {
+  periodKind: QuotaPeriod;
+  periodKey: string;
+  periodStart: string;
+  periodEnd: string;
+  baseQuota: number;
+  incomingBalance: number;
+  successfulDays: number;
+  nextBalance: number;
+  balanceEnabled: boolean;
+  eventKind: "period_close" | "clear_balance";
+  scheduleBoundaryId: string | null;
+  idempotenceIdentity: string;
+};
+
+export function quotaPeriodFactFor(input: {
+  recurrence: QuotaRecurrence;
+  periodDate: string;
+  history?: readonly TaskStateHistoryRow[];
+  quotaPeriodFacts?: readonly TaskQuotaPeriodFact[];
+  eventKind: "period_close" | "clear_balance";
+  idempotenceIdentity: string;
+}): QuotaPeriodFactDraft {
+  const bounds = quotaPeriodBounds(input.periodDate, input.recurrence.period);
+  const history = input.history ?? [];
+  const evaluation = quotaPeriodEvaluation({
+    recurrence: input.recurrence,
+    logicalDate: bounds.end,
+    history,
+    quotaPeriodFacts: input.quotaPeriodFacts,
+  });
+  return {
+    periodKind: input.recurrence.period,
+    periodKey: bounds.key,
+    periodStart: bounds.start,
+    periodEnd: bounds.end,
+    baseQuota: evaluation.baseQuota,
+    incomingBalance: evaluation.incomingBalance,
+    successfulDays: successfulDaysForPeriod(history, bounds),
+    nextBalance: input.eventKind === "clear_balance" ? 0 : evaluation.nextBalance,
+    balanceEnabled: input.recurrence.balanceEnabled,
+    eventKind: input.eventKind,
+    scheduleBoundaryId: input.recurrence.scheduleBoundaryId ?? null,
+    idempotenceIdentity: input.idempotenceIdentity,
+  };
 }
 
 export function quotaPeriodLabel(period: QuotaPeriod) {
@@ -246,6 +340,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
   const logicalDate = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
   const behaviorPolicy = input.behaviorPolicy!;
   const rows = input.history.filter((row) => row.taskId === input.task.id).map((row) => ({ ...row }));
+  const quotaPeriodFacts = input.quotaPeriodFacts ?? [];
   const byDate = new Map(rows.map((row) => [row.logicalDate, row]));
   const changes: TaskHistoryChange[] = [];
   const action = input.action?.type === "record_outcome" ? input.action : null;
@@ -261,7 +356,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
       : scheduleStart;
     const end = shiftDateKey(logicalDate, -1);
     while (cursor <= end) {
-      if (!byDate.has(cursor) && quotaDateIsMandatory({ recurrence, logicalDate: cursor, history: rows })) {
+      if (!byDate.has(cursor) && quotaDateIsMandatory({ recurrence, logicalDate: cursor, history: rows, quotaPeriodFacts })) {
         const row: TaskStateHistoryRow = {
           id: `task-state:${input.task.id}:${cursor}:missed:rollover`,
           taskId: input.task.id,
@@ -294,7 +389,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
     if (reason) {
       changes.push({ type: "reject", logicalDate: actionDate, outcome: action.outcome, reason });
     } else {
-      const evaluation = quotaPeriodEvaluation({ recurrence, logicalDate: actionDate, history: rows });
+      const evaluation = quotaPeriodEvaluation({ recurrence, logicalDate: actionDate, history: rows, quotaPeriodFacts });
       const extraWithoutBalance = SUCCESSFUL_QUOTA_OUTCOMES.has(action.outcome)
         && !recurrence.balanceEnabled
         && evaluation.remainingRequired === 0;
@@ -329,7 +424,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
   const calendar: Record<string, TaskCalendarState> = {};
   for (const date of dateRange(rangeStart, rangeEnd)) {
     const row = byDate.get(date) ?? null;
-    const dateEvaluation = quotaPeriodEvaluation({ recurrence, logicalDate: date, history: rows });
+    const dateEvaluation = quotaPeriodEvaluation({ recurrence, logicalDate: date, history: rows, quotaPeriodFacts });
     const state = row
       ? calendarState(row.outcome, date, logicalDate, true)
       : isComplete
@@ -339,7 +434,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
     days[date] = day;
     calendar[date] = state;
   }
-  const currentEvaluation = quotaPeriodEvaluation({ recurrence, logicalDate, history: rows });
+  const currentEvaluation = quotaPeriodEvaluation({ recurrence, logicalDate, history: rows, quotaPeriodFacts });
   const currentPeriodKey = bounds.key;
   const currentRow = byDate.get(logicalDate) ?? null;
   const latestMissedCandidate = [...rows].filter((row) => row.outcome === "missed").sort((left, right) => left.logicalDate.localeCompare(right.logicalDate)).at(-1) ?? null;
@@ -358,7 +453,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
       : currentEvaluation.nextMandatoryDate
         ?? (() => {
           const nextPeriodDate = shiftDateKey(bounds.end, 1);
-          const nextEvaluation = quotaPeriodEvaluation({ recurrence, logicalDate: nextPeriodDate, history: rows });
+          const nextEvaluation = quotaPeriodEvaluation({ recurrence, logicalDate: nextPeriodDate, history: rows, quotaPeriodFacts });
           return nextEvaluation.nextMandatoryDate;
         })();
   const activeStatus: TaskActiveStatus = isComplete
@@ -384,7 +479,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
     replayCheckpoint: null,
     unresolvedDueOn: currentRow?.outcome === "missed" ? logicalDate : null,
   };
-  const rewardRow = changes.findLast((change) => change.type === "insert" && SUCCESSFUL_QUOTA_OUTCOMES.has(change.row.outcome)) as Extract<TaskHistoryChange, { type: "insert" }> | undefined;
+  const rewardRow = changes.findLast((change) => change.type === "insert" && SUCCESSFUL_OUTCOMES.has(change.row.outcome)) as Extract<TaskHistoryChange, { type: "insert" }> | undefined;
   const rewardEligibility: RewardEligibility = rewardRow && rewardRow.row.countedAsDueOccurrence !== false && behaviorPolicy.rewards === "enabled"
     ? { eligible: !rewardRow.row.rewardClaimed, identity: `task-reward:${input.task.id}:${rewardRow.row.logicalDate}:${rewardRow.row.outcome}`, logicalDate: rewardRow.row.logicalDate, outcome: rewardRow.row.outcome, reason: rewardRow.row.rewardClaimed ? "already_claimed" : "eligible" }
     : { eligible: false, identity: null, logicalDate: rewardRow?.row.logicalDate ?? null, outcome: rewardRow?.row.outcome ?? null, reason: behaviorPolicy.rewards === "disabled" ? "disabled" : rewardRow ? "ineligible_outcome" : "no_outcome" };
