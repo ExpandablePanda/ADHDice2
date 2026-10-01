@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.29`.
+- Current working app version: `7.16.32`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-01 7.16.32 History batch Achievement reconciliation timeout correction
+
+The deferred History batch finalizer still performs one authoritative
+Achievement evaluation, but `adhdice_rebuild_achievement_progress` now takes a
+single user-scoped snapshot of qualifying occurrence evidence and reuses it for
+streaks, occurrence-track matches, and progress aggregates. Award and
+notification inserts retain their existing user-scoped dedupe keys and
+conflict-safe behavior. The source-only migration is
+`supabase/patch_achievement_rebuild_performance_7_16_32.sql`; no SQL or
+Supabase mutation, Edge deployment, or browser/manual QA was performed.
 
 ## 2026-10-01 7.16.28 Final quota correctness corrections
 

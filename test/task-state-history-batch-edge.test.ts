@@ -75,13 +75,32 @@ function dependenciesFor(options: {
       commandId: input.intent.replay_identity,
       commandType: "handled_outcome",
     })) as never,
-    planCommand: (({ task }: { task: { canonical_revision: number } }) => ({
+    planCommand: (({ task }: { task: { canonical_revision: number; status: string; due_on: string | null; completed_at?: string | null; active_status_logical_date?: string | null; active_occurrence_due_on?: string | null; repeat_quota_balance?: number | null; repeat_quota_balance_period?: string | null } }) => ({
       command: { commandId: "planned", commandType: "handled_outcome" },
       normalizedResult: {
         state: "accepted",
         conflictCode: null,
         expectedRevision: task.canonical_revision,
         nextRevision: task.canonical_revision + 1,
+        canonicalTaskPatch: {},
+        compatibilityProjection: {
+          status: task.status,
+          dueOn: task.due_on,
+          completedAt: task.completed_at,
+          activeStatusLogicalDate: task.active_status_logical_date,
+          activeOccurrenceDueOn: task.active_occurrence_due_on,
+          repeatQuotaBalance: task.repeat_quota_balance,
+          repeatQuotaBalancePeriod: task.repeat_quota_balance_period,
+        },
+        historyFact: null,
+        automaticHistoryFacts: [],
+        automaticHistoryDeleteIds: [],
+        occurrence: null,
+        scheduleBoundary: null,
+        occurrenceEffectiveOverride: null,
+        calendarOverride: null,
+        rewardEntitlement: null,
+        quotaPeriodFacts: [],
       },
     })) as never,
     serializePlan: (() => ({})) as never,
@@ -155,6 +174,71 @@ test("three-date batch invokes normal canonical children sequentially with threa
   assert.equal(childCalls.every((call) => call.deferAchievements === true), true);
   assert.equal(finalizerCalls, 1);
   assert.equal(body.final_committed_revision, 13);
+  assert.deepEqual(body.achievement && typeof body.achievement === "object" ? body.achievement : null, {
+    status: "completed",
+    operation_id: body.achievement && typeof body.achievement === "object"
+      ? (body.achievement as Record<string, unknown>).operation_id
+      : null,
+    error_code: null,
+  });
+  assert.equal(body.achievement_warning, null);
+});
+
+test("quota History batch uses the same deferred child and single finalizer path", async () => {
+  let childCalls = 0;
+  let finalizerCalls = 0;
+  let finalizerOperationId = "";
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: { ...batchIntent, task_id: "quota-task", replay_identity: "quota-calendar-batch-1" },
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      loadCanonicalState: async () => {
+        const model = readModel(batchIntent.expected_revision);
+        return {
+          data: {
+            ...model,
+            task: {
+              ...model.task,
+              repeat_frequency: "per_week",
+              repeat_quota_count: 3,
+              repeat_quota_balance_enabled: true,
+              repeat_quota_balance: 0,
+              repeat_quota_balance_period: "week",
+            },
+          },
+          error: null,
+        };
+      },
+      invoke: async ({ intent, deferAchievements }) => {
+        childCalls += 1;
+        assert.equal(deferAchievements, true);
+        return {
+          data: {
+            state: "committed",
+            task_id: "quota-task",
+            command_id: intent.replay_identity,
+            expected_revision: intent.expected_revision,
+            next_revision: (intent.expected_revision ?? 0) + 1,
+          },
+          error: null,
+        };
+      },
+      finalize: async ({ operationId }) => {
+        finalizerCalls += 1;
+        finalizerOperationId = operationId;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(result.status, 200);
+  assert.equal(body.state, "committed");
+  assert.equal(childCalls, 3);
+  assert.equal(finalizerCalls, 1);
+  assert.equal((body.achievement as Record<string, unknown>).status, "completed");
+  assert.equal((body.achievement as Record<string, unknown>).operation_id, finalizerOperationId);
+  assert.equal(body.achievement_warning, null);
 });
 
 test("batch action-availability preflight rejects before any child commits when a selected date is unavailable", async () => {
