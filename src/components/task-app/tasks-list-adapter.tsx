@@ -24,7 +24,7 @@ import { canTaskDelay, getSelectableTaskDisplayStatusesForTask } from "@/lib/tas
 import { resolveTaskManualActionAvailabilityForTask, resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
 import { canRemoveTaskFromCurrentList, type TaskListDefinition, type TaskListId } from "@/lib/task-lists";
 import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
-import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import { TaskAttentionChip } from "./task-attention-chip";
 import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
@@ -1379,7 +1379,7 @@ function StepsCardPreview({
             const scheduleLabel = formatStepPreviewSchedule(item);
             const depthIndent = Math.min(Math.max(item.depth - 1, 0), 3) * 0.75;
             const activePanelMode = activeQuickPanel?.taskId === item.id ? activeQuickPanel.mode : null;
-            const displayStatus = item.status;
+            const displayStatus = normalizeTaskDisplayStatus(item.status);
             const activePriorities = childTask ? buildTaskPrioritySelection(childTask) : item.priorityFlags;
             const categoryLabel = resolveTaskCategoryLabel({
               currentListLabel: currentListLabel ?? "All tasks",
@@ -3226,7 +3226,7 @@ function TasksSimpleList({
         const taskTypeOption = resolveTaskTypeSelectionOption(task.task_type, task.custom_ruleset_id, tableProps.customBehaviorRulesets);
         const taskTypeRowPresentation = resolveTaskTypeRowPresentation(taskTypeOption);
         const taskSurface = taskTypeRowPresentation.surfaceClassName;
-        const displayStatus = rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status;
+        const displayStatus = normalizeTaskDisplayStatus(rowContext.taskDisplayStatusByTaskId[task.id] ?? task.status);
         const dueLabel = formatListDueDateChip(task.due_on);
         const dueTimeLabel = formatDueTimeLabel(task.due_time);
         const dueMeta = dueTimeLabel ? `${dueLabel} · ${dueTimeLabel}` : dueLabel;

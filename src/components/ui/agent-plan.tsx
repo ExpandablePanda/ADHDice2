@@ -33,7 +33,6 @@ export type AgentPlanStatus =
   | "done"
   | "missed"
   | "did_my_best"
-  | "upcoming"
   | "not_due"
   | "archived"
   | "trashed";
@@ -170,7 +169,6 @@ const STATUS_OPTIONS: AgentPlanStatus[] = [
   "done",
   "missed",
   "did_my_best",
-  "upcoming",
   "not_due",
 ];
 
@@ -235,7 +233,6 @@ const STATUS_LABELS: Record<AgentPlanStatus, string> = {
   done: "Done",
   missed: "Missed",
   did_my_best: "Did My Best",
-  upcoming: "Upcoming",
   not_due: "Not Due",
   trashed: "Trash",
 };
@@ -246,7 +243,6 @@ const STATUS_BADGE_STYLES: Record<AgentPlanStatus, string> = {
   done: "border border-[#97dfc1] bg-white text-[#119a69]",
   missed: "border border-[#f4afbc] bg-white text-[#d94e67]",
   did_my_best: "border border-[#f2d36f] bg-white text-[#b28700]",
-  upcoming: "border border-[#cfd6e4] bg-white text-[#68738c]",
   not_due: "border border-[#a9daf7] bg-white text-[#3388c9]",
   archived: "border border-[#b7becd] bg-white text-[#5e687d]",
   trashed: "border border-[#f4afbc] bg-white text-[#d94e67]",
@@ -549,14 +545,6 @@ function StatusIcon({ status }: { status: AgentPlanStatus }) {
     return (
       <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#b28700] text-[#b28700] dark:border-[#f2d36f] dark:text-[#f2d36f]">
         <Star className="h-3 w-3" />
-      </span>
-    );
-  }
-
-  if (status === "upcoming") {
-    return (
-      <span className="flex h-5 w-5 items-center justify-center rounded-full border border-[#8d97b0] text-[#8d97b0] dark:border-[#cfd6e4] dark:text-[#cfd6e4]">
-        <Clock className="h-3 w-3" />
       </span>
     );
   }

@@ -119,7 +119,7 @@ test("FedEx child recurrence uses the shared active status read", () => {
     title: "FedEx child",
   });
   assert.equal(activeStatus(child, []), "pending");
-  assert.equal(activeStatus(child, [history(child.id, TODAY, "done")]), "upcoming");
+  assert.equal(activeStatus(child, [history(child.id, TODAY, "done")]), "not_due");
 });
 
 test("Address Corrections moved cursor makes the old date Not Due and the cursor Due", () => {
@@ -174,7 +174,7 @@ test("Unscheduled positive streaks never create a missed streak and blanks break
 
 test("old rolling History does not consume an unrelated future occurrence", () => {
   const sourceTask = task({ id: "rolling-cursor", due_on: "2026-08-18", repeat_frequency: "custom", repeat_interval: 3 });
-  assert.equal(activeStatus(sourceTask, [history(sourceTask.id, "2026-08-10", "done")]), "upcoming");
+  assert.equal(activeStatus(sourceTask, [history(sourceTask.id, "2026-08-10", "done")]), "not_due");
   assert.equal(calendar(sourceTask, [history(sourceTask.id, "2026-08-10", "done")], "2026-08-17", "2026-08-18")?.["2026-08-18"], "due");
 });
 

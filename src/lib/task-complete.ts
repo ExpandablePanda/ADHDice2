@@ -14,7 +14,6 @@ const ONE_OFF_SELECTABLE_STATUSES: TaskStatus[] = [
   "delayed",
   "missed",
   "complete",
-  "upcoming",
   "not_due",
   "archived",
 ];
@@ -27,7 +26,6 @@ const RECURRING_SELECTABLE_STATUSES: TaskStatus[] = [
   "did_my_best",
   "missed",
   "complete",
-  "upcoming",
   "not_due",
   "archived",
 ];

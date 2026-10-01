@@ -617,7 +617,7 @@ test("current-day recurring history edit resolves to the next active occurrence"
   });
 
   assert.equal(result.dueOn, "2026-07-01");
-  assert.equal(result.status, "upcoming");
+  assert.equal(result.status, "not_due");
   assert.equal(result.completedAt, null);
 });
 
@@ -646,14 +646,14 @@ test("calendar rebases a missed daily recurrence from yesterday's edited complet
   const result = resolveLiveTaskStatusFromHistory(task, history, context, {
     editedHistoryDateKeys: ["2026-07-12"],
   });
-  assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+  assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "not_due" });
   assert.equal(history.find((entry) => entry.entry_date === "2026-07-10")?.status, "missed");
 
   const repeatedSave = resolveLiveTaskStatusFromHistory({ ...task, due_on: result.dueOn, status: result.status }, history, context, {
     editedHistoryDateKeys: ["2026-07-12"],
   });
   assert.equal(repeatedSave.dueOn, undefined);
-  assert.equal(repeatedSave.status, "upcoming");
+  assert.equal(repeatedSave.status, "not_due");
 });
 
 test("calendar rebases Did My Best from its edited completion date", () => {
@@ -676,7 +676,7 @@ test("calendar rebases Did My Best from its edited completion date", () => {
     timezone: "America/New_York",
   }, { editedHistoryDateKeys: ["2026-07-12"] });
 
-  assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+  assert.deepEqual(result, { completedAt: null, dueOn: "2026-07-16", status: "not_due" });
 });
 
 for (const status of ["done", "did_my_best"] as const) {
@@ -731,7 +731,7 @@ test("backdated weekly history keeps separate canonical weekdays independent", (
     timezone: "America/New_York",
   }, { editedHistoryDateKeys: ["2026-07-22"] });
 
-  assert.deepEqual(result, { completedAt: null, status: "upcoming" });
+  assert.deepEqual(result, { completedAt: null, status: "not_due" });
 });
 
 test("daily recurring outcomes stay historical while the new occurrence is Pending", () => {
@@ -768,7 +768,7 @@ test("daily recurring outcomes stay historical while the new occurrence is Pendi
   const activeParent = { ...completedParent, due_on: rolledForward.dueOn ?? "2026-07-17", status: rolledForward.status };
   assert.equal(getTaskDisplayStatusWithHistory(activeParent, [julySixteenthBest], context.currentDayKey), "pending");
   assert.equal(getTaskDisplayStatusWithHistory(activeParent, [{ ...julySixteenthBest, id: "july-sixteenth-done", status: "done" }], context.currentDayKey), "pending");
-  assert.equal(getTaskDisplayStatusWithHistory({ ...activeParent, due_on: "2026-07-18", status: "upcoming" }, [julySixteenthBest], context.currentDayKey), "upcoming");
+  assert.equal(getTaskDisplayStatusWithHistory({ ...activeParent, due_on: "2026-07-18", status: "upcoming" }, [julySixteenthBest], context.currentDayKey), "not_due");
   assert.equal(getTaskDisplayStatusWithHistory(activeParent, [
     julySixteenthBest,
     { ...julySixteenthBest, entry_date: "2026-07-17", id: "july-seventeenth-best" },
@@ -825,7 +825,7 @@ test("calendar uses the latest resolving selected date once and ignores non-reso
     createHistoryEntry({ entryDate: "2026-07-10", id: "earlier-done", status: "done", taskId: task.id, wasCompleted: true }),
     createHistoryEntry({ entryDate: "2026-07-12", id: "latest-best", status: "did_my_best", taskId: task.id, wasCompleted: true }),
   ], context, { editedHistoryDateKeys: ["2026-07-10", "2026-07-12"] });
-  assert.deepEqual(multiSelect, { completedAt: null, dueOn: "2026-07-16", status: "upcoming" });
+  assert.deepEqual(multiSelect, { completedAt: null, dueOn: "2026-07-16", status: "not_due" });
 
   const missedEdit = resolveLiveTaskStatusFromHistory(task, [
     createHistoryEntry({ entryDate: "2026-07-12", id: "later-missed", status: "missed", taskId: task.id, wasCompleted: false }),
@@ -887,7 +887,7 @@ test("calendar reconciliation retains existing future due status classification"
   const upcoming = resolveLiveTaskStatusFromHistory(task, [
     createHistoryEntry({ entryDate: "2026-07-06", id: "future-upcoming", status: "done", taskId: task.id, wasCompleted: true }),
   ], context, { editedHistoryDateKeys: ["2026-07-06"] });
-  assert.deepEqual(upcoming, { completedAt: null, dueOn: "2026-07-13", status: "upcoming" });
+  assert.deepEqual(upcoming, { completedAt: null, dueOn: "2026-07-13", status: "not_due" });
 
   const notDue = resolveLiveTaskStatusFromHistory({ ...task, repeat_interval: 2 }, [
     createHistoryEntry({ entryDate: "2026-07-06", id: "future-not-due", status: "done", taskId: task.id, wasCompleted: true }),
@@ -951,7 +951,7 @@ test("future-due recurring live status ignores today history facts", () => {
   });
 
   assert.equal(result.dueOn, undefined);
-  assert.equal(result.status, "upcoming");
+  assert.equal(result.status, "not_due");
   assert.equal(result.completedAt, null);
 });
 

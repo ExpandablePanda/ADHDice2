@@ -67,7 +67,7 @@ export function AttentionWorkspace({
 
       <AdhdPanel title="Coming Up" subtitle="Future Tasks remain awareness, not urgency.">
         {visibleComingUp.length === 0 ? (
-          <p className="rounded-[1rem] border border-dashed border-[#ded6f3] bg-[#fbfaff] px-4 py-4 text-sm text-[#766f8d] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/58">{taskSectionEmptyText ?? "No upcoming Tasks with a scheduled date."}</p>
+          <p className="rounded-[1rem] border border-dashed border-[#ded6f3] bg-[#fbfaff] px-4 py-4 text-sm text-[#766f8d] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/58">{taskSectionEmptyText ?? "No scheduled Tasks with a future date."}</p>
         ) : (
           <div className="grid gap-2">
             {visibleComingUp.map((task) => (

@@ -1,5 +1,5 @@
 import type { Task, TaskStatus } from "../database.types.ts";
-import { daysBetween, shiftDateKey } from "../task-state-engine/calendar.ts";
+import { shiftDateKey } from "../task-state-engine/calendar.ts";
 import { evaluateTaskState } from "../task-state-engine/engine.ts";
 import { quotaPeriodBounds, quotaPeriodFactFor, type QuotaPeriodFactDraft } from "../task-state-engine/quota.ts";
 import type {
@@ -544,7 +544,7 @@ function projectionForWorkflowClear(task: Task, logicalDate: string): CanonicalC
   let status: TaskStatus = task.status;
   if (task.status === "in_progress") {
     if (!task.due_on) status = "pending";
-    else if (task.due_on > logicalDate) status = daysBetween(logicalDate, task.due_on) <= 7 ? "upcoming" : "not_due";
+    else if (task.due_on > logicalDate) status = "not_due";
     else status = "pending";
   }
   return {

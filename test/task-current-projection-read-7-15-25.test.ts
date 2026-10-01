@@ -138,6 +138,16 @@ test("a fresh projection supplies current status, due, streak, Last Handled, and
   });
 });
 
+test("legacy Upcoming projection rows are read as Not Due", () => {
+  const fresh = resolve({ display_status: "upcoming" });
+  assert.equal(fresh.displayStatusByTaskId["task-1"], "not_due");
+
+  const fallback = resolve({ validity: "repair_required" }, {
+    legacyCurrentRead: { statusesByTaskId: { "task-1": "upcoming" } },
+  });
+  assert.equal(fallback.displayStatusByTaskId["task-1"], "not_due");
+});
+
 test("next_due_on drives display due without substituting current_effective_due_on semantics", () => {
   const result = resolve({}, {
     projectionRow: {

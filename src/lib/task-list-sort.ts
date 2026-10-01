@@ -1,5 +1,5 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
-import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import { getTaskPriorityLevel } from "@/lib/task-priority";
 
@@ -31,12 +31,11 @@ export const LIST_SORT_FIELDS: readonly ListSortField[] = [
   "estimated_duration",
 ];
 
-const LIST_STATUS_ORDER: Record<TaskDisplayStatus, number> = {
+const LIST_STATUS_ORDER: Record<Exclude<TaskDisplayStatus, "upcoming">, number> = {
   unscheduled: 0,
   pending: 1,
   in_progress: 2,
   missed: 3,
-  upcoming: 4,
   not_due: 4,
   delayed: 5,
   done: 6,
@@ -101,8 +100,8 @@ export function sortListParentTasks(
           || compareNullable(left.due_time, right.due_time, (a, b) => a.localeCompare(b));
         break;
       case "status":
-        result = LIST_STATUS_ORDER[context.taskDisplayStatusByTaskId?.[left.id] ?? left.status]
-          - LIST_STATUS_ORDER[context.taskDisplayStatusByTaskId?.[right.id] ?? right.status];
+        result = LIST_STATUS_ORDER[normalizeTaskDisplayStatus(context.taskDisplayStatusByTaskId?.[left.id] ?? left.status)]
+          - LIST_STATUS_ORDER[normalizeTaskDisplayStatus(context.taskDisplayStatusByTaskId?.[right.id] ?? right.status)];
         break;
       case "priority":
         result = getTaskPriorityLevel(left) - getTaskPriorityLevel(right);

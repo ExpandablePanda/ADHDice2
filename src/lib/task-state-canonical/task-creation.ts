@@ -12,7 +12,7 @@ import type { CanonicalEntityKind } from "./types.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_KEY = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
-const SAFE_INITIAL_STATUSES = new Set<TaskStatus>(["pending", "upcoming", "not_due", "archived"]);
+const SAFE_INITIAL_STATUSES = new Set<TaskStatus>(["pending", "not_due", "archived"]);
 const REPEAT_FREQUENCIES = new Set<TaskRepeatFrequency>([
   "none",
   "daily",

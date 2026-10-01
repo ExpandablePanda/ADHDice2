@@ -1,7 +1,7 @@
 import type { CurrentTaskProjectionTimestampKind, Task, TaskCurrentProjection } from "@/lib/database.types";
 import { isCurrentTaskProjectionFresh } from "@/lib/task-current-projection-freshness";
 import { isCanonicalInactiveTask } from "@/lib/task-state-engine/direct-input";
-import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskHistoryStreakSummary, TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { CurrentTaskProjectionScopedVerificationProof } from "@/lib/task-current-projection-parity-verifier";
 import { logicalDateForTimestamp } from "@/lib/task-state-engine/calendar";
@@ -344,7 +344,7 @@ export function resolveCurrentTaskProjectionReads({
     if (isFresh && projection) {
       freshProjectionByTaskId[task.id] = projection;
       freshProjectionTaskIds.push(task.id);
-      displayStatusByTaskId[task.id] = projection.display_status;
+      displayStatusByTaskId[task.id] = normalizeTaskDisplayStatus(projection.display_status);
       dueOnByTaskId[task.id] = projection.next_due_on;
       effectiveTaskHistoryStreakSummaries[task.id] = projectionToTaskHistoryStreakSummary(projection);
       continue;
@@ -354,9 +354,9 @@ export function resolveCurrentTaskProjectionReads({
     else missingProjectionTaskIds.push(task.id);
 
     if (hasOwn(legacyCurrentRead?.statusesByTaskId, task.id)) {
-      displayStatusByTaskId[task.id] = legacyCurrentRead!.statusesByTaskId![task.id]!;
+      displayStatusByTaskId[task.id] = normalizeTaskDisplayStatus(legacyCurrentRead!.statusesByTaskId![task.id]!);
     } else {
-      displayStatusByTaskId[task.id] = task.status;
+      displayStatusByTaskId[task.id] = normalizeTaskDisplayStatus(task.status);
     }
 
     if (hasOwn(legacyCurrentRead?.dueOnByTaskId, task.id)) {
@@ -452,9 +452,9 @@ export function compareCurrentTaskProjectionParity({
         : task.due_on,
       currentMissedStreak: legacySummary?.missedStreak ?? 0,
       currentPositiveStreak: legacySummary?.currentStreak ?? 0,
-      displayStatus: hasOwn(legacyCurrentRead.statusesByTaskId, task.id)
-        ? legacyCurrentRead.statusesByTaskId[task.id]
-        : task.status,
+      displayStatus: normalizeTaskDisplayStatus(hasOwn(legacyCurrentRead.statusesByTaskId, task.id)
+        ? legacyCurrentRead.statusesByTaskId[task.id]!
+        : task.status),
       lastDoneAt: legacySummary?.lastDoneAt ?? null,
       lastDoneDate: legacySummary?.lastDoneDate ?? null,
       lastHandledAt: scopedLastHandledSummary
@@ -465,7 +465,7 @@ export function compareCurrentTaskProjectionParity({
         : legacySummary?.lastHandledDate ?? null,
     };
     const comparisons: Array<[CurrentTaskProjectionParityField, unknown, unknown]> = [
-      ["displayStatus", projection.display_status, legacyValues.displayStatus],
+      ["displayStatus", normalizeTaskDisplayStatus(projection.display_status), legacyValues.displayStatus],
       ["displayDueOn", projection.next_due_on, legacyValues.displayDueOn],
       ["currentPositiveStreak", projection.current_positive_streak, legacyValues.currentPositiveStreak],
       ["currentMissedStreak", projection.current_missed_streak, legacyValues.currentMissedStreak],

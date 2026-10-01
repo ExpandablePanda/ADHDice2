@@ -1,5 +1,5 @@
 import type { Task, TaskEnergy, TaskHistory, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
-import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import { buildEmptyTaskHistoryFacts, getTaskFocusFilterFacts, type TaskHistoryFacts, type TaskHistoryStreakPreset, type TaskHistoryWindowPreset } from "@/lib/task-history";
 import { getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 
@@ -241,13 +241,13 @@ type TaskListLookup = {
 function getTaskRuleDisplayStatus(task: Task, context: TaskListEvaluationContext): TaskDisplayStatus {
   const cachedStatus = context.taskDisplayStatusByTaskId?.[task.id];
   if (cachedStatus) {
-    return cachedStatus;
+    return normalizeTaskDisplayStatus(cachedStatus);
   }
 
   // Live status belongs to the canonical Task State projection. Isolated
   // callers without that projection may use the persisted snapshot, but this
   // list domain must not create a second History-based status authority.
-  return task.status;
+  return normalizeTaskDisplayStatus(task.status);
 }
 
 function getTaskRuleFocusFacts(task: Task, context: TaskListEvaluationContext) {
@@ -452,7 +452,7 @@ export function getBuiltInTaskLists(): TaskListDefinition[] {
       membershipMode: "rules",
       name: "Waiting",
       rules: {
-        rules: [{ rule: { field: "status", op: "is", value: "upcoming" } }],
+        rules: [{ rule: { field: "status", op: "is", value: "not_due" } }],
       },
       sortOrder: 12,
       type: "system",
@@ -696,7 +696,7 @@ export function parseTaskListRules(value: unknown): TaskListRuleGroup | null {
   return {
     rules: legacyRules.map((rule, index) => ({
       connector: index === 0 ? undefined : (candidate.combinator === "any" ? "or" : "and"),
-      rule,
+      rule: normalizeTaskListRule(rule),
     })),
   };
 }
@@ -754,7 +754,7 @@ function matchesTaskListRule(
   switch (rule.field) {
     case "status": {
       const displayStatus = getTaskRuleDisplayStatus(task, context);
-      const values = Array.isArray(rule.value) ? rule.value : [rule.value];
+      const values = (Array.isArray(rule.value) ? rule.value : [rule.value]).map((value) => normalizeTaskDisplayStatus(value));
       return rule.op === "is" ? values.includes(displayStatus) : !values.includes(displayStatus);
     }
     case "list": {
@@ -940,8 +940,18 @@ function isTaskListRuleRow(value: unknown): value is TaskListRuleRow {
 function normalizeTaskListRuleRows(rows: TaskListRuleRow[]): TaskListRuleRow[] {
   return rows.map((entry, index) => ({
     connector: index === 0 ? undefined : (entry.connector === "or" ? "or" : "and"),
-    rule: entry.rule,
+    rule: normalizeTaskListRule(entry.rule),
   }));
+}
+
+function normalizeTaskListRule(rule: TaskListRule): TaskListRule {
+  if (rule.field !== "status") return rule;
+  return {
+    ...rule,
+    value: Array.isArray(rule.value)
+      ? Array.from(new Set(rule.value.map((value) => normalizeTaskDisplayStatus(value))))
+      : normalizeTaskDisplayStatus(rule.value),
+  };
 }
 
 export function isTaskListRepeatEnabled(frequency: TaskRepeatFrequency) {

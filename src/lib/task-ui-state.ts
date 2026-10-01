@@ -1,7 +1,7 @@
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import type { TaskEnergy } from "@/lib/database.types";
 import type { TaskRepeatCategory } from "@/lib/task-repeat";
-import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 import { normalizeListSortBySurface, type ListSortBySurface } from "@/lib/task-list-sort";
@@ -234,7 +234,9 @@ export function migrateLegacyTaskUiState(state: Partial<TaskUiState>): TaskUiSta
     listSortBySurface: normalizeListSortBySurface(state.listSortBySurface),
     selectedBucket: isLegacyAttentionSurface ? "attention" : nextBucket,
     statusFilters: Array.isArray(state.statusFilters)
-      ? state.statusFilters.filter((status) => status !== "trashed")
+      ? Array.from(new Set(state.statusFilters
+        .map((status) => normalizeTaskDisplayStatus(status))
+        .filter((status) => status !== "trashed")))
       : [],
     tableColumnFilters: {
       priority: Array.isArray(state.tableColumnFilters?.priority) ? state.tableColumnFilters.priority : [],

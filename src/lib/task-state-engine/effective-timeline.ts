@@ -2,7 +2,6 @@ import {
   authoritativeRowsByDate,
   calendarStateForOutcome,
   dateRange,
-  daysBetween,
   shiftDateKey,
 } from "./calendar.ts";
 import {
@@ -706,15 +705,10 @@ export function buildTaskEffectiveTimeline(
     if (currentDay?.state === "delayed" || (delayedUntilDate && delayedUntilDate > input.logicalDate)) return "delayed" as const;
     if (streaks.currentMissedStreak > 0 || currentDay?.state === "missed"
       || (behaviorPolicy.unresolvedOccurrence === "missed" && currentDay?.obligation === "overdue")) return "missed" as const;
-    if (currentDay?.state === "scheduled") return daysBetween(input.logicalDate, currentDay.logicalDate) <= 7 ? "upcoming" as const : "not_due" as const;
+    if (currentDay?.state === "scheduled") return "not_due" as const;
     if (currentDay?.state === "not_due" || currentDay?.state === "no_entry") {
       if (!activeDueOn && input.task.recurrence.kind === "none") return "unscheduled" as const;
-      const nextScheduledDueOn = input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly"
-        ? scheduledOccurrences(input.task.recurrence, activeDueOn ?? input.logicalDate, input.logicalDate, shiftDateKey(input.logicalDate, 800)).at(0) ?? null
-        : activeDueOn;
-      return nextScheduledDueOn && nextScheduledDueOn > input.logicalDate && daysBetween(input.logicalDate, nextScheduledDueOn) <= 7
-        ? "upcoming" as const
-        : "not_due" as const;
+      return "not_due" as const;
     }
     return "pending" as const;
   })();

@@ -378,7 +378,7 @@ test("handled Done uses the engine-derived projection for a recurring task", () 
     outcome: "done",
   }));
   assert.equal(plan.normalizedResult.historyFact?.outcome, "done");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });
 
 test("fixed weekly command persists the engine-resolved early-success occurrence", () => {
@@ -1238,7 +1238,7 @@ test("clearing workflow restores a future due projection without changing lifecy
     ...command({ commandId: "00000000-0000-4000-8000-000000000012" }),
     type: "workflow_clear",
   });
-  assert.equal(upcoming.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(upcoming.normalizedResult.compatibilityProjection.status, "not_due");
   assert.equal(upcoming.normalizedResult.canonicalTaskPatch.workflow_state, "none");
 
   const notDue = planTaskStateCommand(state({ status: "in_progress", due_on: "2026-08-30" }), {
@@ -1634,7 +1634,7 @@ test("canonical Daily success projection derives its own date after ambiguous ol
       scheduledDueOn: null,
     }));
 
-    assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming", outcome);
+    assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due", outcome);
     assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-24", outcome);
     assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, "2026-08-23", outcome);
     assert.equal(plan.command.payload.occurrenceKey, null, outcome);
@@ -1961,7 +1961,7 @@ test("trusted repeat planner replays from the last success with the proposed cad
   const plan = planTaskStateCommand(planningState, command);
 
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-14");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });
 
 test("trusted Calendar override planner evaluates the proposed override before commit", () => {
@@ -1985,7 +1985,7 @@ test("trusted Calendar override planner evaluates the proposed override before c
   const plan = planTaskStateCommand(planningState, planned);
 
   assert.equal(plan.normalizedResult.calendarOverride?.override_state, "not_due");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-11");
   assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });

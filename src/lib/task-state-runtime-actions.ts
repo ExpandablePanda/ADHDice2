@@ -431,7 +431,7 @@ export function classifyTaskStateRuntimeAction(
       stateFields,
       metadataFields,
       targetStatus === "pending" || targetStatus === "upcoming" || targetStatus === "not_due"
-        ? "Pending, Upcoming, and Not Due are derived statuses, not independent canonical commands; this transition has no safe canonical action."
+        ? "Pending and Not Due are derived statuses, not independent canonical commands; this transition has no safe canonical action."
         : targetStatus === "delayed"
           ? "Delay requires canonical occurrence identity and effective date; a bare TaskUpdate cannot provide them."
           : "This status transition has no safe canonical command descriptor.",

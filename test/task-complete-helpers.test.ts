@@ -25,7 +25,6 @@ test("one-off status options include missed and complete but exclude occurrence-
     "delayed",
     "missed",
     "complete",
-    "upcoming",
     "not_due",
     "archived",
   ]);
@@ -40,7 +39,6 @@ test("recurring status options keep occurrence statuses and add complete", () =>
     "did_my_best",
     "missed",
     "complete",
-    "upcoming",
     "not_due",
     "archived",
   ]);

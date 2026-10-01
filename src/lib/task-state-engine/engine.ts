@@ -2,7 +2,6 @@ import {
   authoritativeRowsByDate,
   calendarStateForOutcome,
   dateRange,
-  daysBetween,
   logicalDateForTimestamp,
   shiftDateKey,
 } from "./calendar.ts";
@@ -50,8 +49,8 @@ function rewardIdentity(taskId: string, date: string, outcome: TaskHistoryOutcom
   return `task-reward:${taskId}:${date}:${outcome}`;
 }
 
-function statusForFutureDate(today: string, dueOn: string): TaskActiveStatus {
-  return daysBetween(today, dueOn) <= 7 ? "upcoming" : "not_due";
+function statusForFutureDate(): TaskActiveStatus {
+  return "not_due";
 }
 
 function streakFor(
@@ -868,7 +867,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   } else if (unscheduled) {
     activeStatus = "unscheduled";
   } else if (nextDue && nextDue > today) {
-    activeStatus = statusForFutureDate(today, nextDue);
+    activeStatus = statusForFutureDate();
   } else if (oneOffHandled || currentRecurrenceOutcome === "done") {
     activeStatus = "done";
   } else if (currentRecurrenceOutcome === "did_my_best") {

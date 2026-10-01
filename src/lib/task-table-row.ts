@@ -7,7 +7,7 @@ import { getTaskHistoryLastDone, getTaskHistoryLastHandled, isTaskFinishedOnDate
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskAttentionReason } from "@/lib/task-attention";
-import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
@@ -79,7 +79,7 @@ function buildTaskTableSubtasks(subtasks: Task[], parentId: string | null = null
       customRulesetId: subtask.custom_ruleset_id,
       dueOn: subtask.due_on,
       id: subtask.id,
-      status: subtask.status,
+      status: normalizeTaskDisplayStatus(subtask.status),
       taskType: normalizeTaskType(subtask.task_type),
       title: subtask.title,
     }));
@@ -158,7 +158,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatQuotaBalanceEnabled: task.repeat_quota_balance_enabled,
     repeatQuotaBalance: task.repeat_quota_balance,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
-    status: context.displayStatus ?? task.status,
+    status: normalizeTaskDisplayStatus(context.displayStatus ?? task.status),
     finishedToday: context.finishedTodayByTaskId
       ? context.finishedTodayByTaskId[task.id] === true
       : isTaskFinishedOnDate(context.taskHistory, context.todayDateKey),

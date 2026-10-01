@@ -468,56 +468,14 @@ export function calcNextDueDateFromDate(task: Task, referenceDateKey: string): s
   return formatDateKey(base);
 }
 
-function getTimePartsInTimeZone(date: Date, timezone: string) {
-  const formatter = new Intl.DateTimeFormat("en-US", {
-    hour: "2-digit",
-    hourCycle: "h23",
-    minute: "2-digit",
-    timeZone: timezone,
-  });
-  const parts = formatter.formatToParts(date);
-  return {
-    hour: Number.parseInt(parts.find((part) => part.type === "hour")?.value ?? "", 10),
-    minute: Number.parseInt(parts.find((part) => part.type === "minute")?.value ?? "", 10),
-  };
-}
-
-function parseTimeToMinutes(time: string | null) {
-  if (!time) {
-    return null;
-  }
-
-  const [hoursText, minutesText] = time.split(":");
-  const hours = Number.parseInt(hoursText ?? "", 10);
-  const minutes = Number.parseInt(minutesText ?? "", 10);
-  if (!Number.isFinite(hours) || !Number.isFinite(minutes)) {
-    return null;
-  }
-
-  return (hours * 60) + minutes;
-}
-
-function normalizeMinutesWithinLogicalDay(totalMinutes: number, logicalDayStartMinutes: number) {
-  return totalMinutes < logicalDayStartMinutes ? totalMinutes + 1440 : totalMinutes;
-}
-
 export function resolveRecurringLiveStatusFromNextDueDate(
-  task: Pick<Task, "due_time">,
+  _task: Pick<Task, "due_time">,
   {
     currentDayKey,
-    dayStartTime,
     nextDueDate,
-    now,
-    timezone,
   }: ResolveRecurringLiveStatusOptions,
 ): TaskStatus {
   if (nextDueDate > currentDayKey) {
-    const daysUntilDue = Math.round(
-      (new Date(`${nextDueDate}T00:00:00`).getTime() - new Date(`${currentDayKey}T00:00:00`).getTime()) / 86_400_000,
-    );
-    if (daysUntilDue <= 7) {
-      return "upcoming";
-    }
     return "not_due";
   }
 
@@ -525,22 +483,7 @@ export function resolveRecurringLiveStatusFromNextDueDate(
     return "pending";
   }
 
-  const logicalDayStartMinutes = parseTimeToMinutes(dayStartTime);
-  const dueMinutes = parseTimeToMinutes(task.due_time);
-  if (logicalDayStartMinutes === null || dueMinutes === null) {
-    return "pending";
-  }
-
-  const currentTimeParts = getTimePartsInTimeZone(now, timezone);
-  if (!Number.isFinite(currentTimeParts.hour) || !Number.isFinite(currentTimeParts.minute)) {
-    return "pending";
-  }
-
-  const currentMinutes = (currentTimeParts.hour * 60) + currentTimeParts.minute;
-  const normalizedCurrentMinutes = normalizeMinutesWithinLogicalDay(currentMinutes, logicalDayStartMinutes);
-  const normalizedDueMinutes = normalizeMinutesWithinLogicalDay(dueMinutes, logicalDayStartMinutes);
-
-  return normalizedDueMinutes > normalizedCurrentMinutes ? "upcoming" : "pending";
+  return "pending";
 }
 
 export function formatRepeatSummary(task: Pick<Task, "repeat_frequency" | "repeat_interval" | "repeat_days_of_week" | "repeat_day_of_month" | "repeat_monthly_mode" | "repeat_monthly_ordinal" | "repeat_monthly_weekday"> & {

@@ -1,5 +1,5 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
-import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import {
   resolveActiveTaskStatus,
   type ActiveStatusReadInput,
@@ -209,7 +209,9 @@ export function projectTasksForActiveStatusRead(
     const hasCanonicalStatus = Object.hasOwn(statusesByTaskId, task.id);
     const hasCanonicalDueOn = Object.hasOwn(dueOnByTaskId, task.id);
     const status = hasCanonicalStatus ? statusesByTaskId[task.id]! : task.status;
-    const projectedStatus = status === "unscheduled" ? task.status : status;
+    const projectedStatus = status === "unscheduled"
+      ? normalizeTaskDisplayStatus(task.status)
+      : normalizeTaskDisplayStatus(status);
     const dueOn = hasCanonicalDueOn ? dueOnByTaskId[task.id] ?? null : task.due_on;
     // The database-backed Task row remains valid when the engine-only display
     // status is unscheduled. Callers must consume the map for presentation.

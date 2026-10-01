@@ -1,8 +1,8 @@
-import { ArrowRight, Bell, BookOpen, CalendarClock, CalendarDays, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
+import { ArrowRight, Bell, BookOpen, CalendarClock, CalendarDays, Ellipsis, Star, Trash2, X } from "lucide-react";
 import type { MouseEvent } from "react";
 
 import type { TaskStatus } from "@/lib/database.types";
-import type { TaskDisplayStatus as UiTaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus as UiTaskDisplayStatus } from "@/lib/task-display-status";
 
 export type TaskDisplayStatus = UiTaskDisplayStatus;
 
@@ -16,7 +16,6 @@ export const TASK_STATUS_OPTIONS: Array<{ label: string; value: TaskStatus }> = 
   { label: "Did My Best", value: "did_my_best" },
   { label: "Missed", value: "missed" },
   { label: "Complete", value: "complete" },
-  { label: "Upcoming", value: "upcoming" },
   { label: "Not Due", value: "not_due" },
   { label: "Archived", value: "archived" },
 ];
@@ -72,7 +71,7 @@ export function getTaskStatusCircleClassName(
   status: TaskDisplayStatus,
   options: { inverted?: boolean } = {},
 ) {
-  const key = (status === "trashed" ? "trashed" : status) as UiTaskDisplayStatus;
+  const key = normalizeTaskDisplayStatus(status === "trashed" ? "trashed" : status) as UiTaskDisplayStatus;
   if (options.inverted) {
     return TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES[key] ?? "border border-[#6b738f] bg-[#6b738f] text-white dark:border-[#6b738f] dark:bg-[#6b738f] dark:text-white";
   }
@@ -80,7 +79,7 @@ export function getTaskStatusCircleClassName(
 }
 
 export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplayStatus) {
-  const key = (status === "trashed" ? "trashed" : status) as UiTaskDisplayStatus;
+  const key = normalizeTaskDisplayStatus(status === "trashed" ? "trashed" : status) as UiTaskDisplayStatus;
   const hoverClassMap: Record<UiTaskDisplayStatus, string> = {
     archived: "group-hover:border-[#68738c] group-hover:bg-[#68738c] group-hover:text-white dark:group-hover:border-[#68738c] dark:group-hover:bg-[#68738c] dark:group-hover:text-white",
     complete: "group-hover:border-[#256947] group-hover:bg-[#256947] group-hover:text-white dark:group-hover:border-[#256947] dark:group-hover:bg-[#256947] dark:group-hover:text-white",
@@ -99,6 +98,7 @@ export function getTaskStatusCircleHoverInvertedClassName(status: TaskDisplaySta
 }
 
 export function formatTaskStatusLabel(value: string) {
+  value = normalizeTaskDisplayStatus(value);
   if (value === "blank") {
     return "Blank";
   }
@@ -124,38 +124,35 @@ export function renderTaskStatusGlyph(
   size: "sm" | "md" = "md",
   options: { className?: string } = {},
 ) {
+  const normalizedStatus = normalizeTaskDisplayStatus(status);
   const iconSize = size === "sm" ? "h-3 w-3" : "h-3.25 w-3.25";
   const glyphClassName = options.className ?? "";
 
-  if (status === "pending") {
+  if (normalizedStatus === "pending") {
     return <Ellipsis className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
-  if (status === "in_progress") {
+  if (normalizedStatus === "in_progress") {
     return <ArrowRight className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
-  if (status === "done") {
+  if (normalizedStatus === "done") {
     return <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none ${glyphClassName}`.trim()}>✓</span>;
   }
 
-  if (status === "missed") {
+  if (normalizedStatus === "missed") {
     return <X className={`${iconSize} translate-y-[0.5px] ${glyphClassName}`.trim()} strokeWidth={2.6} />;
   }
 
-  if (status === "did_my_best") {
+  if (normalizedStatus === "did_my_best") {
     return <Star className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
-  if (status === "complete") {
+  if (normalizedStatus === "complete") {
     return <span className={`${size === "sm" ? "text-[11px]" : "text-xs"} font-bold leading-none ${glyphClassName}`.trim()}>✓</span>;
   }
 
-  if (status === "upcoming") {
-    return <Clock className={`${iconSize} ${glyphClassName}`.trim()} />;
-  }
-
-  if (status === "not_due") {
+  if (normalizedStatus === "not_due") {
     return (
       <span className={`flex items-center gap-[2px] ${size === "sm" ? "scale-90" : ""} ${glyphClassName}`.trim()} aria-hidden="true">
         <span className={`block rounded-full bg-current ${size === "sm" ? "h-2.5 w-[2px]" : "h-3 w-[2px]"}`} />
@@ -164,15 +161,15 @@ export function renderTaskStatusGlyph(
     );
   }
 
-  if (status === "delayed") {
+  if (normalizedStatus === "delayed") {
     return <CalendarClock className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
-  if (status === "unscheduled") {
+  if (normalizedStatus === "unscheduled") {
     return <CalendarDays className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 
-  if (status === "trashed") {
+  if (normalizedStatus === "trashed") {
     return <Trash2 className={`${iconSize} ${glyphClassName}`.trim()} />;
   }
 

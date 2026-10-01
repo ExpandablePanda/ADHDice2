@@ -256,11 +256,11 @@ for (const outcome of ["done", "did_my_best"] as const) {
     const evaluated = evaluateTaskState(input);
     const plan = planTaskStateCommand({ task: model.task, engineInput: input }, command(sourceTask, outcome));
 
-    assert.equal(ordinaryStatus(sourceTask, rows), "upcoming");
+    assert.equal(ordinaryStatus(sourceTask, rows), "not_due");
     assert.equal(evaluated.calendar[TODAY], outcome);
-    assert.equal(evaluated.activeStatus, "upcoming");
+    assert.equal(evaluated.activeStatus, "not_due");
     assert.equal(evaluated.nextDueDate, "2026-08-20");
-    assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+    assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
     assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20");
   });
 }
@@ -284,7 +284,7 @@ for (const outcome of ["done", "did_my_best"] as const) {
 
     assert.deepEqual(model.historyFacts.map((fact) => fact.outcome), originalHistory);
     assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-20");
-    assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+    assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
   });
 }
 
@@ -364,5 +364,5 @@ test("Every 3 Days correction replays the canonical command from Missed to the n
   assert.equal(input.task.dueOn, "2026-08-16");
   assert.equal(plan.normalizedResult.historyFact?.outcome, "done");
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-19");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });

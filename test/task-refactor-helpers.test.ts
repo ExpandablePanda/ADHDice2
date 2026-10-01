@@ -21,6 +21,7 @@ import {
 import { buildTaskDueDateSet } from "../src/lib/task-history.ts";
 import { formatTaskMetaLine } from "../src/lib/task-formatting.ts";
 import { TASK_FILTER_STATUS_OPTIONS } from "../src/lib/task-filter-state.ts";
+import { TASK_STATUS_OPTIONS } from "../src/components/task-app/task-status-ui.tsx";
 import { isValidDateKey, normalizeTaskFocusIds } from "../src/lib/task-focus-days.ts";
 import { normalizeLogoSrc } from "../src/lib/profile-store.ts";
 import { buildAgentPlanTaskItem } from "../src/lib/task-agent-plan.ts";
@@ -38,9 +39,11 @@ test("db compat helpers match expected schema fallback errors", () => {
   assert.equal(isMissingTaskActualSecondsColumnError("actual_seconds adhdice_clean_tasks schema cache"), true);
 });
 
-test("task filter status options include permanent Complete but exclude Trash", () => {
+test("task filter status options include permanent Complete but exclude retired statuses", () => {
   assert.equal(TASK_FILTER_STATUS_OPTIONS.includes("complete"), true);
   assert.equal(TASK_FILTER_STATUS_OPTIONS.includes("trashed"), false);
+  assert.equal(TASK_FILTER_STATUS_OPTIONS.includes("upcoming"), false);
+  assert.equal(TASK_STATUS_OPTIONS.some((option) => option.value === "upcoming"), false);
 });
 
 test("focus-day helpers normalize valid UUID ids and date keys", () => {
@@ -187,7 +190,7 @@ test("daily until complete missed-date helper backfills overdue days without dup
   assert.equal(shouldReconcileOverdueTaskMisses({ ...task, status: "complete" }, "2026-05-23"), false);
 });
 
-test("repeat helpers resolve recurring live status from next due date and logical-day time", () => {
+test("repeat helpers resolve future and same-day live status without Upcoming", () => {
   const task = createTask({
     created_at: "2026-05-20T09:00:00.000Z",
     due_on: "2026-05-20",
@@ -208,7 +211,7 @@ test("repeat helpers resolve recurring live status from next due date and logica
       now: new Date("2026-05-21T18:00:00.000Z"),
       timezone: "UTC",
     }),
-    "upcoming",
+    "pending",
   );
 
   assert.equal(
@@ -219,7 +222,7 @@ test("repeat helpers resolve recurring live status from next due date and logica
       now: new Date("2026-05-21T18:00:00.000Z"),
       timezone: "UTC",
     }),
-    "upcoming",
+    "not_due",
   );
 
   assert.equal(
@@ -244,7 +247,7 @@ test("repeat helpers resolve recurring live status from next due date and logica
         timezone: "UTC",
       },
     ),
-    "upcoming",
+    "pending",
   );
 
   assert.equal(

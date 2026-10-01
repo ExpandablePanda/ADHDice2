@@ -12,7 +12,6 @@ export const TASK_FILTER_STATUS_OPTIONS: TaskDisplayStatus[] = [
   "done",
   "did_my_best",
   "missed",
-  "upcoming",
   "not_due",
   "complete",
   "archived",

@@ -1083,7 +1083,7 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
 };
 const priorityOptions: TaskPriorityLevelOption[] = ["0", "1", "2", "3", "4", "5"];
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
-const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "delayed", "done", "did_my_best", "missed", "complete", "upcoming", "not_due", "archived", "trashed"];
+const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "delayed", "done", "did_my_best", "missed", "complete", "not_due", "archived", "trashed"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
 const repeatWeekdayOptions = [
   { label: "Sun", value: 0 },

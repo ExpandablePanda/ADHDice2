@@ -214,7 +214,7 @@ test("Unscheduled only projects the ordinary open state", () => {
 
   assert.equal(engine.statusesByTaskId.pending, "unscheduled");
   assert.equal(engine.statusesByTaskId["pending-today"], "pending");
-  assert.equal(engine.statusesByTaskId["pending-future"], "upcoming");
+  assert.equal(engine.statusesByTaskId["pending-future"], "not_due");
   assert.equal(engine.statusesByTaskId["in-progress"], "in_progress");
   assert.equal(engine.statusesByTaskId.delayed, "unscheduled");
   assert.equal(engine.statusesByTaskId.done, "unscheduled");
@@ -325,16 +325,16 @@ test("clean Due remains internally pending while the user-facing active label is
   assert.equal(TASK_STATUS_OPTIONS.find((option) => option.value === "pending")?.label, "Open");
 });
 
-test("future active-status thresholds remain Upcoming and Not Due without a Missed chain", () => {
-  const upcoming = task({ due_on: "2026-08-13", status: "pending" });
+test("future active-status dates all resolve to Not Due without a Missed chain", () => {
+  const future = task({ due_on: "2026-08-13", status: "pending" });
   const notDue = task({ id: "not-due", due_on: "2026-08-19", status: "pending" });
   const read = resolveActiveTaskStatuses({
-    historyByTaskId: { [upcoming.id]: [], [notDue.id]: [] },
+    historyByTaskId: { [future.id]: [], [notDue.id]: [] },
     logicalDayRollover: "00:00",
     now: "2026-08-10T12:00:00.000Z",
-    tasks: [upcoming, notDue],
+    tasks: [future, notDue],
     timezone: "UTC",
   });
-  assert.equal(read.statusesByTaskId[upcoming.id], "upcoming");
+  assert.equal(read.statusesByTaskId[future.id], "not_due");
   assert.equal(read.statusesByTaskId[notDue.id], "not_due");
 });

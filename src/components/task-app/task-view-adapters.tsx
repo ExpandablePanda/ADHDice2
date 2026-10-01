@@ -8,6 +8,7 @@ import { FilterRowsComponent } from "./task-filter-rows";
 import { FocusPlannerModalComponent } from "./focus-planner-modal";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES } from "./task-status-ui";
+import { normalizeTaskDisplayStatus } from "@/lib/task-display-status";
 import {
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
@@ -122,7 +123,7 @@ function formatTaskCalendarOverrideChangedLine(override: TaskCalendarOverride) {
 }
 
 function statusTone(status: TaskStatus) {
-  return TASK_STATUS_CHIP_STYLES[status] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
+  return TASK_STATUS_CHIP_STYLES[normalizeTaskDisplayStatus(status)] ?? TASK_TABLE_INACTIVE_CHIP_CLASS;
 }
 
 export function FilterRowsAdapter(props: ComponentProps<typeof FilterRowsComponent>) {

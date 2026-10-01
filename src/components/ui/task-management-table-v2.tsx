@@ -50,7 +50,7 @@ import {
   type TaskContentFolderMemberSummary,
   type TaskContentFolderMenuOption,
 } from "@/lib/task-content-folders";
-import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import { TaskAttentionChip } from "@/components/task-app/task-attention-chip";
 import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
@@ -1909,7 +1909,6 @@ const STATUS_SORT_ORDER: TaskDisplayStatus[] = [
   "done",
   "did_my_best",
   "missed",
-  "upcoming",
   "not_due",
   "archived",
   "trashed",
@@ -2269,11 +2268,11 @@ function SameTableStepCreationControl({
 }
 
 function statusTone(status: TaskDisplayStatus) {
-  return TASK_DISPLAY_STATUS_CHIP_STYLES[status] ?? "bg-[#f4f5f8] border border-[#e4deef] text-[#6b7285] dark:bg-white/8 dark:border-white/10 dark:text-white/60";
+  return TASK_DISPLAY_STATUS_CHIP_STYLES[normalizeTaskDisplayStatus(status)] ?? "bg-[#f4f5f8] border border-[#e4deef] text-[#6b7285] dark:bg-white/8 dark:border-white/10 dark:text-white/60";
 }
 
 function invertedStatusTone(status: TaskDisplayStatus) {
-  return TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES[status] ?? ACTIVE_LIST_CHIP_CLASS;
+  return TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES[normalizeTaskDisplayStatus(status)] ?? ACTIVE_LIST_CHIP_CLASS;
 }
 
 function energyTone(energy: TaskEnergy) {
@@ -2355,7 +2354,8 @@ function chunkItems<T>(items: T[], size: number) {
 }
 
 function formatStatusLabel(status: TaskDisplayStatus) {
-  return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+  const normalizedStatus = normalizeTaskDisplayStatus(status);
+  return STATUS_OPTIONS.find((option) => option.value === normalizedStatus)?.label ?? normalizedStatus;
 }
 
 function formatPriorityLabel(priority: TaskPriority) {
@@ -2415,7 +2415,8 @@ export function buildTaskMetadataSummary(
 }
 
 function statusSortValue(status: TaskDisplayStatus) {
-  return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+  const normalizedStatus = normalizeTaskDisplayStatus(status);
+  return STATUS_OPTIONS.find((option) => option.value === normalizedStatus)?.label ?? normalizedStatus;
 }
 
 function dueSortValue(task: PrototypeTaskRow) {
@@ -3211,7 +3212,7 @@ export function TaskManagementTableV2({
 
         return textFilterValue(task, columnId as TextFilterColumnId).toLowerCase().includes(normalizedQuery);
       })
-      && (structuredFilters.status.length === 0 || structuredFilters.status.includes(task.status))
+      && (structuredFilters.status.length === 0 || structuredFilters.status.includes(normalizeTaskDisplayStatus(task.status)))
       && (structuredFilters.priority.length === 0 || task.priorities.some((priority) => structuredFilters.priority.includes(priority)))
       && (structuredFilters.energy.length === 0 || structuredFilters.energy.includes(task.energy))
       && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval, task.repeatDayOfMonth, task.repeatMonthlyMode)))

@@ -15,7 +15,7 @@ import { todayISO } from "@/lib/utils";
 import { formatOptionLabel } from "@/lib/task-label-format";
 import { deduplicateTaskHistoryByLogicalDate, getLatestTaskHistoryEntryOnDate, isTaskHistoryStatus } from "@/lib/task-history";
 
-export type TaskDueDateBucket = "none" | "overdue" | "today" | "upcoming" | "not_due";
+export type TaskDueDateBucket = "none" | "overdue" | "today" | "not_due";
 
 export function daysUntil(date: string | null) {
   if (!date) return null;
@@ -46,10 +46,6 @@ function getDueDateBucketForDate(date: string | null, todayDateKey: string): Tas
     return "today";
   }
 
-  if (difference <= 7) {
-    return "upcoming";
-  }
-
   return "not_due";
 }
 
@@ -62,7 +58,7 @@ export function normalizeOpenTaskStatusForDueDate(
       return "delayed";
     }
     const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
-    return dueBucket === "upcoming" || dueBucket === "not_due" ? "delayed" : "pending";
+    return dueBucket === "not_due" ? "delayed" : "pending";
   }
 
   if (task.status !== "pending" && task.status !== "upcoming" && task.status !== "not_due") {
@@ -70,10 +66,6 @@ export function normalizeOpenTaskStatusForDueDate(
   }
 
   const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
-  if (dueBucket === "upcoming") {
-    return "upcoming";
-  }
-
   if (dueBucket === "not_due") {
     return "not_due";
   }
@@ -110,10 +102,6 @@ export function getTaskDueDateBucket(task: Pick<Task, "due_on" | "status">): Tas
     return "today";
   }
 
-  if (difference <= 7) {
-    return "upcoming";
-  }
-
   return "not_due";
 }
 
@@ -124,7 +112,7 @@ function getTaskDisplayStatusForDate(task: Task, todayDateKey: string) {
     }
     const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
 
-    if (dueBucket === "upcoming" || dueBucket === "not_due") {
+    if (dueBucket === "not_due") {
       return "delayed";
     }
 
@@ -140,10 +128,6 @@ function getTaskDisplayStatusForDate(task: Task, todayDateKey: string) {
   }
 
   const dueBucket = getDueDateBucketForDate(task.due_on, todayDateKey);
-  if (dueBucket === "upcoming") {
-    return "upcoming";
-  }
-
   if (dueBucket === "not_due" || dueBucket === "none") {
     return "not_due";
   }
@@ -446,7 +430,7 @@ function getTaskCockpitBucket(
     return "recurring";
   }
 
-  if (state.isOpen && (task.status === "upcoming" || task.status === "not_due" || (task.due_on !== null && task.due_on > todayKey))) {
+  if (state.isOpen && (task.status === "not_due" || (task.due_on !== null && task.due_on > todayKey))) {
     return "later";
   }
 

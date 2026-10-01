@@ -363,6 +363,39 @@ test("future quota projections shift after an early success", () => {
   assert.equal(after.calendar["2026-10-03"], "scheduled");
 });
 
+test("quota Active Status is Not Due before the mandatory date while Calendar stays scheduled", () => {
+  const weeklyRecurrence = { kind: "quota" as const, period: "week" as const, count: 2, balanceEnabled: false, activationDate: "2026-10-01" };
+  const weeklyFuture = evaluateTaskState({
+    ...input({
+      now: "2026-10-01T14:00:00.000Z",
+      task: { ...input().task, dueOn: "2026-09-28", recurrence: weeklyRecurrence },
+    }),
+    calendarStart: "2026-10-01",
+    calendarEnd: "2026-10-03",
+  });
+  assert.equal(weeklyFuture.nextDueDate, "2026-10-03");
+  assert.equal(weeklyFuture.activeStatus, "not_due");
+  assert.equal(weeklyFuture.calendar["2026-10-03"], "scheduled");
+
+  const weeklyToday = evaluateTaskState({
+    ...input({
+      now: "2026-10-03T14:00:00.000Z",
+      task: { ...input().task, dueOn: "2026-09-28", recurrence: weeklyRecurrence },
+    }),
+  });
+  assert.equal(weeklyToday.activeStatus, "pending");
+
+  const monthlyRecurrence = { kind: "quota" as const, period: "month" as const, count: 4, balanceEnabled: false, activationDate: "2026-10-01" };
+  const monthlyFuture = evaluateTaskState({
+    ...input({
+      now: "2026-10-01T14:00:00.000Z",
+      task: { ...input().task, dueOn: "2026-10-01", recurrence: monthlyRecurrence },
+    }),
+  });
+  assert.equal(monthlyFuture.nextDueDate, "2026-10-28");
+  assert.equal(monthlyFuture.activeStatus, "not_due");
+});
+
 test("quota activation does not retroactively miss dates before its boundary", () => {
   const recurrence = { kind: "quota" as const, period: "week" as const, count: 3, balanceEnabled: false, activationDate: "2026-10-01" };
   const result = evaluateTaskState({
