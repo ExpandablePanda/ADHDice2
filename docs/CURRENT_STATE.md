@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.25`.
+- Current working app version: `7.16.26`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-01 7.16.26 Quota recurrence and production storage safety consolidation
+
+The `codex/7.16` release branch now combines the complete 7.16.22/7.16.23
+quota recurrence implementation with the production localStorage safety fixes
+from 7.16.24/7.16.25. Quota recurrence remains owned by the canonical Task,
+History, quota-period fact, Task State command, projection, and source-only SQL
+paths. Focus browser persistence remains quota-safe and best-effort, with
+Supabase and in-memory React state authoritative for Focus History.
+
+No SQL or Supabase mutation was applied, no Edge function was deployed, and
+browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-09-30 7.16.23 Quota recurrence canonical/deployment corrections
 
