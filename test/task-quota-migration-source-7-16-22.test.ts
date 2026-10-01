@@ -23,3 +23,16 @@ test("7.16.22 quota migration is source-only, bounded, and RLS-protected", async
   }
   assert.doesNotMatch(sql, /apply_migration|supabase db push|supabase functions deploy/);
 });
+
+test("bootstrap ruleset revision constraint names are unique after PostgreSQL truncation", async () => {
+  const schema = await readFile(new URL("../supabase/schema.sql", import.meta.url), "utf8");
+  const tableBody = schema.match(/create table public\.adhdice_custom_behavior_ruleset_revisions \(([\s\S]*?)\n\);/)?.[1];
+  assert.ok(tableBody, "ruleset revision table missing from bootstrap schema");
+  const names = [...tableBody.matchAll(/\bconstraint\s+([A-Za-z0-9_]+)/g)].map((match) => match[1]);
+  const truncatedNames = names.map((name) => name.slice(0, 63));
+  assert.equal(new Set(truncatedNames).size, truncatedNames.length, "bootstrap constraint names collide after PostgreSQL truncation");
+  assert.deepEqual(
+    names.filter((name) => name.startsWith("adhdice_ruleset_rev_needs_actions")),
+    ["adhdice_ruleset_rev_needs_actions_check", "adhdice_ruleset_rev_needs_actions_no_null_check"],
+  );
+});

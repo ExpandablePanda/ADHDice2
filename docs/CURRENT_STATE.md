@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.28`.
+- Current working app version: `7.16.29`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -31,6 +31,13 @@ source carries guarded owner-safe quota boundary/command FK parity with the
 canonical schema and runtime migration. SQL remains source-only: no Supabase
 mutation or Edge deployment occurred, and browser/manual/live SQL QA remains
 unverified.
+
+## 2026-10-01 7.16.29 Bootstrap SQL validation correction
+
+The consolidated bootstrap schema now uses unique PostgreSQL-safe names for
+the two ruleset-revision `needs_action_triggers` CHECK constraints. This is a
+baseline SQL validation correction only; quota behavior and migration semantics
+are unchanged. Disposable PostgreSQL validation remains local and source-only.
 
 ## 2026-10-01 7.16.27 Quota pre-deployment correctness pass
 

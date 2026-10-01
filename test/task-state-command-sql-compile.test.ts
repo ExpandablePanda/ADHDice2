@@ -30,6 +30,40 @@ function utilityConnectionArgs(): string[] {
   return ["-h", host!, "-p", port];
 }
 
+const historyFunctionMarker = "-- The legacy p_history_id name is intentional:";
+const taskState7931BaselineCommit = "02b8f9cd96536377159d9f22ff3591c2a25e271f";
+
+function normalizeRulesetRevisionConstraintNames(schema: string): string {
+  return schema
+    .replaceAll(
+      "adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_check",
+      "adhdice_ruleset_rev_needs_actions_check",
+    )
+    .replaceAll(
+      "adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_no_null_check",
+      "adhdice_ruleset_rev_needs_actions_no_null_check",
+    );
+}
+
+function writeOrderedBaselineSchema(
+  outputPath: string,
+  schema: string,
+  canonicalSchema: string,
+  options: { allowMissingHistoryFunctionMarker?: boolean } = {},
+): void {
+  const historyFunctionMarkerIndex = schema.indexOf(historyFunctionMarker);
+  assert.ok(
+    historyFunctionMarkerIndex > 0 || options.allowMissingHistoryFunctionMarker,
+    "expected canonical History function marker in schema source",
+  );
+  const schemaPrefix = historyFunctionMarkerIndex > 0 ? schema.slice(0, historyFunctionMarkerIndex) : schema;
+  const schemaSuffix = historyFunctionMarkerIndex > 0 ? schema.slice(historyFunctionMarkerIndex) : "";
+  writeFileSync(
+    outputPath,
+    `${schemaPrefix}\n${canonicalSchema}\n${schemaSuffix}`,
+  );
+}
+
 test("7.9.20 rollover migration transforms and compiles the prior RPC", (t) => {
   if (!host) {
     t.skip("set ADHDICE_SQL_COMPILE_PGHOST to run the disposable local PostgreSQL compile regression");
@@ -44,6 +78,7 @@ test("7.9.20 rollover migration transforms and compiles the prior RPC", (t) => {
   const database = `adhdice_compile_${process.pid}_${Date.now()}`;
   const preRolloverRpc = join(scratch, "pre-rollover-rpc.sql");
   const preRolloverRpcWithGrants = join(scratch, "pre-rollover-rpc-with-grants.sql");
+  const baselineSchema = join(scratch, "baseline-schema.sql");
   const fixtureSetup = join(scratch, "fixture-setup.sql");
   const verification = join(scratch, "verification.sql");
 
@@ -62,7 +97,12 @@ create function auth.uid() returns uuid language sql stable as $$ select null::u
 `,
     );
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixtureSetup]);
-    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/schema.sql"), "-f", join(repositoryRoot, "supabase/add_task_state_canonical_schema.sql")]);
+    writeOrderedBaselineSchema(
+      baselineSchema,
+      readFileSync(join(repositoryRoot, "supabase/schema.sql"), "utf8"),
+      readFileSync(join(repositoryRoot, "supabase/add_task_state_canonical_schema.sql"), "utf8"),
+    );
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", baselineSchema]);
 
     const preSource = run("git", ["show", "9cfca0c^:supabase/add_task_state_command_rpc.sql"]);
     writeFileSync(preRolloverRpc, preSource);
@@ -111,7 +151,7 @@ test("7.9.31 forward patch and literal History-copy artifacts compile from the i
 
   const scratch = mkdtempSync(join(tmpdir(), "adhdice-sql-compile-7-9-31-"));
   const database = `adhdice_compile_7931_${process.pid}_${Date.now()}`;
-  const baselineSchema = join(scratch, "baseline-canonical-schema.sql");
+  const baselineSchema = join(scratch, "baseline-schema.sql");
   const baselineMigrationSupport = join(scratch, "baseline-migration-support.sql");
   const baselineRpc = join(scratch, "baseline-command-rpc.sql");
   const fixtureSetup = join(scratch, "fixture-setup.sql");
@@ -129,10 +169,15 @@ do $$ begin create role service_role; exception when duplicate_object then null;
 create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
 `);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixtureSetup]);
-    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/schema.sql")]);
-    writeFileSync(baselineSchema, run("git", ["show", "HEAD^:supabase/add_task_state_canonical_schema.sql"]));
-    writeFileSync(baselineMigrationSupport, run("git", ["show", "HEAD^:supabase/add_task_state_migration_support.sql"]));
-    writeFileSync(baselineRpc, `${run("git", ["show", "HEAD^:supabase/add_task_state_command_rpc.sql"])}\nrevoke all on function public.adhdice_execute_task_state_command(uuid, jsonb) from public, anon, authenticated;\ngrant execute on function public.adhdice_execute_task_state_command(uuid, jsonb) to service_role;\n`);
+    writeOrderedBaselineSchema(
+      baselineSchema,
+      normalizeRulesetRevisionConstraintNames(run("git", ["show", `${taskState7931BaselineCommit}:supabase/schema.sql`])),
+      run("git", ["show", `${taskState7931BaselineCommit}:supabase/add_task_state_canonical_schema.sql`]),
+      { allowMissingHistoryFunctionMarker: true },
+    );
+    writeFileSync(baselineMigrationSupport, run("git", ["show", `${taskState7931BaselineCommit}:supabase/add_task_state_migration_support.sql`]));
+    const historicalCommandRpc = run("git", ["show", `${taskState7931BaselineCommit}^:supabase/add_task_state_command_rpc.sql`]);
+    writeFileSync(baselineRpc, `${historicalCommandRpc}\nrevoke all on function public.adhdice_execute_task_state_command(uuid, jsonb) from public, anon, authenticated;\ngrant execute on function public.adhdice_execute_task_state_command(uuid, jsonb) to service_role;\n`);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", baselineSchema,
       "-f", baselineMigrationSupport, "-f", baselineRpc]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_state_auto_missed_history_copy_7_9_31.sql")]);
@@ -286,14 +331,10 @@ do $$ begin create role service_role; exception when duplicate_object then null;
 create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
     `);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixtureSetup]);
-    const schema = readFileSync(join(repositoryRoot, "supabase/schema.sql"), "utf8");
-    const canonicalSchema = readFileSync(join(repositoryRoot, "supabase/add_task_state_canonical_schema.sql"), "utf8");
-    const historyFunctionMarker = "-- The legacy p_history_id name is intentional:";
-    const historyFunctionMarkerIndex = schema.indexOf(historyFunctionMarker);
-    assert.ok(historyFunctionMarkerIndex > 0, "expected canonical History function marker in schema source");
-    writeFileSync(
+    writeOrderedBaselineSchema(
       orderedSchema,
-      `${schema.slice(0, historyFunctionMarkerIndex)}\n${canonicalSchema}\n${schema.slice(historyFunctionMarkerIndex)}`,
+      readFileSync(join(repositoryRoot, "supabase/schema.sql"), "utf8"),
+      readFileSync(join(repositoryRoot, "supabase/add_task_state_canonical_schema.sql"), "utf8"),
     );
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", orderedSchema]);
 
@@ -342,7 +383,6 @@ test("quota deployment installs the enum boundary before quota schema and runtim
   const database = `adhdice_compile_quota_${process.pid}_${Date.now()}`;
   const fixtureSetup = join(scratch, "fixture-setup.sql");
   const baselineSchema = join(scratch, "baseline-schema.sql");
-  const baselineCanonicalSchema = join(scratch, "baseline-canonical-schema.sql");
 
   try {
     run(createdb, [...utilityConnectionArgs(), database]);
@@ -354,10 +394,19 @@ do $$ begin create role authenticated; exception when duplicate_object then null
 do $$ begin create role service_role; exception when duplicate_object then null; end $$;
 create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
 `);
-    writeFileSync(baselineSchema, run("git", ["show", "2b55d6ec^:supabase/schema.sql"]));
-    writeFileSync(baselineCanonicalSchema, run("git", ["show", "2b55d6ec^:supabase/add_task_state_canonical_schema.sql"]));
+    const historicalBaselineSchema = run("git", ["show", "2b55d6ec^:supabase/schema.sql"]);
+    writeOrderedBaselineSchema(
+      baselineSchema,
+      normalizeRulesetRevisionConstraintNames(historicalBaselineSchema),
+      run("git", ["show", "2b55d6ec^:supabase/add_task_state_canonical_schema.sql"]),
+    );
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixtureSetup]);
-    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", baselineSchema, "-f", baselineCanonicalSchema]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", baselineSchema]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_permanent_tombstones_7_9_54.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_tracking_exclusion_7_13_86.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_current_projection_persistence_7_15_14.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_current_projection_source_fences_7_15_15.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_current_projection_invalidation_matrix_7_15_24.sql")]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_quota_recurrence_enum_7_16_22.sql")]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_quota_recurrence_7_16_22.sql")]);
     run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_quota_recurrence_runtime_7_16_23.sql")]);

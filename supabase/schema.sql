@@ -199,9 +199,9 @@ create table public.adhdice_custom_behavior_ruleset_revisions (
     check (available_actions <@ array['done', 'did_my_best', 'missed', 'delay', 'complete']::text[]),
   constraint adhdice_custom_behavior_ruleset_revisions_available_actions_no_null_check
     check (array_position(available_actions, null) is null),
-  constraint adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_check
+  constraint adhdice_ruleset_rev_needs_actions_check
     check (needs_action_triggers <@ array['missed', 'due_today', 'overdue']::text[]),
-  constraint adhdice_custom_behavior_ruleset_revisions_needs_action_triggers_no_null_check
+  constraint adhdice_ruleset_rev_needs_actions_no_null_check
     check (array_position(needs_action_triggers, null) is null),
   constraint adhdice_custom_behavior_ruleset_revisions_success_outcomes_check
     check (success_outcomes <@ array['done', 'did_my_best', 'complete']::text[]),
