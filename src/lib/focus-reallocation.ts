@@ -12,6 +12,7 @@ import {
   OVER_WEEKLY_DAILY_TARGET_REALLOCATION_REASON,
 } from "@/lib/focus-goals";
 import { getLogicalDayKey } from "@/lib/logical-day";
+import { getSafeLocalStorage, readLocalStorageValue, writeLocalStorageEntries } from "@/lib/health-local-storage";
 
 export const FOCUS_REALLOCATION_MODE_STORAGE_KEY = "adhdice_focus_reallocation_mode";
 
@@ -26,17 +27,17 @@ export function getFocusReallocationModeStorageKey(userId: string) {
 }
 
 function browserStorage(): StorageLike | null {
-  return typeof window === "undefined" ? null : window.localStorage;
+  return getSafeLocalStorage();
 }
 
 export function readFocusReallocationMode(userId: string | null, storage: StorageLike | null = browserStorage()): FocusReallocationMode {
   if (!userId || !storage) return "manual";
-  return normalizeFocusReallocationMode(storage.getItem(getFocusReallocationModeStorageKey(userId)));
+  return normalizeFocusReallocationMode(readLocalStorageValue(storage, getFocusReallocationModeStorageKey(userId)));
 }
 
 export function writeFocusReallocationMode(userId: string | null, mode: unknown, storage: StorageLike | null = browserStorage()) {
   if (!userId || !storage) return;
-  storage.setItem(getFocusReallocationModeStorageKey(userId), normalizeFocusReallocationMode(mode));
+  writeLocalStorageEntries(storage, [[getFocusReallocationModeStorageKey(userId), normalizeFocusReallocationMode(mode)]]);
 }
 
 export function shouldPresentDailySurplusModal(

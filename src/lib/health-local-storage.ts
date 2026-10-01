@@ -2,6 +2,14 @@ export type LocalStorageWriter = {
   setItem: (key: string, value: string) => void;
 };
 
+export type LocalStorageReader = {
+  getItem: (key: string) => string | null;
+};
+
+export type LocalStorageRemover = {
+  removeItem: (key: string) => void;
+};
+
 export type LocalStorageWriteResult =
   | { ok: true }
   | { ok: false; reason: "quota" | "storage" };
@@ -16,6 +24,32 @@ function storageErrorDetails(error: unknown) {
     message: typeof candidate.message === "string" ? candidate.message : "",
     name: typeof candidate.name === "string" ? candidate.name.toLowerCase() : "",
   };
+}
+
+export function getSafeLocalStorage(): Storage | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+}
+
+export function readLocalStorageValue(storage: LocalStorageReader, key: string): string | null {
+  try {
+    return storage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+
+export function removeLocalStorageItem(storage: LocalStorageRemover, key: string): boolean {
+  try {
+    storage.removeItem(key);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export function isLocalStorageQuotaError(error: unknown) {
