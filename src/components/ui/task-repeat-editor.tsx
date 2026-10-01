@@ -6,6 +6,7 @@ import {
   createTaskRepeatEditorDraft,
   getTaskRepeatCategory,
   normalizePresetRepeatSelection,
+  normalizeTaskRepeatQuotaCount,
   REPEAT_MONTHLY_MODE_OPTIONS,
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
   REPEAT_WEEKDAY_FULL_LABELS,
@@ -86,7 +87,7 @@ export function TaskRepeatEditor({
   const [localEditorMode, setLocalEditorMode] = useState<TaskRepeatCategory>(() => editorCategory(value));
   const [localDraft, setLocalDraft] = useState<TaskRepeatEditorDraft>(() => createTaskRepeatEditorDraft(value));
   const [localIntervalInput, setLocalIntervalInput] = useState(() => String(Math.max(1, value.repeatInterval)));
-  const [localQuotaCountInput, setLocalQuotaCountInput] = useState(() => String(Math.max(1, value.repeatQuotaCount ?? 1)));
+  const [localQuotaCountInput, setLocalQuotaCountInput] = useState(() => String(value.repeatQuotaCount ?? ""));
   const [localDayOfMonthInput, setLocalDayOfMonthInput] = useState(() => value.repeatDayOfMonth ? String(value.repeatDayOfMonth) : "");
   const [localSessionSignature, setLocalSessionSignature] = useState(() => valueSignature(value));
   const currentValueSignature = valueSignature(value);
@@ -95,7 +96,7 @@ export function TaskRepeatEditor({
   const draft = hasLocalSession ? localDraft : createTaskRepeatEditorDraft(value);
   const editorMode = hasLocalSession ? localEditorMode : editorCategory(value);
   const intervalInput = hasLocalSession ? localIntervalInput : String(draft.repeatInterval);
-  const quotaCountInput = hasLocalSession ? localQuotaCountInput : String(Math.max(1, draft.repeatQuotaCount ?? 1));
+  const quotaCountInput = hasLocalSession ? localQuotaCountInput : String(draft.repeatQuotaCount ?? "");
   const dayOfMonthInput = hasLocalSession ? localDayOfMonthInput : (draft.repeatDayOfMonth ? String(draft.repeatDayOfMonth) : "");
 
   const emit = (nextValue: TaskRepeatEditorValue, nextMode: TaskRepeatCategory, nextDraft?: TaskRepeatEditorDraft) => {
@@ -103,7 +104,7 @@ export function TaskRepeatEditor({
     setLocalDraft(normalizedDraft);
     setLocalEditorMode(nextMode);
     setLocalIntervalInput(String(normalizedDraft.repeatInterval));
-    setLocalQuotaCountInput(String(Math.max(1, normalizedDraft.repeatQuotaCount ?? 1)));
+    setLocalQuotaCountInput(String(normalizedDraft.repeatQuotaCount ?? ""));
     setLocalDayOfMonthInput(normalizedDraft.repeatDayOfMonth ? String(normalizedDraft.repeatDayOfMonth) : "");
     setLocalSessionSignature(valueSignature(nextValue));
     onChange(nextValue);
@@ -132,6 +133,17 @@ export function TaskRepeatEditor({
       commitCustomDraft(nextDraft);
       return;
     }
+    if (selection === "per_week" || selection === "per_month") {
+      const nextValue = normalizePresetRepeatSelection(selection, draft, { dueOn });
+      const nextDraft = createTaskRepeatEditorDraft(nextValue);
+      setLocalDraft(nextDraft);
+      setLocalEditorMode(selection);
+      setLocalIntervalInput(String(nextDraft.repeatInterval));
+      setLocalQuotaCountInput(String(nextValue.repeatQuotaCount ?? ""));
+      setLocalDayOfMonthInput("");
+      setLocalSessionSignature(currentValueSignature);
+      return;
+    }
     const nextValue = normalizePresetRepeatSelection(selection, draft, { dueOn });
     emit(nextValue, selection);
     onPresetApplied?.(selection, nextValue);
@@ -149,9 +161,9 @@ export function TaskRepeatEditor({
     });
   };
   const commitQuotaDraft = (nextDraft: TaskRepeatEditorDraft) => {
-    const limit = nextDraft.repeatFrequency === "per_week" ? 7 : 31;
     const parsed = Number.parseInt(quotaCountInput, 10);
-    const repeatQuotaCount = Number.isFinite(parsed) ? Math.min(limit, Math.max(1, parsed)) : Math.max(1, nextDraft.repeatQuotaCount ?? 1);
+    const repeatQuotaCount = normalizeTaskRepeatQuotaCount(nextDraft.repeatFrequency as "per_week" | "per_month", parsed);
+    if (repeatQuotaCount === null) return;
     const nextValue = normalizePresetRepeatSelection(nextDraft.repeatFrequency as "per_week" | "per_month", {
       ...nextDraft,
       repeatQuotaCount,
@@ -160,11 +172,10 @@ export function TaskRepeatEditor({
   };
   const toggleQuotaBalance = () => {
     if (activeCategory !== "per_week" && activeCategory !== "per_month") return;
-    const nextValue = normalizePresetRepeatSelection(activeCategory, {
+    commitQuotaDraft({
       ...draft,
       repeatQuotaBalanceEnabled: draft.repeatQuotaBalanceEnabled !== true,
-    }, { dueOn });
-    emit(nextValue, activeCategory);
+    });
   };
   const toggleWeekday = (weekday: number) => {
     const nextDays = draft.repeatDaysOfWeek.includes(weekday)

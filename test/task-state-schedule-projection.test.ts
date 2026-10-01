@@ -4,6 +4,7 @@ import type { Task } from "../src/lib/database.types.ts";
 import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
+import { resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/calendar-authority.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import { mergeTaskWithCanonicalScheduleProjection, projectTaskWithCanonicalScheduleBoundary } from "../src/lib/task-state-canonical/schedule-projection.ts";
 import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
@@ -92,6 +93,71 @@ test("metadata and sort-order Task rows merge into projected Tasks without dropp
   assert.equal(merged.due_time, null);
   assert.equal(merged.repeat_frequency, "none");
   assert.equal(merged.repeat_interval, 1);
+});
+
+test("an authoritative post-command boundary replaces the prior Calendar projection immediately", () => {
+  const initialBoundary = {
+    id: "boundary-quota-one",
+    schedule_model: "fixed",
+    repeat_frequency: "per_month",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    repeat_quota_count: 1,
+    repeat_quota_balance_enabled: false,
+    effective_from_logical_date: "2026-10-01",
+    anchor_date: "2026-10-01",
+  } as unknown as CanonicalTaskScheduleBoundary;
+  const committedBoundary = {
+    ...initialBoundary,
+    id: "boundary-quota-four",
+    boundary_sequence: 2,
+    repeat_quota_count: 4,
+  } as unknown as CanonicalTaskScheduleBoundary;
+  const projectedTask = projectTaskWithCanonicalScheduleBoundary({
+    canonicalization_status: "canonical_runtime",
+    container_state: "active",
+    id: "task-quota-calendar",
+    due_on: "2026-10-31",
+    terminal_state: "active",
+    repeat_frequency: "per_month",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    workflow_state: "none",
+  } as unknown as Task, initialBoundary);
+  const authoritativeTask = projectTaskWithCanonicalScheduleBoundary({
+    ...projectedTask,
+    due_on: "2026-10-28",
+  }, committedBoundary);
+
+  const merged = mergeTaskWithCanonicalScheduleProjection(projectedTask, authoritativeTask);
+  const calendar = resolveTaskHistoryCalendarRead({
+    enabled: true,
+    history: [],
+    calendarEnd: "2026-10-31",
+    calendarStart: "2026-10-01",
+    logicalDayRollover: "00:00",
+    now: "2026-10-31T12:00:00.000Z",
+    task: merged,
+    timezone: "UTC",
+  });
+
+  assert.equal(merged.due_on, "2026-10-28");
+  assert.equal(merged.canonical_schedule_boundary?.id, committedBoundary.id);
+  assert.equal(merged.canonical_schedule_boundary?.repeat_quota_count, 4);
+  assert.deepEqual(
+    Object.entries(calendar?.states ?? {})
+      .filter(([, state]) => state === "due")
+      .map(([date]) => date),
+    ["2026-10-28", "2026-10-29", "2026-10-30", "2026-10-31"],
+  );
 });
 
 test("metadata-only and Task Type responses retain a projected canonical rolling schedule", () => {

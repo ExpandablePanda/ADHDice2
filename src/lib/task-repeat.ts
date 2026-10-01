@@ -261,6 +261,16 @@ export function createTaskRepeatEditorDraft(value: TaskRepeatEditorValue): TaskR
   };
 }
 
+export function normalizeTaskRepeatQuotaCount(
+  repeatFrequency: Extract<TaskRepeatFrequency, "per_week" | "per_month">,
+  value: number | null | undefined,
+) {
+  if (!Number.isInteger(value) || (value ?? 0) < 1) {
+    return null;
+  }
+  return Math.min(repeatFrequency === "per_week" ? 7 : 31, value as number);
+}
+
 export function normalizePresetRepeatSelection(
   selection: Exclude<TaskRepeatSelection, "custom" | "weekdays"> | "weekdays",
   current: Partial<TaskRepeatEditorValue> = {},
@@ -278,15 +288,17 @@ export function normalizePresetRepeatSelection(
   }
 
   if (selection === "per_week" || selection === "per_month") {
-    const quotaLimit = selection === "per_week" ? 7 : 31;
+    const currentIsQuota = current.repeatFrequency === undefined
+      || current.repeatFrequency === "per_week"
+      || current.repeatFrequency === "per_month";
     return {
       repeatFrequency: selection,
       repeatInterval: 1,
       ...clearWeeklyFields(),
       ...clearMonthlyFields(),
-      repeatQuotaCount: Number.isInteger(current.repeatQuotaCount) && (current.repeatQuotaCount ?? 0) > 0
-        ? Math.min(quotaLimit, current.repeatQuotaCount as number)
-        : 1,
+      repeatQuotaCount: currentIsQuota
+        ? normalizeTaskRepeatQuotaCount(selection, current.repeatQuotaCount)
+        : null,
       repeatQuotaBalanceEnabled: current.repeatQuotaBalanceEnabled === true,
     };
   }
@@ -403,7 +415,7 @@ export function taskRepeatEditorValueToUpdate(value: TaskRepeatEditorValue) {
       ? value.repeatMonthlyWeekday
       : null,
     repeat_quota_count: value.repeatFrequency === "per_week" || value.repeatFrequency === "per_month"
-      ? Math.min(value.repeatFrequency === "per_week" ? 7 : 31, Math.max(1, Math.trunc(value.repeatQuotaCount ?? 1)))
+      ? normalizeTaskRepeatQuotaCount(value.repeatFrequency, value.repeatQuotaCount)
       : null,
     repeat_quota_balance_enabled: value.repeatFrequency === "per_week" || value.repeatFrequency === "per_month"
       ? value.repeatQuotaBalanceEnabled === true

@@ -11,12 +11,14 @@ import {
   recurrenceAfterSuccess,
   scheduledOccurrences,
 } from "./recurrence.ts";
+import { quotaDateIsMandatory } from "./quota.ts";
 import type {
   TaskEffectiveTimeline,
   TaskEffectiveTimelineDay,
   TaskEffectiveTimelineObligation,
   TaskCalendarOverride,
   TaskHistoryOutcome,
+  TaskQuotaPeriodFact,
   TaskStateHistoryRow,
   TaskStateSnapshot,
   TaskWorkflowState,
@@ -39,6 +41,7 @@ export type BuildTaskEffectiveTimelineInput = {
   currentBehaviorPolicyEffectiveFromLogicalDate?: string;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
+  quotaPeriodFacts?: TaskQuotaPeriodFact[];
   logicalDate: string;
   calendarStart: string;
   calendarEnd: string;
@@ -573,13 +576,32 @@ export function buildTaskEffectiveTimeline(
       if (recurrenceRow) applyExplicitRow(recurrenceRow);
     } else {
       let calculated: TaskEffectiveTimelineDay;
+      const isQuotaRecurrence = input.task.recurrence.kind === "quota";
       const isFixedRecurrence = input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly";
       const isFixedScheduledDate = Boolean(
         activeDueOn
         && isFixedRecurrence
         && isScheduledOccurrence(input.task.recurrence as Extract<TaskStateSnapshot["recurrence"], { kind: "weekly" | "monthly" }>, activeDueOn, date),
       );
-      if (completed || !activeDueOn) {
+      if (completed) {
+        calculated = calculatedDay(input.task.id, date, "no_entry", "none");
+      } else if (isQuotaRecurrence) {
+        const isMandatory = quotaDateIsMandatory({
+          recurrence: input.task.recurrence,
+          logicalDate: date,
+          history: recurrenceExplicitRows,
+          quotaPeriodFacts: input.quotaPeriodFacts,
+        });
+        if (!isMandatory) {
+          calculated = calculatedDay(input.task.id, date, "not_due", "none");
+        } else if (date < input.logicalDate) {
+          calculated = calculatedDay(input.task.id, date, "open", "overdue", date);
+        } else if (date === input.logicalDate) {
+          calculated = calculatedDay(input.task.id, date, "open", "due", date);
+        } else {
+          calculated = calculatedDay(input.task.id, date, "scheduled", "due", date);
+        }
+      } else if (!activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
       } else if (date < activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");

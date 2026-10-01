@@ -5,6 +5,7 @@ import {
   formatRepeatCompactLabel,
   formatRepeatSummary,
   normalizePresetRepeatSelection,
+  normalizeTaskRepeatQuotaCount,
   taskRepeatEditorValueToUpdate,
 } from "../src/lib/task-repeat.ts";
 
@@ -49,6 +50,28 @@ test("quota counts clamp to 7 per week and 31 per month", () => {
     repeatMonthlyWeekday: null,
     repeatQuotaCount: 99,
   }).repeat_quota_count, 31);
+});
+
+test("new quota presets remain pending until an explicit count exists", () => {
+  assert.equal(normalizePresetRepeatSelection("per_month", { repeatFrequency: "none" }).repeatQuotaCount, null);
+  assert.equal(normalizePresetRepeatSelection("per_week", { repeatFrequency: "none" }).repeatQuotaCount, null);
+  assert.equal(normalizeTaskRepeatQuotaCount("per_month", null), null);
+  assert.equal(normalizeTaskRepeatQuotaCount("per_week", 0), null);
+  assert.equal(taskRepeatEditorValueToUpdate({
+    repeatFrequency: "per_month",
+    repeatInterval: 1,
+    repeatDaysOfWeek: [],
+    repeatDayOfMonth: null,
+    repeatMonthlyMode: "day_of_month",
+    repeatMonthlyOrdinal: null,
+    repeatMonthlyWeekday: null,
+    repeatQuotaCount: null,
+  }).repeat_quota_count, null);
+});
+
+test("existing quota counts remain available when switching quota periods", () => {
+  assert.equal(normalizePresetRepeatSelection("per_month", { repeatFrequency: "per_week", repeatQuotaCount: 4 }).repeatQuotaCount, 4);
+  assert.equal(normalizePresetRepeatSelection("per_week", { repeatFrequency: "per_month", repeatQuotaCount: 7 }).repeatQuotaCount, 7);
 });
 
 test("quota labels show the configured count and optional balance", () => {
