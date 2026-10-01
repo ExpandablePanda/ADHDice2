@@ -159,7 +159,7 @@ begin
       'task_patch', 'compatibility_projection', 'history_fact', 'automatic_history_facts',
       'automatic_history_delete_ids', 'occurrence',
       'schedule_boundary', 'occurrence_effective_override', 'calendar_override',
-      'reward_program_version', 'reward_eligible', 'quota_period_facts', 'occurrence_key', 'clear_logical_date', 'manual_action'
+      'reward_program_version', 'reward_eligible', 'quota_period_facts', 'occurrence_key', 'clear_logical_date', 'clear_quota_balance', 'manual_action'
     )
   ) then
     raise exception 'Task State command payload contains an unknown section.'

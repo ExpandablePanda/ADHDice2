@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.26`.
+- Current working app version: `7.16.27`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-01 7.16.27 Quota pre-deployment correctness pass
+
+This source-only correction aligns canonical Task creation monthly/quota INSERT
+positions, admits the serialized Clear Balance marker through the narrow RPC
+payload contract, and prevents quota rollover side effects from being treated
+as semantic no-ops. Permanent Complete now clears the compatibility quota
+balance and period projection while preserving immutable History and quota
+ledger facts; later rollover does not recreate a completed Task obligation.
+
+The quota migration package is split so enum values install in an earlier
+committed migration boundary before dependent quota DDL. No SQL or Supabase
+mutation was applied and no Edge function was deployed.
 
 ## 2026-10-01 7.16.26 Quota recurrence and production storage safety consolidation
 

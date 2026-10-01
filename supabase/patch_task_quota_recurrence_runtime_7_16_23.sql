@@ -256,7 +256,7 @@ begin
       'task_patch', 'compatibility_projection', 'history_fact', 'automatic_history_facts',
       'automatic_history_delete_ids', 'occurrence',
       'schedule_boundary', 'occurrence_effective_override', 'calendar_override',
-      'reward_program_version', 'reward_eligible', 'quota_period_facts', 'occurrence_key', 'clear_logical_date', 'manual_action'
+      'reward_program_version', 'reward_eligible', 'quota_period_facts', 'occurrence_key', 'clear_logical_date', 'clear_quota_balance', 'manual_action'
     )
   ) then
     raise exception 'Task State command payload contains an unknown section.'
@@ -1783,8 +1783,8 @@ begin
     scheduled_on, due_time, estimated_minutes, actual_seconds, tags, external_link_label,
     external_link_url, one_step_at_a_time, subtasks_auto_reset, repeat_frequency, repeat_interval,
     repeat_days_of_week, repeat_day_of_month, repeat_monthly_mode, repeat_monthly_ordinal,
-    repeat_quota_count, repeat_quota_balance_enabled, repeat_quota_balance, repeat_quota_balance_period,
-    repeat_monthly_weekday, pinned_at, pin_order, sort_order, completed_at, trashed_at,
+    repeat_monthly_weekday, repeat_quota_count, repeat_quota_balance_enabled, repeat_quota_balance,
+    repeat_quota_balance_period, pinned_at, pin_order, sort_order, completed_at, trashed_at,
     canonicalization_status, entity_kind, terminal_state, container_state, prior_container_state,
     prior_container_state_status, terminal_completed_at, container_trashed_at, workflow_state,
     workflow_started_at, workflow_logical_date, workflow_occurrence_id, workflow_command_id,

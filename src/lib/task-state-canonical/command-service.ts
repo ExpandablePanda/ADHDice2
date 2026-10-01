@@ -282,7 +282,9 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
     || projection.dueOn !== input.task.due_on
     || projection.completedAt !== input.task.completed_at
     || projection.activeStatusLogicalDate !== input.task.active_status_logical_date
-    || projection.activeOccurrenceDueOn !== input.task.active_occurrence_due_on) {
+    || projection.activeOccurrenceDueOn !== input.task.active_occurrence_due_on
+    || projection.repeatQuotaBalance !== input.task.repeat_quota_balance
+    || projection.repeatQuotaBalancePeriod !== input.task.repeat_quota_balance_period) {
     return false;
   }
 
@@ -293,7 +295,8 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
     && normalizedResult.scheduleBoundary === null
     && normalizedResult.occurrenceEffectiveOverride === null
     && normalizedResult.calendarOverride === null
-    && normalizedResult.rewardEntitlement === null;
+    && normalizedResult.rewardEntitlement === null
+    && (normalizedResult.quotaPeriodFacts ?? []).length === 0;
 }
 
 /**
@@ -945,6 +948,13 @@ export function planTaskStateCommand(
           };
       projection.status = "complete";
       projection.dueOn = null;
+      // Permanent completion ends future quota obligations. The append-only
+      // History and quota-period ledger remain authoritative for the past;
+      // the compatibility projection must not display a live debt or credit.
+      if (task.repeat_frequency === "per_week" || task.repeat_frequency === "per_month") {
+        projection.repeatQuotaBalance = null;
+        projection.repeatQuotaBalancePeriod = null;
+      }
       patch.terminal_state = "permanently_complete";
       patch.container_state = task.container_state ?? "active";
       patch.terminal_completed_at = projection.completedAt;
@@ -1111,7 +1121,8 @@ export function planTaskStateCommand(
         if (change.type !== "insert" || change.row.outcome !== "missed" || change.row.provenance !== "rollover") return [];
         return [automaticHistoryFactFor(command, change.row, input.scheduleBoundaryId ?? null)];
       }) ?? [];
-      if (state.engineInput?.task.recurrence.kind === "quota" && engineResult) {
+      if (task.terminal_state !== "permanently_complete"
+        && state.engineInput?.task.recurrence.kind === "quota" && engineResult) {
         const recurrence = state.engineInput.task.recurrence;
         const currentBounds = quotaPeriodBounds(command.logicalDay.logicalDate, recurrence.period);
         const priorDate = shiftDateKey(currentBounds.start, -1);

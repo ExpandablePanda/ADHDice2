@@ -19,6 +19,8 @@ import { planTaskStateCommand, type CanonicalTaskStateCommand } from "../src/lib
 const canonicalCreationEdgeSource = readFileSync(new URL("../supabase/functions/task-create-canonical/index.ts", import.meta.url), "utf8");
 const assignmentMigration = readFileSync(new URL("../supabase/add_task_custom_ruleset_assignments_7_13_28.sql", import.meta.url), "utf8");
 const behaviorSelectionMigration = readFileSync(new URL("../supabase/add_task_behavior_selections_7_13_31.sql", import.meta.url), "utf8");
+const canonicalCreationSql = readFileSync(new URL("../supabase/add_task_canonical_creation.sql", import.meta.url), "utf8");
+const quotaRuntimeSql = readFileSync(new URL("../supabase/patch_task_quota_recurrence_runtime_7_16_23.sql", import.meta.url), "utf8");
 
 const ownerId = "00000000-0000-4000-8000-000000000001";
 const parentId = "00000000-0000-4000-8000-000000000002";
@@ -184,6 +186,34 @@ function noDirectTaskInsertClient() {
     },
   } as never;
 }
+
+function canonicalCreationInsertSegment(source: string) {
+  const start = source.indexOf("insert into public.adhdice_clean_tasks (");
+  const end = source.indexOf("returning * into v_task;", start);
+  assert.ok(start >= 0 && end > start, "canonical Task INSERT must be present");
+  return source.slice(start, end);
+}
+
+test("canonical creation keeps monthly ordinal/weekday and quota INSERT values positionally aligned", () => {
+  for (const source of [canonicalCreationSql, quotaRuntimeSql]) {
+    const insert = canonicalCreationInsertSegment(source);
+    const orderedColumns = [
+      "repeat_day_of_month", "repeat_monthly_mode", "repeat_monthly_ordinal", "repeat_monthly_weekday",
+      "repeat_quota_count", "repeat_quota_balance_enabled", "repeat_quota_balance", "repeat_quota_balance_period",
+    ];
+    let previous = -1;
+    for (const column of orderedColumns) {
+      const index = insert.indexOf(column, previous + 1);
+      assert.ok(index > previous, `${column} must retain canonical recurrence grouping`);
+      previous = index;
+    }
+    assert.match(insert, /v_task_input\.repeat_monthly_ordinal, v_task_input\.repeat_monthly_weekday,/);
+    assert.match(insert, /case when v_repeat_frequency in \('per_week', 'per_month'\) then v_repeat_quota_count else null end,/);
+    assert.match(insert, /case when v_repeat_frequency in \('per_week', 'per_month'\) then v_repeat_quota_balance_enabled else false end,/);
+    assert.match(insert, /case when v_repeat_frequency in \('per_week', 'per_month'\) and v_repeat_quota_balance_enabled then 0 else null end,/);
+    assert.match(insert, /v_repeat_frequency = 'per_week'[\s\S]*v_repeat_frequency = 'per_month'/);
+  }
+});
 
 test("canonical creation plan initializes runtime state without action facts or rewards", () => {
   const plan = buildCanonicalTaskCreationPlan({ draft: draft(), entityKind: "parent", now, profile });

@@ -330,3 +330,51 @@ from definition;
     }
   }
 });
+
+test("quota deployment installs the enum boundary before quota schema and runtime corrections", (t) => {
+  if (!host) {
+    t.skip("set ADHDICE_SQL_COMPILE_PGHOST to run the disposable local PostgreSQL compile regression");
+    return;
+  }
+  assert.ok(host.startsWith("/") || ["localhost", "127.0.0.1", "::1"].includes(host));
+
+  const scratch = mkdtempSync(join(tmpdir(), "adhdice-sql-compile-quota-"));
+  const database = `adhdice_compile_quota_${process.pid}_${Date.now()}`;
+  const fixtureSetup = join(scratch, "fixture-setup.sql");
+  const baselineSchema = join(scratch, "baseline-schema.sql");
+  const baselineCanonicalSchema = join(scratch, "baseline-canonical-schema.sql");
+
+  try {
+    run(createdb, [...utilityConnectionArgs(), database]);
+    writeFileSync(fixtureSetup, `create schema auth;
+create table auth.users (id uuid primary key);
+create publication supabase_realtime;
+do $$ begin create role anon; exception when duplicate_object then null; end $$;
+do $$ begin create role authenticated; exception when duplicate_object then null; end $$;
+do $$ begin create role service_role; exception when duplicate_object then null; end $$;
+create function auth.uid() returns uuid language sql stable as $$ select null::uuid $$;
+`);
+    writeFileSync(baselineSchema, run("git", ["show", "2b55d6ec^:supabase/schema.sql"]));
+    writeFileSync(baselineCanonicalSchema, run("git", ["show", "2b55d6ec^:supabase/add_task_state_canonical_schema.sql"]));
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", fixtureSetup]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", baselineSchema, "-f", baselineCanonicalSchema]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_quota_recurrence_enum_7_16_22.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_quota_recurrence_7_16_22.sql")]);
+    run(psql, [...connectionArgs(database), "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/patch_task_quota_recurrence_runtime_7_16_23.sql")]);
+    const result = run(psql, [...connectionArgs(database), "-At", "-v", "ON_ERROR_STOP=1", "-c", `select
+      'per_week' = any(enum_range(null::public.adhdice_clean_task_repeat_frequency)::text[]),
+      'per_month' = any(enum_range(null::public.adhdice_clean_task_repeat_frequency)::text[]),
+      to_regprocedure('public.adhdice_execute_task_state_command(uuid,jsonb)') is not null,
+      exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_entity_fkey'),
+      exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_boundary_fkey'),
+      exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_command_fkey');`])
+      .trim().split("|");
+    assert.deepEqual(result, ["t", "t", "t", "t", "t", "t"]);
+  } finally {
+    try {
+      run(dropdb, ["--if-exists", ...utilityConnectionArgs(), database]);
+    } finally {
+      rmSync(scratch, { recursive: true, force: true });
+    }
+  }
+});

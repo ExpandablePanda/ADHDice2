@@ -1,11 +1,7 @@
 -- ADHDice 7.16.22: first-class X Per Week / X Per Month quota recurrence.
 -- Source-only migration. Apply through the normal reviewed Supabase migration
--- workflow; this file is intentionally not executed by the client or agent.
-
-alter type public.adhdice_clean_task_repeat_frequency
-  add value if not exists 'per_week';
-alter type public.adhdice_clean_task_repeat_frequency
-  add value if not exists 'per_month';
+-- workflow after patch_task_quota_recurrence_enum_7_16_22.sql has committed;
+-- this file is intentionally not executed by the client or agent.
 
 alter table public.adhdice_clean_tasks
   add column if not exists repeat_quota_count integer,

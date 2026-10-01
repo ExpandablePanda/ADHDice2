@@ -1463,11 +1463,14 @@ test("a true rollover semantic no-op returns success without invoking the canoni
             activeOccurrenceDueOn: task.active_occurrence_due_on,
           },
           historyFact: null,
+          automaticHistoryFacts: [],
+          automaticHistoryDeleteIds: [],
           occurrence: null,
           scheduleBoundary: null,
           occurrenceEffectiveOverride: null,
           calendarOverride: null,
           rewardEntitlement: null,
+          quotaPeriodFacts: [],
           warnings: [],
         },
       }) as ReturnType<typeof planTaskStateCommand>,
@@ -1478,6 +1481,40 @@ test("a true rollover semantic no-op returns success without invoking the canoni
   assert.equal((result.body as { no_action?: boolean }).no_action, true);
   assert.equal((result.body as { next_revision?: number }).next_revision, 4);
   assert.equal(rpcCalls, 0);
+});
+
+test("quota rollover facts and balance-only projection changes invoke the canonical RPC", async () => {
+  for (const kind of ["period-close", "balance-only"] as const) {
+    let rpcCalls = 0;
+    const result = await executeTrustedTaskStateCommand({
+      userId: "owner-1",
+      intent: { type: "reconcile_rollover", task_id: "task-1", replay_identity: `rollover:${kind}`, expected_revision: 4 },
+      adminClient: { rpc: async () => { rpcCalls += 1; return { data: { state: "committed" }, error: null }; } } as unknown as TrustedTaskStateCommandClient,
+      dependencies: {
+        loadReplayOperation: async () => ({ data: null, error: null }),
+        loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+        buildEngineInput: (() => ({} as TaskStateEngineInput)),
+        serializePlan: (() => ({})),
+        planCommand: ({ task }) => ({
+          command: { commandId: `quota-${kind}`, commandType: "reconcile_rollover" },
+          normalizedResult: {
+            commandId: `quota-${kind}`, commandType: "reconcile_rollover", state: "accepted", conflictCode: null,
+            expectedRevision: task.canonical_revision, nextRevision: task.canonical_revision + 1, canonicalTaskPatch: {},
+            compatibilityProjection: {
+              status: task.status, dueOn: task.due_on, completedAt: task.completed_at,
+              activeStatusLogicalDate: task.active_status_logical_date, activeOccurrenceDueOn: task.active_occurrence_due_on,
+              ...(kind === "balance-only" ? { repeatQuotaBalance: 1, repeatQuotaBalancePeriod: "2026-08-10" } : {}),
+            },
+            historyFact: null, automaticHistoryFacts: [], automaticHistoryDeleteIds: [], occurrence: null,
+            scheduleBoundary: null, occurrenceEffectiveOverride: null, calendarOverride: null, rewardEntitlement: null,
+            quotaPeriodFacts: kind === "period-close" ? [{}] : [], warnings: [],
+          },
+        }) as ReturnType<typeof planTaskStateCommand>,
+      },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(rpcCalls, 1, kind);
+  }
 });
 
 test("a non-rollover semantic no-op still uses the canonical RPC", async () => {
