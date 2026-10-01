@@ -193,7 +193,9 @@ function formatPreviewPriorityLabel(priority: ChildTaskPreviewPriority) {
   return `Priority ${priority}`;
 }
 
-function repeatTone(repeat: PrototypeTaskRow["repeat"]) {
+function repeatTone(repeat: PrototypeTaskRow["repeat"], balance?: number | null) {
+  if (typeof balance === "number" && balance < 0) return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
+  if (typeof balance === "number" && balance > 0) return "border-[#cdebd8] bg-[#eefbf2] text-[#2f8a54] dark:border-[#2f6d49] dark:bg-[#193c29] dark:text-[#9fe0b4]";
   return repeat === "none" ? TASK_TABLE_INACTIVE_CHIP_CLASS : TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS;
 }
 
@@ -360,7 +362,8 @@ type TasksTableSourceProps = {
   onResetTaskBehaviorProfile?: (taskType: TaskType) => Promise<boolean> | boolean;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
   onTogglePinned?: (taskId: string) => void;
-  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void | Promise<boolean>;
+  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">) => void | Promise<boolean>;
+  onClearQuotaBalance?: (taskId: string) => void | Promise<boolean> | boolean;
   onSetStatus?: (
     taskId: string,
     status: TaskStatus,
@@ -759,6 +762,7 @@ export function TasksTableAdapter({
           onTaskPriorityChange={tableProps.onSetPriority}
           onTaskPinToggle={tableProps.onTogglePinned}
           onTaskRepeatChange={tableProps.onSetRepeat}
+          onTaskQuotaBalanceClear={tableProps.onClearQuotaBalance}
           onTaskStatusChange={(taskId, status, scrollAnchorTaskIds, options) => {
             const expectedTask = presentationTasks.find((task) => task.id === taskId) ?? null;
             tableProps.onSetStatus?.(
@@ -1046,6 +1050,7 @@ function StepsCardPreview({
   onSetNotes,
   onSetPriority,
   onSetRepeat,
+  onClearQuotaBalance,
   onSetStatus,
   onSetTags,
   getAvailableStatuses,
@@ -1099,7 +1104,8 @@ function StepsCardPreview({
   onSetLink?: (taskId: string, nextLink: { label: string; url: string }) => void;
   onSetNotes?: (taskId: string, notes: string) => void;
   onSetPriority?: (taskId: string, priorities: PrototypeTaskRow["priorities"]) => void;
-  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void | Promise<boolean>;
+  onSetRepeat?: (taskId: string, repeat: PrototypeTaskRow["repeat"], cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">) => void | Promise<boolean>;
+  onClearQuotaBalance?: (taskId: string) => void | Promise<boolean> | boolean;
   getAvailableStatuses?: (item: ChildTaskPreview) => readonly TaskDisplayStatus[];
   isManualActionAllowed?: (item: ChildTaskPreview, action: TaskManualAction) => boolean;
   onSetStatus?: (
@@ -1390,6 +1396,9 @@ function StepsCardPreview({
                 childTask.repeat_monthly_ordinal,
                 childTask.repeat_monthly_weekday,
                 childTask.repeat_day_of_month,
+                childTask.repeat_quota_count,
+                childTask.repeat_quota_balance_enabled,
+                childTask.repeat_quota_balance,
               )
               : item.repeat !== "none"
                 ? formatRepeatCompactLabel(
@@ -1400,6 +1409,9 @@ function StepsCardPreview({
                   item.repeatMonthlyOrdinal,
                   item.repeatMonthlyWeekday,
                   item.repeatDayOfMonth,
+                  (item as unknown as PrototypeTaskRow).repeatQuotaCount,
+                  (item as unknown as PrototypeTaskRow).repeatQuotaBalanceEnabled,
+                  (item as unknown as PrototypeTaskRow).repeatQuotaBalance,
                 )
                 : "";
             const visibleTags = item.tags.slice(0, 3);
@@ -1694,7 +1706,7 @@ function StepsCardPreview({
                           emphasizeMissed
                           onSetStatus={(status) => {
                             if (status === "delayed") {
-                              if (canTaskDelay({ dueOn: item.dueOn, status: displayStatus }) && (isManualActionAllowed?.(item, "delay") ?? true) && onDelayTaskUntil) {
+                              if (canTaskDelay({ dueOn: item.dueOn, repeatFrequency: item.repeat, status: displayStatus }) && (isManualActionAllowed?.(item, "delay") ?? true) && onDelayTaskUntil) {
                                 onOpenQuickPanel(item.id, "delay");
                               }
                               return;
@@ -1836,6 +1848,7 @@ function StepsCardPreview({
                 {activePanelMode === "repeat" ? (
                   <RepeatQuickPanel
                     dueOn={item.dueOn}
+                    onClearBalance={onClearQuotaBalance ? () => onClearQuotaBalance(item.id) : undefined}
                     onClose={closeQuickPanel}
                     onSave={(value) => onSetRepeat?.(item.id, value.repeatFrequency, {
                       repeatDayOfMonth: value.repeatDayOfMonth,
@@ -1844,6 +1857,8 @@ function StepsCardPreview({
                       repeatMonthlyMode: value.repeatMonthlyMode,
                       repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
                       repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+                      repeatQuotaCount: value.repeatQuotaCount,
+                      repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
                     })}
                     repeatDayOfMonth={item.repeatDayOfMonth}
                     repeatDaysOfWeek={item.repeatDaysOfWeek}
@@ -1852,6 +1867,9 @@ function StepsCardPreview({
                     repeatMonthlyMode={item.repeatMonthlyMode}
                     repeatMonthlyOrdinal={item.repeatMonthlyOrdinal}
                     repeatMonthlyWeekday={item.repeatMonthlyWeekday}
+                    repeatQuotaCount={(item as unknown as PrototypeTaskRow).repeatQuotaCount}
+                    repeatQuotaBalanceEnabled={(item as unknown as PrototypeTaskRow).repeatQuotaBalanceEnabled}
+                    quotaBalance={(item as unknown as PrototypeTaskRow).repeatQuotaBalance}
                   />
                 ) : null}
                 {activePanelMode === "list" ? (
@@ -2195,6 +2213,7 @@ function PriorityQuickPanel({
 
 function RepeatQuickPanel({
   dueOn,
+  onClearBalance,
   onClose,
   onSave,
   repeatDayOfMonth,
@@ -2204,8 +2223,12 @@ function RepeatQuickPanel({
   repeatMonthlyMode,
   repeatMonthlyOrdinal,
   repeatMonthlyWeekday,
+  repeatQuotaCount,
+  repeatQuotaBalanceEnabled,
+  quotaBalance,
 }: {
   dueOn: string | null;
+  onClearBalance?: () => void | Promise<boolean> | boolean;
   onClose: () => void;
   onSave: (value: TaskRepeatEditorValue) => void;
   repeatDayOfMonth: number | null;
@@ -2215,6 +2238,9 @@ function RepeatQuickPanel({
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
+  repeatQuotaCount?: number | null;
+  repeatQuotaBalanceEnabled?: boolean;
+  quotaBalance?: number | null;
 }) {
   return (
     <TaskListQuickPanelShell onClose={onClose} title="Repeat">
@@ -2223,6 +2249,7 @@ function RepeatQuickPanel({
         dueOn={dueOn}
         inactiveToneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS}
         onChange={onSave}
+        onClearBalance={onClearBalance}
         value={{
           repeatFrequency,
           repeatInterval,
@@ -2231,7 +2258,10 @@ function RepeatQuickPanel({
           repeatMonthlyMode,
           repeatMonthlyOrdinal,
           repeatMonthlyWeekday,
+          repeatQuotaCount,
+          repeatQuotaBalanceEnabled,
         }}
+        quotaBalance={quotaBalance}
       />
     </TaskListQuickPanelShell>
   );
@@ -3102,6 +3132,7 @@ function TasksSimpleList({
               onTaskPriorityChange={tableProps.onSetPriority}
               onTaskPinToggle={tableProps.onTogglePinned}
               onTaskRepeatChange={tableProps.onSetRepeat}
+              onTaskQuotaBalanceClear={tableProps.onClearQuotaBalance}
               onTaskStatusChange={(taskId, status, scrollAnchorTaskIds, options) => {
                 const expectedTask = tableProps.requestedOpenTask?.id === taskId
                   ? tableProps.requestedOpenTask
@@ -3488,7 +3519,7 @@ function TasksSimpleList({
                     onSetStatus={(status) => {
                       if (status === "delayed") {
                         setRowContextMenu(null);
-                        if (canTaskDelay({ dueOn: task.due_on, status: displayStatus }) && isListManualActionAllowed(task, "delay") && tableProps.onDelayTaskUntil) {
+                        if (canTaskDelay({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }) && isListManualActionAllowed(task, "delay") && tableProps.onDelayTaskUntil) {
                           openQuickPanel(task.id, "delay");
                         }
                         return;
@@ -3528,7 +3559,7 @@ function TasksSimpleList({
                   <MetadataChipButton
                     active={activePanelMode === "repeat"}
                     onClick={() => openQuickPanel(task.id, "repeat")}
-                    toneClassName={repeatTone(task.repeat_frequency)}
+                    toneClassName={repeatTone(task.repeat_frequency, task.repeat_quota_balance)}
                   >
                     {formatRepeatCompactLabel(
                       task.repeat_frequency,
@@ -3538,6 +3569,9 @@ function TasksSimpleList({
                       task.repeat_monthly_ordinal,
                       task.repeat_monthly_weekday,
                       task.repeat_day_of_month,
+                      task.repeat_quota_count,
+                      task.repeat_quota_balance_enabled,
+                      task.repeat_quota_balance,
                     )}
                   </MetadataChipButton>
                 </div>
@@ -3640,14 +3674,17 @@ function TasksSimpleList({
             {activePanelMode === "repeat" ? (
               <RepeatQuickPanel
                 dueOn={task.due_on}
+                onClearBalance={tableProps.onClearQuotaBalance ? () => tableProps.onClearQuotaBalance?.(task.id) : undefined}
                 onClose={closeQuickPanel}
                 onSave={(value) => tableProps.onSetRepeat?.(task.id, value.repeatFrequency, {
                   repeatDayOfMonth: value.repeatDayOfMonth,
                   repeatDaysOfWeek: value.repeatDaysOfWeek,
                   repeatInterval: value.repeatInterval,
                   repeatMonthlyMode: value.repeatMonthlyMode,
-                  repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
-                  repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+                      repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
+                      repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+                      repeatQuotaCount: value.repeatQuotaCount,
+                      repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
                 })}
                 repeatDayOfMonth={task.repeat_day_of_month}
                 repeatDaysOfWeek={task.repeat_days_of_week ?? []}
@@ -3656,6 +3693,9 @@ function TasksSimpleList({
                 repeatMonthlyMode={task.repeat_monthly_mode}
                 repeatMonthlyOrdinal={task.repeat_monthly_ordinal}
                 repeatMonthlyWeekday={task.repeat_monthly_weekday}
+                repeatQuotaCount={task.repeat_quota_count}
+                repeatQuotaBalanceEnabled={task.repeat_quota_balance_enabled}
+                quotaBalance={task.repeat_quota_balance}
               />
             ) : null}
             {activePanelMode === "list" ? (
@@ -3757,6 +3797,7 @@ function TasksSimpleList({
                 onSetNotes={tableProps.onSetNotes}
                 onSetPriority={tableProps.onSetPriority}
                 onSetRepeat={tableProps.onSetRepeat}
+                onClearQuotaBalance={tableProps.onClearQuotaBalance}
                 onSetStatus={tableProps.onSetStatus}
                 onSetTags={tableProps.onSetTags}
                 getAvailableStatuses={(item) => getPolicyFilteredTaskStatuses({ customRulesetId: item.customRulesetId, dueOn: item.dueOn, repeatFrequency: item.repeat, status: item.status, taskId: item.id, taskType: item.taskType ?? "task" })}

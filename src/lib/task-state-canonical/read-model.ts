@@ -17,6 +17,7 @@ import type {
   CanonicalTaskRewardEntitlement,
   CanonicalTaskRewardGrant,
   CanonicalTaskScheduleBoundary,
+  CanonicalTaskQuotaPeriodFact,
   CanonicalTaskStateColumns,
 } from "./types.ts";
 import { resolveTaskTrackingExclusion } from "../task-tracking.ts";
@@ -113,6 +114,8 @@ export type CanonicalTaskStateReadModel = {
   rewardEntitlements: CanonicalTaskRewardEntitlement[];
   rewardGrants: CanonicalTaskRewardGrant[];
   rewardClaimConsumptions: CanonicalTaskRewardClaimConsumption[];
+  /** Optional until the quota ledger migration is applied in the environment. */
+  quotaPeriodFacts?: CanonicalTaskQuotaPeriodFact[];
   /** Optional for compatibility with pre-7.13.31 read-model fixtures. */
   behaviorSelections?: TaskBehaviorSelection[];
   logicalDayProfile: {

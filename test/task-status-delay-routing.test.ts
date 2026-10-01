@@ -19,8 +19,8 @@ test("Table status circles route Delayed through the existing Delay picker", () 
 });
 
 test("List parent, Step, and Substep status circles never fall back to a bare Delayed status write", () => {
-  assert.match(listSource, /if \(status === "delayed"\) \{[\s\S]*canTaskDelay\(\{ dueOn: item\.dueOn, status: displayStatus \}\)[\s\S]*onOpenQuickPanel\(item\.id, "delay"\);/);
-  assert.match(listSource, /if \(status === "delayed"\) \{[\s\S]*canTaskDelay\(\{ dueOn: task\.due_on, status: displayStatus \}\)[\s\S]*openQuickPanel\(task\.id, "delay"\);/);
+  assert.match(listSource, /if \(status === "delayed"\) \{[\s\S]*canTaskDelay\(\{ dueOn: item\.dueOn, repeatFrequency: item\.repeat, status: displayStatus \}\)[\s\S]*onOpenQuickPanel\(item\.id, "delay"\);/);
+  assert.match(listSource, /if \(status === "delayed"\) \{[\s\S]*canTaskDelay\(\{ dueOn: task\.due_on, repeatFrequency: task\.repeat_frequency, status: displayStatus \}\)[\s\S]*openQuickPanel\(task\.id, "delay"\);/);
   assert.doesNotMatch(listSource, /onDelayTaskUntil\((?:item|task)\.id, null\)/);
   assert.match(listSource, /<DelayQuickPanel[\s\S]*onSave=\{\(nextDueOn\) => onDelayTaskUntil\?\.\(item\.id, nextDueOn\)/);
   assert.match(listSource, /<DelayQuickPanel[\s\S]*onSave=\{\(nextDueOn\) => tableProps\.onDelayTaskUntil\?\.\(task\.id, nextDueOn\)/);
@@ -37,10 +37,10 @@ test("all client Delay surfaces share scheduled-occurrence eligibility", () => {
   for (const status of ["archived", "complete", "did_my_best", "done", "trashed"] as const) {
     assert.equal(canTaskDelay({ dueOn: "2026-08-05", status }), false, status);
   }
-  assert.match(tableSource, /canTaskDelay\(\{ dueOn: task\.dueOn, status: task\.status \}\)/);
+  assert.match(tableSource, /canTaskDelay\(\{ dueOn: task\.dueOn, repeatFrequency: task\.repeat, status: task\.status \}\)/);
   assert.match(tableSource, /getSelectableTaskDisplayStatusesForTask/);
   assert.match(listSource, /getSelectableTaskDisplayStatusesForTask/);
-  assert.match(taskAppSource, /canTaskDelay\(\{ dueOn: task\.due_on, status: task\.status \}\)/);
+  assert.match(taskAppSource, /canTaskDelay\(\{ dueOn: task\.due_on, repeatFrequency: task\.repeat_frequency, status: task\.status \}\)/);
 });
 
 test("normal status-circle actions still use their existing status or schedule handlers", () => {

@@ -92,7 +92,7 @@ export type AgentPlanTaskItem = {
   rowChips: AgentPlanMetaPill[];
   currentStreak: number;
   missedStreak: number;
-  repeatFrequency: "none" | "daily" | "daily_until_complete" | "weekly" | "monthly" | "custom";
+  repeatFrequency: "none" | "daily" | "daily_until_complete" | "weekly" | "monthly" | "custom" | "per_week" | "per_month";
   repeatInterval: number;
   repeatDaysOfWeek: number[];
   repeatDayOfMonth: number | null;

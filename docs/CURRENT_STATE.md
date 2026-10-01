@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.21`.
+- Current working app version: `7.16.22`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,31 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-09-30 7.16.22 X Per Week / X Per Month quota recurrence
+
+Tasks now support first-class `X Per Week` and `X Per Month` recurrence through
+the shared Repeat editor, Table/List metadata, child-task surfaces, canonical
+Task creation, schedule boundaries, Active Status, Calendar, rollover, and
+Task State command paths. Weeks are Monday-Sunday and months use natural
+calendar bounds. The quota count is bounded to the physical period capacity;
+Done and Did My Best count once per logical day, Complete is terminal, Missed
+is only accepted when the remaining-days formula makes that date mandatory, and
+Delay is unavailable. Optional dates stay Not Due and do not create automatic
+misses.
+
+Optional balance mode carries an uncapped signed balance into the next logical
+period. Negative debt is shown in danger styling, positive credit in success
+styling, and zero is omitted from the compact label. Clear Balance is a
+canonical, non-no-op command that resets the current period projection and
+records an append-only quota period fact protected by owner-scoped RLS. The
+Task balance fields remain a rebuildable projection over canonical History and
+quota facts; they are not a separate browser-owned authority.
+
+The source-only quota migration is
+`supabase/patch_task_quota_recurrence_7_16_22.sql`; it was authored but not
+applied. Edge source was updated but not deployed. Focused source tests were
+run; browser/manual/live Supabase QA remains Andrew-owned and unverified.
 
 ## 2026-09-30 7.16.21 Side and 7.16 consolidation checkpoint
 

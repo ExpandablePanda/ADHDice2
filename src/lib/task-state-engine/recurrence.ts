@@ -1,15 +1,22 @@
 import { daysBetween, formatDateKey, parseDateKey, shiftDateKey } from "./calendar.ts";
 import type { MonthlyOrdinal, TaskRecurrence, TaskStateHistoryRow } from "./types.ts";
 
+function isQuotaRecurrence(recurrence: TaskRecurrence): recurrence is Extract<TaskRecurrence, { kind: "quota" }> {
+  return recurrence.kind === "quota";
+}
+
 export function isUnscheduled(recurrence: TaskRecurrence, dueOn: string | null) {
   return recurrence.kind === "none" && dueOn === null;
 }
 
 export function isUntilComplete(recurrence: TaskRecurrence) {
-  return recurrence.kind !== "none" && recurrence.untilComplete === true;
+  return recurrence.kind !== "none" && recurrence.kind !== "quota" && recurrence.untilComplete === true;
 }
 
 export function allowedOutcomes(recurrence: TaskRecurrence, unscheduled: boolean) {
+  if (isQuotaRecurrence(recurrence)) {
+    return new Set(["done", "did_my_best", "complete", "missed"] as const);
+  }
   if (recurrence.kind === "none") {
     return unscheduled
       ? new Set(["did_my_best", "complete"] as const)
@@ -94,6 +101,9 @@ export function scheduledOccurrences(
   through: string,
   options: ScheduledOccurrenceOptions = {},
 ) {
+  if (isQuotaRecurrence(recurrence)) {
+    return dateRangeForQuota(recurrence, from, through);
+  }
   if (recurrence.kind === "none") {
     return dueOn >= from && dueOn <= through ? [dueOn] : [];
   }
@@ -140,12 +150,26 @@ export function scheduledOccurrences(
   return [...occurrences].sort();
 }
 
+function dateRangeForQuota(recurrence: Extract<TaskRecurrence, { kind: "quota" }>, from: string, through: string) {
+  const dates: string[] = [];
+  for (let date = from; date <= through; date = shiftDateKey(date, 1)) {
+    const bounds = recurrence.period === "week"
+      ? { start: shiftDateKey(date, -((parseDateKey(date).getUTCDay() + 6) % 7)) }
+      : { start: `${date.slice(0, 7)}-01` };
+    if (!recurrence.activationDate || date >= recurrence.activationDate) {
+      if (date >= bounds.start) dates.push(date);
+    }
+  }
+  return dates;
+}
+
 export function nextFixedOccurrence(
   recurrence: Extract<TaskRecurrence, { kind: "weekly" | "monthly" }>,
   dueOn: string,
   onOrAfter: string,
   consumed: Set<string>,
 ) {
+  if (isQuotaRecurrence(recurrence)) return null;
   const candidates = scheduledOccurrences(recurrence, dueOn, onOrAfter, shiftDateKey(onOrAfter, 800));
   return candidates.find((date) => !consumed.has(date)) ?? null;
 }
@@ -157,6 +181,7 @@ export function nextFixedOccurrenceOnOrAfter(
   onOrAfter: string,
   consumed: Set<string>,
 ) {
+  if (isQuotaRecurrence(recurrence)) return null;
   const candidates = scheduledOccurrences(
     recurrence,
     dueOn,
@@ -173,6 +198,9 @@ export function recurrenceAfterSuccess(
   actionDate: string,
   consumed: Set<string>,
 ) {
+  if (isQuotaRecurrence(recurrence)) {
+    return { anchor: actionDate, nextDue: null, satisfied: actionDate };
+  }
   if (recurrence.kind === "none") {
     return { anchor: null, nextDue: dueOn, satisfied: null };
   }

@@ -13,6 +13,8 @@ export type TaskCreationMetadata = Pick<
   | "repeat_monthly_mode"
   | "repeat_monthly_ordinal"
   | "repeat_monthly_weekday"
+  | "repeat_quota_count"
+  | "repeat_quota_balance_enabled"
   | "tags"
 > & {
   priority_level: TaskPriorityLevel;

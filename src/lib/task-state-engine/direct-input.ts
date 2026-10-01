@@ -91,6 +91,15 @@ export function isCanonicalInactiveTask(task: CanonicalProjectedTaskState) {
 
 export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
   if (boundary.schedule_model === "unscheduled" || boundary.schedule_model === "one_time") return { kind: "none" };
+  if (boundary.repeat_frequency === "per_week" || boundary.repeat_frequency === "per_month") {
+    return {
+      kind: "quota",
+      period: boundary.repeat_frequency === "per_week" ? "week" : "month",
+      count: boundary.repeat_quota_count ?? (boundary.repeat_frequency === "per_week" ? 1 : 1),
+      balanceEnabled: boundary.repeat_quota_balance_enabled === true,
+      activationDate: boundary.effective_from_logical_date,
+    };
+  }
   const fixedUntilComplete = boundary.repeat_frequency === "daily_until_complete" && isFixedUntilCompleteRepeatTask({
     repeat_frequency: boundary.repeat_frequency,
     repeat_days_of_week: boundary.repeat_days_of_week,
@@ -153,6 +162,17 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
 
 function recurrenceFromTask(task: Task): TaskRecurrence {
   if (task.repeat_frequency === "none") return { kind: "none" };
+  if (task.repeat_frequency === "per_week" || task.repeat_frequency === "per_month") {
+    return {
+      kind: "quota",
+      period: task.repeat_frequency === "per_week" ? "week" : "month",
+      count: task.repeat_quota_count ?? 1,
+      balanceEnabled: task.repeat_quota_balance_enabled === true,
+      activationDate: task.due_on,
+      incomingBalance: task.repeat_quota_balance ?? 0,
+      incomingBalancePeriodKey: task.repeat_quota_balance_period,
+    };
+  }
   const fixedUntilComplete = isFixedUntilCompleteRepeatTask(task);
   if (task.repeat_frequency === "weekly" || (task.repeat_frequency === "daily_until_complete" && fixedUntilComplete && task.repeat_days_of_week.length > 0)) {
     return {
@@ -243,7 +263,14 @@ function buildTaskStateEngineInput(
                 : ["pending", "in_progress", "missed", "upcoming", "not_due", "delayed", "done", "did_my_best"].includes(task.status)
                   ? task.status as TaskStateEngineInput["task"]["activeStatus"]
                   : "pending";
-  const recurrence = boundary ? recurrenceFromBoundary(boundary) : recurrenceFromTask(task);
+  const recurrenceFromAuthority = boundary ? recurrenceFromBoundary(boundary) : recurrenceFromTask(task);
+  const recurrence = recurrenceFromAuthority.kind === "quota"
+    ? {
+        ...recurrenceFromAuthority,
+        incomingBalance: task.repeat_quota_balance ?? 0,
+        incomingBalancePeriodKey: task.repeat_quota_balance_period ?? null,
+      }
+    : recurrenceFromAuthority;
   const dueOn = boundary
     ? boundary.schedule_model === "unscheduled"
       ? null
@@ -292,6 +319,12 @@ function buildTaskStateEngineInput(
         ? task.active_occurrence_due_on
         : task.active_occurrence_due_on,
       recurrence,
+      ...(recurrence.kind === "quota"
+        ? {
+          quotaIncomingBalance: task.repeat_quota_balance ?? 0,
+          quotaIncomingBalancePeriodKey: task.repeat_quota_balance_period ?? null,
+        }
+        : {}),
     },
     history: historyRows(task.id, history),
     now: context.now,

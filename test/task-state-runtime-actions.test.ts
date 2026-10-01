@@ -92,6 +92,8 @@ test("No Date emits one complete unscheduled schedule intent", () => {
       repeat_monthly_mode: "day_of_month",
       repeat_monthly_ordinal: null,
       repeat_monthly_weekday: null,
+      repeat_quota_count: null,
+      repeat_quota_balance_enabled: false,
       one_time_due_on: null,
       anchor_date: null,
       due_time: null,

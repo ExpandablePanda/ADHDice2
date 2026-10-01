@@ -12,6 +12,8 @@ export type TaskRepeatReconciliationValue = {
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
+  repeatQuotaCount?: number | null;
+  repeatQuotaBalanceEnabled?: boolean;
 };
 
 export type PendingTaskRepeat = {
@@ -30,7 +32,9 @@ export function taskRepeatValuesEqual(left: TaskRepeatReconciliationValue, right
     && left.repeatDayOfMonth === right.repeatDayOfMonth
     && left.repeatMonthlyMode === right.repeatMonthlyMode
     && left.repeatMonthlyOrdinal === right.repeatMonthlyOrdinal
-    && left.repeatMonthlyWeekday === right.repeatMonthlyWeekday;
+    && left.repeatMonthlyWeekday === right.repeatMonthlyWeekday
+    && (left.repeatQuotaCount ?? null) === (right.repeatQuotaCount ?? null)
+    && (left.repeatQuotaBalanceEnabled === true) === (right.repeatQuotaBalanceEnabled === true);
 }
 
 export function reconcilePendingTaskRepeats<TRow extends { id: string } & TaskRepeatReconciliationValue>(

@@ -76,6 +76,8 @@ function taskHistoryCalendarTaskIdentity(task: TaskHistoryCalendarTask) {
         repeat_monthly_mode: boundary.repeat_monthly_mode,
         repeat_monthly_ordinal: boundary.repeat_monthly_ordinal,
         repeat_monthly_weekday: boundary.repeat_monthly_weekday,
+        repeat_quota_count: boundary.repeat_quota_count ?? null,
+        repeat_quota_balance_enabled: boundary.repeat_quota_balance_enabled === true,
         schedule_model: boundary.schedule_model,
       }
       : null,
@@ -90,6 +92,8 @@ function taskHistoryCalendarTaskIdentity(task: TaskHistoryCalendarTask) {
     repeat_monthly_mode: task.repeat_monthly_mode,
     repeat_monthly_ordinal: task.repeat_monthly_ordinal,
     repeat_monthly_weekday: task.repeat_monthly_weekday,
+    repeat_quota_count: task.repeat_quota_count,
+    repeat_quota_balance_enabled: task.repeat_quota_balance_enabled,
     status: task.status,
     task_type: task.task_type,
     custom_ruleset_id: task.custom_ruleset_id,

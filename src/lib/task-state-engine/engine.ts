@@ -33,6 +33,7 @@ import type {
   TaskStateEngineInput,
   TaskStateHistoryRow,
 } from "./types.ts";
+import { evaluateQuotaTaskState } from "./quota.ts";
 
 const HANDLED = new Set<TaskHistoryOutcome>(["done", "did_my_best", "missed", "delayed", "complete"]);
 const SUCCESS = new Set<TaskHistoryOutcome>(["done", "did_my_best", "complete"]);
@@ -223,6 +224,7 @@ export function findUnresolvedMissedOccurrence(
 
 function nextDueAfterFinalizedOccurrence(recurrence: TaskRecurrence, occurrenceDate: string) {
   if (recurrence.kind === "none") return null;
+  if (recurrence.kind === "quota") return null;
   if (recurrence.kind === "rolling") {
     return recurrenceAfterSuccess(recurrence, occurrenceDate, occurrenceDate, new Set()).nextDue;
   }
@@ -300,6 +302,9 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const { task } = input;
   const behaviorPolicy = resolveTaskBehaviorPolicy(input.behaviorPolicy);
   const today = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
+  if (task.recurrence.kind === "quota") {
+    return evaluateQuotaTaskState({ ...input, behaviorPolicy });
+  }
   const nowIso = (input.now instanceof Date ? input.now : new Date(input.now)).toISOString();
   const changes: TaskHistoryChange[] = [];
   const errors: string[] = [];

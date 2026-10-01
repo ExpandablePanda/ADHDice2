@@ -50,6 +50,15 @@ export type TaskRecurrence =
       weekday?: number | null;
       untilComplete?: boolean;
       anchorDate?: string | null;
+    }
+  | {
+      kind: "quota";
+      period: "week" | "month";
+      count: number;
+      balanceEnabled: boolean;
+      activationDate?: string | null;
+      incomingBalance?: number | null;
+      incomingBalancePeriodKey?: string | null;
     };
 
 export type TaskStateSnapshot = {
@@ -66,6 +75,8 @@ export type TaskStateSnapshot = {
   /** Optional persisted comparison inputs. Undefined means the source model cannot expose them. */
   recurrenceCursor?: string | null;
   satisfiedOccurrenceIdentity?: string | null;
+  quotaIncomingBalance?: number | null;
+  quotaIncomingBalancePeriodKey?: string | null;
   recurrence: TaskRecurrence;
   behaviorPolicy?: TaskBehaviorPolicy;
 };
@@ -236,6 +247,8 @@ export type ProposedTaskStatePatch = Partial<{
   activeOccurrenceDueOn: string | null;
   recurrenceCursor: string | null;
   satisfiedOccurrenceIdentity: string | null;
+  repeatQuotaBalance: number | null;
+  repeatQuotaBalancePeriod: string | null;
   completedAt: string | null;
 }>;
 

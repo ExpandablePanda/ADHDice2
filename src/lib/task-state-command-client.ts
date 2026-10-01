@@ -31,6 +31,7 @@ export type TaskStateCommandIntent =
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: TaskStateScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
+  | { type: "clear_quota_balance"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string }
   | { type: "archive_task" | "clear_in_progress"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "trash_task" | "restore_task"; task_id: string; replay_identity: string; expected_revision?: number; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
@@ -44,13 +45,15 @@ export type TaskRolloverSweepIntent = {
 
 export type TaskStateScheduleChangeIntent = {
   schedule_model: "unscheduled" | "one_time" | "rolling" | "fixed";
-  repeat_frequency?: "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
+  repeat_frequency?: "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete" | "per_week" | "per_month";
   repeat_interval?: number;
   repeat_days_of_week?: number[];
   repeat_day_of_month?: number | null;
   repeat_monthly_mode?: "day_of_month" | "ordinal_weekday";
   repeat_monthly_ordinal?: "first" | "second" | "third" | "fourth" | "last" | null;
   repeat_monthly_weekday?: number | null;
+  repeat_quota_count?: number | null;
+  repeat_quota_balance_enabled?: boolean;
   one_time_due_on?: string | null;
   due_time?: string | null;
   anchor_date?: string | null;

@@ -20,6 +20,8 @@ const REPEAT_FREQUENCIES = new Set<TaskRepeatFrequency>([
   "monthly",
   "custom",
   "daily_until_complete",
+  "per_week",
+  "per_month",
 ]);
 const MONTHLY_MODES = new Set<TaskRepeatMonthlyMode>(["day_of_month", "ordinal_weekday"]);
 const MONTHLY_ORDINALS = new Set<NonNullable<TaskRepeatMonthlyOrdinal>>(["first", "second", "third", "fourth", "last"]);
@@ -158,6 +160,8 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
     repeat_monthly_mode: input.repeat_monthly_mode ?? "day_of_month",
     repeat_monthly_ordinal: input.repeat_monthly_ordinal ?? null,
     repeat_monthly_weekday: input.repeat_monthly_weekday ?? null,
+    repeat_quota_count: input.repeat_quota_count ?? null,
+    repeat_quota_balance_enabled: input.repeat_quota_balance_enabled ?? false,
     pinned_at: input.pinned_at ?? null,
     pin_order: input.pin_order ?? null,
     sort_order: input.sort_order ?? 0,
@@ -207,6 +211,15 @@ function validateDraft(draft: CanonicalTaskCreationDraft): void {
   if (draft.repeat_monthly_mode === "ordinal_weekday" && (draft.repeat_monthly_ordinal === null || draft.repeat_monthly_weekday === null)) {
     fail("INVALID_MONTHLY_FIELDS", "Ordinal-weekday repeats require both ordinal and weekday fields.");
   }
+  const quotaFrequency = draft.repeat_frequency === "per_week" || draft.repeat_frequency === "per_month" ? draft.repeat_frequency : null;
+  const quotaLimit = quotaFrequency === "per_week" ? 7 : quotaFrequency === "per_month" ? 31 : null;
+  if (quotaLimit !== null && (!Number.isInteger(draft.repeat_quota_count) || (draft.repeat_quota_count ?? 0) < 1 || (draft.repeat_quota_count ?? 0) > quotaLimit)) {
+    fail("INVALID_QUOTA_COUNT", `Quota count must be between 1 and ${quotaLimit}.`);
+  }
+  if (quotaLimit === null && (draft.repeat_quota_count !== null || draft.repeat_quota_balance_enabled !== false)) {
+    fail("INVALID_QUOTA_FIELDS", "Quota fields are only valid for per-week or per-month repeats.");
+  }
+  if (typeof draft.repeat_quota_balance_enabled !== "boolean") fail("INVALID_QUOTA_BALANCE", "Quota balance setting is invalid.");
   if (draft.estimated_minutes !== null && (!Number.isInteger(draft.estimated_minutes) || draft.estimated_minutes < 1)) fail("INVALID_ESTIMATE", "Estimated minutes must be positive.");
   if (!Number.isInteger(draft.actual_seconds) || (draft.actual_seconds ?? 0) < 0) fail("INVALID_ACTUAL_SECONDS", "Actual seconds must be non-negative.");
   if (!Array.isArray(draft.tags) || draft.tags.some((tag) => typeof tag !== "string")) fail("INVALID_TAGS", "Task tags are invalid.");
@@ -250,7 +263,7 @@ export function buildCanonicalTaskCreationPlan(input: {
   const frequency = draft.repeat_frequency ?? "none";
   const scheduleModel = frequency === "none"
     ? draft.due_on === null ? "unscheduled" : "one_time"
-    : frequency === "weekly" || frequency === "monthly"
+    : frequency === "weekly" || frequency === "monthly" || frequency === "per_week" || frequency === "per_month"
       || (frequency === "daily_until_complete" && isFixedUntilCompleteRepeatTask({
         repeat_frequency: frequency,
         repeat_days_of_week: draft.repeat_days_of_week ?? [],
@@ -290,6 +303,8 @@ export function buildCanonicalTaskCreationPlan(input: {
       repeat_monthly_mode: draft.repeat_monthly_mode ?? "day_of_month",
       repeat_monthly_ordinal: draft.repeat_monthly_ordinal ?? null,
       repeat_monthly_weekday: draft.repeat_monthly_weekday ?? null,
+      repeat_quota_count: draft.repeat_quota_count ?? null,
+      repeat_quota_balance_enabled: draft.repeat_quota_balance_enabled === true,
       one_time_due_on: scheduleModel === "one_time" ? draft.due_on : null,
       due_time: draft.due_time ?? null,
       anchor_date: anchorDate,

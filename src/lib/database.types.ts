@@ -13,6 +13,7 @@ import type {
   CanonicalTaskRewardEntitlement,
   CanonicalTaskRewardGrant,
   CanonicalTaskScheduleBoundary,
+  CanonicalTaskQuotaPeriodFact,
   CanonicalTaskStateColumns,
 } from "./task-state-canonical/types.ts";
 
@@ -75,7 +76,7 @@ export type TaskStatus =
   | "complete";
 export type TaskPriority = "low" | "normal" | "high";
 export type TaskEnergy = "none" | "low" | "medium" | "high";
-export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
+export type TaskRepeatFrequency = "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete" | "per_week" | "per_month";
 export type TaskRepeatMonthlyMode = "day_of_month" | "ordinal_weekday";
 export type TaskRepeatMonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
 export type { TaskType } from "./task-type-domain.ts";
@@ -465,6 +466,12 @@ export type Task = {
   repeat_monthly_mode: TaskRepeatMonthlyMode;
   repeat_monthly_ordinal: TaskRepeatMonthlyOrdinal | null;
   repeat_monthly_weekday: number | null;
+  /** Quota recurrence configuration; null/false for ordinary recurrence. */
+  repeat_quota_count?: number | null;
+  repeat_quota_balance_enabled?: boolean;
+  /** Rebuildable current-period projection sourced from canonical quota facts. */
+  repeat_quota_balance?: number | null;
+  repeat_quota_balance_period?: string | null;
   pinned_at: string | null;
   pin_order: number | null;
   sort_order: number;
@@ -533,6 +540,8 @@ export type TaskInsert = {
   repeat_monthly_mode?: TaskRepeatMonthlyMode;
   repeat_monthly_ordinal?: TaskRepeatMonthlyOrdinal | null;
   repeat_monthly_weekday?: number | null;
+  repeat_quota_count?: number | null;
+  repeat_quota_balance_enabled?: boolean;
   pinned_at?: string | null;
   pin_order?: number | null;
   sort_order?: number;
@@ -577,6 +586,8 @@ export type TaskUpdate = Partial<
     | "repeat_monthly_mode"
     | "repeat_monthly_ordinal"
     | "repeat_monthly_weekday"
+    | "repeat_quota_count"
+    | "repeat_quota_balance_enabled"
     | "pinned_at"
     | "pin_order"
     | "sort_order"
@@ -2848,6 +2859,12 @@ export type Database = {
         Row: CanonicalTaskScheduleBoundary;
         Insert: Partial<CanonicalTaskScheduleBoundary>;
         Update: Partial<CanonicalTaskScheduleBoundary>;
+        Relationships: [];
+      };
+      adhdice_task_quota_period_facts: {
+        Row: CanonicalTaskQuotaPeriodFact;
+        Insert: Partial<CanonicalTaskQuotaPeriodFact>;
+        Update: Partial<CanonicalTaskQuotaPeriodFact>;
         Relationships: [];
       };
       adhdice_task_occurrences: {

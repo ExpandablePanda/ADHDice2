@@ -246,6 +246,45 @@ test("clear_outcome RPC serialization preserves its clear date without side effe
   assert.equal(payload.occurrence_effective_override, undefined);
 });
 
+test("Clear Balance commits an auditable zero projection for enabled quota Tasks", () => {
+  const planningState = state({
+    repeat_frequency: "per_week",
+    repeat_quota_count: 3,
+    repeat_quota_balance_enabled: true,
+    repeat_quota_balance: -3,
+    repeat_quota_balance_period: "2026-08-10",
+  });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: {
+      ...planningState.engineInput!.task,
+      recurrence: {
+        kind: "quota",
+        period: "week",
+        count: 3,
+        balanceEnabled: true,
+        incomingBalance: -3,
+        incomingBalancePeriodKey: "2026-08-10",
+      },
+    },
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    type: "clear_quota_balance",
+    commandId: "00000000-0000-4000-8000-000000000099",
+  }));
+  const serialized = serializeCanonicalTaskStateCommandForRpc(plan);
+  const payload = serialized.payload as Record<string, unknown>;
+  const projection = payload.compatibility_projection as Record<string, unknown>;
+
+  assert.equal(plan.command.commandType, "clear_quota_balance");
+  assert.equal(plan.normalizedResult.historyFact, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.equal(projection.repeat_quota_balance, 0);
+  assert.equal(projection.repeat_quota_balance_period, "2026-08-10");
+  assert.equal(payload.clear_quota_balance, true);
+  assert.equal(isCanonicalTaskStateCommandSemanticNoOp({ plan, task: planningState.task }), false);
+});
+
 test("clearing today's explicit Missed recomputes Pending from the remaining schedule", () => {
   const planningState = state({ status: "missed", due_on: "2026-08-10" });
   planningState.engineInput = {

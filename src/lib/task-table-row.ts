@@ -154,6 +154,9 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatMonthlyMode: task.repeat_monthly_mode,
     repeatMonthlyOrdinal: task.repeat_monthly_ordinal,
     repeatMonthlyWeekday: task.repeat_monthly_weekday,
+    repeatQuotaCount: task.repeat_quota_count,
+    repeatQuotaBalanceEnabled: task.repeat_quota_balance_enabled,
+    repeatQuotaBalance: task.repeat_quota_balance,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
     status: context.displayStatus ?? task.status,
     finishedToday: context.finishedTodayByTaskId

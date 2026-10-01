@@ -151,7 +151,7 @@ type TaskPriority = TaskPriorityLevelOption;
 type PendingTableTaskRepeat = PendingTaskRepeat & {
   rollbackValue: TaskRepeatReconciliationValue;
 };
-type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "weekly";
+type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "per_week" | "per_month" | "weekly";
 export type TaskDueChangeHandler = (
   taskId: string,
   schedule: { dueOn: string; dueTime: string },
@@ -411,6 +411,9 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
   repeatMonthlyMode: row.repeatMonthlyMode,
   repeatMonthlyOrdinal: row.repeatMonthlyOrdinal,
   repeatMonthlyWeekday: row.repeatMonthlyWeekday,
+  repeatQuotaCount: row.repeatQuotaCount,
+  repeatQuotaBalanceEnabled: row.repeatQuotaBalanceEnabled,
+  repeatQuotaBalance: row.repeatQuotaBalance,
   status: row.status,
     subtasks: buildPrototypeSubtaskSignature(row.subtasks),
     tags: row.tags,
@@ -428,6 +431,9 @@ function clonePrototypeTaskRow(task: PrototypeTaskRow): PrototypeTaskRow {
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatQuotaCount: task.repeatQuotaCount,
+    repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
+    repeatQuotaBalance: task.repeatQuotaBalance,
     subtasks: task.subtasks.map(clonePrototypeSubtask),
     tags: [...task.tags],
   };
@@ -1135,7 +1141,7 @@ function InlineSubtaskEditor({
                   onSetStatus?.(subtask.id, status);
                   setOpenStatusPickerSubtaskId(null);
                 }}
-                options={(getAvailableStatuses?.(subtask) ?? TASK_SUBTASK_STATUS_OPTIONS.filter((option) => option.value !== "delayed" || canTaskDelay({ dueOn: subtask.dueOn, status: subtask.status })).map((option) => option.value)).map((status) => ({
+                options={(getAvailableStatuses?.(subtask) ?? TASK_SUBTASK_STATUS_OPTIONS.filter((option) => option.value !== "delayed" || canTaskDelay({ dueOn: subtask.dueOn, repeatFrequency: subtask.repeat, status: subtask.status })).map((option) => option.value)).map((status) => ({
                   label: formatTaskStatusLabel(status),
                   value: status,
                 }))}
@@ -1204,6 +1210,9 @@ export type PrototypeTaskRow = {
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
+  repeatQuotaCount?: number | null;
+  repeatQuotaBalanceEnabled?: boolean;
+  repeatQuotaBalance?: number | null;
   subtasksAutoReset: boolean;
   status: TaskDisplayStatus;
   finishedToday: boolean;
@@ -1432,7 +1441,8 @@ type TaskManagementTableV2Props = {
   onTaskPinToggle?: (taskId: string) => void;
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
-  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void | Promise<boolean>;
+  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">) => void | Promise<boolean>;
+  onTaskQuotaBalanceClear?: (taskId: string) => void | Promise<boolean> | boolean;
   onTaskStatusChange?: (taskId: string, status: TaskStatus, scrollAnchorTaskIds?: string[], options?: TableStatusChangeOptions) => void;
   onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
@@ -1744,6 +1754,8 @@ const REPEAT_CATEGORY_OPTIONS: Array<{ label: string; value: TaskRepeatCategory 
   { label: "Weekdays", value: "weekdays" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
+  { label: "X Per Week", value: "per_week" },
+  { label: "X Per Month", value: "per_month" },
   { label: "Custom", value: "custom" },
 ];
 const STATUS_OPTIONS = TASK_DISPLAY_STATUS_OPTIONS;
@@ -1888,7 +1900,7 @@ function summarizeInlineItems<T>(items: T[], maxVisible = 1) {
 }
 const PRIORITY_SORT_ORDER: TaskPriority[] = ["0", "1", "2", "3", "4", "5"];
 const ENERGY_SORT_ORDER: TaskEnergy[] = ["none", "low", "medium", "high"];
-const REPEAT_SORT_ORDER: TaskRepeatCategory[] = ["none", "daily", "daily_until_complete", "weekdays", "weekly", "monthly", "custom"];
+const REPEAT_SORT_ORDER: TaskRepeatCategory[] = ["none", "daily", "daily_until_complete", "weekdays", "weekly", "monthly", "per_week", "per_month", "custom"];
 const STATUS_SORT_ORDER: TaskDisplayStatus[] = [
   "unscheduled",
   "pending",
@@ -2275,7 +2287,13 @@ function priorityTone(priority: TaskPriority) {
   return getTaskPriorityToneClass(priority);
 }
 
-function repeatTone(repeat: TaskRepeatCategory) {
+function repeatTone(repeat: TaskRepeatCategory, balance?: number | null) {
+  if (typeof balance === "number" && balance < 0) {
+    return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
+  }
+  if (typeof balance === "number" && balance > 0) {
+    return "border-[#cdebd8] bg-[#eefbf2] text-[#2f8a54] dark:border-[#2f6d49] dark:bg-[#193c29] dark:text-[#9fe0b4]";
+  }
   return repeat === "none"
     ? "border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60"
     : "border-[#ddd2ff] bg-[#efe9ff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
@@ -2290,10 +2308,12 @@ function taskRepeatEditorValue(task: PrototypeTaskRow): TaskRepeatEditorValue {
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatQuotaCount: task.repeatQuotaCount,
+    repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
   };
 }
 
-function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">): TaskRepeatReconciliationValue {
+function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">): TaskRepeatReconciliationValue {
   return {
     repeat: task.repeat,
     repeatDayOfMonth: task.repeatDayOfMonth,
@@ -2302,6 +2322,8 @@ function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatQuotaCount: task.repeatQuotaCount,
+    repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
   };
 }
 
@@ -2351,7 +2373,7 @@ export type TaskMetadataSummaryRow = {
 };
 
 export function buildTaskMetadataSummary(
-  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "taskType" | "title"> & {
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled" | "status" | "tags" | "taskType" | "title"> & {
     customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   },
   actualSeconds: number,
@@ -2371,6 +2393,8 @@ export function buildTaskMetadataSummary(
     repeat_monthly_mode: task.repeatMonthlyMode,
     repeat_monthly_ordinal: task.repeatMonthlyOrdinal,
     repeat_monthly_weekday: task.repeatMonthlyWeekday,
+    repeat_quota_count: task.repeatQuotaCount,
+    repeat_quota_balance_enabled: task.repeatQuotaBalanceEnabled,
   }) ?? "No repeat";
 
   return [
@@ -2794,6 +2818,7 @@ export function TaskManagementTableV2({
   onRowClick,
   onSelectAllVisible,
   onTaskRepeatChange,
+  onTaskQuotaBalanceClear,
   onTaskStatusChange,
   onTaskSubtaskAdd,
   onTaskSubtaskAddChild,
@@ -5053,7 +5078,7 @@ export function TaskManagementTableV2({
   }
 
   function canDelayTask(task: PrototypeTaskRow) {
-    return canTaskDelay({ dueOn: task.dueOn, status: task.status }) && isManualActionAllowed(task, "delay");
+    return canTaskDelay({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }) && isManualActionAllowed(task, "delay");
   }
 
   function clearStatusRailLongPress() {
@@ -5202,6 +5227,8 @@ export function TaskManagementTableV2({
       repeatMonthlyMode: value.repeatMonthlyMode,
       repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+      repeatQuotaCount: value.repeatQuotaCount,
+      repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
     };
     for (const targetTaskId of targetTaskIds) {
       const targetTask = getTaskById(targetTaskId);
@@ -5238,6 +5265,8 @@ export function TaskManagementTableV2({
           repeatMonthlyMode: value.repeatMonthlyMode,
           repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
           repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+          repeatQuotaCount: value.repeatQuotaCount,
+          repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
         });
       } catch {
         clearPendingTaskRepeat(targetTaskId, generation);
@@ -6330,11 +6359,13 @@ export function TaskManagementTableV2({
           inactiveToneClassName={INACTIVE_CHIP_CLASS}
           key="repeat-editor"
           onChange={(value) => setTaskRepeatValue(task.id, value)}
+          onClearBalance={onTaskQuotaBalanceClear ? () => onTaskQuotaBalanceClear(task.id) : undefined}
           onPresetApplied={(selection) => {
             if (selection === "none") {
               closeInspector();
             }
           }}
+          quotaBalance={task.repeatQuotaBalance}
           value={taskRepeatEditorValue(task)}
         />
       )];
@@ -7980,7 +8011,7 @@ export function TaskManagementTableV2({
       return wrapInteractiveCell(
         wrapMeasuredContent(
           <div>
-            <span className={`${CHIP_BASE} ${repeatTone(task.repeat)}`}>
+            <span className={`${CHIP_BASE} ${repeatTone(task.repeat, task.repeatQuotaBalance)}`}>
               {formatRepeatCompactLabel(
                 task.repeat,
                 task.repeatInterval,
@@ -7989,6 +8020,9 @@ export function TaskManagementTableV2({
                 task.repeatMonthlyOrdinal,
                 task.repeatMonthlyWeekday,
                 task.repeatDayOfMonth,
+                task.repeatQuotaCount,
+                task.repeatQuotaBalanceEnabled,
+                task.repeatQuotaBalance,
               )}
             </span>
           </div>
@@ -10188,11 +10222,13 @@ export function TaskManagementTableV2({
                       dueOn={metadataTask.dueOn || null}
                       inactiveToneClassName={INACTIVE_CHIP_CLASS}
                       onChange={(value) => setTaskRepeatValue(metadataTask.id, value)}
+                      onClearBalance={onTaskQuotaBalanceClear ? () => onTaskQuotaBalanceClear(metadataTask.id) : undefined}
                       onPresetApplied={(selection) => {
                         if (selection === "none" || selection === "daily" || selection === "daily_until_complete") {
                           returnFullMetadataToSummary();
                         }
                       }}
+                      quotaBalance={metadataTask.repeatQuotaBalance}
                       value={taskRepeatEditorValue(metadataTask)}
                     />
                   );
@@ -10890,6 +10926,8 @@ export function TaskManagementTableV2({
                       dueOn={selectedTask.dueOn || null}
                       inactiveToneClassName={INACTIVE_CHIP_CLASS}
                       onChange={(value) => setTaskRepeatValue(selectedTask.id, value)}
+                      onClearBalance={onTaskQuotaBalanceClear ? () => onTaskQuotaBalanceClear(selectedTask.id) : undefined}
+                      quotaBalance={selectedTask.repeatQuotaBalance}
                       value={taskRepeatEditorValue(selectedTask)}
                     />
                   </section>

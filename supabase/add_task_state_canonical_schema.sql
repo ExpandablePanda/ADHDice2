@@ -408,7 +408,7 @@ create table if not exists public.adhdice_task_command_operations (
   command_id uuid not null,
   command_type text not null check (command_type in (
     'set_outcome', 'clear_outcome', 'complete_task', 'delay_occurrence',
-    'set_due_date', 'set_repeat', 'calendar_override', 'archive_task',
+    'set_due_date', 'set_repeat', 'calendar_override', 'clear_quota_balance', 'archive_task',
     'trash_task', 'restore_task', 'start_in_progress', 'clear_in_progress',
     'reconcile_rollover', 'hierarchy_change'
   )),
@@ -463,7 +463,7 @@ create table if not exists public.adhdice_task_schedule_boundaries (
     'unscheduled', 'one_time', 'rolling', 'fixed'
   )),
   repeat_frequency text not null check (repeat_frequency in (
-    'none', 'daily', 'weekly', 'monthly', 'custom', 'daily_until_complete'
+    'none', 'daily', 'weekly', 'monthly', 'custom', 'daily_until_complete', 'per_week', 'per_month'
   )),
   repeat_interval integer not null default 1 check (repeat_interval > 0),
   repeat_days_of_week smallint[] not null default '{}'
@@ -481,6 +481,8 @@ create table if not exists public.adhdice_task_schedule_boundaries (
     )),
   repeat_monthly_weekday smallint
     check (repeat_monthly_weekday is null or repeat_monthly_weekday between 0 and 6),
+  repeat_quota_count integer,
+  repeat_quota_balance_enabled boolean not null default false,
   one_time_due_on date,
   due_time time without time zone,
   anchor_date date,
@@ -546,6 +548,11 @@ create table if not exists public.adhdice_task_schedule_boundaries (
       and repeat_monthly_ordinal is not null
       and repeat_monthly_weekday is not null
     )
+  ),
+  constraint adhdice_task_schedule_boundaries_quota_fields_check check (
+    (repeat_frequency = 'per_week' and repeat_quota_count between 1 and 7)
+    or (repeat_frequency = 'per_month' and repeat_quota_count between 1 and 31)
+    or (repeat_frequency not in ('per_week', 'per_month') and repeat_quota_count is null and repeat_quota_balance_enabled = false)
   ),
   constraint adhdice_task_schedule_boundaries_anchor_check check (
     (

@@ -120,7 +120,7 @@ begin
        'set_outcome', 'clear_outcome', 'complete_task', 'delay_occurrence',
        'set_due_date', 'set_repeat', 'calendar_override', 'archive_task',
        'trash_task', 'restore_task', 'start_in_progress', 'clear_in_progress',
-       'reconcile_rollover', 'hierarchy_change'
+       'reconcile_rollover', 'clear_quota_balance', 'hierarchy_change'
      )
      or v_idempotence_identity is null
      or v_accepted_payload_digest is null
@@ -329,6 +329,21 @@ begin
       where key not in ('canonicalization_status')
     ) then
       raise exception 'Clear outcome command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'clear_quota_balance' then
+    if v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version'
+       or coalesce(v_payload->>'clear_quota_balance', 'false') <> 'true' then
+      raise exception 'Clear quota balance command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status')
+    ) then
+      raise exception 'Clear quota balance command carries an unrelated canonical Task patch.'
         using errcode = '22023';
     end if;
   elsif v_command_type in ('start_in_progress', 'clear_in_progress') then
@@ -812,6 +827,22 @@ begin
          completed_at = case when v_projection ? 'completed_at' then nullif(v_projection->>'completed_at', '')::timestamptz else completed_at end,
          active_status_logical_date = case when v_projection ? 'active_status_logical_date' then nullif(v_projection->>'active_status_logical_date', '')::date else active_status_logical_date end,
          active_occurrence_due_on = case when v_projection ? 'active_occurrence_due_on' then nullif(v_projection->>'active_occurrence_due_on', '')::date else active_occurrence_due_on end,
+         repeat_quota_balance = case
+           when v_projection ? 'repeat_quota_balance' then nullif(v_projection->>'repeat_quota_balance', '')::integer
+           when v_command_type = 'clear_quota_balance' then 0
+           when v_schedule <> '{}'::jsonb and coalesce(v_schedule->>'repeat_frequency', 'none') not in ('per_week', 'per_month') then null
+           when v_schedule <> '{}'::jsonb and coalesce((v_schedule->>'repeat_quota_balance_enabled')::boolean, false) = false then 0
+           else repeat_quota_balance
+         end,
+         repeat_quota_balance_period = case
+           when v_projection ? 'repeat_quota_balance_period' then nullif(v_projection->>'repeat_quota_balance_period', '')
+           when v_command_type = 'clear_quota_balance' then
+           case when repeat_frequency = 'per_week' then date_trunc('week', (v_logical_day_context->>'logical_date')::date)::date::text
+                when repeat_frequency = 'per_month' then to_char(date_trunc('month', (v_logical_day_context->>'logical_date')::date)::date, 'YYYY-MM')
+                else repeat_quota_balance_period end
+           when v_schedule <> '{}'::jsonb and coalesce(v_schedule->>'repeat_frequency', 'none') not in ('per_week', 'per_month') then null
+           when v_schedule <> '{}'::jsonb and coalesce((v_schedule->>'repeat_quota_balance_enabled')::boolean, false) = false then null
+           else repeat_quota_balance_period end,
          canonical_revision = v_next_revision,
          canonical_updated_at = now(),
          projection_source_canonical_revision = v_next_revision,
@@ -820,6 +851,65 @@ begin
          revision = revision + 1,
          updated_at = now()
    where user_id = p_user_id and id = v_entity_id;
+
+  if v_command_type = 'clear_quota_balance' then
+    v_projection := jsonb_set(v_projection, '{repeat_quota_balance}', '0'::jsonb, true);
+    v_projection := jsonb_set(
+      v_projection,
+      '{repeat_quota_balance_period}',
+      to_jsonb(case when v_task.repeat_frequency = 'per_week'
+        then date_trunc('week', (v_logical_day_context->>'logical_date')::date)::date::text
+        else to_char(date_trunc('month', (v_logical_day_context->>'logical_date')::date)::date, 'YYYY-MM') end),
+      true
+    );
+    if v_task.repeat_frequency not in ('per_week', 'per_month') then
+      raise exception 'Clear quota balance requires a quota recurrence.' using errcode = '22023';
+    end if;
+    if not coalesce(v_task.repeat_quota_balance_enabled, false) then
+      raise exception 'Clear quota balance requires balance mode to be enabled.' using errcode = '22023';
+    end if;
+    insert into public.adhdice_task_quota_period_facts (
+      user_id, entity_id, entity_kind, period_kind, period_key, period_start, period_end,
+      base_quota, incoming_balance, successful_days, next_balance, balance_enabled,
+      event_kind, command_id, idempotence_identity, source
+    )
+    select
+      p_user_id,
+      v_entity_id,
+      v_entity_kind,
+      case when v_task.repeat_frequency = 'per_week' then 'week' else 'month' end,
+      case when v_task.repeat_frequency = 'per_week'
+        then to_char(date_trunc('week', (v_logical_day_context->>'logical_date')::date)::date, 'YYYY-MM-DD')
+        else to_char(date_trunc('month', (v_logical_day_context->>'logical_date')::date)::date, 'YYYY-MM') end,
+      case when v_task.repeat_frequency = 'per_week'
+        then date_trunc('week', (v_logical_day_context->>'logical_date')::date)::date
+        else date_trunc('month', (v_logical_day_context->>'logical_date')::date)::date end,
+      case when v_task.repeat_frequency = 'per_week'
+        then (date_trunc('week', (v_logical_day_context->>'logical_date')::date) + interval '6 days')::date
+        else (date_trunc('month', (v_logical_day_context->>'logical_date')::date) + interval '1 month - 1 day')::date end,
+      greatest(1, least(case when v_task.repeat_frequency = 'per_week' then 7 else 31 end, coalesce(v_task.repeat_quota_count, 1))),
+      case when v_task.repeat_quota_balance_enabled then coalesce(v_task.repeat_quota_balance, 0) else 0 end,
+      (
+        select count(distinct fact.logical_date)::integer
+          from public.adhdice_task_history_facts fact
+         where fact.user_id = p_user_id
+           and fact.entity_id = v_entity_id
+           and fact.outcome in ('done', 'did_my_best')
+           and fact.logical_date >= case when v_task.repeat_frequency = 'per_week'
+             then date_trunc('week', (v_logical_day_context->>'logical_date')::date)::date
+             else date_trunc('month', (v_logical_day_context->>'logical_date')::date)::date end
+           and fact.logical_date <= case when v_task.repeat_frequency = 'per_week'
+             then (date_trunc('week', (v_logical_day_context->>'logical_date')::date) + interval '6 days')::date
+             else (date_trunc('month', (v_logical_day_context->>'logical_date')::date) + interval '1 month - 1 day')::date end
+      ),
+      0,
+      v_task.repeat_quota_balance_enabled,
+      'clear_balance',
+      v_command_id,
+      v_idempotence_identity,
+      'task_state_command'
+    on conflict (user_id, idempotence_identity) do nothing;
+  end if;
 
   -- Schedule boundaries are append-only canonical schedule authority.  The
   -- planner supplies a complete schema-aligned row; server-owned identity and

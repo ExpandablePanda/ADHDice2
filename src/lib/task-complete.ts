@@ -43,6 +43,9 @@ const HISTORY_OVERRIDE_ACTION_STATUSES = [
 const HISTORY_CALENDAR_OVERRIDE_ACTIONS = ["not_due", "due_open"] as const;
 
 export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency) {
+  if (repeatFrequency === "per_week" || repeatFrequency === "per_month") {
+    return RECURRING_SELECTABLE_STATUSES.filter((status) => status !== "delayed");
+  }
   return repeatFrequency === "none"
     ? [...ONE_OFF_SELECTABLE_STATUSES]
     : [...RECURRING_SELECTABLE_STATUSES];
@@ -58,12 +61,16 @@ export function getSelectableTaskDisplayStatusesForRepeatFrequency(repeatFrequen
 
 export function canTaskDelay({
   dueOn,
+  repeatFrequency,
   status,
 }: {
   dueOn: string | null | undefined;
+  repeatFrequency?: TaskRepeatFrequency;
   status: TaskDisplayStatus;
 }) {
   return Boolean(dueOn)
+    && repeatFrequency !== "per_week"
+    && repeatFrequency !== "per_month"
     && status !== "unscheduled"
     && status !== "archived"
     && status !== "complete"
@@ -82,7 +89,7 @@ export function getSelectableTaskStatusesForTask({
   status: TaskDisplayStatus;
 }) {
   return getSelectableTaskStatusesForRepeatFrequency(repeatFrequency).filter((nextStatus) => (
-    nextStatus !== "delayed" || canTaskDelay({ dueOn, status })
+    nextStatus !== "delayed" || canTaskDelay({ dueOn, repeatFrequency, status })
   ));
 }
 
@@ -105,7 +112,9 @@ export function getBatchSelectableTaskStatuses() {
 export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_frequency">) {
   return task.repeat_frequency === "none"
     ? (["delayed", "missed", "complete"] as const)
-    : (["done", "did_my_best", "delayed", "missed", "complete"] as const);
+    : task.repeat_frequency === "per_week" || task.repeat_frequency === "per_month"
+      ? (["done", "did_my_best", "missed", "complete"] as const)
+      : (["done", "did_my_best", "delayed", "missed", "complete"] as const);
 }
 
 export function isTaskHistoryEntryClearable({

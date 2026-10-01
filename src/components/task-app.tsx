@@ -5951,7 +5951,7 @@ export function TaskApp() {
 
   const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
-    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status }) || isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+    if (!task || !canTaskDelay({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }) || isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
       action: "delay",
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       behaviorProfiles: taskTypeBehaviorProfiles,
@@ -7778,6 +7778,8 @@ export function TaskApp() {
         repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
         repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
         repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+        repeatQuotaCount: cadence.repeatQuotaCount ?? null,
+        repeatQuotaBalanceEnabled: cadence.repeatQuotaBalanceEnabled === true,
       }
       : repeat === "custom"
         ? {
@@ -7793,10 +7795,14 @@ export function TaskApp() {
     return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 
+  const handleClearTaskQuotaBalance = (taskId: string) => updateTask(taskId, {}, {
+    canonicalIntent: { type: "clear_quota_balance" },
+  });
+
   const applyTaskRepeatEditorValue = (
     taskId: string,
     repeat: TaskRepeatFrequency,
-    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">>,
+    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">>,
   ) => {
     const dueOn = tasks.find((task) => task.id === taskId)?.due_on;
     const value: TaskRepeatEditorValue = cadence
@@ -7808,6 +7814,8 @@ export function TaskApp() {
         repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
         repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
         repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+        repeatQuotaCount: cadence.repeatQuotaCount ?? null,
+        repeatQuotaBalanceEnabled: cadence.repeatQuotaBalanceEnabled === true,
       }
       : repeat === "custom"
         ? {
@@ -8005,6 +8013,7 @@ export function TaskApp() {
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
           onTaskRepeatChange={handleSharedTaskRepeatChange}
+          onTaskQuotaBalanceClear={handleClearTaskQuotaBalance}
           onTaskStatusChange={(taskId, status) => {
             const task = tasks.find((entry) => entry.id === taskId);
             if (task) void updateTaskStatus(task, status);
@@ -8502,6 +8511,7 @@ export function TaskApp() {
                   onSetRepeat: (taskId, repeat, cadence) => {
                     return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
+                  onClearQuotaBalance: handleClearTaskQuotaBalance,
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {
@@ -8676,6 +8686,7 @@ export function TaskApp() {
                   onSetRepeat: (taskId, repeat, cadence) => {
                     return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
+                  onClearQuotaBalance: handleClearTaskQuotaBalance,
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {

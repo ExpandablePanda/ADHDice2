@@ -1,6 +1,7 @@
 import type { Task, TaskStatus } from "../database.types.ts";
 import { daysBetween } from "../task-state-engine/calendar.ts";
 import { evaluateTaskState } from "../task-state-engine/engine.ts";
+import { quotaPeriodBounds } from "../task-state-engine/quota.ts";
 import type {
   TaskHistoryOutcome,
   TaskStateEngineInput,
@@ -41,6 +42,8 @@ export type CanonicalCompatibilityProjection = {
   completedAt: string | null;
   activeStatusLogicalDate: string | null;
   activeOccurrenceDueOn: string | null;
+  repeatQuotaBalance?: number | null;
+  repeatQuotaBalancePeriod?: string | null;
 };
 
 export type CanonicalTaskStateCommandBase = {
@@ -124,6 +127,10 @@ export type CanonicalClearOutcomeCommand = CanonicalTaskStateCommandBase & {
   occurrence?: CanonicalTaskOccurrence;
 };
 
+export type CanonicalClearQuotaBalanceCommand = CanonicalTaskStateCommandBase & {
+  type: "clear_quota_balance";
+};
+
 export type CanonicalRolloverCommand = CanonicalTaskStateCommandBase & {
   type: "rollover";
   /** Server-derived stale workflow evidence; never accepted from browser intent. */
@@ -143,6 +150,7 @@ export type CanonicalTaskStateCommand =
   | CanonicalScheduleCommand
   | CanonicalCalendarOverrideCommand
   | CanonicalClearOutcomeCommand
+  | CanonicalClearQuotaBalanceCommand
   | CanonicalRolloverCommand;
 
 export type CanonicalCommandEnvelope = {
@@ -239,6 +247,7 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
   task: CanonicalTaskRow;
 }) {
   const { normalizedResult } = input.plan;
+  if (normalizedResult.commandType === "clear_quota_balance") return false;
   const patchChangesTask = Object.entries(normalizedResult.canonicalTaskPatch).some(([field, value]) => (
     input.task[field as keyof CanonicalTaskRow] !== value
   ));
@@ -279,6 +288,8 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
       completed_at: projection.completedAt,
       active_status_logical_date: projection.activeStatusLogicalDate,
       active_occurrence_due_on: projection.activeOccurrenceDueOn,
+      ...(projection.repeatQuotaBalance !== undefined ? { repeat_quota_balance: projection.repeatQuotaBalance } : {}),
+      ...(projection.repeatQuotaBalancePeriod !== undefined ? { repeat_quota_balance_period: projection.repeatQuotaBalancePeriod } : {}),
     },
     ...(normalizedResult.rewardEntitlement
       ? { reward_program_version: normalizedResult.rewardEntitlement.rewardProgramVersion }
@@ -286,6 +297,9 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
   };
   if (command.commandType === "clear_outcome") {
     payload.clear_logical_date = command.payload.clear_logical_date;
+  }
+  if (command.commandType === "clear_quota_balance") {
+    payload.clear_quota_balance = true;
   }
   if (command.commandType === "set_due_date" && command.payload.manual_action === "unscheduled_status") {
     payload.manual_action = "unscheduled_status";
@@ -388,6 +402,7 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
     case "schedule_change": return command.changeKind === "due_date" ? "set_due_date" : "set_repeat";
     case "calendar_override": return "calendar_override";
     case "clear_outcome": return "clear_outcome";
+    case "clear_quota_balance": return "clear_quota_balance";
     case "rollover": return "reconcile_rollover";
   }
 }
@@ -435,6 +450,12 @@ function projectionFromEngine(
     activeOccurrenceDueOn: Object.hasOwn(result.proposedTaskPatch, "activeOccurrenceDueOn")
       ? result.proposedTaskPatch.activeOccurrenceDueOn ?? null
       : task.active_occurrence_due_on,
+    repeatQuotaBalance: Object.hasOwn(result.proposedTaskPatch, "repeatQuotaBalance")
+      ? result.proposedTaskPatch.repeatQuotaBalance ?? null
+      : task.repeat_quota_balance,
+    repeatQuotaBalancePeriod: Object.hasOwn(result.proposedTaskPatch, "repeatQuotaBalancePeriod")
+      ? result.proposedTaskPatch.repeatQuotaBalancePeriod ?? null
+      : task.repeat_quota_balance_period,
   };
 }
 
@@ -495,6 +516,8 @@ function projectionForWorkflowClear(task: Task, logicalDate: string): CanonicalC
     completedAt: task.completed_at,
     activeStatusLogicalDate: null,
     activeOccurrenceDueOn: null,
+    repeatQuotaBalance: task.repeat_quota_balance,
+    repeatQuotaBalancePeriod: task.repeat_quota_balance_period,
   };
 }
 
@@ -516,7 +539,14 @@ function projectionFromTask(task: Task): CanonicalCompatibilityProjection {
     completedAt: task.completed_at,
     activeStatusLogicalDate: task.active_status_logical_date,
     activeOccurrenceDueOn: task.active_occurrence_due_on,
+    repeatQuotaBalance: task.repeat_quota_balance,
+    repeatQuotaBalancePeriod: task.repeat_quota_balance_period,
   };
+}
+
+function quotaBalancePeriodKey(task: Task, logicalDate: string) {
+  if (task.repeat_frequency !== "per_week" && task.repeat_frequency !== "per_month") return null;
+  return quotaPeriodBounds(logicalDate, task.repeat_frequency === "per_week" ? "week" : "month").key;
 }
 
 function restoredContainerState(task: CanonicalTaskRow): "active" | "archived" {
@@ -921,6 +951,13 @@ export function planTaskStateCommand(
     }
     case "schedule_change": {
       projection = requireProjection(engineResult, task);
+      if (input.scheduleBoundary.repeat_frequency !== "per_week" && input.scheduleBoundary.repeat_frequency !== "per_month") {
+        projection.repeatQuotaBalance = null;
+        projection.repeatQuotaBalancePeriod = null;
+      } else if (input.scheduleBoundary.repeat_quota_balance_enabled !== true) {
+        projection.repeatQuotaBalance = 0;
+        projection.repeatQuotaBalancePeriod = null;
+      }
       scheduleBoundary = input.scheduleBoundary;
       automaticHistoryFacts = engineResult?.proposedHistoryChanges.flatMap((change) => (
         change.type === "insert"
@@ -939,6 +976,17 @@ export function planTaskStateCommand(
     case "clear_outcome": {
       projection = requireProjection(engineResult, task);
       occurrence = input.occurrence ?? null;
+      break;
+    }
+    case "clear_quota_balance": {
+      if ((task.repeat_frequency !== "per_week" && task.repeat_frequency !== "per_month") || task.repeat_quota_balance_enabled !== true) {
+        throw new CanonicalCommandPlanningError("QUOTA_BALANCE_NOT_ENABLED", "Clear Balance requires an enabled quota balance.");
+      }
+      projection = {
+        ...projectionFromTask(task),
+        repeatQuotaBalance: 0,
+        repeatQuotaBalancePeriod: quotaBalancePeriodKey(task, command.logicalDay.logicalDate),
+      };
       break;
     }
     case "rollover": {
