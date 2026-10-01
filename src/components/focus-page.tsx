@@ -57,6 +57,10 @@ import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, Re
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { FOCUS_PAGE_SHELL_CANONICAL_LAYOUT, FOCUS_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import {
+  readFocusSandboxTabOrder,
+  writeFocusSandboxTabOrder,
+} from "@/lib/focus-sandbox-tab-order";
+import {
   TASKS_SURFACE_ACTIVE_CHIP_CLASS,
   TASKS_SURFACE_GROUP_CLASS,
   TASKS_SURFACE_INACTIVE_CHIP_CLASS,
@@ -106,24 +110,6 @@ const FOCUS_COUNTER_ICON_OPTIONS = [
 ] as const;
 
 const FOCUS_TOOLBAR_CHIP_TONE_CLASS = "border-[#e4deef] bg-[var(--surface-elevated)] text-[#68738c] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/60";
-const FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY = "adhdice.focusSandboxTabOrder.v1";
-const DEFAULT_FOCUS_SANDBOX_TAB_ORDER = [0, 1] as const;
-
-function readFocusSandboxTabOrder(): number[] {
-  if (typeof window === "undefined") return [...DEFAULT_FOCUS_SANDBOX_TAB_ORDER];
-  try {
-    const stored = JSON.parse(window.localStorage.getItem(FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY) ?? "null");
-    if (Array.isArray(stored) && stored.length === 2 && stored.includes(0) && stored.includes(1)) return stored;
-  } catch {
-    // Fall through to the approved default order.
-  }
-  return [...DEFAULT_FOCUS_SANDBOX_TAB_ORDER];
-}
-
-function writeFocusSandboxTabOrder(order: number[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY, JSON.stringify(order));
-}
 
 function FocusTimerPicker({
   categories,

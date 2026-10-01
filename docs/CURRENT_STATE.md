@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-30
+Last reviewed: 2026-10-01
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.24`.
+- Current working app version: `7.16.25`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-01 7.16.25 Finish Focus localStorage quota hardening
+
+Focus sandbox tab-order persistence now uses the shared quota-safe local-storage
+seam for both reads and writes. The existing
+`adhdice.focusSandboxTabOrder.v1` key, default `[0, 1]` order, and Focus tab
+reorder behavior remain unchanged. Quota or unavailable-storage failures are
+best-effort and nonfatal.
+
+This release contains no quota recurrence work, no SQL/Supabase/Edge changes,
+and no Realtime warning work. Browser/manual QA remains Andrew-owned and
+unverified here.
 
 ## 2026-10-01 7.16.24 localStorage quota safety hotfix
 

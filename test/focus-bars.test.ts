@@ -23,6 +23,7 @@ const NOW_MS = 100_000;
 const focusBarsSource = readFileSync(new URL("../src/components/focus-bars.tsx", import.meta.url), "utf8");
 const focusBarsHelperSource = readFileSync(new URL("../src/lib/focus-bars.ts", import.meta.url), "utf8");
 const focusPageSource = readFileSync(new URL("../src/components/focus-page.tsx", import.meta.url), "utf8");
+const focusSandboxTabOrderSource = readFileSync(new URL("../src/lib/focus-sandbox-tab-order.ts", import.meta.url), "utf8");
 const focusTimerPickerSource = focusPageSource.slice(
   focusPageSource.indexOf("function FocusTimerPicker"),
   focusPageSource.indexOf("export function FocusPage"),
@@ -460,7 +461,8 @@ test("Focus tabs copy the approved centered task-tab grouped-chip formatting wit
 });
 
 test("Focus tabs copy Tasks native drag reorder with persisted visual navigation order", () => {
-  assert.match(focusPageSource, /FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY = "adhdice\.focusSandboxTabOrder\.v1"/);
+  assert.match(focusSandboxTabOrderSource, /FOCUS_SANDBOX_TAB_ORDER_STORAGE_KEY = "adhdice\.focusSandboxTabOrder\.v1"/);
+  assert.match(focusPageSource, /readFocusSandboxTabOrder/);
   assert.match(focusPageSource, /focusSandboxTabOrder\.map\(\(page, visualIndex\)/);
   assert.match(focusPageSource, /aria-description="Drag horizontally to reorder this Focus tab\."[\s\S]*?draggable[\s\S]*?onDragStart/);
   assert.match(focusPageSource, /event\.dataTransfer\.setData\("text\/plain", String\(page\)\)/);
