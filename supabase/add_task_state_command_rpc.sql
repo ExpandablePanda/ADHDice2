@@ -279,8 +279,11 @@ begin
        or v_history->>'event_kind' <> 'terminal_complete'
        or v_schedule <> '{}'::jsonb or v_effective_override <> '{}'::jsonb
        or v_calendar_override <> '{}'::jsonb
-       or v_payload->>'reward_eligible' <> 'true'
-       or (v_payload ? 'reward_program_version') = false then
+       or not (
+         (v_payload->>'reward_eligible' = 'true'
+          and nullif(v_payload->>'reward_program_version', '') is not null)
+         or (not (v_payload ? 'reward_eligible') and not (v_payload ? 'reward_program_version'))
+       ) then
       raise exception 'Complete command payload sections are incompatible.'
         using errcode = '22023';
     end if;

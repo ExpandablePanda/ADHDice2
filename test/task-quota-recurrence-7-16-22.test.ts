@@ -87,6 +87,35 @@ test("only distinct successful logical dates count", () => {
   assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-09-30", history }).successesThisPeriod, 1);
 });
 
+test("quota success counts and period-close successful days honor weekly and monthly activation", () => {
+  for (const scenario of [
+    {
+      recurrence: { kind: "quota" as const, period: "week" as const, count: 3, balanceEnabled: true, activationDate: "2026-10-02" },
+      logicalDate: "2026-10-04",
+      history: [historyRow("2026-09-28"), historyRow("2026-10-02")],
+    },
+    {
+      recurrence: { kind: "quota" as const, period: "month" as const, count: 3, balanceEnabled: true, activationDate: "2026-01-15" },
+      logicalDate: "2026-01-31",
+      history: [historyRow("2026-01-05"), historyRow("2026-01-15")],
+    },
+  ]) {
+    const evaluation = quotaPeriodEvaluation({ ...scenario });
+    const close = quotaPeriodFactFor({
+      recurrence: scenario.recurrence,
+      periodDate: scenario.logicalDate,
+      history: scenario.history,
+      eventKind: "period_close",
+      idempotenceIdentity: `${scenario.recurrence.period}-activation-close`,
+    });
+    assert.equal(evaluation.successesThisPeriod, 1, scenario.recurrence.period);
+    assert.equal(evaluation.remainingRequired, 2, scenario.recurrence.period);
+    assert.equal(evaluation.nextBalance, -2, scenario.recurrence.period);
+    assert.equal(close.successfulDays, 1, scenario.recurrence.period);
+    assert.equal(close.nextBalance, -2, scenario.recurrence.period);
+  }
+});
+
 test("balance is uncapped and carries into the next period", () => {
   const recurrence = { kind: "quota" as const, period: "week" as const, count: 2, balanceEnabled: true, incomingBalance: 0 };
   const history = [historyRow("2026-09-28"), historyRow("2026-09-29"), historyRow("2026-09-30")];
@@ -416,6 +445,193 @@ test("a canonical clear fact reconstructs zero without deleting History", () => 
     history: [historyRow("2026-10-05")],
     quotaPeriodFacts: [{ ...clear, id: "clear-fact", createdAt: "2026-10-05T01:00:00.000Z" }],
   }).incomingBalance, 0);
+});
+
+test("Clear Balance resets incoming debt without erasing current-period quota arithmetic", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-10-05",
+    incomingBalance: -3,
+    scheduleBoundaryId: "boundary-clear",
+  };
+  for (const [label, successDates, expectedNextBalance] of [
+    ["zero successes", [], -3],
+    ["partial successes", ["2026-10-06"], -2],
+    ["full quota", ["2026-10-06", "2026-10-07", "2026-10-08"], 0],
+    ["extra successes", ["2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09"], 1],
+  ] as const) {
+    const history = successDates.map((date) => historyRow(date));
+    const clear = quotaPeriodFactFor({
+      recurrence,
+      periodDate: "2026-10-05",
+      history,
+      eventKind: "clear_balance",
+      idempotenceIdentity: `clear-${label}`,
+    });
+    const evaluation = quotaPeriodEvaluation({
+      recurrence,
+      logicalDate: "2026-10-11",
+      history,
+      quotaPeriodFacts: [{ ...clear, id: `fact-${label}`, createdAt: "2026-10-05T01:00:00.000Z" }],
+    });
+    assert.equal(evaluation.incomingBalance, 0, label);
+    assert.equal(evaluation.nextBalance, expectedNextBalance, label);
+  }
+});
+
+test("future quota Calendar projection carries a cleared period's outgoing balance before and after close", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-10-05",
+    scheduleBoundaryId: "boundary-clear-calendar",
+  };
+  const history = [historyRow("2026-10-06")];
+  const clear = quotaPeriodFactFor({
+    recurrence,
+    periodDate: "2026-10-05",
+    history,
+    eventKind: "clear_balance",
+    idempotenceIdentity: "clear-calendar",
+  });
+  const clearFact = { ...clear, id: "clear-calendar-fact", createdAt: "2026-10-07T01:00:00.000Z" };
+  const beforeClose = quotaPeriodEvaluation({
+    recurrence,
+    logicalDate: "2026-10-14",
+    history,
+    quotaPeriodFacts: [clearFact],
+  });
+  assert.equal(beforeClose.incomingBalance, -2);
+  assert.equal(beforeClose.nextMandatoryDate, "2026-10-14");
+
+  const projected = evaluateTaskState({
+    ...input({
+      now: "2026-10-07T14:00:00.000Z",
+      history,
+      task: { ...input().task, dueOn: "2026-10-05", recurrence },
+      quotaPeriodFacts: [clearFact],
+    }),
+    calendarStart: "2026-10-05",
+    calendarEnd: "2026-10-18",
+  });
+  assert.equal(projected.calendar["2026-10-14"], "scheduled");
+
+  const close = quotaPeriodFactFor({
+    recurrence,
+    periodDate: "2026-10-05",
+    history,
+    quotaPeriodFacts: [clearFact],
+    eventKind: "period_close",
+    idempotenceIdentity: "close-calendar",
+  });
+  const afterClose = quotaPeriodEvaluation({
+    recurrence,
+    logicalDate: "2026-10-14",
+    history: [...history, historyRow("2026-10-07"), historyRow("2026-10-08")],
+    quotaPeriodFacts: [clearFact, { ...close, id: "close-calendar-fact", createdAt: "2026-10-12T01:00:00.000Z" }],
+  });
+  assert.equal(close.incomingBalance, 0);
+  assert.equal(close.nextBalance, -2);
+  assert.equal(afterClose.incomingBalance, -2, "the stored period_close next balance remains authoritative");
+});
+
+test("weekly quota rollover catches up multiple periods without synthetic debt compensation", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-09-28",
+    incomingBalance: 0,
+  };
+  const result = evaluateTaskState({
+    ...input({ now: "2026-10-13T14:00:00.000Z", task: { ...input().task, dueOn: "2026-09-28", recurrence } }),
+    action: { type: "reconcile_rollover" },
+  });
+  const history = result.proposedHistoryChanges
+    .filter((change): change is Extract<typeof change, { type: "insert" }> => change.type === "insert")
+    .map((change) => change.row);
+  assert.deepEqual(history.map((row) => row.logicalDate), [
+    "2026-10-02", "2026-10-03", "2026-10-04",
+    "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11",
+    "2026-10-12",
+  ]);
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-13", history }).incomingBalance, -6);
+
+  const retry = evaluateTaskState({
+    ...input({ now: "2026-10-13T14:00:00.000Z", history, task: { ...input().task, dueOn: "2026-09-28", recurrence } }),
+    action: { type: "reconcile_rollover" },
+  });
+  assert.deepEqual(retry.proposedHistoryChanges, []);
+});
+
+test("monthly quota rollover uses natural month capacity across skipped periods", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "month" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2027-01-01",
+    incomingBalance: 0,
+  };
+  const result = evaluateTaskState({
+    ...input({ now: "2027-03-05T14:00:00.000Z", task: { ...input().task, dueOn: "2027-01-01", recurrence } }),
+    action: { type: "reconcile_rollover" },
+  });
+  const history = result.proposedHistoryChanges
+    .filter((change): change is Extract<typeof change, { type: "insert" }> => change.type === "insert")
+    .map((change) => change.row);
+  assert.deepEqual(history.map((row) => row.logicalDate), [
+    "2027-01-29", "2027-01-30", "2027-01-31",
+    "2027-02-23", "2027-02-24", "2027-02-25", "2027-02-26", "2027-02-27", "2027-02-28",
+  ]);
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2027-03-05", history }).incomingBalance, -6);
+  const retry = evaluateTaskState({
+    ...input({ now: "2027-03-05T14:00:00.000Z", history, task: { ...input().task, dueOn: "2027-01-01", recurrence } }),
+    action: { type: "reconcile_rollover" },
+  });
+  assert.deepEqual(retry.proposedHistoryChanges, []);
+});
+
+test("an earlier Clear Balance fact participates in skipped-period rollover reconstruction", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-09-28",
+    incomingBalance: 3,
+    scheduleBoundaryId: "boundary-clear-rollover",
+  };
+  const clear = quotaPeriodFactFor({
+    recurrence,
+    periodDate: "2026-09-28",
+    eventKind: "clear_balance",
+    idempotenceIdentity: "clear-skipped-week",
+  });
+  const clearFact = { ...clear, id: "clear-skipped-week-fact", createdAt: "2026-09-29T01:00:00.000Z" };
+  const result = evaluateTaskState({
+    ...input({
+      now: "2026-10-13T14:00:00.000Z",
+      quotaPeriodFacts: [clearFact],
+      task: { ...input().task, dueOn: "2026-09-28", recurrence },
+    }),
+    action: { type: "reconcile_rollover" },
+  });
+  const history = result.proposedHistoryChanges
+    .filter((change): change is Extract<typeof change, { type: "insert" }> => change.type === "insert")
+    .map((change) => change.row);
+  assert.deepEqual(history.map((row) => row.logicalDate), [
+    "2026-10-02", "2026-10-03", "2026-10-04",
+    "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11",
+    "2026-10-12",
+  ]);
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-13", history, quotaPeriodFacts: [clearFact] }).incomingBalance, -6);
 });
 
 test("canonical balance reconstruction follows period chronology across out-of-order facts", () => {

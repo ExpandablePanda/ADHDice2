@@ -20,18 +20,33 @@ test("quota ledger source definitions agree across bootstrap and runtime migrati
   const bootstrap = read("supabase/add_task_state_canonical_schema.sql");
   const schema = read("supabase/schema.sql");
   const migration = read("supabase/patch_task_quota_recurrence_runtime_7_16_23.sql");
-  for (const source of [bootstrap, schema, migration]) {
+  for (const [name, source] of [["add_task_state_canonical_schema.sql", bootstrap], ["schema.sql", schema], ["patch_task_quota_recurrence_runtime_7_16_23.sql", migration]] as const) {
     for (const field of [
       "schedule_boundary_id", "period_kind", "period_key", "period_start", "period_end",
       "base_quota", "incoming_balance", "successful_days", "next_balance", "balance_enabled",
       "event_kind", "command_id", "idempotence_identity", "revision", "updated_at",
     ]) {
-      assert.match(source, new RegExp(`\\b${field}\\b`), `${field} missing from source package`);
+      assert.match(source, new RegExp(`\\b${field}\\b`), `${field} missing from ${name}`);
     }
+    assert.match(source, /foreign key \(user_id, schedule_boundary_id\)/, `schedule boundary FK missing from ${name}`);
+    assert.match(source, /foreign key \(user_id, command_id\)/, `command FK missing from ${name}`);
   }
   assert.match(bootstrap, /foreign key \(user_id, schedule_boundary_id\)/);
   assert.match(bootstrap, /foreign key \(user_id, command_id\)/);
   assert.match(migration, /unique index if not exists adhdice_task_quota_period_facts_period_close_key/);
+});
+
+test("Complete accepts either a planner-approved reward or no reward fields", () => {
+  for (const source of [
+    read("supabase/add_task_state_command_rpc.sql"),
+    read("supabase/patch_task_quota_recurrence_runtime_7_16_23.sql"),
+  ]) {
+    const completeBranch = source.match(/elsif v_command_type = 'complete_task' then([\s\S]*?)elsif v_command_type = 'delay_occurrence' then/i)?.[1] ?? "";
+    assert.match(completeBranch, /v_payload->>'reward_eligible' = 'true'/);
+    assert.match(completeBranch, /nullif\(v_payload->>'reward_program_version', ''\) is not null/);
+    assert.match(completeBranch, /not \(v_payload \? 'reward_eligible'\) and not \(v_payload \? 'reward_program_version'\)/);
+    assert.match(completeBranch, /Complete command payload sections are incompatible/);
+  }
 });
 
 test("canonical creation SQL validates and persists quota fields", () => {

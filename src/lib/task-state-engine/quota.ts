@@ -78,23 +78,33 @@ export function quotaBaseQuota(
   return Math.min(Math.max(1, recurrence.count), effectiveCapacity);
 }
 
-function eligibleStart(recurrence: QuotaRecurrence, bounds: QuotaPeriodBounds) {
+function eligibleStart(recurrence: Pick<QuotaRecurrence, "activationDate">, bounds: QuotaPeriodBounds) {
   return recurrence.activationDate && recurrence.activationDate > bounds.start
     ? recurrence.activationDate
     : bounds.start;
 }
 
-function distinctSuccessDates(history: readonly TaskStateHistoryRow[], bounds: QuotaPeriodBounds, throughDate: string) {
+function distinctSuccessDates(
+  history: readonly TaskStateHistoryRow[],
+  bounds: QuotaPeriodBounds,
+  throughDate: string,
+  recurrence: Pick<QuotaRecurrence, "activationDate">,
+) {
+  const start = eligibleStart(recurrence, bounds);
   return new Set(
     history
       .filter((row) => SUCCESSFUL_QUOTA_OUTCOMES.has(row.outcome))
       .map((row) => row.logicalDate)
-      .filter((date) => date >= bounds.start && date <= bounds.end && date <= throughDate),
+      .filter((date) => date >= start && date <= bounds.end && date <= throughDate),
   );
 }
 
-function successfulDaysForPeriod(history: readonly TaskStateHistoryRow[], bounds: QuotaPeriodBounds) {
-  return distinctSuccessDates(history, bounds, bounds.end).size;
+function successfulDaysForPeriod(
+  history: readonly TaskStateHistoryRow[],
+  bounds: QuotaPeriodBounds,
+  recurrence: Pick<QuotaRecurrence, "activationDate">,
+) {
+  return distinctSuccessDates(history, bounds, bounds.end, recurrence).size;
 }
 
 function nextPeriodDate(bounds: QuotaPeriodBounds) {
@@ -127,7 +137,7 @@ function incomingBalanceForPeriod(
   if (latestTargetClear) return 0;
 
   const priorFact = periodFacts
-    .filter((fact) => fact.periodEnd < target.start)
+    .filter((fact) => fact.eventKind === "period_close" && fact.periodEnd < target.start)
     .sort((left, right) => left.periodEnd.localeCompare(right.periodEnd) || factOrder(left, right))
     .at(-1);
   const initialDate = priorFact
@@ -143,11 +153,11 @@ function incomingBalanceForPeriod(
   while (cursor.key < target.key) {
     const baseQuota = quotaBaseQuota(recurrence, cursor);
     const closeFact = periodFacts.find((fact) => fact.periodKey === cursor.key && fact.eventKind === "period_close");
+    const clearFact = periodFacts.filter((fact) => fact.periodKey === cursor.key && fact.eventKind === "clear_balance").at(-1);
+    const incomingForPeriod = clearFact ? 0 : incoming;
     incoming = closeFact
       ? closeFact.nextBalance
-      : incoming + successfulDaysForPeriod(history, cursor) - baseQuota;
-    const clearFact = periodFacts.filter((fact) => fact.periodKey === cursor.key && fact.eventKind === "clear_balance").at(-1);
-    if (clearFact) incoming = 0;
+      : incomingForPeriod + successfulDaysForPeriod(history, cursor, recurrence) - baseQuota;
     cursor = quotaPeriodBounds(nextPeriodDate(cursor), recurrence.period);
   }
   return incoming;
@@ -167,7 +177,7 @@ export function quotaPeriodEvaluation(input: {
       ? 0
       : daysBetween(input.logicalDate, bounds.end) + 1;
   const history = input.history ?? [];
-  const successesThisPeriod = distinctSuccessDates(history, bounds, input.logicalDate).size;
+  const successesThisPeriod = distinctSuccessDates(history, bounds, input.logicalDate, input.recurrence).size;
   const incomingBalance = incomingBalanceForPeriod(input.recurrence, bounds, history, input.quotaPeriodFacts);
   const baseQuota = quotaBaseQuota(input.recurrence, bounds);
   const requiredThisPeriod = Math.max(0, baseQuota - incomingBalance);
@@ -180,7 +190,7 @@ export function quotaPeriodEvaluation(input: {
     }) ?? null
     : null;
   const nextBalance = input.recurrence.balanceEnabled
-    ? incomingBalance + successfulDaysForPeriod(history, bounds) - baseQuota
+    ? incomingBalance + successfulDaysForPeriod(history, bounds, input.recurrence) - baseQuota
     : 0;
   return {
     baseQuota,
@@ -259,7 +269,7 @@ export function quotaPeriodFactFor(input: {
     periodEnd: bounds.end,
     baseQuota: evaluation.baseQuota,
     incomingBalance: evaluation.incomingBalance,
-    successfulDays: successfulDaysForPeriod(history, bounds),
+    successfulDays: successfulDaysForPeriod(history, bounds, input.recurrence),
     nextBalance: input.eventKind === "clear_balance" ? 0 : evaluation.nextBalance,
     balanceEnabled: input.recurrence.balanceEnabled,
     eventKind: input.eventKind,

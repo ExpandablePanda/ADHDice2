@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.27`.
+- Current working app version: `7.16.28`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,24 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-01 7.16.28 Final quota correctness corrections
+
+Quota success counting now begins at the effective quota activation date, so
+History from a prior schedule cannot satisfy a newly activated weekly or
+monthly quota. Clear Balance reconstruction resets only incoming debt/credit;
+current-period successes and base quota still determine outgoing balance, with
+canonical `period_close` facts remaining authoritative when present. Engine and
+planner coverage now exercises skipped weekly/monthly periods, individual
+mandatory Missed facts, Clear Balance in an earlier skipped period, period-close
+planning, and idempotent retry behavior.
+
+Complete now accepts either the planner-approved reward pair or no reward fields
+for rewards-disabled Task Types, including quota Tasks. The consolidated schema
+source carries guarded owner-safe quota boundary/command FK parity with the
+canonical schema and runtime migration. SQL remains source-only: no Supabase
+mutation or Edge deployment occurred, and browser/manual/live SQL QA remains
+unverified.
 
 ## 2026-10-01 7.16.27 Quota pre-deployment correctness pass
 

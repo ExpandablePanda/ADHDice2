@@ -74,7 +74,8 @@ create table public.adhdice_clean_tasks (
 );
 
 -- Canonical quota ledger structure. Owner-safe boundary/command foreign keys
--- are attached by add_task_state_canonical_schema.sql after those tables exist.
+-- are attached below when the canonical companion tables already exist, or by
+-- add_task_state_canonical_schema.sql in the ordered bootstrap path.
 create table public.adhdice_task_quota_period_facts (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null references auth.users(id) on delete cascade,
@@ -251,6 +252,32 @@ alter table public.adhdice_task_quota_period_facts
   foreign key (user_id, entity_id)
   references public.adhdice_clean_tasks (user_id, id)
   on delete restrict;
+
+-- The consolidated schema predates the separately installed canonical command
+-- and schedule tables. Keep these owner-safe quota relationships in the
+-- source package without making a clean legacy bootstrap depend on tables that
+-- are not created until the canonical schema companion runs.
+do $ddl$
+begin
+  if to_regclass('public.adhdice_task_schedule_boundaries') is not null
+     and to_regclass('public.adhdice_task_command_operations') is not null then
+    if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_boundary_fkey') then
+      alter table public.adhdice_task_quota_period_facts
+        add constraint adhdice_task_quota_period_facts_boundary_fkey
+        foreign key (user_id, schedule_boundary_id)
+        references public.adhdice_task_schedule_boundaries (user_id, id)
+        on delete restrict;
+    end if;
+    if not exists (select 1 from pg_constraint where conname = 'adhdice_task_quota_period_facts_command_fkey') then
+      alter table public.adhdice_task_quota_period_facts
+        add constraint adhdice_task_quota_period_facts_command_fkey
+        foreign key (user_id, command_id)
+        references public.adhdice_task_command_operations (user_id, command_id)
+        on delete restrict;
+    end if;
+  end if;
+end;
+$ddl$;
 
 -- 7.15.12 Phase 1E current Task read projection foundation. This is a
 -- rebuildable, non-authoritative read model; canonical Task/History/schedule
