@@ -43,6 +43,12 @@ import {
 import { normalizeFocusReallocationMode, readFocusReallocationMode, writeFocusReallocationMode } from "@/lib/focus-reallocation";
 import { fetchAllPagedRows, SUPABASE_READ_PAGE_SIZE, type PaginatedReadResult } from "@/lib/paginated-read";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
+import {
+  getSafeLocalStorage,
+  readLocalStorageValue,
+  removeLocalStorageItem,
+  writeLocalStorageEntries,
+} from "@/lib/health-local-storage";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (msg: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
@@ -87,15 +93,32 @@ function normalizeWeekdayTargetSeconds(value: unknown) {
 // ─── Pure helpers ─────────────────────────────────────────────────────────────
 
 function parseStoredJson<T>(key: string, fallback: T): T {
-  if (typeof window === "undefined") return fallback;
-  const rawValue = window.localStorage.getItem(key);
+  const storage = getSafeLocalStorage();
+  if (!storage) return fallback;
+  const rawValue = readLocalStorageValue(storage, key);
   if (!rawValue) return fallback;
   try {
     return JSON.parse(rawValue) as T;
   } catch {
-    window.localStorage.removeItem(key);
+    removeLocalStorageItem(storage, key);
     return fallback;
   }
+}
+
+function writeFocusStorageValue(key: string, value: unknown) {
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
+  try {
+    writeLocalStorageEntries(storage, [[key, JSON.stringify(value)]]);
+  } catch {
+    // Focus local persistence is a best-effort cache and never a mutation authority.
+  }
+}
+
+function removeFocusStorageValue(key: string) {
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
+  removeLocalStorageItem(storage, key);
 }
 
 function readCountdownMetadata(): CountdownMetadata {
@@ -103,8 +126,7 @@ function readCountdownMetadata(): CountdownMetadata {
 }
 
 function writeCountdownMetadata(metadata: CountdownMetadata) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FOCUS_COUNTDOWN_META_STORAGE_KEY, JSON.stringify(metadata));
+  writeFocusStorageValue(FOCUS_COUNTDOWN_META_STORAGE_KEY, metadata);
 }
 
 function getLocalActiveSessionStorageKey(userId: string) {
@@ -129,13 +151,13 @@ function readLocalActiveSession(userId: string | null | undefined): ActiveFocusS
 }
 
 function writeLocalActiveSession(userId: string | null | undefined, session: ActiveFocusSession | null) {
-  if (typeof window === "undefined" || !userId) return;
+  if (!userId) return;
   const storageKey = getLocalActiveSessionStorageKey(userId);
   if (!session) {
-    window.localStorage.removeItem(storageKey);
+    removeFocusStorageValue(storageKey);
     return;
   }
-  window.localStorage.setItem(storageKey, JSON.stringify(session));
+  writeFocusStorageValue(storageKey, session);
 }
 
 function persistCountdownMetadata(categoryId: string, session: Pick<ActiveFocusSession, "countdownTargetSeconds" | "mode"> | null) {
@@ -152,23 +174,26 @@ function persistCountdownMetadata(categoryId: string, session: Pick<ActiveFocusS
 }
 
 export function saveFocusCategories(categories: FocusCategory[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FOCUS_CATEGORIES_STORAGE_KEY, JSON.stringify(categories));
+  writeFocusStorageValue(FOCUS_CATEGORIES_STORAGE_KEY, categories);
 }
 
+/**
+ * Focus History is fully persisted in Supabase and held in React state at runtime.
+ * Keep this compatibility export as a no-op so old callers cannot recreate the
+ * unbounded browser mirror.
+ */
 export function saveFocusHistory(history: HistoricalFocusSession[]) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(FOCUS_HISTORY_STORAGE_KEY, JSON.stringify(history));
+  void history;
 }
 
 function saveFocusCounters(userId: string | null | undefined, counters: FocusCounter[]) {
-  if (typeof window === "undefined" || !userId) return;
-  window.localStorage.setItem(getFocusCountersStorageKey(userId), JSON.stringify(counters));
+  if (!userId) return;
+  writeFocusStorageValue(getFocusCountersStorageKey(userId), counters);
 }
 
 function saveFocusCounterHistory(userId: string | null | undefined, history: FocusCounterHistoryEntry[]) {
-  if (typeof window === "undefined" || !userId) return;
-  window.localStorage.setItem(getFocusCounterHistoryStorageKey(userId), JSON.stringify(history));
+  if (!userId) return;
+  writeFocusStorageValue(getFocusCounterHistoryStorageKey(userId), history);
 }
 
 export function mapFocusCategoryRow(row: DbFocusCategory): FocusCategory {
@@ -241,9 +266,13 @@ function completionIsoFromDateTime(date: string, time?: string | null) {
 
 export function mergeStoredFocusHistory(history: HistoricalFocusSession[]): HistoricalFocusSession[] {
   const storedHistory = parseStoredJson<HistoricalFocusSession[]>(FOCUS_HISTORY_STORAGE_KEY, []);
-  if (storedHistory.length === 0) return history;
+  if (!Array.isArray(storedHistory) || storedHistory.length === 0) return history;
 
   const storedById = new Map(storedHistory.map((entry) => [entry.id, entry]));
+  const remoteIds = new Set(history.map((entry) => entry.id));
+  if (storedHistory.every((entry) => remoteIds.has(entry.id))) {
+    removeFocusStorageValue(FOCUS_HISTORY_STORAGE_KEY);
+  }
 
   return history.map((entry) => {
     const storedEntry = storedById.get(entry.id);
@@ -459,7 +488,6 @@ export function useFocus(
       const next = mergeStoredFocusHistory(((data ?? []) as DbFocusSession[]).map((row) => mapFocusSessionRow(row)));
       loadedFocusHistoryUserIdRef.current = userId;
       setFocusHistory(next);
-      saveFocusHistory(next);
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[focus] history hydrated pages=${load?.getPageCount() ?? 0} rows=${data?.length ?? 0}`);
       }
@@ -524,10 +552,11 @@ export function useFocus(
       const migrationKeyPrefix = `adhdice_focus_runtime_migration_op:${userId}:`;
       const getMigrationOperationId = (slot: string) => {
         const key = `${migrationKeyPrefix}${slot}`;
-        const stored = window.localStorage.getItem(key);
+        const storage = getSafeLocalStorage();
+        const stored = storage ? readLocalStorageValue(storage, key) : null;
         if (stored) return stored;
         const operationId = createBrowserUuidV4();
-        window.localStorage.setItem(key, operationId);
+        if (storage) writeLocalStorageEntries(storage, [[key, operationId]]);
         return operationId;
       };
 
@@ -556,7 +585,7 @@ export function useFocus(
           if (result.runtime) applyRuntimeRow(result.runtime);
           delete legacyMetadata[row.category_id];
           writeCountdownMetadata(legacyMetadata);
-          window.localStorage.removeItem(`${migrationKeyPrefix}${row.category_id}`);
+          removeFocusStorageValue(`${migrationKeyPrefix}${row.category_id}`);
         }
       }
 
@@ -579,7 +608,7 @@ export function useFocus(
           writeLocalActiveSession(userId, null);
           delete legacyMetadata[legacyStandalone.categoryId];
           writeCountdownMetadata(legacyMetadata);
-          window.localStorage.removeItem(`${migrationKeyPrefix}standalone`);
+          removeFocusStorageValue(`${migrationKeyPrefix}standalone`);
         }
       }
     })();
@@ -646,7 +675,6 @@ export function useFocus(
           const entry = mapFocusSessionRow(payload.new as DbFocusSession);
           setFocusHistory((current) => {
             const next = upsertFocusHistoryEntry(current, entry);
-            saveFocusHistory(next);
             return next;
           });
         })
@@ -1065,21 +1093,18 @@ export function useFocus(
     const inserted = completionResult.completed_session;
     if (!inserted) { setMessage({ tone: "warn", text: "Focus session saved, but the response was empty." }); return; }
 
-    const nextEntry = mergeStoredFocusHistory([
-      {
-        ...mapFocusSessionRow(inserted),
-        title: data?.title ?? category.title,
-        focusType: data?.focusType ?? category.focusType,
-        focusSubtype: data?.focusSubtype ?? category.focusSubtype,
-        focusSubtype2: data?.focusSubtype2 ?? category.focusSubtype2,
-      },
-    ])[0];
+    const nextEntry = {
+      ...mapFocusSessionRow(inserted),
+      title: data?.title ?? category.title,
+      focusType: data?.focusType ?? category.focusType,
+      focusSubtype: data?.focusSubtype ?? category.focusSubtype,
+      focusSubtype2: data?.focusSubtype2 ?? category.focusSubtype2,
+    };
 
     const previousHistorySnapshot = focusHistory;
     const nextHistorySnapshot = upsertFocusHistoryEntry(focusHistory, nextEntry);
     setFocusHistory((prev) => {
       const nextHistory = upsertFocusHistoryEntry(prev, nextEntry);
-      saveFocusHistory(nextHistory);
       return nextHistory;
     });
     if (!isSystemCountdownCategoryId(categoryId)) queueDailySurplusPrompt(previousHistorySnapshot, nextHistorySnapshot, nextEntry);
@@ -1165,20 +1190,17 @@ export function useFocus(
     if (error) { setMessage({ tone: "warn", text: error.message }); return false; }
     if (!inserted) { setMessage({ tone: "warn", text: "Focus entry saved, but the response was empty." }); return false; }
 
-    const nextEntry = mergeStoredFocusHistory([
-      {
-        ...mapFocusSessionRow(inserted),
-        title: data.title,
-        focusType: data.focusType,
-        focusSubtype: data.focusSubtype,
-        focusSubtype2: data.focusSubtype2,
-      },
-    ])[0];
+    const nextEntry = {
+      ...mapFocusSessionRow(inserted),
+      title: data.title,
+      focusType: data.focusType,
+      focusSubtype: data.focusSubtype,
+      focusSubtype2: data.focusSubtype2,
+    };
     const previousHistorySnapshot = focusHistory;
     const nextHistorySnapshot = upsertFocusHistoryEntry(focusHistory, nextEntry);
     setFocusHistory((prev) => {
       const nextHistory = upsertFocusHistoryEntry(prev, nextEntry);
-      saveFocusHistory(nextHistory);
       return nextHistory;
     });
     queueDailySurplusPrompt(previousHistorySnapshot, nextHistorySnapshot, nextEntry);
@@ -1292,7 +1314,6 @@ export function useFocus(
       const nextHistory = prev.map((entry) =>
         entry.categoryId === category.id ? { ...entry, categoryId: null } : entry,
       );
-      saveFocusHistory(nextHistory);
       return nextHistory;
     });
     setActiveSessions((prev) => {
@@ -1350,20 +1371,17 @@ export function useFocus(
     if (error) { setMessage({ tone: "warn", text: error.message }); return; }
     if (!updated) { setMessage({ tone: "warn", text: "Focus entry updated, but the response was empty." }); return; }
 
-    const nextEntry = mergeStoredFocusHistory([
-      {
-        ...mapFocusSessionRow(updated),
-        title: data.title,
-        focusType: data.focusType,
-        focusSubtype: data.focusSubtype,
-        focusSubtype2: data.focusSubtype2,
-      },
-    ])[0];
+    const nextEntry = {
+      ...mapFocusSessionRow(updated),
+      title: data.title,
+      focusType: data.focusType,
+      focusSubtype: data.focusSubtype,
+      focusSubtype2: data.focusSubtype2,
+    };
     let nextHistorySnapshot: HistoricalFocusSession[] = [];
     setFocusHistory((prev) => {
       const nextHistory = prev.map((entry) => (entry.id === entryId ? nextEntry : entry));
       nextHistorySnapshot = nextHistory;
-      saveFocusHistory(nextHistory);
       return nextHistory;
     });
     queueDailySurplusPrompt(focusHistory, nextHistorySnapshot, nextEntry);
@@ -1384,7 +1402,6 @@ export function useFocus(
 
     setFocusHistory((prev) => {
       const nextHistory = prev.filter((entry) => entry.id !== entryId);
-      saveFocusHistory(nextHistory);
       return nextHistory;
     });
     setMessage({ tone: "good", text: "Focus entry deleted." });

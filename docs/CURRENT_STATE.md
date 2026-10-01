@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.21`.
+- Current working app version: `7.16.24`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-01 7.16.24 localStorage quota safety hotfix
+
+The production Safari quota incident was caused by the obsolete unscoped
+`adhdice-profile` cache and uncaught Focus-owned browser-storage writes after a
+successful durable Focus completion. Storage migration v5 removes only the
+exact legacy profile key; scoped `adhdice-profile:<userId>` entries and the
+sessionStorage profile-media cache remain unchanged. The migration runner also
+contains storage access and final version-write failures so unavailable or full
+browser storage cannot crash startup.
+
+Focus categories, counters, countdown metadata, active-session compatibility,
+runtime migration IDs, and Focus reallocation preferences now use the shared
+quota-safe local-storage behavior. Focus History remains authoritative in
+Supabase and in-memory React state; the old full `adhdice_focus_history` mirror
+is no longer written. During a complete Supabase hydration, matching legacy
+entries may provide compatibility labels and the cache is retired only after
+all cached IDs are verified remotely. Legacy-only entries are retained rather
+than silently discarded because their durable counterpart was not verified.
+
+This release contains no quota recurrence work, no SQL/Supabase/Edge changes,
+and no Realtime warning work. Browser/manual QA remains Andrew-owned and
+unverified here.
 
 ## 2026-09-30 7.16.21 Side and 7.16 consolidation checkpoint
 

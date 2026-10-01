@@ -13,31 +13,46 @@
 //   2. Write the migration function — read old data, transform it, write back.
 //   3. Bump CURRENT_VERSION to match.
 
+import {
+  getSafeLocalStorage,
+  readLocalStorageValue,
+  removeLocalStorageItem,
+  writeLocalStorageEntries,
+  type LocalStorageWriter,
+} from "@/lib/health-local-storage";
+
 const VERSION_KEY = "adhdice-storage-version";
-const CURRENT_VERSION = 4;
+const CURRENT_VERSION = 5;
+
+type MigrationStorage = LocalStorageWriter & {
+  length: number;
+  key: (index: number) => string | null;
+  getItem: (key: string) => string | null;
+  removeItem: (key: string) => void;
+};
 
 type Migration = {
   version: number;
   description: string;
-  run: () => void;
+  run: (storage: MigrationStorage) => void;
 };
 
 const MIGRATIONS: Migration[] = [
   {
     version: 1,
     description: "Rename task view 'list' → 'grid' in stored UI state",
-    run: () => {
+    run: (storage) => {
       // Task UI state is scoped per user, so we scan all keys.
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
         if (!key?.startsWith("adhdice-task-ui:")) continue;
         try {
-          const raw = localStorage.getItem(key);
+          const raw = storage.getItem(key);
           if (!raw) continue;
           const parsed = JSON.parse(raw) as { view?: string };
           if (parsed.view === "list") {
             parsed.view = "grid";
-            localStorage.setItem(key, JSON.stringify(parsed));
+            storage.setItem(key, JSON.stringify(parsed));
           }
         } catch {
           // Corrupt entry — leave it alone; parseStoredJson will clear it on next read.
@@ -48,27 +63,27 @@ const MIGRATIONS: Migration[] = [
   {
     version: 2,
     description: "Remove legacy unscoped task-ui and task-focus keys",
-    run: () => {
+    run: (storage) => {
       // Early versions stored these without a :userId suffix. Safe to delete
       // because the scoped versions (adhdice-task-ui:<userId>) are authoritative.
-      localStorage.removeItem("adhdice-task-ui");
-      localStorage.removeItem("adhdice-task-focus");
+      storage.removeItem("adhdice-task-ui");
+      storage.removeItem("adhdice-task-focus");
     },
   },
   {
     version: 3,
     description: "Restore task view default to list in stored UI state",
-    run: () => {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
+    run: (storage) => {
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
         if (!key?.startsWith("adhdice-task-ui:")) continue;
         try {
-          const raw = localStorage.getItem(key);
+          const raw = storage.getItem(key);
           if (!raw) continue;
           const parsed = JSON.parse(raw) as { view?: string };
           if (parsed.view === "grid") {
             parsed.view = "list";
-            localStorage.setItem(key, JSON.stringify(parsed));
+            storage.setItem(key, JSON.stringify(parsed));
           }
         } catch {
           // Corrupt entry — leave it alone; parseStoredJson will clear it on next read.
@@ -79,17 +94,17 @@ const MIGRATIONS: Migration[] = [
   {
     version: 4,
     description: "Rename persisted task view 'list' → 'table' in stored UI state",
-    run: () => {
-      for (let i = 0; i < localStorage.length; i++) {
-        const key = localStorage.key(i);
+    run: (storage) => {
+      for (let i = 0; i < storage.length; i++) {
+        const key = storage.key(i);
         if (!key?.startsWith("adhdice-task-ui:")) continue;
         try {
-          const raw = localStorage.getItem(key);
+          const raw = storage.getItem(key);
           if (!raw) continue;
           const parsed = JSON.parse(raw) as { view?: string };
           if (parsed.view === "list") {
             parsed.view = "table";
-            localStorage.setItem(key, JSON.stringify(parsed));
+            storage.setItem(key, JSON.stringify(parsed));
           }
         } catch {
           // Corrupt entry — leave it alone; parseStoredJson will clear it on next read.
@@ -97,12 +112,22 @@ const MIGRATIONS: Migration[] = [
       }
     },
   },
+  {
+    version: 5,
+    description: "Remove obsolete unscoped profile cache",
+    run: (storage) => {
+      // The current profile cache is scoped by user. Remove only the obsolete
+      // exact key without reading or rewriting its potentially large value.
+      removeLocalStorageItem(storage, "adhdice-profile");
+    },
+  },
 ];
 
 export function runStorageMigrations(): void {
-  if (typeof window === "undefined") return;
+  const storage = getSafeLocalStorage();
+  if (!storage) return;
 
-  const stored = localStorage.getItem(VERSION_KEY);
+  const stored = readLocalStorageValue(storage, VERSION_KEY);
   const appliedVersion = stored ? parseInt(stored, 10) : 0;
 
   if (appliedVersion >= CURRENT_VERSION) return;
@@ -110,12 +135,12 @@ export function runStorageMigrations(): void {
   for (const migration of MIGRATIONS) {
     if (migration.version <= appliedVersion) continue;
     try {
-      migration.run();
+      migration.run(storage);
     } catch (err) {
       console.warn(`[storage-migration v${migration.version}] failed:`, err);
       // Continue — a failed migration is better than a broken app.
     }
   }
 
-  localStorage.setItem(VERSION_KEY, String(CURRENT_VERSION));
+  writeLocalStorageEntries(storage, [[VERSION_KEY, String(CURRENT_VERSION)]]);
 }
