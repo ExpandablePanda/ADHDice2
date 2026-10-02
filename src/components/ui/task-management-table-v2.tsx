@@ -59,6 +59,7 @@ import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTask
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { isTaskEditorChildRouteSettled, resolveTaskEditorFocusPhase } from "@/lib/task-editor-focus-request";
 import { getSelectedTaskPriorityToneClass, getTaskPrioritySelection, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
+import type { QuotaProgress } from "@/lib/task-state-engine/quota";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
 import {
@@ -1213,6 +1214,7 @@ export type PrototypeTaskRow = {
   repeatQuotaCount?: number | null;
   repeatQuotaBalanceEnabled?: boolean;
   repeatQuotaBalance?: number | null;
+  repeatQuotaProgress?: QuotaProgress | null;
   subtasksAutoReset: boolean;
   status: TaskDisplayStatus;
   finishedToday: boolean;
@@ -2080,6 +2082,10 @@ function formatChildTaskPreviewRepeat(item: ChildTaskPreview) {
     item.repeatMonthlyOrdinal,
     item.repeatMonthlyWeekday,
     item.repeatDayOfMonth,
+    item.repeatQuotaCount,
+    item.repeatQuotaBalanceEnabled,
+    item.repeatQuotaBalance,
+    item.repeatQuotaProgress,
   );
 }
 
@@ -2373,7 +2379,7 @@ export type TaskMetadataSummaryRow = {
 };
 
 export function buildTaskMetadataSummary(
-  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled" | "status" | "tags" | "taskType" | "title"> & {
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled" | "repeatQuotaProgress" | "status" | "tags" | "taskType" | "title"> & {
     customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   },
   actualSeconds: number,
@@ -2395,6 +2401,7 @@ export function buildTaskMetadataSummary(
     repeat_monthly_weekday: task.repeatMonthlyWeekday,
     repeat_quota_count: task.repeatQuotaCount,
     repeat_quota_balance_enabled: task.repeatQuotaBalanceEnabled,
+    repeat_quota_progress: task.repeatQuotaProgress,
   }) ?? "No repeat";
 
   return [
@@ -5963,6 +5970,10 @@ export function TaskManagementTableV2({
       repeatMonthlyMode: item.repeatMonthlyMode,
       repeatMonthlyOrdinal: item.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: item.repeatMonthlyWeekday,
+      repeatQuotaCount: item.repeatQuotaCount,
+      repeatQuotaBalanceEnabled: item.repeatQuotaBalanceEnabled,
+      repeatQuotaBalance: item.repeatQuotaBalance,
+      repeatQuotaProgress: item.repeatQuotaProgress,
       status: item.status,
       finishedToday: false,
       subtasks: [],
@@ -8024,6 +8035,7 @@ export function TaskManagementTableV2({
                 task.repeatQuotaCount,
                 task.repeatQuotaBalanceEnabled,
                 task.repeatQuotaBalance,
+                task.repeatQuotaProgress,
               )}
             </span>
           </div>

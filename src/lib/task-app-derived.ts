@@ -29,6 +29,8 @@ import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 import { getTaskContentFolderSearchDocument, type TaskContentFolderRow } from "@/lib/task-content-folders";
 import { todayISO } from "@/lib/utils";
 import { matchesTaskTypeSelections } from "@/lib/task-type";
+import { quotaProgressForTask, type QuotaProgress } from "@/lib/task-state-engine/quota";
+import type { TaskHistoryOutcome } from "@/lib/task-state-engine/types";
 
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
 
@@ -109,6 +111,10 @@ export type ChildTaskPreview = {
   repeatMonthlyMode: Task["repeat_monthly_mode"];
   repeatMonthlyOrdinal: Task["repeat_monthly_ordinal"];
   repeatMonthlyWeekday: Task["repeat_monthly_weekday"];
+  repeatQuotaCount?: number | null;
+  repeatQuotaBalanceEnabled?: boolean;
+  repeatQuotaBalance?: number | null;
+  repeatQuotaProgress?: QuotaProgress | null;
   scheduledOn: string | null;
   status: TaskDisplayStatus;
   storedStatus: TaskStatus;
@@ -471,6 +477,16 @@ export function buildChildTaskPreviewLookup(
             timestamp: streakSummary.lastHandledAt ?? null,
           }
           : getTaskHistoryLastHandled(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
+        const repeatQuotaProgress = todayDateKey
+          ? quotaProgressForTask({
+            task: descendant,
+            logicalDate: todayDateKey,
+            history: (taskHistoryByTaskId[descendant.id] ?? []).map((row) => ({
+              logicalDate: row.entry_date,
+              outcome: row.status as TaskHistoryOutcome,
+            })),
+          })
+          : null;
 
         return {
           actualSeconds: descendant.actual_seconds,
@@ -504,6 +520,10 @@ export function buildChildTaskPreviewLookup(
           repeatMonthlyMode: descendant.repeat_monthly_mode,
           repeatMonthlyOrdinal: descendant.repeat_monthly_ordinal,
           repeatMonthlyWeekday: descendant.repeat_monthly_weekday,
+          repeatQuotaCount: descendant.repeat_quota_count,
+          repeatQuotaBalanceEnabled: descendant.repeat_quota_balance_enabled,
+          repeatQuotaBalance: descendant.repeat_quota_balance,
+          repeatQuotaProgress,
           scheduledOn: descendant.scheduled_on,
           status: normalizeTaskDisplayStatus(taskDisplayStatusByTaskId[descendant.id] ?? descendant.status),
           storedStatus: descendant.status,

@@ -38,8 +38,8 @@ export type {
 } from "./behavior-policy.ts";
 export { logicalDateForTimestamp } from "./calendar.ts";
 export { allowedOutcomes, isScheduledOccurrence, occurrenceIdentity, resolveSuccessfulOccurrenceTarget, scheduledOccurrences } from "./recurrence.ts";
-export { evaluateQuotaTaskState, isQuotaRecurrence, quotaBaseQuota, quotaDateIsMandatory, quotaNextBalance, quotaPeriodBounds, quotaPeriodEvaluation } from "./quota.ts";
-export type { QuotaPeriod, QuotaPeriodBounds, QuotaPeriodEvaluation, QuotaRecurrence } from "./quota.ts";
+export { evaluateQuotaTaskState, isQuotaRecurrence, quotaBaseQuota, quotaDateIsMandatory, quotaNextBalance, quotaPeriodBounds, quotaPeriodEvaluation, quotaProgressForCurrentPeriod, quotaProgressForTask } from "./quota.ts";
+export type { QuotaPeriod, QuotaPeriodBounds, QuotaPeriodEvaluation, QuotaProgress, QuotaProgressHistoryRow, QuotaProgressTask, QuotaRecurrence } from "./quota.ts";
 export { projectPersistableTaskStatePatch } from "./persistence-projection.ts";
 export {
   evaluateTaskActionAuthority,

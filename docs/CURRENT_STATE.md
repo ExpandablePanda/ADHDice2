@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-01
+Last reviewed: 2026-10-02
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.36`.
+- Current working app version: `7.16.37`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,26 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-02 7.16.37 Quota progress readout and remaining hardening
+
+Active X Per Week and X Per Month Repeat metadata now derives a current-period
+progress result through `quotaProgressForTask` in
+`src/lib/task-state-engine/quota.ts`. The result uses the effective canonical
+schedule boundary, Monday-Sunday or natural-calendar-month bounds, and
+canonical History `done`/`did_my_best` dates deduplicated by logical date.
+History before activation, prior periods, Missed outcomes, and balance values
+do not change the numerator; the configured quota count remains the
+denominator. The shared Repeat formatter exposes values such as `5 Per Week ·
+1/5` in Table, List, and Steps surfaces while ordinary recurrence labels are
+unchanged. Existing History reconciliation and row revisions cause the readout
+to update without a second cache or polling.
+
+Focused pure, formatter, and row read-model coverage was added for progress
+boundaries, edits, deletion/outcome replacement semantics, balance separation,
+and current denominator changes. No SQL was required or applied, no Edge
+Function was deployed, no production data was mutated, and browser/manual QA
+remains Andrew-owned and unverified.
 
 ## 2026-10-02 7.16.34 Incremental Achievement reconciliation foundation
 

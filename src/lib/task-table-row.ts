@@ -13,6 +13,8 @@ import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOp
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
 import { getTaskTrashTimestamp } from "@/lib/task-trash";
 import { normalizeTaskType } from "@/lib/task-type";
+import { quotaProgressForTask } from "@/lib/task-state-engine/quota";
+import type { TaskHistoryOutcome } from "@/lib/task-state-engine/types";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
@@ -108,6 +110,14 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     }
     : getTaskHistoryLastHandled(context.taskHistory, context.todayDateKey);
   const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task)) as TaskPriorityLevelOption];
+  const repeatQuotaProgress = quotaProgressForTask({
+    task,
+    logicalDate: context.todayDateKey,
+    history: context.taskHistory.map((row) => ({
+      logicalDate: row.entry_date,
+      outcome: row.status as TaskHistoryOutcome,
+    })),
+  });
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>
     context.listMemberships.some((membership) => membership.id === listDefinition.id)
@@ -157,6 +167,7 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatQuotaCount: task.repeat_quota_count,
     repeatQuotaBalanceEnabled: task.repeat_quota_balance_enabled,
     repeatQuotaBalance: task.repeat_quota_balance,
+    repeatQuotaProgress,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
     status: normalizeTaskDisplayStatus(context.displayStatus ?? task.status),
     finishedToday: context.finishedTodayByTaskId

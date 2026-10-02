@@ -1399,6 +1399,7 @@ function StepsCardPreview({
                 childTask.repeat_quota_count,
                 childTask.repeat_quota_balance_enabled,
                 childTask.repeat_quota_balance,
+                item.repeatQuotaProgress,
               )
               : item.repeat !== "none"
                 ? formatRepeatCompactLabel(
@@ -1409,9 +1410,10 @@ function StepsCardPreview({
                   item.repeatMonthlyOrdinal,
                   item.repeatMonthlyWeekday,
                   item.repeatDayOfMonth,
-                  (item as unknown as PrototypeTaskRow).repeatQuotaCount,
-                  (item as unknown as PrototypeTaskRow).repeatQuotaBalanceEnabled,
-                  (item as unknown as PrototypeTaskRow).repeatQuotaBalance,
+                  item.repeatQuotaCount,
+                  item.repeatQuotaBalanceEnabled,
+                  item.repeatQuotaBalance,
+                  item.repeatQuotaProgress,
                 )
                 : "";
             const visibleTags = item.tags.slice(0, 3);
@@ -3572,6 +3574,7 @@ function TasksSimpleList({
                       task.repeat_quota_count,
                       task.repeat_quota_balance_enabled,
                       task.repeat_quota_balance,
+                      taskRow.repeatQuotaProgress,
                     )}
                   </MetadataChipButton>
                 </div>

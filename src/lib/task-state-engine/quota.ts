@@ -48,6 +48,30 @@ export type QuotaPeriodEvaluation = {
   nextBalance: number;
 };
 
+export type QuotaProgressHistoryRow = Pick<TaskStateHistoryRow, "logicalDate" | "outcome">;
+
+export type QuotaProgress = {
+  period: QuotaPeriod;
+  periodKey: string;
+  numerator: number;
+  denominator: number;
+};
+
+export type QuotaProgressTask = {
+  repeat_frequency?: string | null;
+  repeat_quota_count?: number | null;
+  repeat_quota_balance_enabled?: boolean | null;
+  repeat_quota_balance?: number | null;
+  due_on?: string | null;
+  status?: string | null;
+  terminal_state?: string | null;
+  container_state?: string | null;
+  canonical_schedule_boundary?: {
+    effective_from_logical_date?: string | null;
+    repeat_frequency?: string | null;
+  } | null;
+};
+
 const SUCCESSFUL_QUOTA_OUTCOMES = new Set<TaskHistoryOutcome>(["done", "did_my_best"]);
 const SUCCESSFUL_OUTCOMES = new Set<TaskHistoryOutcome>(["done", "did_my_best", "complete"]);
 
@@ -65,6 +89,59 @@ export function quotaPeriodBounds(dateKey: string, period: QuotaPeriod): QuotaPe
   const start = formatDateKey(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1)));
   const end = formatDateKey(new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth() + 1, 0)));
   return { key: start.slice(0, 7), start, end, capacity: parseDateKey(end).getUTCDate() };
+}
+
+function configuredQuotaCount(period: QuotaPeriod, count: number | null | undefined) {
+  const normalizedCount = Number.isFinite(count) ? Math.trunc(count as number) : 1;
+  return Math.max(1, Math.min(period === "week" ? 7 : 31, normalizedCount));
+}
+
+export function quotaProgressForCurrentPeriod(input: {
+  recurrence: Pick<QuotaRecurrence, "period" | "count" | "activationDate">;
+  logicalDate: string;
+  history?: readonly QuotaProgressHistoryRow[];
+}): QuotaProgress {
+  const bounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
+  return {
+    period: input.recurrence.period,
+    periodKey: bounds.key,
+    numerator: distinctSuccessDates(input.history ?? [], bounds, input.logicalDate, input.recurrence).size,
+    denominator: configuredQuotaCount(input.recurrence.period, input.recurrence.count),
+  };
+}
+
+export function quotaProgressForTask(input: {
+  task: QuotaProgressTask;
+  logicalDate: string;
+  history?: readonly QuotaProgressHistoryRow[];
+}): QuotaProgress | null {
+  const frequency = input.task.repeat_frequency;
+  if (frequency !== "per_week" && frequency !== "per_month") return null;
+  if (
+    input.task.status === "complete"
+    || input.task.status === "archived"
+    || input.task.status === "trashed"
+    || input.task.terminal_state === "permanently_complete"
+    || input.task.container_state === "archived"
+    || input.task.container_state === "trashed"
+  ) {
+    return null;
+  }
+
+  const period = frequency === "per_week" ? "week" : "month";
+  const boundary = input.task.canonical_schedule_boundary;
+  const activationDate = boundary?.repeat_frequency === frequency
+    ? boundary.effective_from_logical_date ?? input.task.due_on ?? null
+    : input.task.due_on ?? null;
+  return quotaProgressForCurrentPeriod({
+    recurrence: {
+      activationDate,
+      count: input.task.repeat_quota_count ?? 1,
+      period,
+    },
+    logicalDate: input.logicalDate,
+    history: input.history,
+  });
 }
 
 export function quotaBaseQuota(
@@ -85,7 +162,7 @@ function eligibleStart(recurrence: Pick<QuotaRecurrence, "activationDate">, boun
 }
 
 function distinctSuccessDates(
-  history: readonly TaskStateHistoryRow[],
+  history: readonly QuotaProgressHistoryRow[],
   bounds: QuotaPeriodBounds,
   throughDate: string,
   recurrence: Pick<QuotaRecurrence, "activationDate">,
@@ -100,7 +177,7 @@ function distinctSuccessDates(
 }
 
 function successfulDaysForPeriod(
-  history: readonly TaskStateHistoryRow[],
+  history: readonly QuotaProgressHistoryRow[],
   bounds: QuotaPeriodBounds,
   recurrence: Pick<QuotaRecurrence, "activationDate">,
 ) {
