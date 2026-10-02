@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.35`.
+- Current working app version: `7.16.36`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -50,6 +50,25 @@ finalizer call per History or rollover batch. Required production order is
 migration has not been applied to Supabase, no Edge Function was deployed, no
 production data was mutated, and browser/manual QA remains Andrew-owned and
 unverified.
+
+## 2026-10-02 7.16.36 Deferred deleted-source Achievement correction
+
+Deleted Achievement sources now read the transaction-local
+`adhdice.achievement_deferred_user_id` marker with the same same-user contract
+as insert/update sources. Deferred History deletes still resolve and deactivate
+their occurrence and refresh affected Step-set evidence, but leave the one
+incremental evaluation to the bounded History/rollover finalizer; non-deferred
+Focus deletion retains immediate incremental evaluation and failure recording.
+The source-only forward migration is
+`supabase/patch_achievement_incremental_runtime_7_16_36.sql` and has not been
+applied.
+
+The canonical `set_outcome` command contract guarantees that every valid
+committed History-batch child returns a primary `history_fact_id`; automatic
+History ID arrays are auxiliary and may be empty. The SQL finalizer retains
+its fail-closed empty-array guard for stale or malformed callers. No SQL or
+Supabase mutation was applied, no Edge Function was deployed, no production
+data was mutated, and browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-10-01 7.16.33 Achievement rebuild temp-table alias correction
 

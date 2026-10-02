@@ -643,6 +643,11 @@ async function finalizeBatchAchievements(input: {
 }
 
 function historyFactIdsFromResult(value: unknown): string[] {
+  // The canonical set_outcome RPC always returns its committed primary
+  // History fact as history_fact_id. The auxiliary automatic History arrays
+  // may be empty, but a committed History-batch child cannot legitimately
+  // reach finalization without at least that primary fact ID. Keep the SQL
+  // finalizer's empty-array guard fail-closed for stale or malformed callers.
   if (!isRecord(value)) return [];
   const result = isRecord(value.result) ? value.result : value;
   const ids: string[] = [];
