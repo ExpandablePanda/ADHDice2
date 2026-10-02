@@ -42,6 +42,8 @@ function childPayload(date: string, index: number, rewardEntitlementId?: string)
         active_status_logical_date: null,
         active_occurrence_due_on: null,
       },
+      history_fact_id: `history-${index + 1}`,
+      history_fact_ids: [],
       ...(rewardEntitlementId ? { reward_entitlement_id: rewardEntitlementId } : {}),
     },
   };

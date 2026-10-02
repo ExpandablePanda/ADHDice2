@@ -309,6 +309,7 @@ function rolloverReadModel(taskId: string) {
 test("one rollover sweep defers each committed child and evaluates Achievements exactly once", async () => {
   const deferredCalls: boolean[] = [];
   const finalizerOperationIds: string[] = [];
+  let finalizedHistoryFactIds: string[] = [];
   const projectionTaskIds: string[] = [];
   const result = await executeRolloverSweep({
     userId: "owner-1",
@@ -350,8 +351,9 @@ test("one rollover sweep defers each committed child and evaluates Achievements 
         projectionTaskIds.push(taskId);
         return { status: "written", projection: {} as never, writerResult: null } satisfies CurrentTaskProjectionRebuildResult;
       },
-      finalizeAchievements: async ({ operationId }) => {
+      finalizeAchievements: async ({ operationId, historyFactIds }) => {
         finalizerOperationIds.push(operationId);
+        finalizedHistoryFactIds = historyFactIds;
         return { data: { status: "completed" }, error: null };
       },
     },
@@ -362,6 +364,7 @@ test("one rollover sweep defers each committed child and evaluates Achievements 
   assert.deepEqual(deferredCalls, [true, true]);
   assert.deepEqual(projectionTaskIds, ["task-1", "task-2"]);
   assert.equal(finalizerOperationIds.length, 1);
+  assert.deepEqual(finalizedHistoryFactIds, ["history-task-1", "history-task-2"]);
   const completedAchievement = ((result.body as Record<string, unknown>).achievement ?? {}) as Record<string, unknown>;
   assert.equal(completedAchievement.status, "completed");
   assert.equal(completedAchievement.operation_id, finalizerOperationIds[0]);

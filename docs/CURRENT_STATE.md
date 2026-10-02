@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.34`.
+- Current working app version: `7.16.35`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -29,6 +29,27 @@ active production runtime in 7.16.34. The new forward migration is
 `supabase/patch_achievement_incremental_reconciliation_7_16_34.sql`; it has not
 been applied to Supabase. No Edge Function was deployed, no production data
 was mutated, and browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-10-02 7.16.35 Incremental Achievement runtime cutover source
+
+The source-only 7.16.35 forward migration wires ordinary Achievement source
+changes, canonical Task State automatic-History finalization, History batches,
+and rollover batches to bounded occurrence resolution, central dependency
+mapping, occurrence-match synchronization, and targeted progress evaluation.
+Affected occurrence resolution includes same-date History siblings,
+superseded source snapshots, deleted-source occurrence IDs, and all Step-set
+versions for affected roots. The existing full evaluator and
+`adhdice_rebuild_achievement_progress()` remain explicit repair/reference
+paths; they are not used by normal source triggers or batch finalization.
+
+The migration is
+`supabase/patch_achievement_incremental_runtime_7_16_35.sql`. The Edge source
+now forwards only committed child `history_fact_id`/`history_fact_ids` to one
+finalizer call per History or rollover batch. Required production order is
+7.16.34 foundation, 7.16.35 runtime cutover, then live verification. The
+migration has not been applied to Supabase, no Edge Function was deployed, no
+production data was mutated, and browser/manual QA remains Andrew-owned and
+unverified.
 
 ## 2026-10-01 7.16.33 Achievement rebuild temp-table alias correction
 

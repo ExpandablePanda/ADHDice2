@@ -136,6 +136,7 @@ type OrchestrationDependencies = {
     adminClient: TrustedTaskStateCommandClient;
     userId: string;
     operationId: string;
+    historyFactIds: string[];
   }) => Promise<{ data: unknown; error: { code?: string | null; message?: string } | null }>;
 };
 
@@ -171,9 +172,10 @@ const defaultDependencies: OrchestrationDependencies = {
     });
   },
   rebuildCurrentTaskProjection,
-  finalizeAchievements: async ({ adminClient, userId, operationId }) => adminClient.rpc("adhdice_finalize_task_history_batch_achievements", {
+  finalizeAchievements: async ({ adminClient, userId, operationId, historyFactIds }) => adminClient.rpc("adhdice_finalize_task_history_batch_achievements", {
     p_user_id: userId,
     p_operation_id: operationId,
+    p_history_fact_ids: historyFactIds,
   }),
 };
 
@@ -587,6 +589,7 @@ async function finalizeBatchAchievements(input: {
   adminClient: TrustedTaskStateCommandClient;
   userId: string;
   operationId: string;
+  historyFactIds: string[];
   partial: boolean;
 }): Promise<BatchAchievementFinalization> {
   const startedAt = performance.now();
@@ -603,6 +606,7 @@ async function finalizeBatchAchievements(input: {
       adminClient: input.adminClient,
       userId: input.userId,
       operationId: input.operationId,
+      historyFactIds: input.historyFactIds,
     });
     const finalizerData = finalizer.data && typeof finalizer.data === "object" && !Array.isArray(finalizer.data)
       ? finalizer.data as Record<string, unknown>
@@ -638,10 +642,24 @@ async function finalizeBatchAchievements(input: {
   };
 }
 
-function rolloverResultHasAchievementSource(value: unknown) {
-  if (!isRecord(value)) return false;
-  return typeof value.history_fact_id === "string"
-    || (Array.isArray(value.history_fact_ids) && value.history_fact_ids.length > 0);
+function historyFactIdsFromResult(value: unknown): string[] {
+  if (!isRecord(value)) return [];
+  const result = isRecord(value.result) ? value.result : value;
+  const ids: string[] = [];
+  if (typeof result.history_fact_id === "string" && result.history_fact_id.length > 0) {
+    ids.push(result.history_fact_id);
+  }
+  if (Array.isArray(result.history_fact_ids)) {
+    for (const id of result.history_fact_ids) {
+      if (typeof id === "string" && id.length > 0) ids.push(id);
+    }
+  }
+  if (Array.isArray(result.history_fact_delete_ids)) {
+    for (const id of result.history_fact_delete_ids) {
+      if (typeof id === "string" && id.length > 0) ids.push(id);
+    }
+  }
+  return [...new Set(ids)];
 }
 
 function rolloverFinalizationFailure(operationId: string, finalization: BatchAchievementFinalization) {
@@ -666,7 +684,7 @@ export async function executeRolloverSweep(input: {
   const operationId = deterministicUuid(`task-rollover-achievement:${input.userId}:${input.intent.replay_identity}`);
   const childResults: Array<Record<string, unknown>> = [];
   const settledTaskIds: string[] = [];
-  let achievementAffectingWork = false;
+  const historyFactIds = new Set<string>();
   let failure: ReturnType<typeof batchFailure> | null = null;
 
   for (const childIntent of input.intent.commands) {
@@ -701,16 +719,19 @@ export async function executeRolloverSweep(input: {
       result: childBody,
     });
     settledTaskIds.push(childIntent.task_id);
-    achievementAffectingWork ||= rolloverResultHasAchievementSource(childBody);
+    for (const historyFactId of historyFactIdsFromResult(childBody)) historyFactIds.add(historyFactId);
   }
 
-  const shouldFinalize = achievementAffectingWork || input.intent.commands.length === 0;
+  // An empty sweep has no committed History facts to reconcile. Keep it a
+  // bounded no-op instead of invoking the fail-closed finalizer without IDs.
+  const shouldFinalize = historyFactIds.size > 0;
   const finalization = shouldFinalize
     ? await finalizeBatchAchievements({
         dependencies,
         adminClient: input.adminClient,
         userId: input.userId,
         operationId,
+        historyFactIds: [...historyFactIds],
         partial: failure !== null,
       })
     : batchAchievementNotRun(operationId);
@@ -751,12 +772,14 @@ async function partialBatchResponse(input: {
 }): Promise<TrustedTaskStateCommandResponse> {
   const childDurationMs = performance.now() - input.startedAt;
   const hasCommittedChild = input.childResults.some((child) => child.state === "committed");
+  const historyFactIds = [...new Set(input.childResults.flatMap((child) => historyFactIdsFromResult(child)))];
   const finalization = hasCommittedChild
     ? await finalizeBatchAchievements({
         dependencies: input.dependencies,
         adminClient: input.adminClient,
         userId: input.userId,
         operationId: input.operationId,
+        historyFactIds,
         partial: true,
       })
     : batchAchievementNotRun(input.operationId);
@@ -1014,11 +1037,13 @@ export async function executeHistoryOutcomeBatch(input: {
   }
 
   const childDurationMs = performance.now() - startedAt;
+  const historyFactIds = [...new Set(childResults.flatMap((child) => historyFactIdsFromResult(child)))];
   const finalization = await finalizeBatchAchievements({
     dependencies,
     adminClient: input.adminClient,
     userId: input.userId,
     operationId,
+    historyFactIds,
     partial: false,
   });
   recordBatchTiming({
