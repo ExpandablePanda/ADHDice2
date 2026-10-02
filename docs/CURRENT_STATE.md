@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.39`.
+- Current working app version: `7.16.40`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,32 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-02 7.16.40 Bound rollover Edge work and projection refresh ownership
+
+The live `task-state-command` v47 rollover failure was CPU exhaustion, not
+memory exhaustion: one `reconcile_rollover_sweep` request processed roughly 33
+child commands serially, causing repeated canonical reads, deferred
+Achievement calls, current-projection writes, and related source-fence reads
+until Supabase returned HTTP 546 after about 60.7 seconds with
+`cpu_time_used=2000 ms` and memory near 21 MB. The browser Safari access-control
+message occurred during the resulting read overload; matching gateway OPTIONS
+and GET requests returned HTTP 200, so this ticket does not change CORS, RLS, or
+projection permissions.
+
+Client rollover reconciliation now sends stable serial chunks of at most 8
+commands. The trusted Edge boundary enforces the same maximum and rejects stale
+or oversized direct sweeps. Each chunk has deterministic replay identity; a
+failed chunk stops later chunks, preserves earlier committed chunks, and keeps
+failed-finalization child identities replayable. Each Edge chunk finalizes only
+its committed History fact IDs through the existing incremental finalizer; no
+full Achievement rebuild is introduced.
+
+Normal logical-day current-projection repair now observes the explicit rollover
+ownership guard and stops between batches while rollover work is active. The
+existing targeted reconciliation resumes after rollover completion or failure
+cleanup. No SQL was applied, no Edge Function was deployed, no production data
+was mutated, and browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-10-02 7.16.39 Bounded canonical History authority for quota progress
 

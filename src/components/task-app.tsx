@@ -2007,6 +2007,7 @@ export function TaskApp() {
     setTasks,
     suppressCategoryReload,
     supabase,
+    isRolloverActive: () => taskRolloverCoordinator.isBusy(),
     tasks,
     taskListDataGeneration,
     logicalDayRollover: dayStartTime,
@@ -2644,10 +2645,11 @@ export function TaskApp() {
           achievementFinalizationPending,
           candidates: sweepCandidates,
           client: supabase,
+          diagnosticsEnabled,
           settledTaskIds,
           sweepReplayIdentity: rolloverSettingsKey,
         });
-        if (sweep.committedTasks.length > 0) {
+        if (sweep.committedTasks.length > 0 && !sweep.achievementFinalizationPending) {
           const committedByTaskId = new Map(sweep.committedTasks.map((entry) => [entry.taskId, entry.task] as const));
           setTasks((current) => keepCurrentTaskArrayIfSemanticallyEqual(
             current,
@@ -2667,7 +2669,7 @@ export function TaskApp() {
             settledTaskIds: sweep.settledTaskIds,
         };
       },
-      onOwnedSettled: async ({ error, settledTaskIds = [] }) => {
+      onOwnedSettled: async ({ achievementFinalizationPending: finalizationPending, error, settledTaskIds = [] }) => {
         const diagnostics = {
           authority, errorSummary: error?.message ?? null,
           executionMs: Math.round(performance.now() - startedAt), lastLogicalDateEvaluated: inputs.todayKey, lastRunSource: source,
@@ -2687,6 +2689,10 @@ export function TaskApp() {
           }
         }
         if (error) setMessage((previous) => previous ?? { tone: "warn", text: error.message });
+        if (finalizationPending) {
+          if (diagnosticsEnabled) console.info("[rollover] Achievement finalization pending; preserving child replay identities for retry.");
+          return;
+        }
         if (diagnosticsEnabled) console.info(`[rollover] Rollover completed; requesting targeted workspace reconciliation (task mutation=${didMutate}).`);
         await reconcileRolloverWorkspace();
       },

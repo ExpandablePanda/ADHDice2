@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent, validateRolloverSweepIntent, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, MAX_ROLLOVER_SWEEP_COMMANDS, type TaskStateCommandIntent, validateRolloverSweepIntent, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
 import {
   executeRolloverSweep,
   executeTrustedTaskStateCommand,
@@ -163,6 +163,23 @@ test("rollover sweep validates unique canonical children and keeps the sweep bou
   assert.deepEqual(validateRolloverSweepIntent(valid), valid);
   assert.equal(validateRolloverSweepIntent({ ...valid, commands: [{ ...command, task_id: "task-1" }, command] }), null);
   assert.equal(validateRolloverSweepIntent({ ...valid, commands: [{ ...command, expected_revision: undefined }] }), null);
+  assert.equal(MAX_ROLLOVER_SWEEP_COMMANDS, 8);
+  assert.equal(validateRolloverSweepIntent({
+    ...valid,
+    commands: Array.from({ length: MAX_ROLLOVER_SWEEP_COMMANDS }, (_, index) => ({
+      ...command,
+      task_id: `task-${index}`,
+      replay_identity: `rollover:task-${index}`,
+    })),
+  })?.commands.length, 8);
+  assert.equal(validateRolloverSweepIntent({
+    ...valid,
+    commands: Array.from({ length: MAX_ROLLOVER_SWEEP_COMMANDS + 1 }, (_, index) => ({
+      ...command,
+      task_id: `task-${index}`,
+      replay_identity: `rollover:task-${index}`,
+    })),
+  }), null);
 });
 
 test("trusted rollover fails closed when a canonical workflow occurrence reference is broken", async () => {

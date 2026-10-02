@@ -206,6 +206,7 @@ type UseWorkspaceDataOptions = {
   setTasks: Dispatch<SetStateAction<Task[]>>;
   suppressCategoryReload: MutableRefObject<boolean>;
   supabase: SupabaseClient;
+  isRolloverActive: () => boolean;
   tasks: Task[];
   taskListDataGeneration: MutableRefObject<number>;
   logicalDayRollover: string;
@@ -368,6 +369,7 @@ export function useWorkspaceData({
   setTasks,
   suppressCategoryReload,
   supabase,
+  isRolloverActive,
   tasks,
   taskListDataGeneration,
   logicalDayRollover,
@@ -502,6 +504,10 @@ export function useWorkspaceData({
   const currentTaskProjectionLogicalDayRefreshCompletedKeyRef = useRef<string | null>(null);
   const currentTaskProjectionLogicalDayRefreshPromiseRef = useRef<OwnedWorkspacePromise<void> | null>(null);
   const currentTaskProjectionLogicalDayRefreshTrailingRef = useRef(false);
+  const isRolloverActiveRef = useRef(isRolloverActive);
+  useEffect(() => {
+    isRolloverActiveRef.current = isRolloverActive;
+  }, [isRolloverActive]);
   const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const rolloverWorkspaceReconciliationRef = useRef<(() => Promise<void>) | null>(null);
   const homeCurrentDayHistoryRequestRef = useRef<((reason: string, options?: { force?: boolean; onlyIfLoaded?: boolean }) => Promise<boolean>) | null>(null);
@@ -3335,11 +3341,16 @@ export function useWorkspaceData({
           result = await runCurrentProjectionLogicalDayRefresh({
             client: client as unknown as ProjectionBackfillOperatorClient,
             maxBatches: 50,
+            isRolloverActive: () => isRolloverActiveRef.current(),
             shouldContinue: () => isActive
               && canApplyCoreWorkspaceResult()
-              && todayKeyRef.current === logicalDate,
+              && todayKeyRef.current === logicalDate
+              && !isRolloverActiveRef.current(),
           });
-          if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;
+          if (!isActive
+            || !canApplyCoreWorkspaceResult()
+            || todayKeyRef.current !== logicalDate
+            || isRolloverActiveRef.current()) return;
 
           await loadCurrentTaskProjectionSnapshot();
           if (!isActive || !canApplyCoreWorkspaceResult() || todayKeyRef.current !== logicalDate) return;

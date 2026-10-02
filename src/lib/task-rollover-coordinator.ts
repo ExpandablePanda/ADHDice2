@@ -67,11 +67,29 @@ export class TaskRolloverSingleFlightCoordinator {
     const settledTaskIds = this.settledTaskIdsByLogicalDay.get(logicalDayKey) ?? new Set<string>();
     const achievementFinalizationPending = this.achievementFinalizationPendingByLogicalDay.get(logicalDayKey) ?? false;
     const previous = this.tail?.generation === generation ? this.tail.promise : Promise.resolve();
-    const request = previous
+    let activeRequestReleased = false;
+    const releaseActiveRequest = () => {
+      if (activeRequestReleased) return;
+      activeRequestReleased = true;
+      if (this.generation === generation) {
+        this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
+        this.notify();
+      }
+    };
+    const execution = previous
       .then(() => this.isCurrent(client, generation, userId) ? execute({ settledTaskIds, achievementFinalizationPending }) : null)
-      .then(async (result): Promise<TaskRolloverCoordinatorResult> => {
+      .then(
+        (result) => result,
+        (error): TaskRolloverRpcResult => ({
+          error: { message: error instanceof Error ? error.message : "Task rollover failed unexpectedly." },
+        }),
+      );
+    const request = execution.then(async (result): Promise<TaskRolloverCoordinatorResult> => {
         const owned = this.isCurrent(client, generation, userId);
-        if (!result) return { owned: false, result: { error: null } };
+        if (!result) {
+          releaseActiveRequest();
+          return { owned: false, result: { error: null } };
+        }
         if (owned && result.settledTaskIds?.length) {
           const settled = this.settledTaskIdsByLogicalDay.get(logicalDayKey) ?? new Set<string>();
           for (const taskId of result.settledTaskIds) settled.add(taskId);
@@ -84,6 +102,10 @@ export class TaskRolloverSingleFlightCoordinator {
             this.achievementFinalizationPendingByLogicalDay.delete(logicalDayKey);
           }
         }
+        // Canonical rollover work is complete before the owned reconciliation
+        // callback runs. This lets a guarded projection repair resume from the
+        // callback without overlapping another rollover Edge execution.
+        releaseActiveRequest();
         if (owned) await onOwnedSettled(result);
         return { owned, result };
       });
@@ -94,17 +116,9 @@ export class TaskRolloverSingleFlightCoordinator {
       if (this.requests.get(logicalDayKey) === request) {
         this.requests.delete(logicalDayKey);
       }
-      if (this.generation === generation) {
-        this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
-        this.notify();
-      }
     }, () => {
       if (this.requests.get(logicalDayKey) === request) {
         this.requests.delete(logicalDayKey);
-      }
-      if (this.generation === generation) {
-        this.activeRequestCount = Math.max(0, this.activeRequestCount - 1);
-        this.notify();
       }
     });
     this.tail = { generation, promise: request.then(() => undefined, () => undefined) };

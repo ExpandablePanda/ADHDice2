@@ -4,6 +4,7 @@ import type { CanonicalTaskStateCommand } from "../../../src/lib/task-state-cano
 import { deterministicUuid, sha256Digest } from "../../../src/lib/task-state-canonical/digest.ts";
 import { resolveCanonicalWorkflowOccurrence } from "../../../src/lib/task-state-canonical/engine-input.ts";
 import { occurrenceIdentity } from "../../../src/lib/task-state-engine/recurrence.ts";
+import { TASK_ROLLOVER_SWEEP_BATCH_SIZE } from "../../../src/lib/task-rollover-batch.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_KEY = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -253,7 +254,7 @@ export function validateHistoryOutcomeBatchIntent(value: unknown): HistoryOutcom
 }
 
 const ROLLOVER_SWEEP_KEYS = new Set(["type", "replay_identity", "commands"]);
-export const MAX_ROLLOVER_SWEEP_COMMANDS = 256;
+export const MAX_ROLLOVER_SWEEP_COMMANDS = TASK_ROLLOVER_SWEEP_BATCH_SIZE;
 
 export function validateRolloverSweepIntent(value: unknown): RolloverSweepIntent | null {
   if (!isRecord(value)

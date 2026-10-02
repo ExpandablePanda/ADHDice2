@@ -190,6 +190,42 @@ test("rollover busy state stays active through a request and carries finalizatio
   assert.deepEqual(receivedPending, [false, true]);
 });
 
+test("owned reconciliation observes rollover as settled after canonical work releases", async () => {
+  const coordinator = new TaskRolloverSingleFlightCoordinator();
+  const client = {};
+  let busyDuringReconciliation = true;
+  coordinator.setOwner(client, "user-a");
+
+  await coordinator.run({
+    client,
+    execute: async () => success,
+    logicalDayKey: "2026-07-19",
+    onOwnedSettled: () => { busyDuringReconciliation = coordinator.isBusy(); },
+    userId: "user-a",
+  });
+
+  assert.equal(busyDuringReconciliation, false);
+});
+
+test("unexpected rollover failure still runs owned cleanup and releases busy state", async () => {
+  const coordinator = new TaskRolloverSingleFlightCoordinator();
+  const client = {};
+  let cleanupMessage = "";
+  coordinator.setOwner(client, "user-a");
+
+  const result = await coordinator.run({
+    client,
+    execute: async () => { throw new Error("rollover transport failed"); },
+    logicalDayKey: "2026-07-19",
+    onOwnedSettled: ({ error }) => { cleanupMessage = error?.message ?? ""; },
+    userId: "user-a",
+  });
+
+  assert.equal(result?.result.error?.message, "rollover transport failed");
+  assert.equal(cleanupMessage, "rollover transport failed");
+  assert.equal(coordinator.isBusy(), false);
+});
+
 test("partial batch settlement preserves successful Tasks and retries only unresolved Tasks", async () => {
   const coordinator = new TaskRolloverSingleFlightCoordinator();
   const client = {};

@@ -678,6 +678,16 @@ function rolloverFinalizationFailure(operationId: string, finalization: BatchAch
   };
 }
 
+function recordRolloverSweepTiming(input: {
+  totalCandidateCount: number;
+  committedCount: number;
+  durationMs: number;
+  failureState: string;
+}) {
+  if (typeof Deno === "undefined" || Deno.env.get("ADHDICE_EDGE_DIAGNOSTICS") !== "1") return;
+  console.info("[task-state-command] rollover sweep timing", input);
+}
+
 export async function executeRolloverSweep(input: {
   userId: string;
   intent: RolloverSweepIntent;
@@ -685,6 +695,7 @@ export async function executeRolloverSweep(input: {
   now?: string;
   dependencies?: Partial<OrchestrationDependencies>;
 }): Promise<TrustedTaskStateCommandResponse> {
+  const startedAt = performance.now();
   const dependencies = { ...defaultDependencies, ...input.dependencies };
   const operationId = deterministicUuid(`task-rollover-achievement:${input.userId}:${input.intent.replay_identity}`);
   const childResults: Array<Record<string, unknown>> = [];
@@ -745,6 +756,13 @@ export async function executeRolloverSweep(input: {
   const state = error
     ? settledTaskIds.length > 0 ? "partial" : "failed"
     : "committed";
+
+  recordRolloverSweepTiming({
+    committedCount: settledTaskIds.length,
+    durationMs: performance.now() - startedAt,
+    failureState: error?.code ?? "none",
+    totalCandidateCount: input.intent.commands.length,
+  });
 
   return {
     status: 200,
