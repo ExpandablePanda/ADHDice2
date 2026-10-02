@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.33`.
+- Current working app version: `7.16.34`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-02 7.16.34 Incremental Achievement reconciliation foundation
+
+The source-only Achievement foundation now has one canonical
+`entity_kind -> track_id` dependency authority, bounded occurrence-match
+synchronization, and a targeted progress/award evaluator that writes only the
+requested tracks. Its formulas reuse the existing full-rebuild formulas, and
+disposable PostgreSQL parity coverage compares the targeted path with the full
+authoritative rebuild across source transitions, metric families, streaks,
+permanent awards, collections, notifications, metadata, and dedupe behavior.
+
+The existing `adhdice_evaluate_achievements()` and full rebuild remain the
+active production runtime in 7.16.34. The new forward migration is
+`supabase/patch_achievement_incremental_reconciliation_7_16_34.sql`; it has not
+been applied to Supabase. No Edge Function was deployed, no production data
+was mutated, and browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-10-01 7.16.33 Achievement rebuild temp-table alias correction
 
