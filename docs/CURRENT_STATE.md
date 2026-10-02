@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.32`.
+- Current working app version: `7.16.33`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-01 7.16.33 Achievement rebuild temp-table alias correction
+
+The 7.16.32 user-scoped Achievement evidence snapshot remains unchanged. This
+patch corrects the temp-table occurrence-count aggregate to reference its
+unqualified column name, and the source-only 7.16.33 forward migration applies
+only that function-definition correction to environments with 7.16.32 already
+installed. Local PostgreSQL execution coverage invokes the rebuilt function
+through the corrected query; no SQL or Supabase mutation, Edge deployment, or
+browser/manual QA was performed.
 
 ## 2026-10-01 7.16.32 History batch Achievement reconciliation timeout correction
 

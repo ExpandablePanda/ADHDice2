@@ -49,7 +49,7 @@ begin
     on pg_temp.adhdice_achievement_qualifying_occurrences (entity_kind, logical_date);
   analyze pg_temp.adhdice_achievement_qualifying_occurrences;
 
-  select coalesce(max(occurrence.occurrence_count), 0) into v_occurrence_count
+  select coalesce(max(occurrence_count), 0) into v_occurrence_count
   from pg_temp.adhdice_achievement_qualifying_occurrences;
 
   with modes(mode) as (
