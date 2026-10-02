@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.40`.
+- Current working app version: `7.16.41`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -39,6 +39,21 @@ ownership guard and stops between batches while rollover work is active. The
 existing targeted reconciliation resumes after rollover completion or failure
 cleanup. No SQL was applied, no Edge Function was deployed, no production data
 was mutated, and browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-10-02 7.16.41 Pre-deployment behavioral hardening for bounded rollover
+
+Behavioral execution coverage now runs the production `executeTaskRolloverSweep()`
+coordinator with injected Edge responses. It proves a 33-task campaign invokes
+five serial chunks of `8, 8, 8, 8, 1`, preserves candidate and replay identity
+order, retains settled prior chunks across partial and network failures, and
+retries Achievement finalization with the same child replay identities. Empty
+candidate success and pending-finalization fail-closed behavior are covered.
+
+The 7.16.40 runtime behavior was unchanged because these tests exposed no
+runtime defect. The Edge max-8 validation and logical-day projection rollover
+guard remain covered. No SQL was added or applied, no Edge Function was
+deployed, no production data was mutated, and browser/manual QA remains
+Andrew-owned and unverified.
 
 ## 2026-10-02 7.16.39 Bounded canonical History authority for quota progress
 
