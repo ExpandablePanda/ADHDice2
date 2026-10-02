@@ -75,16 +75,81 @@ test("quota progress follows outcome edits and date edits without retaining stal
   assert.equal(progress("week", 5, "2026-09-30", dateEdited).numerator, 1);
 });
 
-test("quota progress respects activation, weekly, and monthly boundaries", () => {
+test("quota progress uses period boundaries while activation remains irrelevant to success credit", () => {
   assert.equal(progress("week", 5, "2026-09-30", [
+    historyRow("2026-09-27"),
     historyRow("2026-09-29"),
     historyRow("2026-09-30"),
-  ], "2026-09-30").numerator, 1);
+  ], "2026-09-30").numerator, 2);
   assert.equal(progress("week", 5, "2026-10-05", [historyRow("2026-10-04")]).numerator, 0);
   assert.equal(progress("month", 4, "2026-10-01", [
     historyRow("2026-09-30"),
     historyRow("2026-10-01"),
   ]).numerator, 1);
+});
+
+test("exact QA case counts same-week backdated successes and renders 4/3", () => {
+  const task = {
+    canonical_schedule_boundary: {
+      effective_from_logical_date: "2026-10-01",
+      repeat_frequency: "per_week",
+    },
+    due_on: "2026-10-01",
+    repeat_frequency: "per_week",
+    repeat_quota_count: 3,
+    status: "pending",
+  } as const;
+  const history = [
+    historyRow("2026-09-27"),
+    historyRow("2026-09-28"),
+    historyRow("2026-09-29", "did_my_best"),
+    historyRow("2026-09-30"),
+    historyRow("2026-10-01"),
+  ];
+  const result = quotaProgressForTask({ task, logicalDate: "2026-10-01", history });
+
+  assert.deepEqual(result, {
+    denominator: 3,
+    numerator: 4,
+    period: "week",
+    periodKey: "2026-09-28",
+  });
+  assert.equal(formatRepeatCompactLabel(
+    task.repeat_frequency,
+    1,
+    [],
+    "day_of_month",
+    null,
+    null,
+    null,
+    task.repeat_quota_count,
+    false,
+    0,
+    result,
+  ), "3 Per Week · 4/3");
+});
+
+test("monthly progress counts earlier same-month success but excludes prior-month History", () => {
+  assert.equal(progress("month", 4, "2026-10-15", [
+    historyRow("2026-09-30"),
+    historyRow("2026-10-02"),
+    historyRow("2026-10-05", "did_my_best"),
+    historyRow("2026-10-12"),
+  ], "2026-10-10").numerator, 3);
+});
+
+test("quota progress preserves uncapped numerators above the denominator", () => {
+  const history = [
+    historyRow("2026-09-28"),
+    historyRow("2026-09-29"),
+    historyRow("2026-09-30"),
+    historyRow("2026-10-01"),
+    historyRow("2026-10-02"),
+    historyRow("2026-10-03"),
+  ];
+  const fivePerWeek = progress("week", 5, "2026-10-03", history);
+  assert.equal(fivePerWeek.numerator, 6);
+  assert.equal(formatRepeatCompactLabel("per_week", 1, [], "day_of_month", null, null, null, 5, false, 0, fivePerWeek), "5 Per Week · 6/5");
 });
 
 test("balance and Clear Balance inputs do not change quota success progress", () => {
@@ -128,9 +193,9 @@ test("quota progress uses the configured current denominator and canonical activ
     history: [historyRow("2026-09-29"), historyRow("2026-09-30")],
   });
 
-  assert.equal(current?.numerator, 1);
+  assert.equal(current?.numerator, 2);
   assert.equal(current?.denominator, 5);
-  assert.equal(changedCount?.numerator, 1);
+  assert.equal(changedCount?.numerator, 2);
   assert.equal(changedCount?.denominator, 4);
 });
 

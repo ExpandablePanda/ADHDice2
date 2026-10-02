@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.37`.
+- Current working app version: `7.16.38`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,6 +14,28 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
+## 2026-10-02 7.16.38 Count backdated current-period successes toward quota
+
+Quota success credit is now bounded by the current Monday-Sunday or natural
+calendar-month period and the live logical date, without applying the quota
+activation date. Same-period canonical History `done` and `did_my_best` rows
+therefore count even when their logical dates precede a mid-period activation;
+prior-period History remains excluded and duplicate logical dates still count
+once. This supersedes the 7.16.28 rule only for same-period success credit.
+
+Activation remains authoritative for obligation eligibility, first-period
+base-quota capacity, mandatory-date calculation, and automatic Missed
+generation. No pre-activation obligation is created. The shared 7.16.37
+progress formatter/UI is unchanged, so intentional values such as `3 Per Week
+· 4/3` remain uncapped. Balance-disabled surplus behavior, balance-enabled
+next-period arithmetic, Clear Balance, and canonical quota period facts remain
+engine-owned.
+
+Focused quota engine, progress, calendar/mandatory-date, and balance coverage
+was updated for weekly and monthly mid-period activation. No SQL was required
+or applied, no Edge Function was deployed, no production data was mutated, and
+browser/manual QA remains Andrew-owned and unverified.
+
 ## 2026-10-02 7.16.37 Quota progress readout and remaining hardening
 
 Active X Per Week and X Per Month Repeat metadata now derives a current-period
@@ -21,8 +43,9 @@ progress result through `quotaProgressForTask` in
 `src/lib/task-state-engine/quota.ts`. The result uses the effective canonical
 schedule boundary, Monday-Sunday or natural-calendar-month bounds, and
 canonical History `done`/`did_my_best` dates deduplicated by logical date.
-History before activation, prior periods, Missed outcomes, and balance values
-do not change the numerator; the configured quota count remains the
+At 7.16.37, History before activation was excluded from the numerator; the
+7.16.38 correction above supersedes that rule for the same current period,
+while prior periods remain excluded. The configured quota count remains the
 denominator. The shared Repeat formatter exposes values such as `5 Per Week ·
 1/5` in Table, List, and Steps surfaces while ordinary recurrence labels are
 unchanged. Existing History reconciliation and row revisions cause the readout

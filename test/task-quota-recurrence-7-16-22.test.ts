@@ -87,17 +87,17 @@ test("only distinct successful logical dates count", () => {
   assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-09-30", history }).successesThisPeriod, 1);
 });
 
-test("quota success counts and period-close successful days honor weekly and monthly activation", () => {
+test("same-period successes count before activation while prior periods remain excluded", () => {
   for (const scenario of [
     {
       recurrence: { kind: "quota" as const, period: "week" as const, count: 3, balanceEnabled: true, activationDate: "2026-10-02" },
       logicalDate: "2026-10-04",
-      history: [historyRow("2026-09-28"), historyRow("2026-10-02")],
+      history: [historyRow("2026-09-27"), historyRow("2026-09-28"), historyRow("2026-10-02")],
     },
     {
       recurrence: { kind: "quota" as const, period: "month" as const, count: 3, balanceEnabled: true, activationDate: "2026-01-15" },
       logicalDate: "2026-01-31",
-      history: [historyRow("2026-01-05"), historyRow("2026-01-15")],
+      history: [historyRow("2025-12-31"), historyRow("2026-01-05"), historyRow("2026-01-15")],
     },
   ]) {
     const evaluation = quotaPeriodEvaluation({ ...scenario });
@@ -108,12 +108,85 @@ test("quota success counts and period-close successful days honor weekly and mon
       eventKind: "period_close",
       idempotenceIdentity: `${scenario.recurrence.period}-activation-close`,
     });
-    assert.equal(evaluation.successesThisPeriod, 1, scenario.recurrence.period);
-    assert.equal(evaluation.remainingRequired, 2, scenario.recurrence.period);
-    assert.equal(evaluation.nextBalance, -2, scenario.recurrence.period);
-    assert.equal(close.successfulDays, 1, scenario.recurrence.period);
-    assert.equal(close.nextBalance, -2, scenario.recurrence.period);
+    assert.equal(evaluation.successesThisPeriod, 2, scenario.recurrence.period);
+    assert.equal(evaluation.remainingRequired, 1, scenario.recurrence.period);
+    assert.equal(evaluation.nextBalance, -1, scenario.recurrence.period);
+    assert.equal(close.successfulDays, 2, scenario.recurrence.period);
+    assert.equal(close.nextBalance, -1, scenario.recurrence.period);
   }
+});
+
+test("exact current-week backdated successes drive progress arithmetic without pre-activation obligations", () => {
+  const recurrence = { kind: "quota" as const, period: "week" as const, count: 3, balanceEnabled: false, activationDate: "2026-10-01" };
+  const history = [
+    historyRow("2026-09-27"),
+    historyRow("2026-09-28"),
+    historyRow("2026-09-29", "did_my_best"),
+    historyRow("2026-09-30"),
+    historyRow("2026-10-01"),
+  ];
+  const evaluation = quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-01", history });
+
+  assert.equal(evaluation.successesThisPeriod, 4);
+  assert.equal(evaluation.requiredThisPeriod, 3);
+  assert.equal(evaluation.remainingRequired, 0);
+  assert.equal(evaluation.nextMandatoryDate, null);
+  assert.equal(evaluation.nextBalance, 0);
+  assert.equal(quotaDateIsMandatory({ recurrence, logicalDate: "2026-09-30", history }), false);
+  assert.equal(quotaPeriodEvaluation({ recurrence, logicalDate: "2026-09-30" }).dueToday, false);
+});
+
+test("backdated same-period successes reduce remaining work and move the next mandatory date", () => {
+  const recurrence = { kind: "quota" as const, period: "week" as const, count: 3, balanceEnabled: false, activationDate: "2026-10-01" };
+  const before = quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-01" });
+  const after = quotaPeriodEvaluation({
+    recurrence,
+    logicalDate: "2026-10-01",
+    history: [historyRow("2026-09-28"), historyRow("2026-09-29")],
+  });
+
+  assert.equal(before.remainingRequired, 3);
+  assert.equal(after.successesThisPeriod, 2);
+  assert.equal(after.remainingRequired, 1);
+  assert.equal(after.nextMandatoryDate, "2026-10-04");
+});
+
+test("balance uses corrected current-period surplus and Clear Balance preserves success credit", () => {
+  const recurrence = {
+    kind: "quota" as const,
+    period: "week" as const,
+    count: 3,
+    balanceEnabled: true,
+    activationDate: "2026-10-01",
+    scheduleBoundaryId: "boundary-backdated-balance",
+  };
+  const history = [
+    historyRow("2026-09-28"),
+    historyRow("2026-09-29"),
+    historyRow("2026-09-30"),
+    historyRow("2026-10-01"),
+  ];
+  const evaluation = quotaPeriodEvaluation({ recurrence, logicalDate: "2026-10-04", history });
+  assert.equal(evaluation.successesThisPeriod, 4);
+  assert.equal(evaluation.nextBalance, 1);
+
+  const clear = quotaPeriodFactFor({
+    recurrence,
+    periodDate: "2026-10-01",
+    history,
+    eventKind: "clear_balance",
+    idempotenceIdentity: "clear-backdated-balance",
+  });
+  assert.equal(clear.successfulDays, 4);
+  const afterClear = quotaPeriodEvaluation({
+    recurrence,
+    logicalDate: "2026-10-04",
+    history,
+    quotaPeriodFacts: [{ ...clear, id: "clear-backdated-balance-fact", createdAt: "2026-10-02T00:00:00.000Z" }],
+  });
+  assert.equal(afterClear.incomingBalance, 0);
+  assert.equal(afterClear.successesThisPeriod, 4);
+  assert.equal(afterClear.nextBalance, 1);
 });
 
 test("balance is uncapped and carries into the next period", () => {

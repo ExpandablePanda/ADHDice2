@@ -105,7 +105,7 @@ export function quotaProgressForCurrentPeriod(input: {
   return {
     period: input.recurrence.period,
     periodKey: bounds.key,
-    numerator: distinctSuccessDates(input.history ?? [], bounds, input.logicalDate, input.recurrence).size,
+    numerator: distinctSuccessDates(input.history ?? [], bounds, input.logicalDate).size,
     denominator: configuredQuotaCount(input.recurrence.period, input.recurrence.count),
   };
 }
@@ -165,23 +165,20 @@ function distinctSuccessDates(
   history: readonly QuotaProgressHistoryRow[],
   bounds: QuotaPeriodBounds,
   throughDate: string,
-  recurrence: Pick<QuotaRecurrence, "activationDate">,
 ) {
-  const start = eligibleStart(recurrence, bounds);
   return new Set(
     history
       .filter((row) => SUCCESSFUL_QUOTA_OUTCOMES.has(row.outcome))
       .map((row) => row.logicalDate)
-      .filter((date) => date >= start && date <= bounds.end && date <= throughDate),
+      .filter((date) => date >= bounds.start && date <= bounds.end && date <= throughDate),
   );
 }
 
 function successfulDaysForPeriod(
   history: readonly QuotaProgressHistoryRow[],
   bounds: QuotaPeriodBounds,
-  recurrence: Pick<QuotaRecurrence, "activationDate">,
 ) {
-  return distinctSuccessDates(history, bounds, bounds.end, recurrence).size;
+  return distinctSuccessDates(history, bounds, bounds.end).size;
 }
 
 function nextPeriodDate(bounds: QuotaPeriodBounds) {
@@ -234,7 +231,7 @@ function incomingBalanceForPeriod(
     const incomingForPeriod = clearFact ? 0 : incoming;
     incoming = closeFact
       ? closeFact.nextBalance
-      : incomingForPeriod + successfulDaysForPeriod(history, cursor, recurrence) - baseQuota;
+      : incomingForPeriod + successfulDaysForPeriod(history, cursor) - baseQuota;
     cursor = quotaPeriodBounds(nextPeriodDate(cursor), recurrence.period);
   }
   return incoming;
@@ -254,7 +251,7 @@ export function quotaPeriodEvaluation(input: {
       ? 0
       : daysBetween(input.logicalDate, bounds.end) + 1;
   const history = input.history ?? [];
-  const successesThisPeriod = distinctSuccessDates(history, bounds, input.logicalDate, input.recurrence).size;
+  const successesThisPeriod = distinctSuccessDates(history, bounds, input.logicalDate).size;
   const incomingBalance = incomingBalanceForPeriod(input.recurrence, bounds, history, input.quotaPeriodFacts);
   const baseQuota = quotaBaseQuota(input.recurrence, bounds);
   const requiredThisPeriod = Math.max(0, baseQuota - incomingBalance);
@@ -267,7 +264,7 @@ export function quotaPeriodEvaluation(input: {
     }) ?? null
     : null;
   const nextBalance = input.recurrence.balanceEnabled
-    ? incomingBalance + successfulDaysForPeriod(history, bounds, input.recurrence) - baseQuota
+    ? incomingBalance + successfulDaysForPeriod(history, bounds) - baseQuota
     : 0;
   return {
     baseQuota,
@@ -346,7 +343,7 @@ export function quotaPeriodFactFor(input: {
     periodEnd: bounds.end,
     baseQuota: evaluation.baseQuota,
     incomingBalance: evaluation.incomingBalance,
-    successfulDays: successfulDaysForPeriod(history, bounds, input.recurrence),
+    successfulDays: successfulDaysForPeriod(history, bounds),
     nextBalance: input.eventKind === "clear_balance" ? 0 : evaluation.nextBalance,
     balanceEnabled: input.recurrence.balanceEnabled,
     eventKind: input.eventKind,
