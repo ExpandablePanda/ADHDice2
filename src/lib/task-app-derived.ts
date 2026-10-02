@@ -439,6 +439,8 @@ export function buildChildTaskPreviewLookup(
   adapter = buildTaskHierarchyAdapter(tasks),
   taskHistoryStreakSummaryByTaskId: TaskHistoryStreakSummaryMap = {},
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId = {},
+  quotaCurrentPeriodHistoryByTaskId: Record<string, TaskHistory[]> = {},
+  isQuotaCurrentPeriodHistoryReady = false,
 ): ChildTaskPreviewLookup {
   const focusedTaskIdSet = new Set(focusedTaskIds);
   const previewByParentTaskId: ChildTaskPreviewLookup = {};
@@ -477,11 +479,11 @@ export function buildChildTaskPreviewLookup(
             timestamp: streakSummary.lastHandledAt ?? null,
           }
           : getTaskHistoryLastHandled(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
-        const repeatQuotaProgress = todayDateKey
+        const repeatQuotaProgress = todayDateKey && isQuotaCurrentPeriodHistoryReady
           ? quotaProgressForTask({
             task: descendant,
             logicalDate: todayDateKey,
-            history: (taskHistoryByTaskId[descendant.id] ?? []).map((row) => ({
+            history: (quotaCurrentPeriodHistoryByTaskId[descendant.id] ?? []).map((row) => ({
               logicalDate: row.entry_date,
               outcome: row.status as TaskHistoryOutcome,
             })),
@@ -548,6 +550,8 @@ export function buildTaskAppStructuralData({
   diagnosticDetails,
   focusedTaskIds,
   taskHistoryByTaskId,
+  quotaCurrentPeriodHistoryByTaskId,
+  isQuotaCurrentPeriodHistoryReady,
   taskHistoryStreakSummaryByTaskId,
   taskDisplayStatusByTaskId,
   tasks,
@@ -556,6 +560,8 @@ export function buildTaskAppStructuralData({
   diagnosticDetails?: DevelopmentComputationDiagnostic;
   focusedTaskIds: readonly string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  quotaCurrentPeriodHistoryByTaskId?: Record<string, TaskHistory[]>;
+  isQuotaCurrentPeriodHistoryReady?: boolean;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   tasks: Task[];
@@ -564,7 +570,7 @@ export function buildTaskAppStructuralData({
   const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const hierarchy = buildTaskHierarchyAdapter(tasks);
   const result = {
-    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy, taskHistoryStreakSummaryByTaskId, taskDisplayStatusByTaskId),
+    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy, taskHistoryStreakSummaryByTaskId, taskDisplayStatusByTaskId, quotaCurrentPeriodHistoryByTaskId, isQuotaCurrentPeriodHistoryReady),
     hierarchy,
     taskHierarchyDiagnostics: buildTaskHierarchyDiagnostics(tasks, hierarchy),
     taskPrimaryVisibility: buildTaskPrimaryVisibility(tasks, hierarchy),
@@ -1123,6 +1129,8 @@ type ComputeTaskAppDerivedDataInput = {
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
   milestoneTaskIds?: ReadonlySet<string>;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  quotaCurrentPeriodHistoryByTaskId?: Record<string, TaskHistory[]>;
+  isQuotaCurrentPeriodHistoryReady?: boolean;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   taskContentFolders?: readonly TaskContentFolderRow[];
   todayDateKey: string;
@@ -1149,6 +1157,8 @@ export function computeTaskAppDerivedData({
   milestoneSearchTokensByTaskId,
   milestoneTaskIds,
   taskHistoryByTaskId,
+  quotaCurrentPeriodHistoryByTaskId,
+  isQuotaCurrentPeriodHistoryReady,
   taskHistoryStreakSummaryByTaskId,
   taskContentFolders,
   todayDateKey,
@@ -1166,6 +1176,8 @@ export function computeTaskAppDerivedData({
     const emptyStructuralData = structuralData ?? buildTaskAppStructuralData({
       focusedTaskIds,
       taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
       taskHistoryStreakSummaryByTaskId,
       taskDisplayStatusByTaskId,
       tasks,
@@ -1247,6 +1259,8 @@ export function computeTaskAppDerivedData({
   const resolvedStructuralData = structuralData ?? buildTaskAppStructuralData({
     focusedTaskIds,
     taskHistoryByTaskId,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     taskHistoryStreakSummaryByTaskId,
     taskDisplayStatusByTaskId,
     tasks,

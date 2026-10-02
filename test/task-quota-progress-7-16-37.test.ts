@@ -246,6 +246,8 @@ test("Task table row derives quota progress from canonical History for the share
     listMemberships: [],
     subtasks: [],
     taskHistory: [databaseHistory(task.id, "2026-09-28", "done")],
+    quotaCurrentPeriodHistory: [databaseHistory(task.id, "2026-09-28", "done")],
+    isQuotaCurrentPeriodHistoryReady: true,
     todayDateKey: "2026-09-30",
   });
 

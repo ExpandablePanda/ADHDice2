@@ -27,6 +27,8 @@ export type TaskTableRowContext = {
   listMemberships: Array<{ id: string; isManual: boolean }>;
   subtasks: Task[];
   taskHistory: TaskHistory[];
+  quotaCurrentPeriodHistory?: TaskHistory[];
+  isQuotaCurrentPeriodHistoryReady?: boolean;
   taskHistoryStreakSummary?: TaskHistoryStreakSummary;
   attentionReason?: TaskAttentionReason | null;
   directlyExcludedFromTracking?: boolean;
@@ -43,6 +45,8 @@ export function createStableTaskRowModelCache() {
         displayStatus: context.displayStatus,
         focused: context.focusedTaskIdSet.has(task.id),
         history: context.taskHistory,
+        quotaCurrentPeriodHistory: context.quotaCurrentPeriodHistory,
+        isQuotaCurrentPeriodHistoryReady: context.isQuotaCurrentPeriodHistoryReady,
         linkedNotes: context.linkedNotes,
         listDefinitions: context.listDefinitions,
         listMemberships: context.listMemberships,
@@ -110,14 +114,16 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     }
     : getTaskHistoryLastHandled(context.taskHistory, context.todayDateKey);
   const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task)) as TaskPriorityLevelOption];
-  const repeatQuotaProgress = quotaProgressForTask({
-    task,
-    logicalDate: context.todayDateKey,
-    history: context.taskHistory.map((row) => ({
-      logicalDate: row.entry_date,
-      outcome: row.status as TaskHistoryOutcome,
-    })),
-  });
+  const repeatQuotaProgress = context.isQuotaCurrentPeriodHistoryReady
+    ? quotaProgressForTask({
+      task,
+      logicalDate: context.todayDateKey,
+      history: (context.quotaCurrentPeriodHistory ?? []).map((row) => ({
+        logicalDate: row.entry_date,
+        outcome: row.status as TaskHistoryOutcome,
+      })),
+    })
+    : null;
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>
     context.listMemberships.some((membership) => membership.id === listDefinition.id)

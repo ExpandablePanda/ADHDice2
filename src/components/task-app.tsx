@@ -1907,6 +1907,7 @@ export function TaskApp() {
     reconcileRolloverWorkspace,
     refreshTaskActivitySummary,
     refreshHomeCurrentDayHistory,
+    refreshQuotaCurrentPeriodHistory,
     retryHomeCurrentDayHistory,
     refreshTaskHistoryStreakSummary,
     refreshTaskHistoryStreakSummaries,
@@ -1919,6 +1920,8 @@ export function TaskApp() {
     homeCurrentDayHistoryError,
     homeCurrentDayHistoryStatus,
     isHomeCurrentDayHistoryReady,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     taskActivitySummary,
     taskActivitySummaryStatus,
     currentTaskProjectionReadContext,
@@ -2073,9 +2076,10 @@ export function TaskApp() {
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
     updateTaskHistoryForTask(taskId, nextTaskHistory);
     void refreshHomeCurrentDayHistory("history-mutation-settled");
+    void refreshQuotaCurrentPeriodHistory("history-mutation-settled", taskId);
     void refreshTaskActivitySummary("history-mutation-settled");
     return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory, nextTask);
-  }, [refreshHomeCurrentDayHistory, refreshTaskActivitySummary, refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
+  }, [refreshHomeCurrentDayHistory, refreshQuotaCurrentPeriodHistory, refreshTaskActivitySummary, refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
 
   const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
 
@@ -3114,6 +3118,13 @@ export function TaskApp() {
     () => createProjectionDomainRevision("task-history-authoritative", taskHistoryByTaskId),
     [taskHistoryByTaskId],
   );
+  const quotaCurrentPeriodHistoryRevision = useMemo(
+    () => createProjectionDomainRevision("quota-current-period-history", {
+      history: quotaCurrentPeriodHistoryByTaskId,
+      ready: isQuotaCurrentPeriodHistoryReady,
+    }),
+    [isQuotaCurrentPeriodHistoryReady, quotaCurrentPeriodHistoryByTaskId],
+  );
   const taskHistoryReadinessRevision = useMemo(
     () => createProjectionDomainRevision("full-task-history-readiness", isFullTaskHistoryLoaded),
     [isFullTaskHistoryLoaded],
@@ -3941,6 +3952,7 @@ export function TaskApp() {
   const hierarchyStatusRevision = combineProjectionRevisions(
     taskDomainRevision,
     taskHistoryRevision,
+    quotaCurrentPeriodHistoryRevision,
     taskHistoryStreakSummaryRevision,
     statusSettingsRevision,
     activeStatusRevision,
@@ -3959,9 +3971,9 @@ export function TaskApp() {
     () => projectionCache.getOrCreate("hierarchy-status", hierarchyStatusRevision, () => {
       const diagnostic = process.env.NODE_ENV === "development" ? structuralDiagnosticTracker.capture({
         activePage,
-        dependencies: { activeStatusRevision, statusSettingsRevision, taskDomainRevision, taskHistoryRevision, taskHistoryStreakSummaryRevision },
+        dependencies: { activeStatusRevision, quotaCurrentPeriodHistoryRevision, statusSettingsRevision, taskDomainRevision, taskHistoryRevision, taskHistoryStreakSummaryRevision },
         revisionSources: {
-          history: { taskHistoryRevision, taskHistoryStreakSummaryRevision },
+          history: { quotaCurrentPeriodHistoryRevision, taskHistoryRevision, taskHistoryStreakSummaryRevision },
           list: {},
           settings: { statusSettingsRevision },
           task: { activeStatusRevision, taskDomainRevision },
@@ -3971,6 +3983,8 @@ export function TaskApp() {
         diagnosticDetails: diagnostic,
         focusedTaskIds,
         taskHistoryByTaskId,
+        quotaCurrentPeriodHistoryByTaskId,
+        isQuotaCurrentPeriodHistoryReady,
         taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
         taskDisplayStatusByTaskId,
         tasks: tasksForActiveStatusRead,
@@ -4120,7 +4134,7 @@ export function TaskApp() {
     [taskUiState.visibleColumnsByView.table],
   );
   const taskDerivationRevision = createTaskDerivationRevisionKey({
-    historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision),
+    historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision, quotaCurrentPeriodHistoryRevision),
     listRevision: workspaceFactsRevision,
     settingsRevision: derivationSettingsRevision,
     taskRevision: taskDomainRevision,
@@ -4149,7 +4163,7 @@ export function TaskApp() {
           tasksForActiveStatusRead,
         },
         revisionSources: {
-          history: { taskHistoryByTaskId },
+          history: { quotaCurrentPeriodHistoryByTaskId, taskHistoryByTaskId },
           list: { availableTaskLists, bucketContext, taskListEvaluationContext },
           settings: {
             focusedTaskIds,
@@ -4173,6 +4187,8 @@ export function TaskApp() {
       milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
       milestoneTaskIds: milestoneData.milestoneTaskIds,
       taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
       taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
       taskContentFolders,
       todayDateKey: todayKey,
@@ -4260,6 +4276,8 @@ export function TaskApp() {
         listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
         subtasks: taskSubtasksByTaskId[task.id] ?? [],
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
+        quotaCurrentPeriodHistory: quotaCurrentPeriodHistoryByTaskId[task.id] ?? [],
+        isQuotaCurrentPeriodHistoryReady,
         taskHistoryStreakSummary: effectiveTaskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
         finishedTodayByTaskId,
@@ -4274,6 +4292,8 @@ export function TaskApp() {
       sharedEditorRowModelCache,
       sharedTaskEditorOverlayTaskId,
       taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
       effectiveTaskHistoryStreakSummaries,
       finishedTodayByTaskId,
       taskDisplayStatusByTaskId,
@@ -4474,6 +4494,8 @@ export function TaskApp() {
     subtasksByTaskId: taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
     finishedTodayByTaskId,
     todayDateKey: todayKey,
@@ -4482,6 +4504,8 @@ export function TaskApp() {
     focusedTaskIdSet,
     manualMembershipsByTaskId,
     taskHistoryByTaskId,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     effectiveTaskHistoryStreakSummaries,
     finishedTodayByTaskId,
     taskLinkedNotesByTaskId,

@@ -405,6 +405,8 @@ type TasksTableSourceProps = {
     taskDisplayStatusByTaskId: Record<string, TaskDisplayStatus>;
     taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>;
     taskHistoryByTaskId: Record<string, TaskHistory[]>;
+    quotaCurrentPeriodHistoryByTaskId: Record<string, TaskHistory[]>;
+    isQuotaCurrentPeriodHistoryReady: boolean;
     taskHistoryStreakSummaryByTaskId: Record<string, TaskHistoryStreakSummary>;
     finishedTodayByTaskId?: Readonly<Record<string, boolean>>;
     todayDateKey: string;
@@ -571,6 +573,8 @@ export function TasksTableAdapter({
         listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
         subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+        quotaCurrentPeriodHistory: tableProps.rowContext.quotaCurrentPeriodHistoryByTaskId[task.id] ?? [],
+        isQuotaCurrentPeriodHistoryReady: tableProps.rowContext.isQuotaCurrentPeriodHistoryReady,
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
         attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
         finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
@@ -604,6 +608,8 @@ export function TasksTableAdapter({
         listMemberships: tableProps.rowContext.listMembershipsByTaskId[tableProps.requestedOpenTask.id] ?? [],
         subtasks: tableProps.rowContext.subtasksByTaskId[tableProps.requestedOpenTask.id] ?? [],
         taskHistory: tableProps.rowContext.taskHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        quotaCurrentPeriodHistory: tableProps.rowContext.quotaCurrentPeriodHistoryByTaskId[tableProps.requestedOpenTask.id] ?? [],
+        isQuotaCurrentPeriodHistoryReady: tableProps.rowContext.isQuotaCurrentPeriodHistoryReady,
         taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[tableProps.requestedOpenTask.id],
         attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[tableProps.requestedOpenTask.id],
         finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
@@ -642,6 +648,8 @@ export function TasksTableAdapter({
               listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
               subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
               taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+              quotaCurrentPeriodHistory: tableProps.rowContext.quotaCurrentPeriodHistoryByTaskId[task.id] ?? [],
+              isQuotaCurrentPeriodHistoryReady: tableProps.rowContext.isQuotaCurrentPeriodHistoryReady,
               taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
               attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
               finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
@@ -2545,6 +2553,8 @@ function TasksSimpleList({
       listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
       subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
       taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
+      quotaCurrentPeriodHistory: rowContext.quotaCurrentPeriodHistoryByTaskId[task.id] ?? [],
+      isQuotaCurrentPeriodHistoryReady: rowContext.isQuotaCurrentPeriodHistoryReady,
       taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
       attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
       finishedTodayByTaskId: rowContext.finishedTodayByTaskId,
@@ -2833,6 +2843,8 @@ function TasksSimpleList({
           listMemberships: tableProps.rowContext.listMembershipsByTaskId[task.id] ?? [],
           subtasks: tableProps.rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: tableProps.rowContext.taskHistoryByTaskId[task.id] ?? [],
+          quotaCurrentPeriodHistory: tableProps.rowContext.quotaCurrentPeriodHistoryByTaskId[task.id] ?? [],
+          isQuotaCurrentPeriodHistoryReady: tableProps.rowContext.isQuotaCurrentPeriodHistoryReady,
           taskHistoryStreakSummary: tableProps.rowContext.taskHistoryStreakSummaryByTaskId[task.id],
           attentionReason: tableProps.rowContext.taskAttentionReasonByTaskId[task.id],
           finishedTodayByTaskId: tableProps.rowContext.finishedTodayByTaskId,
@@ -3241,6 +3253,8 @@ function TasksSimpleList({
           listMemberships: rowContext.listMembershipsByTaskId[task.id] ?? [],
           subtasks: rowContext.subtasksByTaskId[task.id] ?? [],
           taskHistory: rowContext.taskHistoryByTaskId[task.id] ?? [],
+          quotaCurrentPeriodHistory: rowContext.quotaCurrentPeriodHistoryByTaskId[task.id] ?? [],
+          isQuotaCurrentPeriodHistoryReady: rowContext.isQuotaCurrentPeriodHistoryReady,
           taskHistoryStreakSummary: rowContext.taskHistoryStreakSummaryByTaskId[task.id],
           attentionReason: rowContext.taskAttentionReasonByTaskId[task.id],
           finishedTodayByTaskId: rowContext.finishedTodayByTaskId,

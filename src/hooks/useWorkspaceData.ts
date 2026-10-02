@@ -1,6 +1,6 @@
 "use client";
 
-import { startTransition, useCallback, useEffect, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type MutableRefObject, type SetStateAction } from "react";
 import type { RealtimeChannel, User } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
@@ -63,6 +63,15 @@ import {
 } from "@/lib/task-history-streak-summaries";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import { mapCanonicalTaskHistoryFacts } from "@/lib/task-state-canonical/history-projection";
+import {
+  getActiveQuotaTaskContextKey,
+  getActiveQuotaTaskIds,
+} from "@/lib/quota-current-period-history-repository";
+import {
+  createQuotaCurrentPeriodHistoryRuntime,
+  type QuotaCurrentPeriodHistoryRuntime,
+  type QuotaCurrentPeriodHistoryRuntimeState,
+} from "@/lib/quota-current-period-history-runtime";
 import {
   getTaskHistoryInitialDetailRange,
   getTaskHistoryOlderDetailRange,
@@ -405,6 +414,21 @@ export function useWorkspaceData({
   if (homeCurrentDayHistoryRuntimeRef.current == null) {
     homeCurrentDayHistoryRuntimeRef.current = createHomeCurrentDayHistoryRuntime(setHomeCurrentDayHistoryState);
   }
+  const [quotaCurrentPeriodHistoryState, setQuotaCurrentPeriodHistoryState] = useState<QuotaCurrentPeriodHistoryRuntimeState>({
+    error: null,
+    logicalDate: null,
+    ownerId: null,
+    rowsByTaskId: {},
+    status: "idle",
+    taskIds: [],
+    taskIdsKey: "",
+    window: null,
+    workspaceGeneration: null,
+  });
+  const quotaCurrentPeriodHistoryRuntimeRef = useRef<QuotaCurrentPeriodHistoryRuntime | null>(null);
+  if (quotaCurrentPeriodHistoryRuntimeRef.current == null) {
+    quotaCurrentPeriodHistoryRuntimeRef.current = createQuotaCurrentPeriodHistoryRuntime(setQuotaCurrentPeriodHistoryState);
+  }
   const hasLoadedNotesRef = useRef(false);
   const hasLoadedFullTaskHistoryRef = useRef(false);
   const fullTaskHistoryRowsRef = useRef<DbTaskHistory[]>([]);
@@ -481,6 +505,7 @@ export function useWorkspaceData({
   const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
   const rolloverWorkspaceReconciliationRef = useRef<(() => Promise<void>) | null>(null);
   const homeCurrentDayHistoryRequestRef = useRef<((reason: string, options?: { force?: boolean; onlyIfLoaded?: boolean }) => Promise<boolean>) | null>(null);
+  const quotaCurrentPeriodHistoryRequestRef = useRef<((reason: string, options?: { force?: boolean; taskId?: string }) => Promise<boolean>) | null>(null);
   const prepareTaskMutationRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadFullTaskHistoryRef = useRef<(() => Promise<boolean>) | null>(null);
   const loadNotesRef = useRef<(() => Promise<boolean>) | null>(null);
@@ -588,6 +613,16 @@ export function useWorkspaceData({
     tasksRef.current = tasks;
   }, [tasks]);
 
+  const quotaCurrentPeriodTaskContextKey = useMemo(
+    () => getActiveQuotaTaskContextKey(tasks, todayKey),
+    [tasks, todayKey],
+  );
+
+  useEffect(() => {
+    if (!supabase || !currentUser?.id) return;
+    void quotaCurrentPeriodHistoryRequestRef.current?.("task-set", { force: true });
+  }, [currentUser?.id, quotaCurrentPeriodTaskContextKey, supabase, todayKey]);
+
   useEffect(() => {
     if (todayKeyRef.current === todayKey) return;
     todayKeyRef.current = todayKey;
@@ -608,6 +643,7 @@ export function useWorkspaceData({
         workspaceGeneration: workspaceGenerationRef.current,
       }, { force: true });
       void currentTaskProjectionLogicalDayRefreshRef.current?.("logical-day", true);
+      void quotaCurrentPeriodHistoryRequestRef.current?.("logical-day", { force: true });
     }
     if (!hasLoadedFullTaskHistoryRef.current) return;
     void loadTaskHistoryStreakSummariesRef.current?.(tasksRef.current, { supersede: true });
@@ -654,6 +690,7 @@ export function useWorkspaceData({
       liveWorkspaceUserIdRef.current = null;
       taskActivitySummaryRuntimeRef.current?.clear();
       homeCurrentDayHistoryRuntimeRef.current?.clear();
+      quotaCurrentPeriodHistoryRuntimeRef.current?.clear();
       hasLoadedNotesRef.current = false;
       hasLoadedFullTaskHistoryRef.current = false;
       fullTaskHistoryRowsRef.current = [];
@@ -672,6 +709,7 @@ export function useWorkspaceData({
       currentTaskProjectionLogicalDayRefreshPromiseRef.current = null;
       currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
       homeCurrentDayHistoryRequestRef.current = null;
+      quotaCurrentPeriodHistoryRequestRef.current = null;
       setFullTaskHistoryLoadedUserId(null);
       taskHistoryLoadPromiseRef.current = null;
       loadTaskHistoryStreakSummariesRef.current = null;
@@ -720,6 +758,7 @@ export function useWorkspaceData({
     }
     clearTaskHistoryTaskCache();
     homeCurrentDayHistoryRuntimeRef.current?.clear();
+    quotaCurrentPeriodHistoryRuntimeRef.current?.clear();
     setTaskHistoryStreakSummaries((current) => Object.keys(current).length === 0 ? current : {});
     setCurrentTaskProjectionsByTaskId({});
     currentTaskProjectionsByTaskIdRef.current = {};
@@ -731,6 +770,7 @@ export function useWorkspaceData({
     currentTaskProjectionLogicalDayRefreshPromiseRef.current = null;
     currentTaskProjectionLogicalDayRefreshTrailingRef.current = false;
     homeCurrentDayHistoryRequestRef.current = null;
+    quotaCurrentPeriodHistoryRequestRef.current = null;
     hasLoadedFullTaskHistoryRef.current = false;
     fullTaskHistoryRowsRef.current = [];
     setFullTaskHistoryLoadedUserId(null);
@@ -773,6 +813,26 @@ export function useWorkspaceData({
     if (activePageRef.current === "Home" || activePageRef.current === "Tasks") {
       void requestHomeCurrentDayHistory("owner-ready");
     }
+    async function requestQuotaCurrentPeriodHistory(
+      reason: string,
+      { force = false, taskId }: { force?: boolean; taskId?: string } = {},
+    ) {
+      if (!isActive || !canApplyCoreWorkspaceResult()) return false;
+      const taskIds = getActiveQuotaTaskIds(tasksRef.current, todayKeyRef.current);
+      if (taskId && !taskIds.includes(taskId)) return false;
+      const taskContextKey = getActiveQuotaTaskContextKey(tasksRef.current, todayKeyRef.current);
+      return await quotaCurrentPeriodHistoryRuntimeRef.current?.request({
+        client,
+        logicalDate: todayKeyRef.current,
+        ownerId: userId,
+        reason,
+        taskContextKey,
+        taskIds,
+        workspaceGeneration,
+      }, { force }) ?? false;
+    }
+    quotaCurrentPeriodHistoryRequestRef.current = requestQuotaCurrentPeriodHistory;
+    void requestQuotaCurrentPeriodHistory("owner-ready");
     void taskActivitySummaryRuntimeRef.current?.request({
       client,
       logicalDate: todayKeyRef.current,
@@ -4064,6 +4124,7 @@ export function useWorkspaceData({
               scheduleTaskHistoryRevisionReconciliation();
             }
           }
+          void requestQuotaCurrentPeriodHistory("history-realtime", { force: true, taskId });
           void taskActivitySummaryRuntimeRef.current?.request({
             client,
             logicalDate: todayKeyRef.current,
@@ -4131,6 +4192,8 @@ export function useWorkspaceData({
       currentTaskProjectionLogicalDayRefreshRef.current = null;
       rolloverWorkspaceReconciliationRef.current = null;
       homeCurrentDayHistoryRequestRef.current = null;
+      quotaCurrentPeriodHistoryRequestRef.current = null;
+      quotaCurrentPeriodHistoryRuntimeRef.current?.clear();
       prepareTaskMutationRef.current = null;
       fetchTaskHistoryForRolloverRef.current = null;
       loadTaskHistoryDetailWindowRef.current = null;
@@ -4266,6 +4329,10 @@ export function useWorkspaceData({
     async (reason = "history-mutation") => await homeCurrentDayHistoryRequestRef.current?.(reason, { force: true, onlyIfLoaded: true }) ?? false,
     [],
   );
+  const refreshQuotaCurrentPeriodHistory = useCallback(
+    async (reason = "history-mutation", taskId?: string) => await quotaCurrentPeriodHistoryRequestRef.current?.(reason, { force: true, taskId }) ?? false,
+    [],
+  );
   const retryHomeCurrentDayHistory = useCallback(
     async () => await homeCurrentDayHistoryRequestRef.current?.("retry", { force: true }) ?? false,
     [],
@@ -4280,6 +4347,13 @@ export function useWorkspaceData({
     && homeCurrentDayHistoryState.ownerId === currentUser.id
     && homeCurrentDayHistoryState.logicalDate === todayKey
     && homeCurrentDayHistoryState.status !== "idle",
+  );
+  const quotaCurrentPeriodHistoryContextMatches = Boolean(
+    currentUser?.id
+    && quotaCurrentPeriodHistoryState.ownerId === currentUser.id
+    && quotaCurrentPeriodHistoryState.logicalDate === todayKey
+    && quotaCurrentPeriodHistoryState.taskIdsKey === quotaCurrentPeriodTaskContextKey
+    && quotaCurrentPeriodHistoryState.status !== "idle",
   );
 
   return {
@@ -4303,6 +4377,7 @@ export function useWorkspaceData({
     fetchTaskHistoryForRollover,
     refreshTaskActivitySummary,
     refreshHomeCurrentDayHistory,
+    refreshQuotaCurrentPeriodHistory,
     retryHomeCurrentDayHistory,
     retryTaskHistoryForTask,
     loadTaskNotes,
@@ -4318,6 +4393,10 @@ export function useWorkspaceData({
     homeCurrentDayHistoryError: homeCurrentDayHistoryContextMatches ? homeCurrentDayHistoryState.error : null,
     homeCurrentDayHistoryStatus: homeCurrentDayHistoryContextMatches ? homeCurrentDayHistoryState.status : "idle",
     isHomeCurrentDayHistoryReady: homeCurrentDayHistoryContextMatches && homeCurrentDayHistoryState.status === "ready",
+    quotaCurrentPeriodHistoryByTaskId: quotaCurrentPeriodHistoryContextMatches ? quotaCurrentPeriodHistoryState.rowsByTaskId : {},
+    quotaCurrentPeriodHistoryError: quotaCurrentPeriodHistoryContextMatches ? quotaCurrentPeriodHistoryState.error : null,
+    quotaCurrentPeriodHistoryStatus: quotaCurrentPeriodHistoryContextMatches ? quotaCurrentPeriodHistoryState.status : "idle",
+    isQuotaCurrentPeriodHistoryReady: quotaCurrentPeriodHistoryContextMatches && quotaCurrentPeriodHistoryState.status === "ready",
     currentTaskProjectionReadContext,
     currentTaskProjectionsByTaskId,
     isCurrentTaskProjectionReadReady,

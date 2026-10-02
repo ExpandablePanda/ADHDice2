@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.38`.
+- Current working app version: `7.16.39`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,26 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-02 7.16.39 Bounded canonical History authority for quota progress
+
+The 7.16.37/7.16.38 quota progress math was correct, but normal Task rows
+consumed `taskHistoryByTaskId`, the intentionally lazy full-History cache from
+`useWorkspaceData`. That cache is absent until semantic History is requested,
+so a real canonical History period could incorrectly render `0/3`.
+
+Active weekly and monthly quota Tasks now share one bounded canonical read from
+`adhdice_task_history_facts`, grouped by entity ID and limited to the common
+Monday/month-start lower bound through the current logical date. The read is
+refreshed for History Realtime INSERT/UPDATE/DELETE, direct History mutations,
+logical-day rollover, and quota Task configuration changes. Table, List, and
+Step/Substep rows consume the same authority. Full lifetime History is not
+bootstrapped, and ordinary recurrence receives no new History read.
+
+Quota progress is omitted while the bounded source is loading or unavailable;
+a ready empty period intentionally renders `0/count`. No SQL was required or
+applied, no Edge Function was deployed, no production data was mutated, and
+browser/manual QA remains Andrew-owned and unverified.
 
 ## 2026-10-02 7.16.38 Count backdated current-period successes toward quota
 
