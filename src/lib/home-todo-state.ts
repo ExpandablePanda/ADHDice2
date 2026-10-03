@@ -68,8 +68,22 @@ export type HomeTodoStateV7 = {
   scratchpadItems: HomeScratchpadItem[];
 };
 
+export type HomeTodoStateV8 = {
+  clientUpdatedAt: string;
+  schemaVersion: 8;
+  taskIds: string[];
+  taskDayOffsets: Record<string, number>;
+  tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routineSections: HomeRoutineSectionDefinition[];
+  routineSectionIdByTaskId: Record<string, string>;
+  urgentTaskIds: string[];
+  scratchpadText: string;
+  scratchpadItems: HomeScratchpadItem[];
+};
+
 export type HomeTodoStateV2 = HomeTodoStateV4;
-export type HomeTodoState = HomeTodoStateV7;
+export type HomeTodoState = HomeTodoStateV8;
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
@@ -84,6 +98,7 @@ type HomeTodoStateCandidate = {
   routineSections?: unknown;
   routineSectionIdByTaskId?: unknown;
   urgentTaskIds?: unknown;
+  scratchpadText?: unknown;
   scratchpadItems?: unknown;
 };
 
@@ -95,9 +110,9 @@ export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTION
 export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
 export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV7 = {
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV8 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 7,
+  schemaVersion: 8,
   taskIds: [],
   taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
@@ -105,6 +120,7 @@ export const EMPTY_HOME_TODO_STATE: HomeTodoStateV7 = {
   routineSections: [],
   routineSectionIdByTaskId: {},
   urgentTaskIds: [],
+  scratchpadText: "",
   scratchpadItems: [],
 };
 
@@ -286,6 +302,7 @@ export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
     || state.routineSections.length > 0
     || Object.keys(state.routineSectionIdByTaskId).length > 0
     || state.urgentTaskIds.length > 0
+    || state.scratchpadText.trim().length > 0
     || state.scratchpadItems.length > 0;
 }
 
@@ -438,7 +455,7 @@ export async function createHomeTodoTask(
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV7 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV8 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
@@ -488,12 +505,15 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV7 {
     migratedRoutineSections.routineSectionIdByTaskId,
     false,
   );
+  const scratchpadText = Number(candidate.schemaVersion) >= 8 && typeof candidate.scratchpadText === "string"
+    ? candidate.scratchpadText
+    : "";
   const scratchpadItems = normalizeHomeScratchpadItems(candidate.scratchpadItems);
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 7,
+    schemaVersion: 8,
     taskIds,
     taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
@@ -501,6 +521,7 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV7 {
     routineSections: normalizedRoutineSections.routineSections,
     routineSectionIdByTaskId: normalizedRoutineSections.routineSectionIdByTaskId,
     urgentTaskIds,
+    scratchpadText,
     scratchpadItems,
   };
 }
@@ -554,6 +575,39 @@ export function createHomeScratchpadItem(
     text: normalizedText,
     createdAt: new Date(now).toISOString(),
   } satisfies HomeScratchpadItem;
+}
+
+export function parseHomeScratchpadLines(value: string) {
+  return value.split(/\r\n|\n|\r/).map((line) => line.trim()).filter(Boolean);
+}
+
+export function createHomeScratchpadItems(
+  text: string,
+  now = new Date(),
+  existingIds: readonly string[] = [],
+) {
+  const items: HomeScratchpadItem[] = [];
+  const ids = [...existingIds];
+  for (const line of parseHomeScratchpadLines(text)) {
+    const item = createHomeScratchpadItem(line, now, ids);
+    if (!item) continue;
+    items.push(item);
+    ids.push(item.id);
+  }
+  return items;
+}
+
+export function moveHomeScratchpadTextToItems(
+  state: Pick<HomeTodoState, "scratchpadText" | "scratchpadItems">,
+  text: string,
+  now = new Date(),
+) {
+  const items = createHomeScratchpadItems(text, now, state.scratchpadItems.map((item) => item.id));
+  if (!items.length) return null;
+  return {
+    scratchpadText: "",
+    scratchpadItems: [...state.scratchpadItems, ...items],
+  };
 }
 
 export function reorderHomeScratchpadItems(

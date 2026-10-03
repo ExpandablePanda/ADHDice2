@@ -5475,7 +5475,7 @@ export function TaskApp() {
     saveFocusSelection,
     setMessage,
     updateTask: async (taskId, updates) => {
-      await updateTask(taskId, updates);
+      return updateTask(taskId, updates);
     },
   });
   useEffect(() => {

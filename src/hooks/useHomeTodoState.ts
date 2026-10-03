@@ -5,10 +5,10 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import {
   createHomeRoutineSectionId,
-  createHomeScratchpadItem,
   EMPTY_HOME_TODO_STATE,
   getHomeRoutineSectionDefaultName,
   hasMeaningfulHomeTodoState,
+  moveHomeScratchpadTextToItems,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
   moveHomeTodoTaskIdToUrgent,
@@ -16,7 +16,6 @@ import {
   moveHomeRoutineTaskIdToSection,
   reorderHomeScratchpadItems,
   reconcileHomeRoutineSectionAssignments,
-  type HomeScratchpadItem,
   type HomeTodoState,
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
@@ -102,7 +101,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...normalized,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 7,
+      schemaVersion: 8,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -215,7 +214,7 @@ export function useHomeTodoState(userId: string | null) {
       return;
     }
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 7, taskIds });
+    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 8, taskIds });
     dirtyRef.current = true;
     stateRef.current = next;
     setState(next);
@@ -233,7 +232,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 7,
+      schemaVersion: 8,
       tasksPerDay: nextTasksPerDay,
     });
     dirtyRef.current = true;
@@ -256,7 +255,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 7,
+      schemaVersion: 8,
       taskDayOffsets,
     });
     dirtyRef.current = true;
@@ -293,7 +292,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...normalized,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 7,
+      schemaVersion: 8,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -314,7 +313,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 7,
+      schemaVersion: 8,
       routineSections: [...current.routineSections, section],
     });
     dirtyRef.current = true;
@@ -338,7 +337,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 7,
+      schemaVersion: 8,
       routineSections,
     });
     dirtyRef.current = true;
@@ -373,7 +372,7 @@ export function useHomeTodoState(userId: string | null) {
       ...current,
       ...nextRoutineState,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 7,
+      schemaVersion: 8,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -415,13 +414,21 @@ export function useHomeTodoState(userId: string | null) {
     commitState({ ...current, ...nextMembership });
   }, [commitState, userId]);
 
-  const addScratchpadItem = useCallback((text: string): HomeScratchpadItem | null => {
-    if (!userId) return null;
+  const saveScratchpadText = useCallback((text: string) => {
+    if (!userId) return false;
     const current = stateRef.current;
-    const item = createHomeScratchpadItem(text, new Date(), current.scratchpadItems.map((entry) => entry.id));
-    if (!item) return null;
-    commitState({ ...current, scratchpadItems: [...current.scratchpadItems, item] });
-    return item;
+    if (current.scratchpadText === text) return true;
+    commitState({ ...current, scratchpadText: text });
+    return true;
+  }, [commitState, userId]);
+
+  const moveScratchpadTextToItems = useCallback((text: string) => {
+    if (!userId) return false;
+    const current = stateRef.current;
+    const nextScratchpadState = moveHomeScratchpadTextToItems(current, text);
+    if (!nextScratchpadState) return false;
+    commitState({ ...current, ...nextScratchpadState });
+    return true;
   }, [commitState, userId]);
 
   const updateScratchpadItem = useCallback((itemId: string, text: string) => {
@@ -454,12 +461,13 @@ export function useHomeTodoState(userId: string | null) {
   }, [commitState, userId]);
 
   return {
-    addScratchpadItem,
     createRoutineSection,
     deleteScratchpadItem,
     moveTodoTaskToUrgent,
     moveUrgentTaskToTodo,
     reorderScratchpadItems,
+    moveScratchpadTextToItems,
+    saveScratchpadText,
     state,
     syncStatus,
     updateRoutineSectionName,

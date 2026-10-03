@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -61,6 +61,7 @@ import {
   type HomeScratchpadItem,
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
+import { promoteHomeSearchResultToUrgent } from "@/lib/home-urgent-search";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import {
   TASK_TABLE_LIST_CHIP_CLASS,
@@ -402,12 +403,13 @@ export function HomePage({
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
   const {
-    addScratchpadItem,
     createRoutineSection,
     deleteScratchpadItem,
     moveTodoTaskToUrgent,
     moveUrgentTaskToTodo,
     reorderScratchpadItems,
+    moveScratchpadTextToItems,
+    saveScratchpadText,
     state,
     syncStatus,
     updateRoutineSectionName,
@@ -444,7 +446,7 @@ export function HomePage({
   const suppressGearClickRef = useRef(false);
   const suppressGearClickResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
-  const scratchpadInputRef = useRef<HTMLInputElement | null>(null);
+  const scratchpadDraftDirtyRef = useRef(false);
   const scratchpadEditCanceledRef = useRef(false);
   const routineSectionRenameCanceledRef = useRef(false);
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
@@ -547,6 +549,10 @@ export function HomePage({
     if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
     updateUrgentTaskIds((currentUrgentTaskIds) => reconcileHomeUrgentTaskIds(currentUrgentTaskIds, tasks));
   }, [syncStatus, tasks, updateUrgentTaskIds]);
+
+  useEffect(() => {
+    if (!scratchpadDraftDirtyRef.current) setScratchpadDraft(state.scratchpadText);
+  }, [state.scratchpadText]);
 
   function selectHomeTab(nextTab: HomePanelTab) {
     setActiveHomeTab(nextTab);
@@ -676,10 +682,13 @@ export function HomePage({
 
   async function addSearchResult(taskId: string) {
     if (activeHomeTab === "urgent") {
-      if (reconciledUrgentTaskIds.includes(taskId)) return;
-      const promoted = await onSetTaskPriority(taskId, "5");
+      const promoted = await promoteHomeSearchResultToUrgent({
+        moveTodoTaskToUrgent,
+        onSetTaskPriority,
+        taskId,
+        urgentTaskIds: reconciledUrgentTaskIds,
+      });
       if (!promoted) return;
-      moveTodoTaskToUrgent(taskId);
       setQuery("");
       setIsSearchOpen(false);
       return;
@@ -696,12 +705,15 @@ export function HomePage({
     updateTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
   }
 
-  function addScratchpadDraft(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const item = addScratchpadItem(scratchpadDraft);
-    if (!item) return;
+  function saveScratchpadDraft() {
+    if (!saveScratchpadText(scratchpadDraft)) return;
+    scratchpadDraftDirtyRef.current = false;
+  }
+
+  function moveScratchpadDraftToItems() {
+    if (!moveScratchpadTextToItems(scratchpadDraft)) return;
+    scratchpadDraftDirtyRef.current = false;
     setScratchpadDraft("");
-    window.requestAnimationFrame(() => scratchpadInputRef.current?.focus());
   }
 
   function beginScratchpadEdit(item: HomeScratchpadItem) {
@@ -1041,7 +1053,7 @@ export function HomePage({
             onClick={() => setStatusMenuTaskId((current) => current === task.id ? null : task.id)}
             type="button"
           >
-            {renderTaskStatusCircle(displayStatus, "sm", { className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" })}
+            {renderTaskStatusCircle(displayStatus, "sm")}
           </button>
           {statusMenuOpen ? (
             <div className="absolute left-0 top-full z-30 mt-2 rounded-full border border-[#e4def2] bg-white p-1 shadow-lg dark:border-white/15 dark:bg-[#201a35]">
@@ -1595,19 +1607,24 @@ export function HomePage({
         <PageShellBody>
         {activeHomeTab === "scratchpad" ? (
           <div className="relative mt-2" ref={searchRef}>
-            <form className="flex flex-wrap items-end gap-2" onSubmit={addScratchpadDraft}>
-              <label className="min-w-[min(100%,16rem)] flex-1">
+            <label className="grid gap-1.5">
                 <span className="sr-only">Scratchpad note</span>
-                <input
-                  className="health-input"
-                  onChange={(event) => setScratchpadDraft(event.target.value)}
-                  placeholder="Write something down…"
-                  ref={scratchpadInputRef}
+                <textarea
+                  aria-label="Scratchpad note"
+                  className="health-input min-h-40 w-full resize-y leading-6"
+                  onChange={(event) => {
+                    scratchpadDraftDirtyRef.current = true;
+                    setScratchpadDraft(event.target.value);
+                  }}
+                  placeholder="Write freely…"
+                  rows={8}
                   value={scratchpadDraft}
                 />
-              </label>
-              <AdhdChip selected type="submit">Add</AdhdChip>
-            </form>
+            </label>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <AdhdChip onClick={saveScratchpadDraft} selected type="button">Save</AdhdChip>
+              <AdhdChip onClick={moveScratchpadDraftToItems} type="button">Move lines to items</AdhdChip>
+            </div>
             {isCreateOpen && convertingScratchpadItemId ? (
               <div className="mt-3">
                 <TaskCreationComposer
@@ -1829,6 +1846,7 @@ export function HomePage({
             </>
           ) : (
             <>
+              <p className="mt-5 text-xs font-semibold text-[#7d7598] dark:text-white/50">Staged items</p>
               <SortableList
                 className={HOME_TODO_LIST_CLASS}
                 getId={(item) => item.id}
@@ -1895,7 +1913,7 @@ export function HomePage({
               </SortableList>
               {!state.scratchpadItems.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
-                  Capture a thought above, then turn it into a Task when you are ready.
+                  Move non-empty notepad lines here, then turn them into Tasks when you are ready.
                 </p>
               ) : null}
             </>

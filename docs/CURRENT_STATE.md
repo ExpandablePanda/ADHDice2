@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-02
+Last reviewed: 2026-10-03
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.44`.
+- Current working app version: `7.16.45`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.45 Home Urgent return contract, status alignment, and Scratchpad V8
+
+Urgent search-add now preserves the canonical Task priority mutation result, so
+Home moves a Task into its exclusive Urgent queue only after Priority 5 commits.
+Home task rows use the shared small status-circle geometry without local forced
+circle or glyph sizing. The synced `adhdice_home_todo_state` JSON is now V8 with
+saved multiline `scratchpadText`; Move lines to items atomically appends staged
+Scratchpad rows and clears the saved notepad, while conversion still creates a
+normal canonical Task in To-do Today before removing the source row. No SQL or
+Edge deployment was performed.
 
 ## 2026-10-03 7.16.44 Home queue exclusivity correction
 

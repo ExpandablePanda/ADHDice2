@@ -9,6 +9,7 @@ import {
   buildHomeTodoDaySections,
   buildHomeTodoHierarchy,
   createHomeScratchpadItem,
+  createHomeScratchpadItems,
   createHomeTodoTask,
   formatHomeRoutineDueLabel,
   formatHomeTodoDateLabel,
@@ -18,6 +19,7 @@ import {
   hasMeaningfulHomeTodoState,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
+  moveHomeScratchpadTextToItems,
   moveHomeRoutineTaskIdToSection,
   moveHomeTodoTaskId,
   moveHomeTodoTaskIdToEdge,
@@ -28,6 +30,7 @@ import {
   normalizeHomeTodoRoutineSectionNames,
   normalizeHomeTodoState,
   normalizeHomeScratchpadItems,
+  parseHomeScratchpadLines,
   reconcileHomeRoutineSectionAssignments,
   reconcileHomeRoutineTaskIds,
   reconcileHomeTodoTaskIds,
@@ -65,14 +68,14 @@ const homeTaskMetadata: HomeTodoTaskMetadata = {
   tags: [],
 };
 
-test("Home state V1/V4 payloads normalize to V7 with independent Routine defaults", () => {
+test("Home state V1/V4 payloads normalize to V8 with independent Routine defaults", () => {
   assert.deepEqual(normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
     schemaVersion: 1,
     taskIds: ["a", "a", "", 4, "b"],
   }), {
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
-    schemaVersion: 7,
+    schemaVersion: 8,
     taskIds: ["a", "b"],
     taskDayOffsets: {},
     tasksPerDay: 10,
@@ -80,6 +83,7 @@ test("Home state V1/V4 payloads normalize to V7 with independent Routine default
     routineSections: [],
     routineSectionIdByTaskId: {},
     urgentTaskIds: [],
+    scratchpadText: "",
     scratchpadItems: [],
   });
 });
@@ -541,7 +545,7 @@ test("Home Routine persistence reconciliation waits for Home hydration", () => {
   assert.equal(shouldPersistHomeRoutineReconciliation("saving"), true);
 });
 
-test("Home V7 bootstrap recognizes meaningful state outside To-do taskIds", () => {
+test("Home V8 bootstrap recognizes meaningful state outside To-do taskIds", () => {
   const empty = normalizeHomeTodoState(null);
   assert.equal(hasMeaningfulHomeTodoState(empty), false);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, taskIds: ["todo"] }), true);
@@ -551,21 +555,12 @@ test("Home V7 bootstrap recognizes meaningful state outside To-do taskIds", () =
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineSections: [{ id: "section-1", name: "Morning" }] }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineSectionIdByTaskId: { routine: "section-1" } }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, urgentTaskIds: ["urgent"] }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, scratchpadText: "Call dentist\nPick up prescription" }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, scratchpadItems: [{ id: "note", text: "Capture", createdAt: "2026-10-03T12:00:00.000Z" }] }), true);
 });
 
-test("Home V6 to V7 migration preserves existing state and initializes new fields", () => {
+test("Home V7 to V8 migration preserves existing state and initializes the notepad", () => {
   const migrated = normalizeHomeTodoState({
-    clientUpdatedAt: "2026-10-02T12:00:00.000Z",
-    schemaVersion: 6,
-    taskIds: ["todo-b", "todo-a"],
-    taskDayOffsets: { "todo-a": 2 },
-    tasksPerDay: 15,
-    routineTaskIds: ["routine"],
-    routineSections: [{ id: "morning", name: "Morning" }],
-    routineSectionIdByTaskId: { routine: "morning" },
-  });
-  assert.deepEqual(migrated, {
     clientUpdatedAt: "2026-10-02T12:00:00.000Z",
     schemaVersion: 7,
     taskIds: ["todo-b", "todo-a"],
@@ -574,8 +569,20 @@ test("Home V6 to V7 migration preserves existing state and initializes new field
     routineTaskIds: ["routine"],
     routineSections: [{ id: "morning", name: "Morning" }],
     routineSectionIdByTaskId: { routine: "morning" },
+    scratchpadItems: [{ id: "note", text: "Legacy capture", createdAt: "2026-10-03T12:00:00.000Z" }],
+  });
+  assert.deepEqual(migrated, {
+    clientUpdatedAt: "2026-10-02T12:00:00.000Z",
+    schemaVersion: 8,
+    taskIds: ["todo-b", "todo-a"],
+    taskDayOffsets: { "todo-a": 2 },
+    tasksPerDay: 15,
+    routineTaskIds: ["routine"],
+    routineSections: [{ id: "morning", name: "Morning" }],
+    routineSectionIdByTaskId: { routine: "morning" },
     urgentTaskIds: [],
-    scratchpadItems: [],
+    scratchpadText: "",
+    scratchpadItems: [{ id: "note", text: "Legacy capture", createdAt: "2026-10-03T12:00:00.000Z" }],
   });
 });
 
@@ -595,28 +602,30 @@ test("Home V1 through V6 migration defaults Urgent and Scratchpad without droppi
   }
 });
 
-test("Home V7 round trip preserves Urgent order and Scratchpad order/content", () => {
+test("Home V8 round trip preserves Urgent order, multiline text, and Scratchpad order/content", () => {
   const state = normalizeHomeTodoState({
-    schemaVersion: 7,
+    schemaVersion: 8,
     urgentTaskIds: ["urgent-b", "urgent-a"],
+    scratchpadText: "Call dentist\n\nFix billing page",
     scratchpadItems: [
       { id: "note-b", text: "Second note", createdAt: "2026-10-03T12:01:00.000Z" },
       { id: "note-a", text: "First note", createdAt: "2026-10-03T12:00:00.000Z" },
     ],
   });
   assert.deepEqual(normalizeHomeTodoState(state).urgentTaskIds, ["urgent-b", "urgent-a"]);
+  assert.equal(normalizeHomeTodoState(state).scratchpadText, "Call dentist\n\nFix billing page");
   assert.deepEqual(normalizeHomeTodoState(state).scratchpadItems, state.scratchpadItems);
 });
 
-test("Home V7 normalization repairs Urgent/To-do overlap with Urgent precedence", () => {
+test("Home V8 normalization repairs Urgent/To-do overlap with Urgent precedence", () => {
   assert.deepEqual(normalizeHomeTodoState({
-    schemaVersion: 7,
+    schemaVersion: 8,
     taskIds: ["a", "b", "a", "d"],
     taskDayOffsets: { a: 0, b: 3, d: 7, stale: 2 },
     urgentTaskIds: ["b", "c", "b"],
   }), {
     clientUpdatedAt: "1970-01-01T00:00:00.000Z",
-    schemaVersion: 7,
+    schemaVersion: 8,
     taskIds: ["a", "d"],
     taskDayOffsets: { a: 0, d: 7 },
     tasksPerDay: 10,
@@ -624,10 +633,11 @@ test("Home V7 normalization repairs Urgent/To-do overlap with Urgent precedence"
     routineSections: [],
     routineSectionIdByTaskId: {},
     urgentTaskIds: ["b", "c"],
+    scratchpadText: "",
     scratchpadItems: [],
   });
   const stable = normalizeHomeTodoState({
-    schemaVersion: 7,
+    schemaVersion: 8,
     taskIds: ["a", "b"],
     taskDayOffsets: { a: 0, b: 1 },
     urgentTaskIds: ["c", "d"],
@@ -692,7 +702,31 @@ test("Home Scratchpad helpers trim, reject malformed entries, create unique IDs,
   ], ["b", "missing"] as string[]).map((entry) => entry.id), ["b", "a"]);
 });
 
-test("Home V5 Routine chunks migrate to stable explicit V7 sections", () => {
+test("Home Scratchpad line staging trims, skips blanks, preserves order, and keeps duplicate text", () => {
+  assert.deepEqual(parseHomeScratchpadLines(" Call dentist \n\n Pick up prescription\r\nFix billing page \n"), [
+    "Call dentist",
+    "Pick up prescription",
+    "Fix billing page",
+  ]);
+  const items = createHomeScratchpadItems(
+    " Same line \n\nSame line",
+    new Date("2026-10-03T12:03:00.000Z"),
+    ["scratchpad-existing"],
+  );
+  assert.deepEqual(items.map((item) => item.text), ["Same line", "Same line"]);
+  assert.equal(new Set(items.map((item) => item.id)).size, 2);
+  const moved = moveHomeScratchpadTextToItems({
+    scratchpadText: "old draft",
+    scratchpadItems: [{ id: "existing", text: "Existing", createdAt: "2026-10-03T12:00:00.000Z" }],
+  }, " First \n\nSecond ", new Date("2026-10-03T12:04:00.000Z"));
+  assert.equal(moved?.scratchpadText, "");
+  assert.deepEqual(moved?.scratchpadItems.map((item) => item.text), ["Existing", "First", "Second"]);
+  assert.equal(new Set(moved?.scratchpadItems.map((item) => item.id)).size, 3);
+  assert.ok(moved?.scratchpadItems.slice(1).every((item) => item.createdAt === "2026-10-03T12:04:00.000Z"));
+  assert.equal(moveHomeScratchpadTextToItems({ scratchpadText: "", scratchpadItems: [] }, " \n\t"), null);
+});
+
+test("Home V5 Routine chunks migrate to stable explicit V8 sections", () => {
   const migrated = normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
     schemaVersion: 5,
@@ -700,7 +734,7 @@ test("Home V5 Routine chunks migrate to stable explicit V7 sections", () => {
     routinesPerSection: 3,
     routineSectionNames: { "0": "  Morning ", "1": "Evening" },
   });
-  assert.equal(migrated.schemaVersion, 7);
+  assert.equal(migrated.schemaVersion, 8);
   assert.deepEqual(migrated.routineSections, [
     { id: "routine-section-0", name: "Morning" },
     { id: "routine-section-1", name: "Evening" },
@@ -715,14 +749,14 @@ test("Home V5 Routine chunks migrate to stable explicit V7 sections", () => {
   assert.deepEqual(buildHomeRoutineSections(migrated.routineTaskIds, migrated.routineSections, migrated.routineSectionIdByTaskId).map((section) => section.groupIds), [["a", "b", "c"], ["d"]]);
 });
 
-test("Home V4 Routine capacity migrates to V7 without losing order", () => {
+test("Home V4 Routine capacity migrates to V8 without losing order", () => {
   const migrated = normalizeHomeTodoState({
     schemaVersion: 4,
     taskIds: [],
     routineTaskIds: ["routine-b", "routine-a"],
     routinesPerPhase: 4,
   });
-  assert.equal(migrated.schemaVersion, 7);
+  assert.equal(migrated.schemaVersion, 8);
   assert.deepEqual(migrated.routineSections, [{ id: "routine-section-0", name: "Section 1" }]);
   assert.deepEqual(migrated.routineTaskIds, ["routine-b", "routine-a"]);
   assert.deepEqual(migrated.routineSectionIdByTaskId, { "routine-b": "routine-section-0", "routine-a": "routine-section-0" });
@@ -772,7 +806,7 @@ test("Home V6 preserves Routine assignments outside Home To-do membership", () =
 
 test("Home V6 assignments have one section per Routine and safe stale fallback", () => {
   const state = normalizeHomeTodoState({
-    schemaVersion: 7,
+    schemaVersion: 8,
     routineTaskIds: ["a", "b"],
     routineSections: [{ id: "morning", name: "Morning" }, { id: "evening", name: "Evening" }],
     routineSectionIdByTaskId: { a: "morning", b: "unknown", stale: "evening" },
@@ -886,7 +920,7 @@ test("Home state rejects malformed Routine order, capacity, and names while pres
     routineSectionNames: { "0": "  Morning  ", "1": " ", "-1": "Invalid", bad: "Invalid", "2": 3 },
   }), {
     clientUpdatedAt: new Date(0).toISOString(),
-    schemaVersion: 7,
+    schemaVersion: 8,
     taskIds: ["todo-a"],
     taskDayOffsets: { "todo-a": 2 },
     tasksPerDay: 15,
@@ -894,6 +928,7 @@ test("Home state rejects malformed Routine order, capacity, and names while pres
     routineSections: [{ id: "routine-section-0", name: "Morning" }],
     routineSectionIdByTaskId: { "routine-a": "routine-section-0" },
     urgentTaskIds: [],
+    scratchpadText: "",
     scratchpadItems: [],
   });
 });
@@ -1021,7 +1056,7 @@ test("Home To-do search includes existing members and guards duplicate adds", ()
   assert.match(source, /isInTodo = todoTaskIdSet\.has\(task\.id\)/);
   assert.match(source, /isInUrgent = urgentTaskIdSet\.has\(task\.id\)/);
   assert.match(source, /activeHomeTab === "urgent" \? isInUrgent : activeHomeTab === "todo" \? isInTodo \|\| isInUrgent : false/);
-  assert.match(source, /if \(reconciledUrgentTaskIds\.includes\(taskId\)\) return/);
+  assert.match(source, /promoteHomeSearchResultToUrgent/);
   assert.match(source, /taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]/);
   assert.match(source, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
   assert.match(source, /sortHomeTodoSearchResults\(tasks/);
@@ -1031,17 +1066,18 @@ test("Home To-do search includes existing members and guards duplicate adds", ()
 
 test("Home Urgent search uses guarded Priority 5 promotion before the shared exclusive move", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const urgentSearchSource = readFileSync(new URL("../src/lib/home-urgent-search.ts", import.meta.url), "utf8");
   const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const searchAddStart = source.indexOf("async function addSearchResult");
-  const searchAddEnd = source.indexOf("\n  function addScratchpadDraft", searchAddStart);
+  const searchAddEnd = source.indexOf("\n  function saveScratchpadDraft", searchAddStart);
   const searchAddSource = source.slice(searchAddStart, searchAddEnd);
-  const priorityIndex = searchAddSource.indexOf('await onSetTaskPriority(taskId, "5")');
-  const failureGuardIndex = searchAddSource.indexOf("if (!promoted) return;");
-  const moveIndex = searchAddSource.indexOf("moveTodoTaskToUrgent(taskId)");
+  const priorityIndex = urgentSearchSource.indexOf('await onSetTaskPriority(taskId, "5")');
+  const failureGuardIndex = urgentSearchSource.indexOf("if (!promoted) return false;");
+  const moveIndex = urgentSearchSource.indexOf("moveTodoTaskToUrgent(taskId)");
   assert.match(source, /reconcileHomeUrgentTaskIds\(state\.urgentTaskIds, tasks\)/);
-  assert.match(searchAddSource, /if \(reconciledUrgentTaskIds\.includes\(taskId\)\) return/);
-  assert.match(source, /await onSetTaskPriority\(taskId, "5"\)/);
-  assert.match(searchAddSource, /moveTodoTaskToUrgent\(taskId\)/);
+  assert.match(searchAddSource, /promoteHomeSearchResultToUrgent/);
+  assert.match(urgentSearchSource, /await onSetTaskPriority\(taskId, "5"\)/);
+  assert.match(urgentSearchSource, /moveTodoTaskToUrgent\(taskId\)/);
   assert.ok(priorityIndex >= 0 && priorityIndex < failureGuardIndex && failureGuardIndex < moveIndex);
   assert.match(source, /priority_level: 5 as const/);
   assert.match(source, /moveUrgentTaskToTodo\(task\.id, destination\.dayOffset\)/);
@@ -1065,22 +1101,27 @@ test("Home shared Task search stays in shell flow for Urgent, To-do, and Routine
   assert.match(source, /activeHomeTab === "urgent"/);
   assert.match(source, /activeHomeTab === "todo"/);
   assert.match(source, /activeHomeTab === "routine"/);
-  assert.match(source, /placeholder="Write something down…"/);
+  assert.match(source, /<textarea/);
+  assert.match(source, /placeholder="Write freely…"/);
+  assert.match(source, /Move lines to items/);
 });
 
 test("Home Scratchpad is non-Task state and conversion preserves source until canonical creation succeeds", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
   const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
   const composerSource = readFileSync(new URL("../src/components/task-app/task-creation-composer.tsx", import.meta.url), "utf8");
-  assert.match(source, /placeholder="Write something down…"/);
-  assert.match(source, /addScratchpadItem\(scratchpadDraft\)/);
+  assert.match(source, /placeholder="Write freely…"/);
+  assert.match(source, /saveScratchpadText\(scratchpadDraft\)/);
+  assert.match(source, /moveScratchpadTextToItems\(scratchpadDraft\)/);
+  assert.match(source, /setScratchpadDraft\(""\)/);
   assert.match(source, /onKeyDown=\{\(event\) => \{[\s\S]*event\.key === "Escape"/);
   assert.match(source, /updateScratchpadItem\(itemId, scratchpadEditDraft\)/);
   assert.match(source, /Convert to Task/);
   assert.match(source, /initialTitle=\{state\.scratchpadItems\.find/);
   assert.match(source, /updateTaskDayOffset\(createdTask\.id, 0\)/);
   assert.match(source, /deleteScratchpadItem\(conversionItemId\)/);
-  assert.match(hookSource, /createHomeScratchpadItem/);
+  assert.match(hookSource, /moveHomeScratchpadTextToItems/);
+  assert.match(hookSource, /scratchpadText: text/);
   assert.match(hookSource, /reorderHomeScratchpadItems/);
   assert.match(composerSource, /initialTitle\?: string/);
   assert.match(composerSource, /const \[title, setTitle\] = useState\(initialTitle\)/);
@@ -1154,7 +1195,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(sortableSource, /processPointerMove\(event\.clientY\)/);
   assert.match(hookSource, /state: outgoing/);
   assert.match(hookSource, /tasksPerDay: nextTasksPerDay/);
-  assert.match(hookSource, /schemaVersion: 7/);
+  assert.match(hookSource, /schemaVersion: 8/);
   assert.match(hookSource, /routineSections/);
   assert.match(hookSource, /routineSectionIdByTaskId/);
   assert.match(hookSource, /createRoutineSection/);
@@ -1190,7 +1231,8 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /<Settings2 aria-hidden="true" \/>/);
   assert.match(source, /aria-haspopup="menu"/);
   assert.match(source, /role="menu"/);
-  assert.match(source, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" \}\)/);
+  assert.match(source, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
+  assert.doesNotMatch(source, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7"/);
   assert.doesNotMatch(source, /flex shrink-0 flex-col items-center/);
   assert.doesNotMatch(source, /basis-full/);
   assert.match(source, /<ArrowUpToLine aria-hidden="true"/);
@@ -1284,17 +1326,18 @@ test("Home Routine section updates use canonical Routine ordering", () => {
   assert.match(updateSource, /nextRoutineState\.routineTaskIds\) === JSON\.stringify\(current\.routineTaskIds\)/);
 });
 
-test("useHomeTodoState exposes V7 Urgent and Scratchpad mutations through shared persistence", () => {
+test("useHomeTodoState exposes V8 Urgent and Scratchpad mutations through shared persistence", () => {
   const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
   assert.match(hookSource, /const commitState = useCallback/);
   assert.match(hookSource, /const updateUrgentTaskIds = useCallback/);
   assert.match(hookSource, /const moveUrgentTaskToTodo = useCallback/);
   assert.match(hookSource, /const moveTodoTaskToUrgent = useCallback/);
-  assert.match(hookSource, /const addScratchpadItem = useCallback/);
+  assert.match(hookSource, /const saveScratchpadText = useCallback/);
+  assert.match(hookSource, /const moveScratchpadTextToItems = useCallback/);
   assert.match(hookSource, /const updateScratchpadItem = useCallback/);
   assert.match(hookSource, /const deleteScratchpadItem = useCallback/);
   assert.match(hookSource, /const reorderScratchpadItems = useCallback/);
-  assert.match(hookSource, /schemaVersion: 7/);
+  assert.match(hookSource, /schemaVersion: 8/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
   assert.match(hookSource, /scheduleWrite\(\)/);
 });

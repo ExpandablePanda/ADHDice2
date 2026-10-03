@@ -4,7 +4,7 @@ import test from "node:test";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("7.16.42 Home work surfaces keep V7 state local to Home", () => {
+test("7.16.45 Home work surfaces keep V8 state local to Home", () => {
   const app = read("../src/components/task-app.tsx");
   const home = read("../src/components/task-app/home-page.tsx");
   const table = read("../src/components/ui/task-management-table-v2.tsx");

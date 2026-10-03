@@ -14,7 +14,7 @@ type UseTaskPriorityRoutingControllerInput = {
   routeTask: (taskId: string, route: TaskRoutingBucket | null) => Promise<void> | void;
   saveFocusSelection: (nextTaskIds: string[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
-  updateTask: (taskId: string, updates: Partial<Task>) => Promise<void>;
+  updateTask: (taskId: string, updates: Partial<Task>) => Promise<boolean>;
 };
 
 export function useTaskPriorityRoutingController({
@@ -84,7 +84,7 @@ export function useTaskPriorityRoutingController({
     }
 
     if (normalizedPriority.priorityLevel !== null) {
-      return await updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
+      return updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
     }
 
     return true;
