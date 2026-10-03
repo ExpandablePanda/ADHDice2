@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { addMealFromParsedFood, createManualBatchIntakeDraft, duplicateManualBatchIntakeDraft, parseBatchIntake, parseBatchIntakeDuration } from "../src/lib/home-batch-intake.ts";
+import { addMealFromParsedFood, createManualBatchIntakeDraft, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
@@ -104,6 +104,8 @@ test("golden Obsidian fixture parses Phase 1 records without silently dropping l
   assert.equal(drafts.some((draft) => draft.sourceText === "tasks" || draft.sourceText === "water"), false);
   assert.equal(new Set(drafts.map((draft) => draft.id)).size, drafts.length);
   assert.ok(drafts.every((draft) => draft.origin === "parsed" && draft.sourceLineNumber !== null));
+  assert.equal(getBatchIntakeReviewGroups(drafts.filter((draft) => draft.kind === "water")).length, 1);
+  assert.equal(getBatchIntakeReviewGroups(drafts.filter((draft) => draft.kind === "weight")).length, 1);
 });
 
 test("manual Batch Intake constructors use explicit manual origins and editable defaults", () => {
@@ -186,6 +188,24 @@ test("a duplicate from an Applied source is still fresh, included, and independe
   assert.equal(getBatchIntakeApplyCount([source, duplicate]), 2);
 });
 
+test("occurrences keep one review group while preserving independent row identity", () => {
+  const source = {
+    ...createManualBatchIntakeDraft("task", { date: "2026-10-01", id: "task-one" }),
+    groupId: "task:canonical-nba",
+    selectedTaskId: "canonical-nba",
+    taskTitle: "NBA 2K27",
+    outcome: "done" as const,
+    issues: [],
+  };
+  const second = { ...duplicateManualBatchIntakeDraft(source, { id: "task-two", writeId: "unused" }), date: "2026-10-02", outcome: "did_my_best" as const };
+  const third = { ...duplicateManualBatchIntakeDraft(second, { id: "task-three", writeId: "unused" }), date: "2026-10-03", outcome: "done" as const };
+  const groups = getBatchIntakeReviewGroups([source, second, third]);
+  assert.equal(groups.length, 1);
+  assert.deepEqual(groups[0]?.occurrenceIds, ["task-one", "task-two", "task-three"]);
+  assert.equal(new Set([source.id, second.id, third.id]).size, 3);
+  assert.equal(getBatchIntakeApplyCount([source, second, third]), 3);
+});
+
 const libraryFood = {
   id: "food-turkey-bacon",
   user_id: "user-1",
@@ -236,6 +256,21 @@ test("custom food selection preserves canonical identity and parsed Meal derivat
   assert.equal(input.provider_item_id, "provider-turkey-bacon");
   assert.equal(input.food_snapshot?.source_food_id, "food-turkey-bacon");
   assert.equal(input.nutrition_snapshot?.calories, 60);
+});
+
+test("grouped Custom Food occurrences calculate consumed nutrition from the stored serving", () => {
+  const fourSliceFood = { ...libraryFood, serving_label: "4 slices", serving_size: "4 slices", serving_quantity: 4, calories: 120 };
+  const selection = { ...mealFoodSelectionFromLibraryItem(fourSliceFood), consumedQuantity: 8, consumedUnit: "slice" };
+  const input = buildHealthMealEntryInputFromSelection(selection, { date: "2026-10-01", id: "meal-two-servings", loggedAt: "2026-10-01T12:00:00.000Z", mealSlot: "breakfast" });
+  assert.equal(input.source_food_id, fourSliceFood.id);
+  assert.equal(input.consumed_quantity, 8);
+  assert.equal(input.consumed_unit, "slice");
+  assert.equal(input.calories, 240);
+  assert.equal(input.nutrition_snapshot?.calories, 240);
+  assert.equal(input.serving_fraction, 2);
+  assert.equal(input.food_snapshot?.calories, 120);
+  assert.equal(fourSliceFood.serving_quantity, 4);
+  assert.equal(fourSliceFood.calories, 120);
 });
 
 test("date parsing handles omitted years, explicit years, and New Year rollover", () => {

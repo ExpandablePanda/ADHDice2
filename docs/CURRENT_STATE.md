@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.52`.
+- Current working app version: `7.16.53`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.53 Batch Intake grouped occurrences and consumed Custom Food quantities
+
+Batch Intake review now presents one ephemeral group per canonical Task, Custom
+Food, Focus category, or explicit Water/Weight group, with independent flat
+occurrence drafts beneath it. Adding an occurrence creates fresh draft/write
+identities while preserving row-based progress, retry, Applied locking, and the
+existing Task History, Health, and Focus authorities. Parsed Meal source
+evidence remains untouched, and different selected foods remain separate groups.
+
+Structured Meal occurrences now record consumed quantity/unit and calculate
+nutrition through the existing Health food calculation authority; the stored
+Custom Food definition remains unchanged. No SQL, Edge deployment, Home V8
+change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.52 Batch Intake repeated occurrences, custom food matching, and exact Focus duration parsing
 

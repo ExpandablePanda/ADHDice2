@@ -3,6 +3,7 @@ import type { FocusCategory, FocusSubtype, FocusType } from "@/lib/types";
 import { displayWeightToKilograms } from "@/lib/health-utils";
 import { mealFoodSelectionFromLibraryItem } from "@/lib/health-meal-draft";
 import { waterAmountToMilliliters } from "@/lib/health-library";
+import { calculateHealthFoodNutrition } from "@/lib/health-nutrition";
 
 export type BatchIntakeKind = "task" | "water" | "weight" | "meal" | "focus" | "unsupported";
 export type BatchIntakeManualKind = Exclude<BatchIntakeKind, "unsupported">;
@@ -12,6 +13,7 @@ export type BatchIntakeWaterStatus = "pending" | "confirmed" | null;
 
 type BatchIntakeDraftBase = {
   id: string;
+  groupId: string;
   sourceText: string;
   sourceLineNumber: number | null;
   date: string | null;
@@ -115,6 +117,8 @@ export type BatchIntakeManualMealDraft = BatchIntakeManualDraftBase & {
   servingUnit: string;
   servingMeasureValue: number | null;
   servingMeasureUnit: HealthServingMeasureUnit | null;
+  consumedQuantity: number | null;
+  consumedUnit: string;
   time: string;
 };
 
@@ -160,6 +164,30 @@ export type BatchIntakeDraft =
   | BatchIntakeMealDraft
   | BatchIntakeFocusDraft
   | BatchIntakeUnsupportedDraft;
+
+export type BatchIntakeReviewGroup = {
+  id: string;
+  kind: BatchIntakeKind;
+  occurrenceIds: string[];
+  drafts: BatchIntakeDraft[];
+};
+
+export function batchIntakeCanonicalGroupId(kind: "task" | "meal" | "focus", identity: string) {
+  return `${kind}:${identity}`;
+}
+
+export function getBatchIntakeReviewGroups(drafts: readonly BatchIntakeDraft[]): BatchIntakeReviewGroup[] {
+  const groups = new Map<string, BatchIntakeReviewGroup>();
+  drafts.forEach((draft) => {
+    const id = draft.groupId || draft.id;
+    const key = `${draft.kind}:${id}`;
+    const group = groups.get(key) ?? { id, kind: draft.kind, occurrenceIds: [], drafts: [] };
+    group.occurrenceIds.push(draft.id);
+    group.drafts.push(draft);
+    groups.set(key, group);
+  });
+  return [...groups.values()];
+}
 
 export type ParseBatchIntakeOptions = {
   referenceDate: string;
@@ -219,6 +247,7 @@ function makeBase(
 ) {
   return {
     id: `batch-intake-${lineNumber}-${part}`,
+    groupId: `batch-intake-${kind}-${lineNumber}-${part}`,
     sourceText: line,
     sourceLineNumber: lineNumber,
     origin: "parsed" as const,
@@ -238,6 +267,7 @@ function currentLocalTime() {
 function manualBase(id: string, sourceText: string, date: string | null) {
   return {
     id,
+    groupId: id,
     sourceText,
     sourceLineNumber: null,
     origin: "manual" as const,
@@ -315,6 +345,8 @@ export function createManualBatchIntakeDraft(
       servingUnit: "serving",
       servingMeasureValue: null,
       servingMeasureUnit: null,
+      consumedQuantity: 1,
+      consumedUnit: "serving",
       time,
       issues: ["Food name is required", "Calories are required"],
     } satisfies BatchIntakeManualMealDraft;
@@ -457,6 +489,7 @@ function createParsedFocusDraft(
     notes: "",
     title: category.title,
     writeId: undefined,
+    groupId: batchIntakeCanonicalGroupId("focus", category.id),
   };
 }
 
@@ -598,7 +631,11 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
     section = null;
   }
 
-  return drafts;
+  return drafts.map((draft) => {
+    if (draft.kind === "water" && draft.origin === "parsed") return { ...draft, groupId: "parsed:water" };
+    if (draft.kind === "weight" && draft.origin === "parsed") return { ...draft, groupId: "parsed:weight" };
+    return draft;
+  });
 }
 
 export function duplicateManualBatchIntakeDraft(
@@ -607,6 +644,7 @@ export function duplicateManualBatchIntakeDraft(
 ): Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeParsedMealDraft> {
   const base = {
     id: options.id,
+    groupId: draft.groupId,
     sourceText: draft.sourceText,
     sourceLineNumber: null,
     origin: "manual" as const,
@@ -692,11 +730,37 @@ export function addMealFromParsedFood(
     servingMeasureValue: selection.servingMeasureValue,
     servingQuantity: selection.servingQuantity,
     servingUnit: selection.servingUnit,
+    consumedQuantity: selection.servingQuantity,
+    consumedUnit: selection.servingUnit,
     sourceFoodId: selection.sourceFoodId,
     sourceParsedMealId: parsedMeal.id,
     time: options.time ?? "12:00",
     writeId: options.writeId,
+    groupId: batchIntakeCanonicalGroupId("meal", selection.sourceFoodId ?? options.id),
   };
+}
+
+export function calculateBatchIntakeMealNutrition(draft: Pick<BatchIntakeManualMealDraft, "calories" | "carbsG" | "fatG" | "nutritionDetails" | "proteinG" | "servingMeasureUnit" | "servingMeasureValue" | "servingQuantity" | "servingUnit" | "consumedQuantity" | "consumedUnit">) {
+  if (draft.calories === null || draft.consumedQuantity === null || !draft.consumedUnit.trim()) return null;
+  try {
+    return calculateHealthFoodNutrition({
+      consumedQuantity: draft.consumedQuantity,
+      consumedUnit: draft.consumedUnit,
+      nutritionPerServing: {
+        calories: draft.calories,
+        carbs_g: draft.carbsG,
+        fat_g: draft.fatG,
+        nutrition_details: draft.nutritionDetails,
+        protein_g: draft.proteinG,
+      },
+      servingMeasureUnit: draft.servingMeasureUnit,
+      servingMeasureValue: draft.servingMeasureValue,
+      servingQuantity: draft.servingQuantity,
+      servingUnit: draft.servingUnit,
+    });
+  } catch {
+    return null;
+  }
 }
 
 export function waterDraftAmountInMilliliters(draft: Pick<BatchIntakeWaterDraft, "amount" | "unit">) {

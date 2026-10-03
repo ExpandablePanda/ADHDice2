@@ -794,7 +794,7 @@ export function HomePage({
     ]);
   }
 
-  function addAnotherBatchIntakeOccurrence(sourceDraft: BatchIntakeDraft) {
+  function addBatchIntakeOccurrence(sourceDraft: BatchIntakeDraft) {
     if (sourceDraft.kind === "unsupported" || (sourceDraft.kind === "meal" && sourceDraft.origin === "parsed")) return;
     const duplicate = duplicateManualBatchIntakeDraft(sourceDraft, {
       id: createBrowserUuidV4(),
@@ -808,13 +808,84 @@ export function HomePage({
     });
   }
 
-  function addMealFromParsedSource(parsedMeal: BatchIntakeParsedMealDraft, food: HealthFoodLibraryItem) {
-    const derived = addMealFromParsedFood(parsedMeal, food, {
-      id: createBrowserUuidV4(),
-      writeId: createBrowserUuidV4(),
-    });
+  function changeBatchIntakeDraft(nextDraft: BatchIntakeDraft) {
     setBatchIntakeDrafts((current) => {
       if (!current) return current;
+      const previous = current.find((draft) => draft.id === nextDraft.id);
+      if (!previous) return current;
+      const sourceGroup = current.filter((draft) => draft.groupId === previous.groupId);
+      const appliedInSourceGroup = sourceGroup.some((draft) => batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied"));
+      const sharedIdentityChanged = previous.kind === "task" && nextDraft.kind === "task"
+        ? previous.selectedTaskId !== nextDraft.selectedTaskId
+        : previous.kind === "meal" && nextDraft.kind === "meal" && previous.origin === "manual" && nextDraft.origin === "manual"
+          ? previous.sourceFoodId !== nextDraft.sourceFoodId
+          : previous.kind === "focus" && nextDraft.kind === "focus"
+            ? previous.categoryId !== nextDraft.categoryId
+            : false;
+      if (sharedIdentityChanged && appliedInSourceGroup) return current;
+
+      const sharedKind = nextDraft.kind === "task" || nextDraft.kind === "meal" || nextDraft.kind === "focus";
+      return current.map((draft) => {
+        if (draft.id === nextDraft.id) return nextDraft;
+        if (!sharedKind || draft.groupId !== previous.groupId) return draft;
+        const draftApplied = batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied");
+        if (draftApplied) return draft;
+        if (nextDraft.kind === "task" && draft.kind === "task") {
+          return { ...draft, groupId: nextDraft.groupId, selectedTaskId: nextDraft.selectedTaskId, taskTitle: nextDraft.taskTitle };
+        }
+        if (nextDraft.kind === "focus" && draft.kind === "focus") {
+          return {
+            ...draft,
+            categoryId: nextDraft.categoryId,
+            focusSubtype: nextDraft.focusSubtype,
+            focusSubtype2: nextDraft.focusSubtype2,
+            focusType: nextDraft.focusType,
+            groupId: nextDraft.groupId,
+            title: nextDraft.title,
+          };
+        }
+        if (nextDraft.kind === "meal" && draft.kind === "meal" && draft.origin === "manual" && nextDraft.origin === "manual") {
+          const resetConsumption = previous.kind === "meal" && previous.origin === "manual" && previous.sourceFoodId !== nextDraft.sourceFoodId;
+          return {
+            ...draft,
+            attribution: nextDraft.attribution,
+            barcode: nextDraft.barcode,
+            brandName: nextDraft.brandName,
+            calories: nextDraft.calories,
+            carbsG: nextDraft.carbsG,
+            consumedQuantity: resetConsumption ? nextDraft.consumedQuantity : draft.consumedQuantity,
+            consumedUnit: resetConsumption ? nextDraft.consumedUnit : draft.consumedUnit,
+            fatG: nextDraft.fatG,
+            foodCategory: nextDraft.foodCategory,
+            foodName: nextDraft.foodName,
+            groupId: nextDraft.groupId,
+            nutritionDetails: nextDraft.nutritionDetails,
+            provider: nextDraft.provider,
+            providerItemId: nextDraft.providerItemId,
+            proteinG: nextDraft.proteinG,
+            servingLabel: nextDraft.servingLabel,
+            servingMeasureUnit: nextDraft.servingMeasureUnit,
+            servingMeasureValue: nextDraft.servingMeasureValue,
+            servingQuantity: nextDraft.servingQuantity,
+            servingUnit: nextDraft.servingUnit,
+            sourceFoodId: nextDraft.sourceFoodId,
+          };
+        }
+        return draft;
+      });
+    });
+  }
+
+  function addMealFromParsedSource(parsedMeal: BatchIntakeParsedMealDraft, food: HealthFoodLibraryItem) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const existing = current.filter((draft): draft is Extract<BatchIntakeDraft, { kind: "meal"; origin: "manual" }> => draft.kind === "meal" && draft.origin === "manual" && draft.sourceFoodId === food.id);
+      const derived = existing.length > 0
+        ? (() => {
+          const duplicate = duplicateManualBatchIntakeDraft(existing.at(-1)!, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
+          return { ...duplicate, date: parsedMeal.date, mealSlot: parsedMeal.mealSlot, sourceParsedMealId: parsedMeal.id, sourceText: parsedMeal.sourceText };
+        })()
+        : addMealFromParsedFood(parsedMeal, food, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
       const sourceIndex = current.findIndex((draft) => draft.id === parsedMeal.id);
       if (sourceIndex < 0) return [...current, derived];
       return [...current.slice(0, sourceIndex + 1), derived, ...current.slice(sourceIndex + 1)];
@@ -1797,11 +1868,11 @@ export function HomePage({
                 focusCategories={focusCategories}
                 focusHistory={focusHistory}
                 onAddRow={addManualBatchRow}
-                onAddAnother={addAnotherBatchIntakeOccurrence}
+                onAddOccurrence={addBatchIntakeOccurrence}
                 onAddMealFromParsed={addMealFromParsedSource}
                 onApply={() => { void applyBatchIntake(); }}
                 onCancel={closeBatchIntakeReview}
-                onChange={(nextDraft) => setBatchIntakeDrafts((current) => current?.map((draft) => draft.id === nextDraft.id ? nextDraft : draft) ?? null)}
+                onChange={changeBatchIntakeDraft}
                 onRemoveRow={removeBatchIntakeRow}
                 tasks={tasks}
               />

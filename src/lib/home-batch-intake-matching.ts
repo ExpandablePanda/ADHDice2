@@ -1,5 +1,5 @@
 import type { Task } from "@/lib/database.types";
-import type { BatchIntakeDraft, BatchIntakeTaskDraft } from "@/lib/home-batch-intake";
+import { batchIntakeCanonicalGroupId, type BatchIntakeDraft, type BatchIntakeTaskDraft } from "@/lib/home-batch-intake";
 
 export type BatchIntakeTaskMatchState = "unique_exact" | "multiple_exact" | "no_exact";
 
@@ -69,6 +69,7 @@ export function applyBatchIntakeTaskMatches(drafts: readonly BatchIntakeDraft[],
     const existingMatchIssues = draft.issues.filter((issue) => !issue.includes("exact Task match") && !issue.includes("canonical Task"));
     return {
       ...draft,
+      groupId: state === "unique_exact" ? batchIntakeCanonicalGroupId("task", exactCandidates[0].task.id) : draft.groupId,
       selectedTaskId: state === "unique_exact" ? exactCandidates[0].task.id : null,
       confidence: state === "unique_exact" ? "high" : draft.confidence,
       issues: [...existingMatchIssues, ...taskMatchIssue(state)],
@@ -85,6 +86,7 @@ export function setBatchIntakeTaskSelection(
   const retainedIssues = draft.issues.filter((issue) => !issue.includes("exact Task match") && !issue.includes("canonical Task") && !issue.includes("Select a Task"));
   return {
     ...draft,
+    ...(selected ? { groupId: batchIntakeCanonicalGroupId("task", selected.id) } : {}),
     selectedTaskId: selected?.id ?? null,
     issues: selected ? retainedIssues : [...retainedIssues, "Select a canonical Task before applying"],
   };

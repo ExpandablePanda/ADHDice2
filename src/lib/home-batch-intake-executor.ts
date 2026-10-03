@@ -7,7 +7,7 @@ import type {
   BatchIntakeWaterDraft,
   BatchIntakeWeightDraft,
 } from "@/lib/home-batch-intake";
-import { waterDraftAmountInMilliliters, weightDraftInKilograms } from "@/lib/home-batch-intake";
+import { calculateBatchIntakeMealNutrition, waterDraftAmountInMilliliters, weightDraftInKilograms } from "@/lib/home-batch-intake";
 import { buildHealthMealLoggedAt } from "@/lib/health-utils";
 import { buildHealthMealEntryInputFromSelection } from "@/lib/health-meal-draft";
 import type { FocusManualEntryInput } from "@/lib/types";
@@ -182,6 +182,8 @@ export function buildBatchIntakeExecutionPlan(
           brandName: draft.brandName,
           calories: draft.calories!,
           carbs: draft.carbsG,
+          consumedQuantity: draft.consumedQuantity ?? undefined,
+          consumedUnit: draft.consumedUnit,
           fat: draft.fatG,
           foodCategory: draft.foodCategory,
           foodName: draft.foodName,
@@ -368,6 +370,11 @@ export function isBatchIntakeMealDraftReady(draft: BatchIntakeManualMealDraft) {
     && Number.isFinite(draft.calories)
     && draft.calories >= 0
     && optionalMacros.every((value) => value === null || (Number.isFinite(value) && value >= 0))
+    && draft.consumedQuantity !== null
+    && Number.isFinite(draft.consumedQuantity)
+    && draft.consumedQuantity > 0
+    && draft.consumedUnit.trim().length > 0
+    && calculateBatchIntakeMealNutrition(draft) !== null
     && buildHealthMealLoggedAt(draft.date, draft.time) !== null
     && draft.issues.length === 0;
 }

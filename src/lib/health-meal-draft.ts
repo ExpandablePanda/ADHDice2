@@ -6,7 +6,8 @@ import type {
   HealthServingMeasureUnit,
 } from "@/lib/database.types";
 import { getCurrentHealthDateTimeInputs } from "@/lib/health-utils";
-import { buildHealthMealFoodSnapshot } from "@/lib/health-meal-recalculation";
+import { buildHealthMealFoodSnapshot, formatHealthConsumedMealLabel } from "@/lib/health-meal-recalculation";
+import { calculateHealthFoodNutrition } from "@/lib/health-nutrition";
 
 export type MealDraft = {
   attribution: string | null;
@@ -54,6 +55,7 @@ export type MealFoodSelection = {
   servingMeasureValue: number | null;
   servingMeasureUnit: HealthServingMeasureUnit | null;
   consumedUnit?: string;
+  consumedQuantity?: number;
 };
 
 function validServingMeasureUnit(value: unknown): HealthServingMeasureUnit | null {
@@ -99,7 +101,24 @@ export function buildHealthMealEntryInputFromSelection(
 ): Omit<HealthMealEntryInsert, "user_id"> {
   const servingQuantity = Number.isFinite(selection.servingQuantity) && selection.servingQuantity > 0 ? selection.servingQuantity : 1;
   const servingUnit = selection.servingUnit.trim() || "serving";
-  const nutritionSnapshot = {
+  const consumedQuantity = selection.consumedQuantity ?? servingQuantity;
+  const consumedUnit = selection.consumedUnit ?? servingUnit;
+  const calculation = selection.consumedQuantity === undefined ? null : calculateHealthFoodNutrition({
+    consumedQuantity,
+    consumedUnit,
+    nutritionPerServing: {
+      calories: selection.calories,
+      carbs_g: selection.carbs,
+      fat_g: selection.fat,
+      nutrition_details: selection.nutritionDetails,
+      protein_g: selection.protein,
+    },
+    servingMeasureUnit: selection.servingMeasureUnit,
+    servingMeasureValue: selection.servingMeasureValue,
+    servingQuantity,
+    servingUnit,
+  });
+  const nutritionSnapshot = calculation?.nutrientTotals ?? {
     calories: Math.round(selection.calories),
     carbs_g: selection.carbs,
     fat_g: selection.fat,
@@ -111,11 +130,11 @@ export function buildHealthMealEntryInputFromSelection(
     barcode: selection.barcode,
     brand_name: selection.brandName.trim() || null,
     calories: nutritionSnapshot.calories,
-    carbs_g: selection.carbs,
-    consumed_quantity: servingQuantity,
-    consumed_unit: selection.consumedUnit ?? servingUnit,
+    carbs_g: nutritionSnapshot.carbs_g,
+    consumed_quantity: consumedQuantity,
+    consumed_unit: consumedUnit,
     entry_date: options.date,
-    fat_g: selection.fat,
+    fat_g: nutritionSnapshot.fat_g,
     food_name: selection.foodName.trim(),
     food_snapshot: buildHealthMealFoodSnapshot({
       attribution: selection.attribution,
@@ -143,9 +162,9 @@ export function buildHealthMealEntryInputFromSelection(
     nutrition_snapshot: nutritionSnapshot,
     provider: selection.provider ?? "manual",
     provider_item_id: selection.providerItemId,
-    protein_g: selection.protein,
-    serving_fraction: 1,
-    serving_label: selection.servingLabel,
+    protein_g: nutritionSnapshot.protein_g,
+    serving_fraction: calculation?.servingFraction ?? 1,
+    serving_label: calculation ? formatHealthConsumedMealLabel(calculation, selection.servingLabel) : selection.servingLabel,
     source_food_id: selection.sourceFoodId,
   };
 }
