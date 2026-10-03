@@ -32,7 +32,7 @@ import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
 import { createManualBatchIntakeDraft, parseBatchIntake, type BatchIntakeDraft, type BatchIntakeManualKind } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
-import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
+import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
 import type { HealthMealEntryInsert, HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
 import type { FocusCategory, FocusManualEntryInput, HistoricalFocusSession } from "@/lib/types";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
@@ -789,7 +789,6 @@ export function HomePage({
         preferredWeightUnit: healthProfile?.preferred_weight_unit,
       }),
     ]);
-    setBatchIntakeExecutionResult(null);
   }
 
   function removeBatchIntakeRow(rowId: string) {
@@ -819,7 +818,7 @@ export function HomePage({
       }, {
         onProgress: setBatchIntakeApplyProgress,
       });
-      setBatchIntakeExecutionResult(result);
+      setBatchIntakeExecutionResult((previous) => mergeBatchIntakeExecutionResults(previous, result));
       const appliedIds = new Set(result.rows.filter((row) => row.status === "applied").map((row) => row.rowId));
       if (appliedIds.size > 0) {
         setBatchIntakeDrafts((current) => current?.map((draft) => appliedIds.has(draft.id) ? { ...draft, included: false } : draft) ?? null);

@@ -51,6 +51,26 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /onRemoveRow/);
 });
 
+test("cumulative Applied results back every supported row lock", () => {
+  assert.match(homeSource, /setBatchIntakeExecutionResult\(\(previous\) => mergeBatchIntakeExecutionResults\(previous, result\)\)/);
+  assert.match(reviewSource, /const locked = result\?\.status === "applied"/);
+  assert.match(reviewSource, /disabled=\{locked\}/);
+  assert.match(reviewSource, /onRemove && !locked/);
+  assert.equal((reviewSource.match(/disabled=\{locked \|\| isApplying\}/g) ?? []).length, 5);
+  assert.match(reviewSource, /onRemove=\{draft\.origin === "manual" \? \(\) => onRemoveRow\(draft\.id\) : undefined\}/);
+});
+
+test("Batch Intake resets cumulative results only when a review is replaced or closed", () => {
+  const parseBlock = homeSource.slice(homeSource.indexOf("function parseScratchpadBatch"), homeSource.indexOf("function openManualBatch"));
+  const manualBlock = homeSource.slice(homeSource.indexOf("function openManualBatch"), homeSource.indexOf("function addManualBatchRow"));
+  const addRowBlock = homeSource.slice(homeSource.indexOf("function addManualBatchRow"), homeSource.indexOf("function removeBatchIntakeRow"));
+  const closeBlock = homeSource.slice(homeSource.indexOf("function closeBatchIntakeReview"), homeSource.indexOf("async function applyBatchIntake"));
+  assert.match(parseBlock, /setBatchIntakeExecutionResult\(null\)/);
+  assert.match(manualBlock, /setBatchIntakeExecutionResult\(null\)/);
+  assert.doesNotMatch(addRowBlock, /setBatchIntakeExecutionResult\(null\)/);
+  assert.match(closeBlock, /setBatchIntakeExecutionResult\(null\)/);
+});
+
 test("Batch intake does not call meal persistence or direct Supabase writes", () => {
   assert.doesNotMatch(homeSource, /addMealEntry|\.from\(/);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/home-batch-intake-executor.ts", import.meta.url), "utf8"), /\.from\(|addMealEntry/);

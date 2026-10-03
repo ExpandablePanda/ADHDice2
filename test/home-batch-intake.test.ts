@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { createManualBatchIntakeDraft, parseBatchIntake } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
-import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount } from "../src/lib/home-batch-intake-executor.ts";
+import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import type { Task } from "../src/lib/database.types.ts";
 
 const fixture = `**10/2**
@@ -233,6 +233,69 @@ test("execution serializes Task groups and keeps failed groups retryable", async
   assert.equal(result.taskGroups[0].status, "failed");
 });
 
+test("execution result merge preserves an Applied row when a retry reports it as failed", () => {
+  const merged = mergeBatchIntakeExecutionResults(
+    { rows: [{ rowId: "a", status: "applied" }], taskGroups: [] },
+    { rows: [{ rowId: "a", status: "failed", error: "late response" }], taskGroups: [] },
+  );
+  assert.deepEqual(merged.rows, [{ rowId: "a", status: "applied" }]);
+});
+
+test("execution result merge allows failed rows to become Applied after retry", () => {
+  const merged = mergeBatchIntakeExecutionResults(
+    { rows: [{ rowId: "b", status: "failed", error: "first attempt" }], taskGroups: [] },
+    { rows: [{ rowId: "b", status: "applied" }], taskGroups: [] },
+  );
+  assert.deepEqual(merged.rows, [{ rowId: "b", status: "applied" }]);
+});
+
+test("execution result merge never downgrades an Applied row", () => {
+  const merged = mergeBatchIntakeExecutionResults(
+    { rows: [{ rowId: "a", status: "applied" }, { rowId: "b", status: "failed" }], taskGroups: [] },
+    { rows: [{ rowId: "a", status: "skipped" }, { rowId: "b", status: "failed", error: "still failed" }], taskGroups: [] },
+  );
+  assert.deepEqual(merged.rows, [
+    { rowId: "a", status: "applied" },
+    { rowId: "b", status: "failed", error: "still failed" },
+  ]);
+});
+
+test("execution result merge preserves rows absent from a retry", () => {
+  const merged = mergeBatchIntakeExecutionResults(
+    { rows: [{ rowId: "a", status: "applied" }, { rowId: "b", status: "failed" }, { rowId: "c", status: "applied" }], taskGroups: [] },
+    { rows: [{ rowId: "b", status: "applied" }], taskGroups: [] },
+  );
+  assert.deepEqual(merged.rows.map((row) => [row.rowId, row.status]), [["a", "applied"], ["b", "applied"], ["c", "applied"]]);
+});
+
+test("execution result merge uses groupKey and preserves unrelated successful groups", () => {
+  const merged = mergeBatchIntakeExecutionResults(
+    {
+      rows: [],
+      taskGroups: [
+        { groupKey: "task:a", rowId: "a", status: "applied" },
+        { groupKey: "task:b", rowId: "b", status: "failed", error: "first attempt" },
+      ],
+    },
+    {
+      rows: [],
+      taskGroups: [{ groupKey: "task:b", rowId: "b-retry", status: "failed", error: "still failed" }],
+    },
+  );
+  assert.deepEqual(merged.taskGroups, [
+    { groupKey: "task:a", rowId: "a", status: "applied" },
+    { groupKey: "task:b", rowId: "b-retry", status: "failed", error: "still failed" },
+  ]);
+});
+
+test("execution result merge allows a failed task group to become Applied after retry", () => {
+  const merged = mergeBatchIntakeExecutionResults(
+    { rows: [], taskGroups: [{ groupKey: "task:b", rowId: "b", status: "failed" }] },
+    { rows: [], taskGroups: [{ groupKey: "task:b", rowId: "b", status: "applied" }] },
+  );
+  assert.deepEqual(merged.taskGroups, [{ groupKey: "task:b", rowId: "b", status: "applied" }]);
+});
+
 test("execution reports completed Task, Water, and Weight rows without changing result semantics", async () => {
   const progress: Array<{ stage: "tasks" | "water" | "weight" | "complete"; processed: number; total: number; applied: number; failed: number }> = [];
   const plan = {
@@ -288,6 +351,33 @@ test("retry progress total contains only the current executable rows", async () 
   assert.equal(progress[0]?.total, 2);
   assert.equal(progress.at(-1)?.processed, 2);
   assert.equal(progress.at(-1)?.stage, "complete");
+});
+
+test("retry progress remains current-attempt progress after prior rows were applied", async () => {
+  const progress: Array<{ processed: number; total: number }> = [];
+  await executeBatchIntakePlan({
+    taskGroups: [],
+    waterRows: [{ rowId: "retry-water", input: {} as never }],
+    weightRows: [],
+  }, {
+    syncTaskHistoryEntries: async () => true,
+    addWaterEntries: async () => ({ success: true, rows: [{ index: 0, success: true }] }),
+    addWeightEntries: async () => ({ success: true, rows: [] }),
+    addMealEntries: async () => ({ success: true, rows: [] }),
+    handleManualFocusEntries: async () => ({ success: true, rows: [] }),
+  }, { onProgress: (next) => progress.push({ processed: next.processed, total: next.total }) });
+  assert.deepEqual(progress[0], { processed: 0, total: 1 });
+  assert.deepEqual(progress.at(-1), { processed: 1, total: 1 });
+});
+
+test("execution result merging does not change current-draft apply count semantics", () => {
+  const draft = createManualBatchIntakeDraft("water", { date: "2026-10-03", id: "water-row" });
+  const merged = mergeBatchIntakeExecutionResults(
+    { rows: [{ rowId: "prior-row", status: "applied" }], taskGroups: [] },
+    { rows: [{ rowId: "water-row", status: "applied" }], taskGroups: [] },
+  );
+  assert.equal(merged.rows.length, 2);
+  assert.equal(getBatchIntakeApplyCount([{ ...draft, amount: 16, status: "confirmed", issues: [] }]), 1);
 });
 
 test("execution runs Meals before Focus serially and preserves partial failures for retry", async () => {

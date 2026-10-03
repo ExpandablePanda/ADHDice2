@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.49`.
+- Current working app version: `7.16.50`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.50 Batch Intake retry-result preservation
+
+Batch Intake Apply now merges each current-attempt execution result into the
+open review's cumulative result. Rows and Task groups absent from a retry stay
+visible, failed rows can become Applied, and an Applied row or group cannot be
+downgraded by a later result. Applied rows therefore remain locked across
+unrelated retries while retry progress continues to report only the current
+execution plan. Parse Batch Intake, opening Manual Batch, and closing the
+review still clear the ephemeral result history. No SQL, Edge deployment,
+Home V8 change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.49 Scratchpad Manual Batch Intake
 

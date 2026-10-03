@@ -38,6 +38,38 @@ export type BatchIntakeExecutionResult = {
   taskGroups: Array<BatchIntakeRowExecution & { groupKey: string }>;
 };
 
+function mergeBatchIntakeExecutionEntries<T extends BatchIntakeRowExecution>(
+  previous: readonly T[],
+  next: readonly T[],
+  identity: (entry: T) => string,
+) {
+  const nextByIdentity = new Map(next.map((entry) => [identity(entry), entry]));
+  const merged = previous.map((entry) => {
+    const replacement = nextByIdentity.get(identity(entry));
+    if (!replacement) return entry;
+    return entry.status === "applied" && replacement.status !== "applied" ? entry : replacement;
+  });
+  const seen = new Set(previous.map(identity));
+  for (const entry of next) {
+    const entryIdentity = identity(entry);
+    if (seen.has(entryIdentity)) continue;
+    seen.add(entryIdentity);
+    merged.push(entry);
+  }
+  return merged;
+}
+
+export function mergeBatchIntakeExecutionResults(
+  previous: BatchIntakeExecutionResult | null,
+  next: BatchIntakeExecutionResult,
+): BatchIntakeExecutionResult {
+  if (!previous) return { rows: [...next.rows], taskGroups: [...next.taskGroups] };
+  return {
+    rows: mergeBatchIntakeExecutionEntries(previous.rows, next.rows, (entry) => entry.rowId),
+    taskGroups: mergeBatchIntakeExecutionEntries(previous.taskGroups, next.taskGroups, (entry) => entry.groupKey),
+  };
+}
+
 export type BatchIntakeApplyProgress = {
   stage: "tasks" | "water" | "weight" | "meals" | "focus" | "complete";
   processed: number;
