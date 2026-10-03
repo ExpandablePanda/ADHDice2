@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.50`.
+- Current working app version: `7.16.51`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.51 Home Finished Today stale-while-revalidate refresh
+
+Home Finished Today now retains the last-known-good current-day History result
+while same-context refreshes run, eliminating ready/loading flicker without
+reducing mutation, Realtime, rollover, gap-recovery, navigation, or trailing
+single-flight refresh freshness. Initial loads still use the loading state, and
+initial failures still expose the existing retryable error state. No SQL, Edge
+deployment, or production data mutation was performed.
 
 ## 2026-10-03 7.16.50 Batch Intake retry-result preservation
 

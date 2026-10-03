@@ -219,11 +219,23 @@ test("Home production wiring keeps History readiness separate from the record ta
   assert.match(homeSource, /Records to Beat/);
   assert.match(homeSource, /onOpenRecord\(chase\.metricKey\)/);
   assert.match(homeSource, /homeHistoryStatus === "idle" \|\| homeHistoryStatus === "loading"/);
+  assert.match(homeSource, /Loading today(?:\'|&apos;)s completions/);
   assert.match(homeSource, /homeHistoryStatus === "error"/);
   assert.match(homeSource, /onRetryHomeHistory/);
+  assert.match(homeSource, /const \[finishedTodayFilter, setFinishedTodayFilter\] = useState/);
+  assert.doesNotMatch(homeSource, /key=\{homeHistoryStatus\}/);
   assert.doesNotMatch(homeSource, /isFullTaskHistoryLoaded/);
+  assert.match(taskAppSource, /homeCurrentDayHistoryRows/);
+  assert.match(taskAppSource, /const homeCurrentDayHistoryByTaskId = useMemo\(\(\) => \{[\s\S]*?for \(const row of homeCurrentDayHistoryRows\)/);
+  assert.match(taskAppSource, /buildHomeDailyProgress\(\{ taskHistoryByTaskId: homeCurrentDayHistoryByTaskId, tasks, todayKey \}\)/);
+  const homeProgressSource = taskAppSource.slice(
+    taskAppSource.indexOf("const homeCurrentDayHistoryByTaskId"),
+    taskAppSource.indexOf("const homeDailyProgress"),
+  );
+  assert.doesNotMatch(homeProgressSource, /task\.status|status: task/);
   assert.match(taskAppSource, /homeCurrentDayHistoryByTaskId/);
   assert.match(taskAppSource, /homeHistoryStatus=\{homeCurrentDayHistoryStatus\}/);
+  assert.match(taskAppSource, /onRetryHomeHistory=\{\(\) => \{ void retryHomeCurrentDayHistory\(\); \}\}/);
   assert.doesNotMatch(taskAppSource.slice(taskAppSource.indexOf("<TaskHomePage"), taskAppSource.indexOf("<TaskHomePage") + 1800), /isFullTaskHistoryLoaded/);
   assert.match(taskAppSource, /setActivePage\("Achievements"\)/);
   assert.match(taskAppSource, /initialRecordMetricKey=\{pendingProgressRecordMetricKey\}/);

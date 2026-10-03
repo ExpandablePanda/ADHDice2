@@ -70,22 +70,16 @@ export function createHomeCurrentDayHistoryRuntime(
   };
 
   const setContext = (request: HomeCurrentDayHistoryLoadRequest) => {
-    const ownerOrDateChanged = context?.ownerId !== request.ownerId || context?.logicalDate !== request.logicalDate;
+    const contextChanged = context?.ownerId !== request.ownerId
+      || context?.logicalDate !== request.logicalDate
+      || context?.workspaceGeneration !== request.workspaceGeneration;
+    if (contextChanged) contextEpoch += 1;
     context = { ...request, contextEpoch };
-    if (ownerOrDateChanged) {
+    if (contextChanged) {
       publish({
         ...EMPTY_STATE,
         logicalDate: request.logicalDate,
         ownerId: request.ownerId,
-        workspaceGeneration: request.workspaceGeneration,
-      });
-    } else if (state.workspaceGeneration !== request.workspaceGeneration) {
-      publish({
-        ...state,
-        error: null,
-        logicalDate: request.logicalDate,
-        ownerId: request.ownerId,
-        status: state.status === "ready" ? "ready" : state.status,
         workspaceGeneration: request.workspaceGeneration,
       });
     }
@@ -96,6 +90,13 @@ export function createHomeCurrentDayHistoryRuntime(
     && context.ownerId === requestContext.ownerId
     && context.logicalDate === requestContext.logicalDate
     && context.workspaceGeneration === requestContext.workspaceGeneration
+  );
+
+  const hasReadyResultForContext = (requestContext: RuntimeContext) => (
+    state.status === "ready"
+    && state.ownerId === requestContext.ownerId
+    && state.logicalDate === requestContext.logicalDate
+    && state.workspaceGeneration === requestContext.workspaceGeneration
   );
 
   const logDiagnostic = (
@@ -121,15 +122,16 @@ export function createHomeCurrentDayHistoryRuntime(
     activeRequestKey = requestKey(requestContext);
     if (!isCurrentContext(requestContext)) return false;
 
+    const retainReadyResult = hasReadyResultForContext(requestContext);
     publish({
       ...state,
       error: null,
       logicalDate: requestContext.logicalDate,
       ownerId: requestContext.ownerId,
-      status: "loading",
+      status: retainReadyResult ? "ready" : "loading",
       workspaceGeneration: requestContext.workspaceGeneration,
     });
-    logDiagnostic(requestContext, "loading", state.rows);
+    logDiagnostic(requestContext, retainReadyResult ? "ready" : "loading", state.rows, retainReadyResult ? "phase=revalidate" : "");
 
     try {
       const rows = await fetchHomeCurrentDayHistory(requestContext.client, {
@@ -165,6 +167,19 @@ export function createHomeCurrentDayHistoryRuntime(
       if (!isCurrentContext(requestContext)) return false;
 
       const message = formatError(error);
+      if (retainReadyResult) {
+        publish({
+          ...state,
+          error: message,
+          logicalDate: requestContext.logicalDate,
+          ownerId: requestContext.ownerId,
+          status: "ready",
+          workspaceGeneration: requestContext.workspaceGeneration,
+        });
+        logDiagnostic(requestContext, "ready", state.rows, `phase=revalidate error=${message}`);
+        return false;
+      }
+
       publish({
         error: message,
         logicalDate: requestContext.logicalDate,
