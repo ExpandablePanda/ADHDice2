@@ -8278,6 +8278,7 @@ export function TaskApp() {
             behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
             calendarNowMs={logicalDayNow}
             calendarTimeZone={userTimeZone}
+            taskContentFolders={taskContentFolders}
             tasks={tasks}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}

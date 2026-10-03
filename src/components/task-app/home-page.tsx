@@ -24,6 +24,7 @@ import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engin
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
+import type { TaskContentFolderRow } from "@/lib/task-content-folders";
 import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-history-runtime";
@@ -365,6 +366,7 @@ export function HomePage({
   calendarNowMs,
   calendarTimeZone,
   tasks,
+  taskContentFolders,
   userId,
   behaviorProfiles,
   behaviorPolicyRevisions,
@@ -411,6 +413,7 @@ export function HomePage({
   calendarNowMs: number;
   calendarTimeZone: string;
   tasks: Task[];
+  taskContentFolders: readonly TaskContentFolderRow[];
   userId: string | null;
   behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
   behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
@@ -775,7 +778,7 @@ export function HomePage({
       preferredWeightUnit: healthProfile?.preferred_weight_unit,
       referenceDate: behaviorPolicyLogicalDate,
     });
-    setBatchIntakeDrafts(applyBatchIntakeTaskMatches(parsed, tasks).map((draft) => (
+    setBatchIntakeDrafts(applyBatchIntakeTaskMatches(parsed, tasks, taskContentFolders).map((draft) => (
       draft.kind === "water" || draft.kind === "weight" || draft.kind === "focus" || (draft.kind === "meal" && draft.entryMode === "food_proposal")
         ? { ...draft, writeId: createBrowserUuidV4() }
         : draft
@@ -1899,6 +1902,7 @@ export function HomePage({
                 onCancel={closeBatchIntakeReview}
                 onChange={changeBatchIntakeDraft}
                 onRemoveRow={removeBatchIntakeRow}
+                taskContentFolders={taskContentFolders}
                 tasks={tasks}
               />
             ) : null}

@@ -39,11 +39,14 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(homeSource, /setBatchIntakeDrafts\(null\)/);
   assert.match(homeSource, /onProgress: setBatchIntakeApplyProgress/);
   assert.match(homeSource, /applyProgress=\{batchIntakeApplyProgress\}/);
+  assert.match(homeSource, /applyBatchIntakeTaskMatches\(parsed, tasks, taskContentFolders\)/);
+  assert.match(homeSource, /taskContentFolders=\{taskContentFolders\}/);
   assert.match(reviewSource, /OperationProgressBar/);
   assert.match(reviewSource, /Applying Batch Intake/);
   assert.match(reviewSource, /applyProgress\.processed/);
   assert.match(appSource, /activePage === "Health" \|\| batchIntakeHealthActive/);
   assert.match(appSource, /onBatchIntakeHealthActivationChange=\{setBatchIntakeHealthActive\}/);
+  assert.match(appSource, /<TaskHomePage[\s\S]*taskContentFolders=\{taskContentFolders\}/);
   assert.match(appSource, /batchIntakeFocusActive/);
   assert.match(appSource, /activePage === "Focus" \|\| activePage === "Stats" \|\| activePage === "Health" \|\| batchIntakeFocusActive/);
   assert.match(appSource, /onBatchIntakeFocusActivationChange=\{setBatchIntakeFocusActive\}/);
@@ -66,6 +69,15 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /Food proposals/);
   assert.match(reviewSource, /Use manual food/);
   assert.match(reviewSource, /onResolveMealProposal/);
+  assert.match(reviewSource, /const executablePlan = buildBatchIntakeExecutionPlan/);
+  assert.match(reviewSource, /const healthRows = executablePlan\.waterRows\.length/);
+  assert.doesNotMatch(reviewSource, /blockedExecutableRow/);
+  assert.match(reviewSource, /Only ready entries will be applied/);
+  assert.match(reviewSource, /Nothing is ready to apply yet/);
+  assert.match(reviewSource, /sticky bottom-0/);
+  assert.doesNotMatch(reviewSource, /text-\[11px\]/);
+  assert.match(reviewSource, /Parsed: \$\{draft\.taskTitle\} · line/);
+  assert.match(reviewSource, /taskContentFolders=\{taskContentFolders\}/);
 });
 
 test("cumulative Applied results back every supported row lock", () => {

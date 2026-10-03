@@ -1,5 +1,6 @@
 import type { Task } from "@/lib/database.types";
 import { batchIntakeCanonicalGroupId, type BatchIntakeDraft, type BatchIntakeTaskDraft } from "@/lib/home-batch-intake";
+import { getTaskContentFolderPathLabel, type TaskContentFolderRow } from "@/lib/task-content-folders";
 
 export type BatchIntakeTaskMatchState = "unique_exact" | "multiple_exact" | "no_exact";
 
@@ -15,7 +16,7 @@ export function isBatchIntakeTaskSelectable(task: Pick<Task, "status" | "permane
   return task.status !== "trashed" && task.permanently_deleted_at == null;
 }
 
-export function getBatchIntakeTaskCandidates(title: string, tasks: readonly Task[]): BatchIntakeTaskCandidate[] {
+export function getBatchIntakeTaskCandidates(title: string, tasks: readonly Task[], taskContentFolders: readonly TaskContentFolderRow[] = []): BatchIntakeTaskCandidate[] {
   const needle = normalizeBatchIntakeTaskTitle(title);
   if (!needle) return [];
   const eligible = tasks.filter(isBatchIntakeTaskSelectable);
@@ -28,7 +29,7 @@ export function getBatchIntakeTaskCandidates(title: string, tasks: readonly Task
   const byId = new Map(tasks.map((task) => [task.id, task]));
   return source.map((task) => ({
     task,
-    context: buildTaskContext(task, byId),
+    context: buildBatchIntakeTaskContext(task, byId, taskContentFolders),
   }));
 }
 
@@ -37,10 +38,10 @@ export function getBatchIntakeTaskMatchState(title: string, tasks: readonly Task
   return exactCount === 1 ? "unique_exact" : exactCount > 1 ? "multiple_exact" : "no_exact";
 }
 
-function buildTaskContext(task: Task, byId: Map<string, Task>) {
+export function buildBatchIntakeTaskContext(task: Task, byId: Map<string, Task>, taskContentFolders: readonly TaskContentFolderRow[] = []) {
   const ancestors: string[] = [];
   let parentId = task.parent_task_id;
-  const seen = new Set<string>();
+  const seen = new Set<string>([task.id]);
   while (parentId && !seen.has(parentId)) {
     seen.add(parentId);
     const parent = byId.get(parentId);
@@ -48,7 +49,27 @@ function buildTaskContext(task: Task, byId: Map<string, Task>) {
     ancestors.unshift(parent.title);
     parentId = parent.parent_task_id;
   }
-  return ancestors.length ? ancestors.join(" › ") : task.status === "archived" ? "Archived" : "Top-level Task";
+  const rootTask = (() => {
+    let current = task;
+    const rootSeen = new Set<string>();
+    while (current.parent_task_id) {
+      if (rootSeen.has(current.id)) return null;
+      rootSeen.add(current.id);
+      const parent = byId.get(current.parent_task_id);
+      if (!parent) return null;
+      current = parent;
+    }
+    return current;
+  })();
+  const folderPath = rootTask?.task_content_folder_id
+    ? getTaskContentFolderPathLabel(taskContentFolders, rootTask.task_content_folder_id)
+    : "";
+  const context = ancestors.length
+    ? `Parent: ${ancestors.join(" › ")}`
+    : `Folder: ${folderPath || "No Folder"}`;
+  const folderContext = ancestors.length && folderPath ? ` · Folder: ${folderPath}` : "";
+  const archivedContext = task.status === "archived" ? " · Archived" : "";
+  return `${context}${folderContext}${archivedContext}`;
 }
 
 function taskMatchIssue(state: BatchIntakeTaskMatchState) {
@@ -59,10 +80,10 @@ function taskMatchIssue(state: BatchIntakeTaskMatchState) {
       : ["Select an existing canonical Task; no exact match was found"];
 }
 
-export function applyBatchIntakeTaskMatches(drafts: readonly BatchIntakeDraft[], tasks: readonly Task[]): BatchIntakeDraft[] {
+export function applyBatchIntakeTaskMatches(drafts: readonly BatchIntakeDraft[], tasks: readonly Task[], taskContentFolders: readonly TaskContentFolderRow[] = []): BatchIntakeDraft[] {
   return drafts.map((draft) => {
     if (draft.kind !== "task") return draft;
-    const exactCandidates = getBatchIntakeTaskCandidates(draft.taskTitle, tasks).filter(
+    const exactCandidates = getBatchIntakeTaskCandidates(draft.taskTitle, tasks, taskContentFolders).filter(
       ({ task }) => normalizeBatchIntakeTaskTitle(task.title) === normalizeBatchIntakeTaskTitle(draft.taskTitle),
     );
     const state = exactCandidates.length === 1 ? "unique_exact" : exactCandidates.length > 1 ? "multiple_exact" : "no_exact";

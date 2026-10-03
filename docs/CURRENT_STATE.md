@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.55`.
+- Current working app version: `7.16.56`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.56 Batch Intake readability, task context, partial Apply, and visible progress
+
+Home Batch Intake review now uses readable scoped typography and dark light-mode
+informational text, concise per-occurrence Task evidence, canonical Task Content
+Folder/root hierarchy context, and a sticky action footer with the existing
+row-based Apply progress. Apply now runs the executable ready subset while
+unresolved drafts remain visible for review; Health readiness is required only
+when the executable plan contains Health rows. No SQL, Edge deployment, Home V8
+change, canonical authority change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.55 Scratchpad Shorthand V1
 

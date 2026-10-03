@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { addMealFromLibraryFood, addMealFromParsedFood, createManualBatchIntakeDraft, createManualMealFood, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration } from "../src/lib/home-batch-intake.ts";
-import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
+import { applyBatchIntakeTaskMatches, getBatchIntakeTaskCandidates, getBatchIntakeTaskMatchState } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
 import type { HealthFoodLibraryItem, Task } from "../src/lib/database.types.ts";
@@ -419,6 +419,65 @@ test("matching auto-selects one exact Task, preserves duplicates for review, and
   assert.equal((matched[2] as Extract<typeof matched[number], { kind: "task" }>).selectedTaskId, null);
   const archived = applyBatchIntakeTaskMatches(parseBatchIntake("10/2\ntasks\nArchived Task", { referenceDate: "2026-10-03" }), tasks)[0];
   assert.equal(archived.kind === "task" ? archived.selectedTaskId : "unexpected", "archived");
+});
+
+test("Task candidates expose root hierarchy, canonical Folder paths, archive state, and safe cycle handling", () => {
+  const tasks = [
+    { id: "tiers", title: "Tiers", parent_task_id: null, task_content_folder_id: "folder-lamprey", status: "pending", permanently_deleted_at: null },
+    { id: "adhdice", title: "ADHDice", parent_task_id: null, task_content_folder_id: "folder-adhdice", status: "pending", permanently_deleted_at: null },
+    { id: "scratchpad", title: "Scratchpad parser", parent_task_id: "adhdice", task_content_folder_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "fix-unit", title: "Fix unit parsing", parent_task_id: "scratchpad", task_content_folder_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "archived", title: "Archived fix", parent_task_id: "adhdice", task_content_folder_id: null, status: "archived", permanently_deleted_at: null },
+    { id: "cycle-a", title: "Cycle A", parent_task_id: "cycle-b", task_content_folder_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "cycle-b", title: "Cycle B", parent_task_id: "cycle-a", task_content_folder_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "no-folder", title: "No folder task", parent_task_id: null, task_content_folder_id: null, status: "pending", permanently_deleted_at: null },
+  ] as unknown as Task[];
+  const folders = [
+    { id: "folder-app", name: "App Development", parent_folder_id: null },
+    { id: "folder-lamprey", name: "Lamprey", parent_folder_id: null },
+    { id: "folder-adhdice", name: "ADHDice", parent_folder_id: "folder-app" },
+  ] as never;
+  const contextFor = (title: string) => getBatchIntakeTaskCandidates(title, tasks, folders)[0]?.context;
+
+  assert.equal(contextFor("Tiers"), "Folder: Lamprey");
+  assert.equal(contextFor("No folder task"), "Folder: No Folder");
+  assert.equal(contextFor("Fix unit parsing"), "Parent: ADHDice › Scratchpad parser · Folder: App Development / ADHDice");
+  assert.equal(contextFor("Archived fix"), "Parent: ADHDice · Folder: App Development / ADHDice · Archived");
+  assert.match(contextFor("Cycle A") ?? "", /Parent: Cycle B/);
+  assert.equal(contextFor("Cycle A")?.includes("Cycle A"), false);
+  assert.equal(getBatchIntakeTaskMatchState("Fix", tasks), "no_exact");
+  assert.equal(getBatchIntakeTaskCandidates("unit", tasks, folders).length, 1);
+  const sourceDraft = parseBatchIntake("10/2\nt: lamprey tiers", { referenceDate: "2026-10-03" })[0];
+  assert.equal(sourceDraft?.sourceText, "t: lamprey tiers");
+});
+
+test("partial Batch Intake plans execute only ready rows and leave unresolved rows out", async () => {
+  const readyRows = Array.from({ length: 15 }, (_, index) => ({
+    ...createManualBatchIntakeDraft("task", { date: `2026-09-${String(index + 1).padStart(2, "0")}`, id: `ready-${index + 1}` }),
+    selectedTaskId: "canonical-task",
+    outcome: "done" as const,
+    issues: [],
+  }));
+  const unresolvedRows = [
+    { ...readyRows[0], id: "unresolved-1", selectedTaskId: null, issues: ["Select a canonical Task before applying"] },
+    { ...readyRows[1], id: "unresolved-2", selectedTaskId: null, issues: ["Select a canonical Task before applying"] },
+  ];
+  const drafts = [...readyRows, ...unresolvedRows];
+  const plan = buildBatchIntakeExecutionPlan(drafts);
+  assert.equal(getBatchIntakeApplyCount(drafts), 15);
+  assert.equal(plan.taskGroups.reduce((count, group) => count + group.rowIds.length, 0), 15);
+  const result = await executeBatchIntakePlan(plan, {
+    syncTaskHistoryEntries: async () => true,
+    addWaterEntries: async () => ({ success: true, rows: [] }),
+    addWeightEntries: async () => ({ success: true, rows: [] }),
+    addMealEntries: async () => ({ success: true, rows: [] }),
+    handleManualFocusEntries: async () => ({ success: true, rows: [] }),
+  });
+  assert.equal(result.rows.length, 15);
+  assert.equal(result.rows.every((row) => row.status === "applied"), true);
+  assert.equal(result.rows.some((row) => row.rowId === "unresolved-1"), false);
+  assert.equal(result.rows.some((row) => row.rowId === "unresolved-2"), false);
+  assert.equal(unresolvedRows.every((draft) => draft.included), true);
 });
 
 test("execution plan groups Task dates and excludes no-change, meals, unsupported, and invalid rows", () => {
