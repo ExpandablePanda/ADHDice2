@@ -492,18 +492,26 @@ export function HomePage({
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
-    const isTodoSearch = activeHomeTab === "todo";
-    const isUrgentSearch = activeHomeTab === "urgent";
-    const selected = isTodoSearch ? new Set(reconciledTaskIds) : isUrgentSearch ? new Set(reconciledUrgentTaskIds) : routineTaskIdSet;
+    const isRoutineSearch = activeHomeTab === "routine";
+    const todoTaskIdSet = new Set(reconciledTaskIds);
+    const urgentTaskIdSet = new Set(reconciledUrgentTaskIds);
     return sortHomeTodoSearchResults(tasks
-      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && ((isTodoSearch || isUrgentSearch) || !selected.has(task.id)))
+      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && (!isRoutineSearch || !routineTaskIdSet.has(task.id)))
       .map((task) => {
         const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
         const searchable = getHomeTodoSearchText(task, hierarchy, listMembershipsByTaskId[task.id] ?? []);
+        const isInTodo = todoTaskIdSet.has(task.id);
+        const isInUrgent = urgentTaskIdSet.has(task.id);
         return {
           hierarchy,
-          isInTodo: isTodoSearch && selected.has(task.id),
-          isInUrgent: isUrgentSearch && selected.has(task.id),
+          isInTodo,
+          isInUrgent,
+          isSearchResultDisabled: activeHomeTab === "urgent" ? isInUrgent : activeHomeTab === "todo" ? isInTodo || isInUrgent : false,
+          membershipLabel: activeHomeTab === "urgent"
+            ? isInUrgent ? "In Urgent" : null
+            : activeHomeTab === "todo"
+              ? isInUrgent ? "In Urgent" : isInTodo ? "In To-do" : null
+              : null,
           searchable,
           task,
         };
@@ -684,6 +692,7 @@ export function HomePage({
       }
       return;
     }
+    if (reconciledUrgentTaskIds.includes(taskId)) return;
     updateTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
   }
 
@@ -1662,11 +1671,11 @@ export function HomePage({
           ) : null}
           {isSearchOpen && query.trim() ? (
             <div className="mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
-              {searchResults.length ? searchResults.map(({ hierarchy, isInTodo, isInUrgent, task }) => (
+              {searchResults.length ? searchResults.map(({ hierarchy, isSearchResultDisabled, membershipLabel, task }) => (
                 <button
-                  aria-disabled={isInTodo || isInUrgent}
+                  aria-disabled={isSearchResultDisabled}
                   className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f6f2ff] dark:hover:bg-white/8"
-                  disabled={isInTodo || isInUrgent}
+                  disabled={isSearchResultDisabled}
                   key={task.id}
                   onClick={() => {
                     void addSearchResult(task.id);
@@ -1683,14 +1692,14 @@ export function HomePage({
                       </span>
                     ) : null}
                   </span>
-                  {isInUrgent ? (
+                  {membershipLabel === "In Urgent" ? (
                     <span
                       aria-label="Already in Urgent"
                       className="inline-flex shrink-0 items-center rounded-full border border-[#ffd6de] bg-[#fff1f3] px-2 py-1 text-[11px] font-semibold text-[#d65775] dark:border-[#5f2a36] dark:bg-[#32161d] dark:text-[#ffb0c1]"
                     >
                       In Urgent
                     </span>
-                  ) : isInTodo ? (
+                  ) : membershipLabel === "In To-do" ? (
                     <span
                       aria-label="Already in To-do"
                       className="inline-flex shrink-0 items-center rounded-full border border-[#d8cff0] bg-[#f7f3ff] px-2 py-1 text-[11px] font-semibold text-[#6f57f6] dark:border-white/15 dark:bg-white/[0.06] dark:text-[#cabfff]"

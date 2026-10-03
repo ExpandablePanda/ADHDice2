@@ -444,7 +444,7 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV7 {
   }
   const candidate = value as HomeTodoStateCandidate;
   const seen = new Set<string>();
-  const taskIds = Array.isArray(candidate.taskIds)
+  const normalizedTaskIds = Array.isArray(candidate.taskIds)
     ? candidate.taskIds.filter((taskId): taskId is string => {
       if (typeof taskId !== "string" || !taskId.trim() || seen.has(taskId)) return false;
       seen.add(taskId);
@@ -454,6 +454,9 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV7 {
   const parsedUpdatedAt = typeof candidate.clientUpdatedAt === "string"
     ? Date.parse(candidate.clientUpdatedAt)
     : Number.NaN;
+  const urgentTaskIds = normalizeHomeUrgentTaskIds(candidate.urgentTaskIds);
+  const urgentTaskIdSet = new Set(urgentTaskIds);
+  const taskIds = normalizedTaskIds.filter((taskId) => !urgentTaskIdSet.has(taskId));
   const taskIdSet = new Set(taskIds);
   const taskDayOffsets = candidate.taskDayOffsets && typeof candidate.taskDayOffsets === "object" && !Array.isArray(candidate.taskDayOffsets)
     ? Object.fromEntries(Object.entries(candidate.taskDayOffsets as Record<string, unknown>).filter(([taskId, offset]) => (
@@ -485,7 +488,6 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV7 {
     migratedRoutineSections.routineSectionIdByTaskId,
     false,
   );
-  const urgentTaskIds = normalizeHomeUrgentTaskIds(candidate.urgentTaskIds);
   const scratchpadItems = normalizeHomeScratchpadItems(candidate.scratchpadItems);
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)

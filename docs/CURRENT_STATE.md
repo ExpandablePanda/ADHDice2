@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.43`.
+- Current working app version: `7.16.44`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.44 Home queue exclusivity correction
+
+Home V7 normalization now enforces mutual exclusivity between Urgent and
+To-do. If stale or malformed Home state overlaps, Urgent wins and the matching
+To-do day offset is removed. To-do search identifies Tasks already in Urgent
+and requires the explicit Urgent-to-To-do day-placement action instead of
+creating a dual membership. No SQL or Edge deployment was performed.
 
 ## 2026-10-03 7.16.43 Home queue/search corrections
 

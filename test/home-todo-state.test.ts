@@ -608,6 +608,33 @@ test("Home V7 round trip preserves Urgent order and Scratchpad order/content", (
   assert.deepEqual(normalizeHomeTodoState(state).scratchpadItems, state.scratchpadItems);
 });
 
+test("Home V7 normalization repairs Urgent/To-do overlap with Urgent precedence", () => {
+  assert.deepEqual(normalizeHomeTodoState({
+    schemaVersion: 7,
+    taskIds: ["a", "b", "a", "d"],
+    taskDayOffsets: { a: 0, b: 3, d: 7, stale: 2 },
+    urgentTaskIds: ["b", "c", "b"],
+  }), {
+    clientUpdatedAt: "1970-01-01T00:00:00.000Z",
+    schemaVersion: 7,
+    taskIds: ["a", "d"],
+    taskDayOffsets: { a: 0, d: 7 },
+    tasksPerDay: 10,
+    routineTaskIds: [],
+    routineSections: [],
+    routineSectionIdByTaskId: {},
+    urgentTaskIds: ["b", "c"],
+    scratchpadItems: [],
+  });
+  const stable = normalizeHomeTodoState({
+    schemaVersion: 7,
+    taskIds: ["a", "b"],
+    taskDayOffsets: { a: 0, b: 1 },
+    urgentTaskIds: ["c", "d"],
+  });
+  assert.deepEqual(normalizeHomeTodoState(stable), stable);
+});
+
 test("Home Urgent membership stays independent from To-do and uses shared eligibility", () => {
   const tasks = [task("active"), task("done", { status: "complete" }), task("trashed", { trashed_at: "2026-10-03T12:00:00.000Z" })];
   assert.deepEqual(reconcileHomeUrgentTaskIds(["active", "done", "active", "missing", "trashed"], tasks), ["active"]);
@@ -640,6 +667,11 @@ test("Home Urgent membership stays independent from To-do and uses shared eligib
   assert.deepEqual(moveHomeUrgentTaskIdToTodo(state, "urgent", 1), {
     taskIds: ["today", "future", "later", "urgent"],
     taskDayOffsets: { today: 0, future: 3, later: 7, urgent: 1 },
+    urgentTaskIds: [],
+  });
+  assert.deepEqual(moveHomeUrgentTaskIdToTodo(state, "urgent", 7), {
+    taskIds: ["today", "future", "later", "urgent"],
+    taskDayOffsets: { today: 0, future: 3, later: 7, urgent: 7 },
     urgentTaskIds: [],
   });
 });
@@ -984,12 +1016,16 @@ test("Home todo search sorts full hierarchy paths together", () => {
 
 test("Home To-do search includes existing members and guards duplicate adds", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
-  assert.match(source, /const isTodoSearch = activeHomeTab === "todo"/);
-  assert.match(source, /isHomeTodoTaskEligible\(task, tasks, taskById\) && \(\(isTodoSearch \|\| isUrgentSearch\) \|\| !selected\.has\(task\.id\)\)/);
-  assert.match(source, /isInTodo: isTodoSearch && selected\.has\(task\.id\)/);
+  assert.match(source, /const todoTaskIdSet = new Set\(reconciledTaskIds\)/);
+  assert.match(source, /const urgentTaskIdSet = new Set\(reconciledUrgentTaskIds\)/);
+  assert.match(source, /isInTodo = todoTaskIdSet\.has\(task\.id\)/);
+  assert.match(source, /isInUrgent = urgentTaskIdSet\.has\(task\.id\)/);
+  assert.match(source, /activeHomeTab === "urgent" \? isInUrgent : activeHomeTab === "todo" \? isInTodo \|\| isInUrgent : false/);
+  assert.match(source, /if \(reconciledUrgentTaskIds\.includes\(taskId\)\) return/);
   assert.match(source, /taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]/);
   assert.match(source, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
   assert.match(source, /sortHomeTodoSearchResults\(tasks/);
+  assert.match(source, /membershipLabel.*"In Urgent"/);
   assert.match(source, /In To-do/);
 });
 
@@ -1198,9 +1234,11 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /routineTasks\.map/);
   assert.match(source, /No Routine tasks yet\./);
   assert.match(source, /activeHomeTab === "routine"/);
-  assert.match(source, /const isTodoSearch = activeHomeTab === "todo"/);
-  assert.match(source, /isHomeTodoTaskEligible\(task, tasks, taskById\) && \(\(isTodoSearch \|\| isUrgentSearch\) \|\| !selected\.has\(task\.id\)\)/);
-  assert.match(source, /isInTodo: isTodoSearch && selected\.has\(task\.id\)/);
+  assert.match(source, /const isRoutineSearch = activeHomeTab === "routine"/);
+  assert.match(source, /const todoTaskIdSet = new Set\(reconciledTaskIds\)/);
+  assert.match(source, /const urgentTaskIdSet = new Set\(reconciledUrgentTaskIds\)/);
+  assert.match(source, /isInTodo = todoTaskIdSet\.has\(task\.id\)/);
+  assert.match(source, /isInUrgent = urgentTaskIdSet\.has\(task\.id\)/);
   assert.match(source, /async function addSearchResult\(taskId: string\)/);
   assert.match(source, /taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]/);
   assert.match(source, /In To-do/);
