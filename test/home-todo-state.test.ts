@@ -611,15 +611,35 @@ test("Home V7 round trip preserves Urgent order and Scratchpad order/content", (
 test("Home Urgent membership stays independent from To-do and uses shared eligibility", () => {
   const tasks = [task("active"), task("done", { status: "complete" }), task("trashed", { trashed_at: "2026-10-03T12:00:00.000Z" })];
   assert.deepEqual(reconcileHomeUrgentTaskIds(["active", "done", "active", "missing", "trashed"], tasks), ["active"]);
-  const state = normalizeHomeTodoState({ taskIds: ["todo"], urgentTaskIds: ["urgent"] });
-  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "todo"), {
-    taskIds: [],
-    taskDayOffsets: {},
-    urgentTaskIds: ["urgent", "todo"],
+  const state = normalizeHomeTodoState({ taskIds: ["today", "future", "later"], taskDayOffsets: { today: 0, future: 3, later: 7 }, urgentTaskIds: ["urgent"] });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "today"), {
+    taskIds: ["future", "later"],
+    taskDayOffsets: { future: 3, later: 7 },
+    urgentTaskIds: ["urgent", "today"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "future"), {
+    taskIds: ["today", "later"],
+    taskDayOffsets: { today: 0, later: 7 },
+    urgentTaskIds: ["urgent", "future"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "later"), {
+    taskIds: ["today", "future"],
+    taskDayOffsets: { today: 0, future: 3 },
+    urgentTaskIds: ["urgent", "later"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "new"), {
+    taskIds: ["today", "future", "later"],
+    taskDayOffsets: { today: 0, future: 3, later: 7 },
+    urgentTaskIds: ["urgent", "new"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent({ ...state, urgentTaskIds: ["urgent", "today"] }, "today"), {
+    taskIds: ["future", "later"],
+    taskDayOffsets: { future: 3, later: 7 },
+    urgentTaskIds: ["urgent", "today"],
   });
   assert.deepEqual(moveHomeUrgentTaskIdToTodo(state, "urgent", 1), {
-    taskIds: ["todo", "urgent"],
-    taskDayOffsets: { urgent: 1 },
+    taskIds: ["today", "future", "later", "urgent"],
+    taskDayOffsets: { today: 0, future: 3, later: 7, urgent: 1 },
     urgentTaskIds: [],
   });
 });
@@ -973,12 +993,20 @@ test("Home To-do search includes existing members and guards duplicate adds", ()
   assert.match(source, /In To-do/);
 });
 
-test("Home Urgent uses independent order, guarded Priority 5 promotion, and explicit To-do moves", () => {
+test("Home Urgent search uses guarded Priority 5 promotion before the shared exclusive move", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
   const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const searchAddStart = source.indexOf("async function addSearchResult");
+  const searchAddEnd = source.indexOf("\n  function addScratchpadDraft", searchAddStart);
+  const searchAddSource = source.slice(searchAddStart, searchAddEnd);
+  const priorityIndex = searchAddSource.indexOf('await onSetTaskPriority(taskId, "5")');
+  const failureGuardIndex = searchAddSource.indexOf("if (!promoted) return;");
+  const moveIndex = searchAddSource.indexOf("moveTodoTaskToUrgent(taskId)");
   assert.match(source, /reconcileHomeUrgentTaskIds\(state\.urgentTaskIds, tasks\)/);
-  assert.match(source, /updateUrgentTaskIds\(\(taskIds\) => taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]\)/);
+  assert.match(searchAddSource, /if \(reconciledUrgentTaskIds\.includes\(taskId\)\) return/);
   assert.match(source, /await onSetTaskPriority\(taskId, "5"\)/);
+  assert.match(searchAddSource, /moveTodoTaskToUrgent\(taskId\)/);
+  assert.ok(priorityIndex >= 0 && priorityIndex < failureGuardIndex && failureGuardIndex < moveIndex);
   assert.match(source, /priority_level: 5 as const/);
   assert.match(source, /moveUrgentTaskToTodo\(task\.id, destination\.dayOffset\)/);
   assert.match(source, /moveTodoTaskToUrgent\(task\.id\)/);
@@ -987,7 +1015,21 @@ test("Home Urgent uses independent order, guarded Priority 5 promotion, and expl
   assert.match(source, /Remove from Urgent/);
   assert.match(source, /onReorder=\{\(nextTasks\) => updateUrgentTaskIds\(\(\) => nextTasks\.map\(\(task\) => task\.id\)\)\}/);
   assert.match(taskAppSource, /onSetTaskPriority=\{\(taskId, priority\) => setTaskPriority\(taskId, priority\)\}/);
-  assert.doesNotMatch(source, /task\.is_urgent|is_urgent/);
+  assert.doesNotMatch(searchAddSource, /task\.is_urgent|is_urgent|task\.status|task\.due_on|task\.repeat/);
+});
+
+test("Home shared Task search stays in shell flow for Urgent, To-do, and Routine while Scratchpad remains separate", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const panelStart = source.indexOf('{isSearchOpen && query.trim() ? (');
+  const panelEnd = source.indexOf("\n          ) : null}", panelStart);
+  const panelSource = source.slice(panelStart, panelEnd);
+  assert.match(panelSource, /max-h-\[min\(55vh,26rem\)\] overflow-y-auto/);
+  assert.doesNotMatch(panelSource, /absolute|inset-x-0|top-full/);
+  assert.match(source, /activeHomeTab === "scratchpad"/);
+  assert.match(source, /activeHomeTab === "urgent"/);
+  assert.match(source, /activeHomeTab === "todo"/);
+  assert.match(source, /activeHomeTab === "routine"/);
+  assert.match(source, /placeholder="Write something down…"/);
 });
 
 test("Home Scratchpad is non-Task state and conversion preserves source until canonical creation succeeds", () => {

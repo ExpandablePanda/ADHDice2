@@ -671,7 +671,7 @@ export function HomePage({
       if (reconciledUrgentTaskIds.includes(taskId)) return;
       const promoted = await onSetTaskPriority(taskId, "5");
       if (!promoted) return;
-      updateUrgentTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
+      moveTodoTaskToUrgent(taskId);
       setQuery("");
       setIsSearchOpen(false);
       return;
@@ -1661,7 +1661,7 @@ export function HomePage({
             </div>
           ) : null}
           {isSearchOpen && query.trim() ? (
-            <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
+            <div className="mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
               {searchResults.length ? searchResults.map(({ hierarchy, isInTodo, isInUrgent, task }) => (
                 <button
                   aria-disabled={isInTodo || isInUrgent}

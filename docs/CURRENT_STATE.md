@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.42`.
+- Current working app version: `7.16.43`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.43 Home queue/search corrections
+
+Urgent and Home To-do are mutually exclusive even when a normal canonical Task
+enters Urgent through search. Urgent search-add reuses the canonical Priority 5
+promotion before the shared Home membership transition, so a failed promotion
+leaves the existing Home membership and day offset unchanged. Home search
+results now stay in normal shell flow while retaining their max-height and
+internal scrolling, so they no longer clip under the Home shell. No SQL or
+Edge deployment was performed.
 
 ## 2026-10-03 7.16.42 Home Urgent Queue and Scratchpad
 
