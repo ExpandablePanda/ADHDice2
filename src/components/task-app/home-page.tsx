@@ -30,7 +30,7 @@ import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-his
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
-import { addMealFromLibraryFood, createManualBatchIntakeDraft, createManualMealFood, duplicateManualBatchIntakeDraft, parseBatchIntake, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
+import { addMealFromLibraryFood, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, parseBatchIntake, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealFoodProposalDraft, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
 import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
 import type { HealthFoodLibraryItem, HealthMealEntryInsert, HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
@@ -457,6 +457,7 @@ export function HomePage({
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("urgent");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [scratchpadDraft, setScratchpadDraft] = useState("");
+  const [isShorthandHelpOpen, setIsShorthandHelpOpen] = useState(false);
   const [editingScratchpadItemId, setEditingScratchpadItemId] = useState<string | null>(null);
   const [scratchpadEditDraft, setScratchpadEditDraft] = useState("");
   const [convertingScratchpadItemId, setConvertingScratchpadItemId] = useState<string | null>(null);
@@ -498,6 +499,11 @@ export function HomePage({
     onBatchIntakeFocusActivationChange?.(Boolean(batchIntakeDrafts && batchIntakeHasFocusRows));
     return () => onBatchIntakeFocusActivationChange?.(false);
   }, [batchIntakeDrafts, batchIntakeHasFocusRows, onBatchIntakeFocusActivationChange]);
+
+  const effectiveBatchIntakeDrafts = useMemo(() => {
+    if (!batchIntakeDrafts || healthLoading || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
+    return reconcileBatchIntakeMealFoodProposals(batchIntakeDrafts, healthFoods, { createWriteId: (proposal) => proposal.writeId ?? createBrowserUuidV4() });
+  }, [batchIntakeDrafts, healthFoods, healthLoading]);
 
   useEffect(() => () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -608,6 +614,7 @@ export function HomePage({
     setRowActionMenu(null);
     setIsFastActionMode(false);
     setIsSettingsOpen(false);
+    setIsShorthandHelpOpen(false);
   }
 
   function clearGearLongPressTimer() {
@@ -769,7 +776,7 @@ export function HomePage({
       referenceDate: behaviorPolicyLogicalDate,
     });
     setBatchIntakeDrafts(applyBatchIntakeTaskMatches(parsed, tasks).map((draft) => (
-      draft.kind === "water" || draft.kind === "weight" || draft.kind === "focus"
+      draft.kind === "water" || draft.kind === "weight" || draft.kind === "focus" || (draft.kind === "meal" && draft.entryMode === "food_proposal")
         ? { ...draft, writeId: createBrowserUuidV4() }
         : draft
     )));
@@ -795,7 +802,7 @@ export function HomePage({
   }
 
   function addBatchIntakeOccurrence(sourceDraft: BatchIntakeDraft) {
-    if (sourceDraft.kind === "unsupported" || (sourceDraft.kind === "meal" && sourceDraft.entryMode === "food")) return;
+    if (sourceDraft.kind === "unsupported" || (sourceDraft.kind === "meal" && sourceDraft.entryMode !== "occurrence")) return;
     const duplicate = duplicateManualBatchIntakeDraft(sourceDraft, {
       id: createBrowserUuidV4(),
       writeId: createBrowserUuidV4(),
@@ -879,6 +886,26 @@ export function HomePage({
     });
   }
 
+  function resolveMealProposalToFood(proposal: BatchIntakeMealFoodProposalDraft, food: HealthFoodLibraryItem) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === proposal.mealOccurrenceId);
+      if (!liveOccurrence) return current;
+      const resolved = resolveBatchIntakeMealFoodProposal(proposal, liveOccurrence, food, { writeId: proposal.writeId ?? createBrowserUuidV4() });
+      return current.map((draft) => draft.id === proposal.id ? resolved : draft);
+    });
+  }
+
+  function useManualMealProposal(proposal: BatchIntakeMealFoodProposalDraft) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === proposal.mealOccurrenceId);
+      if (!liveOccurrence) return current;
+      const resolved = createManualMealFoodFromProposal(liveOccurrence, proposal, { writeId: proposal.writeId ?? createBrowserUuidV4() });
+      return current.map((draft) => draft.id === proposal.id ? resolved : draft);
+    });
+  }
+
   function removeBatchIntakeRow(rowId: string) {
     setBatchIntakeDrafts((current) => current?.filter((draft) => draft.id !== rowId) ?? null);
     setBatchIntakeExecutionResult((current) => current ? { ...current, rows: current.rows.filter((row) => row.rowId !== rowId), taskGroups: current.taskGroups.filter((group) => group.rowId !== rowId) } : null);
@@ -894,7 +921,7 @@ export function HomePage({
     if (!batchIntakeDrafts || batchIntakeApplying) return;
     setBatchIntakeApplying(true);
     try {
-      const plan = buildBatchIntakeExecutionPlan(batchIntakeDrafts, {
+      const plan = buildBatchIntakeExecutionPlan(effectiveBatchIntakeDrafts ?? [], {
         preferredWeightUnit: healthProfile?.preferred_weight_unit,
       });
       const result = await executeBatchIntakePlan(plan, {
@@ -1826,6 +1853,14 @@ export function HomePage({
               <AdhdChip onClick={moveScratchpadDraftToItems} type="button">Move lines to items</AdhdChip>
               <AdhdChip onClick={parseScratchpadBatch} type="button">Parse Batch Intake</AdhdChip>
               <AdhdChip onClick={openManualBatch} type="button">Manual Batch</AdhdChip>
+              <div className="relative">
+                <AdhdChip aria-expanded={isShorthandHelpOpen} onClick={() => setIsShorthandHelpOpen((current) => !current)} type="button">Shorthand</AdhdChip>
+                {isShorthandHelpOpen ? <AdhdDropdownPanel aria-label="Scratchpad Shorthand V1 help" className="grid w-[min(24rem,calc(100vw-2rem))] gap-2 p-3" role="dialog">
+                  <div><p className="text-xs font-semibold text-[#332c55] dark:text-white">Scratchpad Shorthand V1</p><p className="mt-1 text-[11px] text-[#7d7598] dark:text-white/55">Optional compact grammar. Loose Scratchpad text remains supported.</p></div>
+                  <pre className="overflow-x-auto rounded-lg bg-[#faf8fe] p-2 text-[11px] leading-5 text-[#514875] dark:bg-white/5 dark:text-white/70">10/2{`\n`}t: nba 2k done, adhdice dmb{`\n`}w: 20oz done, 15oz pending{`\n`}wt: 233.6{`\n`}f: Coding 1h @ 4:15pm{`\n`}b: turkey bacon 8, watermelon 290g</pre>
+                  <p className="text-[11px] text-[#7d7598] dark:text-white/55">Prefixes: t Task · w Water · wt Weight · f Focus · b/l/d/s Meal slots. Use quotes for commas. Sleep/CPAP/Nap are not in V1.</p>
+                </AdhdDropdownPanel> : null}
+              </div>
             </div>
             {isCreateOpen && convertingScratchpadItemId ? (
               <div className="mt-3">
@@ -1846,7 +1881,7 @@ export function HomePage({
             {batchIntakeDrafts ? (
               <HomeBatchIntakeReview
                 applyProgress={batchIntakeApplyProgress}
-                drafts={batchIntakeDrafts}
+                drafts={effectiveBatchIntakeDrafts ?? []}
                 executionResult={batchIntakeExecutionResult}
                 healthLoading={healthLoading}
                 healthFoods={healthFoods}
@@ -1858,6 +1893,8 @@ export function HomePage({
                 onAddOccurrence={addBatchIntakeOccurrence}
                 onAddManualMealFood={addManualMealFoodToOccurrence}
                 onAddMealFood={addMealFoodToOccurrence}
+                onResolveMealProposal={resolveMealProposalToFood}
+                onUseManualMealProposal={useManualMealProposal}
                 onApply={() => { void applyBatchIntake(); }}
                 onCancel={closeBatchIntakeReview}
                 onChange={changeBatchIntakeDraft}

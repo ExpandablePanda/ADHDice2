@@ -125,7 +125,7 @@ export function buildBatchIntakeExecutionPlan(
     const blockingIssues = draft.issues.filter((issue) => !(draft.kind === "weight" && issue === "Health preferred weight unit is not ready" && (draft.unit ?? options.preferredWeightUnit)));
     if (!draft.included || blockingIssues.length > 0) continue;
     if (draft.kind === "meal") {
-      if (draft.entryMode === "occurrence") continue;
+      if (draft.entryMode !== "food") continue;
       const occurrence = mealOccurrences.get(draft.mealOccurrenceId);
       if (!occurrence || !isBatchIntakeMealFoodDraftReady(draft, occurrence)) continue;
       const loggedAt = loggedAtForDate(occurrence.date!, occurrence.time);

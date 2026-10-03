@@ -29,6 +29,8 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(homeSource, /function openManualBatch\(\)/);
   assert.match(homeSource, /setBatchIntakeDrafts\(\[\]\)/);
   assert.match(homeSource, /Manual Batch/);
+  assert.match(homeSource, /Shorthand/);
+  assert.match(homeSource, /Scratchpad Shorthand V1/);
   assert.match(homeSource, /createManualBatchIntakeDraft/);
   assert.match(homeSource, /removeBatchIntakeRow/);
   assert.match(homeSource, /parseBatchIntake\(scratchpadDraft/);
@@ -61,6 +63,9 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /getBatchIntakeReviewGroups/);
   assert.match(reviewSource, /Consumed quantity/);
   assert.match(reviewSource, /Choose a Focus completion time/);
+  assert.match(reviewSource, /Food proposals/);
+  assert.match(reviewSource, /Use manual food/);
+  assert.match(reviewSource, /onResolveMealProposal/);
 });
 
 test("cumulative Applied results back every supported row lock", () => {

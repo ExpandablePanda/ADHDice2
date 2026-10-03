@@ -38,6 +38,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 
 - `docs/UI_SOURCE_MAP.md` - Mutable lookup for current primitive locations, approved source surfaces, exclusions, and migration status; not the canonical UI authority.
 - `docs/TASKAPP_SOURCE_MAP.md` - Mutable implementation lookup for current TaskApp paths, symbols, and ownership seams; not the canonical architecture authority.
+- `docs/SCRATCHPAD_SHORTHAND.md` - Canonical V1 compatibility contract for optional Scratchpad/Obsidian shorthand intake.
 
 ## Qualified diagnostics
 

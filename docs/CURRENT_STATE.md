@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.54`.
+- Current working app version: `7.16.55`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.55 Scratchpad Shorthand V1
+
+Scratchpad now accepts the optional, documented V1 shorthand grammar for Task,
+Water, Weight, Focus, and explicit Meal-slot intake. Explicit lines take
+precedence over loose section parsing while legacy loose notes remain supported.
+Meal shorthand creates one ephemeral occurrence with food proposals; lazy Health
+library reconciliation performs exact-only Custom Food matching and preserves
+raw token evidence, quantity/unit requests, and canonical Health execution.
+Sleep/CPAP/Nap shorthand remains deferred. No SQL, Edge deployment, Home V8
+change, canonical authority change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.54 Batch Intake Meal occurrences with multiple foods
 

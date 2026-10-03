@@ -4,6 +4,16 @@ import { displayWeightToKilograms } from "@/lib/health-utils";
 import { mealFoodSelectionFromLibraryItem } from "@/lib/health-meal-draft";
 import { waterAmountToMilliliters } from "@/lib/health-library";
 import { calculateHealthFoodNutrition } from "@/lib/health-nutrition";
+import {
+  extractTrailingShorthandTime,
+  normalizeShorthandMealUnit,
+  normalizeShorthandWaterUnit,
+  parseShorthandMealFoodToken,
+  parseShorthandPrefix,
+  stripTrailingMarkdownBackslashes,
+  tokenizeShorthandCsvTokens,
+  type ScratchpadShorthandPrefix,
+} from "@/lib/scratchpad-shorthand";
 
 export type BatchIntakeKind = "task" | "water" | "weight" | "meal" | "focus" | "unsupported";
 export type BatchIntakeManualKind = Exclude<BatchIntakeKind, "unsupported">;
@@ -54,6 +64,7 @@ export type BatchIntakeTaskDraft = BatchIntakeParsedTaskDraft | BatchIntakeManua
 export type BatchIntakeParsedWaterDraft = BatchIntakeParsedDraftBase & {
   kind: "water";
   writeId?: string;
+  time?: string;
   amount: number | null;
   unit: HealthWaterUnit;
   status: BatchIntakeWaterStatus;
@@ -73,6 +84,7 @@ export type BatchIntakeWaterDraft = BatchIntakeParsedWaterDraft | BatchIntakeMan
 export type BatchIntakeParsedWeightDraft = BatchIntakeParsedDraftBase & {
   kind: "weight";
   writeId?: string;
+  time?: string;
   value: number | null;
   unit: HealthWeightUnit | null;
   unitSource: "explicit" | "profile" | "missing";
@@ -110,6 +122,7 @@ export type BatchIntakeManualMealOccurrenceDraft = BatchIntakeMealOccurrenceBase
 export type BatchIntakeMealOccurrenceDraft = BatchIntakeParsedMealOccurrenceDraft | BatchIntakeManualMealOccurrenceDraft;
 
 export type BatchIntakeMealFoodFields = {
+  rawToken: string | null;
   foodName: string;
   brandName: string;
   foodCategory: string | null;
@@ -140,6 +153,20 @@ type BatchIntakeMealFoodBase = BatchIntakeDraftBase & BatchIntakeMealFoodFields 
   writeId: string;
 };
 
+export type BatchIntakeMealFoodProposalDraft = BatchIntakeDraftBase & {
+  kind: "meal";
+  entryMode: "food_proposal";
+  origin: "parsed";
+  sourceLineNumber: number;
+  mealOccurrenceId: string;
+  sourceParsedMealId: string;
+  rawToken: string;
+  proposedFoodName: string;
+  proposedQuantity: number | null;
+  proposedUnit: string | null;
+  writeId?: string;
+};
+
 export type BatchIntakeParsedMealFoodDraft = BatchIntakeMealFoodBase & {
   origin: "parsed";
   sourceLineNumber: number;
@@ -153,7 +180,7 @@ export type BatchIntakeManualMealFoodDraft = BatchIntakeMealFoodBase & {
 };
 
 export type BatchIntakeMealFoodDraft = BatchIntakeParsedMealFoodDraft | BatchIntakeManualMealFoodDraft;
-export type BatchIntakeMealDraft = BatchIntakeMealOccurrenceDraft | BatchIntakeMealFoodDraft;
+export type BatchIntakeMealDraft = BatchIntakeMealOccurrenceDraft | BatchIntakeMealFoodDraft | BatchIntakeMealFoodProposalDraft;
 
 /** Backward-compatible name for the parsed Meal source occurrence. */
 export type BatchIntakeParsedMealDraft = BatchIntakeParsedMealOccurrenceDraft;
@@ -218,7 +245,7 @@ export function getBatchIntakeReviewGroups(drafts: readonly BatchIntakeDraft[]):
     const id = draft.groupId || draft.id;
     const key = `${draft.kind}:${id}`;
     const group = groups.get(key) ?? { id, kind: draft.kind, occurrenceIds: [], drafts: [] };
-    if (!(draft.kind === "meal" && draft.entryMode === "food")) group.occurrenceIds.push(draft.id);
+    if (!(draft.kind === "meal" && draft.entryMode !== "occurrence")) group.occurrenceIds.push(draft.id);
     group.drafts.push(draft);
     groups.set(key, group);
   });
@@ -345,6 +372,7 @@ function emptyManualMealFood(
     }),
     origin: "manual",
     sourceLineNumber: null,
+    rawToken: null,
     issues: ["Food name is required", "Calories are required"],
     attribution: null,
     barcode: null,
@@ -444,12 +472,123 @@ function splitTaskCandidates(line: string) {
 }
 
 function parseOutcome(title: string): { taskTitle: string; outcome: BatchIntakeTaskOutcome } {
-  const suffix = title.match(/\s+(did\s+my\s+best|done)\s*$/i);
+  const suffix = title.match(/\s+(did\s+my\s+best|dmb|done|missed)\s*$/i);
   if (!suffix) return { taskTitle: title.trim(), outcome: null };
+  const normalizedOutcome = suffix[1].toLocaleLowerCase().replace(/\s+/g, "_");
   return {
     taskTitle: title.slice(0, suffix.index).trim(),
-    outcome: suffix[1].replace(/\s+/g, "_").toLowerCase() as BatchIntakeTaskOutcome,
+    outcome: (normalizedOutcome === "dmb" ? "did_my_best" : normalizedOutcome) as BatchIntakeTaskOutcome,
   };
+}
+
+function parseShorthandWaterToken(value: string) {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)\s*(fl\s*oz|floz|fl_oz|oz|cups?|cup)(?:\s+(done|confirmed|pending))?$/i);
+  if (!match) return { amount: null, status: null as BatchIntakeWaterStatus, issues: ["Could not parse Water shorthand"] };
+  const amount = Number(match[1]);
+  const statusText = match[3]?.toLocaleLowerCase() ?? "";
+  const status: BatchIntakeWaterStatus = statusText === "pending"
+    ? "pending"
+    : statusText === "done" || statusText === "confirmed"
+      ? "confirmed"
+      : null;
+  const issues = amount > 0 && Number.isFinite(amount) ? [] : ["Choose a positive water amount"];
+  if (!status) issues.push("Choose Pending or Confirmed");
+  return {
+    amount: Number.isFinite(amount) && amount > 0 ? amount : null,
+    status,
+    unit: normalizeShorthandWaterUnit(match[2] ?? "") ?? "fl_oz",
+    issues,
+  };
+}
+
+function parseShorthandWeightToken(value: string, preferredWeightUnit?: HealthWeightUnit | null) {
+  const match = value.trim().match(/^(\d+(?:\.\d+)?)(?:\s*(lb|lbs|kg))?$/i);
+  if (!match) return { value: null, unit: null, unitSource: "missing" as const, issues: ["Could not parse Weight shorthand"] };
+  const explicitUnit = match[2]?.toLocaleLowerCase();
+  const unit = explicitUnit === "lbs" ? "lb" : explicitUnit as HealthWeightUnit | undefined;
+  const resolvedUnit = unit ?? preferredWeightUnit ?? null;
+  return {
+    value: Number(match[1]),
+    unit: resolvedUnit,
+    unitSource: unit ? "explicit" as const : resolvedUnit ? "profile" as const : "missing" as const,
+    issues: resolvedUnit ? [] : ["Health preferred weight unit is not ready"],
+  };
+}
+
+function shorthandFocusDurationPattern() {
+  return /^(.*?)(?:\s+)(\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours|m|min|mins|minute|minutes)(?:\s*\d+(?:\.\d+)?\s*(?:m|min|mins|minute|minutes))?)$/i;
+}
+
+function createShorthandFocusDraft(
+  line: string,
+  lineNumber: number,
+  date: string | null,
+  body: string,
+  completionTime: string | null,
+  categories: readonly FocusCategory[] | undefined,
+): BatchIntakeParsedFocusDraft {
+  const match = body.match(shorthandFocusDurationPattern());
+  const title = (match?.[1] ?? body).trim();
+  const durationSeconds = match ? parseBatchIntakeDuration(match[2] ?? "") : null;
+  const category = exactFocusCategoryForTitle(title, categories);
+  const issues = [
+    ...(category ? [] : ["No exact saved Focus category match"]),
+    ...(completionTime ? [] : ["Choose a Focus completion time"]),
+    ...(durationSeconds === null ? ["Focus duration must be greater than zero"] : []),
+  ];
+  return {
+    ...makeBase(line, lineNumber, date, "focus", "high", issues),
+    categoryId: category?.id ?? null,
+    completionTime: completionTime ?? "",
+    durationSeconds,
+    focusSubtype: category?.focusSubtype ?? null,
+    focusSubtype2: category?.focusSubtype2 ?? null,
+    focusType: category?.focusType ?? "Work",
+    kind: "focus",
+    notes: "",
+    title: category?.title ?? title,
+    writeId: undefined,
+    groupId: batchIntakeCanonicalGroupId("focus", category?.id ?? `unresolved:${normalizeFocusCategoryTitle(title)}`),
+  };
+}
+
+function createShorthandMealDrafts(
+  line: string,
+  lineNumber: number,
+  date: string | null,
+  prefix: ScratchpadShorthandPrefix,
+  body: string,
+  time: string | null,
+) {
+  const slot: HealthMealSlot = prefix === "b" ? "breakfast" : prefix === "l" ? "lunch" : prefix === "d" ? "dinner" : "snack";
+  const occurrence = {
+    ...makeBase(line, lineNumber, date, "meal", "high"),
+    entryMode: "occurrence" as const,
+    kind: "meal" as const,
+    mealSlot: slot,
+    rawText: body,
+    time: time ?? "12:00",
+  } satisfies BatchIntakeParsedMealOccurrenceDraft;
+  const tokens = tokenizeShorthandCsvTokens(body);
+  const proposals: BatchIntakeMealFoodProposalDraft[] = tokens.map((token, index) => {
+    const parsed = parseShorthandMealFoodToken(token.value);
+    const issues = parsed.proposedFoodName ? ["Resolve food in Custom Nutrition Library"] : ["Food name is required"];
+    return {
+      ...makeBase(line, lineNumber, date, "meal", "high", issues, index + 1),
+      entryMode: "food_proposal" as const,
+      kind: "meal" as const,
+      mealOccurrenceId: occurrence.id,
+      sourceParsedMealId: occurrence.id,
+      rawToken: token.raw,
+      proposedFoodName: parsed.proposedFoodName,
+      proposedQuantity: parsed.proposedQuantity,
+      proposedUnit: parsed.proposedUnit,
+      writeId: undefined,
+      groupId: occurrence.id,
+    };
+  });
+  if (tokens.length === 0) occurrence.issues.push("At least one food proposal is required");
+  return [occurrence, ...proposals] satisfies BatchIntakeMealDraft[];
 }
 
 function parseMeal(line: string) {
@@ -548,11 +687,12 @@ function createParsedFocusDraft(
   date: string | null,
   category: FocusCategory,
   durationSeconds: number,
+  completionTime: string | null = null,
 ): BatchIntakeParsedFocusDraft {
   return {
-    ...makeBase(sourceText, sourceLineNumber, date, "focus", "high", ["Choose a Focus completion time"]),
+    ...makeBase(sourceText, sourceLineNumber, date, "focus", "high", completionTime ? [] : ["Choose a Focus completion time"]),
     categoryId: category.id,
-    completionTime: "",
+    completionTime: completionTime ?? "",
     durationSeconds,
     focusSubtype: category.focusSubtype ?? null,
     focusSubtype2: category.focusSubtype2 ?? null,
@@ -612,6 +752,54 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
     }
     if (structural === "water") {
       section = "water";
+      continue;
+    }
+
+    const shorthandLine = stripTrailingMarkdownBackslashes(line);
+    const shorthand = parseShorthandPrefix(shorthandLine);
+    if (shorthand) {
+      const timed = shorthand.prefix === "t" ? { body: shorthand.body, time: null as string | null } : extractTrailingShorthandTime(shorthand.body);
+      if (shorthand.prefix === "t") {
+        const tokens = tokenizeShorthandCsvTokens(timed.body);
+        tokens.forEach((token, part) => drafts.push(createTaskDraft(line, lineNumber, currentDate, token.value, part, "high")));
+        if (tokens.length === 0) drafts.push(createTaskDraft(line, lineNumber, currentDate, "", 0, "high"));
+        continue;
+      }
+      if (shorthand.prefix === "w") {
+        const tokens = tokenizeShorthandCsvTokens(timed.body);
+        (tokens.length ? tokens : [{ value: "", raw: "" }]).forEach((token, part) => {
+          const water = parseShorthandWaterToken(token.value);
+          drafts.push({
+            ...makeBase(line, lineNumber, currentDate, "water", water.issues.length ? "medium" : "high", water.issues, part),
+            amount: water.amount,
+            kind: "water",
+            status: water.status,
+            time: timed.time ?? "",
+            unit: water.unit ?? "fl_oz",
+          });
+        });
+        continue;
+      }
+      if (shorthand.prefix === "wt") {
+        const tokens = tokenizeShorthandCsvTokens(timed.body);
+        (tokens.length ? tokens : [{ value: "", raw: "" }]).forEach((token, part) => {
+          const weight = parseShorthandWeightToken(token.value, options.preferredWeightUnit);
+          drafts.push({
+            ...makeBase(line, lineNumber, currentDate, "weight", "high", weight.issues, part),
+            kind: "weight",
+            time: timed.time ?? "",
+            unit: weight.unit,
+            unitSource: weight.unitSource,
+            value: weight.value,
+          });
+        });
+        continue;
+      }
+      if (shorthand.prefix === "f") {
+        drafts.push(createShorthandFocusDraft(line, lineNumber, currentDate, timed.body, timed.time, options.focusCategories));
+        continue;
+      }
+      drafts.push(...createShorthandMealDrafts(line, lineNumber, currentDate, shorthand.prefix, timed.body, timed.time));
       continue;
     }
 
@@ -712,9 +900,9 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
 }
 
 export function duplicateManualBatchIntakeDraft(
-  draft: Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeMealFoodDraft>,
+  draft: Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeMealFoodDraft | BatchIntakeMealFoodProposalDraft>,
   options: { id: string; writeId: string },
-): Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeMealFoodDraft> {
+): Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeMealFoodDraft | BatchIntakeMealFoodProposalDraft> {
   const base = {
     id: options.id,
     groupId: draft.groupId,
@@ -778,11 +966,12 @@ export function duplicateManualBatchIntakeDraft(
 function mealFoodFromLibrarySelection(
   occurrence: BatchIntakeMealOccurrenceDraft,
   food: HealthFoodLibraryItem,
-  options: { id: string; writeId: string; origin: "manual" | "parsed"; sourceParsedMealId: string | null },
+  options: { id: string; writeId: string; origin: "manual" | "parsed"; sourceParsedMealId: string | null; rawToken?: string | null },
 ): BatchIntakeMealFoodDraft {
   const selection = mealFoodSelectionFromLibraryItem(food);
   return {
     ...mealFoodBase(occurrence, options),
+    rawToken: options.rawToken ?? null,
     attribution: selection.attribution,
     barcode: selection.barcode,
     brandName: selection.brandName,
@@ -852,6 +1041,80 @@ export function addMealFromParsedFood(
   options: { id: string; writeId: string },
 ): BatchIntakeParsedMealFoodDraft {
   return addMealFromLibraryFood(parsedMeal, food, options);
+}
+
+export function normalizeBatchIntakeFoodName(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+function proposalIssue(draft: BatchIntakeMealFoodProposalDraft, issue: string) {
+  return {
+    ...draft,
+    issues: [...draft.issues.filter((candidate) => !candidate.includes("Custom Food") && !candidate.includes("food in Custom")), issue],
+  } satisfies BatchIntakeMealFoodProposalDraft;
+}
+
+export function resolveBatchIntakeMealFoodProposal(
+  proposal: BatchIntakeMealFoodProposalDraft,
+  occurrence: BatchIntakeMealOccurrenceDraft,
+  food: HealthFoodLibraryItem,
+  options: { id?: string; writeId: string },
+): BatchIntakeMealFoodDraft {
+  const resolved = mealFoodFromLibrarySelection(occurrence, food, {
+    id: options.id ?? proposal.id,
+    origin: "parsed",
+    rawToken: proposal.rawToken,
+    sourceParsedMealId: proposal.sourceParsedMealId,
+    writeId: options.writeId,
+  });
+  resolved.included = proposal.included;
+  resolved.consumedQuantity = proposal.proposedQuantity ?? resolved.servingQuantity;
+  const requestedUnit = proposal.proposedUnit ?? resolved.servingUnit;
+  resolved.consumedUnit = proposal.proposedUnit && normalizeShorthandMealUnit(proposal.proposedUnit) === normalizeShorthandMealUnit(resolved.servingUnit)
+    ? resolved.servingUnit
+    : requestedUnit;
+  const calculation = calculateBatchIntakeMealNutrition(resolved);
+  resolved.issues = calculation ? [] : ["Consumed quantity is incompatible with the stored serving"];
+  return resolved;
+}
+
+export function createManualMealFoodFromProposal(
+  occurrence: BatchIntakeMealOccurrenceDraft,
+  proposal: BatchIntakeMealFoodProposalDraft,
+  options: { id?: string; writeId: string },
+): BatchIntakeManualMealFoodDraft {
+  const manual = emptyManualMealFood(occurrence, { id: options.id ?? proposal.id, writeId: options.writeId });
+  return {
+    ...manual,
+    consumedQuantity: proposal.proposedQuantity ?? 1,
+    consumedUnit: proposal.proposedUnit ?? "serving",
+    foodName: proposal.proposedFoodName,
+    issues: ["Calories are required"],
+    rawToken: proposal.rawToken,
+  };
+}
+
+export function reconcileBatchIntakeMealFoodProposals(
+  drafts: readonly BatchIntakeDraft[],
+  foods: readonly HealthFoodLibraryItem[],
+  options: { createWriteId?: (proposal: BatchIntakeMealFoodProposalDraft) => string } = {},
+) {
+  const occurrences = new Map(
+    drafts
+      .filter((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence")
+      .map((draft) => [draft.id, draft]),
+  );
+  return drafts.flatMap((draft) => {
+    if (draft.kind !== "meal" || draft.entryMode !== "food_proposal") return [draft];
+    const occurrence = occurrences.get(draft.mealOccurrenceId);
+    const matches = foods.filter((food) => normalizeBatchIntakeFoodName(food.food_name) === normalizeBatchIntakeFoodName(draft.proposedFoodName));
+    if (!occurrence || matches.length !== 1) {
+      return [proposalIssue(draft, matches.length > 1 ? "Multiple exact Custom Food matches require review" : "No exact Custom Food match; choose a Custom Food or use manual food")];
+    }
+    return [resolveBatchIntakeMealFoodProposal(draft, occurrence, matches[0], {
+      writeId: draft.writeId ?? options.createWriteId?.(draft) ?? draft.id,
+    })];
+  });
 }
 
 export function calculateBatchIntakeMealNutrition(draft: Pick<BatchIntakeMealFoodDraft, "calories" | "carbsG" | "fatG" | "nutritionDetails" | "proteinG" | "servingMeasureUnit" | "servingMeasureValue" | "servingQuantity" | "servingUnit" | "consumedQuantity" | "consumedUnit">) {
