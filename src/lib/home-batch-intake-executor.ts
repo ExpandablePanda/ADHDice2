@@ -32,6 +32,14 @@ export type BatchIntakeExecutionResult = {
   taskGroups: Array<BatchIntakeRowExecution & { groupKey: string }>;
 };
 
+export type BatchIntakeApplyProgress = {
+  stage: "tasks" | "water" | "weight" | "complete";
+  processed: number;
+  total: number;
+  applied: number;
+  failed: number;
+};
+
 export type BatchIntakeExecutionAuthorities = {
   syncTaskHistoryEntries: (
     taskId: string,
@@ -47,6 +55,10 @@ export type BatchHealthWriteResult = {
   success: boolean;
   rows: Array<{ index: number; success: boolean; error?: string }>;
   error?: string;
+};
+
+type BatchIntakeExecutionOptions = {
+  onProgress?: (progress: BatchIntakeApplyProgress) => void;
 };
 
 export function buildBatchIntakeExecutionPlan(
@@ -120,43 +132,81 @@ export function buildBatchIntakeExecutionPlan(
 export async function executeBatchIntakePlan(
   plan: BatchIntakeExecutionPlan,
   authorities: BatchIntakeExecutionAuthorities,
+  options: BatchIntakeExecutionOptions = {},
 ): Promise<BatchIntakeExecutionResult> {
   const taskGroups: BatchIntakeExecutionResult["taskGroups"] = [];
   const rows: BatchIntakeRowExecution[] = [];
+  const total = getBatchIntakePlanApplyCount(plan);
+  let processed = 0;
+  let applied = 0;
+  let failed = 0;
+  const emitProgress = (stage: BatchIntakeApplyProgress["stage"]) => {
+    options.onProgress?.({ stage, processed, total, applied, failed });
+  };
+  const initialStage: BatchIntakeApplyProgress["stage"] = plan.taskGroups.length > 0
+    ? "tasks"
+    : plan.waterRows.length > 0
+      ? "water"
+      : plan.weightRows.length > 0
+        ? "weight"
+        : "complete";
+
+  emitProgress(initialStage);
 
   for (const group of plan.taskGroups) {
     const success = await authorities.syncTaskHistoryEntries(group.taskId, group.outcome, group.dates, { historicalOverride: true });
     const error = success ? undefined : "Canonical Task History did not commit this group.";
     taskGroups.push({ groupKey: group.key, rowId: group.rowIds[0], status: success ? "applied" : "failed", ...(error ? { error } : {}) });
     rows.push(...group.rowIds.map((rowId) => ({ rowId, status: success ? "applied" as const : "failed" as const, ...(error ? { error } : {}) })));
+    processed += group.rowIds.length;
+    if (success) applied += group.rowIds.length;
+    else failed += group.rowIds.length;
+    emitProgress("tasks");
   }
 
   if (plan.waterRows.length > 0) {
+    if (initialStage !== "water") emitProgress("water");
     const result = await authorities.addWaterEntries(plan.waterRows.map(({ input }) => input));
-    rows.push(...plan.waterRows.map(({ rowId }, index) => ({
+    const waterRows = plan.waterRows.map(({ rowId }, index) => ({
       rowId,
       status: result.rows[index]?.success ? "applied" as const : "failed" as const,
       ...(result.rows[index]?.success ? {} : { error: result.rows[index]?.error ?? result.error ?? "Water batch write failed." }),
-    })));
+    }));
+    rows.push(...waterRows);
+    processed += waterRows.length;
+    applied += waterRows.filter((row) => row.status === "applied").length;
+    failed += waterRows.filter((row) => row.status === "failed").length;
+    emitProgress("water");
   }
 
   if (plan.weightRows.length > 0) {
+    if (initialStage !== "weight") emitProgress("weight");
     const result = await authorities.addWeightEntries(plan.weightRows.map(({ input }) => input));
-    rows.push(...plan.weightRows.map(({ rowId }, index) => ({
+    const weightRows = plan.weightRows.map(({ rowId }, index) => ({
       rowId,
       status: result.rows[index]?.success ? "applied" as const : "failed" as const,
       ...(result.rows[index]?.success ? {} : { error: result.rows[index]?.error ?? result.error ?? "Weight batch write failed." }),
-    })));
+    }));
+    rows.push(...weightRows);
+    processed += weightRows.length;
+    applied += weightRows.filter((row) => row.status === "applied").length;
+    failed += weightRows.filter((row) => row.status === "failed").length;
+    emitProgress("weight");
   }
 
+  emitProgress("complete");
   return { rows, taskGroups };
+}
+
+function getBatchIntakePlanApplyCount(plan: BatchIntakeExecutionPlan) {
+  return plan.taskGroups.reduce((count, group) => count + group.rowIds.length, 0)
+    + plan.waterRows.length
+    + plan.weightRows.length;
 }
 
 export function getBatchIntakeApplyCount(drafts: readonly BatchIntakeDraft[], options?: { preferredWeightUnit?: HealthWeightUnit | null }) {
   const plan = buildBatchIntakeExecutionPlan(drafts, options);
-  return plan.taskGroups.reduce((count, group) => count + group.rowIds.length, 0)
-    + plan.waterRows.length
-    + plan.weightRows.length;
+  return getBatchIntakePlanApplyCount(plan);
 }
 
 export function isBatchIntakeTaskDraftReady(draft: BatchIntakeTaskDraft) {

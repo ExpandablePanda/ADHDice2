@@ -156,8 +156,6 @@ test("repeat editor updates retain explicit nullable clears for canonical set_re
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
-    repeat_quota_count: null,
-    repeat_quota_balance_enabled: false,
     anchor_date: "2026-08-05",
   });
 });

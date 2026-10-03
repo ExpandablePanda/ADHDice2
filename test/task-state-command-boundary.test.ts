@@ -124,7 +124,7 @@ function monthlyBoundary(overrides: Partial<CanonicalTaskScheduleBoundary> = {})
   } as CanonicalTaskScheduleBoundary;
 }
 
-function scheduleCommand(schedule: ScheduleChangeIntent, replayIdentity: string) {
+function scheduleCommand(schedule: ScheduleChangeIntent, replayIdentity: string, previousBoundary = monthlyBoundary()) {
   return buildTrustedTaskStateCommand({
     intent: {
       type: "set_repeat",
@@ -136,7 +136,7 @@ function scheduleCommand(schedule: ScheduleChangeIntent, replayIdentity: string)
     userId: "owner-1",
     readModel: {
       ...readModel,
-      scheduleBoundaries: [monthlyBoundary()],
+      scheduleBoundaries: [previousBoundary],
     } as unknown as CanonicalTaskStateReadModel,
     logicalDay,
     now: "2026-08-10T12:00:00.000Z",
@@ -195,6 +195,25 @@ test("due_time preserves omission and clears explicit null", () => {
   assert.equal(omitted?.due_time, "09:30");
   const cleared = scheduleCommand({ schedule_model: "fixed", repeat_frequency: "weekly", due_time: null }, "cleared-time").scheduleBoundary;
   assert.equal(cleared?.due_time, null);
+});
+
+test("Quota to Weekdays clears quota state at the canonical schedule boundary", () => {
+  const previous = monthlyBoundary({
+    repeat_frequency: "per_week",
+    repeat_quota_count: 5,
+    repeat_quota_balance_enabled: true,
+  });
+  const boundary = scheduleCommand({
+    schedule_model: "fixed",
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [1, 2, 3, 4, 5],
+  }, "quota-to-weekdays", previous).scheduleBoundary;
+
+  assert.equal(boundary?.repeat_frequency, "weekly");
+  assert.deepEqual(boundary?.repeat_days_of_week, [1, 2, 3, 4, 5]);
+  assert.equal(boundary?.repeat_quota_count, null);
+  assert.equal(boundary?.repeat_quota_balance_enabled, false);
 });
 
 test("accepted intent digest survives replay rebuilds with newer canonical and server-derived state", () => {

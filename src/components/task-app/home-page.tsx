@@ -32,7 +32,7 @@ import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
 import { parseBatchIntake, type BatchIntakeDraft } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
-import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
+import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
 import type { HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
@@ -449,6 +449,7 @@ export function HomePage({
   const [convertingScratchpadItemId, setConvertingScratchpadItemId] = useState<string | null>(null);
   const [batchIntakeDrafts, setBatchIntakeDrafts] = useState<BatchIntakeDraft[] | null>(null);
   const [batchIntakeApplying, setBatchIntakeApplying] = useState(false);
+  const [batchIntakeApplyProgress, setBatchIntakeApplyProgress] = useState<BatchIntakeApplyProgress | null>(null);
   const [batchIntakeExecutionResult, setBatchIntakeExecutionResult] = useState<BatchIntakeExecutionResult | null>(null);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -753,11 +754,13 @@ export function HomePage({
         ? { ...draft, writeId: createBrowserUuidV4() }
         : draft
     )));
+    setBatchIntakeApplyProgress(null);
     setBatchIntakeExecutionResult(null);
   }
 
   function closeBatchIntakeReview() {
     setBatchIntakeDrafts(null);
+    setBatchIntakeApplyProgress(null);
     setBatchIntakeExecutionResult(null);
   }
 
@@ -773,6 +776,8 @@ export function HomePage({
         addWaterEntries,
         addWeightEntries,
         syncTaskHistoryEntries,
+      }, {
+        onProgress: setBatchIntakeApplyProgress,
       });
       setBatchIntakeExecutionResult(result);
       const appliedIds = new Set(result.rows.filter((row) => row.status === "applied").map((row) => row.rowId));
@@ -1712,6 +1717,7 @@ export function HomePage({
             ) : null}
             {batchIntakeDrafts ? (
               <HomeBatchIntakeReview
+                applyProgress={batchIntakeApplyProgress}
                 drafts={batchIntakeDrafts}
                 executionResult={batchIntakeExecutionResult}
                 healthLoading={healthLoading}

@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { classifyTaskStateRuntimeAction, createTaskStateReplayIdentity, type TaskRuntimeTask } from "../src/lib/task-state-runtime-actions.ts";
 import type { TaskUpdate } from "../src/lib/database.types.ts";
+import { normalizePresetRepeatSelection, taskRepeatEditorValueToUpdate } from "../src/lib/task-repeat.ts";
+import { validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
 
 function task(overrides: Partial<TaskRuntimeTask> = {}): TaskRuntimeTask {
   return { id: "task-1", status: "pending", canonical_revision: 4, ...overrides };
@@ -68,6 +70,47 @@ test("due-date and repeat changes are canonical schedule descriptors", () => {
   assert.equal(repeat.actionType, "set_repeat");
 });
 
+test("canonical repeat intents omit quota fields for non-quota recurrence and validate at the Edge boundary", () => {
+  const nonQuotaSelections = ["weekdays", "weekly", "daily", "monthly", "daily_until_complete"] as const;
+  for (const selection of nonQuotaSelections) {
+    const values = taskRepeatEditorValueToUpdate(normalizePresetRepeatSelection(selection, {}, { dueOn: "2026-10-02" }));
+    const action = classify(values, { due_on: "2026-10-02", repeat_frequency: "per_week", repeat_quota_count: 5, repeat_quota_balance_enabled: true });
+    assert.equal(action.kind, "canonical_action", selection);
+    assert.equal(action.actionType, "set_repeat", selection);
+    assert.ok(action.intent, selection);
+    assert.equal(validateTaskStateCommandIntent(action.intent), action.intent, selection);
+    assert.equal(Object.hasOwn(action.intent.schedule, "repeat_quota_count"), false, selection);
+    assert.equal(Object.hasOwn(action.intent.schedule, "repeat_quota_balance_enabled"), false, selection);
+  }
+});
+
+test("canonical quota repeat intents retain valid quota fields", () => {
+  for (const [selection, count] of [["per_week", 5], ["per_month", 12]] as const) {
+    const values = taskRepeatEditorValueToUpdate(normalizePresetRepeatSelection(selection, { repeatQuotaCount: count, repeatQuotaBalanceEnabled: true }));
+    const action = classify(values, { due_on: "2026-10-02", repeat_frequency: "daily" });
+    assert.equal(action.kind, "canonical_action", selection);
+    assert.equal(validateTaskStateCommandIntent(action.intent), action.intent, selection);
+    assert.equal(action.intent?.schedule.repeat_quota_count, count);
+    assert.equal(action.intent?.schedule.repeat_quota_balance_enabled, true);
+  }
+});
+
+test("Due then Weekdays serializes against the committed Due Task and passes validation", () => {
+  const due = classify({ due_on: "2026-10-02" }, { due_on: null, repeat_frequency: "none" }, "due-before-weekdays");
+  assert.equal(due.kind, "canonical_action");
+  assert.equal(due.actionType, "set_due_date");
+  assert.equal(due.intent?.type, "set_due_date");
+
+  const weekdays = taskRepeatEditorValueToUpdate(normalizePresetRepeatSelection("weekdays", {}, { dueOn: "2026-10-02" }));
+  const repeat = classify(weekdays, { due_on: "2026-10-02", repeat_frequency: "none", canonical_revision: 5 }, "weekdays-after-due");
+  assert.equal(repeat.kind, "canonical_action");
+  assert.equal(repeat.actionType, "set_repeat");
+  assert.equal(repeat.intent?.expected_revision, 5);
+  assert.equal(repeat.intent?.schedule.anchor_date, "2026-10-02");
+  assert.deepEqual(repeat.intent?.schedule.repeat_days_of_week, [1, 2, 3, 4, 5]);
+  assert.equal(validateTaskStateCommandIntent(repeat.intent), repeat.intent);
+});
+
 test("No Date emits one complete unscheduled schedule intent", () => {
   const result = classify(
     { due_on: null, due_time: null },
@@ -92,8 +135,6 @@ test("No Date emits one complete unscheduled schedule intent", () => {
       repeat_monthly_mode: "day_of_month",
       repeat_monthly_ordinal: null,
       repeat_monthly_weekday: null,
-      repeat_quota_count: null,
-      repeat_quota_balance_enabled: false,
       one_time_due_on: null,
       anchor_date: null,
       due_time: null,

@@ -2,6 +2,7 @@
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
+import { OperationProgressBar } from "./operation-progress";
 import { useState } from "react";
 import type { HealthProfile, Task } from "@/lib/database.types";
 import {
@@ -14,6 +15,7 @@ import {
   isBatchIntakeTaskDraftReady,
   isBatchIntakeWaterDraftReady,
   isBatchIntakeWeightDraftReady,
+  type BatchIntakeApplyProgress,
   type BatchIntakeExecutionResult,
 } from "@/lib/home-batch-intake-executor";
 import type {
@@ -32,6 +34,7 @@ type Props = {
   onCancel: () => void;
   onApply: () => void;
   isApplying: boolean;
+  applyProgress: BatchIntakeApplyProgress | null;
   executionResult: BatchIntakeExecutionResult | null;
 };
 
@@ -42,6 +45,13 @@ function resultFor(result: BatchIntakeExecutionResult | null, rowId: string) {
 function statusText(status: ReturnType<typeof resultFor>) {
   if (!status) return null;
   return status.status === "applied" ? "Applied" : status.status === "failed" ? `Failed: ${status.error}` : "Skipped";
+}
+
+function batchIntakeStageLabel(stage: NonNullable<Props["applyProgress"]>["stage"]) {
+  if (stage === "tasks") return "Task History";
+  if (stage === "water") return "Water";
+  if (stage === "weight") return "Weight";
+  return "Complete";
 }
 
 function taskDraftWithSelection(draft: BatchIntakeTaskDraft, taskId: string | null, tasks: Task[]) {
@@ -149,7 +159,7 @@ function WeightReviewRow({ draft, profile, result, onChange }: { draft: BatchInt
   );
 }
 
-export function HomeBatchIntakeReview({ drafts, tasks, healthProfile, healthLoading, onChange, onCancel, onApply, isApplying, executionResult }: Props) {
+export function HomeBatchIntakeReview({ applyProgress, drafts, tasks, healthProfile, healthLoading, onChange, onCancel, onApply, isApplying, executionResult }: Props) {
   const preferredWeightUnit = healthProfile?.preferred_weight_unit ?? null;
   const applyCount = getBatchIntakeApplyCount(drafts, { preferredWeightUnit });
   const healthRows = drafts.filter((draft) => draft.kind === "water" || draft.kind === "weight");
@@ -171,6 +181,13 @@ export function HomeBatchIntakeReview({ drafts, tasks, healthProfile, healthLoad
         <p>Dates {new Set(drafts.map((draft) => draft.date).filter(Boolean)).size}</p><p>Tasks {counts.task}</p><p>Water {counts.water}</p><p>Weight {counts.weight}</p><p>Meals {counts.meal} · review only</p><p>Unsupported {counts.unsupported}</p>
       </div>
       <div className="mt-3 rounded-lg bg-[#faf8fe] px-3 py-2 text-xs text-[#625b7b] dark:bg-white/5 dark:text-white/70">Ready to apply: <strong>{applyCount}</strong> · Needs review: {counts.needsReview} · Excluded or review-only rows are not counted.</div>
+      {applyProgress ? (
+        <div className="mt-3 rounded-lg border border-[#e7e0fb] bg-white/70 px-3 py-2 text-[#5f5878] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/75">
+          <p className="text-xs font-semibold">Applying Batch Intake</p>
+          <OperationProgressBar progress={{ completed: applyProgress.processed, failed: applyProgress.failed, label: batchIntakeStageLabel(applyProgress.stage), total: applyProgress.total }} />
+          <p className="mt-1 text-xs tabular-nums">{applyProgress.applied} applied{applyProgress.failed > 0 ? ` · ${applyProgress.failed} failed` : ""}</p>
+        </div>
+      ) : null}
       {healthRows.length > 0 && !healthReady ? <p className="mt-3 rounded-lg border border-[#f2d9a6] bg-[#fff9ed] px-3 py-2 text-xs text-[#8a641c]" role="status">{healthLoading ? "Loading Health authority…" : "Health profile is not ready. Health rows cannot be applied yet."}</p> : null}
       {executionResult?.rows.some((row) => row.status === "failed") ? <p className="mt-3 rounded-lg border border-[#ffd6de] bg-[#fff1f3] px-3 py-2 text-xs text-[#a53f56]" role="alert">Some rows failed. Successful rows remain Applied; failed rows stay visible and can be retried.</p> : null}
       <div className="mt-4 grid gap-4">

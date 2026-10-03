@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { parseBatchIntake } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
-import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan } from "../src/lib/home-batch-intake-executor.ts";
+import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount } from "../src/lib/home-batch-intake-executor.ts";
 import type { Task } from "../src/lib/database.types.ts";
 
 const fixture = `**10/2**
@@ -168,6 +168,11 @@ test("execution plan groups Task dates and excludes no-change, meals, unsupporte
   assert.equal(plan.taskGroups[0].rowIds.length, 1);
   assert.equal(plan.waterRows.length, 1);
   assert.equal(plan.weightRows.length, 1);
+  assert.equal(getBatchIntakeApplyCount([
+    { ...taskDraft, selectedTaskId: "task-id", issues: [] },
+    { ...noChange, selectedTaskId: "task-id", issues: [] },
+    ...drafts.filter((draft) => draft.kind !== "task"),
+  ], { preferredWeightUnit: "lb" }), 3);
 });
 
 test("execution serializes Task groups and keeps failed groups retryable", async () => {
@@ -185,4 +190,57 @@ test("execution serializes Task groups and keeps failed groups retryable", async
   assert.deepEqual(calls, ["history"]);
   assert.equal(result.rows[0].status, "failed");
   assert.equal(result.taskGroups[0].status, "failed");
+});
+
+test("execution reports completed Task, Water, and Weight rows without changing result semantics", async () => {
+  const progress: Array<{ stage: "tasks" | "water" | "weight" | "complete"; processed: number; total: number; applied: number; failed: number }> = [];
+  const plan = {
+    taskGroups: [
+      { key: "task:done", taskId: "task", outcome: "done" as const, dates: ["2026-10-01"], rowIds: ["task-1", "task-2"] },
+      { key: "task:missed", taskId: "other-task", outcome: "missed" as const, dates: ["2026-10-02"], rowIds: ["task-3"] },
+    ],
+    waterRows: [
+      { rowId: "water-1", input: {} as never },
+      { rowId: "water-2", input: {} as never },
+    ],
+    weightRows: [{ rowId: "weight-1", input: {} as never }],
+  };
+  const result = await executeBatchIntakePlan(plan, {
+    syncTaskHistoryEntries: async (taskId) => taskId === "task",
+    addWaterEntries: async () => ({ success: false, rows: [{ index: 0, success: true }, { index: 1, success: false, error: "Water failed" }] }),
+    addWeightEntries: async () => ({ success: true, rows: [{ index: 0, success: true }] }),
+  }, { onProgress: (next) => progress.push(next) });
+
+  assert.deepEqual(progress, [
+    { stage: "tasks", processed: 0, total: 6, applied: 0, failed: 0 },
+    { stage: "tasks", processed: 2, total: 6, applied: 2, failed: 0 },
+    { stage: "tasks", processed: 3, total: 6, applied: 2, failed: 1 },
+    { stage: "water", processed: 3, total: 6, applied: 2, failed: 1 },
+    { stage: "water", processed: 5, total: 6, applied: 3, failed: 2 },
+    { stage: "weight", processed: 5, total: 6, applied: 3, failed: 2 },
+    { stage: "weight", processed: 6, total: 6, applied: 4, failed: 2 },
+    { stage: "complete", processed: 6, total: 6, applied: 4, failed: 2 },
+  ]);
+  assert.deepEqual(result.rows.map((row) => [row.rowId, row.status]), [
+    ["task-1", "applied"], ["task-2", "applied"], ["task-3", "failed"],
+    ["water-1", "applied"], ["water-2", "failed"], ["weight-1", "applied"],
+  ]);
+});
+
+test("retry progress total contains only the current executable rows", async () => {
+  const progress: Array<{ stage: "tasks" | "water" | "weight" | "complete"; processed: number; total: number; applied: number; failed: number }> = [];
+  const retryPlan = {
+    taskGroups: [{ key: "task:done", taskId: "task", outcome: "done" as const, dates: ["2026-10-01"], rowIds: ["failed-task-1", "failed-task-2"] }],
+    waterRows: [],
+    weightRows: [],
+  };
+  await executeBatchIntakePlan(retryPlan, {
+    syncTaskHistoryEntries: async () => true,
+    addWaterEntries: async () => ({ success: true, rows: [] }),
+    addWeightEntries: async () => ({ success: true, rows: [] }),
+  }, { onProgress: (next) => progress.push(next) });
+
+  assert.equal(progress[0]?.total, 2);
+  assert.equal(progress.at(-1)?.processed, 2);
+  assert.equal(progress.at(-1)?.stage, "complete");
 });

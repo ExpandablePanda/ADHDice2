@@ -121,14 +121,13 @@ function canonicalScheduleIntent(
       repeat_monthly_mode: "day_of_month",
       repeat_monthly_ordinal: null,
       repeat_monthly_weekday: null,
-      repeat_quota_count: null,
-      repeat_quota_balance_enabled: false,
       one_time_due_on: null,
       anchor_date: null,
       due_time: null,
     };
   }
   const repeatFrequency = values.repeat_frequency ?? task.repeat_frequency ?? "none";
+  const usesQuotaFields = repeatFrequency === "per_week" || repeatFrequency === "per_month";
   const dueOn = Object.hasOwn(values, "due_on") ? values.due_on : task.due_on;
   const schedule: TaskStateScheduleChangeIntent = {
     schedule_model: scheduleModel,
@@ -139,8 +138,8 @@ function canonicalScheduleIntent(
     ...(values.repeat_monthly_mode !== undefined ? { repeat_monthly_mode: values.repeat_monthly_mode } : {}),
     ...(values.repeat_monthly_ordinal !== undefined ? { repeat_monthly_ordinal: values.repeat_monthly_ordinal } : {}),
     ...(values.repeat_monthly_weekday !== undefined ? { repeat_monthly_weekday: values.repeat_monthly_weekday } : {}),
-    ...(values.repeat_quota_count !== undefined ? { repeat_quota_count: values.repeat_quota_count } : {}),
-    ...(values.repeat_quota_balance_enabled !== undefined ? { repeat_quota_balance_enabled: values.repeat_quota_balance_enabled } : {}),
+    ...(usesQuotaFields && values.repeat_quota_count !== undefined ? { repeat_quota_count: values.repeat_quota_count } : {}),
+    ...(usesQuotaFields && values.repeat_quota_balance_enabled !== undefined ? { repeat_quota_balance_enabled: values.repeat_quota_balance_enabled } : {}),
     ...(values.due_time !== undefined ? { due_time: values.due_time } : {}),
     ...(scheduleModel === "one_time" ? { one_time_due_on: dueOn ?? null } : {}),
     ...(scheduleModel === "rolling" || scheduleModel === "fixed" ? { anchor_date: dueOn ?? null } : {}),

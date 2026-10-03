@@ -355,7 +355,7 @@ test("quota schedule commits update the immediate Calendar projection through re
   );
 });
 
-test("canonical Due and Repeat commits reload fresh History before immediate streak reconciliation", async () => {
+test("canonical Due then Weekdays commits use the current Task and reload fresh History", async () => {
   const automaticMissed: TaskHistory = {
     counted_as_due_occurrence: true,
     created_at: "2026-08-01T00:00:00.000Z",
@@ -393,7 +393,7 @@ test("canonical Due and Repeat commits reload fresh History before immediate str
     boundary_type: "repeat_change",
     schedule_model: "fixed",
     repeat_frequency: "weekly",
-    repeat_days_of_week: [6],
+    repeat_days_of_week: [1, 2, 3, 4, 5],
     anchor_date: "2026-08-01",
     anchor_kind: "user_selected",
     anchor_confidence: "proven",
@@ -410,6 +410,11 @@ test("canonical Due and Repeat commits reload fresh History before immediate str
   const update = useTaskUpdateAction({
     canonicalCommandExecutor: async (action, currentTask): Promise<TaskStateRuntimeExecutionResult> => {
       events.push("command");
+      assert.ok(action.intent);
+      if (action.actionType === "set_repeat") {
+        assert.equal(Object.hasOwn(action.intent.schedule, "repeat_quota_count"), false);
+        assert.equal(Object.hasOwn(action.intent.schedule, "repeat_quota_balance_enabled"), false);
+      }
       const nextBoundary = action.actionType === "set_due_date" ? dueBoundary : repeatBoundary;
       return {
         success: true,
@@ -417,7 +422,7 @@ test("canonical Due and Repeat commits reload fresh History before immediate str
           ...currentTask,
           ...(action.actionType === "set_due_date"
             ? { due_on: "2026-08-01" }
-            : { repeat_frequency: "weekly", repeat_days_of_week: [6] }),
+            : { repeat_frequency: "weekly", repeat_days_of_week: [1, 2, 3, 4, 5], repeat_quota_count: null, repeat_quota_balance_enabled: false }),
           canonical_revision: currentTask.canonical_revision + 1,
         },
         response: commandResponse(nextBoundary.id, action.expectedRevision),
@@ -457,7 +462,17 @@ test("canonical Due and Repeat commits reload fresh History before immediate str
   });
 
   assert.equal(await update.updateTask(taskId, { due_on: "2026-08-01" }), true);
-  assert.equal(await update.updateTask(taskId, { repeat_frequency: "weekly", repeat_days_of_week: [6] }), true);
+  assert.equal(await update.updateTask(taskId, {
+    repeat_frequency: "weekly",
+    repeat_interval: 1,
+    repeat_days_of_week: [1, 2, 3, 4, 5],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    repeat_quota_count: null,
+    repeat_quota_balance_enabled: false,
+  }), true);
   assert.deepEqual(events, [
     "command", "schedule-reload", `history-reload:${taskId}`, "streak-reconciliation",
     "command", "schedule-reload", `history-reload:${taskId}`, "streak-reconciliation",
@@ -466,6 +481,8 @@ test("canonical Due and Repeat commits reload fresh History before immediate str
   assert.deepEqual(historyCallbacks[1], []);
   assert.equal(taskCallbacks[0]?.canonical_schedule_boundary?.id, dueBoundary.id);
   assert.equal(taskCallbacks[1]?.canonical_schedule_boundary?.id, repeatBoundary.id);
+  assert.equal(taskCallbacks[1]?.due_on, "2026-08-01");
+  assert.deepEqual(taskCallbacks[1]?.repeat_days_of_week, [1, 2, 3, 4, 5]);
   assert.equal(buildTaskHistoryStreakSummary(taskCallbacks[0]!, historyCallbacks[0]!, "2026-08-05", { timezone: "UTC", now: "2026-08-05T12:00:00.000Z" }).missedStreak, 1);
   assert.equal(buildTaskHistoryStreakSummary(taskCallbacks[1]!, historyCallbacks[1]!, "2026-08-05", { timezone: "UTC", now: "2026-08-05T12:00:00.000Z" }).missedStreak, 0);
 });

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.47`.
+- Current working app version: `7.16.48`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.48 Batch Intake apply progress and non-quota Repeat serialization
+
+Batch Intake Apply now reports actual completed Task History groups and Health
+batch rows through the shared progress-bar pattern; retry totals are derived
+from the current executable plan, while successful rows remain Applied and
+failed rows remain retryable. Canonical Task State schedule intents now omit
+quota fields for non-quota recurrence, so Weekdays and other ordinary Repeat
+changes satisfy the existing Edge validator; quota recurrence retains its
+validated fields. No SQL or Edge deployment was performed.
 
 ## 2026-10-03 7.16.47 On-Time and Home Realtime lifecycle hardening
 

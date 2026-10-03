@@ -4,6 +4,7 @@ import test from "node:test";
 
 const healthSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+const reviewSource = readFileSync(new URL("../src/components/task-app/home-batch-intake-review.tsx", import.meta.url), "utf8");
 const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 test("Health batch writes stay inside useHealth and publish one complete snapshot", () => {
@@ -25,6 +26,11 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(homeSource, /setBatchIntakeDrafts\(applyBatchIntakeTaskMatches/);
   assert.match(homeSource, /setScratchpadDraft\(""\)/);
   assert.match(homeSource, /setBatchIntakeDrafts\(null\)/);
+  assert.match(homeSource, /onProgress: setBatchIntakeApplyProgress/);
+  assert.match(homeSource, /applyProgress=\{batchIntakeApplyProgress\}/);
+  assert.match(reviewSource, /OperationProgressBar/);
+  assert.match(reviewSource, /Applying Batch Intake/);
+  assert.match(reviewSource, /applyProgress\.processed/);
   assert.match(appSource, /activePage === "Health" \|\| batchIntakeHealthActive/);
   assert.match(appSource, /onBatchIntakeHealthActivationChange=\{setBatchIntakeHealthActive\}/);
 });
