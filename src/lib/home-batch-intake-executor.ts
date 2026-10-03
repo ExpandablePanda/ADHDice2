@@ -2,7 +2,8 @@ import type { HealthMealEntryInsert, HealthWaterEntryInsert, HealthWeightEntryIn
 import type {
   BatchIntakeDraft,
   BatchIntakeFocusDraft,
-  BatchIntakeManualMealDraft,
+  BatchIntakeMealFoodDraft,
+  BatchIntakeMealOccurrenceDraft,
   BatchIntakeTaskDraft,
   BatchIntakeWaterDraft,
   BatchIntakeWeightDraft,
@@ -114,10 +115,49 @@ export function buildBatchIntakeExecutionPlan(
   const mealRows: BatchIntakeExecutionPlan["mealRows"] = [];
   const focusRows: BatchIntakeExecutionPlan["focusRows"] = [];
   const loggedAtForDate = options.loggedAtForDate ?? ((date, time) => time?.trim() ? buildHealthMealLoggedAt(date, time) : buildHealthMealLoggedAt(date, "12:00"));
+  const mealOccurrences = new Map(
+    drafts
+      .filter((draft): draft is Extract<BatchIntakeDraft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence")
+      .map((draft) => [draft.id, draft]),
+  );
 
   for (const draft of drafts) {
     const blockingIssues = draft.issues.filter((issue) => !(draft.kind === "weight" && issue === "Health preferred weight unit is not ready" && (draft.unit ?? options.preferredWeightUnit)));
-    if (!draft.included || !draft.date || blockingIssues.length > 0) continue;
+    if (!draft.included || blockingIssues.length > 0) continue;
+    if (draft.kind === "meal") {
+      if (draft.entryMode === "occurrence") continue;
+      const occurrence = mealOccurrences.get(draft.mealOccurrenceId);
+      if (!occurrence || !isBatchIntakeMealFoodDraftReady(draft, occurrence)) continue;
+      const loggedAt = loggedAtForDate(occurrence.date!, occurrence.time);
+      if (!loggedAt) continue;
+      mealRows.push({
+        rowId: draft.id,
+        input: buildHealthMealEntryInputFromSelection({
+          attribution: draft.attribution,
+          barcode: draft.barcode,
+          brandName: draft.brandName,
+          calories: draft.calories!,
+          carbs: draft.carbsG,
+          consumedQuantity: draft.consumedQuantity ?? undefined,
+          consumedUnit: draft.consumedUnit,
+          fat: draft.fatG,
+          foodCategory: draft.foodCategory,
+          foodName: draft.foodName,
+          nutritionDetails: draft.nutritionDetails,
+          provider: draft.provider,
+          providerItemId: draft.providerItemId,
+          protein: draft.proteinG,
+          servingLabel: draft.servingLabel.trim() || null,
+          servingMeasureUnit: draft.servingMeasureUnit,
+          servingMeasureValue: draft.servingMeasureValue,
+          servingQuantity: draft.servingQuantity,
+          servingUnit: draft.servingUnit,
+          sourceFoodId: draft.sourceFoodId,
+        }, { date: occurrence.date!, id: draft.writeId, loggedAt, mealSlot: occurrence.mealSlot }),
+      });
+      continue;
+    }
+    if (!draft.date) continue;
     if (draft.kind === "task") {
       if (!draft.selectedTaskId || !draft.outcome) continue;
       const key = `${draft.selectedTaskId}:${draft.outcome}`;
@@ -167,37 +207,6 @@ export function buildBatchIntakeExecutionPlan(
           source: "manual",
           weight_kg: weightKg,
         },
-      });
-      continue;
-    }
-    if (draft.kind === "meal") {
-      if (draft.origin !== "manual" || !isBatchIntakeMealDraftReady(draft)) continue;
-      const loggedAt = loggedAtForDate(draft.date, draft.time);
-      if (!loggedAt) continue;
-      mealRows.push({
-        rowId: draft.id,
-        input: buildHealthMealEntryInputFromSelection({
-          attribution: draft.attribution,
-          barcode: draft.barcode,
-          brandName: draft.brandName,
-          calories: draft.calories!,
-          carbs: draft.carbsG,
-          consumedQuantity: draft.consumedQuantity ?? undefined,
-          consumedUnit: draft.consumedUnit,
-          fat: draft.fatG,
-          foodCategory: draft.foodCategory,
-          foodName: draft.foodName,
-          nutritionDetails: draft.nutritionDetails,
-          provider: draft.provider,
-          providerItemId: draft.providerItemId,
-          protein: draft.proteinG,
-          servingLabel: draft.servingLabel.trim() || null,
-          servingMeasureUnit: draft.servingMeasureUnit,
-          servingMeasureValue: draft.servingMeasureValue,
-          servingQuantity: draft.servingQuantity,
-          servingUnit: draft.servingUnit,
-          sourceFoodId: draft.sourceFoodId,
-        }, { date: draft.date!, id: draft.writeId, loggedAt, mealSlot: draft.mealSlot }),
       });
       continue;
     }
@@ -360,11 +369,17 @@ export function isBatchIntakeWeightDraftReady(draft: BatchIntakeWeightDraft, pre
   return draft.included && draft.date !== null && draft.value !== null && Boolean(draft.unit ?? preferredWeightUnit) && draft.issues.length === 0 && (!("time" in draft) || !draft.time || buildHealthMealLoggedAt(draft.date, draft.time) !== null);
 }
 
-export function isBatchIntakeMealDraftReady(draft: BatchIntakeManualMealDraft) {
+export function isBatchIntakeMealFoodDraftReady(
+  draft: BatchIntakeMealFoodDraft,
+  occurrence: BatchIntakeMealOccurrenceDraft | null | undefined,
+) {
   const optionalMacros = [draft.proteinG, draft.carbsG, draft.fatG];
   return draft.included
-    && draft.date !== null
-    && draft.entryMode === "structured"
+    && occurrence !== null
+    && occurrence !== undefined
+    && occurrence.included
+    && occurrence.date !== null
+    && draft.entryMode === "food"
     && draft.foodName.trim().length > 0
     && draft.calories !== null
     && Number.isFinite(draft.calories)
@@ -375,9 +390,12 @@ export function isBatchIntakeMealDraftReady(draft: BatchIntakeManualMealDraft) {
     && draft.consumedQuantity > 0
     && draft.consumedUnit.trim().length > 0
     && calculateBatchIntakeMealNutrition(draft) !== null
-    && buildHealthMealLoggedAt(draft.date, draft.time) !== null
+    && occurrence.issues.length === 0
+    && buildHealthMealLoggedAt(occurrence.date, occurrence.time) !== null
     && draft.issues.length === 0;
 }
+
+export const isBatchIntakeMealDraftReady = isBatchIntakeMealFoodDraftReady;
 
 export function isBatchIntakeFocusDraftReady(draft: BatchIntakeFocusDraft) {
   return draft.included

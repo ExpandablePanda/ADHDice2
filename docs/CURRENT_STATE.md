@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.53`.
+- Current working app version: `7.16.54`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,23 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.54 Batch Intake Meal occurrences with multiple foods
+
+Batch Intake Meals now use an explicit ephemeral occurrence/food hierarchy.
+Each Meal occurrence owns slot, date, and time; each food child owns its
+canonical Custom Food identity, consumed quantity/unit, nutrition snapshot,
+draft identity, write identity, and execution result. Manual `+ Meal` creates
+an empty occurrence, while custom-food selection and manual-food fallback add
+independent children without replacing siblings. Parsed Meal source text stays
+immutable review evidence and matched foods remain attached to that source
+occurrence.
+
+Execution remains flat and canonical: each valid food child becomes one
+Health meal entry through `useHealth.addMealEntries`, sharing the occurrence
+context. Applied children lock shared slot/date/time, while unapplied siblings
+remain editable, removable, and retryable. No SQL, Edge deployment, Home V8
+change, schema change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.53 Batch Intake grouped occurrences and consumed Custom Food quantities
 

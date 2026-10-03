@@ -53,7 +53,8 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(homeSource, /focusCategories,/);
   assert.match(appSource, /healthFoods=\{healthFavorites\}/);
   assert.match(reviewSource, /Search custom foods…/);
-  assert.match(reviewSource, /onAddMealFromParsed/);
+  assert.match(reviewSource, /onAddMealFood/);
+  assert.match(reviewSource, /\+ Add manual food/);
   assert.doesNotMatch(reviewSource, /\+ Another/);
   assert.match(reviewSource, /\+ Add occurrence/);
   assert.match(reviewSource, /\+ Add submission/);
@@ -70,6 +71,11 @@ test("cumulative Applied results back every supported row lock", () => {
   assert.match(reviewSource, /groupHasApplied/);
   assert.match(reviewSource, /onAddOccurrence/);
   assert.doesNotMatch(reviewSource, /onAddAnother/);
+  assert.match(reviewSource, /Meal · \$\{mealSlotLabel\(occurrence\.mealSlot\)\}/);
+  assert.match(reviewSource, /Meal slot<select[^>]+disabled=\{sharedDisabled\}/);
+  assert.match(reviewSource, /Date<input[^>]+disabled=\{sharedDisabled\}/);
+  assert.match(reviewSource, /Time<input[^>]+disabled=\{sharedDisabled\}/);
+  assert.match(homeSource, /appliedFoodChild/);
 });
 
 test("Batch Intake resets cumulative results only when a review is replaced or closed", () => {

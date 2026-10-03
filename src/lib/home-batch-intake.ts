@@ -16,18 +16,21 @@ type BatchIntakeDraftBase = {
   groupId: string;
   sourceText: string;
   sourceLineNumber: number | null;
-  date: string | null;
   included: boolean;
   confidence: BatchIntakeConfidence;
   issues: string[];
 };
 
-type BatchIntakeParsedDraftBase = BatchIntakeDraftBase & {
+type BatchIntakeDatedDraftBase = BatchIntakeDraftBase & {
+  date: string | null;
+};
+
+type BatchIntakeParsedDraftBase = BatchIntakeDatedDraftBase & {
   origin: "parsed";
   sourceLineNumber: number;
 };
 
-type BatchIntakeManualDraftBase = BatchIntakeDraftBase & {
+type BatchIntakeManualDraftBase = BatchIntakeDatedDraftBase & {
   origin: "manual";
   sourceLineNumber: null;
 };
@@ -86,19 +89,27 @@ export type BatchIntakeManualWeightDraft = BatchIntakeManualDraftBase & {
 
 export type BatchIntakeWeightDraft = BatchIntakeParsedWeightDraft | BatchIntakeManualWeightDraft;
 
-export type BatchIntakeParsedMealDraft = BatchIntakeParsedDraftBase & {
+type BatchIntakeMealOccurrenceBase = BatchIntakeDatedDraftBase & {
   kind: "meal";
-  entryMode: "raw";
+  entryMode: "occurrence";
   mealSlot: HealthMealSlot;
+  time: string;
+};
+
+export type BatchIntakeParsedMealOccurrenceDraft = BatchIntakeMealOccurrenceBase & {
+  origin: "parsed";
+  sourceLineNumber: number;
   rawText: string;
 };
 
-export type BatchIntakeManualMealDraft = BatchIntakeManualDraftBase & {
-  kind: "meal";
-  entryMode: "structured";
-  writeId: string;
-  mealSlot: HealthMealSlot;
-  sourceParsedMealId?: string | null;
+export type BatchIntakeManualMealOccurrenceDraft = BatchIntakeMealOccurrenceBase & {
+  origin: "manual";
+  sourceLineNumber: null;
+};
+
+export type BatchIntakeMealOccurrenceDraft = BatchIntakeParsedMealOccurrenceDraft | BatchIntakeManualMealOccurrenceDraft;
+
+export type BatchIntakeMealFoodFields = {
   foodName: string;
   brandName: string;
   foodCategory: string | null;
@@ -119,10 +130,35 @@ export type BatchIntakeManualMealDraft = BatchIntakeManualDraftBase & {
   servingMeasureUnit: HealthServingMeasureUnit | null;
   consumedQuantity: number | null;
   consumedUnit: string;
-  time: string;
 };
 
-export type BatchIntakeMealDraft = BatchIntakeParsedMealDraft | BatchIntakeManualMealDraft;
+type BatchIntakeMealFoodBase = BatchIntakeDraftBase & BatchIntakeMealFoodFields & {
+  kind: "meal";
+  entryMode: "food";
+  foodMode: "library" | "manual";
+  mealOccurrenceId: string;
+  writeId: string;
+};
+
+export type BatchIntakeParsedMealFoodDraft = BatchIntakeMealFoodBase & {
+  origin: "parsed";
+  sourceLineNumber: number;
+  sourceParsedMealId: string;
+};
+
+export type BatchIntakeManualMealFoodDraft = BatchIntakeMealFoodBase & {
+  origin: "manual";
+  sourceLineNumber: null;
+  sourceParsedMealId: string | null;
+};
+
+export type BatchIntakeMealFoodDraft = BatchIntakeParsedMealFoodDraft | BatchIntakeManualMealFoodDraft;
+export type BatchIntakeMealDraft = BatchIntakeMealOccurrenceDraft | BatchIntakeMealFoodDraft;
+
+/** Backward-compatible name for the parsed Meal source occurrence. */
+export type BatchIntakeParsedMealDraft = BatchIntakeParsedMealOccurrenceDraft;
+/** Backward-compatible name for an executable manual Meal food child. */
+export type BatchIntakeManualMealDraft = BatchIntakeManualMealFoodDraft;
 
 export type BatchIntakeParsedFocusDraft = BatchIntakeParsedDraftBase & {
   kind: "focus";
@@ -172,7 +208,7 @@ export type BatchIntakeReviewGroup = {
   drafts: BatchIntakeDraft[];
 };
 
-export function batchIntakeCanonicalGroupId(kind: "task" | "meal" | "focus", identity: string) {
+export function batchIntakeCanonicalGroupId(kind: "task" | "focus", identity: string) {
   return `${kind}:${identity}`;
 }
 
@@ -182,7 +218,7 @@ export function getBatchIntakeReviewGroups(drafts: readonly BatchIntakeDraft[]):
     const id = draft.groupId || draft.id;
     const key = `${draft.kind}:${id}`;
     const group = groups.get(key) ?? { id, kind: draft.kind, occurrenceIds: [], drafts: [] };
-    group.occurrenceIds.push(draft.id);
+    if (!(draft.kind === "meal" && draft.entryMode === "food")) group.occurrenceIds.push(draft.id);
     group.drafts.push(draft);
     groups.set(key, group);
   });
@@ -245,9 +281,10 @@ function makeBase(
   issues: string[] = [],
   part = 0,
 ) {
+  const id = `batch-intake-${lineNumber}-${part}`;
   return {
-    id: `batch-intake-${lineNumber}-${part}`,
-    groupId: `batch-intake-${kind}-${lineNumber}-${part}`,
+    id,
+    groupId: kind === "meal" ? id : `batch-intake-${kind}-${lineNumber}-${part}`,
     sourceText: line,
     sourceLineNumber: lineNumber,
     origin: "parsed" as const,
@@ -275,6 +312,64 @@ function manualBase(id: string, sourceText: string, date: string | null) {
     included: true,
     confidence: "high" as const,
     issues: [...issueForDate(date)],
+  };
+}
+
+function mealFoodBase(
+  occurrence: BatchIntakeMealOccurrenceDraft,
+  options: { id: string; origin: "manual" | "parsed"; sourceParsedMealId: string | null },
+) {
+  return {
+    id: options.id,
+    groupId: occurrence.id,
+    sourceText: occurrence.sourceText,
+    sourceLineNumber: options.origin === "parsed" ? occurrence.sourceLineNumber : null,
+    origin: options.origin,
+    included: true,
+    confidence: occurrence.confidence,
+    issues: [] as string[],
+    mealOccurrenceId: occurrence.id,
+    sourceParsedMealId: options.sourceParsedMealId,
+  };
+}
+
+function emptyManualMealFood(
+  occurrence: BatchIntakeMealOccurrenceDraft,
+  options: { id: string; writeId: string },
+): BatchIntakeManualMealFoodDraft {
+  return {
+    ...mealFoodBase(occurrence, {
+      id: options.id,
+      origin: "manual",
+      sourceParsedMealId: occurrence.origin === "parsed" ? occurrence.id : null,
+    }),
+    origin: "manual",
+    sourceLineNumber: null,
+    issues: ["Food name is required", "Calories are required"],
+    attribution: null,
+    barcode: null,
+    brandName: "",
+    calories: null,
+    carbsG: null,
+    consumedQuantity: 1,
+    consumedUnit: "serving",
+    fatG: null,
+    foodCategory: null,
+    foodMode: "manual",
+    foodName: "",
+    kind: "meal",
+    entryMode: "food",
+    nutritionDetails: null,
+    provider: "manual",
+    providerItemId: null,
+    proteinG: null,
+    servingLabel: "",
+    servingMeasureUnit: null,
+    servingMeasureValue: null,
+    servingQuantity: 1,
+    servingUnit: "serving",
+    sourceFoodId: null,
+    writeId: options.writeId,
   };
 }
 
@@ -323,33 +418,10 @@ export function createManualBatchIntakeDraft(
     return {
       ...base,
       kind,
-      entryMode: "structured",
-      writeId: options.id,
+      entryMode: "occurrence",
       mealSlot: "breakfast",
-      sourceParsedMealId: null,
-      foodName: "",
-      brandName: "",
-      foodCategory: null,
-      sourceFoodId: null,
-      calories: null,
-      proteinG: null,
-      carbsG: null,
-      fatG: null,
-      nutritionDetails: null,
-      barcode: null,
-      attribution: null,
-      provider: "manual",
-      providerItemId: null,
-      servingLabel: "",
-      servingQuantity: 1,
-      servingUnit: "serving",
-      servingMeasureValue: null,
-      servingMeasureUnit: null,
-      consumedQuantity: 1,
-      consumedUnit: "serving",
       time,
-      issues: ["Food name is required", "Calories are required"],
-    } satisfies BatchIntakeManualMealDraft;
+    } satisfies BatchIntakeManualMealOccurrenceDraft;
   }
   return {
     ...base,
@@ -554,10 +626,11 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
       drafts.push({
         ...makeBase(line, lineNumber, currentDate, "meal", "high"),
         kind: "meal",
-        entryMode: "raw",
+        entryMode: "occurrence",
         mealSlot: meal.mealSlot,
         rawText: meal.rawText,
-      });
+        time: "12:00",
+      } satisfies BatchIntakeParsedMealOccurrenceDraft);
       section = null;
       continue;
     }
@@ -639,9 +712,9 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
 }
 
 export function duplicateManualBatchIntakeDraft(
-  draft: Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeParsedMealDraft>,
+  draft: Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeMealFoodDraft>,
   options: { id: string; writeId: string },
-): Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeParsedMealDraft> {
+): Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeMealFoodDraft> {
   const base = {
     id: options.id,
     groupId: draft.groupId,
@@ -686,12 +759,13 @@ export function duplicateManualBatchIntakeDraft(
   }
   if (draft.kind === "meal") {
     return {
-      ...draft,
       ...base,
       kind: "meal",
-      entryMode: "structured",
-      writeId: options.writeId,
-    } satisfies BatchIntakeManualMealDraft;
+      groupId: options.id,
+      entryMode: "occurrence",
+      mealSlot: draft.mealSlot,
+      time: draft.time,
+    } satisfies BatchIntakeManualMealOccurrenceDraft;
   }
   return {
     ...draft,
@@ -701,26 +775,24 @@ export function duplicateManualBatchIntakeDraft(
   } satisfies BatchIntakeManualFocusDraft;
 }
 
-export function addMealFromParsedFood(
-  parsedMeal: BatchIntakeParsedMealDraft,
+function mealFoodFromLibrarySelection(
+  occurrence: BatchIntakeMealOccurrenceDraft,
   food: HealthFoodLibraryItem,
-  options: { id: string; writeId: string; time?: string },
-): BatchIntakeManualMealDraft {
+  options: { id: string; writeId: string; origin: "manual" | "parsed"; sourceParsedMealId: string | null },
+): BatchIntakeMealFoodDraft {
   const selection = mealFoodSelectionFromLibraryItem(food);
-  const base = manualBase(options.id, parsedMeal.sourceText, parsedMeal.date);
   return {
-    ...base,
+    ...mealFoodBase(occurrence, options),
     attribution: selection.attribution,
     barcode: selection.barcode,
     brandName: selection.brandName,
     calories: selection.calories,
     carbsG: selection.carbs,
-    entryMode: "structured",
+    entryMode: "food",
     fatG: selection.fat,
     foodName: selection.foodName,
     foodCategory: selection.foodCategory,
     kind: "meal",
-    mealSlot: parsedMeal.mealSlot,
     nutritionDetails: selection.nutritionDetails,
     provider: selection.provider,
     providerItemId: selection.providerItemId,
@@ -733,14 +805,56 @@ export function addMealFromParsedFood(
     consumedQuantity: selection.servingQuantity,
     consumedUnit: selection.servingUnit,
     sourceFoodId: selection.sourceFoodId,
-    sourceParsedMealId: parsedMeal.id,
-    time: options.time ?? "12:00",
+    foodMode: "library",
     writeId: options.writeId,
-    groupId: batchIntakeCanonicalGroupId("meal", selection.sourceFoodId ?? options.id),
-  };
+    origin: options.origin,
+    sourceLineNumber: options.origin === "parsed" ? occurrence.sourceLineNumber : null,
+  } as BatchIntakeMealFoodDraft;
 }
 
-export function calculateBatchIntakeMealNutrition(draft: Pick<BatchIntakeManualMealDraft, "calories" | "carbsG" | "fatG" | "nutritionDetails" | "proteinG" | "servingMeasureUnit" | "servingMeasureValue" | "servingQuantity" | "servingUnit" | "consumedQuantity" | "consumedUnit">) {
+export function createManualMealFood(
+  occurrence: BatchIntakeMealOccurrenceDraft,
+  options: { id: string; writeId: string },
+) {
+  return emptyManualMealFood(occurrence, options);
+}
+
+export function addMealFromLibraryFood(
+  occurrence: BatchIntakeManualMealOccurrenceDraft,
+  food: HealthFoodLibraryItem,
+  options: { id: string; writeId: string },
+): BatchIntakeManualMealFoodDraft;
+export function addMealFromLibraryFood(
+  occurrence: BatchIntakeParsedMealOccurrenceDraft,
+  food: HealthFoodLibraryItem,
+  options: { id: string; writeId: string },
+): BatchIntakeParsedMealFoodDraft;
+export function addMealFromLibraryFood(
+  occurrence: BatchIntakeMealOccurrenceDraft,
+  food: HealthFoodLibraryItem,
+  options: { id: string; writeId: string },
+): BatchIntakeMealFoodDraft;
+export function addMealFromLibraryFood(
+  occurrence: BatchIntakeMealOccurrenceDraft,
+  food: HealthFoodLibraryItem,
+  options: { id: string; writeId: string },
+): BatchIntakeMealFoodDraft {
+  return mealFoodFromLibrarySelection(occurrence, food, {
+    ...options,
+    origin: occurrence.origin,
+    sourceParsedMealId: occurrence.origin === "parsed" ? occurrence.id : null,
+  });
+}
+
+export function addMealFromParsedFood(
+  parsedMeal: BatchIntakeParsedMealOccurrenceDraft,
+  food: HealthFoodLibraryItem,
+  options: { id: string; writeId: string },
+): BatchIntakeParsedMealFoodDraft {
+  return addMealFromLibraryFood(parsedMeal, food, options);
+}
+
+export function calculateBatchIntakeMealNutrition(draft: Pick<BatchIntakeMealFoodDraft, "calories" | "carbsG" | "fatG" | "nutritionDetails" | "proteinG" | "servingMeasureUnit" | "servingMeasureValue" | "servingQuantity" | "servingUnit" | "consumedQuantity" | "consumedUnit">) {
   if (draft.calories === null || draft.consumedQuantity === null || !draft.consumedUnit.trim()) return null;
   try {
     return calculateHealthFoodNutrition({

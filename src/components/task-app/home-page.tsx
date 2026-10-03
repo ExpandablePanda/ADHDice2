@@ -30,7 +30,7 @@ import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-his
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
-import { addMealFromParsedFood, createManualBatchIntakeDraft, duplicateManualBatchIntakeDraft, parseBatchIntake, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeParsedMealDraft } from "@/lib/home-batch-intake";
+import { addMealFromLibraryFood, createManualBatchIntakeDraft, createManualMealFood, duplicateManualBatchIntakeDraft, parseBatchIntake, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
 import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
 import type { HealthFoodLibraryItem, HealthMealEntryInsert, HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
@@ -795,14 +795,14 @@ export function HomePage({
   }
 
   function addBatchIntakeOccurrence(sourceDraft: BatchIntakeDraft) {
-    if (sourceDraft.kind === "unsupported" || (sourceDraft.kind === "meal" && sourceDraft.origin === "parsed")) return;
+    if (sourceDraft.kind === "unsupported" || (sourceDraft.kind === "meal" && sourceDraft.entryMode === "food")) return;
     const duplicate = duplicateManualBatchIntakeDraft(sourceDraft, {
       id: createBrowserUuidV4(),
       writeId: createBrowserUuidV4(),
     });
     setBatchIntakeDrafts((current) => {
       if (!current) return current;
-      const sourceIndex = current.findIndex((draft) => draft.id === sourceDraft.id);
+      const sourceIndex = current.reduce((lastIndex, draft, index) => draft.groupId === sourceDraft.groupId ? index : lastIndex, -1);
       if (sourceIndex < 0) return [...current, duplicate];
       return [...current.slice(0, sourceIndex + 1), duplicate, ...current.slice(sourceIndex + 1)];
     });
@@ -813,18 +813,24 @@ export function HomePage({
       if (!current) return current;
       const previous = current.find((draft) => draft.id === nextDraft.id);
       if (!previous) return current;
+      if (previous.kind === "meal" && nextDraft.kind === "meal") {
+        if (previous.entryMode === "occurrence" && nextDraft.entryMode === "occurrence") {
+          const sharedContextChanged = previous.mealSlot !== nextDraft.mealSlot || previous.date !== nextDraft.date || previous.time !== nextDraft.time;
+          const appliedFoodChild = current.some((draft) => draft.kind === "meal" && draft.entryMode === "food" && draft.mealOccurrenceId === previous.id && batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied"));
+          if (sharedContextChanged && appliedFoodChild) return current;
+        }
+        return current.map((draft) => draft.id === nextDraft.id ? nextDraft : draft);
+      }
       const sourceGroup = current.filter((draft) => draft.groupId === previous.groupId);
       const appliedInSourceGroup = sourceGroup.some((draft) => batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied"));
       const sharedIdentityChanged = previous.kind === "task" && nextDraft.kind === "task"
         ? previous.selectedTaskId !== nextDraft.selectedTaskId
-        : previous.kind === "meal" && nextDraft.kind === "meal" && previous.origin === "manual" && nextDraft.origin === "manual"
-          ? previous.sourceFoodId !== nextDraft.sourceFoodId
-          : previous.kind === "focus" && nextDraft.kind === "focus"
+        : previous.kind === "focus" && nextDraft.kind === "focus"
             ? previous.categoryId !== nextDraft.categoryId
             : false;
       if (sharedIdentityChanged && appliedInSourceGroup) return current;
 
-      const sharedKind = nextDraft.kind === "task" || nextDraft.kind === "meal" || nextDraft.kind === "focus";
+      const sharedKind = nextDraft.kind === "task" || nextDraft.kind === "focus";
       return current.map((draft) => {
         if (draft.id === nextDraft.id) return nextDraft;
         if (!sharedKind || draft.groupId !== previous.groupId) return draft;
@@ -844,49 +850,30 @@ export function HomePage({
             title: nextDraft.title,
           };
         }
-        if (nextDraft.kind === "meal" && draft.kind === "meal" && draft.origin === "manual" && nextDraft.origin === "manual") {
-          const resetConsumption = previous.kind === "meal" && previous.origin === "manual" && previous.sourceFoodId !== nextDraft.sourceFoodId;
-          return {
-            ...draft,
-            attribution: nextDraft.attribution,
-            barcode: nextDraft.barcode,
-            brandName: nextDraft.brandName,
-            calories: nextDraft.calories,
-            carbsG: nextDraft.carbsG,
-            consumedQuantity: resetConsumption ? nextDraft.consumedQuantity : draft.consumedQuantity,
-            consumedUnit: resetConsumption ? nextDraft.consumedUnit : draft.consumedUnit,
-            fatG: nextDraft.fatG,
-            foodCategory: nextDraft.foodCategory,
-            foodName: nextDraft.foodName,
-            groupId: nextDraft.groupId,
-            nutritionDetails: nextDraft.nutritionDetails,
-            provider: nextDraft.provider,
-            providerItemId: nextDraft.providerItemId,
-            proteinG: nextDraft.proteinG,
-            servingLabel: nextDraft.servingLabel,
-            servingMeasureUnit: nextDraft.servingMeasureUnit,
-            servingMeasureValue: nextDraft.servingMeasureValue,
-            servingQuantity: nextDraft.servingQuantity,
-            servingUnit: nextDraft.servingUnit,
-            sourceFoodId: nextDraft.sourceFoodId,
-          };
-        }
         return draft;
       });
     });
   }
 
-  function addMealFromParsedSource(parsedMeal: BatchIntakeParsedMealDraft, food: HealthFoodLibraryItem) {
+  function addMealFoodToOccurrence(occurrence: BatchIntakeMealOccurrenceDraft, food: HealthFoodLibraryItem) {
     setBatchIntakeDrafts((current) => {
       if (!current) return current;
-      const existing = current.filter((draft): draft is Extract<BatchIntakeDraft, { kind: "meal"; origin: "manual" }> => draft.kind === "meal" && draft.origin === "manual" && draft.sourceFoodId === food.id);
-      const derived = existing.length > 0
-        ? (() => {
-          const duplicate = duplicateManualBatchIntakeDraft(existing.at(-1)!, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
-          return { ...duplicate, date: parsedMeal.date, mealSlot: parsedMeal.mealSlot, sourceParsedMealId: parsedMeal.id, sourceText: parsedMeal.sourceText };
-        })()
-        : addMealFromParsedFood(parsedMeal, food, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
-      const sourceIndex = current.findIndex((draft) => draft.id === parsedMeal.id);
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === occurrence.id);
+      if (!liveOccurrence) return current;
+      const derived = addMealFromLibraryFood(liveOccurrence, food, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
+      const sourceIndex = current.reduce((lastIndex, draft, index) => draft.groupId === liveOccurrence.groupId ? index : lastIndex, -1);
+      if (sourceIndex < 0) return [...current, derived];
+      return [...current.slice(0, sourceIndex + 1), derived, ...current.slice(sourceIndex + 1)];
+    });
+  }
+
+  function addManualMealFoodToOccurrence(occurrence: BatchIntakeMealOccurrenceDraft) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === occurrence.id);
+      if (!liveOccurrence) return current;
+      const derived = createManualMealFood(liveOccurrence, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
+      const sourceIndex = current.reduce((lastIndex, draft, index) => draft.groupId === liveOccurrence.groupId ? index : lastIndex, -1);
       if (sourceIndex < 0) return [...current, derived];
       return [...current.slice(0, sourceIndex + 1), derived, ...current.slice(sourceIndex + 1)];
     });
@@ -1869,7 +1856,8 @@ export function HomePage({
                 focusHistory={focusHistory}
                 onAddRow={addManualBatchRow}
                 onAddOccurrence={addBatchIntakeOccurrence}
-                onAddMealFromParsed={addMealFromParsedSource}
+                onAddManualMealFood={addManualMealFoodToOccurrence}
+                onAddMealFood={addMealFoodToOccurrence}
                 onApply={() => { void applyBatchIntake(); }}
                 onCancel={closeBatchIntakeReview}
                 onChange={changeBatchIntakeDraft}

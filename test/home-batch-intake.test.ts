@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { addMealFromParsedFood, createManualBatchIntakeDraft, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration } from "../src/lib/home-batch-intake.ts";
+import { addMealFromLibraryFood, addMealFromParsedFood, createManualBatchIntakeDraft, createManualMealFood, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
@@ -118,7 +118,7 @@ test("manual Batch Intake constructors use explicit manual origins and editable 
 
   assert.deepEqual(drafts.map((draft) => draft.kind), ["task", "water", "weight", "meal", "focus"]);
   assert.ok(drafts.every((draft) => draft.origin === "manual" && draft.sourceLineNumber === null && draft.date === "2026-10-03"));
-  assert.equal(drafts.find((draft) => draft.kind === "meal")?.entryMode, "structured");
+  assert.equal(drafts.find((draft) => draft.kind === "meal")?.entryMode, "occurrence");
   assert.equal(drafts.find((draft) => draft.kind === "focus")?.kind, "focus");
 });
 
@@ -160,7 +160,7 @@ test("duplicate occurrences preserve editable values while refreshing every requ
   };
   const water = { ...createManualBatchIntakeDraft("water", { date: "2026-10-03", id: "water-original" }), amount: 16, status: "confirmed" as const, issues: [] };
   const weight = { ...createManualBatchIntakeDraft("weight", { date: "2026-10-03", id: "weight-original", preferredWeightUnit: "lb" }), value: 180, issues: [] };
-  const meal = { ...createManualBatchIntakeDraft("meal", { date: "2026-10-03", id: "meal-original", time: "12:00" }), foodName: "Soup", calories: 240, sourceFoodId: "food-id", issues: [] };
+  const meal = createManualBatchIntakeDraft("meal", { date: "2026-10-03", id: "meal-original", time: "12:00" });
   const focus = { ...createManualBatchIntakeDraft("focus", { date: "2026-10-03", id: "focus-original", time: "13:00" }), title: "Coding", durationSeconds: 3600, issues: [] };
 
   const duplicates = [task, water, weight, meal, focus].map((draft) => duplicateManualBatchIntakeDraft(draft, { id: `${draft.id}-duplicate`, writeId: `${draft.id}-write-duplicate` }));
@@ -175,7 +175,10 @@ test("duplicate occurrences preserve editable values while refreshing every requ
   assert.equal((duplicates[0] as Extract<typeof duplicates[number], { kind: "task" }>).outcome, "done");
   assert.equal((duplicates[1] as Extract<typeof duplicates[number], { kind: "water" }>).writeId, "water-original-write-duplicate");
   assert.equal((duplicates[2] as Extract<typeof duplicates[number], { kind: "weight" }>).writeId, "weight-original-write-duplicate");
-  assert.equal((duplicates[3] as Extract<typeof duplicates[number], { kind: "meal" }>).writeId, "meal-original-write-duplicate");
+  assert.equal((duplicates[3] as Extract<typeof duplicates[number], { kind: "meal" }>).entryMode, "occurrence");
+  assert.notEqual(duplicates[3].id, meal.id);
+  assert.notEqual(duplicates[3].groupId, meal.groupId);
+  assert.equal((duplicates[3] as Extract<typeof duplicates[number], { kind: "meal" }>).mealSlot, "breakfast");
   assert.equal((duplicates[4] as Extract<typeof duplicates[number], { kind: "focus" }>).writeId, "focus-original-write-duplicate");
 });
 
@@ -242,11 +245,12 @@ test("custom food selection preserves canonical identity and parsed Meal derivat
   const parsedMeal = parseBatchIntake("10/1\nbreakfast - fanta Turkey bacon 8 watermelon 290g", { referenceDate: "2026-10-03" }).find((draft) => draft.kind === "meal");
   assert.ok(parsedMeal && parsedMeal.origin === "parsed");
   const derived = addMealFromParsedFood(parsedMeal, libraryFood, { id: "derived-meal", writeId: "derived-write" });
-  assert.equal(derived.origin, "manual");
+  assert.equal(derived.origin, "parsed");
   assert.equal(derived.sourceParsedMealId, parsedMeal.id);
   assert.equal(derived.sourceText, parsedMeal.sourceText);
-  assert.equal(derived.date, parsedMeal.date);
-  assert.equal(derived.mealSlot, "breakfast");
+  assert.equal(derived.mealOccurrenceId, parsedMeal.id);
+  assert.equal(derived.groupId, parsedMeal.id);
+  assert.equal(derived.entryMode, "food");
   assert.equal(derived.sourceFoodId, libraryFood.id);
   assert.equal(derived.writeId, "derived-write");
   assert.equal(parsedMeal.rawText, "fanta Turkey bacon 8 watermelon 290g");
@@ -271,6 +275,87 @@ test("grouped Custom Food occurrences calculate consumed nutrition from the stor
   assert.equal(input.food_snapshot?.calories, 120);
   assert.equal(fourSliceFood.serving_quantity, 4);
   assert.equal(fourSliceFood.calories, 120);
+});
+
+test("Meal creates an explicit empty occurrence shell with zero executable food rows", () => {
+  const occurrence = createManualBatchIntakeDraft("meal", { date: "2026-10-02", id: "breakfast-occurrence", time: "11:30" });
+  assert.equal(occurrence.kind, "meal");
+  assert.equal(occurrence.entryMode, "occurrence");
+  assert.equal(occurrence.origin, "manual");
+  assert.equal(occurrence.date, "2026-10-02");
+  assert.equal(occurrence.time, "11:30");
+  assert.equal(occurrence.mealSlot, "breakfast");
+  assert.equal(getBatchIntakeApplyCount([occurrence]), 0);
+  assert.equal(getBatchIntakeReviewGroups([occurrence]).length, 1);
+});
+
+test("multiple library foods stay under one occurrence with independent draft and write identities", () => {
+  const occurrence = createManualBatchIntakeDraft("meal", { date: "2026-10-02", id: "meal-occurrence", time: "11:30" }) as Extract<ReturnType<typeof createManualBatchIntakeDraft>, { kind: "meal"; entryMode: "occurrence" }>;
+  const watermelon = { ...libraryFood, id: "food-watermelon", food_name: "Watermelon", provider_item_id: "provider-watermelon", calories: 87 };
+  const turkey = addMealFromLibraryFood(occurrence, libraryFood, { id: "food-row-turkey", writeId: "write-turkey" });
+  const melon = addMealFromLibraryFood(occurrence, watermelon, { id: "food-row-watermelon", writeId: "write-watermelon" });
+  const duplicate = addMealFromLibraryFood(occurrence, libraryFood, { id: "food-row-turkey-duplicate", writeId: "write-turkey-duplicate" });
+  const drafts = [occurrence, turkey, melon, duplicate];
+  const group = getBatchIntakeReviewGroups(drafts)[0];
+  assert.equal(getBatchIntakeReviewGroups(drafts).length, 1);
+  assert.equal(group?.id, occurrence.id);
+  assert.deepEqual(group?.occurrenceIds, [occurrence.id]);
+  assert.deepEqual(group?.drafts.map((draft) => draft.entryMode), ["occurrence", "food", "food", "food"]);
+  assert.equal(getBatchIntakeApplyCount(drafts), 3);
+  assert.deepEqual(drafts.slice(1).map((draft) => draft.mealOccurrenceId), [occurrence.id, occurrence.id, occurrence.id]);
+  assert.equal(new Set(drafts.slice(1).map((draft) => draft.id)).size, 3);
+  assert.equal(new Set(drafts.slice(1).map((draft) => draft.writeId)).size, 3);
+  assert.deepEqual(drafts.slice(1).map((draft) => draft.sourceFoodId), [libraryFood.id, watermelon.id, libraryFood.id]);
+});
+
+test("manual food fallback is non-executable until valid and can coexist with library food", () => {
+  const occurrence = createManualBatchIntakeDraft("meal", { date: "2026-10-02", id: "manual-meal-occurrence", time: "11:30" }) as Extract<ReturnType<typeof createManualBatchIntakeDraft>, { kind: "meal"; entryMode: "occurrence" }>;
+  const blank = createManualMealFood(occurrence, { id: "manual-food", writeId: "manual-food-write" });
+  assert.equal(getBatchIntakeApplyCount([occurrence, blank]), 0);
+  const valid = { ...blank, foodName: "Homemade soup", calories: 180, issues: [] };
+  const library = addMealFromLibraryFood(occurrence, libraryFood, { id: "library-food", writeId: "library-food-write" });
+  assert.equal(getBatchIntakeApplyCount([occurrence, valid, library]), 2);
+  assert.equal(valid.foodMode, "manual");
+  assert.equal(valid.sourceFoodId, null);
+});
+
+test("parsed Meal source creates one occurrence per source line and foods attach locally", () => {
+  const parsed = parseBatchIntake("10/2\nbreakfast - fanta Turkey bacon 8 watermelon 290g\nlunch - turkey bacon", { referenceDate: "2026-10-03" }).filter((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+  assert.equal(parsed.length, 2);
+  const breakfastFood = addMealFromParsedFood(parsed[0], libraryFood, { id: "parsed-turkey", writeId: "parsed-turkey-write" });
+  const breakfastWatermelon = addMealFromParsedFood(parsed[0], { ...libraryFood, id: "food-watermelon", food_name: "Watermelon" }, { id: "parsed-watermelon", writeId: "parsed-watermelon-write" });
+  const lunchFood = addMealFromParsedFood(parsed[1], libraryFood, { id: "parsed-lunch-turkey", writeId: "parsed-lunch-turkey-write" });
+  assert.equal(parsed[0].rawText, "fanta Turkey bacon 8 watermelon 290g");
+  assert.equal(parsed[0].time, "12:00");
+  assert.equal(getBatchIntakeReviewGroups([parsed[0], breakfastFood, breakfastWatermelon]).length, 1);
+  assert.equal(getBatchIntakeReviewGroups([parsed[0], breakfastFood, breakfastWatermelon])[0]?.drafts.length, 3);
+  assert.equal(breakfastFood.mealOccurrenceId, parsed[0].id);
+  assert.equal(lunchFood.mealOccurrenceId, parsed[1].id);
+  assert.notEqual(breakfastFood.mealOccurrenceId, lunchFood.mealOccurrenceId);
+  assert.equal(getBatchIntakeApplyCount([parsed[0], breakfastFood, breakfastWatermelon, parsed[1], lunchFood]), 3);
+});
+
+test("shared occurrence context is flattened into every canonical food payload", () => {
+  const occurrence = { ...(createManualBatchIntakeDraft("meal", { date: "2026-10-02", id: "shared-occurrence", time: "11:30" }) as Extract<ReturnType<typeof createManualBatchIntakeDraft>, { kind: "meal"; entryMode: "occurrence" }>), mealSlot: "breakfast" as const };
+  const first = addMealFromLibraryFood(occurrence, libraryFood, { id: "shared-food-1", writeId: "shared-write-1" });
+  const second = addMealFromLibraryFood(occurrence, { ...libraryFood, id: "food-watermelon", food_name: "Watermelon", calories: 87 }, { id: "shared-food-2", writeId: "shared-write-2" });
+  const third = createManualMealFood(occurrence, { id: "shared-food-3", writeId: "shared-write-3" });
+  const validThird = { ...third, foodName: "Fanta", calories: 240, issues: [] };
+  const drafts = [occurrence, first, second, validThird];
+  const plan = buildBatchIntakeExecutionPlan(drafts);
+  assert.equal(plan.mealRows?.length, 3);
+  assert.deepEqual(plan.mealRows?.map(({ input }) => [input.entry_date, input.meal_slot, input.logged_at]), [
+    ["2026-10-02", "breakfast", "2026-10-02T15:30:00.000Z"],
+    ["2026-10-02", "breakfast", "2026-10-02T15:30:00.000Z"],
+    ["2026-10-02", "breakfast", "2026-10-02T15:30:00.000Z"],
+  ]);
+  const movedOccurrence = { ...occurrence, date: "2026-10-03", time: "12:15", mealSlot: "lunch" as const };
+  const movedPlan = buildBatchIntakeExecutionPlan([movedOccurrence, first, second, validThird]);
+  assert.deepEqual(movedPlan.mealRows?.map(({ input }) => [input.entry_date, input.meal_slot, input.logged_at]), [
+    ["2026-10-03", "lunch", "2026-10-03T16:15:00.000Z"],
+    ["2026-10-03", "lunch", "2026-10-03T16:15:00.000Z"],
+    ["2026-10-03", "lunch", "2026-10-03T16:15:00.000Z"],
+  ]);
 });
 
 test("date parsing handles omitted years, explicit years, and New Year rollover", () => {
@@ -362,14 +447,17 @@ test("execution plan keeps parsed Meals review-only and includes valid manual Me
   const task = createManualBatchIntakeDraft("task", { date: "2026-10-03", id: "manual-task" });
   const water = createManualBatchIntakeDraft("water", { date: "2026-10-03", id: "manual-water" });
   const weight = createManualBatchIntakeDraft("weight", { date: "2026-10-03", id: "manual-weight", preferredWeightUnit: "lb" });
-  const meal = createManualBatchIntakeDraft("meal", { date: "2026-10-03", id: "manual-meal", time: "12:00" });
+  const mealOccurrence = createManualBatchIntakeDraft("meal", { date: "2026-10-03", id: "manual-meal", time: "12:00" });
+  assert.equal(mealOccurrence.kind, "meal");
+  const mealFood = createManualMealFood(mealOccurrence as Extract<typeof mealOccurrence, { kind: "meal"; entryMode: "occurrence" }>, { id: "manual-food", writeId: "manual-food-write" });
   const focus = createManualBatchIntakeDraft("focus", { date: "2026-10-03", id: "manual-focus", time: "13:00" });
   const drafts = [
     parsedMeal,
     { ...task, selectedTaskId: "canonical-task", outcome: "done" as const, issues: [] },
     { ...water, amount: 16, status: "confirmed" as const, issues: [] },
     { ...weight, value: 180, issues: [] },
-    { ...meal, foodName: "Soup", calories: 240, issues: [] },
+    mealOccurrence,
+    { ...mealFood, foodName: "Soup", calories: 240, issues: [] },
     { ...focus, title: "Deep work", durationSeconds: 1800, issues: [] },
   ];
   const plan = buildBatchIntakeExecutionPlan(drafts, { preferredWeightUnit: "lb" });
@@ -570,4 +658,41 @@ test("execution runs Meals before Focus serially and preserves partial failures 
   assert.ok(progress.includes("meals"));
   assert.ok(progress.includes("focus"));
   assert.equal(progress.at(-1), "complete");
+});
+
+test("Meal execution reports independent food rows and retries only the failed sibling", async () => {
+  const occurrence = createManualBatchIntakeDraft("meal", { date: "2026-10-02", id: "retry-occurrence", time: "11:30" }) as Extract<ReturnType<typeof createManualBatchIntakeDraft>, { kind: "meal"; entryMode: "occurrence" }>;
+  const first = addMealFromLibraryFood(occurrence, libraryFood, { id: "retry-food-1", writeId: "retry-write-1" });
+  const second = addMealFromLibraryFood(occurrence, { ...libraryFood, id: "food-watermelon", food_name: "Watermelon" }, { id: "retry-food-2", writeId: "retry-write-2" });
+  const third = addMealFromLibraryFood(occurrence, { ...libraryFood, id: "food-fanta", food_name: "Fanta" }, { id: "retry-food-3", writeId: "retry-write-3" });
+  const plan = buildBatchIntakeExecutionPlan([occurrence, first, second, third]);
+  const appliedIds: string[] = [];
+  const firstResult = await executeBatchIntakePlan(plan, {
+    syncTaskHistoryEntries: async () => true,
+    addWaterEntries: async () => ({ success: true, rows: [] }),
+    addWeightEntries: async () => ({ success: true, rows: [] }),
+    addMealEntries: async (inputs) => {
+      assert.deepEqual(inputs.map((input) => input.id), ["retry-write-1", "retry-write-2", "retry-write-3"]);
+      appliedIds.push("retry-write-1", "retry-write-3");
+      return { success: false, rows: [{ index: 0, success: true }, { index: 1, success: false, error: "Watermelon failed" }, { index: 2, success: true }] };
+    },
+    handleManualFocusEntries: async () => ({ success: true, rows: [] }),
+  });
+  assert.deepEqual(firstResult.rows.map((row) => [row.rowId, row.status]), [[first.id, "applied"], [second.id, "failed"], [third.id, "applied"]]);
+  assert.equal(getBatchIntakeApplyCount([occurrence, first, second, third]), 3);
+
+  const retryPlan = { ...plan, mealRows: plan.mealRows?.filter((row) => row.rowId === second.id) };
+  const retryResult = await executeBatchIntakePlan(retryPlan, {
+    syncTaskHistoryEntries: async () => true,
+    addWaterEntries: async () => ({ success: true, rows: [] }),
+    addWeightEntries: async () => ({ success: true, rows: [] }),
+    addMealEntries: async (inputs) => {
+      assert.deepEqual(inputs.map((input) => input.id), ["retry-write-2"]);
+      return { success: true, rows: [{ index: 0, success: true }] };
+    },
+    handleManualFocusEntries: async () => ({ success: true, rows: [] }),
+  });
+  const merged = mergeBatchIntakeExecutionResults(firstResult, retryResult);
+  assert.deepEqual(merged.rows.map((row) => [row.rowId, row.status]), [[first.id, "applied"], [second.id, "applied"], [third.id, "applied"]]);
+  assert.deepEqual(appliedIds, ["retry-write-1", "retry-write-3"]);
 });
