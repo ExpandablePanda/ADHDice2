@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.48`.
+- Current working app version: `7.16.49`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.49 Scratchpad Manual Batch Intake
+
+Scratchpad Batch Intake now supports an ephemeral Manual Batch entry path in
+the shared Batch Intake Review workspace. Users can add structured Task
+History, Water, Weight, Meal, and Focus Session rows, edit or exclude them,
+and apply them through the existing typed review, validation, execution,
+canonical-authority, progress, and retry pipeline. Parsed Meals remain
+review-only, while structured manual Meals use a Health-owned batch snapshot
+write and manual Focus rows use a Focus-owned batch history write. Health and
+Focus continue to activate lazily only while the review requires them. No Home
+V8 change, SQL, Edge deployment, or production data mutation was performed.
 
 ## 2026-10-03 7.16.48 Batch Intake apply progress and non-quota Repeat serialization
 

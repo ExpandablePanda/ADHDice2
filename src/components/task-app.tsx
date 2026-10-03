@@ -1220,6 +1220,7 @@ export function TaskApp() {
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const [batchIntakeHealthActive, setBatchIntakeHealthActive] = useState(false);
+  const [batchIntakeFocusActive, setBatchIntakeFocusActive] = useState(false);
   const focusDomainMutationBarrierRef = useRef<WorkspaceDomainMutationBarrier>(() => {});
   const invalidateFocusDomainGeneration = useCallback(() => {
     focusDomainMutationBarrierRef.current();
@@ -1237,14 +1238,14 @@ export function TaskApp() {
     setFocusReallocationMode,
     suppressCategoryReload,
     handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer, handleDeleteTimer,
-    handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
+    handleManualFocusEntry, handleManualFocusEntries, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
     handleAdjustFocusCounter, handleCreateFocusCounter, handleDeleteFocusCounter, handleUpdateFocusCounter,
   } = useFocus(
     supabase,
     session?.user?.id ?? null,
     setMessage,
-    activePage === "Focus" || activePage === "Stats" || activePage === "Health",
+    activePage === "Focus" || activePage === "Stats" || activePage === "Health" || batchIntakeFocusActive,
     invalidateFocusDomainGeneration,
   );
   const {
@@ -1296,6 +1297,7 @@ export function TaskApp() {
     saveSavedMeal: saveHealthSavedMeal,
     saveProfile: saveHealthProfile,
     addMealEntry: addHealthMealEntry,
+    addMealEntries: addHealthMealEntries,
     addWaterEntry: addHealthWaterEntry,
     addWaterEntries: addHealthWaterEntries,
     confirmWaterEntry: confirmHealthWaterEntry,
@@ -8281,9 +8283,14 @@ export function TaskApp() {
             userId={currentUserId}
             addWaterEntries={addHealthWaterEntries}
             addWeightEntries={addHealthWeightEntries}
+            addMealEntries={addHealthMealEntries}
+            focusCategories={focusCategories}
+            focusHistory={focusHistory}
+            handleManualFocusEntries={handleManualFocusEntries}
             healthLoading={isHealthLoading}
             healthProfile={healthProfile}
             onBatchIntakeHealthActivationChange={setBatchIntakeHealthActive}
+            onBatchIntakeFocusActivationChange={setBatchIntakeFocusActive}
             syncTaskHistoryEntries={syncTaskHistoryEntries}
           />
         ) : activePage === "Achievements" ? (

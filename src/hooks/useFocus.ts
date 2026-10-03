@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { subscribeToBrowserAuth } from "@/lib/supabase";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
-import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, FocusReallocationMode, PendingFocusDailySurplus } from "@/lib/types";
+import type { FocusCategory, ActiveFocusSession, HistoricalFocusSession, FocusCounter, FocusCounterHistoryEntry, FocusType, FocusSubtype, FocusDailyGoalAdjustment, FocusReallocationMode, PendingFocusDailySurplus, FocusManualEntryInput } from "@/lib/types";
 import type { FocusCategory as DbFocusCategory, FocusDailyGoalAdjustment as DbFocusDailyGoalAdjustment, FocusSession as DbFocusSession } from "@/lib/database.types";
 import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
 import { createRealtimeSnapshotLifecycle } from "@/lib/realtime-snapshot-lifecycle";
@@ -347,6 +347,8 @@ export function useFocus(
   const completingRuntimeIdsRef = useRef(new Set<string>());
   const loadedFocusHistoryUserIdRef = useRef<string | null>(null);
   const focusHistoryLoadInFlightRef = useRef<FocusHistoryLoad | null>(null);
+  const focusHistoryRef = useRef(focusHistory);
+  const focusHistoryMutationGenerationRef = useRef(0);
   const migratedRuntimeUserRef = useRef<string | null>(null);
   const runtimeChannelRef = useRef<RealtimeChannel | null>(null);
   const runtimeChannelRemovalPromiseRef = useRef<Promise<void> | null>(null);
@@ -367,6 +369,10 @@ export function useFocus(
   useEffect(() => {
     activeSessionsRef.current = activeSessions;
   }, [activeSessions]);
+
+  useEffect(() => {
+    focusHistoryRef.current = focusHistory;
+  }, [focusHistory]);
 
   useEffect(() => {
     focusCounterStateRef.current = focusCounterState;
@@ -394,11 +400,16 @@ export function useFocus(
 
   useEffect(() => {
     currentUserIdRef.current = userId;
+    focusHistoryMutationGenerationRef.current += 1;
     loadedFocusHistoryUserIdRef.current = null;
     counterRequestGenerationRef.current += 1;
     const nextState = { counters: [], history: [], ownerUserId: userId };
     focusCounterStateRef.current = nextState;
   }, [userId]);
+
+  useEffect(() => {
+    focusHistoryMutationGenerationRef.current += 1;
+  }, [historyActive]);
 
   useEffect(() => {
     runtimeRequestGenerationRef.current += 1;
@@ -1103,6 +1114,7 @@ export function useFocus(
 
     const previousHistorySnapshot = focusHistory;
     const nextHistorySnapshot = upsertFocusHistoryEntry(focusHistory, nextEntry);
+    focusHistoryRef.current = nextHistorySnapshot;
     setFocusHistory((prev) => {
       const nextHistory = upsertFocusHistoryEntry(prev, nextEntry);
       return nextHistory;
@@ -1148,25 +1160,14 @@ export function useFocus(
     if (result) setMessage({ tone: "good", text: "Timer deleted." });
   }
 
-  async function handleManualFocusEntry(data: {
-    categoryId: string | null;
-    title: string;
-    focusType: FocusType;
-    focusSubtype?: FocusSubtype | null;
-    focusSubtype2?: FocusSubtype | null;
-    durationSeconds: number;
-    date: string;
-    notes: string;
-    completionTime?: string;
-    startedAt?: string | null;
-    endedAt?: string | null;
-  }) {
+  async function handleManualFocusEntry(data: FocusManualEntryInput) {
     if (!client || !userId) return false;
 
     const completedAt = data.endedAt !== undefined
       ? data.endedAt
       : completionIsoFromDateTime(data.date, data.completionTime);
     const payload = {
+      id: data.id ?? createBrowserUuidV4(),
       user_id: userId,
       category_id: data.categoryId,
       title_snapshot: sanitizeFocusLabel(data.title, "Untitled Session"),
@@ -1206,6 +1207,120 @@ export function useFocus(
     queueDailySurplusPrompt(previousHistorySnapshot, nextHistorySnapshot, nextEntry);
     setMessage({ tone: "good", text: "Focus entry saved." });
     return true;
+  }
+
+  async function handleManualFocusEntries(inputs: FocusManualEntryInput[]) {
+    const failure = (error: string) => ({ success: false, rows: inputs.map((_, index) => ({ index, success: false, error })), error });
+    if (inputs.length === 0) return { success: true, rows: [] };
+    if (!client || !userId || !historyActive) return failure("Focus authority is not ready.");
+
+    const operationGeneration = ++focusHistoryMutationGenerationRef.current;
+    const validationErrors = new Map<number, string>();
+    const validInputs: Array<{ index: number; input: FocusManualEntryInput }> = [];
+    inputs.forEach((input, index) => {
+      if (!input.title.trim()) {
+        validationErrors.set(index, "Focus title is required.");
+        return;
+      }
+      if (!input.focusType.trim()) {
+        validationErrors.set(index, "Focus type is required.");
+        return;
+      }
+      if (!Number.isFinite(input.durationSeconds) || input.durationSeconds <= 0) {
+        validationErrors.set(index, "Focus duration must be greater than zero.");
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.date) || !completionIsoFromDateTime(input.date, input.completionTime)) {
+        validationErrors.set(index, "Choose a valid Focus date and completion time.");
+        return;
+      }
+      if (input.categoryId !== null && !focusCategories.some((category) => category.id === input.categoryId)) {
+        validationErrors.set(index, "Choose an existing saved Focus category or No saved category.");
+        return;
+      }
+      validInputs.push({ index, input });
+    });
+
+    const payloads = validInputs.map(({ input }) => ({
+      id: input.id ?? createBrowserUuidV4(),
+      user_id: userId,
+      category_id: input.categoryId,
+      title_snapshot: sanitizeFocusLabel(input.title, "Untitled Session"),
+      focus_type_snapshot: sanitizeFocusLabel(input.focusType, "Work"),
+      focus_subtype_snapshot: sanitizeOptionalFocusLabel(input.focusSubtype),
+      focus_subtype_2_snapshot: sanitizeOptionalFocusLabel(input.focusSubtype2),
+      session_date: input.date,
+      duration_seconds: input.durationSeconds,
+      notes: input.notes || null,
+      ended_at: input.endedAt !== undefined ? input.endedAt : completionIsoFromDateTime(input.date, input.completionTime),
+      source: "manual" as const,
+      ...(Object.prototype.hasOwnProperty.call(input, "startedAt") ? { started_at: input.startedAt ?? null } : {}),
+    }));
+
+    let inserted: DbFocusSession[] = [];
+    let batchError: string | undefined;
+    if (payloads.length > 0) {
+      const response = await client
+        .from("adhdice_focus_sessions")
+        .upsert(payloads, { onConflict: "id" })
+        .select("*");
+      if (currentUserIdRef.current !== userId || operationGeneration !== focusHistoryMutationGenerationRef.current || !historyActive) {
+        return failure("Focus operation is no longer active.");
+      }
+      if (response.error) {
+        batchError = response.error.message;
+        setMessage({ tone: "warn", text: response.error.message });
+      } else {
+        const responseById = new Map((response.data ?? []).map((row) => [row.id, row as DbFocusSession]));
+        const missing = payloads.some((payload) => !responseById.has(payload.id));
+        if (missing) {
+          batchError = "Focus did not return every row after the batch write.";
+          setMessage({ tone: "warn", text: batchError });
+        } else {
+          inserted = payloads.map((payload) => responseById.get(payload.id!)!).filter(Boolean);
+        }
+      }
+    }
+
+    const rows = inputs.map((_, index) => {
+      const validationError = validationErrors.get(index);
+      if (validationError) return { index, success: false, error: validationError };
+      return { index, success: !batchError, ...(batchError ? { error: batchError } : {}) };
+    });
+    if (batchError || inserted.length !== validInputs.length) {
+      return { success: false, rows, ...(batchError ? { error: batchError } : {}) };
+    }
+
+    const previousHistory = focusHistoryRef.current;
+    let nextHistory = previousHistory;
+    const nextEntries = inserted.map((row, index) => {
+      const input = validInputs[index]?.input;
+      const nextEntry = {
+        ...mapFocusSessionRow(row),
+        title: input?.title ?? row.title_snapshot,
+        focusType: input?.focusType ?? row.focus_type_snapshot,
+        focusSubtype: input?.focusSubtype ?? row.focus_subtype_snapshot ?? undefined,
+        focusSubtype2: input?.focusSubtype2 ?? row.focus_subtype_2_snapshot ?? undefined,
+      };
+      const before = nextHistory;
+      nextHistory = upsertFocusHistoryEntry(nextHistory, nextEntry);
+      if (input && !isSystemCountdownCategoryId(nextEntry.categoryId)) {
+        queueDailySurplusPrompt(before, nextHistory, nextEntry);
+      }
+      return nextEntry;
+    });
+    if (currentUserIdRef.current !== userId || operationGeneration !== focusHistoryMutationGenerationRef.current || !historyActive) {
+      return failure("Focus operation is no longer active.");
+    }
+    focusHistoryRef.current = nextHistory;
+    setFocusHistory(nextHistory);
+    setMessage({ tone: "good", text: `${nextEntries.length} Focus session${nextEntries.length === 1 ? "" : "s"} saved.` });
+    if (typeof BroadcastChannel !== "undefined") {
+      const broadcast = new BroadcastChannel("adhdice_focus_sync");
+      broadcast.postMessage("finish");
+      broadcast.close();
+    }
+    return { success: rows.every((row) => row.success), rows };
   }
 
   async function handleSaveCategories(categories: FocusCategory[]) {
@@ -1527,6 +1642,7 @@ export function useFocus(
     handleResetTimer,
     handleDeleteTimer,
     handleManualFocusEntry,
+    handleManualFocusEntries,
     handleSaveDailyGoalAdjustment,
     handleSaveCategories,
     handleDeleteFocusCategory,

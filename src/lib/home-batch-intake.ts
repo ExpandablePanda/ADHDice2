@@ -1,8 +1,10 @@
 import type { HealthMealSlot, HealthWeightUnit, HealthWaterUnit, TaskStatus } from "@/lib/database.types";
+import type { FocusSubtype, FocusType } from "@/lib/types";
 import { displayWeightToKilograms } from "@/lib/health-utils";
 import { waterAmountToMilliliters } from "@/lib/health-library";
 
-export type BatchIntakeKind = "task" | "water" | "weight" | "meal" | "unsupported";
+export type BatchIntakeKind = "task" | "water" | "weight" | "meal" | "focus" | "unsupported";
+export type BatchIntakeManualKind = Exclude<BatchIntakeKind, "unsupported">;
 export type BatchIntakeConfidence = "high" | "medium" | "low";
 export type BatchIntakeTaskOutcome = Extract<TaskStatus, "done" | "did_my_best" | "missed"> | null;
 export type BatchIntakeWaterStatus = "pending" | "confirmed" | null;
@@ -10,22 +12,40 @@ export type BatchIntakeWaterStatus = "pending" | "confirmed" | null;
 type BatchIntakeDraftBase = {
   id: string;
   sourceText: string;
-  sourceLineNumber: number;
+  sourceLineNumber: number | null;
   date: string | null;
-  kind: BatchIntakeKind;
   included: boolean;
   confidence: BatchIntakeConfidence;
   issues: string[];
 };
 
-export type BatchIntakeTaskDraft = BatchIntakeDraftBase & {
+type BatchIntakeParsedDraftBase = BatchIntakeDraftBase & {
+  origin: "parsed";
+  sourceLineNumber: number;
+};
+
+type BatchIntakeManualDraftBase = BatchIntakeDraftBase & {
+  origin: "manual";
+  sourceLineNumber: null;
+};
+
+export type BatchIntakeParsedTaskDraft = BatchIntakeParsedDraftBase & {
   kind: "task";
   taskTitle: string;
   outcome: BatchIntakeTaskOutcome;
   selectedTaskId: string | null;
 };
 
-export type BatchIntakeWaterDraft = BatchIntakeDraftBase & {
+export type BatchIntakeManualTaskDraft = BatchIntakeManualDraftBase & {
+  kind: "task";
+  taskTitle: string;
+  outcome: BatchIntakeTaskOutcome;
+  selectedTaskId: string | null;
+};
+
+export type BatchIntakeTaskDraft = BatchIntakeParsedTaskDraft | BatchIntakeManualTaskDraft;
+
+export type BatchIntakeParsedWaterDraft = BatchIntakeParsedDraftBase & {
   kind: "water";
   writeId?: string;
   amount: number | null;
@@ -33,7 +53,18 @@ export type BatchIntakeWaterDraft = BatchIntakeDraftBase & {
   status: BatchIntakeWaterStatus;
 };
 
-export type BatchIntakeWeightDraft = BatchIntakeDraftBase & {
+export type BatchIntakeManualWaterDraft = BatchIntakeManualDraftBase & {
+  kind: "water";
+  writeId: string;
+  amount: number | null;
+  unit: HealthWaterUnit;
+  status: BatchIntakeWaterStatus;
+  time: string;
+};
+
+export type BatchIntakeWaterDraft = BatchIntakeParsedWaterDraft | BatchIntakeManualWaterDraft;
+
+export type BatchIntakeParsedWeightDraft = BatchIntakeParsedDraftBase & {
   kind: "weight";
   writeId?: string;
   value: number | null;
@@ -41,13 +72,54 @@ export type BatchIntakeWeightDraft = BatchIntakeDraftBase & {
   unitSource: "explicit" | "profile" | "missing";
 };
 
-export type BatchIntakeMealDraft = BatchIntakeDraftBase & {
+export type BatchIntakeManualWeightDraft = BatchIntakeManualDraftBase & {
+  kind: "weight";
+  writeId: string;
+  value: number | null;
+  unit: HealthWeightUnit | null;
+  unitSource: "explicit" | "profile" | "missing";
+  time: string;
+};
+
+export type BatchIntakeWeightDraft = BatchIntakeParsedWeightDraft | BatchIntakeManualWeightDraft;
+
+export type BatchIntakeParsedMealDraft = BatchIntakeParsedDraftBase & {
   kind: "meal";
+  entryMode: "raw";
   mealSlot: HealthMealSlot;
   rawText: string;
 };
 
-export type BatchIntakeUnsupportedDraft = BatchIntakeDraftBase & {
+export type BatchIntakeManualMealDraft = BatchIntakeManualDraftBase & {
+  kind: "meal";
+  entryMode: "structured";
+  writeId: string;
+  mealSlot: HealthMealSlot;
+  foodName: string;
+  calories: number | null;
+  proteinG: number | null;
+  carbsG: number | null;
+  fatG: number | null;
+  servingLabel: string;
+  time: string;
+};
+
+export type BatchIntakeMealDraft = BatchIntakeParsedMealDraft | BatchIntakeManualMealDraft;
+
+export type BatchIntakeManualFocusDraft = BatchIntakeManualDraftBase & {
+  kind: "focus";
+  writeId: string;
+  categoryId: string | null;
+  title: string;
+  focusType: FocusType;
+  focusSubtype: FocusSubtype | null;
+  focusSubtype2: FocusSubtype | null;
+  durationSeconds: number | null;
+  completionTime: string;
+  notes: string;
+};
+
+export type BatchIntakeUnsupportedDraft = BatchIntakeParsedDraftBase & {
   kind: "unsupported";
   reason: string;
 };
@@ -57,6 +129,7 @@ export type BatchIntakeDraft =
   | BatchIntakeWaterDraft
   | BatchIntakeWeightDraft
   | BatchIntakeMealDraft
+  | BatchIntakeManualFocusDraft
   | BatchIntakeUnsupportedDraft;
 
 export type ParseBatchIntakeOptions = {
@@ -118,12 +191,105 @@ function makeBase(
     id: `batch-intake-${lineNumber}-${part}`,
     sourceText: line,
     sourceLineNumber: lineNumber,
+    origin: "parsed" as const,
     date,
     kind,
     included: true,
     confidence,
     issues: [...issueForDate(date), ...issues],
-  } satisfies BatchIntakeDraftBase;
+  };
+}
+
+function currentLocalTime() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+function manualBase(id: string, sourceText: string, date: string) {
+  return {
+    id,
+    sourceText,
+    sourceLineNumber: null,
+    origin: "manual" as const,
+    date,
+    included: true,
+    confidence: "high" as const,
+    issues: [],
+  };
+}
+
+export function createManualBatchIntakeDraft(
+  kind: BatchIntakeManualKind,
+  options: { id: string; date: string; preferredWeightUnit?: HealthWeightUnit | null; time?: string },
+): BatchIntakeDraft {
+  const time = options.time ?? currentLocalTime();
+  const base = manualBase(options.id, `Manual ${kind === "focus" ? "Focus Session" : kind[0].toUpperCase() + kind.slice(1)} entry`, options.date);
+  if (kind === "task") {
+    return {
+      ...base,
+      kind,
+      taskTitle: "",
+      outcome: null,
+      selectedTaskId: null,
+      issues: ["Select an existing canonical Task", "Choose an outcome"],
+    } satisfies BatchIntakeManualTaskDraft;
+  }
+  if (kind === "water") {
+    return {
+      ...base,
+      kind,
+      writeId: options.id,
+      amount: null,
+      unit: "fl_oz",
+      status: null,
+      time: "",
+      issues: ["Choose a positive water amount", "Choose Pending or Confirmed"],
+    } satisfies BatchIntakeManualWaterDraft;
+  }
+  if (kind === "weight") {
+    const unit = options.preferredWeightUnit ?? null;
+    return {
+      ...base,
+      kind,
+      writeId: options.id,
+      value: null,
+      unit,
+      unitSource: unit ? "profile" : "missing",
+      time: "",
+      issues: ["Choose a positive weight value"],
+    } satisfies BatchIntakeManualWeightDraft;
+  }
+  if (kind === "meal") {
+    return {
+      ...base,
+      kind,
+      entryMode: "structured",
+      writeId: options.id,
+      mealSlot: "breakfast",
+      foodName: "",
+      calories: null,
+      proteinG: null,
+      carbsG: null,
+      fatG: null,
+      servingLabel: "",
+      time,
+      issues: ["Food name is required", "Calories are required"],
+    } satisfies BatchIntakeManualMealDraft;
+  }
+  return {
+    ...base,
+    kind: "focus",
+    writeId: options.id,
+    categoryId: null,
+    title: "",
+    focusType: "Work",
+    focusSubtype: null,
+    focusSubtype2: null,
+    durationSeconds: null,
+    completionTime: time,
+    notes: "",
+    issues: ["Focus title is required", "Focus duration must be greater than zero"],
+  } satisfies BatchIntakeManualFocusDraft;
 }
 
 function splitTaskCandidates(line: string) {
@@ -250,6 +416,7 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
       drafts.push({
         ...makeBase(line, lineNumber, currentDate, "meal", "high"),
         kind: "meal",
+        entryMode: "raw",
         mealSlot: meal.mealSlot,
         rawText: meal.rawText,
       });

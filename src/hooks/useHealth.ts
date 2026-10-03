@@ -2638,6 +2638,131 @@ export function useHealth(
     return true;
   }
 
+  async function addMealEntries(inputs: Array<Omit<HealthMealEntryInsert, "user_id">>): Promise<HealthBatchWriteResult> {
+    if (inputs.length === 0) return { success: true, rows: [] };
+    if (!userId || !profile) {
+      return { success: false, rows: inputs.map((_, index) => ({ index, success: false, error: "Health authority is not ready." })), error: "Health authority is not ready." };
+    }
+    const operation = captureOperation();
+    if (!operation) {
+      return { success: false, rows: inputs.map((_, index) => ({ index, success: false, error: "Health operation is no longer active." })) };
+    }
+
+    const validationErrors = new Map<number, string>();
+    const validInputs: Array<{ index: number; input: Omit<HealthMealEntryInsert, "user_id"> }> = [];
+    inputs.forEach((input, index) => {
+      if (!input.food_name.trim()) {
+        validationErrors.set(index, "Food name is required.");
+        return;
+      }
+      if (!Number.isFinite(input.calories) || input.calories < 0) {
+        validationErrors.set(index, "Calories must be a non-negative number.");
+        return;
+      }
+      if ([input.protein_g, input.carbs_g, input.fat_g].some((value) => value !== null && value !== undefined && (!Number.isFinite(value) || value < 0))) {
+        validationErrors.set(index, "Meal nutrition values must be non-negative numbers.");
+        return;
+      }
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(input.entry_date) || !input.logged_at || Number.isNaN(Date.parse(input.logged_at))) {
+        validationErrors.set(index, "Choose a valid meal date and time.");
+        return;
+      }
+      validInputs.push({ index, input });
+    });
+
+    const now = new Date().toISOString();
+    const localRows: HealthMealEntry[] = validInputs.map(({ input }) => ({
+      attribution: input.attribution ?? null,
+      barcode: input.barcode ?? null,
+      brand_name: input.brand_name ?? null,
+      calories: input.calories,
+      carbs_g: input.carbs_g ?? null,
+      created_at: now,
+      entry_date: input.entry_date,
+      fat_g: input.fat_g ?? null,
+      food_name: input.food_name.trim(),
+      id: input.id ?? createLocalId("health-meal"),
+      logged_at: input.logged_at!,
+      meal_slot: input.meal_slot,
+      protein_g: input.protein_g ?? null,
+      provider: input.provider ?? "manual",
+      provider_item_id: input.provider_item_id ?? null,
+      serving_label: input.serving_label ?? null,
+      source_food_id: input.source_food_id ?? null,
+      consumed_quantity: input.consumed_quantity ?? null,
+      consumed_unit: input.consumed_unit ?? null,
+      serving_fraction: input.serving_fraction ?? null,
+      food_snapshot: input.food_snapshot ?? null,
+      nutrition_snapshot: input.nutrition_snapshot ?? null,
+      updated_at: now,
+      user_id: userId,
+    }));
+
+    let nextRows = localRows;
+    let batchError: string | undefined;
+    if (client && storageMode === "remote" && localRows.length > 0) {
+      const { data, error } = await client
+        .from("adhdice_health_meal_entries")
+        .upsert(localRows.map(({ created_at, updated_at, ...row }) => {
+          void created_at;
+          void updated_at;
+          return row;
+        }), { onConflict: "id" })
+        .select("*");
+      if (!isCurrentOperation(operation)) {
+        return { success: false, rows: inputs.map((_, index) => ({ index, success: false, error: "Health operation is no longer active." })) };
+      }
+      if (error) {
+        batchError = error.message;
+        setMessage({ tone: "warn", text: error.message });
+      } else {
+        const remoteById = new Map((data ?? []).map((row) => [row.id, row as HealthMealEntry]));
+        if (localRows.some((row) => !remoteById.has(row.id))) {
+          batchError = "Health did not return every Meal row after the batch write.";
+          setMessage({ tone: "warn", text: batchError });
+        } else {
+          nextRows = localRows.map((row) => remoteById.get(row.id) ?? row);
+        }
+      }
+    }
+
+    const rows = inputs.map((_, index) => {
+      const validationError = validationErrors.get(index);
+      if (validationError) return { index, success: false, error: validationError };
+      const validInput = validInputs.find((entry) => entry.index === index);
+      const rowFailed = Boolean(batchError) || !validInput;
+      return { index, success: !rowFailed, ...(rowFailed ? { error: batchError ?? "Meal batch write failed." } : {}) };
+    });
+    if (batchError || nextRows.length === 0) {
+      return { success: false, rows, ...(batchError ? { error: batchError } : {}) };
+    }
+
+    if (!isCurrentOperation(operation)) {
+      return { success: false, rows: inputs.map((_, index) => ({ index, success: false, error: "Health operation is no longer active." })) };
+    }
+    const rowIds = new Set(nextRows.map((row) => row.id));
+    const nextSnapshot = buildHealthSnapshot({
+      awards,
+      checkIns,
+      favorites,
+      importAudits,
+      mealEntries: [...nextRows, ...mealEntries.filter((row) => !rowIds.has(row.id))].sort((left, right) => right.logged_at.localeCompare(left.logged_at)),
+      metricEntries,
+      profile,
+      recipes,
+      savedMeals,
+      waterEntries,
+      weightEntries,
+    });
+    applySnapshot(nextSnapshot);
+    await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
+    if (!isCurrentOperation(operation)) {
+      return { success: false, rows: inputs.map((_, index) => ({ index, success: false, error: "Health operation is no longer active." })) };
+    }
+    setHealthSuccessMessage({ tone: "good", text: `${nextRows.length} meal${nextRows.length === 1 ? "" : "s"} saved.` });
+    return { success: rows.every((row) => row.success), rows };
+  }
+
   async function deleteMealEntry(entryId: string) {
     if (!profile) {
       return false;
@@ -4403,6 +4528,7 @@ export function useHealth(
     updateSymptomEntry,
     deleteSymptomEntry,
     addMealEntry,
+    addMealEntries,
     addWaterEntry,
     addWaterEntries,
     confirmWaterEntry,

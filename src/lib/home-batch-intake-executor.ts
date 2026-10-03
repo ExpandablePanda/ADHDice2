@@ -1,11 +1,15 @@
-import type { HealthWaterEntryInsert, HealthWeightEntryInsert, HealthWeightUnit, TaskStatus } from "@/lib/database.types";
+import type { HealthMealEntryInsert, HealthWaterEntryInsert, HealthWeightEntryInsert, HealthWeightUnit, TaskStatus } from "@/lib/database.types";
 import type {
   BatchIntakeDraft,
+  BatchIntakeManualFocusDraft,
+  BatchIntakeManualMealDraft,
   BatchIntakeTaskDraft,
   BatchIntakeWaterDraft,
   BatchIntakeWeightDraft,
 } from "@/lib/home-batch-intake";
 import { waterDraftAmountInMilliliters, weightDraftInKilograms } from "@/lib/home-batch-intake";
+import { buildHealthMealLoggedAt } from "@/lib/health-utils";
+import type { FocusManualEntryInput } from "@/lib/types";
 
 export type BatchIntakeTaskGroup = {
   key: string;
@@ -19,6 +23,8 @@ export type BatchIntakeExecutionPlan = {
   taskGroups: BatchIntakeTaskGroup[];
   waterRows: Array<{ rowId: string; input: Omit<HealthWaterEntryInsert, "user_id"> }>;
   weightRows: Array<{ rowId: string; input: Omit<HealthWeightEntryInsert, "user_id"> }>;
+  mealRows?: Array<{ rowId: string; input: Omit<HealthMealEntryInsert, "user_id"> }>;
+  focusRows?: Array<{ rowId: string; input: FocusManualEntryInput }>;
 };
 
 export type BatchIntakeRowExecution = {
@@ -33,7 +39,7 @@ export type BatchIntakeExecutionResult = {
 };
 
 export type BatchIntakeApplyProgress = {
-  stage: "tasks" | "water" | "weight" | "complete";
+  stage: "tasks" | "water" | "weight" | "meals" | "focus" | "complete";
   processed: number;
   total: number;
   applied: number;
@@ -49,6 +55,8 @@ export type BatchIntakeExecutionAuthorities = {
   ) => Promise<boolean>;
   addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
   addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
+  addMealEntries: (inputs: Array<Omit<HealthMealEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
+  handleManualFocusEntries: (inputs: FocusManualEntryInput[]) => Promise<BatchFocusWriteResult>;
 };
 
 export type BatchHealthWriteResult = {
@@ -57,18 +65,22 @@ export type BatchHealthWriteResult = {
   error?: string;
 };
 
+export type BatchFocusWriteResult = BatchHealthWriteResult;
+
 type BatchIntakeExecutionOptions = {
   onProgress?: (progress: BatchIntakeApplyProgress) => void;
 };
 
 export function buildBatchIntakeExecutionPlan(
   drafts: readonly BatchIntakeDraft[],
-  options: { preferredWeightUnit?: HealthWeightUnit | null; loggedAtForDate?: (date: string) => string } = {},
+  options: { preferredWeightUnit?: HealthWeightUnit | null; loggedAtForDate?: (date: string, time?: string | null) => string | null } = {},
 ): BatchIntakeExecutionPlan {
   const taskGroups = new Map<string, BatchIntakeTaskGroup>();
   const waterRows: BatchIntakeExecutionPlan["waterRows"] = [];
   const weightRows: BatchIntakeExecutionPlan["weightRows"] = [];
-  const loggedAtForDate = options.loggedAtForDate ?? ((date) => `${date}T12:00:00`);
+  const mealRows: BatchIntakeExecutionPlan["mealRows"] = [];
+  const focusRows: BatchIntakeExecutionPlan["focusRows"] = [];
+  const loggedAtForDate = options.loggedAtForDate ?? ((date, time) => time?.trim() ? buildHealthMealLoggedAt(date, time) : buildHealthMealLoggedAt(date, "12:00"));
 
   for (const draft of drafts) {
     const blockingIssues = draft.issues.filter((issue) => !(draft.kind === "weight" && issue === "Health preferred weight unit is not ready" && (draft.unit ?? options.preferredWeightUnit)));
@@ -91,15 +103,17 @@ export function buildBatchIntakeExecutionPlan(
     if (draft.kind === "water") {
       const amountMl = waterDraftAmountInMilliliters(draft);
       if (amountMl === null || draft.status === null) continue;
+      const waterLoggedAt = loggedAtForDate(draft.date, "time" in draft ? draft.time : null);
+      if (!waterLoggedAt) continue;
       waterRows.push({
         rowId: draft.id,
         input: {
           amount: draft.amount!,
           amount_ml: amountMl,
-          confirmed_at: draft.status === "confirmed" ? loggedAtForDate(draft.date) : null,
+          confirmed_at: draft.status === "confirmed" ? waterLoggedAt : null,
           entry_date: draft.date,
           ...(draft.writeId ? { id: draft.writeId } : {}),
-          logged_at: loggedAtForDate(draft.date),
+          logged_at: waterLoggedAt,
           unit: draft.unit,
         },
       });
@@ -109,14 +123,57 @@ export function buildBatchIntakeExecutionPlan(
       const unit = draft.unit ?? options.preferredWeightUnit ?? null;
       const weightKg = unit ? weightDraftInKilograms({ value: draft.value, unit }) : null;
       if (weightKg === null) continue;
+      const weightLoggedAt = loggedAtForDate(draft.date, "time" in draft ? draft.time : null);
+      if (!weightLoggedAt) continue;
       weightRows.push({
         rowId: draft.id,
         input: {
           entry_date: draft.date,
           ...(draft.writeId ? { id: draft.writeId } : {}),
-          logged_at: loggedAtForDate(draft.date),
+          logged_at: weightLoggedAt,
           source: "manual",
           weight_kg: weightKg,
+        },
+      });
+      continue;
+    }
+    if (draft.kind === "meal") {
+      if (draft.origin !== "manual" || !isBatchIntakeMealDraftReady(draft)) continue;
+      const loggedAt = loggedAtForDate(draft.date, draft.time);
+      if (!loggedAt) continue;
+      mealRows.push({
+        rowId: draft.id,
+        input: {
+          calories: draft.calories!,
+          carbs_g: draft.carbsG,
+          entry_date: draft.date!,
+          fat_g: draft.fatG,
+          food_name: draft.foodName.trim(),
+          id: draft.writeId,
+          logged_at: loggedAt,
+          meal_slot: draft.mealSlot,
+          protein_g: draft.proteinG,
+          provider: "manual",
+          ...(draft.servingLabel.trim() ? { serving_label: draft.servingLabel.trim() } : {}),
+        },
+      });
+      continue;
+    }
+    if (draft.kind === "focus") {
+      if (!isBatchIntakeFocusDraftReady(draft)) continue;
+      focusRows.push({
+        rowId: draft.id,
+        input: {
+          categoryId: draft.categoryId,
+          completionTime: draft.completionTime,
+          date: draft.date!,
+          durationSeconds: draft.durationSeconds!,
+          focusSubtype: draft.focusSubtype,
+          focusSubtype2: draft.focusSubtype2,
+          focusType: draft.focusType,
+          id: draft.writeId,
+          notes: draft.notes,
+          title: draft.title,
         },
       });
     }
@@ -126,6 +183,8 @@ export function buildBatchIntakeExecutionPlan(
     taskGroups: [...taskGroups.values()].map((group) => ({ ...group, dates: [...group.dates].sort() })),
     waterRows,
     weightRows,
+    mealRows,
+    focusRows,
   };
 }
 
@@ -136,6 +195,8 @@ export async function executeBatchIntakePlan(
 ): Promise<BatchIntakeExecutionResult> {
   const taskGroups: BatchIntakeExecutionResult["taskGroups"] = [];
   const rows: BatchIntakeRowExecution[] = [];
+  const mealRowsPlan = plan.mealRows ?? [];
+  const focusRowsPlan = plan.focusRows ?? [];
   const total = getBatchIntakePlanApplyCount(plan);
   let processed = 0;
   let applied = 0;
@@ -149,6 +210,10 @@ export async function executeBatchIntakePlan(
       ? "water"
       : plan.weightRows.length > 0
         ? "weight"
+        : mealRowsPlan.length > 0
+          ? "meals"
+          : focusRowsPlan.length > 0
+            ? "focus"
         : "complete";
 
   emitProgress(initialStage);
@@ -194,6 +259,36 @@ export async function executeBatchIntakePlan(
     emitProgress("weight");
   }
 
+  if (mealRowsPlan.length > 0) {
+    if (initialStage !== "meals") emitProgress("meals");
+    const result = await authorities.addMealEntries(mealRowsPlan.map(({ input }) => input));
+    const mealRows = mealRowsPlan.map(({ rowId }, index) => ({
+      rowId,
+      status: result.rows[index]?.success ? "applied" as const : "failed" as const,
+      ...(result.rows[index]?.success ? {} : { error: result.rows[index]?.error ?? result.error ?? "Meal batch write failed." }),
+    }));
+    rows.push(...mealRows);
+    processed += mealRows.length;
+    applied += mealRows.filter((row) => row.status === "applied").length;
+    failed += mealRows.filter((row) => row.status === "failed").length;
+    emitProgress("meals");
+  }
+
+  if (focusRowsPlan.length > 0) {
+    if (initialStage !== "focus") emitProgress("focus");
+    const result = await authorities.handleManualFocusEntries(focusRowsPlan.map(({ input }) => input));
+    const focusRows = focusRowsPlan.map(({ rowId }, index) => ({
+      rowId,
+      status: result.rows[index]?.success ? "applied" as const : "failed" as const,
+      ...(result.rows[index]?.success ? {} : { error: result.rows[index]?.error ?? result.error ?? "Focus batch write failed." }),
+    }));
+    rows.push(...focusRows);
+    processed += focusRows.length;
+    applied += focusRows.filter((row) => row.status === "applied").length;
+    failed += focusRows.filter((row) => row.status === "failed").length;
+    emitProgress("focus");
+  }
+
   emitProgress("complete");
   return { rows, taskGroups };
 }
@@ -201,7 +296,9 @@ export async function executeBatchIntakePlan(
 function getBatchIntakePlanApplyCount(plan: BatchIntakeExecutionPlan) {
   return plan.taskGroups.reduce((count, group) => count + group.rowIds.length, 0)
     + plan.waterRows.length
-    + plan.weightRows.length;
+    + plan.weightRows.length
+    + (plan.mealRows?.length ?? 0)
+    + (plan.focusRows?.length ?? 0);
 }
 
 export function getBatchIntakeApplyCount(drafts: readonly BatchIntakeDraft[], options?: { preferredWeightUnit?: HealthWeightUnit | null }) {
@@ -214,9 +311,35 @@ export function isBatchIntakeTaskDraftReady(draft: BatchIntakeTaskDraft) {
 }
 
 export function isBatchIntakeWaterDraftReady(draft: BatchIntakeWaterDraft) {
-  return draft.included && draft.date !== null && draft.amount !== null && draft.status !== null && draft.issues.length === 0;
+  return draft.included && draft.date !== null && draft.amount !== null && draft.status !== null && draft.issues.length === 0 && (!("time" in draft) || !draft.time || buildHealthMealLoggedAt(draft.date, draft.time) !== null);
 }
 
 export function isBatchIntakeWeightDraftReady(draft: BatchIntakeWeightDraft, preferredWeightUnit?: HealthWeightUnit | null) {
-  return draft.included && draft.date !== null && draft.value !== null && Boolean(draft.unit ?? preferredWeightUnit) && draft.issues.length === 0;
+  return draft.included && draft.date !== null && draft.value !== null && Boolean(draft.unit ?? preferredWeightUnit) && draft.issues.length === 0 && (!("time" in draft) || !draft.time || buildHealthMealLoggedAt(draft.date, draft.time) !== null);
+}
+
+export function isBatchIntakeMealDraftReady(draft: BatchIntakeManualMealDraft) {
+  const optionalMacros = [draft.proteinG, draft.carbsG, draft.fatG];
+  return draft.included
+    && draft.date !== null
+    && draft.entryMode === "structured"
+    && draft.foodName.trim().length > 0
+    && draft.calories !== null
+    && Number.isFinite(draft.calories)
+    && draft.calories >= 0
+    && optionalMacros.every((value) => value === null || (Number.isFinite(value) && value >= 0))
+    && buildHealthMealLoggedAt(draft.date, draft.time) !== null
+    && draft.issues.length === 0;
+}
+
+export function isBatchIntakeFocusDraftReady(draft: BatchIntakeManualFocusDraft) {
+  return draft.included
+    && draft.date !== null
+    && draft.title.trim().length > 0
+    && draft.focusType.trim().length > 0
+    && draft.durationSeconds !== null
+    && Number.isFinite(draft.durationSeconds)
+    && draft.durationSeconds > 0
+    && buildHealthMealLoggedAt(draft.date, draft.completionTime) !== null
+    && draft.issues.length === 0;
 }

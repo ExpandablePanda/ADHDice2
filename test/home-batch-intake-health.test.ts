@@ -18,10 +18,19 @@ test("Health batch writes stay inside useHealth and publish one complete snapsho
   assert.match(healthSource, /onConflict: "id"/);
   assert.match(healthSource, /did not return every Water row/);
   assert.match(healthSource, /did not return every Weight row/);
+  assert.match(healthSource, /async function addMealEntries\(/);
+  assert.match(healthSource, /\.from\("adhdice_health_meal_entries"\)\s*\n\s*\.upsert/);
+  assert.match(healthSource, /mealEntries: \[\.\.\.nextRows/);
+  assert.match(healthSource, /did not return every Meal row/);
 });
 
 test("Home batch intake keeps Scratchpad source text separate and activates Health lazily", () => {
   assert.match(homeSource, /Parse Batch Intake/);
+  assert.match(homeSource, /function openManualBatch\(\)/);
+  assert.match(homeSource, /setBatchIntakeDrafts\(\[\]\)/);
+  assert.match(homeSource, /Manual Batch/);
+  assert.match(homeSource, /createManualBatchIntakeDraft/);
+  assert.match(homeSource, /removeBatchIntakeRow/);
   assert.match(homeSource, /parseBatchIntake\(scratchpadDraft/);
   assert.match(homeSource, /setBatchIntakeDrafts\(applyBatchIntakeTaskMatches/);
   assert.match(homeSource, /setScratchpadDraft\(""\)/);
@@ -33,9 +42,25 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /applyProgress\.processed/);
   assert.match(appSource, /activePage === "Health" \|\| batchIntakeHealthActive/);
   assert.match(appSource, /onBatchIntakeHealthActivationChange=\{setBatchIntakeHealthActive\}/);
+  assert.match(appSource, /batchIntakeFocusActive/);
+  assert.match(appSource, /activePage === "Focus" \|\| activePage === "Stats" \|\| activePage === "Health" \|\| batchIntakeFocusActive/);
+  assert.match(appSource, /onBatchIntakeFocusActivationChange=\{setBatchIntakeFocusActive\}/);
+  assert.match(reviewSource, /\+ \{kind === "task"/);
+  assert.match(reviewSource, /Meals review-only/);
+  assert.match(reviewSource, /Focus Session/);
+  assert.match(reviewSource, /onRemoveRow/);
 });
 
 test("Batch intake does not call meal persistence or direct Supabase writes", () => {
   assert.doesNotMatch(homeSource, /addMealEntry|\.from\(/);
   assert.doesNotMatch(readFileSync(new URL("../src/lib/home-batch-intake-executor.ts", import.meta.url), "utf8"), /\.from\(|addMealEntry/);
+});
+
+test("Focus batch authority owns validation, stable writes, and complete history publication", () => {
+  const focusSource = readFileSync(new URL("../src/hooks/useFocus.ts", import.meta.url), "utf8");
+  assert.match(focusSource, /async function handleManualFocusEntries\(/);
+  assert.match(focusSource, /\.from\("adhdice_focus_sessions"\)\s*\n\s*\.upsert/);
+  assert.match(focusSource, /focusHistoryRef\.current/);
+  assert.match(focusSource, /queueDailySurplusPrompt/);
+  assert.match(focusSource, /setFocusHistory\(nextHistory\)/);
 });

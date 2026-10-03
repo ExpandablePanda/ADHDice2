@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { parseBatchIntake } from "../src/lib/home-batch-intake.ts";
+import { createManualBatchIntakeDraft, parseBatchIntake } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount } from "../src/lib/home-batch-intake-executor.ts";
 import type { Task } from "../src/lib/database.types.ts";
@@ -90,6 +90,21 @@ test("golden Obsidian fixture parses Phase 1 records without silently dropping l
   assert.equal(drafts.some((draft) => draft.sourceText === "1h" && draft.kind === "unsupported"), true);
   assert.equal(drafts.some((draft) => draft.sourceText === "tasks" || draft.sourceText === "water"), false);
   assert.equal(new Set(drafts.map((draft) => draft.id)).size, drafts.length);
+  assert.ok(drafts.every((draft) => draft.origin === "parsed" && draft.sourceLineNumber !== null));
+});
+
+test("manual Batch Intake constructors use explicit manual origins and editable defaults", () => {
+  const drafts = (["task", "water", "weight", "meal", "focus"] as const).map((kind) => createManualBatchIntakeDraft(kind, {
+    date: "2026-10-03",
+    id: `manual-${kind}`,
+    preferredWeightUnit: "lb",
+    time: "09:15",
+  }));
+
+  assert.deepEqual(drafts.map((draft) => draft.kind), ["task", "water", "weight", "meal", "focus"]);
+  assert.ok(drafts.every((draft) => draft.origin === "manual" && draft.sourceLineNumber === null && draft.date === "2026-10-03"));
+  assert.equal(drafts.find((draft) => draft.kind === "meal")?.entryMode, "structured");
+  assert.equal(drafts.find((draft) => draft.kind === "focus")?.kind, "focus");
 });
 
 test("date parsing handles omitted years, explicit years, and New Year rollover", () => {
@@ -175,6 +190,32 @@ test("execution plan groups Task dates and excludes no-change, meals, unsupporte
   ], { preferredWeightUnit: "lb" }), 3);
 });
 
+test("execution plan keeps parsed Meals review-only and includes valid manual Meals and Focus rows", () => {
+  const parsedMeal = parseBatchIntake("10/2\nlunch - soup", { referenceDate: "2026-10-03" }).find((draft) => draft.kind === "meal");
+  assert.ok(parsedMeal && parsedMeal.origin === "parsed");
+  const task = createManualBatchIntakeDraft("task", { date: "2026-10-03", id: "manual-task" });
+  const water = createManualBatchIntakeDraft("water", { date: "2026-10-03", id: "manual-water" });
+  const weight = createManualBatchIntakeDraft("weight", { date: "2026-10-03", id: "manual-weight", preferredWeightUnit: "lb" });
+  const meal = createManualBatchIntakeDraft("meal", { date: "2026-10-03", id: "manual-meal", time: "12:00" });
+  const focus = createManualBatchIntakeDraft("focus", { date: "2026-10-03", id: "manual-focus", time: "13:00" });
+  const drafts = [
+    parsedMeal,
+    { ...task, selectedTaskId: "canonical-task", outcome: "done" as const, issues: [] },
+    { ...water, amount: 16, status: "confirmed" as const, issues: [] },
+    { ...weight, value: 180, issues: [] },
+    { ...meal, foodName: "Soup", calories: 240, issues: [] },
+    { ...focus, title: "Deep work", durationSeconds: 1800, issues: [] },
+  ];
+  const plan = buildBatchIntakeExecutionPlan(drafts, { preferredWeightUnit: "lb" });
+
+  assert.equal(plan.taskGroups.length, 1);
+  assert.equal(plan.waterRows.length, 1);
+  assert.equal(plan.weightRows.length, 1);
+  assert.equal(plan.mealRows?.length, 1);
+  assert.equal(plan.focusRows?.length, 1);
+  assert.equal(getBatchIntakeApplyCount(drafts, { preferredWeightUnit: "lb" }), 5);
+});
+
 test("execution serializes Task groups and keeps failed groups retryable", async () => {
   const calls: string[] = [];
   const plan = {
@@ -209,6 +250,8 @@ test("execution reports completed Task, Water, and Weight rows without changing 
     syncTaskHistoryEntries: async (taskId) => taskId === "task",
     addWaterEntries: async () => ({ success: false, rows: [{ index: 0, success: true }, { index: 1, success: false, error: "Water failed" }] }),
     addWeightEntries: async () => ({ success: true, rows: [{ index: 0, success: true }] }),
+    addMealEntries: async () => ({ success: true, rows: [] }),
+    handleManualFocusEntries: async () => ({ success: true, rows: [] }),
   }, { onProgress: (next) => progress.push(next) });
 
   assert.deepEqual(progress, [
@@ -238,9 +281,37 @@ test("retry progress total contains only the current executable rows", async () 
     syncTaskHistoryEntries: async () => true,
     addWaterEntries: async () => ({ success: true, rows: [] }),
     addWeightEntries: async () => ({ success: true, rows: [] }),
+    addMealEntries: async () => ({ success: true, rows: [] }),
+    handleManualFocusEntries: async () => ({ success: true, rows: [] }),
   }, { onProgress: (next) => progress.push(next) });
 
   assert.equal(progress[0]?.total, 2);
   assert.equal(progress.at(-1)?.processed, 2);
   assert.equal(progress.at(-1)?.stage, "complete");
+});
+
+test("execution runs Meals before Focus serially and preserves partial failures for retry", async () => {
+  const calls: string[] = [];
+  const progress: string[] = [];
+  const plan = {
+    taskGroups: [{ key: "task:done", taskId: "task", outcome: "done" as const, dates: ["2026-10-03"], rowIds: ["task-row"] }],
+    waterRows: [{ rowId: "water-row", input: {} as never }],
+    weightRows: [{ rowId: "weight-row", input: {} as never }],
+    mealRows: [{ rowId: "meal-row", input: {} as never }],
+    focusRows: [{ rowId: "focus-row", input: {} as never }],
+  };
+  const result = await executeBatchIntakePlan(plan, {
+    syncTaskHistoryEntries: async () => { calls.push("task"); return true; },
+    addWaterEntries: async () => { calls.push("water"); return { success: true, rows: [{ index: 0, success: true }] }; },
+    addWeightEntries: async () => { calls.push("weight"); return { success: true, rows: [{ index: 0, success: true }] }; },
+    addMealEntries: async () => { calls.push("meal"); return { success: false, rows: [{ index: 0, success: false, error: "Meal failed" }] }; },
+    handleManualFocusEntries: async () => { calls.push("focus"); return { success: true, rows: [{ index: 0, success: true }] }; },
+  }, { onProgress: (next) => progress.push(next.stage) });
+
+  assert.deepEqual(calls, ["task", "water", "weight", "meal", "focus"]);
+  assert.equal(result.rows.filter((row) => row.status === "applied").length, 4);
+  assert.equal(result.rows.find((row) => row.rowId === "meal-row")?.status, "failed");
+  assert.ok(progress.includes("meals"));
+  assert.ok(progress.includes("focus"));
+  assert.equal(progress.at(-1), "complete");
 });

@@ -1,5 +1,19 @@
 export type FocusType = string;
 export type FocusSubtype = string;
+export type FocusManualEntryInput = {
+  id?: string;
+  categoryId: string | null;
+  title: string;
+  focusType: FocusType;
+  focusSubtype?: FocusSubtype | null;
+  focusSubtype2?: FocusSubtype | null;
+  durationSeconds: number;
+  date: string;
+  completionTime?: string;
+  notes: string;
+  startedAt?: string | null;
+  endedAt?: string | null;
+};
 export type FocusReallocationMode = "manual" | "automatic";
 export type FocusTargetDistributionMode = "auto" | "manual";
 export type FocusWeeklySurplusCarryoverMode = "off" | "cap25" | "cap50" | "full";
