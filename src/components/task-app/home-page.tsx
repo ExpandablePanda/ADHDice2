@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type DragEvent, type FormEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -49,6 +49,7 @@ import {
   getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
+  reconcileHomeUrgentTaskIds,
   shouldPersistHomeRoutineReconciliation,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
@@ -57,8 +58,10 @@ import {
   reconcileHomeRoutineTaskIds,
   sortHomeTodoSearchResults,
   type HomeRoutineGroup,
+  type HomeScratchpadItem,
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
+import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import {
   TASK_TABLE_LIST_CHIP_CLASS,
   TASK_TABLE_CHIP_BASE_CLASS,
@@ -71,7 +74,7 @@ const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
 const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 const HOME_GEAR_LONG_PRESS_MS = 475;
 const HOME_GEAR_LONG_PRESS_MOVE_PX = 8;
-type HomePanelTab = "todo" | "routine";
+export type HomePanelTab = "urgent" | "todo" | "routine" | "scratchpad";
 type HomeRowActionMenuView = "actions" | "move-day" | "move-routine-section";
 
 type HomeRowActionMenuState = {
@@ -333,6 +336,7 @@ export function HomePage({
   manualMembershipsByTaskId,
   allTags,
   onCreateTaskWithType,
+  onSetTaskPriority,
   onSetRoutineMembership,
   onReorderChildTask,
   onOpenTask,
@@ -366,6 +370,7 @@ export function HomePage({
   manualMembershipsByTaskId: Readonly<Record<string, readonly string[]>>;
   allTags: string[];
   onCreateTaskWithType: (title: string, taskTypeSelectionValue: string, metadata: HomeTodoTaskMetadata) => Promise<Task | null>;
+  onSetTaskPriority: (taskId: string, priority: TaskPriorityLevelOption) => Promise<boolean>;
   onSetRoutineMembership: (taskId: string, included: boolean) => Promise<boolean>;
   onReorderChildTask: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenTask: (taskId: string) => void;
@@ -396,11 +401,32 @@ export function HomePage({
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
-  const { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const {
+    addScratchpadItem,
+    createRoutineSection,
+    deleteScratchpadItem,
+    moveTodoTaskToUrgent,
+    moveUrgentTaskToTodo,
+    reorderScratchpadItems,
+    state,
+    syncStatus,
+    updateRoutineSectionName,
+    updateRoutineTaskIds,
+    updateRoutineTaskSection,
+    updateScratchpadItem,
+    updateTaskDayOffset,
+    updateTaskIds,
+    updateTasksPerDay,
+    updateUrgentTaskIds,
+  } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("todo");
+  const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("urgent");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [scratchpadDraft, setScratchpadDraft] = useState("");
+  const [editingScratchpadItemId, setEditingScratchpadItemId] = useState<string | null>(null);
+  const [scratchpadEditDraft, setScratchpadEditDraft] = useState("");
+  const [convertingScratchpadItemId, setConvertingScratchpadItemId] = useState<string | null>(null);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
@@ -418,6 +444,8 @@ export function HomePage({
   const suppressGearClickRef = useRef(false);
   const suppressGearClickResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
+  const scratchpadInputRef = useRef<HTMLInputElement | null>(null);
+  const scratchpadEditCanceledRef = useRef(false);
   const routineSectionRenameCanceledRef = useRef(false);
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
   const routineChildDropTargetRef = useRef<HomeRoutineChildDropTarget | null>(null);
@@ -435,6 +463,14 @@ export function HomePage({
   const todoTasks = useMemo(
     () => reconciledTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task)),
     [reconciledTaskIds, taskById],
+  );
+  const reconciledUrgentTaskIds = useMemo(
+    () => reconcileHomeUrgentTaskIds(state.urgentTaskIds, tasks),
+    [state.urgentTaskIds, tasks],
+  );
+  const urgentTasks = useMemo(
+    () => reconciledUrgentTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task)),
+    [reconciledUrgentTaskIds, taskById],
   );
   const routineTaskIds = useMemo(
     () => getHomeRoutineTaskIds(tasks, listMembershipsByTaskId, manualMembershipsByTaskId),
@@ -457,16 +493,23 @@ export function HomePage({
     const needle = query.trim().toLowerCase();
     if (!needle) return [];
     const isTodoSearch = activeHomeTab === "todo";
-    const selected = isTodoSearch ? new Set(reconciledTaskIds) : routineTaskIdSet;
+    const isUrgentSearch = activeHomeTab === "urgent";
+    const selected = isTodoSearch ? new Set(reconciledTaskIds) : isUrgentSearch ? new Set(reconciledUrgentTaskIds) : routineTaskIdSet;
     return sortHomeTodoSearchResults(tasks
-      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && (isTodoSearch || !selected.has(task.id)))
+      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && ((isTodoSearch || isUrgentSearch) || !selected.has(task.id)))
       .map((task) => {
         const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
         const searchable = getHomeTodoSearchText(task, hierarchy, listMembershipsByTaskId[task.id] ?? []);
-        return { hierarchy, isInTodo: isTodoSearch && selected.has(task.id), searchable, task };
+        return {
+          hierarchy,
+          isInTodo: isTodoSearch && selected.has(task.id),
+          isInUrgent: isUrgentSearch && selected.has(task.id),
+          searchable,
+          task,
+        };
       })
       .filter((item) => item.searchable.includes(needle)));
-  }, [activeHomeTab, listMembershipsByTaskId, query, reconciledTaskIds, routineTaskIdSet, taskById, tasks]);
+  }, [activeHomeTab, listMembershipsByTaskId, query, reconciledTaskIds, reconciledUrgentTaskIds, routineTaskIdSet, taskById, tasks]);
 
   const { laterTaskIds, sections: daySections } = useMemo(
     () => buildHomeTodoDaySections(todoTasks.map((task) => task.id), state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone, state.taskDayOffsets),
@@ -492,9 +535,16 @@ export function HomePage({
     updateRoutineTaskIds((currentRoutineTaskIds) => reconcileHomeRoutineTaskIds(currentRoutineTaskIds, routineTaskIds));
   }, [routineTaskIds, syncStatus, tasks.length, updateRoutineTaskIds]);
 
+  useEffect(() => {
+    if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
+    updateUrgentTaskIds((currentUrgentTaskIds) => reconcileHomeUrgentTaskIds(currentUrgentTaskIds, tasks));
+  }, [syncStatus, tasks, updateUrgentTaskIds]);
+
   function selectHomeTab(nextTab: HomePanelTab) {
     setActiveHomeTab(nextTab);
     setIsSearchOpen(false);
+    setIsCreateOpen(false);
+    setConvertingScratchpadItemId(null);
     setRowActionMenu(null);
     setIsFastActionMode(false);
     setIsSettingsOpen(false);
@@ -585,26 +635,47 @@ export function HomePage({
   }
 
   async function handleCreateTask(draft: TaskCreationDraft) {
+    const creationTab = activeHomeTab;
+    const conversionItemId = convertingScratchpadItemId;
+    const metadata = creationTab === "urgent"
+      ? { ...draft.metadata, priority_level: 5 as const }
+      : draft.metadata;
     const createdTask = await createHomeTodoTask(
       draft.title,
       draft.taskTypeSelection,
       onCreateTaskWithType,
-      activeHomeTab === "todo"
+      creationTab === "todo" || creationTab === "scratchpad"
         ? (taskId) => updateTaskIds((taskIds) => [...taskIds, taskId])
-        : () => {},
-      draft.metadata,
+        : creationTab === "urgent"
+          ? (taskId) => updateUrgentTaskIds((taskIds) => [...taskIds, taskId])
+          : () => {},
+      metadata,
     );
-    if (createdTask && activeHomeTab === "routine") {
+    if (createdTask && creationTab === "routine") {
       await onSetRoutineMembership(createdTask.id, true);
+    }
+    if (createdTask && creationTab === "scratchpad" && conversionItemId) {
+      updateTaskDayOffset(createdTask.id, 0);
+      deleteScratchpadItem(conversionItemId);
     }
     return createdTask;
   }
 
   function cancelCreateTask() {
     setIsCreateOpen(false);
+    setConvertingScratchpadItemId(null);
   }
 
   async function addSearchResult(taskId: string) {
+    if (activeHomeTab === "urgent") {
+      if (reconciledUrgentTaskIds.includes(taskId)) return;
+      const promoted = await onSetTaskPriority(taskId, "5");
+      if (!promoted) return;
+      updateUrgentTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
+      setQuery("");
+      setIsSearchOpen(false);
+      return;
+    }
     if (activeHomeTab === "routine") {
       const enabled = await onSetRoutineMembership(taskId, true);
       if (enabled) {
@@ -614,6 +685,41 @@ export function HomePage({
       return;
     }
     updateTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
+  }
+
+  function addScratchpadDraft(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const item = addScratchpadItem(scratchpadDraft);
+    if (!item) return;
+    setScratchpadDraft("");
+    window.requestAnimationFrame(() => scratchpadInputRef.current?.focus());
+  }
+
+  function beginScratchpadEdit(item: HomeScratchpadItem) {
+    scratchpadEditCanceledRef.current = false;
+    setEditingScratchpadItemId(item.id);
+    setScratchpadEditDraft(item.text);
+  }
+
+  function saveScratchpadEdit(itemId: string) {
+    if (scratchpadEditCanceledRef.current) {
+      scratchpadEditCanceledRef.current = false;
+      return;
+    }
+    updateScratchpadItem(itemId, scratchpadEditDraft);
+    setEditingScratchpadItemId(null);
+  }
+
+  function cancelScratchpadEdit() {
+    scratchpadEditCanceledRef.current = true;
+    setEditingScratchpadItemId(null);
+  }
+
+  function beginScratchpadConversion(item: HomeScratchpadItem) {
+    setEditingScratchpadItemId(null);
+    setConvertingScratchpadItemId(item.id);
+    setIsCreateOpen(true);
+    setIsSearchOpen(false);
   }
 
   useEffect(() => {
@@ -858,6 +964,7 @@ export function HomePage({
     routineSectionGroupIds?: readonly string[],
   ) {
     const isRoutine = mode === "routine";
+    const isUrgent = mode === "urgent";
     const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
@@ -866,8 +973,8 @@ export function HomePage({
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
     const currentRoutineSectionId = isRoutine ? effectiveRoutineSectionState.routineSectionIdByTaskId[task.id] : null;
-    const durableTaskIndex = state.taskIds.indexOf(task.id);
-    const renderedDayOffset = daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
+    const durableTaskIndex = isUrgent ? state.urgentTaskIds.indexOf(task.id) : state.taskIds.indexOf(task.id);
+    const renderedDayOffset = isUrgent ? null : daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
     const moveDayDestinations = [
       ...daySections.map((section) => ({
@@ -877,8 +984,8 @@ export function HomePage({
       })),
       { dayOffset: 7, isFull: false, label: "Later" },
     ];
-    const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0;
-    const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state.taskIds.length - 1 && renderedDayOffset === 7;
+    const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && (isUrgent || renderedDayOffset === 0);
+    const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === (isUrgent ? state.urgentTaskIds.length : state.taskIds.length) - 1 && (isUrgent || renderedDayOffset === 7);
     const routineSectionIndex = isRoutine && routineSectionGroupIds ? routineSectionGroupIds.indexOf(task.id) : index;
     const routineSectionLength = routineSectionGroupIds?.length ?? routineGroups.length;
     const isAtRoutineTop = isRoutine && routineSectionIndex === 0;
@@ -932,6 +1039,7 @@ export function HomePage({
               <TaskStatusCircleRail
                 currentStatus={displayStatus}
                 onSetStatus={(status) => {
+                  if (status === "unscheduled") return;
                   onSetStatus(task, status);
                   setStatusMenuTaskId(null);
                 }}
@@ -990,13 +1098,13 @@ export function HomePage({
                   <AdhdIconButton
                     aria-expanded={rowActionMenuOpen && rowActionMenuView === "move-day"}
                     aria-haspopup="menu"
-                    aria-label={`Move ${task.title || "Untitled task"} to day`}
+                    aria-label={isUrgent ? `Move ${task.title || "Untitled task"} to To-do` : `Move ${task.title || "Untitled task"} to day`}
                     className={HOME_TODO_ACTION_CLASS}
                     iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                     onClick={() => setRowActionMenu({ taskId: task.id, view: "move-day" })}
                     selected={rowActionMenuOpen && rowActionMenuView === "move-day"}
                     size="sm"
-                    title="Move to day"
+                    title={isUrgent ? "Move to To-do" : "Move to day"}
                   >
                     <CalendarDays aria-hidden="true" />
                   </AdhdIconButton>
@@ -1007,8 +1115,12 @@ export function HomePage({
                     className={HOME_TODO_ACTION_CLASS}
                     iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                     onClick={() => {
-                      updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
-                      updateTaskDayOffset(task.id, 0);
+                      if (isUrgent) {
+                        updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                      } else {
+                        updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                        updateTaskDayOffset(task.id, 0);
+                      }
                       setRowActionMenu(null);
                     }}
                     size="sm"
@@ -1023,8 +1135,12 @@ export function HomePage({
                     className={HOME_TODO_ACTION_CLASS}
                     iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                     onClick={() => {
-                      updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
-                      updateTaskDayOffset(task.id, 7);
+                      if (isUrgent) {
+                        updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                      } else {
+                        updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                        updateTaskDayOffset(task.id, 7);
+                      }
                       setRowActionMenu(null);
                     }}
                     size="sm"
@@ -1071,12 +1187,14 @@ export function HomePage({
                     setRowActionMenu(null);
                     if (isRoutine) {
                       void onSetRoutineMembership(task.id, false);
+                    } else if (isUrgent) {
+                      updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                     } else {
                       updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                     }
                   }}
                   size="sm"
-                  title={isRoutine ? "Remove from Routine" : "Remove from Home To-do"}
+                  title={isRoutine ? "Remove from Routine" : isUrgent ? "Remove from Urgent" : "Remove from Home To-do"}
                   tone="danger"
                 >
                   <Minus aria-hidden="true" />
@@ -1117,7 +1235,7 @@ export function HomePage({
             {rowActionMenuOpen ? (
               <AdhdDropdownPanel
                 aria-label={rowActionMenuView === "move-day"
-                  ? `Move ${task.title || "Untitled task"} to day`
+                  ? isUrgent ? `Move ${task.title || "Untitled task"} to To-do` : `Move ${task.title || "Untitled task"} to day`
                   : rowActionMenuView === "move-routine-section"
                     ? `Move ${task.title || "Untitled task"} to section`
                     : `${task.title || "Untitled task"} actions`}
@@ -1173,7 +1291,8 @@ export function HomePage({
                           key={destination.dayOffset}
                           onClick={() => {
                             if (disabled) return;
-                            updateTaskDayOffset(task.id, destination.dayOffset);
+                            if (isUrgent) moveUrgentTaskToTodo(task.id, destination.dayOffset);
+                            else updateTaskDayOffset(task.id, destination.dayOffset);
                             setRowActionMenu(null);
                           }}
                           role="menuitemradio"
@@ -1209,14 +1328,30 @@ export function HomePage({
                     ) : null}
                     {!isRoutine ? (
                       <button
-                        aria-label={`Move ${task.title || "Untitled task"} to day`}
+                        aria-label={isUrgent ? `Move ${task.title || "Untitled task"} to To-do` : `Move ${task.title || "Untitled task"} to day`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
                         onClick={() => setRowActionMenu({ taskId: task.id, view: "move-day" })}
                         role="menuitem"
                         type="button"
                       >
                         <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                        Move to day
+                        {isUrgent ? "Move to To-do" : "Move to day"}
+                      </button>
+                    ) : null}
+                    {!isRoutine && !isUrgent ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to Urgent`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={async () => {
+                          const promoted = await onSetTaskPriority(task.id, "5");
+                          if (!promoted) return;
+                          moveTodoTaskToUrgent(task.id);
+                          setRowActionMenu(null);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        Move to Urgent
                       </button>
                     ) : null}
                     {!isRoutine && !isAtAbsoluteTop ? (
@@ -1224,8 +1359,12 @@ export function HomePage({
                         aria-label={`Move ${task.title || "Untitled task"} to Top`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
                         onClick={() => {
-                          updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
-                          updateTaskDayOffset(task.id, 0);
+                          if (isUrgent) {
+                            updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                          } else {
+                            updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                            updateTaskDayOffset(task.id, 0);
+                          }
                           setRowActionMenu(null);
                         }}
                         role="menuitem"
@@ -1240,8 +1379,12 @@ export function HomePage({
                         aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
                         onClick={() => {
-                          updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
-                          updateTaskDayOffset(task.id, 7);
+                          if (isUrgent) {
+                            updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                          } else {
+                            updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                            updateTaskDayOffset(task.id, 7);
+                          }
                           setRowActionMenu(null);
                         }}
                         role="menuitem"
@@ -1282,12 +1425,14 @@ export function HomePage({
                       </button>
                     ) : null}
                     <button
-                      aria-label={`Remove ${task.title || "Untitled task"} from ${isRoutine ? "Routine" : "Home To-do"}`}
+                      aria-label={`Remove ${task.title || "Untitled task"} from ${isRoutine ? "Routine" : isUrgent ? "Urgent" : "Home To-do"}`}
                       className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#d65775] hover:bg-[#fff1f3] dark:text-[#ffb0c1] dark:hover:bg-[#32161d]"
                       onClick={() => {
                         setRowActionMenu(null);
                         if (isRoutine) {
                           void onSetRoutineMembership(task.id, false);
+                        } else if (isUrgent) {
+                          updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                         } else {
                           updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                         }
@@ -1296,7 +1441,7 @@ export function HomePage({
                       type="button"
                     >
                       <Minus aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                      {isRoutine ? "Remove from Routine" : "Remove from Home To-do"}
+                      {isRoutine ? "Remove from Routine" : isUrgent ? "Remove from Urgent" : "Remove from Home To-do"}
                     </button>
                   </div>
                 )}
@@ -1352,9 +1497,17 @@ export function HomePage({
                   data-style-component="HomePage"
                   data-style-role="ui.section.title"
                 >
-                  {activeHomeTab === "todo" ? "To-do list" : "Routine"}
+                  {activeHomeTab === "urgent" ? "Urgent" : activeHomeTab === "todo" ? "To-do list" : activeHomeTab === "routine" ? "Routine" : "Scratchpad"}
                 </h1>
                 <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
+                  <AdhdChip
+                    aria-selected={activeHomeTab === "urgent"}
+                    onClick={() => selectHomeTab("urgent")}
+                    role="tab"
+                    selected={activeHomeTab === "urgent"}
+                  >
+                    Urgent
+                  </AdhdChip>
                   <AdhdChip
                     aria-selected={activeHomeTab === "todo"}
                     onClick={() => selectHomeTab("todo")}
@@ -1370,6 +1523,14 @@ export function HomePage({
                     selected={activeHomeTab === "routine"}
                   >
                     Routine
+                  </AdhdChip>
+                  <AdhdChip
+                    aria-selected={activeHomeTab === "scratchpad"}
+                    onClick={() => selectHomeTab("scratchpad")}
+                    role="tab"
+                    selected={activeHomeTab === "scratchpad"}
+                  >
+                    Scratchpad
                   </AdhdChip>
                 </div>
               </div>
@@ -1423,6 +1584,39 @@ export function HomePage({
             </div>
         </div>
         <PageShellBody>
+        {activeHomeTab === "scratchpad" ? (
+          <div className="relative mt-2" ref={searchRef}>
+            <form className="flex flex-wrap items-end gap-2" onSubmit={addScratchpadDraft}>
+              <label className="min-w-[min(100%,16rem)] flex-1">
+                <span className="sr-only">Scratchpad note</span>
+                <input
+                  className="health-input"
+                  onChange={(event) => setScratchpadDraft(event.target.value)}
+                  placeholder="Write something down…"
+                  ref={scratchpadInputRef}
+                  value={scratchpadDraft}
+                />
+              </label>
+              <AdhdChip selected type="submit">Add</AdhdChip>
+            </form>
+            {isCreateOpen && convertingScratchpadItemId ? (
+              <div className="mt-3">
+                <TaskCreationComposer
+                  allTags={allTags}
+                  initialTitle={state.scratchpadItems.find((item) => item.id === convertingScratchpadItemId)?.text ?? ""}
+                  key={convertingScratchpadItemId}
+                  onCancel={cancelCreateTask}
+                  onCreate={handleCreateTask}
+                  onCreated={() => {
+                    setIsCreateOpen(false);
+                    setConvertingScratchpadItemId(null);
+                  }}
+                  taskTypeOptions={taskTypeOptions}
+                />
+              </div>
+            ) : null}
+          </div>
+        ) : (
         <div className="relative mt-2" ref={searchRef}>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Search tasks</span>
@@ -1455,18 +1649,24 @@ export function HomePage({
             <div className="mt-3">
               <TaskCreationComposer
                 allTags={allTags}
+                initialPriority={activeHomeTab === "urgent" ? "5" : "0"}
                 onCancel={cancelCreateTask}
                 onCreate={handleCreateTask}
-                onCreated={() => setIsCreateOpen(false)}
+                onCreated={() => {
+                  setIsCreateOpen(false);
+                  setConvertingScratchpadItemId(null);
+                }}
                 taskTypeOptions={taskTypeOptions}
               />
             </div>
           ) : null}
           {isSearchOpen && query.trim() ? (
             <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
-              {searchResults.length ? searchResults.map(({ hierarchy, isInTodo, task }) => (
+              {searchResults.length ? searchResults.map(({ hierarchy, isInTodo, isInUrgent, task }) => (
                 <button
+                  aria-disabled={isInTodo || isInUrgent}
                   className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f6f2ff] dark:hover:bg-white/8"
+                  disabled={isInTodo || isInUrgent}
                   key={task.id}
                   onClick={() => {
                     void addSearchResult(task.id);
@@ -1483,7 +1683,14 @@ export function HomePage({
                       </span>
                     ) : null}
                   </span>
-                  {isInTodo ? (
+                  {isInUrgent ? (
+                    <span
+                      aria-label="Already in Urgent"
+                      className="inline-flex shrink-0 items-center rounded-full border border-[#ffd6de] bg-[#fff1f3] px-2 py-1 text-[11px] font-semibold text-[#d65775] dark:border-[#5f2a36] dark:bg-[#32161d] dark:text-[#ffb0c1]"
+                    >
+                      In Urgent
+                    </span>
+                  ) : isInTodo ? (
                     <span
                       aria-label="Already in To-do"
                       className="inline-flex shrink-0 items-center rounded-full border border-[#d8cff0] bg-[#f7f3ff] px-2 py-1 text-[11px] font-semibold text-[#6f57f6] dark:border-white/15 dark:bg-white/[0.06] dark:text-[#cabfff]"
@@ -1498,8 +1705,26 @@ export function HomePage({
             </div>
           ) : null}
         </div>
+        )}
 
-          {activeHomeTab === "todo" ? (
+          {activeHomeTab === "urgent" ? (
+            <>
+              <SortableList
+                className={HOME_TODO_LIST_CLASS}
+                getId={(task) => task.id}
+                getLabel={(task) => task.title || "Untitled task"}
+                items={urgentTasks}
+                onReorder={(nextTasks) => updateUrgentTaskIds(() => nextTasks.map((task) => task.id))}
+              >
+                {(task, index, handle) => renderHomeTask(task, index, handle, "urgent")}
+              </SortableList>
+              {!urgentTasks.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  Search above to add the first Task to Urgent.
+                </p>
+              ) : null}
+            </>
+          ) : activeHomeTab === "todo" ? (
             <>
               <SortableList
                 className={HOME_TODO_LIST_CLASS}
@@ -1547,7 +1772,7 @@ export function HomePage({
                 </p>
               ) : null}
             </>
-          ) : (
+          ) : activeHomeTab === "routine" ? (
             <>
               {routineSections.map((section) => {
                 const sectionRoutineGroups = section.groupIds
@@ -1590,6 +1815,78 @@ export function HomePage({
               {!routineGroups.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/[0.15] dark:bg-white/[0.03] dark:text-white/55">
                   No Routine tasks yet.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <SortableList
+                className={HOME_TODO_LIST_CLASS}
+                getId={(item) => item.id}
+                getLabel={(item) => item.text}
+                items={state.scratchpadItems}
+                onReorder={(nextItems) => reorderScratchpadItems(nextItems.map((item) => item.id))}
+              >
+                {(item, _index, handle) => (
+                  <AdhdCard className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2" padding="sm">
+                    <span className="shrink-0">{handle}</span>
+                    <div className="min-w-0">
+                      {editingScratchpadItemId === item.id ? (
+                        <input
+                          aria-label={`Edit ${item.text}`}
+                          autoFocus
+                          className="health-input h-9 w-full"
+                          onBlur={() => saveScratchpadEdit(item.id)}
+                          onChange={(event) => setScratchpadEditDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              saveScratchpadEdit(item.id);
+                            } else if (event.key === "Escape") {
+                              event.preventDefault();
+                              cancelScratchpadEdit();
+                            }
+                          }}
+                          value={scratchpadEditDraft}
+                        />
+                      ) : (
+                        <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>{item.text}</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <AdhdIconButton
+                        aria-label={`Edit ${item.text}`}
+                        className={HOME_TODO_ACTION_CLASS}
+                        iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                        onClick={() => beginScratchpadEdit(item)}
+                        size="sm"
+                        title="Edit"
+                      >
+                        <Pencil aria-hidden="true" />
+                      </AdhdIconButton>
+                      <AdhdChip onClick={() => beginScratchpadConversion(item)} type="button">Convert to Task</AdhdChip>
+                      <AdhdIconButton
+                        aria-label={`Delete ${item.text}`}
+                        className={HOME_TODO_ACTION_CLASS}
+                        iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                        onClick={() => {
+                          deleteScratchpadItem(item.id);
+                          if (editingScratchpadItemId === item.id) setEditingScratchpadItemId(null);
+                          if (convertingScratchpadItemId === item.id) cancelCreateTask();
+                        }}
+                        size="sm"
+                        title="Delete"
+                        tone="danger"
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </AdhdIconButton>
+                    </div>
+                  </AdhdCard>
+                )}
+              </SortableList>
+              {!state.scratchpadItems.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  Capture a thought above, then turn it into a Task when you are ready.
                 </p>
               ) : null}
             </>

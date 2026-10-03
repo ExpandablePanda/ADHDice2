@@ -4,13 +4,14 @@ import test from "node:test";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("7.15.69 Home To-do metadata plumbing is removed and Home owns V6 state", () => {
+test("7.16.42 Home work surfaces keep V7 state local to Home", () => {
   const app = read("../src/components/task-app.tsx");
   const home = read("../src/components/task-app/home-page.tsx");
   const table = read("../src/components/ui/task-management-table-v2.tsx");
   const adapter = read("../src/components/task-app/tasks-list-adapter.tsx");
   assert.doesNotMatch(app, /useHomeTodoState\(/);
   assert.match(home, /useHomeTodoState\(userId\)/);
+  assert.match(home, /useState<HomePanelTab>\("urgent"\)/);
   for (const source of [app, table, adapter]) {
     assert.doesNotMatch(source, /homeTodoTaskIds|onSetHomeTodoMembership|home_todo/);
   }
@@ -127,6 +128,8 @@ test("Home keeps its own creation behavior while reusing the shared form", () =>
   const home = read("../src/components/task-app/home-page.tsx");
   assert.match(home, /<TaskCreationComposer/);
   assert.match(home, /onCreate=\{handleCreateTask\}/);
+  assert.match(home, /initialPriority=\{activeHomeTab === "urgent" \? "5" : "0"\}/);
+  assert.match(home, /initialTitle=\{state\.scratchpadItems\.find/);
   assert.match(home, /createHomeTodoTask\(/);
   assert.match(home, /activeHomeTab === "todo"/);
   assert.match(home, /onSetRoutineMembership\(createdTask\.id, true\)/);

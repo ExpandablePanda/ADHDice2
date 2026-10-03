@@ -8247,6 +8247,7 @@ export function TaskApp() {
             listMembershipsByTaskId={taskListMembershipsByTaskId}
             manualMembershipsByTaskId={manualMembershipsByTaskId}
             onCreateTaskWithType={createHomeTodoTaskWithType}
+            onSetTaskPriority={(taskId, priority) => setTaskPriority(taskId, priority)}
             onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
             onOpenTask={openTaskEditorFromId}

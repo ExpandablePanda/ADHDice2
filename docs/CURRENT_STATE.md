@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.41`.
+- Current working app version: `7.16.42`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,24 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.42 Home Urgent Queue and Scratchpad
+
+Home now opens to the Urgent tab by default. Urgent is an independent ordered
+Home queue of normal canonical Tasks; it is separate from Home To-do, does not
+use `task.is_urgent`, and does not create a second Task or History authority.
+Every Task entering Urgent is promoted through the canonical Task metadata
+mutation path to Priority 5. Leaving Urgent never lowers or restores Priority.
+Moving Urgent to To-do uses explicit existing Home day placement (Today through
+the visible week or Later), while moving To-do to Urgent removes To-do day
+membership and keeps Priority 5.
+
+The synced `adhdice_home_todo_state` JSON is V7 with `urgentTaskIds` and
+non-Task `scratchpadItems`. V1-V6 normalize those fields to empty arrays while
+preserving existing To-do and Routine data. Scratchpad captures are synced text
+only; successful conversion runs the real TaskCreationComposer, creates a
+normal canonical Task in Home To-do Today, and removes the source only after
+creation succeeds. Failed or canceled conversion preserves the capture.
 
 ## 2026-10-02 7.16.40 Bound rollover Edge work and projection refresh ownership
 

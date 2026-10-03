@@ -49,8 +49,27 @@ export type HomeTodoStateV6 = {
   routineSectionIdByTaskId: Record<string, string>;
 };
 
+export type HomeScratchpadItem = {
+  id: string;
+  text: string;
+  createdAt: string;
+};
+
+export type HomeTodoStateV7 = {
+  clientUpdatedAt: string;
+  schemaVersion: 7;
+  taskIds: string[];
+  taskDayOffsets: Record<string, number>;
+  tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routineSections: HomeRoutineSectionDefinition[];
+  routineSectionIdByTaskId: Record<string, string>;
+  urgentTaskIds: string[];
+  scratchpadItems: HomeScratchpadItem[];
+};
+
 export type HomeTodoStateV2 = HomeTodoStateV4;
-export type HomeTodoState = HomeTodoStateV6;
+export type HomeTodoState = HomeTodoStateV7;
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
@@ -64,6 +83,8 @@ type HomeTodoStateCandidate = {
   routineSectionNames?: unknown;
   routineSections?: unknown;
   routineSectionIdByTaskId?: unknown;
+  urgentTaskIds?: unknown;
+  scratchpadItems?: unknown;
 };
 
 export const HOME_TODO_TASKS_PER_DAY_OPTIONS = [10, 11, 12, 13, 14, 15] as const;
@@ -74,15 +95,17 @@ export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTION
 export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
 export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV6 = {
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV7 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 6,
+  schemaVersion: 7,
   taskIds: [],
   taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
   routineTaskIds: [],
   routineSections: [],
   routineSectionIdByTaskId: {},
+  urgentTaskIds: [],
+  scratchpadItems: [],
 };
 
 export type HomeTodoDaySection<T = string> = {
@@ -261,7 +284,9 @@ export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
     || state.tasksPerDay !== DEFAULT_HOME_TODO_TASKS_PER_DAY
     || state.routineTaskIds.length > 0
     || state.routineSections.length > 0
-    || Object.keys(state.routineSectionIdByTaskId).length > 0;
+    || Object.keys(state.routineSectionIdByTaskId).length > 0
+    || state.urgentTaskIds.length > 0
+    || state.scratchpadItems.length > 0;
 }
 
 export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
@@ -413,7 +438,7 @@ export async function createHomeTodoTask(
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV7 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
@@ -460,18 +485,94 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
     migratedRoutineSections.routineSectionIdByTaskId,
     false,
   );
+  const urgentTaskIds = normalizeHomeUrgentTaskIds(candidate.urgentTaskIds);
+  const scratchpadItems = normalizeHomeScratchpadItems(candidate.scratchpadItems);
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 6,
+    schemaVersion: 7,
     taskIds,
     taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
     routineTaskIds,
     routineSections: normalizedRoutineSections.routineSections,
     routineSectionIdByTaskId: normalizedRoutineSections.routineSectionIdByTaskId,
+    urgentTaskIds,
+    scratchpadItems,
   };
+}
+
+export function normalizeHomeUrgentTaskIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.filter((taskId): taskId is string => {
+    if (typeof taskId !== "string") return false;
+    const normalizedTaskId = taskId.trim();
+    if (!normalizedTaskId || seen.has(normalizedTaskId)) return false;
+    seen.add(normalizedTaskId);
+    return true;
+  }).map((taskId) => taskId.trim());
+}
+
+export function normalizeHomeScratchpadItems(value: unknown): HomeScratchpadItem[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const items: HomeScratchpadItem[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const candidate = entry as { id?: unknown; text?: unknown; createdAt?: unknown };
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    const text = typeof candidate.text === "string" ? candidate.text.trim() : "";
+    const createdAt = typeof candidate.createdAt === "string" ? candidate.createdAt.trim() : "";
+    if (!id || !text || seen.has(id) || !Number.isFinite(Date.parse(createdAt))) continue;
+    seen.add(id);
+    items.push({ id, text, createdAt: new Date(createdAt).toISOString() });
+  }
+  return items;
+}
+
+export function createHomeScratchpadItem(
+  text: string,
+  now = new Date(),
+  existingIds: readonly string[] = [],
+) {
+  const normalizedText = text.trim();
+  if (!normalizedText) return null;
+  const existingIdSet = new Set(existingIds);
+  const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  let id = `scratchpad-${randomId}`;
+  let suffix = 2;
+  while (existingIdSet.has(id)) {
+    id = `scratchpad-${randomId}-${suffix}`;
+    suffix += 1;
+  }
+  return {
+    id,
+    text: normalizedText,
+    createdAt: new Date(now).toISOString(),
+  } satisfies HomeScratchpadItem;
+}
+
+export function reorderHomeScratchpadItems(
+  items: readonly HomeScratchpadItem[],
+  orderedIds: readonly string[],
+) {
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const next: HomeScratchpadItem[] = [];
+  for (const id of orderedIds) {
+    const item = itemById.get(id);
+    if (!item || seen.has(id)) continue;
+    seen.add(id);
+    next.push(item);
+  }
+  for (const item of items) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    next.push(item);
+  }
+  return next;
 }
 
 export function isHomeTodoTaskEligible(
@@ -654,6 +755,36 @@ export function reconcileHomeTodoTaskIds(taskIds: readonly string[], tasks: read
     const task = taskById.get(taskId);
     return Boolean(task && isHomeTodoTaskEligible(task, tasks, taskById));
   });
+}
+
+export function reconcileHomeUrgentTaskIds(taskIds: readonly string[], tasks: readonly Task[]) {
+  return reconcileHomeTodoTaskIds(taskIds, tasks);
+}
+
+export function moveHomeUrgentTaskIdToTodo(
+  state: Pick<HomeTodoState, "taskIds" | "taskDayOffsets" | "urgentTaskIds">,
+  taskId: string,
+  dayOffset: number,
+) {
+  const normalizedDayOffset = Number.isInteger(dayOffset) && dayOffset >= 0 && dayOffset <= 7 ? dayOffset : 0;
+  return {
+    urgentTaskIds: state.urgentTaskIds.filter((candidate) => candidate !== taskId),
+    taskIds: state.taskIds.includes(taskId) ? [...state.taskIds] : [...state.taskIds, taskId],
+    taskDayOffsets: { ...state.taskDayOffsets, [taskId]: normalizedDayOffset },
+  };
+}
+
+export function moveHomeTodoTaskIdToUrgent(
+  state: Pick<HomeTodoState, "taskIds" | "taskDayOffsets" | "urgentTaskIds">,
+  taskId: string,
+) {
+  return {
+    urgentTaskIds: state.urgentTaskIds.includes(taskId)
+      ? [...state.urgentTaskIds]
+      : [...state.urgentTaskIds, taskId],
+    taskIds: state.taskIds.filter((candidate) => candidate !== taskId),
+    taskDayOffsets: Object.fromEntries(Object.entries(state.taskDayOffsets).filter(([candidate]) => candidate !== taskId)),
+  };
 }
 
 /**

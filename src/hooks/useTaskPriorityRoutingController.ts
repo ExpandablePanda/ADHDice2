@@ -70,13 +70,13 @@ export function useTaskPriorityRoutingController({
   async function setTaskPriority(taskId: string, priority: TaskPrioritySelectionInput) {
     const normalizedPriority = normalizeTaskPrioritySelectionInput(priority);
     if (!normalizedPriority) {
-      return;
+      return false;
     }
 
     if (normalizedPriority.focusAction === "add") {
       await saveFocusSelection(Array.from(new Set([...focusedTaskIds, taskId])));
       void routeTask(taskId, "today");
-      return;
+      return true;
     }
 
     if (normalizedPriority.focusAction === "remove") {
@@ -84,8 +84,10 @@ export function useTaskPriorityRoutingController({
     }
 
     if (normalizedPriority.priorityLevel !== null) {
-      await updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
+      return await updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
     }
+
+    return true;
   }
 
   return {

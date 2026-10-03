@@ -5,13 +5,18 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import {
   createHomeRoutineSectionId,
+  createHomeScratchpadItem,
   EMPTY_HOME_TODO_STATE,
   getHomeRoutineSectionDefaultName,
   hasMeaningfulHomeTodoState,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
+  moveHomeTodoTaskIdToUrgent,
+  moveHomeUrgentTaskIdToTodo,
   moveHomeRoutineTaskIdToSection,
+  reorderHomeScratchpadItems,
   reconcileHomeRoutineSectionAssignments,
+  type HomeScratchpadItem,
   type HomeTodoState,
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
@@ -88,6 +93,24 @@ export function useHomeTodoState(userId: string | null) {
       void flush();
     }, WRITE_DELAY_MS);
   }, [flush]);
+
+  const commitState = useCallback((value: unknown) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const normalized = normalizeHomeTodoState(value);
+    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
+    const next = normalizeHomeTodoState({
+      ...normalized,
+      clientUpdatedAt: nextTimestamp,
+      schemaVersion: 7,
+    });
+    dirtyRef.current = true;
+    stateRef.current = next;
+    setState(next);
+    persistCache(next, userId);
+    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
+    scheduleWrite();
+  }, [persistCache, scheduleWrite, userId]);
 
   const applyRemote = useCallback((value: unknown, remoteClientUpdatedAt?: string | null) => {
     if (!userId) return;
@@ -192,7 +215,7 @@ export function useHomeTodoState(userId: string | null) {
       return;
     }
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 6, taskIds });
+    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 7, taskIds });
     dirtyRef.current = true;
     stateRef.current = next;
     setState(next);
@@ -210,7 +233,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 7,
       tasksPerDay: nextTasksPerDay,
     });
     dirtyRef.current = true;
@@ -233,7 +256,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 7,
       taskDayOffsets,
     });
     dirtyRef.current = true;
@@ -270,7 +293,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...normalized,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 7,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -291,7 +314,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 7,
       routineSections: [...current.routineSections, section],
     });
     dirtyRef.current = true;
@@ -315,7 +338,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 7,
       routineSections,
     });
     dirtyRef.current = true;
@@ -350,7 +373,7 @@ export function useHomeTodoState(userId: string | null) {
       ...current,
       ...nextRoutineState,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 7,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -360,5 +383,92 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
-  return { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay };
+  const updateUrgentTaskIds = useCallback((updater: (taskIds: string[]) => string[]) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const urgentTaskIds = normalizeHomeTodoState({ ...current, urgentTaskIds: updater(current.urgentTaskIds) }).urgentTaskIds;
+    if (urgentTaskIds.length === current.urgentTaskIds.length && urgentTaskIds.every((taskId, index) => taskId === current.urgentTaskIds[index])) return;
+    commitState({ ...current, urgentTaskIds });
+  }, [commitState, userId]);
+
+  const moveUrgentTaskToTodo = useCallback((taskId: string, dayOffset: number) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const nextMembership = moveHomeUrgentTaskIdToTodo(current, taskId, dayOffset);
+    if (
+      JSON.stringify(nextMembership.urgentTaskIds) === JSON.stringify(current.urgentTaskIds)
+      && JSON.stringify(nextMembership.taskIds) === JSON.stringify(current.taskIds)
+      && JSON.stringify(nextMembership.taskDayOffsets) === JSON.stringify(current.taskDayOffsets)
+    ) return;
+    commitState({ ...current, ...nextMembership });
+  }, [commitState, userId]);
+
+  const moveTodoTaskToUrgent = useCallback((taskId: string) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const nextMembership = moveHomeTodoTaskIdToUrgent(current, taskId);
+    if (
+      JSON.stringify(nextMembership.urgentTaskIds) === JSON.stringify(current.urgentTaskIds)
+      && JSON.stringify(nextMembership.taskIds) === JSON.stringify(current.taskIds)
+      && JSON.stringify(nextMembership.taskDayOffsets) === JSON.stringify(current.taskDayOffsets)
+    ) return;
+    commitState({ ...current, ...nextMembership });
+  }, [commitState, userId]);
+
+  const addScratchpadItem = useCallback((text: string): HomeScratchpadItem | null => {
+    if (!userId) return null;
+    const current = stateRef.current;
+    const item = createHomeScratchpadItem(text, new Date(), current.scratchpadItems.map((entry) => entry.id));
+    if (!item) return null;
+    commitState({ ...current, scratchpadItems: [...current.scratchpadItems, item] });
+    return item;
+  }, [commitState, userId]);
+
+  const updateScratchpadItem = useCallback((itemId: string, text: string) => {
+    if (!userId) return false;
+    const normalizedText = text.trim();
+    if (!normalizedText) return false;
+    const current = stateRef.current;
+    const itemIndex = current.scratchpadItems.findIndex((item) => item.id === itemId);
+    if (itemIndex < 0) return false;
+    if (current.scratchpadItems[itemIndex]!.text === normalizedText) return true;
+    const scratchpadItems = current.scratchpadItems.map((item, index) => index === itemIndex ? { ...item, text: normalizedText } : item);
+    commitState({ ...current, scratchpadItems });
+    return true;
+  }, [commitState, userId]);
+
+  const deleteScratchpadItem = useCallback((itemId: string) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const scratchpadItems = current.scratchpadItems.filter((item) => item.id !== itemId);
+    if (scratchpadItems.length === current.scratchpadItems.length) return;
+    commitState({ ...current, scratchpadItems });
+  }, [commitState, userId]);
+
+  const reorderScratchpadItems = useCallback((orderedIds: readonly string[]) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const scratchpadItems = reorderHomeScratchpadItems(current.scratchpadItems, orderedIds);
+    if (JSON.stringify(scratchpadItems) === JSON.stringify(current.scratchpadItems)) return;
+    commitState({ ...current, scratchpadItems });
+  }, [commitState, userId]);
+
+  return {
+    addScratchpadItem,
+    createRoutineSection,
+    deleteScratchpadItem,
+    moveTodoTaskToUrgent,
+    moveUrgentTaskToTodo,
+    reorderScratchpadItems,
+    state,
+    syncStatus,
+    updateRoutineSectionName,
+    updateRoutineTaskIds,
+    updateRoutineTaskSection,
+    updateScratchpadItem,
+    updateTaskDayOffset,
+    updateTaskIds,
+    updateTasksPerDay,
+    updateUrgentTaskIds,
+  };
 }

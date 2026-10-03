@@ -44,6 +44,8 @@ function energyTone(energy: TaskEnergy) {
 
 export function TaskCreationComposer({
   allTags,
+  initialPriority = "0",
+  initialTitle = "",
   initialTaskTypeSelection = "task",
   onCancel,
   onCreate,
@@ -53,6 +55,8 @@ export function TaskCreationComposer({
   titleLabel = "Task title",
 }: {
   allTags: string[];
+  initialPriority?: TaskPriorityLevelOption;
+  initialTitle?: string;
   initialTaskTypeSelection?: string;
   onCancel: () => void;
   onCreate: (draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
@@ -61,7 +65,7 @@ export function TaskCreationComposer({
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
   titleLabel?: string;
 }) {
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle);
   const [taskTypeSelection, setTaskTypeSelection] = useState(initialTaskTypeSelection);
   const [dueOn, setDueOn] = useState("");
   const [dueTime, setDueTime] = useState("");
@@ -76,7 +80,7 @@ export function TaskCreationComposer({
   });
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
-  const [priority, setPriority] = useState<TaskPriorityLevelOption>("0");
+  const [priority, setPriority] = useState<TaskPriorityLevelOption>(initialPriority);
   const [energy, setEnergy] = useState<TaskEnergy>("none");
   const [isCreating, setIsCreating] = useState(false);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -119,7 +123,7 @@ export function TaskCreationComposer({
   }
 
   function resetDraft() {
-    setTitle("");
+    setTitle(initialTitle);
     setTaskTypeSelection(initialTaskTypeSelection);
     setDueOn("");
     setDueTime("");
@@ -134,7 +138,7 @@ export function TaskCreationComposer({
     });
     setTags([]);
     setTagDraft("");
-    setPriority("0");
+    setPriority(initialPriority);
     setEnergy("none");
   }
 
