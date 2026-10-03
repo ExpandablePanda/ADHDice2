@@ -1219,6 +1219,7 @@ export function TaskApp() {
     userId: session?.user?.id,
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
+  const [batchIntakeHealthActive, setBatchIntakeHealthActive] = useState(false);
   const focusDomainMutationBarrierRef = useRef<WorkspaceDomainMutationBarrier>(() => {});
   const invalidateFocusDomainGeneration = useCallback(() => {
     focusDomainMutationBarrierRef.current();
@@ -1296,8 +1297,10 @@ export function TaskApp() {
     saveProfile: saveHealthProfile,
     addMealEntry: addHealthMealEntry,
     addWaterEntry: addHealthWaterEntry,
+    addWaterEntries: addHealthWaterEntries,
     confirmWaterEntry: confirmHealthWaterEntry,
     addWeightEntry: addHealthWeightEntry,
+    addWeightEntries: addHealthWeightEntries,
     addWorkout: addHealthWorkout,
     updateMealEntry: updateHealthMealEntry,
     updateWaterEntry: updateHealthWaterEntry,
@@ -1306,7 +1309,7 @@ export function TaskApp() {
     weightEntries: healthWeightEntries,
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
-  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health");
+  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health" || batchIntakeHealthActive);
   const activeHealthTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness";
   const {
@@ -8276,6 +8279,12 @@ export function TaskApp() {
             tasks={tasks}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
+            addWaterEntries={addHealthWaterEntries}
+            addWeightEntries={addHealthWeightEntries}
+            healthLoading={isHealthLoading}
+            healthProfile={healthProfile}
+            onBatchIntakeHealthActivationChange={setBatchIntakeHealthActive}
+            syncTaskHistoryEntries={syncTaskHistoryEntries}
           />
         ) : activePage === "Achievements" ? (
           <AchievementsPage

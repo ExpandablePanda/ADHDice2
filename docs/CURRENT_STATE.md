@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.45`.
+- Current working app version: `7.16.46`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.46 Scratchpad Batch Intake Phase 1
+
+Home Scratchpad now has a non-destructive Parse Batch Intake review workflow.
+The deterministic parser proposes historical Task outcomes, Water, Weight,
+review-only Meals, and visible deferred/unsupported rows. Apply groups Task
+History through the existing canonical authority and uses Health-owned Water and
+Weight batch writes; partial failures remain in the review surface for retry.
+Health hydration remains inactive during ordinary Home use and activates only
+while a review containing Health rows is open. No SQL or Edge deployment was
+performed.
 
 ## 2026-10-03 7.16.45 Home Urgent return contract, status alignment, and Scratchpad V8
 

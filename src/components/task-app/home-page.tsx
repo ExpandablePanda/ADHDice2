@@ -9,6 +9,7 @@ import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { TaskCreationComposer } from "./task-creation-composer";
+import { HomeBatchIntakeReview } from "./home-batch-intake-review";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
@@ -29,6 +30,11 @@ import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-his
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
+import { parseBatchIntake, type BatchIntakeDraft } from "@/lib/home-batch-intake";
+import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
+import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
+import type { HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
+import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
   filterHomeFinishedItems,
   getHomeFinishedTodayFilterDetails,
@@ -366,6 +372,12 @@ export function HomePage({
   behaviorPolicyLoading = false,
   behaviorPolicyLogicalDate,
   taskTypeOptions,
+  healthProfile,
+  healthLoading,
+  addWaterEntries,
+  addWeightEntries,
+  syncTaskHistoryEntries,
+  onBatchIntakeHealthActivationChange,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   manualMembershipsByTaskId: Readonly<Record<string, readonly string[]>>;
@@ -400,6 +412,12 @@ export function HomePage({
   behaviorPolicyLoading?: boolean;
   behaviorPolicyLogicalDate: string;
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
+  healthProfile: HealthProfile | null;
+  healthLoading: boolean;
+  addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
+  addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
+  syncTaskHistoryEntries: (taskId: string, outcome: "done" | "did_my_best" | "missed", dates: string[], options?: { historicalOverride?: boolean }) => Promise<boolean>;
+  onBatchIntakeHealthActivationChange?: (active: boolean) => void;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
   const {
@@ -429,6 +447,9 @@ export function HomePage({
   const [editingScratchpadItemId, setEditingScratchpadItemId] = useState<string | null>(null);
   const [scratchpadEditDraft, setScratchpadEditDraft] = useState("");
   const [convertingScratchpadItemId, setConvertingScratchpadItemId] = useState<string | null>(null);
+  const [batchIntakeDrafts, setBatchIntakeDrafts] = useState<BatchIntakeDraft[] | null>(null);
+  const [batchIntakeApplying, setBatchIntakeApplying] = useState(false);
+  const [batchIntakeExecutionResult, setBatchIntakeExecutionResult] = useState<BatchIntakeExecutionResult | null>(null);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
@@ -452,6 +473,12 @@ export function HomePage({
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
   const routineChildDropTargetRef = useRef<HomeRoutineChildDropTarget | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+
+  const batchIntakeHasHealthRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "water" || draft.kind === "weight"));
+  useEffect(() => {
+    onBatchIntakeHealthActivationChange?.(Boolean(batchIntakeDrafts && batchIntakeHasHealthRows));
+    return () => onBatchIntakeHealthActivationChange?.(false);
+  }, [batchIntakeDrafts, batchIntakeHasHealthRows, onBatchIntakeHealthActivationChange]);
 
   useEffect(() => () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -714,6 +741,47 @@ export function HomePage({
     if (!moveScratchpadTextToItems(scratchpadDraft)) return;
     scratchpadDraftDirtyRef.current = false;
     setScratchpadDraft("");
+  }
+
+  function parseScratchpadBatch() {
+    const parsed = parseBatchIntake(scratchpadDraft, {
+      preferredWeightUnit: healthProfile?.preferred_weight_unit,
+      referenceDate: behaviorPolicyLogicalDate,
+    });
+    setBatchIntakeDrafts(applyBatchIntakeTaskMatches(parsed, tasks).map((draft) => (
+      draft.kind === "water" || draft.kind === "weight"
+        ? { ...draft, writeId: createBrowserUuidV4() }
+        : draft
+    )));
+    setBatchIntakeExecutionResult(null);
+  }
+
+  function closeBatchIntakeReview() {
+    setBatchIntakeDrafts(null);
+    setBatchIntakeExecutionResult(null);
+  }
+
+  async function applyBatchIntake() {
+    if (!batchIntakeDrafts || batchIntakeApplying) return;
+    setBatchIntakeApplying(true);
+    try {
+      const plan = buildBatchIntakeExecutionPlan(batchIntakeDrafts, {
+        preferredWeightUnit: healthProfile?.preferred_weight_unit,
+        loggedAtForDate: (date) => new Date(`${date}T12:00:00`).toISOString(),
+      });
+      const result = await executeBatchIntakePlan(plan, {
+        addWaterEntries,
+        addWeightEntries,
+        syncTaskHistoryEntries,
+      });
+      setBatchIntakeExecutionResult(result);
+      const appliedIds = new Set(result.rows.filter((row) => row.status === "applied").map((row) => row.rowId));
+      if (appliedIds.size > 0) {
+        setBatchIntakeDrafts((current) => current?.map((draft) => appliedIds.has(draft.id) ? { ...draft, included: false } : draft) ?? null);
+      }
+    } finally {
+      setBatchIntakeApplying(false);
+    }
   }
 
   function beginScratchpadEdit(item: HomeScratchpadItem) {
@@ -1624,6 +1692,7 @@ export function HomePage({
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <AdhdChip onClick={saveScratchpadDraft} selected type="button">Save</AdhdChip>
               <AdhdChip onClick={moveScratchpadDraftToItems} type="button">Move lines to items</AdhdChip>
+              <AdhdChip onClick={parseScratchpadBatch} type="button">Parse Batch Intake</AdhdChip>
             </div>
             {isCreateOpen && convertingScratchpadItemId ? (
               <div className="mt-3">
@@ -1640,6 +1709,19 @@ export function HomePage({
                   taskTypeOptions={taskTypeOptions}
                 />
               </div>
+            ) : null}
+            {batchIntakeDrafts ? (
+              <HomeBatchIntakeReview
+                drafts={batchIntakeDrafts}
+                executionResult={batchIntakeExecutionResult}
+                healthLoading={healthLoading}
+                healthProfile={healthProfile}
+                isApplying={batchIntakeApplying}
+                onApply={() => { void applyBatchIntake(); }}
+                onCancel={closeBatchIntakeReview}
+                onChange={(nextDraft) => setBatchIntakeDrafts((current) => current?.map((draft) => draft.id === nextDraft.id ? nextDraft : draft) ?? null)}
+                tasks={tasks}
+              />
             ) : null}
           </div>
         ) : (
