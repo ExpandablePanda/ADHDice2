@@ -30,10 +30,10 @@ import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-his
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
-import { createManualBatchIntakeDraft, parseBatchIntake, type BatchIntakeDraft, type BatchIntakeManualKind } from "@/lib/home-batch-intake";
+import { addMealFromParsedFood, createManualBatchIntakeDraft, duplicateManualBatchIntakeDraft, parseBatchIntake, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeParsedMealDraft } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
 import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
-import type { HealthMealEntryInsert, HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
+import type { HealthFoodLibraryItem, HealthMealEntryInsert, HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
 import type { FocusCategory, FocusManualEntryInput, HistoricalFocusSession } from "@/lib/types";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
@@ -374,6 +374,7 @@ export function HomePage({
   behaviorPolicyLogicalDate,
   taskTypeOptions,
   healthProfile,
+  healthFoods,
   healthLoading,
   addWaterEntries,
   addWeightEntries,
@@ -419,6 +420,7 @@ export function HomePage({
   behaviorPolicyLogicalDate: string;
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
   healthProfile: HealthProfile | null;
+  healthFoods: HealthFoodLibraryItem[];
   healthLoading: boolean;
   addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
@@ -486,7 +488,7 @@ export function HomePage({
   const routineChildDropTargetRef = useRef<HomeRoutineChildDropTarget | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
 
-  const batchIntakeHasHealthRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "water" || draft.kind === "weight" || (draft.kind === "meal" && draft.origin === "manual")));
+  const batchIntakeHasHealthRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "water" || draft.kind === "weight" || draft.kind === "meal"));
   const batchIntakeHasFocusRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "focus"));
   useEffect(() => {
     onBatchIntakeHealthActivationChange?.(Boolean(batchIntakeDrafts && batchIntakeHasHealthRows));
@@ -762,11 +764,12 @@ export function HomePage({
 
   function parseScratchpadBatch() {
     const parsed = parseBatchIntake(scratchpadDraft, {
+      focusCategories,
       preferredWeightUnit: healthProfile?.preferred_weight_unit,
       referenceDate: behaviorPolicyLogicalDate,
     });
     setBatchIntakeDrafts(applyBatchIntakeTaskMatches(parsed, tasks).map((draft) => (
-      draft.kind === "water" || draft.kind === "weight"
+      draft.kind === "water" || draft.kind === "weight" || draft.kind === "focus"
         ? { ...draft, writeId: createBrowserUuidV4() }
         : draft
     )));
@@ -789,6 +792,33 @@ export function HomePage({
         preferredWeightUnit: healthProfile?.preferred_weight_unit,
       }),
     ]);
+  }
+
+  function addAnotherBatchIntakeOccurrence(sourceDraft: BatchIntakeDraft) {
+    if (sourceDraft.kind === "unsupported" || (sourceDraft.kind === "meal" && sourceDraft.origin === "parsed")) return;
+    const duplicate = duplicateManualBatchIntakeDraft(sourceDraft, {
+      id: createBrowserUuidV4(),
+      writeId: createBrowserUuidV4(),
+    });
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const sourceIndex = current.findIndex((draft) => draft.id === sourceDraft.id);
+      if (sourceIndex < 0) return [...current, duplicate];
+      return [...current.slice(0, sourceIndex + 1), duplicate, ...current.slice(sourceIndex + 1)];
+    });
+  }
+
+  function addMealFromParsedSource(parsedMeal: BatchIntakeParsedMealDraft, food: HealthFoodLibraryItem) {
+    const derived = addMealFromParsedFood(parsedMeal, food, {
+      id: createBrowserUuidV4(),
+      writeId: createBrowserUuidV4(),
+    });
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const sourceIndex = current.findIndex((draft) => draft.id === parsedMeal.id);
+      if (sourceIndex < 0) return [...current, derived];
+      return [...current.slice(0, sourceIndex + 1), derived, ...current.slice(sourceIndex + 1)];
+    });
   }
 
   function removeBatchIntakeRow(rowId: string) {
@@ -1761,11 +1791,14 @@ export function HomePage({
                 drafts={batchIntakeDrafts}
                 executionResult={batchIntakeExecutionResult}
                 healthLoading={healthLoading}
+                healthFoods={healthFoods}
                 healthProfile={healthProfile}
                 isApplying={batchIntakeApplying}
                 focusCategories={focusCategories}
                 focusHistory={focusHistory}
                 onAddRow={addManualBatchRow}
+                onAddAnother={addAnotherBatchIntakeOccurrence}
+                onAddMealFromParsed={addMealFromParsedSource}
                 onApply={() => { void applyBatchIntake(); }}
                 onCancel={closeBatchIntakeReview}
                 onChange={(nextDraft) => setBatchIntakeDrafts((current) => current?.map((draft) => draft.id === nextDraft.id ? nextDraft : draft) ?? null)}

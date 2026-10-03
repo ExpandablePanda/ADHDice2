@@ -1,6 +1,7 @@
-import type { HealthMealSlot, HealthWeightUnit, HealthWaterUnit, TaskStatus } from "@/lib/database.types";
-import type { FocusSubtype, FocusType } from "@/lib/types";
+import type { HealthFoodLibraryItem, HealthMealSlot, HealthNutritionDetails, HealthServingMeasureUnit, HealthWeightUnit, HealthWaterUnit, TaskStatus } from "@/lib/database.types";
+import type { FocusCategory, FocusSubtype, FocusType } from "@/lib/types";
 import { displayWeightToKilograms } from "@/lib/health-utils";
+import { mealFoodSelectionFromLibraryItem } from "@/lib/health-meal-draft";
 import { waterAmountToMilliliters } from "@/lib/health-library";
 
 export type BatchIntakeKind = "task" | "water" | "weight" | "meal" | "focus" | "unsupported";
@@ -95,16 +96,42 @@ export type BatchIntakeManualMealDraft = BatchIntakeManualDraftBase & {
   entryMode: "structured";
   writeId: string;
   mealSlot: HealthMealSlot;
+  sourceParsedMealId?: string | null;
   foodName: string;
+  brandName: string;
+  foodCategory: string | null;
+  sourceFoodId: string | null;
   calories: number | null;
   proteinG: number | null;
   carbsG: number | null;
   fatG: number | null;
+  nutritionDetails: HealthNutritionDetails | null;
+  barcode: string | null;
+  attribution: string | null;
+  provider: string | null;
+  providerItemId: string | null;
   servingLabel: string;
+  servingQuantity: number;
+  servingUnit: string;
+  servingMeasureValue: number | null;
+  servingMeasureUnit: HealthServingMeasureUnit | null;
   time: string;
 };
 
 export type BatchIntakeMealDraft = BatchIntakeParsedMealDraft | BatchIntakeManualMealDraft;
+
+export type BatchIntakeParsedFocusDraft = BatchIntakeParsedDraftBase & {
+  kind: "focus";
+  writeId?: string;
+  categoryId: string | null;
+  title: string;
+  focusType: FocusType;
+  focusSubtype: FocusSubtype | null;
+  focusSubtype2: FocusSubtype | null;
+  durationSeconds: number | null;
+  completionTime: string;
+  notes: string;
+};
 
 export type BatchIntakeManualFocusDraft = BatchIntakeManualDraftBase & {
   kind: "focus";
@@ -119,6 +146,8 @@ export type BatchIntakeManualFocusDraft = BatchIntakeManualDraftBase & {
   notes: string;
 };
 
+export type BatchIntakeFocusDraft = BatchIntakeParsedFocusDraft | BatchIntakeManualFocusDraft;
+
 export type BatchIntakeUnsupportedDraft = BatchIntakeParsedDraftBase & {
   kind: "unsupported";
   reason: string;
@@ -129,12 +158,13 @@ export type BatchIntakeDraft =
   | BatchIntakeWaterDraft
   | BatchIntakeWeightDraft
   | BatchIntakeMealDraft
-  | BatchIntakeManualFocusDraft
+  | BatchIntakeFocusDraft
   | BatchIntakeUnsupportedDraft;
 
 export type ParseBatchIntakeOptions = {
   referenceDate: string;
   preferredWeightUnit?: HealthWeightUnit | null;
+  focusCategories?: readonly FocusCategory[];
 };
 
 function normalizeLine(value: string) {
@@ -205,7 +235,7 @@ function currentLocalTime() {
   return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
 }
 
-function manualBase(id: string, sourceText: string, date: string) {
+function manualBase(id: string, sourceText: string, date: string | null) {
   return {
     id,
     sourceText,
@@ -214,7 +244,7 @@ function manualBase(id: string, sourceText: string, date: string) {
     date,
     included: true,
     confidence: "high" as const,
-    issues: [],
+    issues: [...issueForDate(date)],
   };
 }
 
@@ -266,12 +296,25 @@ export function createManualBatchIntakeDraft(
       entryMode: "structured",
       writeId: options.id,
       mealSlot: "breakfast",
+      sourceParsedMealId: null,
       foodName: "",
+      brandName: "",
+      foodCategory: null,
+      sourceFoodId: null,
       calories: null,
       proteinG: null,
       carbsG: null,
       fatG: null,
+      nutritionDetails: null,
+      barcode: null,
+      attribution: null,
+      provider: "manual",
+      providerItemId: null,
       servingLabel: "",
+      servingQuantity: 1,
+      servingUnit: "serving",
+      servingMeasureValue: null,
+      servingMeasureUnit: null,
       time,
       issues: ["Food name is required", "Calories are required"],
     } satisfies BatchIntakeManualMealDraft;
@@ -363,6 +406,60 @@ function parseWeight(line: string, preferredWeightUnit?: HealthWeightUnit | null
   };
 }
 
+function normalizeFocusCategoryTitle(value: string) {
+  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
+}
+
+function exactFocusCategoryForTitle(title: string, categories: readonly FocusCategory[] | undefined) {
+  const normalizedTitle = normalizeFocusCategoryTitle(title);
+  if (!normalizedTitle || !categories) return null;
+  return categories.find((category) => normalizeFocusCategoryTitle(category.title) === normalizedTitle) ?? null;
+}
+
+export function parseBatchIntakeDuration(value: string): number | null {
+  const normalized = value.trim().toLocaleLowerCase().replace(/\s+/g, " ");
+  const hourMatch = normalized.match(/^(\d+(?:\.\d+)?)\s*(?:h|hr|hrs|hour|hours)(?:\s*(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes))?$/);
+  const minuteMatch = normalized.match(/^(\d+(?:\.\d+)?)\s*(?:m|min|mins|minute|minutes)$/);
+  if (!hourMatch && !minuteMatch) return null;
+
+  const hours = hourMatch ? Number(hourMatch[1]) : 0;
+  const minutes = hourMatch ? (hourMatch[2] ? Number(hourMatch[2]) : 0) : Number(minuteMatch?.[1]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours < 0 || minutes < 0 || (hourMatch && minutes >= 60)) return null;
+  const durationSeconds = Math.round(hours * 3600 + minutes * 60);
+  return durationSeconds > 0 ? durationSeconds : null;
+}
+
+function parseInlineFocusPair(line: string, categories: readonly FocusCategory[] | undefined) {
+  const match = line.match(/^(.+?)\s*(?:-|:)\s*(\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours|m|min|mins|minute|minutes)(?:\s*\d+(?:\.\d+)?\s*(?:m|min|mins|minute|minutes))?)$/i)
+    ?? line.match(/^(.+?)\s+(\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours|m|min|mins|minute|minutes)(?:\s*\d+(?:\.\d+)?\s*(?:m|min|mins|minute|minutes))?)$/i);
+  if (!match) return null;
+  const category = exactFocusCategoryForTitle(match[1] ?? "", categories);
+  const durationSeconds = parseBatchIntakeDuration(match[2] ?? "");
+  return category && durationSeconds !== null ? { category, durationSeconds } : null;
+}
+
+function createParsedFocusDraft(
+  sourceText: string,
+  sourceLineNumber: number,
+  date: string | null,
+  category: FocusCategory,
+  durationSeconds: number,
+): BatchIntakeParsedFocusDraft {
+  return {
+    ...makeBase(sourceText, sourceLineNumber, date, "focus", "high", ["Choose a Focus completion time"]),
+    categoryId: category.id,
+    completionTime: "",
+    durationSeconds,
+    focusSubtype: category.focusSubtype ?? null,
+    focusSubtype2: category.focusSubtype2 ?? null,
+    focusType: category.focusType,
+    kind: "focus",
+    notes: "",
+    title: category.title,
+    writeId: undefined,
+  };
+}
+
 function isDeferredLine(line: string) {
   const lower = line.toLowerCase();
   if (/\bcpap\b|\bno\s+pap\b|\bsleep\b|\bnap\b/.test(lower)) {
@@ -390,25 +487,33 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
   let currentDate: string | null = null;
   let section: "tasks" | "water" | null = null;
 
-  sourceText.split("\n").forEach((rawLine, index) => {
+  const lines = sourceText.split("\n");
+  for (let index = 0; index < lines.length; index += 1) {
+    const rawLine = lines[index] ?? "";
     const lineNumber = index + 1;
     const line = normalizeLine(rawLine);
-    if (!line) return;
+    if (!line) continue;
     const headingDate = parseDateHeading(line, options.referenceDate);
     if (headingDate) {
       currentDate = headingDate;
       section = null;
-      return;
+      continue;
     }
 
     const structural = normalizeStructuralLine(line);
     if (structural === "tasks" || structural === "task") {
       section = "tasks";
-      return;
+      continue;
     }
     if (structural === "water") {
       section = "water";
-      return;
+      continue;
+    }
+
+    if (section === "tasks") {
+      const taskTitles = splitTaskCandidates(line);
+      taskTitles.forEach((title, part) => drafts.push(createTaskDraft(line, lineNumber, currentDate, title, part, "high")));
+      continue;
     }
 
     const meal = parseMeal(line);
@@ -421,7 +526,7 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
         rawText: meal.rawText,
       });
       section = null;
-      return;
+      continue;
     }
 
     const weight = parseWeight(line, options.preferredWeightUnit);
@@ -434,7 +539,7 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
         unitSource: weight.unitSource,
       });
       section = null;
-      return;
+      continue;
     }
 
     const water = parseWater(line, section === "water");
@@ -447,7 +552,24 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
         status: water.status,
       });
       section = "water";
-      return;
+      continue;
+    }
+
+    const inlineFocus = parseInlineFocusPair(line, options.focusCategories);
+    if (inlineFocus) {
+      drafts.push(createParsedFocusDraft(line, lineNumber, currentDate, inlineFocus.category, inlineFocus.durationSeconds));
+      section = null;
+      continue;
+    }
+
+    const nextLine = index + 1 < lines.length ? normalizeLine(lines[index + 1] ?? "") : "";
+    const pairedCategory = exactFocusCategoryForTitle(line, options.focusCategories);
+    const pairedDuration = pairedCategory && nextLine ? parseBatchIntakeDuration(nextLine) : null;
+    if (pairedCategory && pairedDuration !== null) {
+      drafts.push(createParsedFocusDraft(`${line} / ${nextLine}`, lineNumber, currentDate, pairedCategory, pairedDuration));
+      index += 1;
+      section = null;
+      continue;
     }
 
     const deferredReason = isDeferredLine(line);
@@ -458,14 +580,14 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
         reason: deferredReason,
       });
       section = null;
-      return;
+      continue;
     }
 
     const taskTitles = splitTaskCandidates(line);
-    if (section === "tasks" || (currentDate && taskTitles.length > 1)) {
-      taskTitles.forEach((title, part) => drafts.push(createTaskDraft(line, lineNumber, currentDate, title, part, section === "tasks" ? "high" : "medium")));
-      section = section === "tasks" ? "tasks" : null;
-      return;
+    if (currentDate && taskTitles.length > 1) {
+      taskTitles.forEach((title, part) => drafts.push(createTaskDraft(line, lineNumber, currentDate, title, part, "medium")));
+      section = null;
+      continue;
     }
 
     drafts.push({
@@ -474,9 +596,107 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
       reason: currentDate ? "Unrecognized line" : "Missing date heading",
     });
     section = null;
-  });
+  }
 
   return drafts;
+}
+
+export function duplicateManualBatchIntakeDraft(
+  draft: Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeParsedMealDraft>,
+  options: { id: string; writeId: string },
+): Exclude<BatchIntakeDraft, BatchIntakeUnsupportedDraft | BatchIntakeParsedMealDraft> {
+  const base = {
+    id: options.id,
+    sourceText: draft.sourceText,
+    sourceLineNumber: null,
+    origin: "manual" as const,
+    date: draft.date,
+    included: true,
+    confidence: draft.confidence,
+    issues: [...draft.issues],
+  };
+  if (draft.kind === "task") {
+    return {
+      ...base,
+      kind: "task",
+      selectedTaskId: draft.selectedTaskId,
+      taskTitle: draft.taskTitle,
+      outcome: draft.outcome,
+    } satisfies BatchIntakeManualTaskDraft;
+  }
+  if (draft.kind === "water") {
+    return {
+      ...base,
+      kind: "water",
+      amount: draft.amount,
+      status: draft.status,
+      time: "time" in draft ? draft.time : "",
+      unit: draft.unit,
+      writeId: options.writeId,
+    } satisfies BatchIntakeManualWaterDraft;
+  }
+  if (draft.kind === "weight") {
+    return {
+      ...base,
+      kind: "weight",
+      time: "time" in draft ? draft.time : "",
+      unit: draft.unit,
+      unitSource: draft.unitSource,
+      value: draft.value,
+      writeId: options.writeId,
+    } satisfies BatchIntakeManualWeightDraft;
+  }
+  if (draft.kind === "meal") {
+    return {
+      ...draft,
+      ...base,
+      kind: "meal",
+      entryMode: "structured",
+      writeId: options.writeId,
+    } satisfies BatchIntakeManualMealDraft;
+  }
+  return {
+    ...draft,
+    ...base,
+    kind: "focus",
+    writeId: options.writeId,
+  } satisfies BatchIntakeManualFocusDraft;
+}
+
+export function addMealFromParsedFood(
+  parsedMeal: BatchIntakeParsedMealDraft,
+  food: HealthFoodLibraryItem,
+  options: { id: string; writeId: string; time?: string },
+): BatchIntakeManualMealDraft {
+  const selection = mealFoodSelectionFromLibraryItem(food);
+  const base = manualBase(options.id, parsedMeal.sourceText, parsedMeal.date);
+  return {
+    ...base,
+    attribution: selection.attribution,
+    barcode: selection.barcode,
+    brandName: selection.brandName,
+    calories: selection.calories,
+    carbsG: selection.carbs,
+    entryMode: "structured",
+    fatG: selection.fat,
+    foodName: selection.foodName,
+    foodCategory: selection.foodCategory,
+    kind: "meal",
+    mealSlot: parsedMeal.mealSlot,
+    nutritionDetails: selection.nutritionDetails,
+    provider: selection.provider,
+    providerItemId: selection.providerItemId,
+    proteinG: selection.protein,
+    servingLabel: selection.servingLabel ?? "",
+    servingMeasureUnit: selection.servingMeasureUnit,
+    servingMeasureValue: selection.servingMeasureValue,
+    servingQuantity: selection.servingQuantity,
+    servingUnit: selection.servingUnit,
+    sourceFoodId: selection.sourceFoodId,
+    sourceParsedMealId: parsedMeal.id,
+    time: options.time ?? "12:00",
+    writeId: options.writeId,
+  };
 }
 
 export function waterDraftAmountInMilliliters(draft: Pick<BatchIntakeWaterDraft, "amount" | "unit">) {

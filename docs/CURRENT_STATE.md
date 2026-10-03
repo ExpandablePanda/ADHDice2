@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.51`.
+- Current working app version: `7.16.52`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,26 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.52 Batch Intake repeated occurrences, custom food matching, and exact Focus duration parsing
+
+Batch Intake now supports per-record `+ Another` occurrences for Task,
+Water, Weight, structured Meal, and Focus Session rows. Duplicates receive
+fresh draft/write identities, remain editable and included, and do not inherit
+Applied or Failed execution state; Applied source rows remain locked.
+
+Manual and parsed Meal review can search the existing Health Custom Nutrition
+Library. Manual selections preserve canonical food identity and nutrition
+metadata, while parsed Meal selections create separate structured executable
+rows and leave the raw parsed Meal as immutable review evidence. Health
+activation remains lazy while the Batch Intake review requires it.
+
+Focus parsing recognizes only exact saved category titles paired with valid
+durations such as `1h`, `1h 30m`, `90m`, and `30 minutes`. The paired source
+lines become one parsed Focus proposal with category metadata and require a
+reviewed completion time before the existing Focus batch authority can apply
+it. No SQL, Edge deployment, Home V8 change, or production data mutation was
+performed.
 
 ## 2026-10-03 7.16.51 Home Finished Today stale-while-revalidate refresh
 

@@ -72,9 +72,11 @@ import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session"
 import {
   createDefaultMealDraft,
   hasMeaningfulMealDraft,
+  mealFoodSelectionFromLibraryItem,
   prepareMealDraftForSelectedSlot,
   resetMealDraftForNextItem,
   type MealDraft,
+  type MealFoodSelection,
 } from "@/lib/health-meal-draft";
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
@@ -477,28 +479,6 @@ type MealEditDraft = {
   measurement: string;
   servingLabel: string;
   time: string;
-};
-
-type MealFoodSelection = {
-  sourceFoodId: string | null;
-  foodName: string;
-  brandName: string;
-  foodCategory: string | null;
-  calories: number;
-  protein: number | null;
-  carbs: number | null;
-  fat: number | null;
-  nutritionDetails: HealthNutritionDetails | null;
-  attribution: string | null;
-  barcode: string | null;
-  provider: string | null;
-  providerItemId: string | null;
-  servingLabel: string | null;
-  servingQuantity: number;
-  servingUnit: string;
-  servingMeasureValue: number | null;
-  servingMeasureUnit: HealthServingMeasureUnit | null;
-  consumedUnit?: string;
 };
 
 function createQuickFoodId() {
@@ -5340,29 +5320,6 @@ function mealFoodSelectionFromDraft(draft: MealDraft): MealFoodSelection | null 
     servingQuantity,
     servingUnit: draft.servingUnit.trim(),
     sourceFoodId: draft.sourceFoodId,
-  };
-}
-
-function mealFoodSelectionFromLibraryItem(item: HealthFoodLibraryItem): MealFoodSelection {
-  return {
-    attribution: item.attribution,
-    barcode: item.barcode,
-    brandName: item.brand_name ?? "",
-    calories: item.calories,
-    carbs: item.carbs_g,
-    fat: item.fat_g,
-    foodCategory: item.food_category ?? item.category,
-    foodName: item.food_name,
-    provider: item.provider,
-    providerItemId: item.provider_item_id ?? item.id,
-    protein: item.protein_g,
-    nutritionDetails: item.nutrition_details ?? null,
-    servingLabel: item.serving_label,
-    servingMeasureUnit: validServingMeasureUnit(item.serving_measure_unit),
-    servingMeasureValue: positiveFiniteNumber(item.serving_measure_value),
-    servingQuantity: positiveFiniteNumber(item.serving_quantity) ?? 1,
-    servingUnit: item.serving_unit?.trim() || "serving",
-    sourceFoodId: item.id,
   };
 }
 

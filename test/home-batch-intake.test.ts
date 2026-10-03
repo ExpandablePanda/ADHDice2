@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createManualBatchIntakeDraft, parseBatchIntake } from "../src/lib/home-batch-intake.ts";
+import { addMealFromParsedFood, createManualBatchIntakeDraft, duplicateManualBatchIntakeDraft, parseBatchIntake, parseBatchIntakeDuration } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
-import type { Task } from "../src/lib/database.types.ts";
+import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
+import type { HealthFoodLibraryItem, Task } from "../src/lib/database.types.ts";
+import type { FocusCategory } from "../src/lib/types.ts";
 
 const fixture = `**10/2**
 no cpap 430-630
@@ -72,8 +74,18 @@ lunch - 12 wings millers ale, side of fries, dr. pepper
 snack - 2 string cheese
 snack - 2 string cheese, 380g watermelon, 5 spears`;
 
+const codingCategory: FocusCategory = {
+  id: "focus-coding",
+  title: "Coding",
+  focusType: "Work",
+  focusSubtype: "Deep Work",
+  focusSubtype2: null,
+  color: "#6f57f6",
+  icon: "code",
+};
+
 test("golden Obsidian fixture parses Phase 1 records without silently dropping lines", () => {
-  const drafts = parseBatchIntake(fixture, { referenceDate: "2026-10-03", preferredWeightUnit: "lb" });
+  const drafts = parseBatchIntake(fixture, { focusCategories: [codingCategory], referenceDate: "2026-10-03", preferredWeightUnit: "lb" });
   assert.equal(new Set(drafts.map((draft) => draft.date).filter(Boolean)).size, 6);
   assert.equal(drafts.filter((draft) => draft.kind === "water").length, 8);
   assert.equal(drafts.filter((draft) => draft.kind === "weight").length, 1);
@@ -86,8 +98,9 @@ test("golden Obsidian fixture parses Phase 1 records without silently dropping l
   );
   assert.equal(drafts.find((draft) => draft.sourceText === "15oz water dine")?.issues.includes("Choose Pending or Confirmed"), true);
   assert.equal(drafts.some((draft) => draft.sourceText === "no cpap 430-630" && draft.kind === "unsupported" && draft.reason === "Sleep/CPAP parsing deferred"), true);
-  assert.equal(drafts.some((draft) => draft.sourceText === "coding" && draft.kind === "unsupported"), true);
-  assert.equal(drafts.some((draft) => draft.sourceText === "1h" && draft.kind === "unsupported"), true);
+  assert.equal(drafts.filter((draft) => draft.kind === "focus").length, 1);
+  assert.deepEqual(drafts.filter((draft) => draft.kind === "focus").map((draft) => draft.sourceText), ["coding / 1h"]);
+  assert.equal(drafts.some((draft) => draft.sourceText === "1h"), false);
   assert.equal(drafts.some((draft) => draft.sourceText === "tasks" || draft.sourceText === "water"), false);
   assert.equal(new Set(drafts.map((draft) => draft.id)).size, drafts.length);
   assert.ok(drafts.every((draft) => draft.origin === "parsed" && draft.sourceLineNumber !== null));
@@ -105,6 +118,124 @@ test("manual Batch Intake constructors use explicit manual origins and editable 
   assert.ok(drafts.every((draft) => draft.origin === "manual" && draft.sourceLineNumber === null && draft.date === "2026-10-03"));
   assert.equal(drafts.find((draft) => draft.kind === "meal")?.entryMode, "structured");
   assert.equal(drafts.find((draft) => draft.kind === "focus")?.kind, "focus");
+});
+
+test("duration parsing accepts supported hour and minute forms and rejects invalid values", () => {
+  assert.equal(parseBatchIntakeDuration("1h"), 3600);
+  assert.equal(parseBatchIntakeDuration("1 hr"), 3600);
+  assert.equal(parseBatchIntakeDuration("1 hour"), 3600);
+  assert.equal(parseBatchIntakeDuration("1h 30m"), 5400);
+  assert.equal(parseBatchIntakeDuration("1 hr 30 min"), 5400);
+  assert.equal(parseBatchIntakeDuration("90m"), 5400);
+  assert.equal(parseBatchIntakeDuration("90 min"), 5400);
+  assert.equal(parseBatchIntakeDuration("30 minutes"), 1800);
+  assert.equal(parseBatchIntakeDuration("0m"), null);
+  assert.equal(parseBatchIntakeDuration("-1h"), null);
+  assert.equal(parseBatchIntakeDuration("one hour"), null);
+});
+
+test("Focus parsing consumes exact saved-category duration pairs without fuzzy or task-section matches", () => {
+  const paired = parseBatchIntake("9/30\ncoding\n1h", { focusCategories: [codingCategory], referenceDate: "2026-10-03" });
+  assert.deepEqual(paired.map((draft) => draft.kind), ["focus"]);
+  assert.equal(paired[0]?.kind === "focus" ? paired[0].durationSeconds : null, 3600);
+  assert.equal(paired[0]?.kind === "focus" ? paired[0].categoryId : null, "focus-coding");
+  assert.equal(paired[0]?.kind === "focus" ? paired[0].completionTime : "unexpected", "");
+  assert.equal(paired[0]?.kind === "focus" ? paired[0].issues.includes("Choose a Focus completion time") : false, true);
+
+  const inline = parseBatchIntake("9/30\nCoding - 1h 30m\nCoding 90m", { focusCategories: [codingCategory], referenceDate: "2026-10-03" });
+  assert.deepEqual(inline.filter((draft) => draft.kind === "focus").map((draft) => draft.durationSeconds), [5400, 5400]);
+  assert.equal(parseBatchIntake("9/30\nunknown\n1h", { focusCategories: [codingCategory], referenceDate: "2026-10-03" }).filter((draft) => draft.kind === "focus").length, 0);
+  assert.deepEqual(parseBatchIntake("9/30\ntasks\ncoding\n1h", { focusCategories: [codingCategory], referenceDate: "2026-10-03" }).map((draft) => draft.kind), ["task", "task"]);
+});
+
+test("duplicate occurrences preserve editable values while refreshing every required identity", () => {
+  const task = {
+    ...createManualBatchIntakeDraft("task", { date: "2026-10-03", id: "task-original" }),
+    selectedTaskId: "task-id",
+    taskTitle: "NBA 2K27",
+    outcome: "done" as const,
+    issues: [],
+  };
+  const water = { ...createManualBatchIntakeDraft("water", { date: "2026-10-03", id: "water-original" }), amount: 16, status: "confirmed" as const, issues: [] };
+  const weight = { ...createManualBatchIntakeDraft("weight", { date: "2026-10-03", id: "weight-original", preferredWeightUnit: "lb" }), value: 180, issues: [] };
+  const meal = { ...createManualBatchIntakeDraft("meal", { date: "2026-10-03", id: "meal-original", time: "12:00" }), foodName: "Soup", calories: 240, sourceFoodId: "food-id", issues: [] };
+  const focus = { ...createManualBatchIntakeDraft("focus", { date: "2026-10-03", id: "focus-original", time: "13:00" }), title: "Coding", durationSeconds: 3600, issues: [] };
+
+  const duplicates = [task, water, weight, meal, focus].map((draft) => duplicateManualBatchIntakeDraft(draft, { id: `${draft.id}-duplicate`, writeId: `${draft.id}-write-duplicate` }));
+  assert.deepEqual(duplicates.map((draft) => [draft.kind, draft.id, draft.origin, draft.included]), [
+    ["task", "task-original-duplicate", "manual", true],
+    ["water", "water-original-duplicate", "manual", true],
+    ["weight", "weight-original-duplicate", "manual", true],
+    ["meal", "meal-original-duplicate", "manual", true],
+    ["focus", "focus-original-duplicate", "manual", true],
+  ]);
+  assert.equal((duplicates[0] as Extract<typeof duplicates[number], { kind: "task" }>).selectedTaskId, "task-id");
+  assert.equal((duplicates[0] as Extract<typeof duplicates[number], { kind: "task" }>).outcome, "done");
+  assert.equal((duplicates[1] as Extract<typeof duplicates[number], { kind: "water" }>).writeId, "water-original-write-duplicate");
+  assert.equal((duplicates[2] as Extract<typeof duplicates[number], { kind: "weight" }>).writeId, "weight-original-write-duplicate");
+  assert.equal((duplicates[3] as Extract<typeof duplicates[number], { kind: "meal" }>).writeId, "meal-original-write-duplicate");
+  assert.equal((duplicates[4] as Extract<typeof duplicates[number], { kind: "focus" }>).writeId, "focus-original-write-duplicate");
+});
+
+test("a duplicate from an Applied source is still fresh, included, and independently countable", () => {
+  const source = { ...createManualBatchIntakeDraft("water", { date: "2026-10-03", id: "applied-source" }), amount: 16, status: "confirmed" as const, issues: [] };
+  const duplicate = duplicateManualBatchIntakeDraft(source, { id: "new-row", writeId: "new-write" });
+  assert.notEqual(duplicate.id, source.id);
+  assert.notEqual((duplicate as Extract<typeof duplicate, { kind: "water" }>).writeId, source.writeId);
+  assert.equal(duplicate.included, true);
+  assert.equal(getBatchIntakeApplyCount([source, duplicate]), 2);
+});
+
+const libraryFood = {
+  id: "food-turkey-bacon",
+  user_id: "user-1",
+  food_name: "Turkey Bacon",
+  brand_name: "Acme",
+  category: "Protein",
+  food_category: "Protein",
+  serving_label: "3 slices",
+  serving_size: "3 slices",
+  serving_quantity: 3,
+  serving_unit: "slice",
+  serving_measure_value: null,
+  serving_measure_unit: null,
+  serving_weight_amount: null,
+  serving_weight_unit: null,
+  calories: 60,
+  protein_g: 5,
+  carbs_g: 1,
+  fat_g: 4,
+  nutrition_details: null,
+  barcode: "123",
+  provider: "custom",
+  provider_item_id: "provider-turkey-bacon",
+  attribution: "Acme",
+  is_favorite: true,
+  created_at: "2026-10-03T12:00:00Z",
+  updated_at: "2026-10-03T12:00:00Z",
+} satisfies HealthFoodLibraryItem;
+
+test("custom food selection preserves canonical identity and parsed Meal derivation stays one row per food", () => {
+  const selection = mealFoodSelectionFromLibraryItem(libraryFood);
+  assert.deepEqual({ sourceFoodId: selection.sourceFoodId, provider: selection.provider, providerItemId: selection.providerItemId, calories: selection.calories, protein: selection.protein, carbs: selection.carbs, fat: selection.fat, servingLabel: selection.servingLabel }, { sourceFoodId: "food-turkey-bacon", provider: "custom", providerItemId: "provider-turkey-bacon", calories: 60, protein: 5, carbs: 1, fat: 4, servingLabel: "3 slices" });
+
+  const parsedMeal = parseBatchIntake("10/1\nbreakfast - fanta Turkey bacon 8 watermelon 290g", { referenceDate: "2026-10-03" }).find((draft) => draft.kind === "meal");
+  assert.ok(parsedMeal && parsedMeal.origin === "parsed");
+  const derived = addMealFromParsedFood(parsedMeal, libraryFood, { id: "derived-meal", writeId: "derived-write" });
+  assert.equal(derived.origin, "manual");
+  assert.equal(derived.sourceParsedMealId, parsedMeal.id);
+  assert.equal(derived.sourceText, parsedMeal.sourceText);
+  assert.equal(derived.date, parsedMeal.date);
+  assert.equal(derived.mealSlot, "breakfast");
+  assert.equal(derived.sourceFoodId, libraryFood.id);
+  assert.equal(derived.writeId, "derived-write");
+  assert.equal(parsedMeal.rawText, "fanta Turkey bacon 8 watermelon 290g");
+
+  const input = buildHealthMealEntryInputFromSelection(selection, { date: "2026-10-01", id: "meal-entry", loggedAt: "2026-10-01T12:00:00.000Z", mealSlot: "breakfast" });
+  assert.equal(input.source_food_id, "food-turkey-bacon");
+  assert.equal(input.provider_item_id, "provider-turkey-bacon");
+  assert.equal(input.food_snapshot?.source_food_id, "food-turkey-bacon");
+  assert.equal(input.nutrition_snapshot?.calories, 60);
 });
 
 test("date parsing handles omitted years, explicit years, and New Year rollover", () => {

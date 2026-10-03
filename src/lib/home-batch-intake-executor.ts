@@ -1,7 +1,7 @@
 import type { HealthMealEntryInsert, HealthWaterEntryInsert, HealthWeightEntryInsert, HealthWeightUnit, TaskStatus } from "@/lib/database.types";
 import type {
   BatchIntakeDraft,
-  BatchIntakeManualFocusDraft,
+  BatchIntakeFocusDraft,
   BatchIntakeManualMealDraft,
   BatchIntakeTaskDraft,
   BatchIntakeWaterDraft,
@@ -9,6 +9,7 @@ import type {
 } from "@/lib/home-batch-intake";
 import { waterDraftAmountInMilliliters, weightDraftInKilograms } from "@/lib/home-batch-intake";
 import { buildHealthMealLoggedAt } from "@/lib/health-utils";
+import { buildHealthMealEntryInputFromSelection } from "@/lib/health-meal-draft";
 import type { FocusManualEntryInput } from "@/lib/types";
 
 export type BatchIntakeTaskGroup = {
@@ -175,19 +176,26 @@ export function buildBatchIntakeExecutionPlan(
       if (!loggedAt) continue;
       mealRows.push({
         rowId: draft.id,
-        input: {
+        input: buildHealthMealEntryInputFromSelection({
+          attribution: draft.attribution,
+          barcode: draft.barcode,
+          brandName: draft.brandName,
           calories: draft.calories!,
-          carbs_g: draft.carbsG,
-          entry_date: draft.date!,
-          fat_g: draft.fatG,
-          food_name: draft.foodName.trim(),
-          id: draft.writeId,
-          logged_at: loggedAt,
-          meal_slot: draft.mealSlot,
-          protein_g: draft.proteinG,
-          provider: "manual",
-          ...(draft.servingLabel.trim() ? { serving_label: draft.servingLabel.trim() } : {}),
-        },
+          carbs: draft.carbsG,
+          fat: draft.fatG,
+          foodCategory: draft.foodCategory,
+          foodName: draft.foodName,
+          nutritionDetails: draft.nutritionDetails,
+          provider: draft.provider,
+          providerItemId: draft.providerItemId,
+          protein: draft.proteinG,
+          servingLabel: draft.servingLabel.trim() || null,
+          servingMeasureUnit: draft.servingMeasureUnit,
+          servingMeasureValue: draft.servingMeasureValue,
+          servingQuantity: draft.servingQuantity,
+          servingUnit: draft.servingUnit,
+          sourceFoodId: draft.sourceFoodId,
+        }, { date: draft.date!, id: draft.writeId, loggedAt, mealSlot: draft.mealSlot }),
       });
       continue;
     }
@@ -203,7 +211,7 @@ export function buildBatchIntakeExecutionPlan(
           focusSubtype: draft.focusSubtype,
           focusSubtype2: draft.focusSubtype2,
           focusType: draft.focusType,
-          id: draft.writeId,
+          ...(draft.writeId ? { id: draft.writeId } : {}),
           notes: draft.notes,
           title: draft.title,
         },
@@ -364,7 +372,7 @@ export function isBatchIntakeMealDraftReady(draft: BatchIntakeManualMealDraft) {
     && draft.issues.length === 0;
 }
 
-export function isBatchIntakeFocusDraftReady(draft: BatchIntakeManualFocusDraft) {
+export function isBatchIntakeFocusDraftReady(draft: BatchIntakeFocusDraft) {
   return draft.included
     && draft.date !== null
     && draft.title.trim().length > 0

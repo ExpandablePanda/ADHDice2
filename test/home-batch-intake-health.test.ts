@@ -49,6 +49,13 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /Meals review-only/);
   assert.match(reviewSource, /Focus Session/);
   assert.match(reviewSource, /onRemoveRow/);
+  assert.match(homeSource, /draft\.kind === "water" \|\| draft\.kind === "weight" \|\| draft\.kind === "meal"/);
+  assert.match(homeSource, /focusCategories,/);
+  assert.match(appSource, /healthFoods=\{healthFavorites\}/);
+  assert.match(reviewSource, /Search custom foods…/);
+  assert.match(reviewSource, /onAddMealFromParsed/);
+  assert.match(reviewSource, /\+ Another/);
+  assert.match(reviewSource, /Choose a Focus completion time/);
 });
 
 test("cumulative Applied results back every supported row lock", () => {
@@ -56,6 +63,7 @@ test("cumulative Applied results back every supported row lock", () => {
   assert.match(reviewSource, /const locked = result\?\.status === "applied"/);
   assert.match(reviewSource, /disabled=\{locked\}/);
   assert.match(reviewSource, /onRemove && !locked/);
+  assert.match(reviewSource, /disabled=\{disabled && !locked\}/);
   assert.equal((reviewSource.match(/disabled=\{locked \|\| isApplying\}/g) ?? []).length, 5);
   assert.match(reviewSource, /onRemove=\{draft\.origin === "manual" \? \(\) => onRemoveRow\(draft\.id\) : undefined\}/);
 });

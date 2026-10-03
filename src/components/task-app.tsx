@@ -8288,6 +8288,7 @@ export function TaskApp() {
             focusHistory={focusHistory}
             handleManualFocusEntries={handleManualFocusEntries}
             healthLoading={isHealthLoading}
+            healthFoods={healthFavorites}
             healthProfile={healthProfile}
             onBatchIntakeHealthActivationChange={setBatchIntakeHealthActive}
             onBatchIntakeFocusActivationChange={setBatchIntakeFocusActive}
