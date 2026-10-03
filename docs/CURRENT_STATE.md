@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.46`.
+- Current working app version: `7.16.47`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.47 On-Time and Home Realtime lifecycle hardening
+
+Browser refresh, Fast Refresh/HMR, and React development remounts could reuse a
+same-topic channel from the global browser Supabase singleton while its prior
+`removeChannel()` was still pending. On-Time and Home now serialize prior
+channel removal before creating, configuring, and subscribing a replacement;
+each effect removes only the channel it owns and canceled effects cannot
+subscribe late. On-Time cache, hydration, migration, writes, dirty cleanup
+flush, and channel error status behavior remain unchanged. Home V8 state,
+local cache, client timestamps, Realtime merge, and debounce/write behavior
+remain unchanged. No application-data semantics changed; no SQL or Edge
+deployment was performed.
 
 ## 2026-10-03 7.16.46 Scratchpad Batch Intake Phase 1
 

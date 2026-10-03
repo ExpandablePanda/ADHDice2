@@ -20,6 +20,7 @@ import {
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { startSerializedRealtimeChannel } from "@/lib/realtime-channel-lifecycle";
 
 const CACHE_PREFIX = "adhdice-home-todo";
 const WRITE_DELAY_MS = 650;
@@ -47,6 +48,7 @@ export function useHomeTodoState(userId: string | null) {
   const remoteSupportedRef = useRef(true);
   const writeTimerRef = useRef<number | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const channelRemovalPromiseRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -184,25 +186,33 @@ export function useHomeTodoState(userId: string | null) {
         }
       });
 
-    channelRef.current = client
-      .channel(`adhdice_home_todo_state:${userId}`)
-      .on("postgres_changes", {
-        event: "*",
-        filter: `user_id=eq.${userId}`,
-        schema: "public",
-        table: "adhdice_home_todo_state",
-      }, (payload) => {
-        const row = payload.new as { client_updated_at?: string; state?: unknown };
-        if (row.state) applyRemote(row.state, row.client_updated_at);
-      })
-      .subscribe();
+    const stopRealtimeChannel = startSerializedRealtimeChannel({
+      channelRef,
+      channelRemovalPromiseRef,
+      createChannel: () => client.channel(`adhdice_home_todo_state:${userId}`),
+      subscribe: (thisChannel) => {
+        const isCurrentChannel = () => alive && channelRef.current === thisChannel;
+        thisChannel
+          .on("postgres_changes", {
+            event: "*",
+            filter: `user_id=eq.${userId}`,
+            schema: "public",
+            table: "adhdice_home_todo_state",
+          }, (payload) => {
+            if (!isCurrentChannel()) return;
+            const row = payload.new as { client_updated_at?: string; state?: unknown };
+            if (row.state) applyRemote(row.state, row.client_updated_at);
+          })
+          .subscribe();
+      },
+      removeChannel: (thisChannel) => client.removeChannel(thisChannel),
+    });
 
     return () => {
       alive = false;
       if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
       if (dirtyRef.current) void flush();
-      if (channelRef.current) void client.removeChannel(channelRef.current);
-      channelRef.current = null;
+      stopRealtimeChannel();
     };
   }, [applyRemote, flush, scheduleWrite, userId]);
 

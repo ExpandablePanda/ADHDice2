@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { startSerializedRealtimeChannel } from "@/lib/realtime-channel-lifecycle";
 import {
   createEmptyOnTimePlan,
   compareOnTimePlanPriority,
@@ -41,6 +42,7 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
   const hydratedUserRef = useRef<string | null>(null);
   const writeTimerRef = useRef<number | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const channelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const applyRemoteRef = useRef<(value: unknown, remoteClientUpdatedAt?: string | null) => void>(() => undefined);
 
@@ -179,20 +181,30 @@ export function useOnTimePlan(userId: string | null, timezone: string, active: b
       }
       setSyncState(dirtyRef.current ? "saving" : "synced");
     });
-    channelRef.current = client.channel(`adhdice_on_time_plans:${userId}`).on("postgres_changes", {
-      event: "*", schema: "public", table: "adhdice_on_time_plans", filter: `user_id=eq.${userId}`,
-    }, (payload) => {
-      const row = payload.new as { plan_state?: unknown; client_updated_at?: string };
-      if (row.plan_state) applyRemote(row.plan_state, row.client_updated_at);
-    }).subscribe((status) => {
-      if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setSyncState(supportedRef.current ? "offline" : "unavailable");
+    const stopRealtimeChannel = startSerializedRealtimeChannel({
+      channelRef,
+      channelRemovalPromiseRef,
+      createChannel: () => client.channel(`adhdice_on_time_plans:${userId}`),
+      subscribe: (thisChannel) => {
+        const isCurrentChannel = () => alive && channelRef.current === thisChannel;
+        thisChannel.on("postgres_changes", {
+          event: "*", schema: "public", table: "adhdice_on_time_plans", filter: `user_id=eq.${userId}`,
+        }, (payload) => {
+          if (!isCurrentChannel()) return;
+          const row = payload.new as { plan_state?: unknown; client_updated_at?: string };
+          if (row.plan_state) applyRemote(row.plan_state, row.client_updated_at);
+        }).subscribe((status) => {
+          if (!isCurrentChannel()) return;
+          if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") setSyncState(supportedRef.current ? "offline" : "unavailable");
+        });
+      },
+      removeChannel: (thisChannel) => client.removeChannel(thisChannel),
     });
     return () => {
       alive = false;
       if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
       if (dirtyRef.current) void flush();
-      if (channelRef.current) void client.removeChannel(channelRef.current);
-      channelRef.current = null;
+      stopRealtimeChannel();
     };
   }, [applyRemote, flush, persistCache, scheduleWrite, timezone, userId]);
 
