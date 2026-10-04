@@ -2,12 +2,15 @@ import test from "node:test";
 import assert from "node:assert/strict";
 
 import {
+  buildHealthMealEntryInputFromSelection,
   createDefaultMealDraft,
   hasMeaningfulMealDraft,
   prepareMealDraftForSelectedSlot,
   resetMealDraftForNextItem,
+  type MealFoodSelection,
   type MealDraft,
 } from "../src/lib/health-meal-draft.ts";
+import { normalizeHealthMealStoredCalories } from "../src/lib/health-meal-recalculation.ts";
 
 function draft(overrides: Partial<MealDraft> = {}): MealDraft {
   return {
@@ -17,6 +20,59 @@ function draft(overrides: Partial<MealDraft> = {}): MealDraft {
     ...overrides,
   };
 }
+
+function fractionalMealSelection(overrides: Partial<MealFoodSelection> = {}): MealFoodSelection {
+  return {
+    attribution: null,
+    barcode: null,
+    brandName: "Example Brand",
+    calories: 142.8,
+    carbs: 22.25,
+    fat: 3.75,
+    foodCategory: "Test",
+    foodName: "Fractional Meal",
+    nutritionDetails: null,
+    protein: 12.5,
+    provider: "custom",
+    providerItemId: "fractional-food",
+    servingLabel: "1 serving",
+    servingMeasureUnit: "g",
+    servingMeasureValue: 59,
+    servingQuantity: 1,
+    servingUnit: "serving",
+    sourceFoodId: "fractional-food",
+    consumedQuantity: 50,
+    consumedUnit: "g",
+    ...overrides,
+  };
+}
+
+test("Meal input rounds the integer calories column while preserving precise nutrition", () => {
+  const input = buildHealthMealEntryInputFromSelection(fractionalMealSelection(), {
+    date: "2026-10-04",
+    id: "fractional-meal",
+    loggedAt: "2026-10-04T12:00:00.000Z",
+    mealSlot: "breakfast",
+  });
+
+  assert.equal(input.calories, 121);
+  assert.equal(input.calories, Math.round(121.01694915254238));
+  assert.equal(input.nutrition_snapshot?.calories, 121.01694915254238);
+  assert.equal(input.protein_g, input.nutrition_snapshot?.protein_g);
+  assert.equal(input.carbs_g, input.nutrition_snapshot?.carbs_g);
+  assert.equal(input.fat_g, input.nutrition_snapshot?.fat_g);
+  assert.equal(input.consumed_quantity, 50);
+  assert.equal(input.serving_fraction, 50 / 59);
+  assert.equal(Number.isInteger(input.calories), true);
+});
+
+test("stored Meal calorie normalization preserves valid integers and rejects invalid values", () => {
+  assert.equal(normalizeHealthMealStoredCalories(121.01694915254238), 121);
+  assert.equal(normalizeHealthMealStoredCalories(121), 121);
+  assert.equal(normalizeHealthMealStoredCalories(0), 0);
+  assert.equal(normalizeHealthMealStoredCalories(Number.NaN), null);
+  assert.equal(normalizeHealthMealStoredCalories(-1), null);
+});
 
 test("successful meal reset preserves the logging date", () => {
   assert.equal(resetMealDraftForNextItem(draft()).date, "2026-08-20");

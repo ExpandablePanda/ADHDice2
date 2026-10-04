@@ -6,7 +6,7 @@ import type {
   HealthServingMeasureUnit,
 } from "@/lib/database.types";
 import { getCurrentHealthDateTimeInputs } from "@/lib/health-utils";
-import { buildHealthMealFoodSnapshot, formatHealthConsumedMealLabel } from "@/lib/health-meal-recalculation";
+import { buildHealthMealFoodSnapshot, formatHealthConsumedMealLabel, normalizeHealthMealStoredCalories } from "@/lib/health-meal-recalculation";
 import { calculateHealthFoodNutrition } from "@/lib/health-nutrition";
 
 export type MealDraft = {
@@ -125,11 +125,13 @@ export function buildHealthMealEntryInputFromSelection(
     nutrition_details: selection.nutritionDetails,
     protein_g: selection.protein,
   };
+  const storedCalories = normalizeHealthMealStoredCalories(nutritionSnapshot.calories);
+  if (storedCalories === null) throw new Error("Calories must be a non-negative number.");
   return {
     attribution: selection.attribution,
     barcode: selection.barcode,
     brand_name: selection.brandName.trim() || null,
-    calories: nutritionSnapshot.calories,
+    calories: storedCalories,
     carbs_g: nutritionSnapshot.carbs_g,
     consumed_quantity: consumedQuantity,
     consumed_unit: consumedUnit,

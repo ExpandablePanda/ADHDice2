@@ -486,6 +486,78 @@ test("compatible measured units survive resolution and nutrition still uses the 
   assert.equal(calculateBatchIntakeMealNutrition({ ...resolved, consumedQuantity: 1, consumedUnit: "serving" })?.nutrientTotals.calories, 100);
 });
 
+test("parsed Batch Intake Meal fixture emits integer scalar calories with precise fractional snapshots", () => {
+  const cinnamonFood = {
+    ...cinnamonToastCrunch,
+    serving_label: "30 g",
+    serving_size: "30 g",
+    serving_quantity: 1,
+    serving_unit: "serving",
+    serving_measure_value: 30,
+    serving_measure_unit: "g" as const,
+    calories: 115,
+  };
+  const popcornFood = {
+    ...libraryFood,
+    id: "food-popcorn-chicken",
+    food_name: "Popcorn Chicken",
+    serving_label: "10 pieces",
+    serving_size: "10 pieces",
+    serving_quantity: 10,
+    serving_unit: "piece",
+    calories: 123,
+  };
+  const lemonadeFood = {
+    ...libraryFood,
+    id: "food-lemonade",
+    food_name: "Lemonade",
+    serving_label: "100 g",
+    serving_size: "100 g",
+    serving_quantity: 1,
+    serving_unit: "serving",
+    serving_measure_value: 100,
+    serving_measure_unit: "g" as const,
+    calories: 120,
+  };
+  const pretzelFood = {
+    ...libraryFood,
+    id: "food-pretzel-sticks",
+    food_name: "Pretzel sticks",
+    serving_label: "16 pieces",
+    serving_size: "16 pieces",
+    serving_quantity: 16,
+    serving_unit: "piece",
+    calories: 110,
+  };
+  const fixture = [
+    { food: plantProteinFood, token: "plant protein 1.5 scoops" },
+    { food: milkFood, token: "milk 178 ml" },
+    { food: cinnamonFood, token: "cinnamon toast crunch 80 g" },
+    { food: turkeyBaconSlicesFood, token: "turkey bacon 4 slices" },
+    { food: popcornFood, token: "popcorn chicken 14 pieces" },
+    { food: lemonadeFood, token: "lemonade 44 g" },
+    { food: pretzelFood, token: "pretzel sticks 9 pieces" },
+  ];
+
+  const inputs = fixture.map(({ food, token }, index) => {
+    const parsed = parseBatchIntake(`10/3\nb: ${token}`, { referenceDate: "2026-10-03" });
+    const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+    const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+    assert.ok(occurrence && proposal);
+    const resolved = resolveBatchIntakeMealFoodProposal(proposal, occurrence, food, { writeId: `fixture-write-${index}` });
+    assert.deepEqual(resolved.issues, []);
+    return buildHealthMealEntryInputFromSelection({
+      ...mealFoodSelectionFromLibraryItem(food),
+      consumedQuantity: resolved.consumedQuantity,
+      consumedUnit: resolved.consumedUnit,
+    }, { date: "2026-10-03", id: `fixture-input-${index}`, loggedAt: "2026-10-03T12:00:00.000Z", mealSlot: "breakfast" });
+  });
+
+  assert.equal(inputs.every((input) => Number.isInteger(input.calories)), true);
+  assert.equal(inputs.some((input) => !Number.isInteger(input.nutrition_snapshot?.calories ?? 0)), true);
+  assert.equal(inputs.find((input) => input.id === "fixture-input-1")?.nutrition_snapshot?.calories, 100 * 178 / 240);
+});
+
 test("incompatible proposal units fall back to a valid saved unit and remain review-blocked", () => {
   const parsed = parseBatchIntake("10/3\nb: plant protein 2 cups", { referenceDate: "2026-10-03" });
   const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");

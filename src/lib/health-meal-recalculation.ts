@@ -44,6 +44,11 @@ export function selectHealthFoodMealEntriesBySourceId(
   return mealEntries.filter((entry) => entry.source_food_id === sourceFoodId);
 }
 
+export function normalizeHealthMealStoredCalories(value: number) {
+  if (!Number.isFinite(value) || value < 0) return null;
+  return Math.round(value);
+}
+
 export function buildHealthMealFoodSnapshot(source: HealthMealFoodSnapshotSource): HealthMealFoodSnapshot {
   return {
     attribution: source.attribution ?? null,

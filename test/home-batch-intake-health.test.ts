@@ -24,6 +24,19 @@ test("Health batch writes stay inside useHealth and publish one complete snapsho
   assert.match(healthSource, /did not return every Meal row/);
 });
 
+test("Health Meal writes normalize integer calories before local and remote persistence", () => {
+  const singleMealSource = healthSource.slice(healthSource.indexOf("async function addMealEntry"), healthSource.indexOf("async function addMealEntries"));
+  const batchMealSource = healthSource.slice(healthSource.indexOf("async function addMealEntries"), healthSource.indexOf("async function deleteMealEntry"));
+  assert.match(healthSource, /normalizeHealthMealStoredCalories/);
+  assert.match(singleMealSource, /const storedCalories = normalizeHealthMealStoredCalories\(input\.calories\)/);
+  assert.match(singleMealSource, /calories: storedCalories/);
+  assert.match(singleMealSource, /\.insert\(\{[\s\S]*calories: storedCalories,[\s\S]*user_id: userId/);
+  assert.match(batchMealSource, /const storedCalories = normalizeHealthMealStoredCalories\(input\.calories\)/);
+  assert.match(batchMealSource, /validInputs\.push\(\{ index, input: \{ \.\.\.input, calories: storedCalories \} \}\)/);
+  assert.match(batchMealSource, /calories: input\.calories/);
+  assert.match(batchMealSource, /localRows\.map\(\(\{\s*created_at, updated_at, \.\.\.row\s*\}/);
+});
+
 test("Home batch intake keeps Scratchpad source text separate and activates Health lazily", () => {
   assert.match(homeSource, /Parse Batch Intake/);
   assert.match(homeSource, /function openManualBatch\(\)/);

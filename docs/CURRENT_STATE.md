@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.65`.
+- Current working app version: `7.16.66`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.66 Fractional Meal calories at Health write boundary
+
+Health Meal persistence now normalizes finite, non-negative top-level calories
+to the integer database contract before constructing local rows or remote
+payloads. Fractional consumed nutrition remains precise in
+`nutrition_snapshot`, while protein, carbs, fat, consumed quantity, and
+serving fraction retain their decimal values. Shared Meal input construction,
+single Meal saves, and batch Meal saves use the same boundary contract. No SQL,
+Edge deployment, schema change, parser change, Custom Food model change, or
+production data mutation was performed.
 
 ## 2026-10-04 7.16.65 Explicit consumed unit confirmation
 

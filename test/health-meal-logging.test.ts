@@ -277,6 +277,11 @@ test("failed canonical saves leave the inline draft intact", () => {
   assert.match(saveSource, /if \(!saved\) \{\s+return false;\s+\}/);
 });
 
+test("normal Health Meal saves keep their rounded calorie contract", () => {
+  assert.match(saveSource, /calories: Math\.round\(calculation\.nutrientTotals\.calories\)/);
+  assert.match(useHealthSource, /normalizeHealthMealStoredCalories/);
+});
+
 test("Done closes only the active inline editor", () => {
   assert.match(source, /function closeMealEntryEditor\(\) \{\s+setActiveMealEntrySlot\(null\);/);
   assert.match(inlineEditorSource, /<AdhdChip onClick=\{closeMealEntryEditor\}>Done<\/AdhdChip>/);

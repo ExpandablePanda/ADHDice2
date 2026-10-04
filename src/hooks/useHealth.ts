@@ -91,6 +91,7 @@ import {
 import {
   buildHealthFoodHistoryMealEntryUpdate,
   formatHealthFoodHistoryRepairResult,
+  normalizeHealthMealStoredCalories,
   selectHealthFoodMealEntriesBySourceId,
   type HealthFoodHistoryRepairResult,
 } from "@/lib/health-meal-recalculation";
@@ -2570,12 +2571,18 @@ export function useHealth(
     const operation = captureOperation();
     if (!operation) return false;
 
+    const storedCalories = normalizeHealthMealStoredCalories(input.calories);
+    if (storedCalories === null) {
+      setMessage({ tone: "warn", text: "Calories must be a non-negative number." });
+      return false;
+    }
+
     const now = new Date().toISOString();
     const localRow: HealthMealEntry = {
       attribution: input.attribution ?? null,
       barcode: input.barcode ?? null,
       brand_name: input.brand_name ?? null,
-      calories: input.calories,
+      calories: storedCalories,
       carbs_g: input.carbs_g ?? null,
       created_at: now,
       entry_date: input.entry_date,
@@ -2604,6 +2611,7 @@ export function useHealth(
         .from("adhdice_health_meal_entries")
         .insert({
           ...input,
+          calories: storedCalories,
           user_id: userId,
         })
         .select("*")
@@ -2655,7 +2663,8 @@ export function useHealth(
         validationErrors.set(index, "Food name is required.");
         return;
       }
-      if (!Number.isFinite(input.calories) || input.calories < 0) {
+      const storedCalories = normalizeHealthMealStoredCalories(input.calories);
+      if (storedCalories === null) {
         validationErrors.set(index, "Calories must be a non-negative number.");
         return;
       }
@@ -2667,7 +2676,7 @@ export function useHealth(
         validationErrors.set(index, "Choose a valid meal date and time.");
         return;
       }
-      validInputs.push({ index, input });
+      validInputs.push({ index, input: { ...input, calories: storedCalories } });
     });
 
     const now = new Date().toISOString();
