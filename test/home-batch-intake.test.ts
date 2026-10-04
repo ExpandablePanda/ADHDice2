@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { addMealFromLibraryFood, addMealFromParsedFood, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration, updateBatchIntakeFocusCategory, updateBatchIntakeFocusTitle } from "../src/lib/home-batch-intake.ts";
+import { addMealFromLibraryFood, addMealFromParsedFood, calculateBatchIntakeMealNutrition, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, updateBatchIntakeFocusCategory, updateBatchIntakeFocusTitle } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches, getBatchIntakeTaskCandidates, getBatchIntakeTaskMatchState } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
@@ -340,6 +340,28 @@ const libraryFood = {
   updated_at: "2026-10-03T12:00:00Z",
 } satisfies HealthFoodLibraryItem;
 
+const milkFood = {
+  ...libraryFood,
+  id: "food-lehigh-valley-milk",
+  food_name: "1% Lowfat Milk",
+  brand_name: "Lehigh Valley",
+  serving_label: "240 ml",
+  serving_size: "240 ml",
+  serving_quantity: 1,
+  serving_unit: "serving",
+  serving_measure_value: 240,
+  serving_measure_unit: "ml",
+  calories: 100,
+  provider_item_id: "provider-lehigh-valley-milk",
+} satisfies HealthFoodLibraryItem;
+
+const cinnamonToastCrunch = {
+  ...libraryFood,
+  id: "food-cinnamon-toast-crunch",
+  food_name: "Cinnamon Toast Crunch",
+  provider_item_id: "provider-cinnamon-toast-crunch",
+} satisfies HealthFoodLibraryItem;
+
 test("custom food selection preserves canonical identity and parsed Meal derivation stays one row per food", () => {
   const selection = mealFoodSelectionFromLibraryItem(libraryFood);
   assert.deepEqual({ sourceFoodId: selection.sourceFoodId, provider: selection.provider, providerItemId: selection.providerItemId, calories: selection.calories, protein: selection.protein, carbs: selection.carbs, fat: selection.fat, servingLabel: selection.servingLabel }, { sourceFoodId: "food-turkey-bacon", provider: "custom", providerItemId: "provider-turkey-bacon", calories: 60, protein: 5, carbs: 1, fat: 4, servingLabel: "3 slices" });
@@ -362,6 +384,63 @@ test("custom food selection preserves canonical identity and parsed Meal derivat
   assert.equal(input.provider_item_id, "provider-turkey-bacon");
   assert.equal(input.food_snapshot?.source_food_id, "food-turkey-bacon");
   assert.equal(input.nutrition_snapshot?.calories, 60);
+});
+
+test("Meal proposal correction resolves the same child and preserves source evidence, edits, and write identity", () => {
+  const parsed = parseBatchIntake("10/3\nb: cinnamon toast crunch 100g, 1% milk 200ml", { referenceDate: "2026-10-03" });
+  const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+  const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal" && draft.proposedFoodName === "1% milk");
+  assert.ok(occurrence && proposal);
+  const initial = reconcileBatchIntakeMealFoodProposals(parsed.map((draft) => draft.id === proposal.id ? { ...draft, writeId: "milk-proposal-write" } : draft), [cinnamonToastCrunch]);
+  assert.equal(initial.filter((draft) => draft.kind === "meal" && draft.entryMode === "food").length, 1);
+  const unresolved = initial.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+  assert.ok(unresolved);
+
+  const edited = { ...unresolved, proposedFoodName: "milk", proposedQuantity: 180, proposedUnit: "ml" };
+  const resolved = resolveBatchIntakeMealFoodProposal(edited, occurrence, milkFood, { writeId: edited.writeId ?? "milk-proposal-write" });
+  const replaced = initial.map((draft) => draft.id === edited.id ? resolved : draft);
+
+  assert.equal(resolved.id, edited.id);
+  assert.equal(resolved.writeId, "milk-proposal-write");
+  assert.equal(resolved.mealOccurrenceId, occurrence.id);
+  assert.equal(resolved.sourceParsedMealId, occurrence.id);
+  assert.equal(resolved.rawToken, "1% milk 200ml");
+  assert.equal(resolved.sourceText, occurrence.sourceText);
+  assert.equal(resolved.consumedQuantity, 180);
+  assert.equal(resolved.consumedUnit, "ml");
+  assert.equal(calculateBatchIntakeMealNutrition(resolved)?.consumed.quantity, 180);
+  assert.equal(replaced.filter((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal").length, 0);
+  assert.equal(replaced.filter((draft) => draft.kind === "meal" && draft.entryMode === "food").length, 2);
+});
+
+test("Meal proposal manual fallback keeps corrected interpretation and raw source in one replacement child", () => {
+  const parsed = parseBatchIntake("10/3\nb: 1% milk 200ml", { referenceDate: "2026-10-03" });
+  const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+  const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+  assert.ok(occurrence && proposal);
+  const edited = { ...proposal, proposedFoodName: "milk", proposedQuantity: 180, proposedUnit: "ml", writeId: "manual-proposal-write" };
+  const manual = createManualMealFoodFromProposal(occurrence, edited, { writeId: edited.writeId });
+
+  assert.equal(manual.id, proposal.id);
+  assert.equal(manual.writeId, "manual-proposal-write");
+  assert.equal(manual.foodName, "milk");
+  assert.equal(manual.consumedQuantity, 180);
+  assert.equal(manual.consumedUnit, "ml");
+  assert.equal(manual.rawToken, "1% milk 200ml");
+  assert.equal(manual.sourceText, occurrence.sourceText);
+  assert.equal(manual.sourceLineNumber, proposal.sourceLineNumber);
+  assert.equal(manual.sourceParsedMealId, occurrence.id);
+  assert.equal(manual.included, proposal.included);
+  assert.equal(manual.foodMode, "manual");
+});
+
+test("corrected Meal proposal units still use canonical compatibility validation", () => {
+  const parsed = parseBatchIntake("10/3\nb: 1% milk 200ml", { referenceDate: "2026-10-03" });
+  const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+  const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+  assert.ok(occurrence && proposal);
+  const resolved = resolveBatchIntakeMealFoodProposal({ ...proposal, proposedFoodName: "milk", proposedQuantity: 180, proposedUnit: "g" }, occurrence, milkFood, { writeId: "incompatible-unit-write" });
+  assert.match(resolved.issues.join(" "), /incompatible/i);
 });
 
 test("grouped Custom Food occurrences calculate consumed nutrition from the stored serving", () => {

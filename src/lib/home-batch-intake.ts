@@ -176,7 +176,7 @@ export type BatchIntakeParsedMealFoodDraft = BatchIntakeMealFoodBase & {
 
 export type BatchIntakeManualMealFoodDraft = BatchIntakeMealFoodBase & {
   origin: "manual";
-  sourceLineNumber: null;
+  sourceLineNumber: number | null;
   sourceParsedMealId: string | null;
 };
 
@@ -1278,6 +1278,9 @@ export function createManualMealFoodFromProposal(
   const manual = emptyManualMealFood(occurrence, { id: options.id ?? proposal.id, writeId: options.writeId });
   return {
     ...manual,
+    included: proposal.included,
+    sourceLineNumber: proposal.sourceLineNumber,
+    sourceParsedMealId: proposal.sourceParsedMealId,
     consumedQuantity: proposal.proposedQuantity ?? 1,
     consumedUnit: proposal.proposedUnit ?? "serving",
     foodName: proposal.proposedFoodName,

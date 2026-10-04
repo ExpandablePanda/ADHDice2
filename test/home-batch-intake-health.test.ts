@@ -58,7 +58,8 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(homeSource, /draft\.kind === "water" \|\| draft\.kind === "weight" \|\| draft\.kind === "meal"/);
   assert.match(homeSource, /focusCategories,/);
   assert.match(appSource, /healthFoods=\{healthFavorites\}/);
-  assert.match(reviewSource, /Search custom foods…/);
+  assert.match(reviewSource, /Add another food/);
+  assert.match(reviewSource, /Search foods to add…/);
   assert.match(reviewSource, /onAddMealFood/);
   assert.match(reviewSource, /\+ Add manual food/);
   assert.doesNotMatch(reviewSource, /\+ Another/);
@@ -68,6 +69,12 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /Consumed quantity/);
   assert.match(reviewSource, /Choose a Focus completion time/);
   assert.match(reviewSource, /Food proposals/);
+  assert.match(reviewSource, /const \[proposalSearch, setProposalSearch\]/);
+  assert.match(reviewSource, /proposalSearch\[proposal\.id\] \?\? proposal\.proposedFoodName/);
+  assert.match(reviewSource, /What I meant/);
+  assert.match(reviewSource, /Correct food proposal/);
+  assert.match(reviewSource, /proposedQuantity/);
+  assert.match(reviewSource, /proposedUnit/);
   assert.match(reviewSource, /Use manual food/);
   assert.match(reviewSource, /onResolveMealProposal/);
   assert.match(reviewSource, /const executablePlan = buildBatchIntakeExecutionPlan/);
@@ -93,7 +100,20 @@ test("cumulative Applied results back every supported row lock", () => {
   assert.match(reviewSource, /Meal slot<select[^>]+disabled=\{sharedDisabled\}/);
   assert.match(reviewSource, /Date<input[^>]+disabled=\{sharedDisabled\}/);
   assert.match(reviewSource, /Time<input[^>]+disabled=\{sharedDisabled\}/);
+  assert.match(reviewSource, /Unit<select[^>]+disabled=\{rowDisabled\}/);
+  assert.doesNotMatch(reviewSource, /Unit<select[^>]+disabled=\{rowDisabled \|\| !isManual\}/);
+  assert.match(reviewSource, /unitSource: event\.target\.value \? "explicit" : "missing"/);
   assert.match(homeSource, /appliedFoodChild/);
+});
+
+test("Meal review keeps add and correct actions separate and preserves source evidence", () => {
+  assert.match(reviewSource, /onChange=\{\(event\) => updateProposalSearch\(proposal, event\.target\.value\)\}/);
+  assert.match(reviewSource, /onClick=\{\(\) => onResolveMealProposal\(proposal, food\)\}/);
+  assert.match(reviewSource, /onClick=\{\(\) => onAddMealFood\(occurrence, food\)\}/);
+  assert.match(reviewSource, /Source: \{proposal\.rawToken\}/);
+  assert.match(reviewSource, /const proposalDisabled = disabled \|\| proposalResult\?\.status === "applied"/);
+  assert.match(reviewSource, /disabled=\{sharedDisabled\} onChange=\{\(event\) => setFoodSearch/);
+  assert.doesNotMatch(reviewSource, /Search custom foods…/);
 });
 
 test("Focus review routes title/category identity edits through shared helpers and group propagation", () => {

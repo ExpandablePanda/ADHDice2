@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.61`.
+- Current working app version: `7.16.62`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.62 Universal Batch Intake parse correction
+
+Batch Intake preserves parsed source evidence while allowing parsed
+interpretations to be corrected in-place before Apply. Meal food proposals now
+edit Food, Quantity, and Unit within their own proposal card; custom-food
+selection and manual fallback replace that same proposal child without adding a
+second food. Occurrence-level food search remains explicitly an Add another
+food action. Parsed Water and Weight units are editable within their canonical
+choice sets, while Task and Focus review behavior, source evidence, cumulative
+Applied locking, and existing domain persistence authorities remain unchanged.
+No SQL, Edge deployment, schema change, Home V8 change, or production data
+mutation was performed.
 
 ## 2026-10-03 7.16.61 Focus review group identity synchronization
 
