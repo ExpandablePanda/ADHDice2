@@ -1119,6 +1119,22 @@ test("Home derived tabs use canonical membership, retain task controls, and avoi
   assert.doesNotMatch(derivedViewSource, /SortableList|updateTaskIds|updateUrgentTaskIds|updateRoutineTaskIds|onSetRoutineMembership|Move to Top|Move to Bottom|Remove from Home To-do|Remove from Attention|Remove from Missed/);
 });
 
+test("Home derived task rows use canonical Task-ID keys and preserve Routine row keys", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const renderStart = source.indexOf("function renderHomeTask");
+  const renderEnd = source.indexOf("\n  useEffect", renderStart);
+  const renderSource = source.slice(renderStart, renderEnd);
+  const derivedViewStart = source.lastIndexOf(') : activeHomeTab === "attention" ?');
+  const derivedViewEnd = source.indexOf(') : (', derivedViewStart);
+  const derivedViewSource = source.slice(derivedViewStart, derivedViewEnd);
+
+  assert.match(renderSource, /key=\{rowKey \?\? task\.id\}/);
+  assert.doesNotMatch(renderSource, /key=\{index\}/);
+  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
+  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
+  assert.match(source, /renderHomeTask\(\s*task,\s*reconciledRoutineTaskIds\.indexOf\(group\.anchorId\),\s*isAnchor \? handle : null,\s*"routine",\s*`\$\{group\.anchorId\}-\$\{task\.id\}`,/);
+});
+
 test("Home Urgent search uses guarded Priority 5 promotion before the shared exclusive move", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
   const urgentSearchSource = readFileSync(new URL("../src/lib/home-urgent-search.ts", import.meta.url), "utf8");

@@ -1261,7 +1261,7 @@ export function HomePage({
     const isAtRoutineBottom = isRoutine && routineSectionIndex === routineSectionLength - 1;
     return (
       <AdhdCard
-        key={rowKey}
+        key={rowKey ?? task.id}
         className={`${isRoutineChild
           ? "grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-0"
           : isDerived
