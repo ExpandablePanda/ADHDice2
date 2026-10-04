@@ -13,6 +13,7 @@ import {
   createHomeTodoTask,
   formatHomeRoutineDueLabel,
   formatHomeTodoDateLabel,
+  getHomeTasksByCanonicalMembership,
   getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
@@ -1049,6 +1050,31 @@ test("Home todo search sorts full hierarchy paths together", () => {
   assert.deepEqual(results.map((entry) => entry.task.id), ["a", "a-child", "b", "b-child"]);
 });
 
+test("Home Attention and Missed projections use canonical memberships without mutating Home state", () => {
+  const attention = task("attention", { status: "missed" });
+  const missed = task("missed");
+  const statusOnlyMissed = task("status-only-missed", { status: "missed" });
+  const completeAttention = task("complete-attention", { status: "complete" });
+  const tasks = [attention, missed, statusOnlyMissed, completeAttention];
+  const memberships = {
+    attention: [{ id: "attention" }],
+    missed: [{ id: "missed" }],
+    "status-only-missed": [],
+    "complete-attention": [{ id: "attention" }],
+  };
+  const state = normalizeHomeTodoState({ taskIds: ["missed"], urgentTaskIds: ["attention"], routineTaskIds: ["routine"] });
+
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, memberships, "attention").map((entry) => entry.id), ["attention"]);
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, memberships, "missed").map((entry) => entry.id), ["missed"]);
+  assert.deepEqual(state.taskIds, ["missed"]);
+  assert.deepEqual(state.urgentTaskIds, ["attention"]);
+  assert.deepEqual(state.routineTaskIds, ["routine"]);
+
+  const refreshedMemberships = { ...memberships, missed: [{ id: "missed" }, { id: "attention" }] };
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, refreshedMemberships, "attention").map((entry) => entry.id), ["attention", "missed"]);
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, { ...refreshedMemberships, missed: [] }, "missed").map((entry) => entry.id), []);
+});
+
 test("Home To-do search includes existing members and guards duplicate adds", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
   assert.match(source, /const todoTaskIdSet = new Set\(reconciledTaskIds\)/);
@@ -1062,6 +1088,35 @@ test("Home To-do search includes existing members and guards duplicate adds", ()
   assert.match(source, /sortHomeTodoSearchResults\(tasks/);
   assert.match(source, /membershipLabel.*"In Urgent"/);
   assert.match(source, /In To-do/);
+});
+
+test("Home derived tabs use canonical membership, retain task controls, and avoid Home-local actions", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const homeStateSource = readFileSync(new URL("../src/lib/home-todo-state.ts", import.meta.url), "utf8");
+  const renderSource = source.slice(source.indexOf("function renderHomeTask"), source.indexOf("\n  useEffect", source.indexOf("function renderHomeTask")));
+  const derivedViewStart = source.lastIndexOf(') : activeHomeTab === "attention" ?');
+  const derivedViewEnd = source.indexOf(') : (', derivedViewStart);
+  const derivedViewSource = source.slice(derivedViewStart, derivedViewEnd);
+
+  assert.match(source, /export type HomePanelTab = "urgent" \| "todo" \| "attention" \| "missed" \| "routine" \| "scratchpad"/);
+  assert.match(source, /getHomeTasksByCanonicalMembership\(tasks, listMembershipsByTaskId, "attention", taskById\)/);
+  assert.match(source, /getHomeTasksByCanonicalMembership\(tasks, listMembershipsByTaskId, "missed", taskById\)/);
+  assert.match(homeStateSource, /export function getHomeTasksByCanonicalMembership[\s\S]*isHomeTodoTaskEligible\(task, tasks, taskById\)/);
+  assert.match(source, /activeHomeTab === "attention" \|\| activeHomeTab === "missed" \? null/);
+  assert.match(source, /if \(creationTab === "attention" \|\| creationTab === "missed"\) return null/);
+  assert.match(source, /if \(activeHomeTab === "attention" \|\| activeHomeTab === "missed"\) return;/);
+  assert.match(source, /activeHomeTab === "todo" \? "To-do list"[\s\S]*activeHomeTab === "attention" \? "Attention"[\s\S]*activeHomeTab === "missed" \? "Missed"[\s\S]*activeHomeTab === "routine" \? "Routine"[\s\S]*"Scratchpad"/);
+  assert.match(source, /<AdhdChip[\s\S]*>\s*Urgent\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*To-do\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Attention\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Missed\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Routine\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Scratchpad\s*<\/AdhdChip>/);
+  assert.match(source, /No tasks need Attention right now\./);
+  assert.match(source, /No missed tasks right now\./);
+  assert.match(source, /const isDerived = mode === "attention" \|\| mode === "missed"/);
+  assert.match(renderSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(renderSource, /!isRoutineChild && !isDerived \? \(/);
+  assert.match(renderSource, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
+  assert.match(renderSource, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
+  assert.match(renderSource, /attentionReason=\{taskAttentionReasonByTaskId\[task\.id\]\}/);
+  assert.doesNotMatch(homeStateSource, /taskAttentionReasonByTaskId/);
+  assert.doesNotMatch(derivedViewSource, /SortableList|updateTaskIds|updateUrgentTaskIds|updateRoutineTaskIds|onSetRoutineMembership|Move to Top|Move to Bottom|Remove from Home To-do|Remove from Attention|Remove from Missed/);
 });
 
 test("Home Urgent search uses guarded Priority 5 promotion before the shared exclusive move", () => {
@@ -1240,7 +1295,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)\)/);
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)\)/);
   assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
-  assert.match(source, /!isRoutineChild \? \(/);
+  assert.match(source, /!isRoutineChild && !isDerived \? \(/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
   assert.match(source, /const durableTaskIndex = isUrgent \? state\.urgentTaskIds\.indexOf\(task\.id\) : state\.taskIds\.indexOf\(task\.id\)/);
@@ -1267,7 +1322,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /<TaskStatusCircleRail/);
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
   assert.match(source, /useState<HomePanelTab>\("urgent"\)/);
-  assert.match(source, /<AdhdChip[\s\S]*>\s*Urgent\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*To-do\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Routine\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Scratchpad\s*<\/AdhdChip>/);
+  assert.match(source, /<AdhdChip[\s\S]*>\s*Urgent\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*To-do\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Attention\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Missed\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Routine\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Scratchpad\s*<\/AdhdChip>/);
   assert.match(source, /getHomeRoutineTaskIds/);
   assert.match(source, /manualMembershipsByTaskId/);
   assert.match(source, /routineTaskIds/);
@@ -1396,7 +1451,7 @@ test("Home Routine child drag reuses TaskApp sibling reorder without changing Ho
   assert.match(taskAppSource, /<TaskHomePage[\s\S]*onReorderChildTask=\{\(taskId, instruction\) => \{ void reorderChildTask\(taskId, instruction\); \}\}/);
   assert.match(homeSource, /items=\{sectionRoutineGroups\}/);
   assert.match(homeSource, /mergeHomeTodoVisibleTaskIds\([\s\S]*section\.groupIds[\s\S]*nextGroups\.map/);
-  assert.match(homeSource, /!isRoutineChild \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(homeSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
 });
 
 test("Home row gear menus and long-press fast actions preserve Home behavior", () => {
@@ -1495,7 +1550,7 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   assert.match(source, /if \(!rowActionMenuRef\.current\?\.contains\(event\.target as Node\)\) setRowActionMenu\(null\)/);
   assert.match(source, /setActiveHomeTab\(nextTab\);[\s\S]*setRowActionMenu\(null\);[\s\S]*setIsFastActionMode\(false\)/);
   assert.doesNotMatch(source, /moveDayMenuTaskId|moveDayMenuRef/);
-  assert.match(source, /!isRoutineChild \? \(/);
+  assert.match(source, /!isRoutineChild && !isDerived \? \(/);
 });
 
 test("Home To-do consumes canonical streak and Attention projections without changing Routine metadata", () => {

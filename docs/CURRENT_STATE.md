@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.74`.
+- Current working app version: `7.16.75`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.75 Home Attention and Missed task views
+
+Home now exposes canonical Attention and Missed task views. They mirror existing
+Task list membership and do not create Home-local membership or ordering state.
+Derived rows retain the shared Task editor, status control, hierarchy context,
+streak signals, and Attention reason presentation, while Home search, creation,
+settings, reorder, and membership actions remain limited to their existing
+Home-owned tabs.
 
 ## 2026-10-04 7.16.74 Exit All Search on Rail Navigation
 

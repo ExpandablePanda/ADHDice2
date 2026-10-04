@@ -658,6 +658,16 @@ export function isHomeTodoTaskEligible(
   return true;
 }
 
+export function getHomeTasksByCanonicalMembership(
+  tasks: readonly Task[],
+  listMembershipsByTaskId: Readonly<Record<string, readonly Pick<TaskListMembership, "id">[]>>,
+  membershipId: string,
+  taskById = new Map(tasks.map((task) => [task.id, task])),
+) {
+  return tasks.filter((task) => isHomeTodoTaskEligible(task, tasks, taskById)
+    && (listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === membershipId));
+}
+
 export function getHomeRoutineTaskIds(
   tasks: readonly Task[],
   listMembershipsByTaskId: Readonly<Record<string, readonly Pick<TaskListMembership, "id">[]>>,

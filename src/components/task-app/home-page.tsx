@@ -56,6 +56,7 @@ import {
   formatHomeRoutineDueLabel,
   getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
+  getHomeTasksByCanonicalMembership,
   getHomeTodoSearchText,
   reconcileHomeUrgentTaskIds,
   shouldPersistHomeRoutineReconciliation,
@@ -83,7 +84,7 @@ const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
 const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 const HOME_GEAR_LONG_PRESS_MS = 475;
 const HOME_GEAR_LONG_PRESS_MOVE_PX = 8;
-export type HomePanelTab = "urgent" | "todo" | "routine" | "scratchpad";
+export type HomePanelTab = "urgent" | "todo" | "attention" | "missed" | "routine" | "scratchpad";
 type HomeRowActionMenuView = "actions" | "move-day" | "move-routine-section";
 
 type HomeRowActionMenuState = {
@@ -546,9 +547,17 @@ export function HomePage({
     [routineGroups],
   );
   const routineTaskIdSet = useMemo(() => new Set(routineTasks.map((task) => task.id)), [routineTasks]);
+  const attentionTasks = useMemo(
+    () => getHomeTasksByCanonicalMembership(tasks, listMembershipsByTaskId, "attention", taskById),
+    [listMembershipsByTaskId, taskById, tasks],
+  );
+  const missedTasks = useMemo(
+    () => getHomeTasksByCanonicalMembership(tasks, listMembershipsByTaskId, "missed", taskById),
+    [listMembershipsByTaskId, taskById, tasks],
+  );
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return [];
+    if (!needle || activeHomeTab === "attention" || activeHomeTab === "missed") return [];
     const isRoutineSearch = activeHomeTab === "routine";
     const todoTaskIdSet = new Set(reconciledTaskIds);
     const urgentTaskIdSet = new Set(reconciledUrgentTaskIds);
@@ -706,6 +715,7 @@ export function HomePage({
 
   async function handleCreateTask(draft: TaskCreationDraft) {
     const creationTab = activeHomeTab;
+    if (creationTab === "attention" || creationTab === "missed") return null;
     const conversionItemId = convertingScratchpadItemId;
     const metadata = creationTab === "urgent"
       ? { ...draft.metadata, priority_level: 5 as const }
@@ -737,6 +747,7 @@ export function HomePage({
   }
 
   async function addSearchResult(taskId: string) {
+    if (activeHomeTab === "attention" || activeHomeTab === "missed") return;
     if (activeHomeTab === "urgent") {
       const promoted = await promoteHomeSearchResultToUrgent({
         moveTodoTaskToUrgent,
@@ -1222,6 +1233,7 @@ export function HomePage({
   ) {
     const isRoutine = mode === "routine";
     const isUrgent = mode === "urgent";
+    const isDerived = mode === "attention" || mode === "missed";
     const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
     const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
@@ -1252,13 +1264,15 @@ export function HomePage({
         key={rowKey}
         className={`${isRoutineChild
           ? "grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-0"
-          : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}${isRoutineChild && routineChildDragState?.taskId === task.id ? " opacity-60" : ""}${isRoutineChild ? ` ${getRoutineChildDropIndicatorClassName(task.id)}` : ""}`}
+          : isDerived
+            ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0"
+            : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}${isRoutineChild && routineChildDragState?.taskId === task.id ? " opacity-60" : ""}${isRoutineChild ? ` ${getRoutineChildDropIndicatorClassName(task.id)}` : ""}`}
         padding="sm"
         onDragOver={isRoutineChild ? (event) => updateRoutineChildDropTarget(event, task, routineDepth) : undefined}
         onDrop={isRoutineChild ? (event) => dropRoutineChildOnTask(event, task, routineDepth) : undefined}
         style={isRoutineChild ? { marginLeft: `${Math.min(Math.max(routineDepth, 1), 3) * 0.75}rem` } : undefined}
       >
-        {!isRoutineChild ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
+        {!isRoutineChild && !isDerived ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
         {isRoutineChild ? (
           <button
             aria-label={`Drag to reorder ${routineDepth > 1 ? "substep" : "step"} ${task.title || "Untitled"}`}
@@ -1276,7 +1290,7 @@ export function HomePage({
             <GripVertical aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         ) : null}
-        {!isRoutineChild ? (
+        {!isRoutineChild && !isDerived ? (
           <span className="ml-1 shrink-0 text-sm font-medium leading-5 text-[#26324f] dark:text-white">
             {index + 1}
           </span>
@@ -1347,7 +1361,7 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        {!isRoutineChild ? (
+        {!isRoutineChild && !isDerived ? (
           <div className="relative flex shrink-0 items-center gap-1" ref={rowActionMenuOpen ? rowActionMenuRef : undefined}>
             {fastActionOpen ? (
               <div className="flex shrink-0 items-center gap-0.5" onClickCapture={handleFastActionClickCapture}>
@@ -1754,7 +1768,7 @@ export function HomePage({
                   data-style-component="HomePage"
                   data-style-role="ui.section.title"
                 >
-                  {activeHomeTab === "urgent" ? "Urgent" : activeHomeTab === "todo" ? "To-do list" : activeHomeTab === "routine" ? "Routine" : "Scratchpad"}
+                  {activeHomeTab === "urgent" ? "Urgent" : activeHomeTab === "todo" ? "To-do list" : activeHomeTab === "attention" ? "Attention" : activeHomeTab === "missed" ? "Missed" : activeHomeTab === "routine" ? "Routine" : "Scratchpad"}
                 </h1>
                 <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
                   <AdhdChip
@@ -1772,6 +1786,22 @@ export function HomePage({
                     selected={activeHomeTab === "todo"}
                   >
                     To-do
+                  </AdhdChip>
+                  <AdhdChip
+                    aria-selected={activeHomeTab === "attention"}
+                    onClick={() => selectHomeTab("attention")}
+                    role="tab"
+                    selected={activeHomeTab === "attention"}
+                  >
+                    Attention
+                  </AdhdChip>
+                  <AdhdChip
+                    aria-selected={activeHomeTab === "missed"}
+                    onClick={() => selectHomeTab("missed")}
+                    role="tab"
+                    selected={activeHomeTab === "missed"}
+                  >
+                    Missed
                   </AdhdChip>
                   <AdhdChip
                     aria-selected={activeHomeTab === "routine"}
@@ -1841,7 +1871,7 @@ export function HomePage({
             </div>
         </div>
         <PageShellBody>
-        {activeHomeTab === "scratchpad" ? (
+        {activeHomeTab === "attention" || activeHomeTab === "missed" ? null : activeHomeTab === "scratchpad" ? (
           <div className="relative mt-2" ref={searchRef}>
             <label className="grid gap-1.5">
                 <span className="sr-only">Scratchpad note</span>
@@ -2112,6 +2142,28 @@ export function HomePage({
               {!routineGroups.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/[0.15] dark:bg-white/[0.03] dark:text-white/55">
                   No Routine tasks yet.
+                </p>
+              ) : null}
+            </>
+          ) : activeHomeTab === "attention" ? (
+            <>
+              <div className={HOME_TODO_LIST_CLASS}>
+                {attentionTasks.map((task, index) => renderHomeTask(task, index, null, "attention"))}
+              </div>
+              {!attentionTasks.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  No tasks need Attention right now.
+                </p>
+              ) : null}
+            </>
+          ) : activeHomeTab === "missed" ? (
+            <>
+              <div className={HOME_TODO_LIST_CLASS}>
+                {missedTasks.map((task, index) => renderHomeTask(task, index, null, "missed"))}
+              </div>
+              {!missedTasks.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  No missed tasks right now.
                 </p>
               ) : null}
             </>
