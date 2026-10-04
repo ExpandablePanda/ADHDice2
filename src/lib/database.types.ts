@@ -3610,7 +3610,10 @@ export type Database = {
         }>;
       };
       adhdice_reset_pending_reward_dice: {
-        Args: Record<string, never>;
+        Args: {
+          p_expected_pending_dice: number;
+          p_expected_revision: number;
+        };
         Returns: Array<{
           pending_dice: number;
           revision: number;

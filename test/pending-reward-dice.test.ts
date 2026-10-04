@@ -145,8 +145,9 @@ test("pending reward payloads load lazily and repeated opens join one request", 
   assert.match(queueLoader, /queueLoadInFlightRef/);
   assert.match(queueLoader, /return inFlight\.promise/);
   const opener = taskApp.slice(taskApp.indexOf("const openPendingRewardBank"), taskApp.indexOf("const hudNotificationBaseItems"));
-  assert.match(opener, /await loadPendingRewardQueue\(\)/);
-  assert.match(opener, /setActiveRewardBankSession\(\[\.\.\.pendingRewardQueue\]\)/);
+  assert.match(opener, /await loadPendingRewardBankSession\(\)/);
+  assert.match(opener, /setActiveRewardBankSession\(bankSession\)/);
+  assert.match(controller, /pendingDice: snapshot\.pendingDice[\s\S]*pendingRewards: \[\.\.\.queue\][\s\S]*revision: snapshot\.revision/);
 });
 
 test("pending reward realtime invalidation and claim settlement do not eagerly reload payloads", () => {

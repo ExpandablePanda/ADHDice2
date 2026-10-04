@@ -1,5 +1,7 @@
--- ADHDice 7.16.79: atomically discard the authenticated user's unclaimed pending reward bank.
--- Source-only forward patch. Do not apply without explicit live SQL authorization.
+-- SUPERSEDED for live deployment by
+-- supabase/patch_pending_reward_dice_reset_7_16_80.sql.
+-- This historical source-only patch is retained for audit context only. Do not
+-- apply it; its zero-argument RPC is not safe against concurrent rewards.
 
 begin;
 

@@ -7,10 +7,10 @@ import type { DicePhase } from "../dice-3d";
 import { ModalShell } from "../modal-shell";
 import {
   chunkDiceRolls,
-  getPendingRewardDiceCount,
   type PendingTaskReward,
   type TaskRewardBankSession,
 } from "@/lib/task-rewards";
+import type { PendingRewardBankSnapshot } from "@/lib/pending-reward-dice";
 
 const RewardDice3DCanvas = lazy(() => import("../dice-3d").then((module) => ({ default: module.RewardDice3DCanvas })));
 
@@ -18,7 +18,8 @@ type TaskRewardModalProps = {
   isDark: boolean;
   onClaim: () => Promise<TaskRewardBankSession | null>;
   onClose: () => void;
-  onReset: () => Promise<boolean>;
+  onReset: (snapshot: PendingRewardBankSnapshot) => Promise<boolean>;
+  pendingBankSnapshot: PendingRewardBankSnapshot;
   pendingRewards: PendingTaskReward[];
   variant?: "global" | "table";
 };
@@ -38,6 +39,7 @@ export function TaskRewardModal({
   onClaim,
   onClose,
   onReset,
+  pendingBankSnapshot,
   pendingRewards,
 }: TaskRewardModalProps) {
   const [stage, setStage] = useState<RewardStage>("intro");
@@ -46,7 +48,7 @@ export function TaskRewardModal({
   const [isResetting, setIsResetting] = useState(false);
   const [isAutoAdvancePaused, setIsAutoAdvancePaused] = useState(false);
   const [session, setSession] = useState<TaskRewardBankSession | null>(null);
-  const pendingDiceCount = getPendingRewardDiceCount(pendingRewards);
+  const pendingDiceCount = pendingBankSnapshot.pendingDice;
   const previewBatches = chunkDiceRolls(Array.from({ length: pendingDiceCount }, () => 1), 6);
 
   const baseRollBatches = session?.baseRollBatches ?? previewBatches;
@@ -72,7 +74,7 @@ export function TaskRewardModal({
     setIsClaiming(false);
     setIsResetting(false);
     setIsAutoAdvancePaused(false);
-  }, [pendingRewards]);
+  }, [pendingBankSnapshot, pendingRewards]);
 
   useEffect(() => {
     if (stage !== "batch_wait") {
@@ -139,7 +141,7 @@ export function TaskRewardModal({
 
     setIsResetting(true);
     try {
-      const didReset = await onReset();
+      const didReset = await onReset(pendingBankSnapshot);
       if (didReset) onClose();
     } finally {
       setIsResetting(false);

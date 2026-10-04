@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.79`.
+- Current working app version: `7.16.80`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.80 Fence Pending Dice Reset Against Concurrent Rewards
+
+Pending Dice Bank reset is now concurrency-fenced against the exact account
+revision and pending-dice count captured when the destructive confirmation
+opened. The guarded RPC locks the account before checking both values, verifies
+the unclaimed inventory before and after deletion, and fails closed on stale or
+inconsistent state. A stale reset refreshes the account and pending queue,
+updates the open bank session, and requires a new confirmation. The
+7.16.79 zero-argument reset patch is superseded by
+`supabase/patch_pending_reward_dice_reset_7_16_80.sql`; SQL remains unapplied
+pending ChatGPT review and explicit deployment approval.
 
 ## 2026-10-04 7.16.79 Reset Pending Dice Bank
 
@@ -24,10 +36,9 @@ roll/claim, Task, History, or Achievement state. The controller applies that
 snapshot, clears the loaded queue, and closes the modal only after success;
 failed resets retain the visible bank until authoritative reconciliation.
 
-The forward migration is
-`supabase/patch_pending_reward_dice_reset_7_16_79.sql`; it has not been
-executed or applied to live Supabase. Browser/live reset QA remains pending
-SQL review and explicit deployment approval.
+The forward migration was superseded before deployment by the 7.16.80 guarded
+correction. Browser/live reset QA remains pending SQL review and explicit
+deployment approval.
 
 ## 2026-10-04 7.16.78 Home Task-row structural breadcrumbs
 

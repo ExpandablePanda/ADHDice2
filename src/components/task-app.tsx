@@ -139,6 +139,7 @@ import { useScratchNotes } from "@/hooks/useScratchNotes";
 import { useTaskActions } from "@/hooks/useTaskActions";
 import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
+import type { PendingRewardBankOpenSession, PendingRewardBankSnapshot } from "@/lib/pending-reward-dice";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
 import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
@@ -1171,7 +1172,7 @@ export function TaskApp() {
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
   const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
-  const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
+  const [activeRewardBankSession, setActiveRewardBankSession] = useState<PendingRewardBankOpenSession | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [lowStim, setLowStim] = useState(false);
@@ -4763,7 +4764,7 @@ export function TaskApp() {
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
   const {
     claimPendingRewardBank,
-    loadPendingRewardQueue,
+    loadPendingRewardBankSession,
     pendingRewardDiceCount,
     queueTaskRewards,
     resetPendingRewardBank,
@@ -4775,13 +4776,24 @@ export function TaskApp() {
     setEconomy,
   });
   const openPendingRewardBank = useCallback(async () => {
-    const pendingRewardQueue = await loadPendingRewardQueue();
-    if (!pendingRewardQueue || pendingRewardQueue.length === 0) {
+    const bankSession = await loadPendingRewardBankSession();
+    if (!bankSession || bankSession.pendingRewards.length === 0 || bankSession.pendingDice <= 0) {
       return;
     }
 
-    setActiveRewardBankSession([...pendingRewardQueue]);
-  }, [loadPendingRewardQueue]);
+    setActiveRewardBankSession(bankSession);
+  }, [loadPendingRewardBankSession]);
+  const handleResetPendingRewardBank = useCallback(async (snapshot: PendingRewardBankSnapshot) => {
+    const result = await resetPendingRewardBank(snapshot);
+    if (result.conflict) {
+      if (result.refreshedSession && result.refreshedSession.pendingRewards.length > 0 && result.refreshedSession.pendingDice > 0) {
+        setActiveRewardBankSession(result.refreshedSession);
+      } else {
+        setActiveRewardBankSession(null);
+      }
+    }
+    return result.didReset;
+  }, [resetPendingRewardBank]);
   const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
     if (pendingRewardDiceCount > 0) {
@@ -8166,8 +8178,9 @@ export function TaskApp() {
           isDark={theme === "dark"}
           onClaim={claimPendingRewardBank}
           onClose={() => setActiveRewardBankSession(null)}
-          onReset={resetPendingRewardBank}
-          pendingRewards={activeRewardBankSession}
+          onReset={handleResetPendingRewardBank}
+          pendingBankSnapshot={activeRewardBankSession}
+          pendingRewards={activeRewardBankSession.pendingRewards}
         />
       ) : null}
       <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
