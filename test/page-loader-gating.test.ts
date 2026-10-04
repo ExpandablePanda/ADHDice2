@@ -36,7 +36,8 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   assert.doesNotMatch(loadingScreen, /<h1[\s>]/);
   assert.match(loadingScreen, /strokeDasharray="52 237\.03"/);
   assert.match(loadingScreen, /strokeLinecap="round"/);
-  assert.match(loadingScreen, /strokeWidth="7"/);
+  assert.equal((loadingScreen.match(/strokeWidth="4"/g) ?? []).length, 2);
+  assert.doesNotMatch(loadingScreen, /strokeWidth="7"/);
   assert.match(loadingScreen, /<g transform="rotate\(-90 50 50\)">/);
   assert.match(loadingScreen, /className="workspace-loading-ring-motion"/);
   assert.match(loadingScreen, /<animateTransform[\s\S]*?attributeName="transform"/);

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.67`.
+- Current working app version: `7.16.68`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.68 Thin full-screen loading ring
+
+The full-screen ADHDice workspace loader keeps its existing radius, size, logo,
+animation, colors, positioning, full-screen layout, and dark-mode behavior while
+reducing both the pale background circle and animated purple arc from
+`strokeWidth="7"` to `strokeWidth="4"`. No SQL, Edge deployment, schema change,
+or production data mutation was performed.
 
 ## 2026-10-04 7.16.67 Keep Edit Task Calendar on the current page
 
