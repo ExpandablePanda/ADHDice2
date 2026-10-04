@@ -3,7 +3,7 @@ import test from "node:test";
 
 import { addMealFromLibraryFood, addMealFromParsedFood, calculateBatchIntakeMealNutrition, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, updateBatchIntakeFocusCategory, updateBatchIntakeFocusTitle } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches, getBatchIntakeTaskCandidates, getBatchIntakeTaskMatchState } from "../src/lib/home-batch-intake-matching.ts";
-import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
+import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, isBatchIntakeMealFoodDraftReady, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
 import { getHealthFoodMeasurementOptions } from "../src/lib/health-nutrition.ts";
 import type { HealthFoodLibraryItem, Task } from "../src/lib/database.types.ts";
@@ -498,6 +498,19 @@ test("incompatible proposal units fall back to a valid saved unit and remain rev
   assert.equal(resolved.consumedUnit, "scoops");
   assert.equal(options.some((option) => option.value === "cups"), false);
   assert.deepEqual(resolved.issues, ["Choose a consumed unit for this food"]);
+});
+
+test("explicitly confirming the saved fallback unit makes the Meal row ready and recalculates nutrition", () => {
+  const parsed = parseBatchIntake("10/3\nb: plant protein 2 cups", { referenceDate: "2026-10-03" });
+  const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+  const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+  assert.ok(occurrence && proposal);
+
+  const resolved = resolveBatchIntakeMealFoodProposal(proposal, occurrence, plantProteinFood, { writeId: "plant-confirmed-write" });
+  assert.equal(isBatchIntakeMealFoodDraftReady(resolved, occurrence), false);
+  const confirmed = { ...resolved, consumedUnit: "scoops", issues: resolved.issues.filter((issue) => issue !== "Choose a consumed unit for this food") };
+  assert.equal(calculateBatchIntakeMealNutrition(confirmed)?.consumed.unit, "scoops");
+  assert.equal(isBatchIntakeMealFoodDraftReady(confirmed, occurrence), true);
 });
 
 test("Meal proposal manual fallback keeps corrected interpretation and raw source in one replacement child", () => {

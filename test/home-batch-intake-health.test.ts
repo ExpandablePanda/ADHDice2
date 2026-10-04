@@ -115,6 +115,16 @@ test("resolved library Meals review consumed amount only while manual foods reta
   assert.match(reviewSource, /updateConsumption\(food, food\.consumedQuantity, event\.target\.value, true\)/);
 });
 
+test("library Meal unit review requires explicit canonical-unit confirmation before nutrition is shown", () => {
+  assert.match(reviewSource, /const unitNeedsReview = food\.foodMode === "library" && food\.issues\.includes\("Choose a consumed unit for this food"\)/);
+  assert.match(reviewSource, /const consumedUnitSelectValue = unitNeedsReview \? "" : food\.consumedUnit/);
+  assert.match(reviewSource, /value=\{consumedUnitSelectValue\}/);
+  assert.match(reviewSource, /\{unitNeedsReview \? <option value="" disabled>Choose…<\/option> : null\}/);
+  assert.match(reviewSource, /\{!unitNeedsReview && calculation \?/);
+  assert.match(reviewSource, /const optionValues = food\.foodMode === "manual" && !options\.some/);
+  assert.match(reviewSource, /getHealthFoodMeasurementOptions\(\{ servingUnit: food\.servingUnit, servingMeasureUnit: food\.servingMeasureUnit \}\)/);
+});
+
 test("Meal review keeps add and correct actions separate and preserves source evidence", () => {
   assert.match(reviewSource, /onChange=\{\(event\) => updateProposalSearch\(proposal, event\.target\.value\)\}/);
   assert.match(reviewSource, /onClick=\{\(\) => onResolveMealProposal\(proposal, food\)\}/);

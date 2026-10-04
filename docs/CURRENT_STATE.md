@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-03
+Last reviewed: 2026-10-04
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.64`.
+- Current working app version: `7.16.65`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.65 Explicit consumed unit confirmation
+
+Batch Intake resolved library foods that have an incompatible parsed unit now
+show a blank `Choose…` consumed-unit selection while retaining only the
+selected Custom Food's canonical measurement options. The existing consumed
+selection update clears the review issue and revalidates quantity/compatibility;
+calculated nutrition stays hidden until confirmation. Valid compatible units,
+missing-unit defaults, manual foods, source evidence, and Meal execution remain
+unchanged. No parser, schema, SQL, Edge deployment, Custom Food model, or
+production data changed.
 
 ## 2026-10-04 7.16.64 Custom Food proposal unit resolution
 
