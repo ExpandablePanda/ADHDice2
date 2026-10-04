@@ -101,9 +101,15 @@ test("cumulative Applied results back every supported row lock", () => {
   assert.match(reviewSource, /Date<input[^>]+disabled=\{sharedDisabled\}/);
   assert.match(reviewSource, /Time<input[^>]+disabled=\{sharedDisabled\}/);
   assert.match(reviewSource, /Unit<select[^>]+disabled=\{rowDisabled\}/);
-  assert.doesNotMatch(reviewSource, /Unit<select[^>]+disabled=\{rowDisabled \|\| !isManual\}/);
   assert.match(reviewSource, /unitSource: event\.target\.value \? "explicit" : "missing"/);
   assert.match(homeSource, /appliedFoodChild/);
+});
+
+test("resolved library Meals review consumed amount only while manual foods retain serving definitions", () => {
+  assert.match(reviewSource, /food\.foodMode === "manual" \? <><label[\s\S]*Serving quantity[\s\S]*Serving unit/);
+  assert.match(reviewSource, /Consumed quantity/);
+  assert.match(reviewSource, /Consumed unit/);
+  assert.doesNotMatch(reviewSource, /servingLabel|Saved serving/);
 });
 
 test("Meal review keeps add and correct actions separate and preserves source evidence", () => {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.62`.
+- Current working app version: `7.16.63`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.63 Simplified resolved Meal review
+
+Batch Intake review now shows resolved library foods with their saved Custom
+Food identity and source evidence, consumed quantity/unit, and calculated
+nutrition only. Saved serving-definition controls and summary are hidden for
+library foods; manual foods retain their editable serving-definition fields.
+Applied locking, proposal correction, Meal execution, Custom Food data, and
+Health Food editor behavior remain unchanged. No SQL, Edge deployment, schema
+change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.62 Universal Batch Intake parse correction
 
