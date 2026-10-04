@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.76`.
+- Current working app version: `7.16.77`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,12 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.77 Home Attention and Missed Folder context
+
+Home Attention/Missed rows now show canonical Folder ancestry before existing
+parent Task ancestry, giving derived Tasks their full structural context
+without changing membership or hierarchy.
 
 ## 2026-10-04 7.16.76 Home Attention and Missed row identity
 

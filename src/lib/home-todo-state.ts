@@ -4,7 +4,8 @@ import type { TaskListMembership } from "@/lib/task-lists";
 import type { TaskCreationMetadata } from "@/lib/task-creation";
 import { formatDueTimeLabel } from "@/lib/task-cockpit";
 import { shiftDateKey } from "@/lib/date-key";
-import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { buildTaskHierarchyAdapter, type TaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { getTaskContentFolderPath, type TaskContentFolderRow } from "@/lib/task-content-folders";
 
 export type HomeTodoStateV1 = {
   clientUpdatedAt: string;
@@ -792,6 +793,23 @@ export function buildHomeTodoHierarchy(
     parentId = parent.parent_task_id;
   }
   return labels;
+}
+
+export function buildHomeDerivedTaskHierarchy(
+  task: Task,
+  tasks: readonly Task[],
+  taskContentFolders: readonly TaskContentFolderRow[],
+  taskById = new Map(tasks.map((item) => [item.id, item])),
+  taskHierarchy: TaskHierarchyAdapter<Task> = buildTaskHierarchyAdapter(tasks),
+) {
+  const parentHierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
+  const rootTask = task.parent_task_id === null
+    ? task
+    : taskHierarchy.getParentChain(task.id).at(-1);
+  const folderPath = rootTask?.task_content_folder_id
+    ? getTaskContentFolderPath(taskContentFolders, rootTask.task_content_folder_id)
+    : [];
+  return [...folderPath, ...parentHierarchy];
 }
 
 export function getHomeTodoSearchText(

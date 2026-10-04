@@ -31,6 +31,7 @@ import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-his
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
 import { addMealFromLibraryFood, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, parseBatchIntake, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealFoodProposalDraft, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
 import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
@@ -47,6 +48,7 @@ import {
   type HomeRecordMetricKey,
 } from "@/lib/home-progress";
 import {
+  buildHomeDerivedTaskHierarchy,
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
   buildHomeRoutineGroups,
@@ -492,6 +494,7 @@ export function HomePage({
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
   const routineChildDropTargetRef = useRef<HomeRoutineChildDropTarget | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const taskHierarchy = useMemo(() => buildTaskHierarchyAdapter(tasks), [tasks]);
 
   const batchIntakeHasHealthRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "water" || draft.kind === "weight" || draft.kind === "meal"));
   const batchIntakeHasFocusRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "focus"));
@@ -1235,7 +1238,9 @@ export function HomePage({
     const isUrgent = mode === "urgent";
     const isDerived = mode === "attention" || mode === "missed";
     const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
-    const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
+    const hierarchy = isDerived
+      ? buildHomeDerivedTaskHierarchy(task, tasks, taskContentFolders, taskById, taskHierarchy)
+      : buildHomeTodoHierarchy(task, tasks, taskById);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     const fastActionOpen = isFastActionMode;
