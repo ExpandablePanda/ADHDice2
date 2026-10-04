@@ -11,7 +11,7 @@ import {
   type BatchIntakeMealFoodProposalDraft,
 } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
-import { getBatchIntakeApplyCount } from "../src/lib/home-batch-intake-executor.ts";
+import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount } from "../src/lib/home-batch-intake-executor.ts";
 import { tokenizeShorthandCsv, extractTrailingShorthandTime } from "../src/lib/scratchpad-shorthand.ts";
 
 const codingCategory: FocusCategory = {
@@ -74,6 +74,19 @@ t: nba 2k done, adhdice dmb, wolverine
 wt: 233.6
 t: address sort done, listen to album dmb`;
 
+const multiDateCanonicalTasks = ["NBA 2K", "NBA The Run", "Wolverine", "Madden 27"].map((title, index) => ({
+  id: `multi-date-task-${index}`,
+  parent_task_id: null,
+  permanently_deleted_at: null,
+  status: "pending",
+  title,
+})) as unknown as Task[];
+
+const multiDateQaFixture = `t: NBA 2K - Done 9/27 9/28 9/29 9/30 10/2 10/3
+t: NBA The Run - Done 9/29 9/30 10/2
+t: Wolverine - Done 9/27 9/29 9/30 10/2 10/3
+t: Madden 27 - Done 9/29`;
+
 test("Shorthand V1 golden fixture is deterministic with explicit context", () => {
   const parsed = parseBatchIntake(shorthandGoldenFixture, {
     focusCategories: [codingCategory],
@@ -123,6 +136,108 @@ test("V1 prefix, precedence, date, CSV, and time rules are explicit", () => {
 
   const missingDate = parseBatchIntake("f: Coding 1h", { focusCategories: [codingCategory], referenceDate: "2026-10-03" })[0];
   assert.equal(missingDate?.issues.includes("Missing date heading"), true);
+});
+
+test("Task multi-date shorthand expands the QA fixture into 15 flat occurrences and four canonical groups", async () => {
+  const parsed = parseBatchIntake(multiDateQaFixture, { referenceDate: "2026-10-03" });
+  const taskDrafts = parsed.filter((draft) => draft.kind === "task");
+  assert.equal(taskDrafts.length, 15);
+  assert.deepEqual(
+    taskDrafts.reduce<Record<string, number>>((counts, draft) => {
+      counts[draft.taskTitle] = (counts[draft.taskTitle] ?? 0) + 1;
+      return counts;
+    }, {}),
+    { "NBA 2K": 6, "NBA The Run": 3, "Wolverine": 5, "Madden 27": 1 },
+  );
+  assert.ok(taskDrafts.every((draft) => draft.outcome === "done" && multiDateQaFixture.split("\n").includes(draft.sourceText)));
+  assert.equal(new Set(taskDrafts.map((draft) => draft.id)).size, 15);
+
+  const matched = applyBatchIntakeTaskMatches(parsed, multiDateCanonicalTasks);
+  const taskGroups = getBatchIntakeReviewGroups(matched).filter((group) => group.kind === "task");
+  assert.deepEqual(taskGroups.map((group) => group.drafts.length), [6, 3, 5, 1]);
+  assert.ok(taskGroups.every((group) => group.drafts.every((draft) => draft.kind === "task" && draft.selectedTaskId !== null)));
+
+  const plan = buildBatchIntakeExecutionPlan(matched);
+  assert.equal(getBatchIntakeApplyCount(matched), 15);
+  assert.deepEqual(plan.taskGroups.map((group) => [group.taskId, group.dates.length, group.rowIds.length]), [
+    ["multi-date-task-0", 6, 6],
+    ["multi-date-task-1", 3, 3],
+    ["multi-date-task-2", 5, 5],
+    ["multi-date-task-3", 1, 1],
+  ]);
+
+  const receivedDates: string[][] = [];
+  const progress: Array<{ processed: number; total: number }> = [];
+  const firstTaskPlan = { ...plan, taskGroups: [plan.taskGroups[0]!] };
+  const result = await executeBatchIntakePlan(firstTaskPlan, {
+    syncTaskHistoryEntries: async (_taskId, _outcome, dates) => { receivedDates.push(dates); return true; },
+    addWaterEntries: async () => ({ success: true, rows: [] }),
+    addWeightEntries: async () => ({ success: true, rows: [] }),
+    addMealEntries: async () => ({ success: true, rows: [] }),
+    handleManualFocusEntries: async () => ({ success: true, rows: [] }),
+  }, { onProgress: (next) => progress.push({ processed: next.processed, total: next.total }) });
+  assert.deepEqual(receivedDates, [["2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-02", "2026-10-03"]]);
+  assert.equal(result.rows.length, 6);
+  assert.equal(progress.at(-1)?.total, 6);
+  assert.equal(progress.at(-1)?.processed, 6);
+});
+
+test("Task multi-date shorthand normalizes outcomes, dates, duplicate dates, and heading precedence", () => {
+  const parsed = parseBatchIntake([
+    "10/3",
+    "t: DMB task - DMB 9/29 10/1",
+    "t: Best task - Did My Best 09/28",
+    "t: Missed task - Missed 9/27 09/27",
+    "t: Date formats - Done 9/7 09/08 9/9/2026 09/10/2026",
+    "t: Inline wins - Done 9/27 9/28",
+    "t: Heading fallback - Done",
+  ].join("\n"), { referenceDate: "2026-10-03" });
+  const tasks = parsed.filter((draft) => draft.kind === "task");
+  assert.deepEqual(tasks.map((draft) => [draft.taskTitle, draft.outcome, draft.date]), [
+    ["DMB task", "did_my_best", "2026-09-29"],
+    ["DMB task", "did_my_best", "2026-10-01"],
+    ["Best task", "did_my_best", "2026-09-28"],
+    ["Missed task", "missed", "2026-09-27"],
+    ["Date formats", "done", "2026-09-07"],
+    ["Date formats", "done", "2026-09-08"],
+    ["Date formats", "done", "2026-09-09"],
+    ["Date formats", "done", "2026-09-10"],
+    ["Inline wins", "done", "2026-09-27"],
+    ["Inline wins", "done", "2026-09-28"],
+    ["Heading fallback", "done", "2026-10-03"],
+  ]);
+  assert.equal(new Set(tasks.filter((draft) => draft.taskTitle === "Missed task").map((draft) => draft.date)).size, 1);
+});
+
+test("yearless inline dates reuse heading inference at the year boundary", () => {
+  const drafts = parseBatchIntake("t: New Year task - Done 12/31", { referenceDate: "2027-01-02" });
+  assert.equal(drafts[0]?.kind === "task" ? drafts[0].date : null, "2026-12-31");
+});
+
+test("malformed inline dates remain reviewable without blocking valid sibling occurrences", () => {
+  const parsed = parseBatchIntake("10/3\nt: NBA 2K - Done 9/27 nope 10/2 9/27", { referenceDate: "2026-10-03" });
+  const tasks = parsed.filter((draft) => draft.kind === "task");
+  assert.deepEqual(tasks.map((draft) => draft.date), ["2026-09-27", null, "2026-10-02"]);
+  assert.equal(tasks[1]?.kind === "task" ? tasks[1].issues.includes("Invalid Task shorthand date: nope") : false, true);
+  const matched = applyBatchIntakeTaskMatches(parsed, [multiDateCanonicalTasks[0]!]);
+  assert.equal(getBatchIntakeApplyCount(matched), 2);
+  assert.equal(getBatchIntakeReviewGroups(matched).filter((group) => group.kind === "task")[0]?.drafts.length, 3);
+});
+
+test("Task multi-date disambiguation preserves ordinary hyphenated titles and no-outcome behavior", () => {
+  const drafts = parseBatchIntake("10/2\nt: Spider-Man 2 done\nt: Call Mom - follow up\nt: NBA 2K - 9/27 9/28", { referenceDate: "2026-10-03" });
+  assert.deepEqual(drafts.filter((draft) => draft.kind === "task").map((draft) => [draft.taskTitle, draft.outcome, draft.date]), [
+    ["Spider-Man 2", "done", "2026-10-02"],
+    ["Call Mom - follow up", null, "2026-10-02"],
+    ["NBA 2K - 9/27 9/28", null, "2026-10-02"],
+  ]);
+});
+
+test("Task execution plans retain inline date source order", () => {
+  const parsed = parseBatchIntake("t: NBA 2K - Done 10/2 9/27", { referenceDate: "2026-10-03" });
+  const matched = applyBatchIntakeTaskMatches(parsed, [multiDateCanonicalTasks[0]!]);
+  const plan = buildBatchIntakeExecutionPlan(matched);
+  assert.deepEqual(plan.taskGroups[0]?.dates, ["2026-10-02", "2026-09-27"]);
 });
 
 test("explicit Focus stays Focus when category is unknown and exact matching stays strict", () => {

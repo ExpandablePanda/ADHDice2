@@ -60,7 +60,12 @@ function batchIntakeStageLabel(stage: NonNullable<Props["applyProgress"]>["stage
 
 function draftSource(draft: BatchIntakeDraft) {
   if (draft.kind === "task") {
-    return draft.origin === "parsed" && draft.sourceLineNumber !== null ? `Parsed: ${draft.taskTitle} · line ${draft.sourceLineNumber}` : draft.taskTitle;
+    if (draft.origin !== "parsed" || draft.sourceLineNumber === null) return draft.taskTitle;
+    const outcome = draft.outcome === "did_my_best" ? "Did My Best" : draft.outcome ? draft.outcome[0].toUpperCase() + draft.outcome.slice(1) : null;
+    const dateMatch = draft.date?.match(/^\d{4}-(\d{2})-(\d{2})$/);
+    const date = dateMatch ? `${Number(dateMatch[1])}/${Number(dateMatch[2])}` : draft.date;
+    const details = [draft.taskTitle, outcome, date].filter(Boolean).join(" · ");
+    return `Parsed: ${details} · line ${draft.sourceLineNumber}`;
   }
   return draft.origin === "parsed" && draft.sourceLineNumber !== null ? `${draft.sourceText} · line ${draft.sourceLineNumber}` : draft.sourceText;
 }

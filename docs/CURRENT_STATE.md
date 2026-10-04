@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.56`.
+- Current working app version: `7.16.57`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.57 Task Shorthand Multi-Date Occurrences
+
+Scratchpad Task shorthand now accepts `t: <Task> - <Outcome> <date> <date> ...`
+with canonical Done, DMB, Did My Best, and Missed outcomes. Each valid inline
+date becomes one flat Task History occurrence under the same exact-matched
+canonical Task group; inline dates override an active heading, while missing or
+malformed dates remain visible for review. Existing simple and comma-separated
+Task shorthand, canonical exact-only matching, partial Apply, row-based progress,
+and canonical Task History execution remain unchanged. No SQL, Edge deployment,
+Home V8 change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.56 Batch Intake readability, task context, partial Apply, and visible progress
 

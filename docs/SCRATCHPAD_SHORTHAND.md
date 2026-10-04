@@ -73,6 +73,31 @@ matching uses canonical exact-match rules: one unique exact match can be
 selected automatically, while multiple exact matches and no exact match remain
 Needs Review. Fuzzy matches never auto-select and `t:` never creates a Task.
 
+### Task multi-date history
+
+Historical Task outcomes can use one Task expression with multiple inline dates:
+
+```text
+t: NBA 2K - Done 9/27 9/28 9/29
+```
+
+The deliberate ` - ` separator must be followed by a recognized outcome:
+`Done`, `DMB`, `Did My Best`, or `Missed`, case-insensitively. The parser creates
+one flat occurrence draft per date under one visible Task group after canonical
+Task matching. It removes the outcome and dates before exact Task matching, so
+the canonical search title is `NBA 2K`.
+
+Inline dates are authoritative for that line and override the active date
+heading. A line without inline dates falls back to the active heading; without
+either, the occurrence remains visible with `Missing date heading`. Dates use
+the same `M/D`, `MM/DD`, and explicit-year validation and nearest-not-after
+year inference as date headings, including year-boundary rollover. Duplicate
+dates within one expression are kept as one occurrence in source order.
+
+Malformed inline date tokens remain visible as non-executable review issues while
+valid sibling dates remain eligible for partial Apply. Existing simple Task
+shorthand and comma-separated Task shorthand remain unchanged.
+
 ## Water shorthand
 
 ```text

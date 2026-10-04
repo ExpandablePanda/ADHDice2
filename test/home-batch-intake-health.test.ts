@@ -31,6 +31,7 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(homeSource, /Manual Batch/);
   assert.match(homeSource, /Shorthand/);
   assert.match(homeSource, /Scratchpad Shorthand V1/);
+  assert.match(homeSource, /NBA 2K - Done 9\/27 9\/28 9\/29/);
   assert.match(homeSource, /createManualBatchIntakeDraft/);
   assert.match(homeSource, /removeBatchIntakeRow/);
   assert.match(homeSource, /parseBatchIntake\(scratchpadDraft/);
@@ -76,7 +77,7 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /Nothing is ready to apply yet/);
   assert.match(reviewSource, /sticky bottom-0/);
   assert.doesNotMatch(reviewSource, /text-\[11px\]/);
-  assert.match(reviewSource, /Parsed: \$\{draft\.taskTitle\} · line/);
+  assert.match(reviewSource, /Parsed: \$\{details\} · line/);
   assert.match(reviewSource, /taskContentFolders=\{taskContentFolders\}/);
 });
 

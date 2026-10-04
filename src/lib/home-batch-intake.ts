@@ -20,6 +20,7 @@ export type BatchIntakeManualKind = Exclude<BatchIntakeKind, "unsupported">;
 export type BatchIntakeConfidence = "high" | "medium" | "low";
 export type BatchIntakeTaskOutcome = Extract<TaskStatus, "done" | "did_my_best" | "missed"> | null;
 export type BatchIntakeWaterStatus = "pending" | "confirmed" | null;
+type TaskDraftPart = number | string;
 
 type BatchIntakeDraftBase = {
   id: string;
@@ -306,7 +307,7 @@ function makeBase(
   kind: BatchIntakeKind,
   confidence: BatchIntakeConfidence,
   issues: string[] = [],
-  part = 0,
+  part: TaskDraftPart = 0,
 ) {
   const id = `batch-intake-${lineNumber}-${part}`;
   return {
@@ -716,15 +717,107 @@ function isDeferredLine(line: string) {
   return null;
 }
 
-function createTaskDraft(line: string, lineNumber: number, date: string | null, title: string, part: number, confidence: BatchIntakeConfidence): BatchIntakeTaskDraft {
-  const parsed = parseOutcome(title);
+function createTaskDraftFromParts(
+  line: string,
+  lineNumber: number,
+  date: string | null,
+  taskTitle: string,
+  outcome: BatchIntakeTaskOutcome,
+  part: TaskDraftPart,
+  confidence: BatchIntakeConfidence,
+  issues: string[] = [],
+  suppressMissingDateIssue = false,
+): BatchIntakeTaskDraft {
+  const base = makeBase(line, lineNumber, date, "task", confidence, issues, part);
   return {
-    ...makeBase(line, lineNumber, date, "task", confidence, parsed.taskTitle ? [] : ["Task title is empty"], part),
+    ...base,
     kind: "task",
-    taskTitle: parsed.taskTitle,
-    outcome: parsed.outcome,
+    taskTitle,
+    outcome,
     selectedTaskId: null,
+    issues: [
+      ...(suppressMissingDateIssue ? base.issues.filter((issue) => issue !== "Missing date heading") : base.issues),
+      ...(taskTitle ? [] : ["Task title is empty"]),
+    ],
   };
+}
+
+function createTaskDraft(line: string, lineNumber: number, date: string | null, title: string, part: TaskDraftPart, confidence: BatchIntakeConfidence): BatchIntakeTaskDraft {
+  const parsed = parseOutcome(title);
+  return createTaskDraftFromParts(line, lineNumber, date, parsed.taskTitle, parsed.outcome, part, confidence);
+}
+
+function normalizeTaskOutcome(value: string): BatchIntakeTaskOutcome {
+  const normalizedOutcome = value.toLocaleLowerCase().replace(/\s+/g, "_");
+  return (normalizedOutcome === "dmb" ? "did_my_best" : normalizedOutcome) as BatchIntakeTaskOutcome;
+}
+
+function parseMultiDateTaskExpression(value: string) {
+  const match = value.match(/^(.+?)\s+-\s+(did\s+my\s+best|dmb|done|missed)(?:\s+(.*))?$/i);
+  if (!match) return null;
+  return {
+    dateTokens: match[3]?.trim() ? match[3].trim().split(/\s+/) : [],
+    outcome: normalizeTaskOutcome(match[2] ?? ""),
+    taskTitle: (match[1] ?? "").trim(),
+  };
+}
+
+function createMultiDateTaskDrafts(
+  line: string,
+  lineNumber: number,
+  fallbackDate: string | null,
+  value: string,
+  referenceDate: string,
+  part: TaskDraftPart,
+) {
+  const parsed = parseMultiDateTaskExpression(value);
+  if (!parsed) return null;
+  if (parsed.dateTokens.length === 0) {
+    return [createTaskDraftFromParts(line, lineNumber, fallbackDate, parsed.taskTitle, parsed.outcome, `${part}-0`, "high")];
+  }
+
+  const seenDates = new Set<string>();
+  const drafts: BatchIntakeTaskDraft[] = [];
+  parsed.dateTokens.forEach((dateToken, dateIndex) => {
+    const resolvedDate = parseDateHeading(dateToken, referenceDate);
+    const draftPart = `${part}-${dateIndex}`;
+    if (resolvedDate) {
+      if (seenDates.has(resolvedDate)) return;
+      seenDates.add(resolvedDate);
+      drafts.push(createTaskDraftFromParts(line, lineNumber, resolvedDate, parsed.taskTitle, parsed.outcome, draftPart, "high"));
+      return;
+    }
+    drafts.push(createTaskDraftFromParts(
+      line,
+      lineNumber,
+      null,
+      parsed.taskTitle,
+      parsed.outcome,
+      draftPart,
+      "medium",
+      [`Invalid Task shorthand date: ${dateToken}`],
+      true,
+    ));
+  });
+  return drafts;
+}
+
+function createTaskShorthandDrafts(
+  line: string,
+  lineNumber: number,
+  date: string | null,
+  body: string,
+  referenceDate: string,
+) {
+  const tokens = tokenizeShorthandCsvTokens(body);
+  const drafts: BatchIntakeTaskDraft[] = [];
+  tokens.forEach((token, part) => {
+    const multiDateDrafts = createMultiDateTaskDrafts(line, lineNumber, date, token.value, referenceDate, part);
+    if (multiDateDrafts) drafts.push(...multiDateDrafts);
+    else drafts.push(createTaskDraft(line, lineNumber, date, token.value, part, "high"));
+  });
+  if (tokens.length === 0) drafts.push(createTaskDraft(line, lineNumber, date, "", 0, "high"));
+  return drafts;
 }
 
 export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOptions): BatchIntakeDraft[] {
@@ -760,9 +853,7 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
     if (shorthand) {
       const timed = shorthand.prefix === "t" ? { body: shorthand.body, time: null as string | null } : extractTrailingShorthandTime(shorthand.body);
       if (shorthand.prefix === "t") {
-        const tokens = tokenizeShorthandCsvTokens(timed.body);
-        tokens.forEach((token, part) => drafts.push(createTaskDraft(line, lineNumber, currentDate, token.value, part, "high")));
-        if (tokens.length === 0) drafts.push(createTaskDraft(line, lineNumber, currentDate, "", 0, "high"));
+        drafts.push(...createTaskShorthandDrafts(line, lineNumber, currentDate, timed.body, options.referenceDate));
         continue;
       }
       if (shorthand.prefix === "w") {

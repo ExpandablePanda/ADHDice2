@@ -231,7 +231,7 @@ export function buildBatchIntakeExecutionPlan(
   }
 
   return {
-    taskGroups: [...taskGroups.values()].map((group) => ({ ...group, dates: [...group.dates].sort() })),
+    taskGroups: [...taskGroups.values()].map((group) => ({ ...group, dates: [...group.dates] })),
     waterRows,
     weightRows,
     mealRows,
