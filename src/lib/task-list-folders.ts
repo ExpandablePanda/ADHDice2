@@ -284,6 +284,17 @@ export type AllTaskListDirectoryEntry =
   | { id: string; kind: "folder"; label: string; path: string }
   | { folderId: string | null; id: string; kind: "list" | "system"; label: string; path: string };
 
+export function filterTaskListDirectoryEntries<T extends AllTaskListDirectoryEntry>(
+  entries: readonly T[],
+  query: string,
+) {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  return entries.filter((entry) => (
+    !normalizedQuery
+      || `${entry.label} ${entry.path}`.toLocaleLowerCase().includes(normalizedQuery)
+  ));
+}
+
 export function buildAllTaskListDirectory(
   tree: TaskListFolderTree,
   lists: readonly TaskListDefinition[],
@@ -308,9 +319,7 @@ export function buildAllTaskListDirectory(
       };
     }),
   ];
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  return entries
-    .filter((entry) => !normalizedQuery || `${entry.label} ${entry.path}`.toLocaleLowerCase().includes(normalizedQuery))
+  return filterTaskListDirectoryEntries(entries, query)
     .sort((left, right) => left.path.localeCompare(right.path) || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id));
 }
 

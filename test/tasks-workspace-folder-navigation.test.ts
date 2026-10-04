@@ -39,6 +39,7 @@ const railExports = compileModule(railSource, (id) => {
   }
   if (id === "react/jsx-runtime") return { Fragment: Symbol("Fragment"), jsx, jsxs: jsx };
   if (id === "lucide-react") return new Proxy({}, { get: () => () => null });
+  if (id === "./task-type-identity") return { TaskTypeIdentity: () => null };
   if (id === "@/components/ui/task-table-primitives") {
     return {
       TASK_TABLE_ACTIVE_LIST_CHIP_CLASS: "active",
@@ -48,7 +49,16 @@ const railExports = compileModule(railSource, (id) => {
     };
   }
   if (id === "@/components/ui-system") return { AdhdChip: () => null, AdhdDropdownPanel: () => null };
-  if (id === "@/lib/task-list-folders") return { getTaskListContainerKey: (folderId: string | null) => folderId ?? "root" };
+  if (id === "@/lib/task-list-folders") return {
+    filterTaskListDirectoryEntries: (entries: unknown[], query: string) => {
+      const normalizedQuery = query.trim().toLocaleLowerCase();
+      return entries.filter((entry) => {
+        const directoryEntry = entry as { label: string; path: string };
+        return !normalizedQuery || `${directoryEntry.label} ${directoryEntry.path}`.toLocaleLowerCase().includes(normalizedQuery);
+      });
+    },
+    getTaskListContainerKey: (folderId: string | null) => folderId ?? "root",
+  };
   if (id === "@/lib/task-list-rail-order") {
     return {
       getTaskListRailIndicatorLeft: () => 0,
@@ -83,6 +93,7 @@ const workspaceExports = compileModule(workspaceSource, (id) => {
   if (id === "react/jsx-runtime") return { Fragment: Symbol("Fragment"), jsx, jsxs: jsx };
   if (id === "lucide-react") return new Proxy({}, { get: () => () => null });
   if (id === "./task-page") return { TaskPage: taskPageComponent };
+  if (id === "./task-type-identity") return { TaskTypeIdentity: () => null };
   if (id === "./tasks-page") return {
     TaskOperationsHeader: railExports.TaskOperationsHeader,
   };

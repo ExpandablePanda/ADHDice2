@@ -4,6 +4,7 @@ import test from "node:test";
 import type { TaskListFolder, TaskListRailItem } from "@/lib/database.types";
 import {
   TASK_LIST_RAIL_MAX_SORT_ORDER,
+  buildCanonicalTaskListRailDirectory,
   buildCanonicalTaskListRailTree,
   buildTaskListRailManifest,
   getTaskListRailFolderItemKey,
@@ -275,6 +276,19 @@ test("root and active-folder rendering both consume the canonical tree", () => {
   assert.match(appSource, /primaryRail: buildStructureOptions\(null\)/);
   assert.match(appSource, /openFolderRails:[\s\S]*buildStructureOptions\(folder\.id\)/);
   assert.doesNotMatch(appSource, /primaryRail: \[\.\.\.fixedOptions/);
+});
+
+test("canonical All Lists directory search matches nested path context", () => {
+  const nestedList = {
+    ...definition("list:deep", "custom", "manual"),
+    folderId: folderB.id,
+    name: "Deep list",
+  };
+  const tree = buildCanonicalTaskListRailTree([nestedList], [folderA, folderB], []);
+  const matches = buildCanonicalTaskListRailDirectory(tree, folderB.id);
+
+  assert.ok(matches.some((entry) => entry.id === folderB.id));
+  assert.ok(matches.some((entry) => entry.id === nestedList.id));
 });
 
 test("rail placement uses stable keys, real subtypes, and bounded indices", () => {

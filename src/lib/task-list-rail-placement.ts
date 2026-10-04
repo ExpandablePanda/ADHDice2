@@ -9,6 +9,7 @@ import type { TaskListDefinition } from "@/lib/task-lists";
 import {
   TASK_LIST_FOLDER_CONFLICT_CODE,
   TaskListFolderConflictError,
+  filterTaskListDirectoryEntries,
   getPersistedTaskListEntityId,
   isTaskListFolderConflict,
 } from "@/lib/task-list-folders";
@@ -249,9 +250,7 @@ export function buildCanonicalTaskListRailDirectory(
       path: folderPath ? `${folderPath} / ${item.entity.name}` : item.entity.name,
     };
   });
-  const normalizedQuery = query.trim().toLocaleLowerCase();
-  return entries
-    .filter((entry) => !normalizedQuery || `${entry.label} ${entry.path}`.toLocaleLowerCase().includes(normalizedQuery))
+  return filterTaskListDirectoryEntries(entries, query)
     .sort((left, right) => left.path.localeCompare(right.path) || left.kind.localeCompare(right.kind) || left.id.localeCompare(right.id));
 }
 

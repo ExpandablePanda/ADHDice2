@@ -16,7 +16,7 @@ import { StyleLabIconPreviewSlot } from "@/components/style-lab/style-lab-icon-s
 
 import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
-import { getTaskListContainerKey } from "@/lib/task-list-folders";
+import { filterTaskListDirectoryEntries, getTaskListContainerKey } from "@/lib/task-list-folders";
 import type { AllTaskListDirectoryEntry } from "@/lib/task-list-folders";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import { TaskTypeIdentity } from "./task-type-identity";
@@ -1361,6 +1361,73 @@ export function TaskListRailHierarchy({
   );
 }
 
+function TaskListDirectoryResult({
+  entry,
+  onSelect,
+}: {
+  entry: AllTaskListDirectoryEntry;
+  onSelect: (entry: AllTaskListDirectoryEntry) => void;
+}) {
+  return (
+    <AdhdChip
+      className="w-full justify-start text-left"
+      onClick={() => onSelect(entry)}
+      toneClassName={SHARED_CHIP_MUTED_CLASS}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        {entry.kind === "folder" ? <Folder className="h-3.5 w-3.5 shrink-0" /> : null}
+        <span className="min-w-0">
+          <span className="block truncate">{entry.label}</span>
+          <span className="block truncate text-[10px] font-medium opacity-60">{entry.kind} · {entry.path}</span>
+        </span>
+      </span>
+    </AdhdChip>
+  );
+}
+
+function TaskListRailSearch({
+  onChange,
+  query,
+}: {
+  onChange: (query: string) => void;
+  query: string;
+}) {
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const clearSearch = () => {
+    onChange("");
+    inputRef.current?.focus();
+  };
+
+  return (
+    <label className="flex h-8 min-w-0 max-w-[24rem] items-center gap-2 rounded-[0.75rem] border border-[#efe9ff] bg-[#fbfaff] px-2.5 dark:border-white/10 dark:bg-white/[0.04]" data-list-rail-search>
+      <Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+      <input
+        aria-label="Search lists and folders"
+        className="min-w-0 flex-1 bg-transparent text-[12px] text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+        onChange={(event) => onChange(event.target.value)}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          clearSearch();
+        }}
+        placeholder="Search lists and folders…"
+        ref={inputRef}
+        value={query}
+      />
+      {query.trim().length > 0 ? (
+        <button
+          aria-label="Clear lists and folders search"
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[#8d86ab] transition hover:bg-[#efe9ff] hover:text-[#6f57f6] dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-[#cabfff]"
+          onClick={clearSearch}
+          type="button"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      ) : null}
+    </label>
+  );
+}
+
 export function TaskOperationsHeader({
   actionLabel,
   activeCount,
@@ -1482,10 +1549,16 @@ export function TaskOperationsHeader({
   const [isAllListsOpen, setIsAllListsOpen] = useState(false);
   const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
   const [allListsSearch, setAllListsSearch] = useState("");
-  const matchingDirectoryEntries = allListDirectoryEntries.filter((entry) => {
-    const query = allListsSearch.trim().toLocaleLowerCase();
-    return !query || `${entry.label} ${entry.path}`.toLocaleLowerCase().includes(query);
-  });
+  const [railSearch, setRailSearch] = useState("");
+  const matchingDirectoryEntries = filterTaskListDirectoryEntries(allListDirectoryEntries, allListsSearch);
+  const matchingRailDirectoryEntries = filterTaskListDirectoryEntries(allListDirectoryEntries, railSearch);
+  useEffect(() => {
+    if (view === "table" && isRailHidden && railSearch) {
+      // Hide/show should reopen the rail with an empty ephemeral query.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRailSearch("");
+    }
+  }, [isRailHidden, railSearch, view]);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const clearLongPress = () => {
@@ -1517,6 +1590,11 @@ export function TaskOperationsHeader({
     event.preventDefault();
     event.stopPropagation();
     onOpenFocusPlanner();
+  };
+
+  const handleRailDirectorySelection = (entry: AllTaskListDirectoryEntry) => {
+    onSelectDirectoryEntry?.(entry);
+    setRailSearch("");
   };
 
   return (
@@ -1723,24 +1801,15 @@ export function TaskOperationsHeader({
                     </label>
                     <div className="adhdice-scrollbar mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto">
                       {matchingDirectoryEntries.map((entry) => (
-                        <AdhdChip
-                          className="w-full justify-start text-left"
+                        <TaskListDirectoryResult
                           key={`${entry.kind}:${entry.id}`}
-                          onClick={() => {
-                            onSelectDirectoryEntry?.(entry);
+                          entry={entry}
+                          onSelect={(selectedEntry) => {
+                            onSelectDirectoryEntry?.(selectedEntry);
                             setIsAllListsOpen(false);
                             setAllListsSearch("");
                           }}
-                          toneClassName={SHARED_CHIP_MUTED_CLASS}
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            {entry.kind === "folder" ? <Folder className="h-3.5 w-3.5 shrink-0" /> : null}
-                            <span className="min-w-0">
-                              <span className="block truncate">{entry.label}</span>
-                              <span className="block truncate text-[10px] font-medium opacity-60">{entry.kind} · {entry.path}</span>
-                            </span>
-                          </span>
-                        </AdhdChip>
+                        />
                       ))}
                     </div>
                   </AdhdDropdownPanel>
@@ -1750,17 +1819,34 @@ export function TaskOperationsHeader({
           </div>
           <div className="flex flex-col gap-1" data-task-rail-filter-stack>
             {view === "table" && isRailHidden ? null : (
-              <TaskListRailHierarchy
-                canMoveStructureInto={canMoveStructureInto}
-                currentFolderBreadcrumbs={currentFolderBreadcrumbs}
-                currentFolderId={currentFolderId}
-                lists={lists}
-                onMoveStructure={onMoveStructure}
-                onNavigateFolder={onNavigateFolder}
-                onSelectBucket={onSelectBucket}
-                openFolderRails={openFolderRails}
-                selectedBucket={selectedBucket}
-              />
+              <>
+                <TaskListRailSearch onChange={setRailSearch} query={railSearch} />
+                {railSearch.trim() ? (
+                  <div className="adhdice-scrollbar flex max-h-48 flex-col gap-1 overflow-y-auto" data-list-rail-search-results>
+                    {matchingRailDirectoryEntries.length > 0 ? matchingRailDirectoryEntries.map((entry) => (
+                      <TaskListDirectoryResult
+                        key={`${entry.kind}:${entry.id}`}
+                        entry={entry}
+                        onSelect={handleRailDirectorySelection}
+                      />
+                    )) : (
+                      <p className="px-2 py-2 text-[12px] text-[#8d87a7] dark:text-white/45">No lists or folders found.</p>
+                    )}
+                  </div>
+                ) : (
+                  <TaskListRailHierarchy
+                    canMoveStructureInto={canMoveStructureInto}
+                    currentFolderBreadcrumbs={currentFolderBreadcrumbs}
+                    currentFolderId={currentFolderId}
+                    lists={lists}
+                    onMoveStructure={onMoveStructure}
+                    onNavigateFolder={onNavigateFolder}
+                    onSelectBucket={onSelectBucket}
+                    openFolderRails={openFolderRails}
+                    selectedBucket={selectedBucket}
+                  />
+                )}
+              </>
             )}
             {filterRowsNode}
           </div>

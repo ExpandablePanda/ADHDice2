@@ -19,6 +19,7 @@ new vm.Script(compiled).runInNewContext({
     if (id === "react") return { memo: (value: unknown) => value, startTransition: (callback: () => void) => callback(), useCallback: (value: unknown) => value, useEffect: () => undefined, useRef: (value: unknown) => ({ current: value }), useState: (value: unknown) => [value, () => undefined] };
     if (id === "react/jsx-runtime") return { Fragment: Symbol("Fragment"), jsx, jsxs: jsx };
     if (id === "lucide-react") return new Proxy({}, { get: () => () => null });
+    if (id === "./task-type-identity") return { TaskTypeIdentity: () => null };
     if (id.startsWith("@/components") || id.startsWith("@/lib/task-list-rail-order") || id.startsWith("@/lib/task-ui-state") || id === "@/lib/task-search-controller") return {};
     if (id === "@/lib/task-list-folders") return { getTaskListContainerKey: () => "root" };
     return require(id);

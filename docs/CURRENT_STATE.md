@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.71`.
+- Current working app version: `7.16.72`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.72 Tasks Lists Rail Search
+
+Tasks now exposes direct list/folder search above the Lists rail using the
+existing list-directory authority. Search mode is navigation-only; clearing it
+restores the normal reorderable hierarchy. The All Lists menu remains available
+and shares the same label/path matching semantics. No SQL, Edge deployment,
+schema change, list persistence change, or production data mutation was
+performed.
 
 ## 2026-10-04 7.16.71 Restore Calendar X Close Behavior
 
