@@ -5,6 +5,7 @@ import { addMealFromLibraryFood, addMealFromParsedFood, calculateBatchIntakeMeal
 import { applyBatchIntakeTaskMatches, getBatchIntakeTaskCandidates, getBatchIntakeTaskMatchState } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
+import { getHealthFoodMeasurementOptions } from "../src/lib/health-nutrition.ts";
 import type { HealthFoodLibraryItem, Task } from "../src/lib/database.types.ts";
 import type { FocusCategory } from "../src/lib/types.ts";
 
@@ -355,6 +356,40 @@ const milkFood = {
   provider_item_id: "provider-lehigh-valley-milk",
 } satisfies HealthFoodLibraryItem;
 
+const plantProteinFood = {
+  ...libraryFood,
+  id: "food-plant-protein",
+  food_name: "Plant Protein",
+  serving_label: "1 scoop",
+  serving_size: "1 scoop",
+  serving_quantity: 1,
+  serving_unit: "scoops",
+  calories: 120,
+  provider_item_id: "provider-plant-protein",
+} satisfies HealthFoodLibraryItem;
+
+const turkeyBaconSlicesFood = {
+  ...libraryFood,
+  id: "food-turkey-bacon-slices",
+  serving_label: "4 slices",
+  serving_size: "4 slices",
+  serving_quantity: 4,
+  serving_unit: "slices",
+  provider_item_id: "provider-turkey-bacon-slices",
+} satisfies HealthFoodLibraryItem;
+
+const proteinBarFood = {
+  ...libraryFood,
+  id: "food-protein-bar",
+  food_name: "Protein Bar",
+  serving_label: "1 bar",
+  serving_size: "1 bar",
+  serving_quantity: 1,
+  serving_unit: "bar",
+  calories: 200,
+  provider_item_id: "provider-protein-bar",
+} satisfies HealthFoodLibraryItem;
+
 const cinnamonToastCrunch = {
   ...libraryFood,
   id: "food-cinnamon-toast-crunch",
@@ -413,6 +448,58 @@ test("Meal proposal correction resolves the same child and preserves source evid
   assert.equal(replaced.filter((draft) => draft.kind === "meal" && draft.entryMode === "food").length, 2);
 });
 
+test("resolved Meal proposals derive custom consumed units, preserve quantity, and keep one child", () => {
+  const cases = [
+    { food: plantProteinFood, source: "plant protein 1.5", quantity: 1.5, unit: "scoops" },
+    { food: turkeyBaconSlicesFood, source: "turkey bacon 2 slices", quantity: 2, unit: "slices" },
+    { food: proteinBarFood, source: "protein bar 1", quantity: 1, unit: "bar" },
+  ] as const;
+
+  for (const { food, source, quantity, unit } of cases) {
+    const parsed = parseBatchIntake(`10/3\nb: ${source}`, { referenceDate: "2026-10-03" });
+    const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+    const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+    assert.ok(occurrence && proposal);
+
+    const resolved = resolveBatchIntakeMealFoodProposal(proposal, occurrence, food, { writeId: `${food.id}-write` });
+    const options = getHealthFoodMeasurementOptions({ servingUnit: food.serving_unit, servingMeasureUnit: food.serving_measure_unit });
+    assert.equal(options.some((option) => option.value === unit), true);
+    assert.equal(resolved.consumedQuantity, quantity);
+    assert.equal(resolved.consumedUnit, unit);
+    assert.equal(resolved.rawToken, proposal.rawToken);
+    assert.equal(resolved.sourceText, occurrence.sourceText);
+    assert.equal(resolved.issues.length, 0);
+    assert.equal(resolved.id, proposal.id);
+  }
+});
+
+test("compatible measured units survive resolution and nutrition still uses the existing authority", () => {
+  const parsed = parseBatchIntake("10/3\nb: 1% milk 200ml", { referenceDate: "2026-10-03" });
+  const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+  const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+  assert.ok(occurrence && proposal);
+
+  const resolved = resolveBatchIntakeMealFoodProposal(proposal, occurrence, milkFood, { writeId: "milk-200ml-write" });
+  assert.equal(resolved.consumedQuantity, 200);
+  assert.equal(resolved.consumedUnit, "ml");
+  assert.ok(Math.abs((calculateBatchIntakeMealNutrition(resolved)?.nutrientTotals.calories ?? 0) - (100 * 200 / 240)) < 1e-12);
+  assert.equal(calculateBatchIntakeMealNutrition({ ...resolved, consumedQuantity: 1, consumedUnit: "serving" })?.nutrientTotals.calories, 100);
+});
+
+test("incompatible proposal units fall back to a valid saved unit and remain review-blocked", () => {
+  const parsed = parseBatchIntake("10/3\nb: plant protein 2 cups", { referenceDate: "2026-10-03" });
+  const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
+  const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+  assert.ok(occurrence && proposal);
+
+  const resolved = resolveBatchIntakeMealFoodProposal(proposal, occurrence, plantProteinFood, { writeId: "plant-incompatible-write" });
+  const options = getHealthFoodMeasurementOptions({ servingUnit: plantProteinFood.serving_unit, servingMeasureUnit: plantProteinFood.serving_measure_unit });
+  assert.equal(resolved.consumedQuantity, 2);
+  assert.equal(resolved.consumedUnit, "scoops");
+  assert.equal(options.some((option) => option.value === "cups"), false);
+  assert.deepEqual(resolved.issues, ["Choose a consumed unit for this food"]);
+});
+
 test("Meal proposal manual fallback keeps corrected interpretation and raw source in one replacement child", () => {
   const parsed = parseBatchIntake("10/3\nb: 1% milk 200ml", { referenceDate: "2026-10-03" });
   const occurrence = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "occurrence" }> => draft.kind === "meal" && draft.entryMode === "occurrence");
@@ -440,7 +527,7 @@ test("corrected Meal proposal units still use canonical compatibility validation
   const proposal = parsed.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
   assert.ok(occurrence && proposal);
   const resolved = resolveBatchIntakeMealFoodProposal({ ...proposal, proposedFoodName: "milk", proposedQuantity: 180, proposedUnit: "g" }, occurrence, milkFood, { writeId: "incompatible-unit-write" });
-  assert.match(resolved.issues.join(" "), /incompatible/i);
+  assert.deepEqual(resolved.issues, ["Choose a consumed unit for this food"]);
 });
 
 test("grouped Custom Food occurrences calculate consumed nutrition from the stored serving", () => {

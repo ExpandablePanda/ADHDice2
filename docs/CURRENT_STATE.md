@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.63`.
+- Current working app version: `7.16.64`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.64 Custom Food proposal unit resolution
+
+Batch Intake Meal proposals now resolve consumed units through the selected
+Custom Food's existing measurement options. Parsed quantities and compatible
+units survive in-place proposal replacement; absent units use the saved serving
+unit, while incompatible parser units fall back to a valid canonical option and
+remain blocked with a consumed-unit review message until corrected. Custom
+serving units and optional mass/volume conversions remain authoritative through
+`getHealthFoodMeasurementOptions` and existing nutrition calculation. No parser,
+schema, SQL, Edge deployment, Custom Food model, or production data changed.
 
 ## 2026-10-04 7.16.63 Simplified resolved Meal review
 

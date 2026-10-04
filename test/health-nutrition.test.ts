@@ -225,6 +225,12 @@ test("supported measurement options always include servings and only expose the 
   }).map((option) => option.value), ["serving", "slice"]);
 });
 
+test("custom serving units come directly from the saved food definition", () => {
+  assert.deepEqual(getHealthFoodMeasurementOptions({ servingMeasureUnit: null, servingUnit: "scoops" }).map((option) => option.value), ["serving", "scoops"]);
+  assert.deepEqual(getHealthFoodMeasurementOptions({ servingMeasureUnit: null, servingUnit: "slices" }).map((option) => option.value), ["serving", "slices"]);
+  assert.deepEqual(getHealthFoodMeasurementOptions({ servingMeasureUnit: null, servingUnit: "bar" }).map((option) => option.value), ["serving", "bar"]);
+});
+
 test("Open Food Facts barcode lookup still returns the normalized product", async () => {
   const previousFetch = globalThis.fetch;
   let requestUrl = "";

@@ -3,7 +3,7 @@ import type { FocusCategory, FocusSubtype, FocusType } from "@/lib/types";
 import { displayWeightToKilograms } from "@/lib/health-utils";
 import { mealFoodSelectionFromLibraryItem } from "@/lib/health-meal-draft";
 import { waterAmountToMilliliters } from "@/lib/health-library";
-import { calculateHealthFoodNutrition } from "@/lib/health-nutrition";
+import { calculateHealthFoodNutrition, getHealthFoodMeasurementOptions } from "@/lib/health-nutrition";
 import {
   extractTrailingShorthandTime,
   normalizeShorthandMealUnit,
@@ -1239,6 +1239,11 @@ export function normalizeBatchIntakeFoodName(value: string) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
 
+function findBatchIntakeMealMeasurementOption(value: string, options: ReturnType<typeof getHealthFoodMeasurementOptions>) {
+  const normalizedValue = normalizeShorthandMealUnit(value);
+  return normalizedValue ? options.find((option) => normalizeShorthandMealUnit(option.value) === normalizedValue) ?? null : null;
+}
+
 function proposalIssue(draft: BatchIntakeMealFoodProposalDraft, issue: string) {
   return {
     ...draft,
@@ -1261,10 +1266,15 @@ export function resolveBatchIntakeMealFoodProposal(
   });
   resolved.included = proposal.included;
   resolved.consumedQuantity = proposal.proposedQuantity ?? resolved.servingQuantity;
-  const requestedUnit = proposal.proposedUnit ?? resolved.servingUnit;
-  resolved.consumedUnit = proposal.proposedUnit && normalizeShorthandMealUnit(proposal.proposedUnit) === normalizeShorthandMealUnit(resolved.servingUnit)
-    ? resolved.servingUnit
-    : requestedUnit;
+  const measurementOptions = getHealthFoodMeasurementOptions({ servingUnit: resolved.servingUnit, servingMeasureUnit: resolved.servingMeasureUnit });
+  const requestedUnit = proposal.proposedUnit?.trim() || null;
+  const selectedOption = requestedUnit ? findBatchIntakeMealMeasurementOption(requestedUnit, measurementOptions) : null;
+  const defaultOption = findBatchIntakeMealMeasurementOption(resolved.servingUnit, measurementOptions) ?? measurementOptions[0] ?? null;
+  resolved.consumedUnit = (selectedOption ?? defaultOption)?.value ?? resolved.servingUnit;
+  if (requestedUnit && !selectedOption) {
+    resolved.issues = ["Choose a consumed unit for this food"];
+    return resolved;
+  }
   const calculation = calculateBatchIntakeMealNutrition(resolved);
   resolved.issues = calculation ? [] : ["Consumed quantity is incompatible with the stored serving"];
   return resolved;

@@ -110,6 +110,9 @@ test("resolved library Meals review consumed amount only while manual foods reta
   assert.match(reviewSource, /Consumed quantity/);
   assert.match(reviewSource, /Consumed unit/);
   assert.doesNotMatch(reviewSource, /servingLabel|Saved serving/);
+  assert.match(reviewSource, /const optionValues = food\.foodMode === "manual" && !options\.some/);
+  assert.match(reviewSource, /Choose a consumed unit for this food/);
+  assert.match(reviewSource, /updateConsumption\(food, food\.consumedQuantity, event\.target\.value, true\)/);
 });
 
 test("Meal review keeps add and correct actions separate and preserves source evidence", () => {
