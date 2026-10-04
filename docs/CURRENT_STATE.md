@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.66`.
+- Current working app version: `7.16.67`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.67 Keep Edit Task Calendar on the current page
+
+Task History/Calendar is now owned by the global shared Task editor flow rather
+than the Tasks-only workspace flow. Opening Calendar from Home or another
+page-independent shared editor keeps the originating page visible, preserves
+the selected editor state while the modal is open, and returns to that editor
+when Calendar closes. Tasks still uses the same single TaskHistoryModal host
+and unchanged History/Calendar handlers. No SQL, Edge deployment, schema
+change, or production data mutation was performed.
 
 ## 2026-10-04 7.16.66 Fractional Meal calories at Health write boundary
 

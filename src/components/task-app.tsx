@@ -7909,7 +7909,7 @@ export function TaskApp() {
         completeFlow={null}
         focusPlannerFlow={focusPlannerFlow}
         momentumFlow={momentumFlow}
-        taskHistoryFlow={taskHistoryFlow}
+        taskHistoryFlow={null}
       />
       {milestoneSetupTask ? (
         <MilestoneSetupModal
@@ -7968,7 +7968,7 @@ export function TaskApp() {
         completeFlow={completeFlow}
         focusPlannerFlow={null}
         momentumFlow={null}
-        taskHistoryFlow={null}
+        taskHistoryFlow={taskHistoryFlow}
       />
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
         <TaskManagementTableV2
