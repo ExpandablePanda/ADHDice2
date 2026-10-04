@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.68`.
+- Current working app version: `7.16.69`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -21,6 +21,17 @@ animation, colors, positioning, full-screen layout, and dark-mode behavior while
 reducing both the pale background circle and animated purple arc from
 `strokeWidth="7"` to `strokeWidth="4"`. No SQL, Edge deployment, schema change,
 or production data mutation was performed.
+
+## 2026-10-04 7.16.69 Calendar Task Search / Switcher
+
+Task History/Calendar now supports compact in-modal search across already
+loaded non-permanently-deleted canonical Task entities, including parent Tasks,
+Steps, and Substeps. Selecting a result switches the existing Calendar modal by
+Task ID, loads the selected Task's bounded History detail and Calendar overrides,
+resets Task-local modal state, and preserves the originating app page and shared
+Edit Task overlay. The existing Task History and Calendar authorities remain
+unchanged. No SQL, Edge deployment, schema change, or production data mutation
+was performed.
 
 ## 2026-10-04 7.16.67 Keep Edit Task Calendar on the current page
 

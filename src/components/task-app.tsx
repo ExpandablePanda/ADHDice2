@@ -1664,6 +1664,8 @@ export function TaskApp() {
     setMessage(value);
   }, []);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
+  const [taskHistoryModalLoadingTaskId, setTaskHistoryModalLoadingTaskId] = useState<string | null>(null);
+  const taskHistoryModalLoadGenerationRef = useRef(0);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
   const [taskEditorNavigationTaskIds, setTaskEditorNavigationTaskIds] = useState<string[] | null>(null);
@@ -6435,10 +6437,18 @@ export function TaskApp() {
   }
 
   function openTaskHistoryForTask(taskId: string) {
+    const loadGeneration = ++taskHistoryModalLoadGenerationRef.current;
     setTaskHistoryModalTaskId(taskId);
+    setTaskHistoryModalLoadingTaskId(taskId);
     const range = getTaskHistoryInitialDetailRange(todayKey);
-    void loadTaskHistoryDetailWindow(taskId, { range, source: "open" });
-    void loadTaskCalendarOverridesForTask(taskId, range);
+    void Promise.allSettled([
+      loadTaskHistoryDetailWindow(taskId, { range, source: "open" }),
+      loadTaskCalendarOverridesForTask(taskId, range),
+    ]).then(() => {
+      if (taskHistoryModalLoadGenerationRef.current === loadGeneration) {
+        setTaskHistoryModalLoadingTaskId(null);
+      }
+    });
   }
 
   function openBatchDeleteModal() {
@@ -7226,7 +7236,9 @@ export function TaskApp() {
   }
 
   function closeTaskHistoryModal() {
+    taskHistoryModalLoadGenerationRef.current += 1;
     setTaskHistoryModalTaskId(null);
+    setTaskHistoryModalLoadingTaskId(null);
   }
 
   const batchDeleteFlow = isBatchDeleteModalOpen ? {
@@ -7424,6 +7436,7 @@ export function TaskApp() {
 
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onSelectTask: openTaskHistoryForTask,
     onRefreshTaskAuthority: async () => {
       if (!taskHistoryModalTaskId) return false;
       await reconcileTaskEntity(taskHistoryModalTaskId);
@@ -7526,11 +7539,13 @@ export function TaskApp() {
       await refreshTaskHistoryDetailAfterMutation(taskHistoryModalTaskId);
     },
     task: taskHistoryModalTask,
+    taskCandidates: tasks,
     taskHistory: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.history ?? [],
     calendarOverrides: taskCalendarOverridesByTaskId[taskHistoryModalTaskId] ?? [],
     taskTitle: taskHistoryModalTask.title,
     taskHistoryLoadError: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.error ?? null,
     taskHistoryLoadStatus: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.status ?? "loading",
+    taskHistoryModalIsLoading: taskHistoryModalLoadingTaskId === taskHistoryModalTaskId,
     onRetryTaskHistoryLoad: () => loadTaskHistoryDetailWindow(taskHistoryModalTaskId, {
       force: true,
       source: "open",
