@@ -21,6 +21,13 @@ export type PendingRewardDiceMutationRow = {
   was_replayed: boolean;
 };
 
+export type PendingRewardDiceResetRow = {
+  discarded_dice: number;
+  pending_dice: number;
+  revision: number;
+  updated_at: string;
+};
+
 export function buildPendingRewardAwardOperationId(reward: PendingTaskReward) {
   return `task-reward:${getPendingTaskRewardKey(reward)}`;
 }

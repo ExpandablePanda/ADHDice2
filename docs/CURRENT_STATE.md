@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.78`.
+- Current working app version: `7.16.79`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.79 Reset Pending Dice Bank
+
+The Pending Roll Bank intro now offers a confirmed `Reset Bank` action. The
+source-only owner-scoped reset RPC atomically discards only unclaimed pending
+reward items, zeroes the pending account, advances its revision, and returns
+the authoritative account snapshot without touching earned economy, reward
+roll/claim, Task, History, or Achievement state. The controller applies that
+snapshot, clears the loaded queue, and closes the modal only after success;
+failed resets retain the visible bank until authoritative reconciliation.
+
+The forward migration is
+`supabase/patch_pending_reward_dice_reset_7_16_79.sql`; it has not been
+executed or applied to live Supabase. Browser/live reset QA remains pending
+SQL review and explicit deployment approval.
 
 ## 2026-10-04 7.16.78 Home Task-row structural breadcrumbs
 

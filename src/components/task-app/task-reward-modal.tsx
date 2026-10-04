@@ -18,6 +18,7 @@ type TaskRewardModalProps = {
   isDark: boolean;
   onClaim: () => Promise<TaskRewardBankSession | null>;
   onClose: () => void;
+  onReset: () => Promise<boolean>;
   pendingRewards: PendingTaskReward[];
   variant?: "global" | "table";
 };
@@ -36,11 +37,13 @@ export function TaskRewardModal({
   isDark,
   onClaim,
   onClose,
+  onReset,
   pendingRewards,
 }: TaskRewardModalProps) {
   const [stage, setStage] = useState<RewardStage>("intro");
   const [batchIndex, setBatchIndex] = useState(0);
   const [isClaiming, setIsClaiming] = useState(false);
+  const [isResetting, setIsResetting] = useState(false);
   const [isAutoAdvancePaused, setIsAutoAdvancePaused] = useState(false);
   const [session, setSession] = useState<TaskRewardBankSession | null>(null);
   const pendingDiceCount = getPendingRewardDiceCount(pendingRewards);
@@ -67,6 +70,7 @@ export function TaskRewardModal({
     setStage("intro");
     setBatchIndex(0);
     setIsClaiming(false);
+    setIsResetting(false);
     setIsAutoAdvancePaused(false);
   }, [pendingRewards]);
 
@@ -114,7 +118,7 @@ export function TaskRewardModal({
   }, [batchCount, batchIndex, isAutoAdvancePaused, isClaiming, stage]);
 
   async function startRewardRoll() {
-    if (isClaiming) return;
+    if (isClaiming || isResetting) return;
     setIsClaiming(true);
     const authoritativeSession = await onClaim();
     setIsClaiming(false);
@@ -123,6 +127,23 @@ export function TaskRewardModal({
     setBatchIndex(0);
     setIsAutoAdvancePaused(false);
     setStage("batch_wait");
+  }
+
+  async function handleReset() {
+    if (stage !== "intro" || isClaiming || isResetting || pendingDiceCount <= 0) return;
+    const diceLabel = pendingDiceCount === 1 ? "die" : "dice";
+    const confirmed = window.confirm(
+      `Reset ${pendingDiceCount} ${diceLabel} from your pending roll bank?\n\nThis discards these unrolled rewards. Existing XP, points, tokens, achievements, completed Tasks, Task History, and previous reward history will not change.`,
+    );
+    if (!confirmed) return;
+
+    setIsResetting(true);
+    try {
+      const didReset = await onReset();
+      if (didReset) onClose();
+    } finally {
+      setIsResetting(false);
+    }
   }
 
   async function handleClaim() {
@@ -206,15 +227,25 @@ export function TaskRewardModal({
                 </div>
               </div>
 
-              <div className="flex justify-center">
+              <div className="flex flex-wrap justify-center gap-2">
                 <button
                   className="ui-pill-button-strong-light"
-                  disabled={isClaiming}
+                  disabled={isClaiming || isResetting}
                   onClick={() => { void startRewardRoll(); }}
                   type="button"
                 >
                   {isClaiming ? "Preparing roll..." : "Roll banked dice"}
                 </button>
+                {stage === "intro" ? (
+                  <button
+                    className="rounded-full border border-rose-200 bg-rose-50 px-3 py-2 text-sm font-semibold text-rose-700 disabled:opacity-60 dark:border-rose-300/20 dark:bg-rose-400/10 dark:text-rose-200"
+                    disabled={isClaiming || isResetting}
+                    onClick={() => { void handleReset(); }}
+                    type="button"
+                  >
+                    {isResetting ? "Resetting..." : "Reset Bank"}
+                  </button>
+                ) : null}
               </div>
             </div>
           ) : null}

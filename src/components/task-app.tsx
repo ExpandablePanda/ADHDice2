@@ -4766,6 +4766,7 @@ export function TaskApp() {
     loadPendingRewardQueue,
     pendingRewardDiceCount,
     queueTaskRewards,
+    resetPendingRewardBank,
   } = useTaskRewardController({
     client,
     currentUserId: session?.user?.id ?? null,
@@ -8165,6 +8166,7 @@ export function TaskApp() {
           isDark={theme === "dark"}
           onClaim={claimPendingRewardBank}
           onClose={() => setActiveRewardBankSession(null)}
+          onReset={resetPendingRewardBank}
           pendingRewards={activeRewardBankSession}
         />
       ) : null}

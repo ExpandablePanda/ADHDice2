@@ -3609,6 +3609,15 @@ export type Database = {
           was_replayed: boolean;
         }>;
       };
+      adhdice_reset_pending_reward_dice: {
+        Args: Record<string, never>;
+        Returns: Array<{
+          pending_dice: number;
+          revision: number;
+          updated_at: string;
+          discarded_dice: number;
+        }>;
+      };
       adhdice_execute_roll: {
         Args: {
           p_operation_id: string;

@@ -16,6 +16,7 @@ import {
   shouldApplyPendingRewardDiceSnapshot,
   type PendingRewardDiceAccountSnapshot,
   type PendingRewardDiceMutationRow,
+  type PendingRewardDiceResetRow,
 } from "@/lib/pending-reward-dice";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import { fetchAllPagedRows, SUPABASE_READ_PAGE_SIZE } from "@/lib/paginated-read";
@@ -290,6 +291,50 @@ export function useTaskRewardController({
     await fulfillCanonicalRewardEntitlements(candidates.filter((candidate) => Boolean(candidate.canonicalRewardEntitlementId) && !excludedTaskIds.has(candidate.task.id)));
   }
 
+  async function resetPendingRewardBank() {
+    if (!client || !currentUserId) return false;
+    try {
+      const reset = await client.rpc("adhdice_reset_pending_reward_dice", {});
+      const resetRow = reset.data?.[0] as PendingRewardDiceResetRow | undefined;
+      const revision = Number(resetRow?.revision);
+      if (
+        reset.error
+        || !resetRow
+        || resetRow.pending_dice !== 0
+        || !Number.isFinite(revision)
+        || typeof resetRow.updated_at !== "string"
+        || !Number.isInteger(resetRow.discarded_dice)
+        || resetRow.discarded_dice < 0
+      ) {
+        setMessage({ tone: "warn", text: reset.error?.message ?? "Supabase returned an incomplete pending reward reset. The bank will be refreshed." });
+        await refreshPendingRewardAccount();
+        return false;
+      }
+      fetchGenerationRef.current += 1;
+      applyAuthoritativeSnapshot({
+        pendingDice: resetRow.pending_dice,
+        revision,
+        updatedAt: resetRow.updated_at,
+      });
+      clearPendingRewardQueue();
+      setMessage({
+        tone: "good",
+        text: `Reset ${resetRow.discarded_dice} pending reward ${resetRow.discarded_dice === 1 ? "die" : "dice"}.`,
+      });
+      void refreshPendingRewardAccount();
+      return true;
+    } catch (error) {
+      setMessage({
+        tone: "warn",
+        text: isFetchFailure(error)
+          ? "Could not reach Supabase to reset the pending reward bank. Please try again."
+          : error instanceof Error ? error.message : "Could not reset the pending reward bank. Please try again.",
+      });
+      await refreshPendingRewardAccount();
+      return false;
+    }
+  }
+
   async function claimPendingRewardBank() {
     if (!client || !currentUserId || pendingRewardDiceCount <= 0) return null;
     try {
@@ -345,5 +390,6 @@ export function useTaskRewardController({
     pendingRewardDiceCount,
     pendingRewardQueue,
     queueTaskRewards,
+    resetPendingRewardBank,
   };
 }
