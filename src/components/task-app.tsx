@@ -7540,6 +7540,7 @@ export function TaskApp() {
     },
     task: taskHistoryModalTask,
     taskCandidates: tasks,
+    taskDisplayStatusByTaskId,
     taskHistory: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.history ?? [],
     calendarOverrides: taskCalendarOverridesByTaskId[taskHistoryModalTaskId] ?? [],
     taskTitle: taskHistoryModalTask.title,

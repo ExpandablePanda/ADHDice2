@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.69`.
+- Current working app version: `7.16.70`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.70 Calendar Search Header and Derived Status
+
+Calendar search now sits beside the editable Task title in a wrapping header
+row, while the Task type label remains above and the close control stays at the
+far right. Search result context now uses the canonical derived current Task
+status from `taskDisplayStatusByTaskId`, falling back to persisted `task.status`
+only when the projection has no value. Parent context, local case-insensitive
+search, ID-based duplicate selection, and Task switching remain unchanged. No
+SQL, Edge deployment, schema change, or production data mutation was performed.
 
 ## 2026-10-04 7.16.68 Thin full-screen loading ring
 

@@ -8,7 +8,7 @@ import { FilterRowsComponent } from "./task-filter-rows";
 import { FocusPlannerModalComponent } from "./focus-planner-modal";
 import { TaskDelayPicker } from "./task-delay-picker";
 import { formatTaskStatusLabel, renderTaskStatusCircle, TASK_STATUS_CHIP_STYLES, TASK_STATUS_INVERTED_CHIP_STYLES } from "./task-status-ui";
-import { normalizeTaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import {
   TASK_TABLE_INACTIVE_CHIP_CLASS,
   TaskTableChipButton,
@@ -343,11 +343,13 @@ export function filterTaskHistorySearchTasks({
   currentTaskId,
   customBehaviorRulesets = [],
   query,
+  taskDisplayStatusByTaskId = {},
   tasks,
 }: {
   currentTaskId: string;
   customBehaviorRulesets?: readonly Pick<CustomBehaviorRuleset, "id" | "name" | "task_type">[];
   query: string;
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   tasks: readonly Task[];
 }) {
   const normalizedQuery = query.trim().toLowerCase();
@@ -363,7 +365,7 @@ export function filterTaskHistorySearchTasks({
       const parentTitle = candidate.parent_task_id ? tasksById.get(candidate.parent_task_id)?.title : null;
       const context = [
         formatTaskTypeLabel(candidate.task_type, candidate.custom_ruleset_id, customBehaviorRulesets),
-        formatTaskStatusLabel(candidate.status),
+        formatTaskStatusLabel(taskDisplayStatusByTaskId[candidate.id] ?? candidate.status),
         parentTitle ? `Parent: ${parentTitle}` : candidate.parent_task_id ? "Child Task" : null,
       ].filter(Boolean).join(" · ");
       return { context, task: candidate };
@@ -382,6 +384,7 @@ export function TaskHistoryModal({
   onSetStatuses,
   task,
   taskCandidates = [],
+  taskDisplayStatusByTaskId = {},
   taskHistory,
   taskHistoryLoadError = null,
   taskHistoryLoadStatus = "ready",
@@ -416,6 +419,7 @@ export function TaskHistoryModal({
   onSetCalendarOverride?: (logicalDate: string, overrideState: "not_due" | "due_open") => Promise<boolean | void>;
   task: Task;
   taskCandidates?: readonly Task[];
+  taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   taskHistory: DbTaskHistory[];
   taskHistoryLoadError?: string | null;
   taskHistoryLoadStatus?: "error" | "loading" | "ready";
@@ -474,9 +478,10 @@ export function TaskHistoryModal({
       currentTaskId: task.id,
       customBehaviorRulesets,
       query: taskSearchQuery,
+      taskDisplayStatusByTaskId,
       tasks: taskCandidates,
     }),
-    [customBehaviorRulesets, task.id, taskCandidates, taskSearchQuery],
+    [customBehaviorRulesets, task.id, taskCandidates, taskDisplayStatusByTaskId, taskSearchQuery],
   );
 
   useEffect(() => {
@@ -996,52 +1001,56 @@ export function TaskHistoryModal({
   return (
     <ModalShell className="flex h-[100dvh] w-full max-w-6xl flex-col overflow-hidden rounded-none border border-[#ece8f8] bg-white shadow-[0_30px_80px_rgba(81,61,168,0.18)] sm:h-auto sm:max-h-[calc(100vh-2rem)] sm:rounded-[2.4rem] sm:p-6 dark:border-white/10 dark:bg-[#171328]" label={`${taskHistoryLabel} calendar`} onClose={handleModalClose}>
       <header className="flex shrink-0 items-start justify-between gap-4 border-b border-[#eee9f8] pb-4 dark:border-white/10">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-[0.22em] text-[#9b92be] dark:text-white/35">{taskTypeLabel}</p>
-          <EditableEntityHeaderTitle aria-label="Task title" onCancel={cancelTaskTitle} onChange={setTaskTitleDraft} onCommit={commitTaskTitle} placeholder="Name this Task" value={taskTitleDraft} />
-          <div className="relative mt-2 max-w-md" ref={taskSearchRef}>
-            <label className="sr-only" htmlFor="task-history-search">Search another task</label>
-            <input
-              aria-controls="task-history-search-results"
-              aria-expanded={isTaskSearchOpen && taskSearchResults.length > 0}
-              aria-haspopup="listbox"
-              className="h-9 w-full rounded-[0.85rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition placeholder:text-[#aaa3bd] focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:placeholder:text-white/40 dark:focus:border-[#6d56d6]"
-              id="task-history-search"
-              onChange={(event) => {
-                setTaskSearchQuery(event.target.value);
-                taskSearchOpenRef.current = true;
-                setIsTaskSearchOpen(true);
-              }}
-              onFocus={() => {
-                taskSearchOpenRef.current = true;
-                setIsTaskSearchOpen(true);
-              }}
-              placeholder="Search another task…"
-              role="combobox"
-              type="search"
-              value={taskSearchQuery}
-            />
-            {isTaskSearchOpen && taskSearchResults.length > 0 ? (
-              <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-[0.9rem] border border-[#ded6f2] bg-white p-1 shadow-[0_18px_40px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#22193f]" id="task-history-search-results" role="listbox">
-                {taskSearchResults.map(({ context, task: resultTask }) => (
-                  <button
-                    className="block w-full rounded-[0.7rem] px-3 py-2 text-left transition hover:bg-[#f1ecff] dark:hover:bg-white/10"
-                    disabled={!onSelectTask}
-                    key={resultTask.id}
-                    onClick={() => selectTask(resultTask.id)}
-                    aria-selected={false}
-                    role="option"
-                    type="button"
-                  >
-                    <span className="block truncate text-sm font-semibold text-[#27304c] dark:text-white/90">{resultTask.title}</span>
-                    <span className="mt-0.5 block truncate text-xs text-[#827a97] dark:text-white/50">{context}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
+          <div className="flex min-w-0 flex-wrap items-center gap-3">
+            <div className="min-w-[12rem] flex-[1_1_18rem]">
+              <EditableEntityHeaderTitle aria-label="Task title" onCancel={cancelTaskTitle} onChange={setTaskTitleDraft} onCommit={commitTaskTitle} placeholder="Name this Task" value={taskTitleDraft} />
+            </div>
+            <div className="relative min-w-[14rem] max-w-md flex-[1_1_20rem]" ref={taskSearchRef}>
+              <label className="sr-only" htmlFor="task-history-search">Search another task</label>
+              <input
+                aria-controls="task-history-search-results"
+                aria-expanded={isTaskSearchOpen && taskSearchResults.length > 0}
+                aria-haspopup="listbox"
+                className="h-9 w-full rounded-[0.85rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition placeholder:text-[#aaa3bd] focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:placeholder:text-white/40 dark:focus:border-[#6d56d6]"
+                id="task-history-search"
+                onChange={(event) => {
+                  setTaskSearchQuery(event.target.value);
+                  taskSearchOpenRef.current = true;
+                  setIsTaskSearchOpen(true);
+                }}
+                onFocus={() => {
+                  taskSearchOpenRef.current = true;
+                  setIsTaskSearchOpen(true);
+                }}
+                placeholder="Search another task…"
+                role="combobox"
+                type="search"
+                value={taskSearchQuery}
+              />
+              {isTaskSearchOpen && taskSearchResults.length > 0 ? (
+                <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-56 overflow-y-auto rounded-[0.9rem] border border-[#ded6f2] bg-white p-1 shadow-[0_18px_40px_rgba(81,61,168,0.16)] dark:border-white/10 dark:bg-[#22193f]" id="task-history-search-results" role="listbox">
+                  {taskSearchResults.map(({ context, task: resultTask }) => (
+                    <button
+                      className="block w-full rounded-[0.7rem] px-3 py-2 text-left transition hover:bg-[#f1ecff] dark:hover:bg-white/10"
+                      disabled={!onSelectTask}
+                      key={resultTask.id}
+                      onClick={() => selectTask(resultTask.id)}
+                      aria-selected={false}
+                      role="option"
+                      type="button"
+                    >
+                      <span className="block truncate text-sm font-semibold text-[#27304c] dark:text-white/90">{resultTask.title}</span>
+                      <span className="mt-0.5 block truncate text-xs text-[#827a97] dark:text-white/50">{context}</span>
+                    </button>
+                  ))}
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
-        <AdhdIconButton aria-label="Close task history" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
+        <AdhdIconButton aria-label="Close task history" onClick={handleModalClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
       </header>
       <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0">
         {calendarRead ? <div className="space-y-5">{taskCalendarSection}</div> : calendarUnavailableSection}

@@ -24,10 +24,14 @@ function task(id: string, title: string, extra: Parameters<typeof createTask>[0]
   });
 }
 
-test("Task History exposes a compact local Task search and preserves the editable title", () => {
+test("Task History keeps the editable title and search in a wrapping flex header row", () => {
   assert.match(modal, /placeholder="Search another task…"/);
   assert.match(modal, /<EditableEntityHeaderTitle aria-label="Task title"/);
+  assert.match(modal, /<div className="flex min-w-0 flex-wrap items-center gap-3">[\s\S]*<EditableEntityHeaderTitle aria-label="Task title"[\s\S]*placeholder="Search another task…"/);
+  assert.match(modal, /min-w-\[12rem\] flex-\[1_1_18rem\]/);
+  assert.match(modal, /min-w-\[14rem\] max-w-md flex-\[1_1_20rem\]/);
   assert.match(modal, /taskCandidates\?: readonly Task\[\]/);
+  assert.match(modal, /taskDisplayStatusByTaskId\?: TaskDisplayStatusByTaskId/);
   assert.match(modal, /onSelectTask\?: \(taskId: string\) => void/);
 });
 
@@ -46,6 +50,49 @@ test("Task History search filters loaded Task titles case-insensitively and excl
   assert.deepEqual(results.map(({ task: resultTask }) => resultTask.id), ["one", "two"]);
   assert.equal(results[0]?.task.title, "Weekly Planning");
   assert.match(results[0]?.context ?? "", /Open/);
+});
+
+test("Task History search context prefers the live derived display status and preserves parent context", () => {
+  const results = filterTaskHistorySearchTasks({
+    currentTaskId: "current",
+    query: "status",
+    taskDisplayStatusByTaskId: {
+      pending: "pending",
+      notDue: "not_due",
+      inProgress: "in_progress",
+      missed: "missed",
+    },
+    tasks: [
+      task("current", "Current"),
+      task("parent", "Status Parent", { status: "pending" }),
+      task("pending", "Status Pending", { status: "not_due", parent_task_id: "parent" }),
+      task("notDue", "Status Not Due", { status: "pending" }),
+      task("inProgress", "Status In Progress", { status: "pending" }),
+      task("missed", "Status Missed", { status: "pending" }),
+    ],
+  });
+
+  assert.deepEqual(results.map(({ task: resultTask }) => resultTask.id), ["parent", "pending", "notDue", "inProgress", "missed"]);
+  assert.match(results.find(({ task: resultTask }) => resultTask.id === "pending")?.context ?? "", /^Task · Open · Parent: Status Parent$/);
+  assert.match(results.find(({ task: resultTask }) => resultTask.id === "notDue")?.context ?? "", /Not Due/);
+  assert.match(results.find(({ task: resultTask }) => resultTask.id === "inProgress")?.context ?? "", /In Progress/);
+  assert.match(results.find(({ task: resultTask }) => resultTask.id === "missed")?.context ?? "", /Missed/);
+});
+
+test("Task History search falls back to raw status only when the derived status is absent", () => {
+  const results = filterTaskHistorySearchTasks({
+    currentTaskId: "current",
+    query: "fallback",
+    taskDisplayStatusByTaskId: { derived: "pending" },
+    tasks: [
+      task("current", "Current"),
+      task("derived", "Derived Fallback", { status: "not_due" }),
+      task("raw", "Raw Fallback", { status: "not_due" }),
+    ],
+  });
+
+  assert.match(results.find(({ task: resultTask }) => resultTask.id === "derived")?.context ?? "", /Open/);
+  assert.match(results.find(({ task: resultTask }) => resultTask.id === "raw")?.context ?? "", /Not Due/);
 });
 
 test("duplicate Task titles retain distinct IDs and selection calls the explicit ID callback", () => {
@@ -70,6 +117,7 @@ test("selecting a Task starts the existing bounded History and Calendar reads wi
   assert.doesNotMatch(openHandler, /setActivePage/);
   assert.match(flow, /onSelectTask: openTaskHistoryForTask/);
   assert.match(flow, /taskCandidates: tasks/);
+  assert.match(flow, /taskDisplayStatusByTaskId,/);
   assert.match(flow, /taskHistoryModalLoadingTaskId === taskHistoryModalTaskId/);
 });
 
