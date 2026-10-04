@@ -1,6 +1,7 @@
 import { formatDateKey, shiftDateKey } from "./date-key.ts";
 import type { Task, TaskRepeatFrequency, TaskRepeatMonthlyMode, TaskRepeatMonthlyOrdinal, TaskStatus } from "./database.types.ts";
 import type { QuotaProgress } from "./task-state-engine/quota.ts";
+import { recurrenceOccurrenceIsAllowed } from "./task-state-engine/recurrence.ts";
 
 export type TaskRepeatCategory = "none" | "daily" | "daily_until_complete" | "weekdays" | "weekly" | "monthly" | "custom" | "per_week" | "per_month";
 export type TaskRepeatEditorUnit = "daily" | "weekly" | "monthly" | "per_week" | "per_month";
@@ -13,6 +14,7 @@ export type TaskRepeatEditorValue = {
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
+  repeatEndOn: string | null;
   repeatQuotaCount?: number | null;
   repeatQuotaBalanceEnabled?: boolean;
 };
@@ -32,6 +34,12 @@ type ResolveRecurringLiveStatusOptions = {
 
 function formatQuotaProgress(progress?: QuotaProgress | null) {
   return progress ? ` · ${progress.numerator}/${progress.denominator}` : "";
+}
+
+function formatRepeatEndSuffix(repeatEndOn?: string | null) {
+  return repeatEndOn
+    ? ` · Ends ${new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${repeatEndOn}T12:00:00Z`))}`
+    : "";
 }
 
 export const REPEAT_WEEKDAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
@@ -289,6 +297,7 @@ export function normalizePresetRepeatSelection(
       ...clearMonthlyFields(),
       repeatQuotaCount: null,
       repeatQuotaBalanceEnabled: false,
+      repeatEndOn: null,
     };
   }
 
@@ -305,6 +314,7 @@ export function normalizePresetRepeatSelection(
         ? normalizeTaskRepeatQuotaCount(selection, current.repeatQuotaCount)
         : null,
       repeatQuotaBalanceEnabled: current.repeatQuotaBalanceEnabled === true,
+      repeatEndOn: current.repeatEndOn ?? null,
     };
   }
 
@@ -316,6 +326,7 @@ export function normalizePresetRepeatSelection(
       ...clearMonthlyFields(),
       repeatQuotaCount: null,
       repeatQuotaBalanceEnabled: false,
+      repeatEndOn: current.repeatEndOn ?? null,
     };
   }
 
@@ -327,6 +338,7 @@ export function normalizePresetRepeatSelection(
       ...clearMonthlyFields(),
       repeatQuotaCount: null,
       repeatQuotaBalanceEnabled: false,
+      repeatEndOn: current.repeatEndOn ?? null,
     };
   }
 
@@ -342,6 +354,7 @@ export function normalizePresetRepeatSelection(
       ...clearMonthlyFields(),
       repeatQuotaCount: null,
       repeatQuotaBalanceEnabled: false,
+      repeatEndOn: current.repeatEndOn ?? null,
     };
   }
 
@@ -355,13 +368,15 @@ export function normalizePresetRepeatSelection(
     ...clearWeeklyFields(),
     ...monthly,
     repeatQuotaCount: null,
-    repeatQuotaBalanceEnabled: false,
+      repeatQuotaBalanceEnabled: false,
+      repeatEndOn: current.repeatEndOn ?? null,
   };
 }
 
 export function buildCustomCadenceMutation(
   draft: Pick<TaskRepeatEditorDraft, "unit" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday"> & {
     completionMode?: TaskRepeatCompletionMode;
+    repeatEndOn?: string | null;
   },
   options: { dueOn?: string | null; fallbackWeekday?: number } = {},
 ): TaskRepeatEditorValue {
@@ -373,6 +388,7 @@ export function buildCustomCadenceMutation(
       repeatInterval,
       ...clearWeeklyFields(),
       ...clearMonthlyFields(),
+      repeatEndOn: draft.repeatEndOn ?? null,
     };
   }
 
@@ -382,6 +398,7 @@ export function buildCustomCadenceMutation(
       repeatInterval,
       repeatDaysOfWeek: resolveWeekdaySelection(draft.repeatDaysOfWeek, options.dueOn, options.fallbackWeekday),
       ...clearMonthlyFields(),
+      repeatEndOn: draft.repeatEndOn ?? null,
     };
   }
 
@@ -391,6 +408,7 @@ export function buildCustomCadenceMutation(
     repeatInterval,
     ...clearWeeklyFields(),
     ...monthly,
+    repeatEndOn: draft.repeatEndOn ?? null,
   };
 }
 
@@ -425,6 +443,7 @@ export function taskRepeatEditorValueToUpdate(value: TaskRepeatEditorValue) {
     repeat_quota_balance_enabled: value.repeatFrequency === "per_week" || value.repeatFrequency === "per_month"
       ? value.repeatQuotaBalanceEnabled === true
       : false,
+    repeat_end_on: repeatFrequency === "none" ? null : value.repeatEndOn ?? null,
   };
 }
 
@@ -454,23 +473,27 @@ export function calcNextDueDateFromDate(task: Task, referenceDateKey: string): s
       ? 7 * interval
       : nextDow > baseDow ? nextDow - baseDow : 7 * interval - (baseDow - nextDow);
     base.setDate(base.getDate() + daysUntil);
-    return formatDateKey(base);
+    const candidate = formatDateKey(base);
+    return recurrenceOccurrenceIsAllowed({ kind: "rolling", intervalDays: 1, endOn: task.repeat_end_on }, candidate) ? candidate : null;
   }
 
   if (task.repeat_frequency === "monthly" || (task.repeat_frequency === "daily_until_complete" && repeatShape === "monthly")) {
     base.setMonth(base.getMonth() + interval);
     const occurrenceDate = getMonthlyOccurrenceDate(task, base.getFullYear(), base.getMonth(), referenceDateKey);
     base.setDate(occurrenceDate.getDate());
-    return formatDateKey(base);
+    const candidate = formatDateKey(base);
+    return recurrenceOccurrenceIsAllowed({ kind: "rolling", intervalDays: 1, endOn: task.repeat_end_on }, candidate) ? candidate : null;
   }
 
   if (isDailyCadenceRepeatFrequency(task.repeat_frequency)) {
     base.setDate(base.getDate() + interval);
-    return formatDateKey(base);
+    const candidate = formatDateKey(base);
+    return recurrenceOccurrenceIsAllowed({ kind: "rolling", intervalDays: 1, endOn: task.repeat_end_on }, candidate) ? candidate : null;
   }
 
   base.setDate(base.getDate() + interval);
-  return formatDateKey(base);
+  const candidate = formatDateKey(base);
+  return recurrenceOccurrenceIsAllowed({ kind: "rolling", intervalDays: 1, endOn: task.repeat_end_on }, candidate) ? candidate : null;
 }
 
 export function resolveRecurringLiveStatusFromNextDueDate(
@@ -496,8 +519,12 @@ export function formatRepeatSummary(task: Pick<Task, "repeat_frequency" | "repea
   repeat_quota_balance_enabled?: boolean | null;
   repeat_quota_balance?: number | null;
   repeat_quota_progress?: QuotaProgress | null;
+  repeat_end_on?: string | null;
 }): string | null {
   if (task.repeat_frequency === "none") return null;
+
+  const endSuffix = formatRepeatEndSuffix(task.repeat_end_on);
+  const withEnd = (summary: string) => `${summary}${endSuffix}`;
 
   if (task.repeat_frequency === "per_week" || task.repeat_frequency === "per_month") {
     const count = Math.max(1, Math.min(task.repeat_frequency === "per_week" ? 7 : 31, Math.trunc(task.repeat_quota_count ?? 1)));
@@ -505,7 +532,7 @@ export function formatRepeatSummary(task: Pick<Task, "repeat_frequency" | "repea
       ? ` (${task.repeat_quota_balance > 0 ? "+" : ""}${task.repeat_quota_balance})`
       : "";
     const progress = formatQuotaProgress(task.repeat_quota_progress);
-    return `${count} Per ${task.repeat_frequency === "per_week" ? "Week" : "Month"}${progress}${balance}`;
+    return withEnd(`${count} Per ${task.repeat_frequency === "per_week" ? "Week" : "Month"}${progress}${balance}`);
   }
 
   if (task.repeat_frequency === "daily_until_complete") {
@@ -516,16 +543,16 @@ export function formatRepeatSummary(task: Pick<Task, "repeat_frequency" | "repea
       repeatMonthlyMode: task.repeat_monthly_mode,
     });
     if (repeatShape === "weekly") {
-      return `${formatRepeatSummary({ ...task, repeat_frequency: "weekly" })} until complete`;
+      return withEnd(`${formatRepeatSummary({ ...task, repeat_frequency: "weekly", repeat_end_on: null })} until complete`);
     }
     if (repeatShape === "monthly") {
-      return `${formatRepeatSummary({ ...task, repeat_frequency: "monthly" })} until complete`;
+      return withEnd(`${formatRepeatSummary({ ...task, repeat_frequency: "monthly", repeat_end_on: null })} until complete`);
     }
-    return task.repeat_interval > 1 ? `Every ${task.repeat_interval} days until complete` : "Daily Until Complete";
+    return withEnd(task.repeat_interval > 1 ? `Every ${task.repeat_interval} days until complete` : "Daily Until Complete");
   }
 
   if (task.repeat_frequency === "daily") {
-    return task.repeat_interval > 1 ? `Every ${task.repeat_interval} days` : "Daily";
+    return withEnd(task.repeat_interval > 1 ? `Every ${task.repeat_interval} days` : "Daily");
   }
 
   if (task.repeat_frequency === "weekly") {
@@ -535,30 +562,30 @@ export function formatRepeatSummary(task: Pick<Task, "repeat_frequency" | "repea
       task.repeat_interval,
     );
     if (isWeekdaysPreset) {
-      return "Weekdays";
+      return withEnd("Weekdays");
     }
     const weekdayLabels = (task.repeat_days_of_week ?? [])
       .map((day) => REPEAT_WEEKDAY_LABELS[day] ?? null)
       .filter((value): value is (typeof REPEAT_WEEKDAY_LABELS)[number] => value !== null);
     const weekdaySummary = weekdayLabels.length > 0 ? ` (${weekdayLabels.join(", ")})` : "";
-    return task.repeat_interval > 1
+    return withEnd(task.repeat_interval > 1
       ? `Every ${task.repeat_interval} weeks${weekdaySummary}`
-      : `Weekly${weekdaySummary}`;
+      : `Weekly${weekdaySummary}`);
   }
 
   if (task.repeat_frequency === "monthly") {
     if (isOrdinalMonthlyRepeatTask(task)) {
-      return formatOrdinalMonthlySummary(task) ?? "Monthly";
+      return withEnd(formatOrdinalMonthlySummary(task) ?? "Monthly");
     }
     const daySummary = task.repeat_day_of_month ? ` on ${task.repeat_day_of_month}` : "";
-    return task.repeat_interval > 1
+    return withEnd(task.repeat_interval > 1
       ? `Every ${task.repeat_interval} months${daySummary}`
-      : `Monthly${daySummary}`;
+      : `Monthly${daySummary}`);
   }
 
-  return task.repeat_frequency === "custom"
+  return withEnd(task.repeat_frequency === "custom"
     ? `Every ${Math.max(1, task.repeat_interval)} days`
-    : "Custom";
+    : "Custom");
 }
 
 export function isWeekdaysRepeatSelection(
@@ -689,7 +716,7 @@ function formatOrdinalNumber(value: number) {
   }
 }
 
-export function formatRepeatCompactLabel(
+function formatRepeatCompactLabelBase(
   repeatFrequency: string | null | undefined,
   repeatInterval: number | null | undefined,
   repeatDaysOfWeek?: number[] | null,
@@ -779,6 +806,36 @@ export function formatRepeatCompactLabel(
     repeatMonthlyWeekday,
     repeatDayOfMonth,
   );
+}
+
+export function formatRepeatCompactLabel(
+  repeatFrequency: string | null | undefined,
+  repeatInterval: number | null | undefined,
+  repeatDaysOfWeek?: number[] | null,
+  repeatMonthlyMode?: TaskRepeatMonthlyMode | null,
+  repeatMonthlyOrdinal?: TaskRepeatMonthlyOrdinal | null,
+  repeatMonthlyWeekday?: number | null,
+  repeatDayOfMonth?: number | null,
+  repeatQuotaCount?: number | null,
+  repeatQuotaBalanceEnabled?: boolean | null,
+  repeatQuotaBalance?: number | null,
+  repeatQuotaProgress?: QuotaProgress | null,
+  repeatEndOn?: string | null,
+) {
+  const summary = formatRepeatCompactLabelBase(
+    repeatFrequency,
+    repeatInterval,
+    repeatDaysOfWeek,
+    repeatMonthlyMode,
+    repeatMonthlyOrdinal,
+    repeatMonthlyWeekday,
+    repeatDayOfMonth,
+    repeatQuotaCount,
+    repeatQuotaBalanceEnabled,
+    repeatQuotaBalance,
+    repeatQuotaProgress,
+  );
+  return summary === "No Repeat" ? summary : `${summary}${formatRepeatEndSuffix(repeatEndOn)}`;
 }
 
 function compareDateKeys(left: string, right: string) {

@@ -13,6 +13,7 @@ import {
   occurrenceIdentity,
   resolveSuccessfulOccurrenceTarget,
   recurrenceAfterSuccess,
+  recurrenceOccurrenceIsAllowed,
   scheduledOccurrences,
 } from "./recurrence.ts";
 import {
@@ -266,7 +267,7 @@ function automaticMissedRows(input: {
   if (task.recurrence.kind === "none") {
     dueDates = scheduleStart >= start && scheduleStart <= end ? [scheduleStart] : [];
   } else if (task.recurrence.kind === "rolling") {
-    dueDates = dateRange(start, end);
+    dueDates = dateRange(start, end).filter((date) => recurrenceOccurrenceIsAllowed(task.recurrence, date));
   } else {
     dueDates = scheduledOccurrences(task.recurrence, scheduleStart, start, end);
   }
@@ -391,8 +392,16 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
 
   if (action) {
     const allowed = allowedOutcomes(task.recurrence, unscheduled);
+    const recurrenceEndOn = task.recurrence.kind === "none" ? null : task.recurrence.endOn ?? null;
     let reason: string | null = null;
     if (task.lifecycle !== "active") reason = `Cannot record outcomes for ${task.lifecycle} tasks.`;
+    else if (!historicalOverride
+      && recurrenceEndOn
+      && actionDate > recurrenceEndOn
+      && !(action.occurrenceDueOn && action.occurrenceDueOn <= recurrenceEndOn)
+      && !(existingActionRow?.occurrenceDueOn && existingActionRow.occurrenceDueOn <= recurrenceEndOn)) {
+      reason = "The recurrence has ended; no new occurrence may be recorded after its End Date.";
+    }
     else if (existingActionRow && !action.replaceExisting) reason = "Only one outcome is allowed per task per logical day.";
     else if (!historicalOverride && SUCCESS.has(action.outcome) && actionOccurrenceIdentity && rows.some((row) => (
       row.outcome !== "missed"
@@ -751,11 +760,15 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     .sort((a, b) => b.logicalDate.localeCompare(a.logicalDate))[0] ?? null;
   let activeStatus: TaskActiveStatus;
   let calendar: Record<string, ReturnType<typeof calendarStateForOutcome>> = {};
+  const recurrenceEndOn = task.recurrence.kind === "none" ? null : task.recurrence.endOn ?? null;
+  const recurrenceEndedBeforeToday = recurrenceEndOn !== null
+    && today > recurrenceEndOn
+    && (!nextDue || nextDue <= recurrenceEndOn);
   for (const [date, row] of byDate) calendar[date] = calendarStateForOutcome(row.outcome);
   if (!completed) {
     for (const date of dateRange(calendarStart, today)) {
       if (calendar[date]) continue;
-      if (date === today && (unscheduled || !nextDue || nextDue <= today || overdueAnchor)) calendar[date] = "open";
+      if (date === today && !recurrenceEndedBeforeToday && (unscheduled || !nextDue || nextDue <= today || overdueAnchor)) calendar[date] = "open";
       else if (date < today && overdueAnchor) calendar[date] = "missed";
       else calendar[date] = "no_entry";
     }

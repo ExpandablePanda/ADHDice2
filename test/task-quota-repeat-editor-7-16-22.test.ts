@@ -25,6 +25,7 @@ test("quota presets keep quota count separate from repeat interval", () => {
     repeat_monthly_weekday: null,
     repeat_quota_balance_enabled: true,
     repeat_quota_count: 5,
+    repeat_end_on: null,
   });
 });
 

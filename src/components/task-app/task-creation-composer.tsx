@@ -77,6 +77,7 @@ export function TaskCreationComposer({
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
   });
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
@@ -135,6 +136,7 @@ export function TaskCreationComposer({
       repeatMonthlyMode: "day_of_month",
       repeatMonthlyOrdinal: null,
       repeatMonthlyWeekday: null,
+      repeatEndOn: null,
     });
     setTags([]);
     setTagDraft("");

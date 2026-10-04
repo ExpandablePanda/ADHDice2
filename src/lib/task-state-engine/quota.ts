@@ -13,7 +13,7 @@ import type {
   TaskStateHistoryRow,
   TaskQuotaPeriodFact,
 } from "./types.ts";
-import { occurrenceIdentity } from "./recurrence.ts";
+import { occurrenceIdentity, recurrenceOccurrenceIsAllowed } from "./recurrence.ts";
 import type { TaskBehaviorPolicy } from "./behavior-policy.ts";
 
 export type QuotaPeriod = "week" | "month";
@@ -27,6 +27,7 @@ export type QuotaRecurrence = {
   scheduleBoundaryId?: string | null;
   incomingBalance?: number | null;
   incomingBalancePeriodKey?: string | null;
+  endOn?: string | null;
 };
 
 export type QuotaPeriodBounds = {
@@ -62,6 +63,7 @@ export type QuotaProgressTask = {
   repeat_quota_count?: number | null;
   repeat_quota_balance_enabled?: boolean | null;
   repeat_quota_balance?: number | null;
+  repeat_end_on?: string | null;
   due_on?: string | null;
   status?: string | null;
   terminal_state?: string | null;
@@ -69,6 +71,7 @@ export type QuotaProgressTask = {
   canonical_schedule_boundary?: {
     effective_from_logical_date?: string | null;
     repeat_frequency?: string | null;
+    repeat_end_on?: string | null;
   } | null;
 };
 
@@ -97,11 +100,12 @@ function configuredQuotaCount(period: QuotaPeriod, count: number | null | undefi
 }
 
 export function quotaProgressForCurrentPeriod(input: {
-  recurrence: Pick<QuotaRecurrence, "period" | "count" | "activationDate">;
+  recurrence: Pick<QuotaRecurrence, "period" | "count" | "activationDate" | "endOn">;
   logicalDate: string;
   history?: readonly QuotaProgressHistoryRow[];
 }): QuotaProgress {
-  const bounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
+  const rawBounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
+  const bounds = effectiveQuotaPeriodBounds(input.recurrence, rawBounds);
   return {
     period: input.recurrence.period,
     periodKey: bounds.key,
@@ -133,11 +137,15 @@ export function quotaProgressForTask(input: {
   const activationDate = boundary?.repeat_frequency === frequency
     ? boundary.effective_from_logical_date ?? input.task.due_on ?? null
     : input.task.due_on ?? null;
+  const repeatEndOn = boundary?.repeat_frequency === frequency
+    ? boundary.repeat_end_on ?? input.task.repeat_end_on ?? null
+    : input.task.repeat_end_on ?? null;
   return quotaProgressForCurrentPeriod({
     recurrence: {
       activationDate,
       count: input.task.repeat_quota_count ?? 1,
       period,
+      endOn: repeatEndOn,
     },
     logicalDate: input.logicalDate,
     history: input.history,
@@ -159,6 +167,19 @@ function eligibleStart(recurrence: Pick<QuotaRecurrence, "activationDate">, boun
   return recurrence.activationDate && recurrence.activationDate > bounds.start
     ? recurrence.activationDate
     : bounds.start;
+}
+
+function effectiveQuotaPeriodBounds(
+  recurrence: Pick<QuotaRecurrence, "endOn">,
+  bounds: QuotaPeriodBounds,
+): QuotaPeriodBounds {
+  if (!recurrence.endOn || recurrence.endOn >= bounds.end) return bounds;
+  const end = recurrence.endOn;
+  return {
+    ...bounds,
+    end,
+    capacity: end < bounds.start ? 0 : daysBetween(bounds.start, end) + 1,
+  };
 }
 
 function distinctSuccessDates(
@@ -202,6 +223,7 @@ function incomingBalanceForPeriod(
   facts: readonly TaskQuotaPeriodFact[] = [],
 ) {
   if (!recurrence.balanceEnabled) return 0;
+  if (recurrence.endOn && target.start > recurrence.endOn) return 0;
   const relevantFacts = facts
     .filter((fact) => fact.balanceEnabled && factAppliesToRecurrence(fact, recurrence))
     .sort(factOrder);
@@ -225,13 +247,15 @@ function incomingBalanceForPeriod(
   if (target.key < cursor.key) return 0;
   let incoming = priorFact?.nextBalance ?? recurrence.incomingBalance ?? 0;
   while (cursor.key < target.key) {
+    if (recurrence.endOn && cursor.start > recurrence.endOn) return 0;
+    const effectiveCursor = effectiveQuotaPeriodBounds(recurrence, cursor);
     const baseQuota = quotaBaseQuota(recurrence, cursor);
     const closeFact = periodFacts.find((fact) => fact.periodKey === cursor.key && fact.eventKind === "period_close");
     const clearFact = periodFacts.filter((fact) => fact.periodKey === cursor.key && fact.eventKind === "clear_balance").at(-1);
     const incomingForPeriod = clearFact ? 0 : incoming;
     incoming = closeFact
       ? closeFact.nextBalance
-      : incomingForPeriod + successfulDaysForPeriod(history, cursor) - baseQuota;
+      : incomingForPeriod + successfulDaysForPeriod(history, effectiveCursor) - baseQuota;
     cursor = quotaPeriodBounds(nextPeriodDate(cursor), recurrence.period);
   }
   return incoming;
@@ -243,7 +267,8 @@ export function quotaPeriodEvaluation(input: {
   history?: readonly TaskStateHistoryRow[];
   quotaPeriodFacts?: readonly TaskQuotaPeriodFact[];
 }): QuotaPeriodEvaluation {
-  const bounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
+  const rawBounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
+  const bounds = effectiveQuotaPeriodBounds(input.recurrence, rawBounds);
   const start = eligibleStart(input.recurrence, bounds);
   const daysRemainingIncludingToday = input.logicalDate < start
     ? 0
@@ -253,7 +278,8 @@ export function quotaPeriodEvaluation(input: {
   const history = input.history ?? [];
   const successesThisPeriod = distinctSuccessDates(history, bounds, input.logicalDate).size;
   const incomingBalance = incomingBalanceForPeriod(input.recurrence, bounds, history, input.quotaPeriodFacts);
-  const baseQuota = quotaBaseQuota(input.recurrence, bounds);
+  // A final period may be date-truncated without prorating its configured quota.
+  const baseQuota = quotaBaseQuota(input.recurrence, rawBounds);
   const requiredThisPeriod = Math.max(0, baseQuota - incomingBalance);
   const remainingRequired = Math.max(0, requiredThisPeriod - successesThisPeriod);
   const dueToday = daysRemainingIncludingToday > 0 && remainingRequired >= daysRemainingIncludingToday;
@@ -285,7 +311,7 @@ export function quotaDateIsMandatory(input: {
   history?: readonly TaskStateHistoryRow[];
   quotaPeriodFacts?: readonly TaskQuotaPeriodFact[];
 }) {
-  const bounds = quotaPeriodBounds(input.logicalDate, input.recurrence.period);
+  const bounds = effectiveQuotaPeriodBounds(input.recurrence, quotaPeriodBounds(input.logicalDate, input.recurrence.period));
   const start = eligibleStart(input.recurrence, bounds);
   if (input.logicalDate < start || input.logicalDate > bounds.end) return false;
   return quotaPeriodEvaluation(input).dueToday;
@@ -299,7 +325,7 @@ export function quotaNextBalance(input: {
 }) {
   return quotaPeriodEvaluation({
     recurrence: input.recurrence,
-    logicalDate: quotaPeriodBounds(input.periodDate, input.recurrence.period).end,
+    logicalDate: effectiveQuotaPeriodBounds(input.recurrence, quotaPeriodBounds(input.periodDate, input.recurrence.period)).end,
     history: input.history,
     quotaPeriodFacts: input.quotaPeriodFacts,
   }).nextBalance;
@@ -328,7 +354,7 @@ export function quotaPeriodFactFor(input: {
   eventKind: "period_close" | "clear_balance";
   idempotenceIdentity: string;
 }): QuotaPeriodFactDraft {
-  const bounds = quotaPeriodBounds(input.periodDate, input.recurrence.period);
+  const bounds = effectiveQuotaPeriodBounds(input.recurrence, quotaPeriodBounds(input.periodDate, input.recurrence.period));
   const history = input.history ?? [];
   const evaluation = quotaPeriodEvaluation({
     recurrence: input.recurrence,
@@ -465,6 +491,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
   if (action && !isComplete) {
     let reason: string | null = null;
     if (input.task.lifecycle !== "active") reason = `Cannot record outcomes for ${input.task.lifecycle} tasks.`;
+    else if (recurrence.endOn && actionDate > recurrence.endOn && !existing) reason = "The recurrence has ended; no new quota occurrence may be recorded after its End Date.";
     else if (existing && !action.replaceExisting) reason = "Only one outcome is allowed per task per logical day.";
     else if (action.outcome === "delayed") reason = "Delay is unavailable for quota recurrence.";
     else if (action.outcome === "missed" && !quotaDateIsMandatory({ recurrence, logicalDate: actionDate, history: rows })) {
@@ -513,7 +540,9 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
       ? calendarState(row.outcome, date, logicalDate, true)
       : isComplete
         ? "no_entry"
-        : calendarState(null, date, logicalDate, dateEvaluation.dueToday);
+        : !recurrenceOccurrenceIsAllowed(recurrence, date)
+          ? "no_entry"
+          : calendarState(null, date, logicalDate, dateEvaluation.dueToday);
     const day = quotaTimelineDay(input.task.id, date, state, logicalDate, row?.outcome ?? null, behaviorPolicy, row?.id ?? null);
     days[date] = day;
     calendar[date] = state;
@@ -537,6 +566,7 @@ export function evaluateQuotaTaskState(input: TaskStateEngineInput): TaskStateEn
       : currentEvaluation.nextMandatoryDate
         ?? (() => {
           const nextPeriodDate = shiftDateKey(bounds.end, 1);
+          if (recurrence.endOn && nextPeriodDate > recurrence.endOn) return null;
           const nextEvaluation = quotaPeriodEvaluation({ recurrence, logicalDate: nextPeriodDate, history: rows, quotaPeriodFacts });
           return nextEvaluation.nextMandatoryDate;
         })();

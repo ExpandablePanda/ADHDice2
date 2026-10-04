@@ -412,6 +412,7 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
   repeatMonthlyMode: row.repeatMonthlyMode,
   repeatMonthlyOrdinal: row.repeatMonthlyOrdinal,
   repeatMonthlyWeekday: row.repeatMonthlyWeekday,
+  repeatEndOn: row.repeatEndOn,
   repeatQuotaCount: row.repeatQuotaCount,
   repeatQuotaBalanceEnabled: row.repeatQuotaBalanceEnabled,
   repeatQuotaBalance: row.repeatQuotaBalance,
@@ -432,6 +433,7 @@ function clonePrototypeTaskRow(task: PrototypeTaskRow): PrototypeTaskRow {
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatEndOn: task.repeatEndOn,
     repeatQuotaCount: task.repeatQuotaCount,
     repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
     repeatQuotaBalance: task.repeatQuotaBalance,
@@ -1211,6 +1213,7 @@ export type PrototypeTaskRow = {
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
+  repeatEndOn: string | null;
   repeatQuotaCount?: number | null;
   repeatQuotaBalanceEnabled?: boolean;
   repeatQuotaBalance?: number | null;
@@ -1443,7 +1446,7 @@ type TaskManagementTableV2Props = {
   onTaskPinToggle?: (taskId: string) => void;
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
-  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">) => void | Promise<boolean>;
+  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">) => void | Promise<boolean>;
   onTaskQuotaBalanceClear?: (taskId: string) => void | Promise<boolean> | boolean;
   onTaskStatusChange?: (taskId: string, status: TaskStatus, scrollAnchorTaskIds?: string[], options?: TableStatusChangeOptions) => void;
   onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
@@ -1529,6 +1532,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
     subtasksAutoReset: false,
     status: "pending",
     finishedToday: false,
@@ -1572,6 +1576,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
     subtasksAutoReset: false,
     status: "in_progress",
     finishedToday: false,
@@ -1623,6 +1628,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
     subtasksAutoReset: false,
     status: "pending",
     finishedToday: false,
@@ -2086,6 +2092,7 @@ function formatChildTaskPreviewRepeat(item: ChildTaskPreview) {
     item.repeatQuotaBalanceEnabled,
     item.repeatQuotaBalance,
     item.repeatQuotaProgress,
+    item.repeatEndOn,
   );
 }
 
@@ -2313,12 +2320,13 @@ function taskRepeatEditorValue(task: PrototypeTaskRow): TaskRepeatEditorValue {
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatEndOn: task.repeatEndOn,
     repeatQuotaCount: task.repeatQuotaCount,
     repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
   };
 }
 
-function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">): TaskRepeatReconciliationValue {
+function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">): TaskRepeatReconciliationValue {
   return {
     repeat: task.repeat,
     repeatDayOfMonth: task.repeatDayOfMonth,
@@ -2327,6 +2335,7 @@ function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatEndOn: task.repeatEndOn,
     repeatQuotaCount: task.repeatQuotaCount,
     repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
   };
@@ -2379,7 +2388,7 @@ export type TaskMetadataSummaryRow = {
 };
 
 export function buildTaskMetadataSummary(
-  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled" | "repeatQuotaProgress" | "status" | "tags" | "taskType" | "title"> & {
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled" | "repeatQuotaProgress" | "status" | "tags" | "taskType" | "title"> & {
     customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   },
   actualSeconds: number,
@@ -2402,6 +2411,7 @@ export function buildTaskMetadataSummary(
     repeat_quota_count: task.repeatQuotaCount,
     repeat_quota_balance_enabled: task.repeatQuotaBalanceEnabled,
     repeat_quota_progress: task.repeatQuotaProgress,
+    repeat_end_on: task.repeatEndOn,
   }) ?? "No repeat";
 
   return [
@@ -5069,6 +5079,7 @@ export function TaskManagementTableV2({
         repeatMonthlyMode: "day_of_month" as const,
         repeatMonthlyOrdinal: null,
         repeatMonthlyWeekday: null,
+        repeatEndOn: null,
       } : {}),
       lists: dueOn === offsetDate(0)
         ? Array.from(new Set(task.lists.filter((list) => list !== "Inbox").concat("Today")))
@@ -5235,6 +5246,7 @@ export function TaskManagementTableV2({
       repeatMonthlyMode: value.repeatMonthlyMode,
       repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+      repeatEndOn: value.repeatEndOn,
       repeatQuotaCount: value.repeatQuotaCount,
       repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
     };
@@ -5273,6 +5285,7 @@ export function TaskManagementTableV2({
           repeatMonthlyMode: value.repeatMonthlyMode,
           repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
           repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+          repeatEndOn: value.repeatEndOn,
           repeatQuotaCount: value.repeatQuotaCount,
           repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
         });
@@ -5970,6 +5983,7 @@ export function TaskManagementTableV2({
       repeatMonthlyMode: item.repeatMonthlyMode,
       repeatMonthlyOrdinal: item.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: item.repeatMonthlyWeekday,
+      repeatEndOn: item.repeatEndOn,
       repeatQuotaCount: item.repeatQuotaCount,
       repeatQuotaBalanceEnabled: item.repeatQuotaBalanceEnabled,
       repeatQuotaBalance: item.repeatQuotaBalance,
@@ -8036,6 +8050,7 @@ export function TaskManagementTableV2({
                 task.repeatQuotaBalanceEnabled,
                 task.repeatQuotaBalance,
                 task.repeatQuotaProgress,
+                task.repeatEndOn,
               )}
             </span>
           </div>

@@ -25,6 +25,7 @@ export type ImportedTaskSubtask = {
   line: number;
   priority: TaskPriority;
   priorityLevel: TaskPriorityLevel;
+  repeatEndOn: string | null;
   repeatFrequency: TaskRepeatFrequency;
   status: TaskStatus;
   tags: string[];
@@ -41,6 +42,7 @@ export type ImportedTaskDraft = {
   isUrgent: boolean;
   line: number;
   priorityLevel: TaskPriorityLevel;
+  repeatEndOn: string | null;
   repeatFrequency: TaskRepeatFrequency;
   status: TaskStatus;
   subtasks: ImportedTaskSubtask[];
@@ -169,6 +171,7 @@ function parseParentTaskLine(
     line,
     priority: "normal" as TaskPriority,
     priorityLevel: 0 as TaskPriorityLevel,
+    repeatEndOn: null,
     repeatFrequency: "none" as TaskRepeatFrequency,
     status: "pending" as TaskStatus,
     subtasks: [] as ImportedTaskSubtask[],
@@ -213,6 +216,7 @@ function parseStepLine(
     line,
     priority: "normal",
     priorityLevel: 0,
+    repeatEndOn: null,
     repeatFrequency: "none",
     status: "pending",
     tags: parsed.tags,
@@ -327,6 +331,15 @@ function applyParentMetadataToken(
     return {};
   }
 
+  if (field === "repeat_end" || field === "repeat_end_on") {
+    const parsed = parseRepeatEndDateValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse recurrence End Date "${rawValue}".` };
+    }
+    task.repeatEndOn = parsed;
+    return {};
+  }
+
   if (field === "status") {
     const parsed = parseTaskStatusValue(value);
     if (!parsed) {
@@ -421,6 +434,15 @@ function applyStepMetadataToken(
       return { warning: `Could not parse step repeat value "${rawValue}".` };
     }
     subtask.repeatFrequency = parsed;
+    return {};
+  }
+
+  if (field === "repeat_end" || field === "repeat_end_on") {
+    const parsed = parseRepeatEndDateValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse recurrence End Date "${rawValue}".` };
+    }
+    subtask.repeatEndOn = parsed;
     return {};
   }
 
@@ -630,4 +652,11 @@ function parseDurationMinutesValue(value: string) {
   const minutes = Number(match[2] ?? "0");
   const total = hours * 60 + minutes;
   return total > 0 ? total : null;
+}
+
+function parseRepeatEndDateValue(value: string) {
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+  const parsed = new Date(`${normalized}T12:00:00Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized ? null : normalized;
 }

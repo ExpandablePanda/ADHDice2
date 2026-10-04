@@ -7850,6 +7850,7 @@ export function TaskApp() {
         repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
         repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
         repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+        repeatEndOn: cadence.repeatEndOn ?? null,
         repeatQuotaCount: cadence.repeatQuotaCount ?? null,
         repeatQuotaBalanceEnabled: cadence.repeatQuotaBalanceEnabled === true,
       }
@@ -7862,8 +7863,9 @@ export function TaskApp() {
           repeatMonthlyMode: "day_of_month",
           repeatMonthlyOrdinal: null,
           repeatMonthlyWeekday: null,
+          repeatEndOn: null,
         }
-        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+        : normalizePresetRepeatSelection(repeat, { repeatEndOn: tasks.find((task) => task.id === taskId)?.repeat_end_on ?? null }, { dueOn });
     return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 
@@ -7874,7 +7876,7 @@ export function TaskApp() {
   const applyTaskRepeatEditorValue = (
     taskId: string,
     repeat: TaskRepeatFrequency,
-    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">>,
+    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">>,
   ) => {
     const dueOn = tasks.find((task) => task.id === taskId)?.due_on;
     const value: TaskRepeatEditorValue = cadence
@@ -7886,6 +7888,7 @@ export function TaskApp() {
         repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
         repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
         repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+        repeatEndOn: cadence.repeatEndOn ?? null,
         repeatQuotaCount: cadence.repeatQuotaCount ?? null,
         repeatQuotaBalanceEnabled: cadence.repeatQuotaBalanceEnabled === true,
       }
@@ -7898,8 +7901,9 @@ export function TaskApp() {
           repeatMonthlyMode: "day_of_month",
           repeatMonthlyOrdinal: null,
           repeatMonthlyWeekday: null,
+          repeatEndOn: null,
         }
-        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+        : normalizePresetRepeatSelection(repeat, { repeatEndOn: tasks.find((task) => task.id === taskId)?.repeat_end_on ?? null }, { dueOn });
     return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 

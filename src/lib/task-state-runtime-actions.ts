@@ -23,6 +23,7 @@ export const TASK_STATE_OWNED_UPDATE_FIELDS = [
   "repeat_monthly_mode",
   "repeat_monthly_ordinal",
   "repeat_monthly_weekday",
+  "repeat_end_on",
   "repeat_quota_count",
   "repeat_quota_balance_enabled",
   "completed_at",
@@ -79,6 +80,7 @@ export type TaskStateScheduleChanges = Readonly<Partial<Pick<
   | "repeat_monthly_mode"
   | "repeat_monthly_ordinal"
   | "repeat_monthly_weekday"
+  | "repeat_end_on"
   | "repeat_quota_count"
   | "repeat_quota_balance_enabled"
 >>>;
@@ -138,6 +140,9 @@ function canonicalScheduleIntent(
     ...(values.repeat_monthly_mode !== undefined ? { repeat_monthly_mode: values.repeat_monthly_mode } : {}),
     ...(values.repeat_monthly_ordinal !== undefined ? { repeat_monthly_ordinal: values.repeat_monthly_ordinal } : {}),
     ...(values.repeat_monthly_weekday !== undefined ? { repeat_monthly_weekday: values.repeat_monthly_weekday } : {}),
+    ...(scheduleModel === "rolling" || scheduleModel === "fixed"
+      ? { repeat_end_on: (Object.hasOwn(values, "repeat_end_on") ? values.repeat_end_on : task.repeat_end_on) ?? null }
+      : { repeat_end_on: null }),
     ...(usesQuotaFields && values.repeat_quota_count !== undefined ? { repeat_quota_count: values.repeat_quota_count } : {}),
     ...(usesQuotaFields && values.repeat_quota_balance_enabled !== undefined ? { repeat_quota_balance_enabled: values.repeat_quota_balance_enabled } : {}),
     ...(values.due_time !== undefined ? { due_time: values.due_time } : {}),
@@ -206,6 +211,7 @@ const SCHEDULE_REPEAT_FIELDS = [
   "repeat_monthly_mode",
   "repeat_monthly_ordinal",
   "repeat_monthly_weekday",
+  "repeat_end_on",
   "repeat_quota_count",
   "repeat_quota_balance_enabled",
 ] as const;

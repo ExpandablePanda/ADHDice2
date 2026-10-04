@@ -215,6 +215,7 @@ export function useTaskBatchEditAction({
           repeatMonthlyMode: task.repeat_monthly_mode,
           repeatMonthlyOrdinal: task.repeat_monthly_ordinal,
           repeatMonthlyWeekday: task.repeat_monthly_weekday,
+          repeatEndOn: task.repeat_end_on,
         };
         const nextRepeatValue = draft.repeatFrequency === "custom"
           ? buildCustomCadenceMutation({
@@ -239,7 +240,11 @@ export function useTaskBatchEditAction({
             },
             { dueOn: task.due_on },
           );
-        Object.assign(updateValues, taskRepeatEditorValueToUpdate(nextRepeatValue));
+        const nextRepeatValueWithEnd = {
+          ...nextRepeatValue,
+          repeatEndOn: nextRepeatValue.repeatFrequency === "none" ? null : task.repeat_end_on,
+        } satisfies TaskRepeatEditorValue;
+        Object.assign(updateValues, taskRepeatEditorValueToUpdate(nextRepeatValueWithEnd));
       }
 
       const occurrenceSensitive = isOccurrenceSensitiveTaskMutation({

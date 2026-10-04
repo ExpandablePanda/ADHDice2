@@ -466,6 +466,8 @@ export type Task = {
   repeat_monthly_mode: TaskRepeatMonthlyMode;
   repeat_monthly_ordinal: TaskRepeatMonthlyOrdinal | null;
   repeat_monthly_weekday: number | null;
+  /** Inclusive logical-date ceiling for generated recurrence occurrences. */
+  repeat_end_on: string | null;
   /** Quota recurrence configuration; null/false for ordinary recurrence. */
   repeat_quota_count?: number | null;
   repeat_quota_balance_enabled?: boolean;
@@ -540,6 +542,7 @@ export type TaskInsert = {
   repeat_monthly_mode?: TaskRepeatMonthlyMode;
   repeat_monthly_ordinal?: TaskRepeatMonthlyOrdinal | null;
   repeat_monthly_weekday?: number | null;
+  repeat_end_on?: string | null;
   repeat_quota_count?: number | null;
   repeat_quota_balance_enabled?: boolean;
   pinned_at?: string | null;
@@ -586,6 +589,7 @@ export type TaskUpdate = Partial<
     | "repeat_monthly_mode"
     | "repeat_monthly_ordinal"
     | "repeat_monthly_weekday"
+    | "repeat_end_on"
     | "repeat_quota_count"
     | "repeat_quota_balance_enabled"
     | "pinned_at"

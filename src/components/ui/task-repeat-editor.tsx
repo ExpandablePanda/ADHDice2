@@ -50,6 +50,7 @@ function valueSignature(value: TaskRepeatEditorValue) {
     value.repeatMonthlyWeekday,
     value.repeatQuotaCount,
     value.repeatQuotaBalanceEnabled,
+    value.repeatEndOn,
   ]);
 }
 
@@ -176,6 +177,9 @@ export function TaskRepeatEditor({
       ...draft,
       repeatQuotaBalanceEnabled: draft.repeatQuotaBalanceEnabled !== true,
     });
+  };
+  const commitEndOn = (rawValue: string) => {
+    emit({ ...draft, repeatEndOn: rawValue || null }, activeCategory);
   };
   const toggleWeekday = (weekday: number) => {
     const nextDays = draft.repeatDaysOfWeek.includes(weekday)
@@ -357,6 +361,18 @@ export function TaskRepeatEditor({
       {activeCategory === "weekly" ? renderWeekdayChips() : null}
       {activeCategory === "monthly" ? renderMonthlyControls(false) : null}
       {activeCategory === "per_week" || activeCategory === "per_month" ? renderQuotaControls() : null}
+      {activeCategory !== "none" && draft.repeatFrequency !== "none" ? (
+        <label className="flex flex-nowrap items-center gap-2" data-repeat-editor-end-date="true">
+          <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Ends</span>
+          <input
+            aria-label="End date"
+            className={TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
+            onChange={(event) => commitEndOn(event.target.value)}
+            type="date"
+            value={draft.repeatEndOn ?? ""}
+          />
+        </label>
+      ) : null}
       {activeCategory === "custom" ? (
         <div className={embedded ? "grid gap-2" : "grid gap-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"} data-repeat-editor-custom="true">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom</p>

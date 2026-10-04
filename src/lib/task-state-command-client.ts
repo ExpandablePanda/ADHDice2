@@ -54,6 +54,7 @@ export type TaskStateScheduleChangeIntent = {
   repeat_monthly_weekday?: number | null;
   repeat_quota_count?: number | null;
   repeat_quota_balance_enabled?: boolean;
+  repeat_end_on?: string | null;
   one_time_due_on?: string | null;
   due_time?: string | null;
   anchor_date?: string | null;

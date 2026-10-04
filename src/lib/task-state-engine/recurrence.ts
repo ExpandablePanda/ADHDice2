@@ -5,6 +5,11 @@ function isQuotaRecurrence(recurrence: TaskRecurrence): recurrence is Extract<Ta
   return recurrence.kind === "quota";
 }
 
+/** The single recurrence-generation rule for an inclusive logical-date ceiling. */
+export function recurrenceOccurrenceIsAllowed(recurrence: TaskRecurrence, occurrenceDate: string) {
+  return recurrence.kind === "none" || recurrence.endOn == null || occurrenceDate <= recurrence.endOn;
+}
+
 export function isUnscheduled(recurrence: TaskRecurrence, dueOn: string | null) {
   return recurrence.kind === "none" && dueOn === null;
 }
@@ -75,6 +80,7 @@ export function isScheduledOccurrence(
   options: ScheduledOccurrenceOptions = {},
 ) {
   if (!options.includeBeforeDueOn && dateKey < dueOn) return false;
+  if (!recurrenceOccurrenceIsAllowed(recurrence, dateKey)) return false;
 
   if (recurrence.kind === "weekly") {
     const interval = Math.max(1, recurrence.intervalWeeks ?? 1);
@@ -114,7 +120,7 @@ export function scheduledOccurrences(
     while (cursor <= through) {
       const distance = daysBetween(dueOn, cursor);
       if (options.includeBeforeDueOn || distance >= 0) {
-        if (isAlignedToInterval(distance, interval)) occurrences.add(cursor);
+        if (isAlignedToInterval(distance, interval) && recurrenceOccurrenceIsAllowed(recurrence, cursor)) occurrences.add(cursor);
       }
       cursor = shiftDateKey(cursor, 1);
     }
@@ -130,7 +136,7 @@ export function scheduledOccurrences(
         && (options.includeBeforeDueOn || cursor >= dueOn)
         && cursor >= from
         && cursor <= through) {
-        occurrences.add(cursor);
+        if (recurrenceOccurrenceIsAllowed(recurrence, cursor)) occurrences.add(cursor);
       }
     }
   } else {
@@ -143,7 +149,10 @@ export function scheduledOccurrences(
         const monthDistance = (year - anchor.getUTCFullYear()) * 12 + month - anchor.getUTCMonth();
         if (!isAlignedToInterval(monthDistance, interval)) continue;
         const occurrence = monthlyOccurrence(year, month, recurrence, anchor.getUTCDate());
-        if ((options.includeBeforeDueOn || occurrence >= dueOn) && occurrence >= from && occurrence <= through) occurrences.add(occurrence);
+        if ((options.includeBeforeDueOn || occurrence >= dueOn)
+          && occurrence >= from
+          && occurrence <= through
+          && recurrenceOccurrenceIsAllowed(recurrence, occurrence)) occurrences.add(occurrence);
       }
     }
   }
@@ -153,6 +162,7 @@ export function scheduledOccurrences(
 function dateRangeForQuota(recurrence: Extract<TaskRecurrence, { kind: "quota" }>, from: string, through: string) {
   const dates: string[] = [];
   for (let date = from; date <= through; date = shiftDateKey(date, 1)) {
+    if (!recurrenceOccurrenceIsAllowed(recurrence, date)) break;
     const bounds = recurrence.period === "week"
       ? { start: shiftDateKey(date, -((parseDateKey(date).getUTCDay() + 6) % 7)) }
       : { start: `${date.slice(0, 7)}-01` };
@@ -205,9 +215,10 @@ export function recurrenceAfterSuccess(
     return { anchor: null, nextDue: dueOn, satisfied: null };
   }
   if (recurrence.kind === "rolling") {
+    const nextDue = shiftDateKey(actionDate, Math.max(1, recurrence.intervalDays));
     return {
       anchor: actionDate,
-      nextDue: shiftDateKey(actionDate, Math.max(1, recurrence.intervalDays)),
+      nextDue: recurrenceOccurrenceIsAllowed(recurrence, nextDue) ? nextDue : null,
       satisfied: dueOn,
     };
   }

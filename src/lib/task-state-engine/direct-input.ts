@@ -99,6 +99,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       balanceEnabled: boundary.repeat_quota_balance_enabled === true,
       activationDate: boundary.effective_from_logical_date,
       scheduleBoundaryId: boundary.id,
+      endOn: boundary.repeat_end_on,
     };
   }
   const fixedUntilComplete = boundary.repeat_frequency === "daily_until_complete" && isFixedUntilCompleteRepeatTask({
@@ -114,6 +115,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       weekdays: boundary.repeat_days_of_week,
       ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.schedule_model === "fixed" && (boundary.repeat_frequency === "monthly" || fixedUntilComplete)) {
@@ -126,6 +128,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       weekday: boundary.repeat_monthly_weekday,
       ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.schedule_model === "rolling") {
@@ -133,6 +136,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       kind: "rolling",
       intervalDays: boundary.repeat_interval,
       ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.repeat_frequency === "weekly") {
@@ -141,6 +145,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       intervalWeeks: boundary.repeat_interval,
       weekdays: boundary.repeat_days_of_week,
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.repeat_frequency === "monthly") {
@@ -152,12 +157,14 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       ordinal: boundary.repeat_monthly_ordinal,
       weekday: boundary.repeat_monthly_weekday,
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   return {
     kind: "rolling",
     intervalDays: boundary.repeat_interval,
     ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+    endOn: boundary.repeat_end_on,
   };
 }
 
@@ -172,6 +179,7 @@ function recurrenceFromTask(task: Task): TaskRecurrence {
       activationDate: task.due_on,
       incomingBalance: task.repeat_quota_balance ?? 0,
       incomingBalancePeriodKey: task.repeat_quota_balance_period,
+      endOn: task.repeat_end_on,
     };
   }
   const fixedUntilComplete = isFixedUntilCompleteRepeatTask(task);
@@ -182,6 +190,7 @@ function recurrenceFromTask(task: Task): TaskRecurrence {
       weekdays: task.repeat_days_of_week,
       ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
+      endOn: task.repeat_end_on,
     };
   }
   if (task.repeat_frequency === "monthly" || (task.repeat_frequency === "daily_until_complete" && fixedUntilComplete)) {
@@ -194,12 +203,14 @@ function recurrenceFromTask(task: Task): TaskRecurrence {
       weekday: task.repeat_monthly_weekday,
       ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
+      endOn: task.repeat_end_on,
     };
   }
   return {
     kind: "rolling",
     intervalDays: task.repeat_interval,
     ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+    endOn: task.repeat_end_on,
   };
 }
 

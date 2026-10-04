@@ -787,7 +787,7 @@ test("task list counts preserve built-in bucket memberships", () => {
 
 test("import parser captures parent metadata and nested steps", () => {
   const parsed = parseImportedTaskLines([
-    "Clean Ears #hygiene *due-Today *repeat-Daily",
+    "Clean Ears #hygiene *due-Today *repeat-Daily *repeat_end-2026-06-15",
     "Moisturize",
     "-AM",
     "--Face",
@@ -800,6 +800,7 @@ test("import parser captures parent metadata and nested steps", () => {
   assert.deepEqual(parsed.tasks[0]?.tags, ["hygiene"]);
   assert.equal(parsed.tasks[0]?.dueOn, "2026-06-10");
   assert.equal(parsed.tasks[0]?.repeatFrequency, "daily");
+  assert.equal(parsed.tasks[0]?.repeatEndOn, "2026-06-15");
   assert.equal(parsed.tasks[1]?.subtasks[0]?.title, "AM");
   assert.equal(parsed.tasks[1]?.subtasks[0]?.children[0]?.title, "Face");
   assert.equal(parsed.tasks[1]?.subtasks[0]?.children[1]?.title, "Feet");

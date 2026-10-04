@@ -152,6 +152,7 @@ export type CanonicalTaskScheduleBoundary = {
   repeat_monthly_mode: "day_of_month" | "ordinal_weekday";
   repeat_monthly_ordinal: "first" | "second" | "third" | "fourth" | "last" | null;
   repeat_monthly_weekday: number | null;
+  repeat_end_on: string | null;
   /** Optional for legacy test/read fixtures; canonical SQL defaults these fields. */
   repeat_quota_count?: number | null;
   repeat_quota_balance_enabled?: boolean;

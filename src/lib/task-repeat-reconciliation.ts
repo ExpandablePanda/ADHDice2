@@ -12,6 +12,7 @@ export type TaskRepeatReconciliationValue = {
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
+  repeatEndOn: string | null;
   repeatQuotaCount?: number | null;
   repeatQuotaBalanceEnabled?: boolean;
 };
@@ -33,6 +34,7 @@ export function taskRepeatValuesEqual(left: TaskRepeatReconciliationValue, right
     && left.repeatMonthlyMode === right.repeatMonthlyMode
     && left.repeatMonthlyOrdinal === right.repeatMonthlyOrdinal
     && left.repeatMonthlyWeekday === right.repeatMonthlyWeekday
+    && left.repeatEndOn === right.repeatEndOn
     && (left.repeatQuotaCount ?? null) === (right.repeatQuotaCount ?? null)
     && (left.repeatQuotaBalanceEnabled === true) === (right.repeatQuotaBalanceEnabled === true);
 }

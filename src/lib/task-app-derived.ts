@@ -111,6 +111,7 @@ export type ChildTaskPreview = {
   repeatMonthlyMode: Task["repeat_monthly_mode"];
   repeatMonthlyOrdinal: Task["repeat_monthly_ordinal"];
   repeatMonthlyWeekday: Task["repeat_monthly_weekday"];
+  repeatEndOn: string | null;
   repeatQuotaCount?: number | null;
   repeatQuotaBalanceEnabled?: boolean;
   repeatQuotaBalance?: number | null;
@@ -522,6 +523,7 @@ export function buildChildTaskPreviewLookup(
           repeatMonthlyMode: descendant.repeat_monthly_mode,
           repeatMonthlyOrdinal: descendant.repeat_monthly_ordinal,
           repeatMonthlyWeekday: descendant.repeat_monthly_weekday,
+          repeatEndOn: descendant.repeat_end_on,
           repeatQuotaCount: descendant.repeat_quota_count,
           repeatQuotaBalanceEnabled: descendant.repeat_quota_balance_enabled,
           repeatQuotaBalance: descendant.repeat_quota_balance,

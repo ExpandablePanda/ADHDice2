@@ -33,13 +33,14 @@ export type MonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
 
 export type TaskRecurrence =
   | { kind: "none" }
-  | { kind: "rolling"; intervalDays: number; untilComplete?: boolean }
+  | { kind: "rolling"; intervalDays: number; untilComplete?: boolean; endOn?: string | null }
   | {
       kind: "weekly";
       intervalWeeks?: number;
       weekdays: number[];
       untilComplete?: boolean;
       anchorDate?: string | null;
+      endOn?: string | null;
     }
   | {
       kind: "monthly";
@@ -50,6 +51,7 @@ export type TaskRecurrence =
       weekday?: number | null;
       untilComplete?: boolean;
       anchorDate?: string | null;
+      endOn?: string | null;
     }
   | {
       kind: "quota";
@@ -60,6 +62,7 @@ export type TaskRecurrence =
       scheduleBoundaryId?: string | null;
       incomingBalance?: number | null;
       incomingBalancePeriodKey?: string | null;
+      endOn?: string | null;
     };
 
 export type TaskQuotaPeriodFact = {

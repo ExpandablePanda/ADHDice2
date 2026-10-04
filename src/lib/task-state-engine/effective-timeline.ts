@@ -7,6 +7,7 @@ import {
 import {
   isScheduledOccurrence,
   occurrenceIdentity,
+  recurrenceOccurrenceIsAllowed,
   recurrenceAfterSuccess,
   scheduledOccurrences,
 } from "./recurrence.ts";
@@ -329,7 +330,8 @@ function nextDueAfterCalendarCancellation(
 ) {
   if (recurrence.kind === "none") return null;
   if (recurrence.kind === "rolling") {
-    return shiftDateKey(cancelledDueOn, Math.max(1, recurrence.intervalDays));
+    const nextDue = shiftDateKey(cancelledDueOn, Math.max(1, recurrence.intervalDays));
+    return recurrenceOccurrenceIsAllowed(recurrence, nextDue) ? nextDue : null;
   }
   return scheduledOccurrences(
     recurrence,
@@ -575,16 +577,31 @@ export function buildTaskEffectiveTimeline(
       if (recurrenceRow) applyExplicitRow(recurrenceRow);
     } else {
       let calculated: TaskEffectiveTimelineDay;
-      const isQuotaRecurrence = input.task.recurrence.kind === "quota";
       const isFixedRecurrence = input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly";
+      const fixedRecurrence = isFixedRecurrence
+        ? input.task.recurrence as Extract<TaskStateSnapshot["recurrence"], { kind: "weekly" | "monthly" }>
+        : null;
+      const recurrenceEndOn = input.task.recurrence.kind === "none" ? null : input.task.recurrence.endOn ?? null;
+      const recurrenceEndedBeforeDate = recurrenceEndOn !== null
+        && date > recurrenceEndOn
+        && date !== activeDueOn;
+      const delayedFinalFixedOccurrence = Boolean(
+        activeDueOn
+        && fixedRecurrence
+        && date === activeDueOn
+        && fixedRecurrence.endOn != null
+        && activeDueOn > fixedRecurrence.endOn,
+      );
       const isFixedScheduledDate = Boolean(
         activeDueOn
-        && isFixedRecurrence
-        && isScheduledOccurrence(input.task.recurrence as Extract<TaskStateSnapshot["recurrence"], { kind: "weekly" | "monthly" }>, activeDueOn, date),
+        && fixedRecurrence
+        && (delayedFinalFixedOccurrence || isScheduledOccurrence(fixedRecurrence, activeDueOn, date)),
       );
       if (completed) {
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
-      } else if (isQuotaRecurrence) {
+      } else if (recurrenceEndedBeforeDate) {
+        calculated = calculatedDay(input.task.id, date, "no_entry", "none");
+      } else if (input.task.recurrence.kind === "quota") {
         const isMandatory = quotaDateIsMandatory({
           recurrence: input.task.recurrence,
           logicalDate: date,

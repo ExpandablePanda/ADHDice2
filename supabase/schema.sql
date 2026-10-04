@@ -43,6 +43,7 @@ create table public.adhdice_clean_tasks (
   repeat_monthly_mode public.adhdice_clean_task_repeat_monthly_mode not null default 'day_of_month',
   repeat_monthly_ordinal public.adhdice_clean_task_repeat_monthly_ordinal,
   repeat_monthly_weekday smallint check (repeat_monthly_weekday is null or (repeat_monthly_weekday >= 0 and repeat_monthly_weekday <= 6)),
+  repeat_end_on date,
   repeat_quota_count integer,
   repeat_quota_balance_enabled boolean not null default false,
   repeat_quota_balance integer,
@@ -65,6 +66,10 @@ create table public.adhdice_clean_tasks (
       or (repeat_frequency = 'per_month' and repeat_quota_count between 1 and 31)
       or (repeat_frequency not in ('per_week', 'per_month') and repeat_quota_count is null and repeat_quota_balance_enabled = false and repeat_quota_balance is null and repeat_quota_balance_period is null)
     ),
+  constraint adhdice_clean_tasks_repeat_end_check
+    check (repeat_frequency <> 'none' or repeat_end_on is null),
+  constraint adhdice_clean_tasks_repeat_end_due_check
+    check (repeat_frequency = 'none' or repeat_end_on is null or due_on is null or repeat_end_on >= due_on),
   constraint adhdice_clean_tasks_parent_task_not_self
     check (parent_task_id is null or parent_task_id <> id),
   constraint adhdice_clean_tasks_parent_task_content_folder_check

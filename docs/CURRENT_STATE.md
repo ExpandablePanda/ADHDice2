@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.81`.
+- Current working app version: `7.16.82`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.82 Recurrence End Date
+
+Recurring Tasks now support an inclusive nullable `repeat_end_on` End Date,
+preserved in canonical schedule boundaries and enforced by Task State Engine
+recurrence generation. No occurrence is generated after the configured date;
+the final valid occurrence retains normal History and completion semantics.
+Quota final periods are date-truncated without prorating the configured target,
+and balance does not carry into a later nonexistent period. End Time remains
+intentionally deferred because the Task State Engine is logical-date based.
+The source-only migration is `supabase/patch_task_recurrence_end_date_7_16_82.sql`;
+SQL remains unapplied pending review and explicit deployment approval.
 
 ## 2026-10-04 7.16.81 Remove stock profile avatar fallback
 

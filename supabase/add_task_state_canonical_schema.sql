@@ -481,6 +481,7 @@ create table if not exists public.adhdice_task_schedule_boundaries (
     )),
   repeat_monthly_weekday smallint
     check (repeat_monthly_weekday is null or repeat_monthly_weekday between 0 and 6),
+  repeat_end_on date,
   repeat_quota_count integer,
   repeat_quota_balance_enabled boolean not null default false,
   one_time_due_on date,
@@ -535,6 +536,16 @@ create table if not exists public.adhdice_task_schedule_boundaries (
     or (
       schedule_model in ('rolling', 'fixed')
       and repeat_frequency <> 'none'
+    )
+  ),
+  constraint adhdice_task_schedule_boundaries_repeat_end_check check (
+    (
+      schedule_model in ('unscheduled', 'one_time')
+      and repeat_end_on is null
+    )
+    or (
+      schedule_model in ('rolling', 'fixed')
+      and (repeat_end_on is null or anchor_date is null or repeat_end_on >= anchor_date)
     )
   ),
   constraint adhdice_task_schedule_boundaries_monthly_fields_check check (

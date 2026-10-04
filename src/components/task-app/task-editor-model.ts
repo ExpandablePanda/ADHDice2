@@ -27,6 +27,7 @@ export function buildNewTaskDraft(title: string): TaskDraft {
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
+    repeat_end_on: null,
     status: "pending",
     subtasks_auto_reset: false,
     tags: [],

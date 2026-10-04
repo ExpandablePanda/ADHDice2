@@ -59,6 +59,7 @@ export type CanonicalTaskCreationPlan = {
     repeat_monthly_mode: TaskRepeatMonthlyMode;
     repeat_monthly_ordinal: TaskRepeatMonthlyOrdinal | null;
     repeat_monthly_weekday: number | null;
+    repeat_end_on: string | null;
     one_time_due_on: string | null;
     due_time: string | null;
     anchor_date: string | null;
@@ -160,6 +161,7 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
     repeat_monthly_mode: input.repeat_monthly_mode ?? "day_of_month",
     repeat_monthly_ordinal: input.repeat_monthly_ordinal ?? null,
     repeat_monthly_weekday: input.repeat_monthly_weekday ?? null,
+    repeat_end_on: input.repeat_frequency && input.repeat_frequency !== "none" ? input.repeat_end_on ?? null : null,
     repeat_quota_count: input.repeat_quota_count ?? null,
     repeat_quota_balance_enabled: input.repeat_quota_balance_enabled ?? false,
     pinned_at: input.pinned_at ?? null,
@@ -171,14 +173,19 @@ function normalizedDraft(input: Omit<TaskInsert, "user_id">): CanonicalTaskCreat
 }
 
 function validateDraft(draft: CanonicalTaskCreationDraft): void {
+  const dueOn = draft.due_on ?? null;
+  const repeatEndOn = draft.repeat_end_on ?? null;
   if (!SAFE_INITIAL_STATUSES.has(draft.status ?? "pending")) {
     fail(
       "UNSAFE_IMPORTED_STATUS",
       `Task status "${draft.status}" requires handled History, workflow, delay, or lifecycle provenance and cannot be initialized from this snapshot.`,
     );
   }
-  if (draft.due_on !== null && (!DATE_KEY.test(draft.due_on) || !validDate(draft.due_on))) {
+  if (dueOn !== null && (!DATE_KEY.test(dueOn) || !validDate(dueOn))) {
     fail("INVALID_DUE_DATE", "Task due date is invalid.");
+  }
+  if (repeatEndOn !== null && (!DATE_KEY.test(repeatEndOn) || !validDate(repeatEndOn))) {
+    fail("INVALID_REPEAT_END_DATE", "Task recurrence End Date is invalid.");
   }
   if (draft.parent_task_id !== null && !UUID_KEY.test(draft.parent_task_id)) {
     fail("INVALID_PARENT_TASK", "Task parent identity is invalid.");
@@ -193,6 +200,12 @@ function validateDraft(draft: CanonicalTaskCreationDraft): void {
   if (draft.scheduled_on !== null && (!DATE_KEY.test(draft.scheduled_on) || !validDate(draft.scheduled_on))) fail("INVALID_SCHEDULED_DATE", "Task scheduled date is invalid.");
   if (!isTime(draft.due_time ?? null)) fail("INVALID_DUE_TIME", "Task due time is invalid.");
   if (!REPEAT_FREQUENCIES.has(draft.repeat_frequency ?? "none")) fail("INVALID_REPEAT_FREQUENCY", "Task repeat frequency is invalid.");
+  if (draft.repeat_frequency === "none" && repeatEndOn !== null) {
+    fail("INVALID_REPEAT_END_DATE", "Recurrence End Date requires a repeating schedule.");
+  }
+  if (draft.repeat_frequency !== "none" && repeatEndOn !== null && dueOn !== null && repeatEndOn < dueOn) {
+    fail("INVALID_REPEAT_END_DATE", "Recurrence End Date must be on or after the initial due date.");
+  }
   if (!Number.isInteger(draft.repeat_interval) || (draft.repeat_interval ?? 0) < 1) fail("INVALID_REPEAT_INTERVAL", "Task repeat interval must be a positive integer.");
   if ((draft.repeat_days_of_week ?? []).some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
     fail("INVALID_REPEAT_WEEKDAYS", "Task repeat weekdays are invalid.");
@@ -303,6 +316,7 @@ export function buildCanonicalTaskCreationPlan(input: {
       repeat_monthly_mode: draft.repeat_monthly_mode ?? "day_of_month",
       repeat_monthly_ordinal: draft.repeat_monthly_ordinal ?? null,
       repeat_monthly_weekday: draft.repeat_monthly_weekday ?? null,
+      repeat_end_on: frequency === "none" ? null : draft.repeat_end_on ?? null,
       repeat_quota_count: draft.repeat_quota_count ?? null,
       repeat_quota_balance_enabled: draft.repeat_quota_balance_enabled === true,
       one_time_due_on: scheduleModel === "one_time" ? draft.due_on : null,

@@ -33,6 +33,7 @@ export type ScheduleChangeIntent = {
   repeat_monthly_weekday?: number | null;
   repeat_quota_count?: number | null;
   repeat_quota_balance_enabled?: boolean;
+  repeat_end_on?: string | null;
   one_time_due_on?: string | null;
   due_time?: string | null;
   anchor_date?: string | null;
@@ -132,6 +133,7 @@ function validScheduleIntent(value: unknown): value is ScheduleChangeIntent {
   if (!isRecord(value) || !exactOrSubsetKeys(value, new Set([
     "schedule_model", "repeat_frequency", "repeat_interval", "repeat_days_of_week", "repeat_day_of_month",
     "repeat_monthly_mode", "repeat_monthly_ordinal", "repeat_monthly_weekday", "repeat_quota_count", "repeat_quota_balance_enabled", "one_time_due_on", "due_time", "anchor_date",
+    "repeat_end_on",
   ]))) return false;
   if (!["unscheduled", "one_time", "rolling", "fixed"].includes(String(value.schedule_model))) return false;
   if (value.repeat_frequency !== undefined && !["none", "daily", "weekly", "monthly", "custom", "daily_until_complete", "per_week", "per_month"].includes(String(value.repeat_frequency))) return false;
@@ -152,6 +154,9 @@ function validScheduleIntent(value: unknown): value is ScheduleChangeIntent {
   if (value.one_time_due_on !== undefined && !isOptionalDate(value.one_time_due_on)) return false;
   if (value.due_time !== undefined && value.due_time !== null && (typeof value.due_time !== "string" || !TIME_KEY.test(value.due_time))) return false;
   if (value.anchor_date !== undefined && !isOptionalDate(value.anchor_date)) return false;
+  if (value.repeat_end_on !== undefined && value.repeat_end_on !== null && !isValidCalendarDate(value.repeat_end_on)) return false;
+  if ((value.schedule_model === "unscheduled" || value.schedule_model === "one_time")
+    && value.repeat_end_on !== undefined && value.repeat_end_on !== null) return false;
   if (value.schedule_model === "one_time" && !isDate(value.one_time_due_on)) return false;
   return true;
 }
@@ -393,6 +398,10 @@ function serverScheduleBoundary(
   }
   const hasExplicitAnchor = schedule.anchor_date !== undefined && schedule.anchor_date !== null;
   const anchorDate = recurring ? schedule.anchor_date ?? previous.anchor_date : null;
+  const repeatEndOn = recurring ? nullableScheduleField(schedule, previous.repeat_end_on, "repeat_end_on") : null;
+  if (repeatEndOn !== null && anchorDate !== null && repeatEndOn < anchorDate) {
+    throw new Error("End Date must be on or after the recurrence schedule date.");
+  }
   return {
     ...previous,
     id: deterministicUuid(`${base.commandId}:schedule`),
@@ -409,6 +418,7 @@ function serverScheduleBoundary(
     repeat_monthly_mode: schedule.repeat_monthly_mode ?? previous.repeat_monthly_mode,
     repeat_monthly_ordinal: nullableScheduleField(schedule, previous.repeat_monthly_ordinal, "repeat_monthly_ordinal"),
     repeat_monthly_weekday: nullableScheduleField(schedule, previous.repeat_monthly_weekday, "repeat_monthly_weekday"),
+    repeat_end_on: repeatEndOn,
     repeat_quota_count: repeatFrequency === "per_week" || repeatFrequency === "per_month"
       ? nullableScheduleField(schedule, previous.repeat_quota_count ?? null, "repeat_quota_count")
       : null,

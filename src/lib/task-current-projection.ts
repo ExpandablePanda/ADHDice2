@@ -137,6 +137,7 @@ function canonicalBoundarySemantics(boundary: CanonicalTaskStateReadModel["sched
     repeat_monthly_mode: boundary.repeat_monthly_mode,
     repeat_monthly_ordinal: boundary.repeat_monthly_ordinal,
     repeat_monthly_weekday: boundary.repeat_monthly_weekday,
+    repeat_end_on: boundary.repeat_end_on,
     repeat_quota_count: boundary.repeat_quota_count ?? null,
     repeat_quota_balance_enabled: boundary.repeat_quota_balance_enabled === true,
     one_time_due_on: boundary.one_time_due_on,
