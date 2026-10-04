@@ -31,7 +31,7 @@ import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-his
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
-import { addMealFromLibraryFood, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, parseBatchIntake, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealFoodProposalDraft, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
+import { addMealFromLibraryFood, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, parseBatchIntake, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealFoodProposalDraft, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
 import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
 import type { HealthFoodLibraryItem, HealthMealEntryInsert, HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
@@ -831,13 +831,19 @@ export function HomePage({
         }
         return current.map((draft) => draft.id === nextDraft.id ? nextDraft : draft);
       }
+      if (previous.kind === "focus" && nextDraft.kind === "focus") {
+        const appliedDraftIds = new Set(
+          batchIntakeExecutionResult?.rows
+            .filter((row) => row.status === "applied")
+            .map((row) => row.rowId) ?? [],
+        );
+        return changeBatchIntakeFocusDraftGroup(current, nextDraft, appliedDraftIds);
+      }
       const sourceGroup = current.filter((draft) => draft.groupId === previous.groupId);
       const appliedInSourceGroup = sourceGroup.some((draft) => batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied"));
       const sharedIdentityChanged = previous.kind === "task" && nextDraft.kind === "task"
         ? previous.selectedTaskId !== nextDraft.selectedTaskId
-        : previous.kind === "focus" && nextDraft.kind === "focus"
-            ? previous.categoryId !== nextDraft.categoryId
-            : false;
+        : false;
       if (sharedIdentityChanged && appliedInSourceGroup) return current;
 
       const sharedKind = nextDraft.kind === "task" || nextDraft.kind === "focus";

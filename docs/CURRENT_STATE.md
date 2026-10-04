@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.60`.
+- Current working app version: `7.16.61`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.61 Focus review group identity synchronization
+
+Focus Batch Intake review now recomputes the ephemeral canonical group identity
+when a shared session title changes, propagates the new title and identity to
+unapplied siblings, and lets the derived review grouping merge matching groups
+without changing flat draft IDs. Changing to a saved Focus category preserves
+the session title while inheriting that category's type and subtypes; selecting
+No saved category preserves the current editable metadata and uses the retained
+category candidate for deterministic unresolved grouping. Applied Focus groups
+remain locked. The 7.16.60 parser grammar, inline dates, existing Focus
+execution authority, and execution payload shape are unchanged. No SQL, Edge
+deployment, Focus schema change, Home V8 change, or production data mutation
+was performed.
 
 ## 2026-10-03 7.16.60 Focus shorthand category, session title, and inline date
 

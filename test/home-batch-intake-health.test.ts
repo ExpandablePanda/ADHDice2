@@ -96,6 +96,12 @@ test("cumulative Applied results back every supported row lock", () => {
   assert.match(homeSource, /appliedFoodChild/);
 });
 
+test("Focus review routes title/category identity edits through shared helpers and group propagation", () => {
+  assert.match(reviewSource, /updateBatchIntakeFocusTitle\(first, event\.target\.value\)/);
+  assert.match(reviewSource, /updateBatchIntakeFocusCategory\(first, category\)/);
+  assert.match(homeSource, /changeBatchIntakeFocusDraftGroup\(current, nextDraft, appliedDraftIds\)/);
+});
+
 test("Batch Intake resets cumulative results only when a review is replaced or closed", () => {
   const parseBlock = homeSource.slice(homeSource.indexOf("function parseScratchpadBatch"), homeSource.indexOf("function openManualBatch"));
   const manualBlock = homeSource.slice(homeSource.indexOf("function openManualBatch"), homeSource.indexOf("function addManualBatchRow"));

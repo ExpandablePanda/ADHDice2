@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { addMealFromLibraryFood, addMealFromParsedFood, createManualBatchIntakeDraft, createManualMealFood, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration } from "../src/lib/home-batch-intake.ts";
+import { addMealFromLibraryFood, addMealFromParsedFood, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration, updateBatchIntakeFocusCategory, updateBatchIntakeFocusTitle } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches, getBatchIntakeTaskCandidates, getBatchIntakeTaskMatchState } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
@@ -82,6 +82,26 @@ const codingCategory: FocusCategory = {
   focusSubtype2: null,
   color: "#6f57f6",
   icon: "code",
+};
+
+const sleepCategory: FocusCategory = {
+  id: "focus-sleep",
+  title: "Sleep",
+  focusType: "Sleep",
+  focusSubtype: "Night sleep",
+  focusSubtype2: "Recovery",
+  color: "#4b8fbe",
+  icon: "moon",
+};
+
+const recoveryCategory: FocusCategory = {
+  id: "focus-recovery",
+  title: "Recovery",
+  focusType: "Personal",
+  focusSubtype: "Restoration",
+  focusSubtype2: "Health",
+  color: "#4b8fbe",
+  icon: "heart",
 };
 
 test("golden Obsidian fixture parses Phase 1 records without silently dropping lines", () => {
@@ -207,6 +227,88 @@ test("occurrences keep one review group while preserving independent row identit
   assert.deepEqual(groups[0]?.occurrenceIds, ["task-one", "task-two", "task-three"]);
   assert.equal(new Set([source.id, second.id, third.id]).size, 3);
   assert.equal(getBatchIntakeApplyCount([source, second, third]), 3);
+});
+
+test("Focus title edits recompute identity and propagate title/groupId to unapplied siblings", () => {
+  const source = parseBatchIntake("10/3\nf: Sleep, CPAP 1h @ 1pm", { focusCategories: [sleepCategory], referenceDate: "2026-10-03" })[0];
+  assert.equal(source?.kind, "focus");
+  if (source?.kind !== "focus") return;
+  const sibling = duplicateManualBatchIntakeDraft(source, { id: "focus-sibling", writeId: "focus-sibling-write" });
+  const renamed = updateBatchIntakeFocusTitle(source, "Nap");
+  const changed = changeBatchIntakeFocusDraftGroup([source, sibling], renamed, new Set());
+  const focus = changed.filter((draft): draft is Extract<typeof changed[number], { kind: "focus" }> => draft.kind === "focus");
+
+  assert.equal(renamed.groupId, "focus:focus-sleep:nap");
+  assert.equal(renamed.groupId.endsWith(":nap"), true);
+  assert.deepEqual(focus.map((draft) => [draft.id, draft.title, draft.groupId]), [
+    [source.id, "Nap", "focus:focus-sleep:nap"],
+    [sibling.id, "Nap", "focus:focus-sleep:nap"],
+  ]);
+  assert.deepEqual(focus.map((draft) => draft.id), [source.id, sibling.id]);
+});
+
+test("Focus category edits preserve the session title, inherit category metadata, and update execution payload identity", () => {
+  const source = parseBatchIntake("10/3\nf: Sleep, CPAP 1h @ 1pm", { focusCategories: [sleepCategory], referenceDate: "2026-10-03" })[0];
+  assert.equal(source?.kind, "focus");
+  if (source?.kind !== "focus") return;
+  const sibling = duplicateManualBatchIntakeDraft(source, { id: "focus-category-sibling", writeId: "focus-category-sibling-write" });
+  const moved = updateBatchIntakeFocusCategory(source, recoveryCategory);
+  const changed = changeBatchIntakeFocusDraftGroup([source, sibling], moved, new Set());
+  const focus = changed.filter((draft): draft is Extract<typeof changed[number], { kind: "focus" }> => draft.kind === "focus");
+  const plan = buildBatchIntakeExecutionPlan(changed);
+
+  assert.deepEqual(focus.map((draft) => [draft.title, draft.categoryId, draft.focusType, draft.focusSubtype, draft.focusSubtype2, draft.groupId]), [
+    ["CPAP", "focus-recovery", "Personal", "Restoration", "Health", "focus:focus-recovery:cpap"],
+    ["CPAP", "focus-recovery", "Personal", "Restoration", "Health", "focus:focus-recovery:cpap"],
+  ]);
+  assert.deepEqual(plan.focusRows?.map(({ input }) => [input.title, input.categoryId]), [
+    ["CPAP", "focus-recovery"],
+    ["CPAP", "focus-recovery"],
+  ]);
+});
+
+test("clearing Focus category preserves editable metadata and uses the retained category candidate for unresolved grouping", () => {
+  const source = parseBatchIntake("10/3\nf: Sleep, CPAP 1h @ 1pm", { focusCategories: [sleepCategory], referenceDate: "2026-10-03" })[0];
+  assert.equal(source?.kind, "focus");
+  if (source?.kind !== "focus") return;
+  const cleared = updateBatchIntakeFocusCategory(source, null);
+
+  assert.deepEqual([cleared.categoryId, cleared.title, cleared.focusType, cleared.focusSubtype, cleared.focusSubtype2, cleared.groupId], [
+    null, "CPAP", "Sleep", "Night sleep", "Recovery", "focus:unresolved:sleep:cpap",
+  ]);
+});
+
+test("Focus identity edits merge presentation groups without changing underlying draft IDs", () => {
+  const parsed = parseBatchIntake([
+    "10/3",
+    "f: Sleep, CPAP 1h @ 1pm",
+    "f: Sleep, Nap 1h @ 2pm",
+  ].join("\n"), { focusCategories: [sleepCategory], referenceDate: "2026-10-03" });
+  const source = parsed[0];
+  const other = parsed[1];
+  assert.equal(source?.kind, "focus");
+  assert.equal(other?.kind, "focus");
+  if (source?.kind !== "focus" || other?.kind !== "focus") return;
+  const draftIds = [source.id, other.id];
+  const changed = changeBatchIntakeFocusDraftGroup(parsed, updateBatchIntakeFocusTitle(source, "Nap"), new Set());
+  const groups = getBatchIntakeReviewGroups(changed.filter((draft) => draft.kind === "focus"));
+
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0]?.drafts.length, 2);
+  assert.deepEqual(groups[0]?.drafts.map((draft) => draft.id), draftIds);
+});
+
+test("Applied Focus occurrences keep the original group identity locked", () => {
+  const source = parseBatchIntake("10/3\nf: Sleep, CPAP 1h @ 1pm", { focusCategories: [sleepCategory], referenceDate: "2026-10-03" })[0];
+  assert.equal(source?.kind, "focus");
+  if (source?.kind !== "focus") return;
+  const sibling = duplicateManualBatchIntakeDraft(source, { id: "focus-applied-sibling", writeId: "focus-applied-sibling-write" });
+  const attempted = changeBatchIntakeFocusDraftGroup([source, sibling], updateBatchIntakeFocusTitle(source, "Nap"), new Set([sibling.id]));
+
+  assert.deepEqual(attempted.map((draft) => [draft.id, draft.kind === "focus" ? draft.title : null, draft.groupId]), [
+    [source.id, "CPAP", source.groupId],
+    [sibling.id, "CPAP", sibling.groupId],
+  ]);
 });
 
 const libraryFood = {

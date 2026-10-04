@@ -192,6 +192,7 @@ export type BatchIntakeParsedFocusDraft = BatchIntakeParsedDraftBase & {
   kind: "focus";
   writeId?: string;
   categoryId: string | null;
+  categoryCandidate: string;
   title: string;
   focusType: FocusType;
   focusSubtype: FocusSubtype | null;
@@ -205,6 +206,7 @@ export type BatchIntakeManualFocusDraft = BatchIntakeManualDraftBase & {
   kind: "focus";
   writeId: string;
   categoryId: string | null;
+  categoryCandidate: string;
   title: string;
   focusType: FocusType;
   focusSubtype: FocusSubtype | null;
@@ -243,6 +245,65 @@ export function batchIntakeCanonicalGroupId(kind: "task" | "focus", identity: st
 export function batchIntakeCanonicalFocusGroupId(categoryId: string | null, categoryCandidate: string, title: string) {
   const categoryIdentity = categoryId ?? `unresolved:${normalizeFocusCategoryTitle(categoryCandidate)}`;
   return batchIntakeCanonicalGroupId("focus", `${categoryIdentity}:${normalizeFocusCategoryTitle(title)}`);
+}
+
+function focusCategoryCandidateForDraft(draft: Pick<BatchIntakeFocusDraft, "categoryCandidate" | "title">, title = draft.title) {
+  return draft.categoryCandidate.trim() || title;
+}
+
+export function updateBatchIntakeFocusTitle(draft: BatchIntakeFocusDraft, title: string): BatchIntakeFocusDraft {
+  const categoryCandidate = focusCategoryCandidateForDraft(draft, title);
+  return {
+    ...draft,
+    categoryCandidate,
+    groupId: batchIntakeCanonicalFocusGroupId(draft.categoryId, categoryCandidate, title),
+    title,
+  };
+}
+
+export function updateBatchIntakeFocusCategory(draft: BatchIntakeFocusDraft, category: FocusCategory | null): BatchIntakeFocusDraft {
+  const categoryCandidate = category?.title ?? focusCategoryCandidateForDraft(draft);
+  return {
+    ...draft,
+    categoryCandidate,
+    categoryId: category?.id ?? null,
+    ...(category ? {
+      focusSubtype: category.focusSubtype ?? null,
+      focusSubtype2: category.focusSubtype2 ?? null,
+      focusType: category.focusType,
+    } : {}),
+    groupId: batchIntakeCanonicalFocusGroupId(category?.id ?? null, categoryCandidate, draft.title),
+  };
+}
+
+export function changeBatchIntakeFocusDraftGroup(
+  drafts: readonly BatchIntakeDraft[],
+  nextDraft: BatchIntakeFocusDraft,
+  appliedDraftIds: ReadonlySet<string>,
+) {
+  const previous = drafts.find((draft) => draft.id === nextDraft.id);
+  if (!previous || previous.kind !== "focus") return [...drafts];
+  const sourceGroup = drafts.filter((draft) => draft.groupId === previous.groupId);
+  const sharedIdentityChanged = previous.categoryId !== nextDraft.categoryId
+    || previous.categoryCandidate !== nextDraft.categoryCandidate
+    || previous.groupId !== nextDraft.groupId
+    || previous.title !== nextDraft.title;
+  if (sharedIdentityChanged && sourceGroup.some((draft) => appliedDraftIds.has(draft.id))) return [...drafts];
+
+  return drafts.map((draft) => {
+    if (draft.id === nextDraft.id) return nextDraft;
+    if (draft.kind !== "focus" || draft.groupId !== previous.groupId || appliedDraftIds.has(draft.id)) return draft;
+    return {
+      ...draft,
+      categoryCandidate: nextDraft.categoryCandidate,
+      categoryId: nextDraft.categoryId,
+      focusSubtype: nextDraft.focusSubtype,
+      focusSubtype2: nextDraft.focusSubtype2,
+      focusType: nextDraft.focusType,
+      groupId: nextDraft.groupId,
+      title: nextDraft.title,
+    };
+  });
 }
 
 export function getBatchIntakeReviewGroups(drafts: readonly BatchIntakeDraft[]): BatchIntakeReviewGroup[] {
@@ -462,6 +523,7 @@ export function createManualBatchIntakeDraft(
     kind: "focus",
     writeId: options.id,
     categoryId: null,
+    categoryCandidate: "",
     title: "",
     focusType: "Work",
     focusSubtype: null,
@@ -577,6 +639,7 @@ function createShorthandFocusDraft(
   return {
     ...makeBase(line, lineNumber, resolvedDate, "focus", "high", issues),
     categoryId: category?.id ?? null,
+    categoryCandidate: titleAndCategory.categoryCandidate,
     completionTime: timed.time ?? "",
     durationSeconds,
     focusSubtype: category?.focusSubtype ?? null,
@@ -730,6 +793,7 @@ function createParsedFocusDraft(
   return {
     ...makeBase(sourceText, sourceLineNumber, date, "focus", "high", completionTime ? [] : ["Choose a Focus completion time"]),
     categoryId: category.id,
+    categoryCandidate: category.title,
     completionTime: completionTime ?? "",
     durationSeconds,
     focusSubtype: category.focusSubtype ?? null,
