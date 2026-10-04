@@ -1001,6 +1001,9 @@ export function ReorderableTaskChipRail({
               onEnterAllSearch();
               return;
             }
+            if (isAllSearchActive) {
+              onExitAllSearch?.();
+            }
             startTransition(() => {
               if (list.structureKind === "folder") {
                 onOpenFolder?.(list.id);

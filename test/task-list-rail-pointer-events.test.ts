@@ -53,11 +53,13 @@ test("List Rail pointer zones retain list halves and folder 25/50/25 placement",
 test("List Rail normal and folder chip clicks execute their callbacks", () => {
   const selectedBuckets: string[] = [];
   const openedFolders: string[] = [];
+  const exitedSearch: string[] = [];
   const rail = ReorderableTaskChipRail({
     lists: [
       { id: "list-1", label: "Inbox", structureKind: "list", count: 2 },
       { id: "folder-1", label: "Projects", structureKind: "folder" },
     ],
+    onExitAllSearch: () => exitedSearch.push("exit"),
     onOpenFolder: (folderId: string) => openedFolders.push(folderId),
     onSelectBucket: (bucket: string) => selectedBuckets.push(bucket),
     selectedBucket: "all",
@@ -69,6 +71,59 @@ test("List Rail normal and folder chip clicks execute their callbacks", () => {
   assert.doesNotThrow(() => buttons[1]?.props.onClick?.({ preventDefault() {} }));
   assert.deepEqual(selectedBuckets, ["list-1"]);
   assert.deepEqual(openedFolders, ["folder-1"]);
+  assert.deepEqual(exitedSearch, []);
+});
+
+test("All rail search enters on the second All click and exits before another chip navigates", () => {
+  const lists = [
+    { id: "all", label: "All", structureKind: "list", count: 4 },
+    { id: "inbox", label: "Inbox", structureKind: "list", count: 2 },
+    { id: "priority", label: "Priority", structureKind: "list", count: 1 },
+    { id: "folder-1", label: "Projects", structureKind: "folder" },
+  ];
+  const enteredSearch: string[] = [];
+  const normalRail = ReorderableTaskChipRail({
+    lists,
+    onEnterAllSearch: () => enteredSearch.push("enter"),
+    onSelectBucket: () => undefined,
+    selectedBucket: "all",
+  });
+  const normalButtons = findButtons(normalRail);
+  assert.equal(normalButtons.length, 4);
+  normalButtons[0]?.props.onClick?.({ preventDefault() {} });
+  assert.deepEqual(enteredSearch, ["enter"]);
+
+  const events: string[] = [];
+  const activeRail = ReorderableTaskChipRail({
+    allSearchQuery: "in",
+    isAllSearchActive: true,
+    lists,
+    onExitAllSearch: () => events.push("exit"),
+    onOpenFolder: (folderId: string) => events.push(`folder:${folderId}`),
+    onSelectBucket: (bucket: string) => events.push(`bucket:${bucket}`),
+    selectedBucket: "all",
+  });
+  const activeButtons = findButtons(activeRail);
+  assert.equal(activeButtons.length, 3);
+  activeButtons[0]?.props.onClick?.({ preventDefault() {} });
+  activeButtons[1]?.props.onClick?.({ preventDefault() {} });
+  activeButtons[2]?.props.onClick?.({ preventDefault() {} });
+  assert.deepEqual(events, [
+    "exit",
+    "bucket:inbox",
+    "exit",
+    "bucket:priority",
+    "exit",
+    "folder:folder-1",
+  ]);
+
+  const restoredRail = ReorderableTaskChipRail({
+    isAllSearchActive: false,
+    lists,
+    onSelectBucket: () => undefined,
+    selectedBucket: "inbox",
+  });
+  assert.equal(findButtons(restoredRail).length, 4);
 });
 
 test("List Rail has no diagnostic panel, controls, callbacks, or pointer-move snapshot state", () => {

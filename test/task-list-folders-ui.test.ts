@@ -223,9 +223,12 @@ test("All chip owns the ephemeral inline rail search while All Lists and Task se
   assert.match(headerSource, /filterTaskListDirectoryEntries\(allListDirectoryEntries, railSearch\)/);
   assert.match(headerSource, /isRailSearchActive && railSearch\.trim\(\)/);
   assert.match(headerSource, /onSelectDirectoryEntry\?\.\(entry\);\s*exitRailSearch\(\);/);
+  assert.match(headerSource, /const exitRailSearch = \(\) => \{\s*setRailSearch\(""\);\s*setIsRailSearchActive\(false\);\s*\}/);
+  assert.match(headerSource, /onExitAllSearch=\{exitRailSearch\}/);
   assert.match(headerSource, /view === "table" && isRailHidden && \(isRailSearchActive \|\| railSearch\)/);
   assert.match(headerSource, /<TaskChipButton onClick=\{\(\) => setIsAllListsOpen\(\(current\) => !current\)\}>/);
   assert.match(headerSource, /<TaskSearchBox[\s\S]*?onSearchChange=\{onSearchChange\}[\s\S]*?search=\{search\}/);
   assert.match(railSource, /reorderableEnabled && isRailListReorderable\(list\) && Boolean\(onMoveStructure\)/);
   assert.match(railSource, /reorderableEnabled=\{!isAllSearchActive\}/);
+  assert.match(railSource, /if \(isAllSearchActive\) \{\s*onExitAllSearch\?\.\(\);\s*\}\s*startTransition\(\(\) => \{\s*if \(list\.structureKind === "folder"\)/);
 });

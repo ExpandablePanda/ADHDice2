@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.73`.
+- Current working app version: `7.16.74`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.74 Exit All Search on Rail Navigation
+
+Navigating to any other list or folder now exits the All-chip search state so
+the inline search cannot remain visible after All stops being the active rail
+selection. The existing All-chip entry, result-selection, Escape, clear, Hide
+Lists, and reorder behavior remain unchanged. No SQL, Edge deployment, schema
+change, list persistence change, or production data mutation was performed.
 
 ## 2026-10-04 7.16.73 Tasks Lists Rail Search
 
