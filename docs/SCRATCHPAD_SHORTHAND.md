@@ -139,7 +139,26 @@ f: Coding 1h @ 4:15pm
 f: Coding 1h30m @ 4:15pm
 f: Coding 90m
 f: Music 45 min @ 8pm
+f: Sleep, CPAP 4h 11m @ 11:45am 10/3
 ```
+
+The grammar is `f: <category> [ , <session title> ] <duration> [ @ <time> ] [ <date> ]`.
+The first value is the saved Focus Category candidate. An optional second value
+is the individual session title; without it, the matched category title is the
+session title. Category matching is exact after case/whitespace normalization;
+fuzzy matches never auto-select. A matched Category supplies `categoryId`, Focus
+type, primary subtype, and secondary subtype. An unknown category remains a
+Focus review row with a null category, while an explicit session title is kept.
+Quoted values use the shared shorthand tokenizer, so titles such as
+`"Nap, afternoon"` may contain commas.
+
+The optional trailing inline date accepts `M/D`, `MM/DD`, `M/D/YYYY`, or
+`MM/DD/YYYY`. It uses the same year inference as Scratchpad date headings and
+Task multi-date shorthand, and overrides the active heading for that line only.
+It does not change the heading used by later lines. A missing completion time
+still carries `Choose a Focus completion time` for review; a missing inline date
+falls back to the active heading, and without either date the row keeps the
+existing missing-date review issue.
 
 Existing duration forms remain supported, including `1h`, `1 hr`, `1 hour`,
 `1h 30m`, `1 hr 30 min`, `90m`, `90 min`, and `30 minutes`. An exact normalized
@@ -188,5 +207,5 @@ breakfast - fanta Turkey bacon 8 watermelon 290g
 
 ## Deferred domains
 
-Sleep, CPAP, and Nap shorthand are **not** part of V1. Do not advertise or rely
-on `sleep:`, `cpap:`, or `nap:` syntax as implemented shorthand.
+Sleep, CPAP, and Nap remain ordinary Focus category/session-title values; this
+does not add separate `sleep:`, `cpap:`, or `nap:` prefixes.

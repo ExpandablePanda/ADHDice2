@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { HealthFoodLibraryItem, Task } from "../src/lib/database.types.ts";
-import type { FocusCategory } from "../src/lib/types.ts";
+import type { FocusCategory, FocusManualEntryInput } from "../src/lib/types.ts";
 import {
   calculateBatchIntakeMealNutrition,
   getBatchIntakeReviewGroups,
@@ -22,6 +22,16 @@ const codingCategory: FocusCategory = {
   focusSubtype2: null,
   color: "#6f57f6",
   icon: "code",
+};
+
+const sleepCategory: FocusCategory = {
+  id: "focus-sleep",
+  title: "Sleep",
+  focusType: "Sleep",
+  focusSubtype: "Night sleep",
+  focusSubtype2: "Recovery",
+  color: "#4b8fbe",
+  icon: "moon",
 };
 
 const turkeyBacon = {
@@ -252,6 +262,116 @@ test("explicit Focus stays Focus when category is unknown and exact matching sta
   assert.equal(unknown?.kind === "focus" ? unknown.issues.includes("No exact saved Focus category match") : false, true);
   const fuzzyTask = applyBatchIntakeTaskMatches(parseBatchIntake("10/2\nt: NBA", { referenceDate: "2026-10-03" }), canonicalTasks)[0];
   assert.equal(fuzzyTask?.kind === "task" ? fuzzyTask.selectedTaskId : "unexpected", null);
+});
+
+test("Focus shorthand separates the saved category from the session title and inherits category defaults", () => {
+  const parsed = parseBatchIntake([
+    "10/3",
+    "f: Sleep, Sleep 1h 50m @ 5:40am",
+    "f: sleep, CPAP 4h 11m @ 11:45am",
+    "f: Sleep, \"Nap, afternoon\" 1h @ 4pm",
+    "f: Coding 1h @ 2:30pm",
+    "f: Recovery, Nap 1h @ 2pm",
+    "f: Sleepy, CPAP 1h @ 3pm",
+  ].join("\n"), { focusCategories: [sleepCategory, codingCategory], referenceDate: "2026-10-03" });
+  const focus = parsed.filter((draft): draft is Extract<typeof parsed[number], { kind: "focus" }> => draft.kind === "focus");
+
+  assert.deepEqual(focus.slice(0, 4).map((draft) => [draft.categoryId, draft.title, draft.focusType, draft.focusSubtype, draft.focusSubtype2]), [
+    ["focus-sleep", "Sleep", "Sleep", "Night sleep", "Recovery"],
+    ["focus-sleep", "CPAP", "Sleep", "Night sleep", "Recovery"],
+    ["focus-sleep", "Nap, afternoon", "Sleep", "Night sleep", "Recovery"],
+    ["focus-coding", "Coding", "Work", "Deep Work", null],
+  ]);
+  assert.equal(focus[0]?.issues.length, 0);
+  assert.equal(focus[1]?.issues.length, 0);
+  assert.equal(focus[2]?.issues.length, 0);
+  assert.equal(focus[3]?.issues.length, 0);
+  assert.equal(focus[4]?.categoryId, null);
+  assert.equal(focus[4]?.title, "Nap");
+  assert.equal(focus[4]?.issues.includes("No exact saved Focus category match"), true);
+  assert.equal(focus[5]?.categoryId, null);
+  assert.equal(focus[5]?.title, "CPAP");
+  assert.equal(focus[5]?.issues.includes("No exact saved Focus category match"), true);
+  assert.equal(sleepCategory.title, "Sleep");
+});
+
+test("Focus inline dates are extracted before completion time and do not mutate the active heading", () => {
+  const parsed = parseBatchIntake([
+    "10/1",
+    "f: Sleep, CPAP 4h @ 11:45am 10/03",
+    "f: Coding 1h @ 2pm",
+    "f: Sleep, Nap 2h 10/3/2025",
+  ].join("\n"), { focusCategories: [sleepCategory, codingCategory], referenceDate: "2026-10-03" });
+  const focus = parsed.filter((draft): draft is Extract<typeof parsed[number], { kind: "focus" }> => draft.kind === "focus");
+
+  assert.deepEqual(focus.map((draft) => [draft.date, draft.completionTime, draft.title]), [
+    ["2026-10-03", "11:45", "CPAP"],
+    ["2026-10-01", "14:00", "Coding"],
+    ["2025-10-03", "", "Nap"],
+  ]);
+  assert.equal(focus[2]?.issues.includes("Choose a Focus completion time"), true);
+  assert.equal(focus[2]?.issues.includes("Missing date heading"), false);
+
+  const historical = parseBatchIntake("f: Sleep, Nap 1h 12/31", { focusCategories: [sleepCategory], referenceDate: "2026-01-02" })[0];
+  assert.equal(historical?.kind === "focus" ? historical.date : null, "2025-12-31");
+
+  const missing = parseBatchIntake("f: Sleep, CPAP 4h 11m", { focusCategories: [sleepCategory], referenceDate: "2026-10-03" })[0];
+  assert.equal(missing?.kind === "focus" ? missing.date : "unexpected", null);
+  assert.equal(missing?.issues.includes("Missing date heading"), true);
+  assert.equal(missing?.issues.includes("Choose a Focus completion time"), true);
+});
+
+test("the six-line Sleep fixture creates three deterministic Focus groups and six executable rows", async () => {
+  const fixture = [
+    "f: Sleep, Sleep 1h 50m @ 5:40am 10/3",
+    "f: Sleep, CPAP 4h 11m @ 11:45am 10/3",
+    "f: Sleep, Sleep 2h @ 6:30am 10/2",
+    "f: Sleep, CPAP 4h 50m @ 11:30am 10/2",
+    "f: Sleep, Nap 2h 15m @ 6:15pm 10/2",
+    "f: Sleep, Nap 2h 15m @ 11:55pm 10/2",
+  ].join("\n");
+  const drafts = parseBatchIntake(fixture, { focusCategories: [sleepCategory], referenceDate: "2026-10-03" });
+  const focus = drafts.filter((draft): draft is Extract<typeof drafts[number], { kind: "focus" }> => draft.kind === "focus");
+  const groups = getBatchIntakeReviewGroups(focus);
+
+  assert.equal(focus.length, 6);
+  assert.equal(focus.filter((draft) => draft.issues.length === 0).length, 6);
+  assert.deepEqual(focus.map((draft) => [draft.date, draft.durationSeconds, draft.completionTime]), [
+    ["2026-10-03", 6600, "05:40"],
+    ["2026-10-03", 15060, "11:45"],
+    ["2026-10-02", 7200, "06:30"],
+    ["2026-10-02", 17400, "11:30"],
+    ["2026-10-02", 8100, "18:15"],
+    ["2026-10-02", 8100, "23:55"],
+  ]);
+  assert.deepEqual(groups.map((group) => [group.id, group.drafts.length, group.drafts[0]?.kind === "focus" ? group.drafts[0].title : null]), [
+    ["focus:focus-sleep:sleep", 2, "Sleep"],
+    ["focus:focus-sleep:cpap", 2, "CPAP"],
+    ["focus:focus-sleep:nap", 2, "Nap"],
+  ]);
+  assert.deepEqual(focus.map((draft) => draft.categoryId), Array(6).fill("focus-sleep"));
+  assert.deepEqual(new Set(focus.map((draft) => draft.groupId)).size, 3);
+  assert.equal(getBatchIntakeApplyCount(focus), 6);
+
+  const plan = buildBatchIntakeExecutionPlan(focus);
+  const received: FocusManualEntryInput[] = [];
+  const progress: Array<{ processed: number; total: number }> = [];
+  const result = await executeBatchIntakePlan(plan, {
+    syncTaskHistoryEntries: async () => true,
+    addWaterEntries: async () => ({ success: true, rows: [] }),
+    addWeightEntries: async () => ({ success: true, rows: [] }),
+    addMealEntries: async () => ({ success: true, rows: [] }),
+    handleManualFocusEntries: async (inputs) => {
+      received.push(...inputs);
+      return { success: true, rows: inputs.map((_, index) => ({ index, success: true })) };
+    },
+  }, { onProgress: (next) => progress.push({ processed: next.processed, total: next.total }) });
+
+  assert.equal(received.length, 6);
+  assert.deepEqual(received.map((input) => [input.categoryId, input.title, input.focusType, input.focusSubtype, input.focusSubtype2]), focus.map((draft) => [draft.categoryId, draft.title, draft.focusType, draft.focusSubtype, draft.focusSubtype2]));
+  assert.equal(result.rows.length, 6);
+  assert.equal(result.rows.every((row) => row.status === "applied"), true);
+  assert.deepEqual(progress.at(-1), { processed: 6, total: 6 });
 });
 
 test("weight and Meal proposals retain review state when Health context cannot resolve them", () => {

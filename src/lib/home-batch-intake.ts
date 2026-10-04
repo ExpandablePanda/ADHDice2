@@ -240,6 +240,11 @@ export function batchIntakeCanonicalGroupId(kind: "task" | "focus", identity: st
   return `${kind}:${identity}`;
 }
 
+export function batchIntakeCanonicalFocusGroupId(categoryId: string | null, categoryCandidate: string, title: string) {
+  const categoryIdentity = categoryId ?? `unresolved:${normalizeFocusCategoryTitle(categoryCandidate)}`;
+  return batchIntakeCanonicalGroupId("focus", `${categoryIdentity}:${normalizeFocusCategoryTitle(title)}`);
+}
+
 export function getBatchIntakeReviewGroups(drafts: readonly BatchIntakeDraft[]): BatchIntakeReviewGroup[] {
   const groups = new Map<string, BatchIntakeReviewGroup>();
   drafts.forEach((draft) => {
@@ -520,36 +525,68 @@ function shorthandFocusDurationPattern() {
   return /^(.*?)(?:\s+)(\d+(?:\.\d+)?\s*(?:h|hr|hrs|hour|hours|m|min|mins|minute|minutes)(?:\s*\d+(?:\.\d+)?\s*(?:m|min|mins|minute|minutes))?)$/i;
 }
 
+function extractTrailingShorthandDate(value: string, referenceDate: string) {
+  const normalized = stripTrailingMarkdownBackslashes(value);
+  const match = normalized.match(/^(.*)\s+(\d{1,2}\/\d{1,2}(?:\/\d{2,4})?)$/);
+  if (!match) return { body: normalized, date: null as string | null, issue: null as string | null };
+  const dateToken = match[2] ?? "";
+  const date = parseDateHeading(dateToken, referenceDate);
+  return {
+    body: (match[1] ?? "").trim(),
+    date,
+    issue: date ? null : `Invalid Focus shorthand date: ${dateToken}`,
+  };
+}
+
+function splitFocusCategoryAndTitle(value: string) {
+  const tokens = tokenizeShorthandCsvTokens(value);
+  const categoryCandidate = tokens[0]?.value ?? value.trim();
+  if (tokens.length < 2) {
+    return { categoryCandidate, sessionTitle: null as string | null };
+  }
+  const sessionTitle = tokens.slice(1).map((token) => token.value).join(", ").trim();
+  return { categoryCandidate, sessionTitle: sessionTitle || null };
+}
+
+function focusGroupId(category: FocusCategory | null, categoryCandidate: string, title: string) {
+  return batchIntakeCanonicalFocusGroupId(category?.id ?? null, categoryCandidate, title);
+}
+
 function createShorthandFocusDraft(
   line: string,
   lineNumber: number,
   date: string | null,
   body: string,
-  completionTime: string | null,
   categories: readonly FocusCategory[] | undefined,
+  referenceDate: string,
 ): BatchIntakeParsedFocusDraft {
-  const match = body.match(shorthandFocusDurationPattern());
-  const title = (match?.[1] ?? body).trim();
+  const inlineDate = extractTrailingShorthandDate(body, referenceDate);
+  const timed = extractTrailingShorthandTime(inlineDate.body);
+  const match = timed.body.match(shorthandFocusDurationPattern());
+  const titleAndCategory = splitFocusCategoryAndTitle((match?.[1] ?? timed.body).trim());
   const durationSeconds = match ? parseBatchIntakeDuration(match[2] ?? "") : null;
-  const category = exactFocusCategoryForTitle(title, categories);
+  const category = exactFocusCategoryForTitle(titleAndCategory.categoryCandidate, categories);
+  const title = titleAndCategory.sessionTitle ?? category?.title ?? titleAndCategory.categoryCandidate;
+  const resolvedDate = inlineDate.date ?? (inlineDate.issue ? null : date);
   const issues = [
+    ...(inlineDate.issue ? [inlineDate.issue] : []),
     ...(category ? [] : ["No exact saved Focus category match"]),
-    ...(completionTime ? [] : ["Choose a Focus completion time"]),
+    ...(timed.time ? [] : ["Choose a Focus completion time"]),
     ...(durationSeconds === null ? ["Focus duration must be greater than zero"] : []),
   ];
   return {
-    ...makeBase(line, lineNumber, date, "focus", "high", issues),
+    ...makeBase(line, lineNumber, resolvedDate, "focus", "high", issues),
     categoryId: category?.id ?? null,
-    completionTime: completionTime ?? "",
+    completionTime: timed.time ?? "",
     durationSeconds,
     focusSubtype: category?.focusSubtype ?? null,
     focusSubtype2: category?.focusSubtype2 ?? null,
     focusType: category?.focusType ?? "Work",
     kind: "focus",
     notes: "",
-    title: category?.title ?? title,
+    title,
     writeId: undefined,
-    groupId: batchIntakeCanonicalGroupId("focus", category?.id ?? `unresolved:${normalizeFocusCategoryTitle(title)}`),
+    groupId: focusGroupId(category, titleAndCategory.categoryCandidate, title),
   };
 }
 
@@ -702,7 +739,7 @@ function createParsedFocusDraft(
     notes: "",
     title: category.title,
     writeId: undefined,
-    groupId: batchIntakeCanonicalGroupId("focus", category.id),
+    groupId: focusGroupId(category, category.title, category.title),
   };
 }
 
@@ -851,6 +888,10 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
     const shorthandLine = stripTrailingMarkdownBackslashes(line);
     const shorthand = parseShorthandPrefix(shorthandLine);
     if (shorthand) {
+      if (shorthand.prefix === "f") {
+        drafts.push(createShorthandFocusDraft(line, lineNumber, currentDate, shorthand.body, options.focusCategories, options.referenceDate));
+        continue;
+      }
       const timed = shorthand.prefix === "t" ? { body: shorthand.body, time: null as string | null } : extractTrailingShorthandTime(shorthand.body);
       if (shorthand.prefix === "t") {
         drafts.push(...createTaskShorthandDrafts(line, lineNumber, currentDate, timed.body, options.referenceDate));
@@ -884,10 +925,6 @@ export function parseBatchIntake(sourceText: string, options: ParseBatchIntakeOp
             value: weight.value,
           });
         });
-        continue;
-      }
-      if (shorthand.prefix === "f") {
-        drafts.push(createShorthandFocusDraft(line, lineNumber, currentDate, timed.body, timed.time, options.focusCategories));
         continue;
       }
       drafts.push(...createShorthandMealDrafts(line, lineNumber, currentDate, shorthand.prefix, timed.body, timed.time));

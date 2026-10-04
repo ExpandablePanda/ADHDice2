@@ -1860,8 +1860,8 @@ export function HomePage({
                 <AdhdChip aria-expanded={isShorthandHelpOpen} onClick={() => setIsShorthandHelpOpen((current) => !current)} type="button">Shorthand</AdhdChip>
                 {isShorthandHelpOpen ? <AdhdDropdownPanel aria-label="Scratchpad Shorthand V1 help" className="grid w-[min(24rem,calc(100vw-2rem))] gap-2 p-3" role="dialog">
                   <div><p className="text-xs font-semibold text-[#332c55] dark:text-white">Scratchpad Shorthand V1</p><p className="mt-1 text-[11px] text-[#7d7598] dark:text-white/55">Optional compact grammar. Loose Scratchpad text remains supported.</p></div>
-                  <pre className="overflow-x-auto rounded-lg bg-[#faf8fe] p-2 text-[11px] leading-5 text-[#514875] dark:bg-white/5 dark:text-white/70">10/2{`\n`}t: nba 2k done, adhdice dmb{`\n`}t: NBA 2K - Done 9/27 9/28 9/29{`\n`}w: 20oz done, 15oz pending{`\n`}wt: 233.6{`\n`}f: Coding 1h @ 4:15pm{`\n`}b: turkey bacon 8, watermelon 290g</pre>
-                  <p className="text-[11px] text-[#7d7598] dark:text-white/55">Prefixes: t Task · w Water · wt Weight · f Focus · b/l/d/s Meal slots. Use quotes for commas. Sleep/CPAP/Nap are not in V1.</p>
+                  <pre className="overflow-x-auto rounded-lg bg-[#faf8fe] p-2 text-[11px] leading-5 text-[#514875] dark:bg-white/5 dark:text-white/70">10/2{`\n`}t: nba 2k done, adhdice dmb{`\n`}t: NBA 2K - Done 9/27 9/28 9/29{`\n`}w: 20oz done, 15oz pending{`\n`}wt: 233.6{`\n`}f: Coding 1h @ 2:30pm{`\n`}f: Sleep, CPAP 4h 11m @ 11:45am 10/3{`\n`}b: turkey bacon 8, watermelon 290g</pre>
+                  <p className="text-[11px] text-[#7d7598] dark:text-white/55">Prefixes: t Task · w Water · wt Weight · f Focus · b/l/d/s Meal slots. Focus supports category, optional session title, duration, time, and trailing date. Use quotes for commas.</p>
                 </AdhdDropdownPanel> : null}
               </div>
             </div>

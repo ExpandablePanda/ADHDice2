@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.59`.
+- Current working app version: `7.16.60`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.60 Focus shorthand category, session title, and inline date
+
+Explicit Focus shorthand now separates the exact saved Focus category from an
+optional session title, inherits the saved category's Focus type and subtypes,
+and supports a trailing inline historical date using the existing Scratchpad
+date inference. Inline dates override the active heading for their line only.
+Focus review grouping includes canonical category identity and normalized
+session title, so repeated Sleep/CPAP or Sleep/Nap occurrences stay together
+without merging distinct session titles. Existing Coding shorthand, loose pair
+parsing, Focus execution through `handleManualFocusEntries`, and per-row retry
+semantics remain unchanged. No SQL, Edge deployment, Home V8 change, schema
+change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.59 History canonical schedule projection preservation
 
