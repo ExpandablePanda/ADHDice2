@@ -12,7 +12,7 @@ export type UserProfile = {
 };
 
 export const PROFILE_STORAGE_KEY = "adhdice-profile";
-export const PROFILE_MEDIA_SESSION_KEY_PREFIX = "adhdice-profile-media";
+export const PROFILE_MEDIA_SESSION_KEY_PREFIX = "adhdice-profile-media:v2";
 export const PROFILE_MEDIA_COLUMNS = "avatar_src,logo_src";
 export const WORKSPACE_PROFILE_COLUMNS = "user_id,display_name,accent_color,day_start_time,timezone,settings_revision,focus_alarm_enabled,focus_alarm_interval_minutes,level,low_stim_mode,xp,points,theme_preference,tokens,free_roll_bank,created_at,updated_at";
 
@@ -49,7 +49,7 @@ declare global {
 }
 
 export const DEFAULT_PROFILE: UserProfile = {
-  avatarSrc: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?auto=format&fit=crop&w=200&q=80",
+  avatarSrc: "",
   created: false,
   displayName: "Andrew Schaffer",
   email: "andrew@adhdice.app",

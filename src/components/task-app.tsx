@@ -3,6 +3,7 @@
 import dynamic from "next/dynamic";
 import Image from "next/image";
 import { APP_VERSION as CURRENT_APP_VERSION } from "@/lib/app-version";
+import { ProfileAvatarImage } from "@/components/profile-avatar";
 import { useNativeIosPlatform } from "@/lib/platform";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
@@ -9528,7 +9529,7 @@ function TopHeader({
       onClick={onOpenAccount}
       type="button"
     >
-      <ProfileAvatarImage avatarSrc={profile.avatarSrc} />
+      <ProfileAvatarImage avatarSrc={profile.avatarSrc} displayName={profile.displayName} />
     </button>
   );
 
@@ -9896,7 +9897,7 @@ function CommandCenterHeader({
   const isWorkspaceRefreshing = refreshStatus !== "idle";
   const accountButton = (
     <button className="relative mr-[3px] rounded-full bg-[var(--hud-surface)] transition-transform hover:scale-[1.02]" onClick={onOpenAccount} type="button">
-      <ProfileAvatarImage avatarSrc={profile.avatarSrc} />
+      <ProfileAvatarImage avatarSrc={profile.avatarSrc} displayName={profile.displayName} />
     </button>
   );
 
@@ -10327,21 +10328,6 @@ function CommandCenterHeader({
   );
 }
 
-function ProfileAvatarImage({ avatarSrc }: { avatarSrc: string }) {
-  return (
-    <Image
-      alt="Profile avatar"
-      className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
-      height={44}
-      key={avatarSrc}
-      priority
-      src={avatarSrc}
-      unoptimized={avatarSrc.startsWith("data:")}
-      width={44}
-    />
-  );
-}
-
 function BrandMark({
   compact = false,
   profile,
@@ -10438,13 +10424,11 @@ function AccountModal({
 
           <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <Image
-                alt="Profile preview"
-                className="h-12 w-12 rounded-full object-cover"
-                height={48}
-                src={draft.avatarSrc}
-                unoptimized={draft.avatarSrc.startsWith("data:")}
-                width={48}
+              <ProfileAvatarImage
+                avatarSrc={draft.avatarSrc}
+                className="h-12 w-12"
+                displayName={draft.displayName}
+                priority={false}
               />
               <div>
                 <p className={`text-sm font-semibold text-[#202844] dark:text-white`}>{draft.displayName}</p>

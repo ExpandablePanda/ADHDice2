@@ -1,7 +1,9 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import type { User } from "@supabase/supabase-js";
 import type { createBrowserSupabaseClient } from "../src/lib/supabase.ts";
+import { getProfileAvatarInitial } from "../src/lib/profile-avatar.ts";
 import {
   buildProfileSnapshot,
   DEFAULT_PROFILE,
@@ -15,6 +17,9 @@ import {
   setActiveProfileUserId,
   WORKSPACE_PROFILE_COLUMNS,
 } from "../src/lib/profile-store.ts";
+
+const profileAvatarSource = readFileSync(new URL("../src/components/profile-avatar.tsx", import.meta.url), "utf8");
+const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 class MemoryStorage {
   private values = new Map<string, string>();
@@ -101,6 +106,26 @@ test("workspace profile columns exclude large media while retaining required set
   }
 });
 
+test("default profile has no remote or stock avatar fallback", () => {
+  assert.equal(DEFAULT_PROFILE.avatarSrc, "");
+  assert.equal(/^https?:\/\//i.test(DEFAULT_PROFILE.avatarSrc), false);
+});
+
+test("profile avatar fallback uses the display-name initial without an image request", () => {
+  assert.equal(getProfileAvatarInitial("Andrew Schaffer"), "A");
+  assert.equal(getProfileAvatarInitial("  nora  "), "N");
+  assert.equal(getProfileAvatarInitial(""), "?");
+  assert.match(profileAvatarSource, /if \(!avatarSrc\.trim\(\)\)/);
+  assert.match(profileAvatarSource, /<span[\s\S]*role="img"/);
+  assert.match(profileAvatarSource, /getProfileAvatarInitial\(displayName\)/);
+  assert.doesNotMatch(profileAvatarSource, /<Image[\s\S]*src=\{avatarSrc\}[\s\S]*if/);
+});
+
+test("HUD and account preview share the same neutral profile avatar fallback", () => {
+  assert.equal((taskAppSource.match(/<ProfileAvatarImage avatarSrc=\{profile\.avatarSrc\} displayName=\{profile\.displayName\} \/>/g) ?? []).length, 2);
+  assert.match(taskAppSource, /<ProfileAvatarImage[\s\S]*avatarSrc=\{draft\.avatarSrc\}[\s\S]*displayName=\{draft\.displayName\}/);
+});
+
 test("profile media requests deduplicate concurrently and cache the completed session", async () => {
   const browser = installProfileMediaWindow();
   const userId = "media-user";
@@ -147,6 +172,22 @@ test("profile media reload restores the matching user's session cache without an
   assert.equal(requestCount, 1);
   assert.equal(profile.avatarSrc, "data:image/png;base64,reloaded");
   assert.equal(profile.logoSrc, "https://example.test/reloaded-logo.png");
+  browser.restore();
+});
+
+test("legacy profile media session cache cannot restore the removed fallback", async () => {
+  const browser = installProfileMediaWindow();
+  const userId = "legacy-fallback-session-user";
+  browser.sessionStorage.setItem(`adhdice-profile-media:${userId}`, "loaded");
+  browser.sessionStorage.setItem(`adhdice-profile-media:${userId}:cache`, JSON.stringify({
+    avatarSrc: "legacy-stock-avatar",
+    logoSrc: null,
+  }));
+  setActiveProfileUserId(userId);
+  const client = createMediaClient(async () => null, []);
+
+  const profile = await loadProfileMedia(client, userId);
+  assert.equal(profile.avatarSrc, "");
   browser.restore();
 });
 
@@ -241,6 +282,17 @@ test("failed profile media requests remain retryable", async () => {
   browser.restore();
 });
 
+test("failed profile media request does not introduce a stock avatar", async () => {
+  const browser = installProfileMediaWindow();
+  const userId = "failed-media-user";
+  setActiveProfileUserId(userId);
+  const client = createMediaClient(async () => null, [], () => ({ message: "temporary failure" }));
+
+  const profile = await loadProfileMedia(client, userId);
+  assert.equal(profile.avatarSrc, "");
+  browser.restore();
+});
+
 test("current-user media hydration replaces cached fallback for every avatar consumer", async () => {
   const browser = installProfileMediaWindow();
   const userId = "avatar-consumer-user";
@@ -257,7 +309,7 @@ test("current-user media hydration replaces cached fallback for every avatar con
   const expandedHudAvatarSrc = after.avatarSrc;
   const accountButtonAvatarSrc = after.avatarSrc;
 
-  assert.equal(before.avatarSrc, DEFAULT_PROFILE.avatarSrc);
+  assert.equal(before.avatarSrc, "");
   assert.equal(expandedHudAvatarSrc, "data:image/png;base64,current-user-avatar");
   assert.equal(accountButtonAvatarSrc, expandedHudAvatarSrc);
   browser.restore();

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.80`.
+- Current working app version: `7.16.81`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.81 Remove stock profile avatar fallback
+
+Removed the legacy stock profile-photo fallback. Profile surfaces now show a
+neutral initial placeholder until the authenticated user's real avatar is
+available. Existing profile-media lazy hydration, session caching,
+request-deduplication, stale-account protection, and uploaded avatar/logo
+behavior remain in place. No SQL, Supabase migration, profile data mutation,
+or auth change was performed.
 
 ## 2026-10-04 7.16.80 Fence Pending Dice Reset Against Concurrent Rewards
 
