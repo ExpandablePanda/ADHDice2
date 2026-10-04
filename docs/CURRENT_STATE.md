@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.77`.
+- Current working app version: `7.16.78`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.78 Home Task-row structural breadcrumbs
+
+All Home Task rows now use the same canonical structural breadcrumb, showing
+Folder ancestry before parent Task ancestry across Urgent, To-do, Attention,
+Missed, and Routine. Routine Steps and Substeps resolve Folder context through
+their root Task, while Tasks without Folder membership retain parent-only
+breadcrumbs and top-level Tasks without either context show no breadcrumb.
 
 ## 2026-10-04 7.16.77 Home Attention and Missed Folder context
 

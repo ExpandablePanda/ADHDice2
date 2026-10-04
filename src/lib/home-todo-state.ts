@@ -795,7 +795,7 @@ export function buildHomeTodoHierarchy(
   return labels;
 }
 
-export function buildHomeDerivedTaskHierarchy(
+export function buildHomeTaskRowHierarchy(
   task: Task,
   tasks: readonly Task[],
   taskContentFolders: readonly TaskContentFolderRow[],

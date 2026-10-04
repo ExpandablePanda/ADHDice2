@@ -48,7 +48,7 @@ import {
   type HomeRecordMetricKey,
 } from "@/lib/home-progress";
 import {
-  buildHomeDerivedTaskHierarchy,
+  buildHomeTaskRowHierarchy,
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
   buildHomeRoutineGroups,
@@ -1238,9 +1238,7 @@ export function HomePage({
     const isUrgent = mode === "urgent";
     const isDerived = mode === "attention" || mode === "missed";
     const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
-    const hierarchy = isDerived
-      ? buildHomeDerivedTaskHierarchy(task, tasks, taskContentFolders, taskById, taskHierarchy)
-      : buildHomeTodoHierarchy(task, tasks, taskById);
+    const hierarchy = buildHomeTaskRowHierarchy(task, tasks, taskContentFolders, taskById, taskHierarchy);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     const fastActionOpen = isFastActionMode;

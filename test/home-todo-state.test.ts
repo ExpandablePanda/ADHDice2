@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import type { Task } from "../src/lib/database.types.ts";
 import type { TaskContentFolderRow } from "../src/lib/task-content-folders.ts";
 import {
-  buildHomeDerivedTaskHierarchy,
+  buildHomeTaskRowHierarchy,
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
   buildHomeTodoDaySections,
@@ -1077,7 +1077,7 @@ test("Home Attention and Missed projections use canonical memberships without mu
   assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, { ...refreshedMemberships, missed: [] }, "missed").map((entry) => entry.id), []);
 });
 
-test("Home derived rows combine canonical root Folder paths with parent Task ancestry", () => {
+test("Home Task rows combine canonical root Folder paths with parent Task ancestry", () => {
   const folders = [
     { id: "projects", name: "Projects", parent_folder_id: null },
     { id: "games", name: "Games", parent_folder_id: "projects" },
@@ -1089,12 +1089,12 @@ test("Home derived rows combine canonical root Folder paths with parent Task anc
   const childWithoutFolder = task("child-without-folder", { title: "Child Task", parent_task_id: parentOnly.id });
   const tasks = [root, step, substep, parentOnly, childWithoutFolder];
 
-  assert.deepEqual(buildHomeDerivedTaskHierarchy(root, tasks, folders), ["Projects", "Games"]);
-  assert.deepEqual(buildHomeDerivedTaskHierarchy(step, tasks, folders), ["Projects", "Games", "Madden Franchise"]);
-  assert.deepEqual(buildHomeDerivedTaskHierarchy(substep, tasks, folders), ["Projects", "Games", "Madden Franchise", "Weekly Tasks"]);
-  assert.deepEqual(buildHomeDerivedTaskHierarchy(childWithoutFolder, tasks, folders), ["Parent Task"]);
-  assert.deepEqual(buildHomeDerivedTaskHierarchy(task("plain", { title: "Plain Task" }), [task("plain", { title: "Plain Task" })], folders), []);
-  assert.equal(buildHomeDerivedTaskHierarchy(step, tasks, folders).includes("Weekly Tasks"), false);
+  assert.deepEqual(buildHomeTaskRowHierarchy(root, tasks, folders), ["Projects", "Games"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(step, tasks, folders), ["Projects", "Games", "Madden Franchise"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(substep, tasks, folders), ["Projects", "Games", "Madden Franchise", "Weekly Tasks"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(childWithoutFolder, tasks, folders), ["Parent Task"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(task("plain", { title: "Plain Task" }), [task("plain", { title: "Plain Task" })], folders), []);
+  assert.equal(buildHomeTaskRowHierarchy(step, tasks, folders).includes("Weekly Tasks"), false);
 });
 
 test("Home To-do search includes existing members and guards duplicate adds", () => {
@@ -1132,7 +1132,13 @@ test("Home derived tabs use canonical membership, retain task controls, and avoi
   assert.match(source, /No tasks need Attention right now\./);
   assert.match(source, /No missed tasks right now\./);
   assert.match(source, /const isDerived = mode === "attention" \|\| mode === "missed"/);
-  assert.match(source, /const hierarchy = isDerived\s*\? buildHomeDerivedTaskHierarchy\(task, tasks, taskContentFolders, taskById, taskHierarchy\)\s*:\s*buildHomeTodoHierarchy\(task, tasks, taskById\)/);
+  assert.match(renderSource, /const hierarchy = buildHomeTaskRowHierarchy\(task, tasks, taskContentFolders, taskById, taskHierarchy\)/);
+  assert.doesNotMatch(renderSource, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
+  assert.match(source, /renderHomeTask\(task, index, handle, "urgent"\)/);
+  assert.match(source, /renderHomeTask\(task, index, handle, "todo"\)/);
+  assert.match(source, /renderHomeTask\([\s\S]*"routine"[\s\S]*\)/);
+  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
+  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
   assert.match(renderSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
   assert.match(renderSource, /!isRoutineChild && !isDerived \? \(/);
   assert.match(renderSource, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
