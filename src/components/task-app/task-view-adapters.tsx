@@ -46,6 +46,7 @@ import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolve
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
+import { isActiveCanonicalTaskEntityRow } from "@/lib/task-realtime-reconciliation";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
 import type {
   CustomBehaviorRuleset,
@@ -340,6 +341,7 @@ export function MomentumTaskModal({
 
 export function TaskHistoryModal({
   onClose,
+  onRefreshTaskAuthority,
   onRenameTaskTitle,
   onRetryTaskHistoryLoad,
   onLoadOlderTaskHistory,
@@ -370,6 +372,7 @@ export function TaskHistoryModal({
   historyWindowStartDate,
 }: {
   onClose: () => void;
+  onRefreshTaskAuthority?: () => Promise<boolean> | boolean | void;
   onRenameTaskTitle: (taskId: string, nextTitle: string) => Promise<boolean | void> | boolean | void;
   onRetryTaskHistoryLoad?: () => Promise<boolean> | void;
   onLoadOlderTaskHistory?: () => Promise<boolean> | void;
@@ -423,6 +426,7 @@ export function TaskHistoryModal({
   const [taskTitleDraft, setTaskTitleDraft] = useState(taskTitle);
   const isTaskTitleSaveInFlightRef = useRef(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
+  const [isRefreshingTaskAuthority, setIsRefreshingTaskAuthority] = useState(false);
 
   async function commitTaskTitle() {
     const nextTitle = taskTitleDraft.trim();
@@ -453,13 +457,16 @@ export function TaskHistoryModal({
   const knownDateKeys = new Set(days);
   const calendarStart = days[0] ?? today;
   const calendarEnd = days.at(-1) ?? today;
+  const projectedTask = task as Task & { canonical_schedule_boundary?: unknown };
+  const isMissingActiveCanonicalScheduleBoundary = isActiveCanonicalTaskEntityRow(task)
+    && !projectedTask.canonical_schedule_boundary;
   const calendarLogicalDate = stateEngineContext
     ? logicalDateForTimestamp(stateEngineContext.now, stateEngineContext.timezone, stateEngineContext.logicalDayRollover)
     : null;
   // The semantic logical date is the dependency boundary; minute-level `now`
   // identity must not rebuild the canonical Calendar read.
   const calendarReadInput = useMemo(
-    () => stateEngineContext
+    () => stateEngineContext && !isMissingActiveCanonicalScheduleBoundary
       ? {
         ...stateEngineContext,
         calendarEnd,
@@ -484,6 +491,7 @@ export function TaskHistoryModal({
       calendarLogicalDate,
       calendarEnd,
       calendarStart,
+      isMissingActiveCanonicalScheduleBoundary,
       normalizedTaskHistory,
       stateEngineContext?.logicalDayRollover,
       stateEngineContext?.timezone,
@@ -630,6 +638,16 @@ export function TaskHistoryModal({
     : calendarActionStatuses as CalendarActionStatus[];
   const taskCalendarMonthKey = `${displayedMonth.year}-${String(displayedMonth.month + 1).padStart(2, "0")}`;
   const taskCalendarMonthDays = getTaskHistoryCalendarMonthDays(taskCalendarMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
+
+  async function refreshTaskAuthority() {
+    if (!onRefreshTaskAuthority || isRefreshingTaskAuthority) return;
+    setIsRefreshingTaskAuthority(true);
+    try {
+      await onRefreshTaskAuthority();
+    } finally {
+      setIsRefreshingTaskAuthority(false);
+    }
+  }
 
   function cellTone(dateKey: string) {
     const entry = historyByDate.get(dateKey);
@@ -869,7 +887,15 @@ export function TaskHistoryModal({
 
   const calendarUnavailableSection = (
     <section aria-live="polite" className="rounded-[1.5rem] border border-dashed border-[#ddd6f9] bg-[#faf8ff] px-5 py-6 text-sm text-[#7b84a0] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/55">
-      Calendar is unavailable until canonical Task State is ready.
+      {isMissingActiveCanonicalScheduleBoundary ? (
+        <>
+          <p>Task schedule authority is refreshing. Refresh and try again.</p>
+          <div className="mt-4 flex flex-wrap gap-2">
+            {onRefreshTaskAuthority ? <button className="rounded-full border border-[#ddd2ff] bg-[#f1ecff] px-4 py-2 text-sm font-semibold text-[#6f57f6] disabled:cursor-not-allowed disabled:opacity-50 dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" disabled={isRefreshingTaskAuthority} onClick={() => { void refreshTaskAuthority(); }} type="button">{isRefreshingTaskAuthority ? "Refreshing…" : "Refresh Task"}</button> : null}
+            <button className="rounded-full border border-[#ddd6f9] bg-white px-4 py-2 text-sm font-semibold text-[#5d5874] dark:border-white/10 dark:bg-white/[0.03] dark:text-white/75" onClick={onClose} type="button">Close</button>
+          </div>
+        </>
+      ) : "Calendar is unavailable until canonical Task State is ready."}
     </section>
   );
   const isHistoryLoading = taskHistoryLoadStatus === "loading";

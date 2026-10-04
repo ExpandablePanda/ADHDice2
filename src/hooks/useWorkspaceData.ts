@@ -509,6 +509,7 @@ export function useWorkspaceData({
     isRolloverActiveRef.current = isRolloverActive;
   }, [isRolloverActive]);
   const softWorkspaceRefreshRef = useRef<(() => Promise<void>) | null>(null);
+  const taskEntityReconciliationRef = useRef<((taskId: string) => Promise<void>) | null>(null);
   const rolloverWorkspaceReconciliationRef = useRef<(() => Promise<void>) | null>(null);
   const homeCurrentDayHistoryRequestRef = useRef<((reason: string, options?: { force?: boolean; onlyIfLoaded?: boolean }) => Promise<boolean>) | null>(null);
   const quotaCurrentPeriodHistoryRequestRef = useRef<((reason: string, options?: { force?: boolean; taskId?: string }) => Promise<boolean>) | null>(null);
@@ -1462,6 +1463,10 @@ export function useWorkspaceData({
         () => requestTaskEntityReconciliation(taskId, eventType),
       );
     }
+
+    taskEntityReconciliationRef.current = async (taskId: string) => {
+      await requestTaskEntityReconciliation(taskId, "history_mutation");
+    };
 
     function shouldReconnectTaskChannel() {
       return (
@@ -4200,6 +4205,7 @@ export function useWorkspaceData({
         liveWorkspaceUserIdRef.current = null;
       }
       softWorkspaceRefreshRef.current = null;
+      taskEntityReconciliationRef.current = null;
       currentTaskProjectionLogicalDayRefreshRef.current = null;
       rolloverWorkspaceReconciliationRef.current = null;
       homeCurrentDayHistoryRequestRef.current = null;
@@ -4274,6 +4280,10 @@ export function useWorkspaceData({
 
   const softRefreshWorkspace = useCallback(async () => {
     await softWorkspaceRefreshRef.current?.();
+  }, []);
+
+  const reconcileTaskEntity = useCallback(async (taskId: string) => {
+    await taskEntityReconciliationRef.current?.(taskId);
   }, []);
 
   const reconcileRolloverWorkspace = useCallback(async () => {
@@ -4380,6 +4390,7 @@ export function useWorkspaceData({
     prepareTaskMutation,
     reconcileRolloverWorkspace,
     softRefreshWorkspace,
+    reconcileTaskEntity,
     loadTaskHistoryForTask,
     loadTaskHistoryForTasks,
     loadTaskHistoryDetailWindow,

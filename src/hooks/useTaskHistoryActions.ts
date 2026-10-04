@@ -7,6 +7,7 @@ import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskHistoryLoadMap, TaskHistoryLoadOptions } from "@/lib/task-history";
 import { fetchLatestTaskRow } from "@/lib/task-db-mutations";
 import { classifyTaskStateRuntimeAction, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
+import { mergeTaskWithCanonicalScheduleProjection } from "@/lib/task-state-canonical/schedule-projection";
 import {
   executeTaskHistoryOutcomeBatch,
   executeTaskStateRuntimeAction,
@@ -44,6 +45,7 @@ type UseTaskHistoryActionsOptions = {
   currentUserId: string;
   currentDayKey: string;
   onHistoryMutation?: (taskId: string, taskHistory?: DbTaskHistory[]) => void | Promise<void>;
+  reconcileTaskEntity?: (taskId: string) => Promise<void>;
   onTasksCompleted?: (candidates: TaskRewardCandidate[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
   setTaskHistory: Dispatch<SetStateAction<DbTaskHistory[]>>;
@@ -62,6 +64,7 @@ export function useTaskHistoryActions({
   currentUserId,
   currentDayKey,
   onHistoryMutation,
+  reconcileTaskEntity,
   onTasksCompleted,
   setMessage,
   setTaskHistory,
@@ -93,14 +96,17 @@ export function useTaskHistoryActions({
     void onHistoryMutation?.(taskId, nextHistory);
   }
 
-  async function readFreshCanonicalTask(taskId: string): Promise<TaskStateRuntimeLocalTask | null> {
+  async function readFreshCanonicalTask(taskId: string, projectedTask?: TaskStateRuntimeLocalTask | null): Promise<TaskStateRuntimeLocalTask | null> {
     try {
       const result = await fetchLatestTaskRow(client, taskId);
       const canonicalRevision = result.data?.canonical_revision;
       if (result.error || !result.data || typeof canonicalRevision !== "number" || !Number.isInteger(canonicalRevision) || canonicalRevision < 1) {
         return null;
       }
-      return result.data as TaskStateRuntimeLocalTask;
+      const freshTask = result.data as TaskStateRuntimeLocalTask;
+      return projectedTask
+        ? mergeTaskWithCanonicalScheduleProjection(projectedTask, freshTask) as TaskStateRuntimeLocalTask
+        : freshTask;
     } catch {
       return null;
     }
@@ -123,20 +129,35 @@ export function useTaskHistoryActions({
     if (batchResult.completedChildren.length > 0) {
       const finalTask = batchResult.task ?? batchResult.completedChildren.at(-1)?.task ?? null;
       if (finalTask) {
-        setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId ? finalTask : candidate)));
-        options?.onTaskCommitted?.(finalTask);
+        const projectedTask = options?.currentTask
+          ?? tasks.find((candidate) => candidate.id === taskId) as TaskStateRuntimeLocalTask | undefined
+          ?? null;
+        const reconciledTask = projectedTask
+          ? mergeTaskWithCanonicalScheduleProjection(projectedTask, finalTask) as TaskStateRuntimeLocalTask
+          : finalTask;
+        setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId
+          ? mergeTaskWithCanonicalScheduleProjection(candidate, finalTask) as TaskStateRuntimeLocalTask
+          : candidate)));
+        options?.onTaskCommitted?.(reconciledTask);
       }
       const rewardCandidates = batchResult.completedChildren.flatMap((child) => {
         const rewardEntitlementId = child.response.side_effect_ids.reward_entitlement_id;
+        const projectedTask = options?.currentTask
+          ?? tasks.find((candidate) => candidate.id === taskId) as TaskStateRuntimeLocalTask | undefined
+          ?? null;
+        const childTask = projectedTask
+          ? mergeTaskWithCanonicalScheduleProjection(projectedTask, child.task) as TaskStateRuntimeLocalTask
+          : child.task;
         return rewardEntitlementId
           ? [{
               canonicalRewardEntitlementId: rewardEntitlementId,
               previousStatus: child.previousTask.status,
-              task: child.task,
+              task: childTask,
             }]
           : [];
       });
       if (rewardCandidates.length > 0) await onTasksCompleted?.(rewardCandidates);
+      await reconcileTaskEntity?.(taskId);
     }
 
     if (!batchResult.success) {
@@ -186,12 +207,13 @@ export function useTaskHistoryActions({
     const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
     if (uniqueEntryDates.length === 0) return true;
 
-    let canonicalTask = options?.currentTask
+    const localProjectedTask = options?.currentTask
       ?? tasks.find((candidate) => candidate.id === taskId) as TaskStateRuntimeLocalTask | undefined
       ?? null;
+    let canonicalTask = localProjectedTask;
 
     if (options?.refreshCanonicalTaskBeforeCommit) {
-      const freshTask = await readFreshCanonicalTask(taskId);
+      const freshTask = await readFreshCanonicalTask(taskId, localProjectedTask);
       if (!freshTask) {
         showCanonicalTaskRefreshFailure();
         return false;
@@ -239,7 +261,7 @@ export function useTaskHistoryActions({
         && !batchResult.success
         && batchResult.completedChildren.length === 0
         && isStaleStartConflict(batchResult)) {
-        const retryTask = await readFreshCanonicalTask(taskId);
+        const retryTask = await readFreshCanonicalTask(taskId, canonicalTask);
         if (!retryTask) {
           showCanonicalTaskRefreshFailure();
           return false;
@@ -322,7 +344,7 @@ export function useTaskHistoryActions({
       if (!canonicalResult.success
         && options?.refreshCanonicalTaskBeforeCommit
         && isStaleStartConflict(canonicalResult)) {
-        const retryTask = await readFreshCanonicalTask(taskId);
+        const retryTask = await readFreshCanonicalTask(taskId, currentTask);
         if (!retryTask) {
           showCanonicalTaskRefreshFailure();
           return false;
@@ -351,18 +373,22 @@ export function useTaskHistoryActions({
 
       retireCalendarReplayIdentity(replayAttempt.key);
       const canonicalRewardEntitlementId = canonicalResult.response.side_effect_ids.reward_entitlement_id;
+      const committedTask = mergeTaskWithCanonicalScheduleProjection(currentTask, canonicalResult.task) as TaskStateRuntimeLocalTask;
       if (canonicalRewardEntitlementId && ["complete_task", "set_outcome"].includes(action.actionType)) {
         await onTasksCompleted?.([{
           canonicalRewardEntitlementId,
           previousStatus: currentTask.status,
-          task: canonicalResult.task,
+          task: committedTask,
         }]);
       }
-      currentTask = canonicalResult.task;
+      currentTask = committedTask;
       options?.onTaskCommitted?.(currentTask);
     }
 
-    setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId ? currentTask : candidate)));
+    setTasks((current) => sortTasksForUi(current.map((candidate) => candidate.id === taskId
+      ? mergeTaskWithCanonicalScheduleProjection(candidate, currentTask) as TaskStateRuntimeLocalTask
+      : candidate)));
+    await reconcileTaskEntity?.(taskId);
     const refreshed = loadTaskHistoryForTasks ? (await loadTaskHistoryForTasks([taskId], { force: true, silent: true }))[taskId] : null;
     if (refreshed?.status === "ready") {
       setTaskHistory((current) => [

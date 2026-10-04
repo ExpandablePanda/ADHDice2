@@ -1916,6 +1916,7 @@ export function TaskApp() {
     retryHomeCurrentDayHistory,
     refreshTaskHistoryStreakSummary,
     refreshTaskHistoryStreakSummaries,
+    reconcileTaskEntity,
     softRefreshWorkspace,
     taskHistoryByTaskId: sharedTaskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
@@ -4934,6 +4935,7 @@ export function TaskApp() {
       currentDayKey: todayKey,
       loadTaskHistoryForTasks,
       onHistoryMutation: reconcileTaskHistoryMutation,
+      reconcileTaskEntity,
       onTasksCompleted: queueTaskRewards,
       setMessage,
       setTaskHistory,
@@ -7422,6 +7424,11 @@ export function TaskApp() {
 
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onRefreshTaskAuthority: async () => {
+      if (!taskHistoryModalTaskId) return false;
+      await reconcileTaskEntity(taskHistoryModalTaskId);
+      return true;
+    },
     onRenameTaskTitle: (taskId: string, nextTitle: string): Promise<boolean> => updateTask(taskId, { title: nextTitle }),
     onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) return false;

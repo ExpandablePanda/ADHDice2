@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.58`.
+- Current working app version: `7.16.59`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.59 History canonical schedule projection preservation
+
+History freshness reads and canonical commit reconciliation now preserve the
+read-only canonical schedule projection while taking canonical revision and
+persisted Task-row values from the fresh server row. The existing targeted
+Task-plus-boundary reconciliation is used after successful History mutations to
+cover concurrent schedule changes. Task History now renders a recoverable
+authority-unavailable state instead of crashing when an active canonical Task
+temporarily lacks its client-side boundary projection. No SQL, Edge deployment,
+Home V8 change, or production data mutation was performed.
 
 ## 2026-10-03 7.16.58 Batch Intake canonical revision freshness
 

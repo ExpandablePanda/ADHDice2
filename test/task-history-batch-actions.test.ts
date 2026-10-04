@@ -8,6 +8,8 @@ import type { Task, TaskHistory } from "../src/lib/database.types.ts";
 import { parseBatchIntake } from "../src/lib/home-batch-intake.ts";
 import { applyBatchIntakeTaskMatches } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan } from "../src/lib/home-batch-intake-executor.ts";
+import type { CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import { projectTaskWithCanonicalScheduleBoundary } from "../src/lib/task-state-canonical/schedule-projection.ts";
 import type {
   TaskHistoryOutcomeBatchExecutionResult,
   TaskStateRuntimeExecutionResult,
@@ -21,6 +23,49 @@ function canonicalTask(id: string): TaskStateRuntimeLocalTask {
     canonicalization_status: "canonical_proven",
     entity_kind: "parent",
   };
+}
+
+function canonicalBoundary(taskId: string, boundaryId = `boundary-${taskId}`): CanonicalTaskScheduleBoundary {
+  return {
+    id: boundaryId,
+    user_id: "user-1",
+    entity_id: taskId,
+    entity_kind: "parent",
+    boundary_sequence: 1,
+    boundary_type: "initial",
+    source: "task_creation",
+    schedule_model: "rolling",
+    repeat_frequency: "daily",
+    repeat_interval: 3,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    repeat_quota_count: null,
+    repeat_quota_balance_enabled: false,
+    effective_from_logical_date: "2026-09-01",
+    anchor_date: "2026-09-01",
+    anchor_confidence: "proven",
+    one_time_due_on: null,
+    due_time: "08:15",
+    prior_boundary_id: null,
+    idempotence_identity: `${boundaryId}:initial`,
+  } as CanonicalTaskScheduleBoundary;
+}
+
+function projectedCanonicalTask(id: string, boundaryId = `boundary-${id}`): TaskStateRuntimeLocalTask {
+  return projectTaskWithCanonicalScheduleBoundary(canonicalTask(id), canonicalBoundary(id, boundaryId)) as TaskStateRuntimeLocalTask;
+}
+
+function rawTaskWithoutProjection(task: TaskStateRuntimeLocalTask): TaskStateRuntimeLocalTask {
+  const rawTask = { ...task } as TaskStateRuntimeLocalTask & {
+    canonical_schedule_boundary?: unknown;
+    canonical_schedule_anchor_date?: unknown;
+  };
+  delete rawTask.canonical_schedule_boundary;
+  delete rawTask.canonical_schedule_anchor_date;
+  return rawTask as TaskStateRuntimeLocalTask;
 }
 
 function historyEntry(taskId: string, status: TaskHistory["status"]): TaskHistory {
@@ -228,8 +273,8 @@ test("canonical History Complete carries the selected logical date and terminal 
 });
 
 test("historical multi-date sync refreshes the canonical Task once before the grouped commit", async () => {
-  const staleTask = { ...canonicalTask("canonical-calendar"), canonical_revision: 10 };
-  const freshTask = { ...staleTask, canonical_revision: 12 };
+  const staleTask = { ...projectedCanonicalTask("canonical-calendar"), canonical_revision: 10 };
+  const freshTask = rawTaskWithoutProjection({ ...staleTask, title: "Fresh persisted title", canonical_revision: 12 });
   const reader = freshTaskClient([{ data: freshTask, error: null }]);
   let receivedTask: TaskStateRuntimeLocalTask | null = null;
   let batchCalls = 0;
@@ -258,18 +303,23 @@ test("historical multi-date sync refreshes the canonical Task once before the gr
   assert.equal(batchCalls, 1);
   assert.equal(reader.readCalls, 1);
   assert.equal(receivedTask?.canonical_revision, 12);
+  assert.equal(receivedTask?.title, "Fresh persisted title");
+  assert.equal(receivedTask?.canonical_schedule_boundary?.id, "boundary-canonical-calendar");
+  assert.equal(receivedTask?.canonical_schedule_anchor_date, "2026-09-01");
 });
 
 test("historical multi-date sync retries one stale start with the same batch replay identity", async () => {
-  const staleTask = { ...canonicalTask("canonical-calendar"), canonical_revision: 10 };
-  const firstFreshTask = { ...staleTask, canonical_revision: 12 };
-  const secondFreshTask = { ...staleTask, canonical_revision: 13 };
+  const staleTask = { ...projectedCanonicalTask("canonical-calendar"), canonical_revision: 10 };
+  const firstFreshTask = rawTaskWithoutProjection({ ...staleTask, canonical_revision: 12 });
+  const secondFreshTask = rawTaskWithoutProjection({ ...staleTask, canonical_revision: 13 });
   const reader = freshTaskClient([
     { data: firstFreshTask, error: null },
     { data: secondFreshTask, error: null },
   ]);
   const revisions: number[] = [];
   const replayIdentities: string[] = [];
+  const boundaryIds: Array<string | undefined> = [];
+  const anchorDates: Array<string | null | undefined> = [];
   let batchCalls = 0;
   const messages: string[] = [];
   const actions = useTaskHistoryActions({
@@ -280,6 +330,8 @@ test("historical multi-date sync retries one stale start with the same batch rep
       batchCalls += 1;
       revisions.push(input.task.canonical_revision);
       replayIdentities.push(input.replayIdentity);
+      boundaryIds.push(input.task.canonical_schedule_boundary?.id);
+      anchorDates.push(input.task.canonical_schedule_anchor_date);
       return batchCalls === 1 ? staleBatchResult() : successfulBatchResult(input.task);
     },
     setMessage: (message) => {
@@ -299,9 +351,54 @@ test("historical multi-date sync retries one stale start with the same batch rep
   }), true);
   assert.equal(batchCalls, 2);
   assert.deepEqual(revisions, [12, 13]);
+  assert.deepEqual(boundaryIds, ["boundary-canonical-calendar", "boundary-canonical-calendar"]);
+  assert.deepEqual(anchorDates, ["2026-09-01", "2026-09-01"]);
   assert.equal(replayIdentities[0], replayIdentities[1]);
   assert.equal(reader.readCalls, 2);
   assert.equal(messages.some((message) => message.includes("This task changed before")), false);
+});
+
+test("raw committed History Tasks preserve the local projection in state and callbacks", async () => {
+  const projectedTask = { ...projectedCanonicalTask("post-commit-calendar"), canonical_revision: 10 };
+  const committedTask = rawTaskWithoutProjection({
+    ...projectedTask,
+    status: "done",
+    title: "Committed persisted title",
+    canonical_revision: 11,
+  });
+  let localTasks: TaskStateRuntimeLocalTask[] = [projectedTask];
+  let callbackTask: TaskStateRuntimeLocalTask | null = null;
+  let targetedReconciliationCalls = 0;
+  const actions = useTaskHistoryActions({
+    client: {} as never,
+    currentDayKey: "2026-08-20",
+    currentUserId: "user-1",
+    historyBatchExecutor: async () => successfulBatchResult(committedTask),
+    onTaskCommitted: (task) => {
+      callbackTask = task;
+    },
+    reconcileTaskEntity: async () => {
+      targetedReconciliationCalls += 1;
+    },
+    setMessage: () => {},
+    setTaskHistory: () => {},
+    setTasks: (updater) => {
+      localTasks = typeof updater === "function" ? updater(localTasks) as TaskStateRuntimeLocalTask[] : updater as TaskStateRuntimeLocalTask[];
+    },
+    sortTasksForUi: (tasks) => tasks,
+    tasks: [projectedTask],
+    timezone: "UTC",
+  });
+
+  assert.equal(await actions.syncTaskHistoryEntries(projectedTask.id, "done", ["2026-08-19", "2026-08-20"], {
+    historicalOverride: true,
+  }), true);
+  assert.equal(localTasks[0]?.canonical_revision, 11);
+  assert.equal(localTasks[0]?.title, "Committed persisted title");
+  assert.equal(localTasks[0]?.canonical_schedule_boundary?.id, "boundary-post-commit-calendar");
+  assert.equal(callbackTask?.canonical_revision, 11);
+  assert.equal(callbackTask?.canonical_schedule_boundary?.id, "boundary-post-commit-calendar");
+  assert.equal(targetedReconciliationCalls, 1);
 });
 
 test("historical multi-date sync stops after the second stale start and preserves the conflict warning", async () => {
@@ -429,13 +526,14 @@ test("historical Task sync refuses to commit when the fresh canonical read fails
 });
 
 test("historical single-date sync reclassifies after one stale conflict and reuses its calendar replay identity", async () => {
-  const staleTask = { ...canonicalTask("canonical-calendar"), canonical_revision: 10 };
+  const staleTask = { ...projectedCanonicalTask("canonical-calendar"), canonical_revision: 10 };
   const reader = freshTaskClient([
-    { data: { ...staleTask, canonical_revision: 12 }, error: null },
-    { data: { ...staleTask, canonical_revision: 13 }, error: null },
+    { data: rawTaskWithoutProjection({ ...staleTask, canonical_revision: 12 }), error: null },
+    { data: rawTaskWithoutProjection({ ...staleTask, canonical_revision: 13 }), error: null },
   ]);
   const revisions: number[] = [];
   const replayIdentities: string[] = [];
+  const boundaryIds: Array<string | undefined> = [];
   let commandCalls = 0;
   let rewardCalls = 0;
   const actions = useTaskHistoryActions({
@@ -443,7 +541,13 @@ test("historical single-date sync reclassifies after one stale conflict and reus
       commandCalls += 1;
       revisions.push(action.expectedRevision);
       replayIdentities.push(action.replayIdentity);
-      return commandCalls === 1 ? failedResult("This task changed before the canonical action could be committed. Refresh the task and try again.") : commandResult(task, "done");
+      boundaryIds.push(task.canonical_schedule_boundary?.id);
+      return commandCalls === 1
+        ? failedResult("This task changed before the canonical action could be committed. Refresh the task and try again.")
+        : (() => {
+            const result = commandResult(task, "done");
+            return { ...result, task: rawTaskWithoutProjection(result.task) };
+          })();
     },
     client: reader.client,
     currentDayKey: "2026-08-20",
@@ -463,6 +567,7 @@ test("historical single-date sync reclassifies after one stale conflict and reus
   }), true);
   assert.equal(commandCalls, 2);
   assert.deepEqual(revisions, [12, 13]);
+  assert.deepEqual(boundaryIds, ["boundary-canonical-calendar", "boundary-canonical-calendar"]);
   assert.equal(replayIdentities[0], replayIdentities[1]);
   assert.equal(reader.readCalls, 2);
   assert.equal(rewardCalls, 1);
@@ -510,7 +615,7 @@ t: NBA The Run - Done 9/29 9/30 10/2
 t: Wolverine - Done 9/27 9/29 9/30 10/2 10/3
 t: Madden 27 - Done 9/29`;
   const canonicalTasks = ["NBA 2K", "NBA The Run", "Wolverine", "Madden 27"].map((title, index) => ({
-    ...canonicalTask(`fixture-task-${index}`),
+    ...projectedCanonicalTask(`fixture-task-${index}`),
     title,
   }));
   const parsed = parseBatchIntake(fixture, { referenceDate: "2026-10-03" });
@@ -523,8 +628,9 @@ t: Madden 27 - Done 9/29`;
     id: group.taskId,
     canonical_revision: 10 + index,
   }));
-  const freshTasks = staleTasks.map((task, index) => ({ ...task, canonical_revision: 12 + index }));
+  const freshTasks = staleTasks.map((task, index) => rawTaskWithoutProjection({ ...task, canonical_revision: 12 + index }));
   const receivedRevisions: number[] = [];
+  let localTasks: TaskStateRuntimeLocalTask[] = staleTasks;
   const multiReader = freshTaskClient(
     freshTasks.slice(0, 3).map((task) => ({ data: task, error: null })),
     plan.taskGroups.slice(0, 3).map((group) => group.taskId),
@@ -535,11 +641,26 @@ t: Madden 27 - Done 9/29`;
     currentUserId: "user-1",
     historyBatchExecutor: async (input) => {
       receivedRevisions.push(input.task.canonical_revision);
-      return successfulBatchResult(input.task);
+      const committed = rawTaskWithoutProjection({
+        ...input.task,
+        status: "done",
+        canonical_revision: input.task.canonical_revision + 1,
+      });
+      return {
+        ...successfulBatchResult(committed),
+        completedChildren: [{
+          logicalDate: input.entries[0]?.logical_date ?? "2026-10-03",
+          previousTask: input.task,
+          task: committed,
+          response: { side_effect_ids: {} },
+        }],
+      } as TaskHistoryOutcomeBatchExecutionResult;
     },
     setMessage: () => {},
     setTaskHistory: () => {},
-    setTasks: () => {},
+    setTasks: (updater) => {
+      localTasks = typeof updater === "function" ? updater(localTasks) as TaskStateRuntimeLocalTask[] : updater as TaskStateRuntimeLocalTask[];
+    },
     sortTasksForUi: (tasks) => tasks,
     tasks: staleTasks,
     timezone: "UTC",
@@ -556,14 +677,17 @@ t: Madden 27 - Done 9/29`;
   const singleActions = useTaskHistoryActions({
     canonicalCommandExecutor: async (_action, task) => {
       receivedRevisions.push(task.canonical_revision);
-      return commandResult(task, "done");
+      const result = commandResult(task, "done");
+      return { ...result, task: rawTaskWithoutProjection(result.task) };
     },
     client: singleReader.client,
     currentDayKey: "2026-10-03",
     currentUserId: "user-1",
     setMessage: () => {},
     setTaskHistory: () => {},
-    setTasks: () => {},
+    setTasks: (updater) => {
+      localTasks = typeof updater === "function" ? updater(localTasks) as TaskStateRuntimeLocalTask[] : updater as TaskStateRuntimeLocalTask[];
+    },
     sortTasksForUi: (tasks) => tasks,
     tasks: staleTasks,
     timezone: "UTC",
@@ -575,6 +699,9 @@ t: Madden 27 - Done 9/29`;
   assert.equal(multiReader.readCalls, 3);
   assert.equal(singleReader.readCalls, 1);
   assert.deepEqual(receivedRevisions, [12, 13, 14, 15]);
+  assert.equal(localTasks.length, 4);
+  assert.ok(localTasks.every((task) => task.canonical_schedule_boundary?.id === `boundary-${task.id}`));
+  assert.ok(localTasks.every((task) => task.canonical_schedule_anchor_date === "2026-09-01"));
 });
 
 test("multi-date History sync threads revisions and reconciles once after the sequence", async () => {
