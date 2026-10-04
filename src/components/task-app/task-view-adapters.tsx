@@ -1050,7 +1050,7 @@ export function TaskHistoryModal({
             </div>
           </div>
         </div>
-        <AdhdIconButton aria-label="Close task history" onClick={handleModalClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
+        <AdhdIconButton aria-label="Close task history" onClick={onClose} size="sm" title="Close" variant="rowToolbar"><X /></AdhdIconButton>
       </header>
       <div className="adhdice-scrollbar min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4 sm:mt-6 sm:px-0 sm:py-0">
         {calendarRead ? <div className="space-y-5">{taskCalendarSection}</div> : calendarUnavailableSection}

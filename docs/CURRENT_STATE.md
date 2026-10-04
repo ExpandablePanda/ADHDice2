@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.70`.
+- Current working app version: `7.16.71`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.71 Restore Calendar X Close Behavior
+
+Task History/Calendar now closes immediately when the visible X is clicked by
+calling the explicit `onClose` callback directly. ModalShell Escape and
+backdrop dismissal still use `handleModalClose`, so an open Task search may be
+dismissed first; search outside-click behavior and the 7.16.70 Calendar search
+and switching behavior remain unchanged. No SQL, Edge deployment, schema
+change, or production data mutation was performed.
 
 ## 2026-10-04 7.16.70 Calendar Search Header and Derived Status
 

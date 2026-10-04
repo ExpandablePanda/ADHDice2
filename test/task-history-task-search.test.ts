@@ -35,6 +35,12 @@ test("Task History keeps the editable title and search in a wrapping flex header
   assert.match(modal, /onSelectTask\?: \(taskId: string\) => void/);
 });
 
+test("Task History keeps search-first dismissal on ModalShell but closes immediately from the explicit X", () => {
+  assert.match(modal, /<ModalShell[\s\S]*?onClose=\{handleModalClose\}>/);
+  assert.match(modal, /<AdhdIconButton aria-label="Close task history" onClick=\{onClose\} size="sm" title="Close" variant="rowToolbar">/);
+  assert.doesNotMatch(modal, /<AdhdIconButton aria-label="Close task history" onClick=\{handleModalClose\}/);
+});
+
 test("Task History search filters loaded Task titles case-insensitively and excludes permanently deleted rows", () => {
   const results = filterTaskHistorySearchTasks({
     currentTaskId: "current",
