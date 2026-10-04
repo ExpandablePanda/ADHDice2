@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.57`.
+- Current working app version: `7.16.58`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-03 7.16.58 Batch Intake canonical revision freshness
+
+Batch Intake historical Task writes now perform a bounded fresh read of the
+canonical Task immediately before commit, so grouped and single-date actions
+start from the server's current `canonical_revision` even when the React Task
+snapshot or Task Realtime subscription is stale. If a first attempt receives a
+stale-start conflict before any grouped child commits, the Task is refreshed
+once and the same replay identity is retried exactly once. Partial grouped
+commits are reconciled through the existing History refresh path without an
+automatic retry. No SQL, Edge deployment, Home V8 change, or production data
+mutation was performed.
 
 ## 2026-10-03 7.16.57 Task Shorthand Multi-Date Occurrences
 

@@ -431,7 +431,7 @@ export function HomePage({
   focusCategories: FocusCategory[];
   focusHistory: HistoricalFocusSession[];
   handleManualFocusEntries: (inputs: FocusManualEntryInput[]) => Promise<BatchFocusWriteResult>;
-  syncTaskHistoryEntries: (taskId: string, outcome: "done" | "did_my_best" | "missed", dates: string[], options?: { historicalOverride?: boolean }) => Promise<boolean>;
+  syncTaskHistoryEntries: (taskId: string, outcome: "done" | "did_my_best" | "missed", dates: string[], options?: { historicalOverride?: boolean; refreshCanonicalTaskBeforeCommit?: boolean }) => Promise<boolean>;
   onBatchIntakeHealthActivationChange?: (active: boolean) => void;
   onBatchIntakeFocusActivationChange?: (active: boolean) => void;
 }) {

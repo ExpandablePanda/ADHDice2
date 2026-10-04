@@ -5,6 +5,7 @@ import type { Dispatch, SetStateAction } from "react";
 import type { Task, TaskHistory as DbTaskHistory, TaskHistoryActionInput, TaskStatus } from "@/lib/database.types";
 import type { TaskRewardCandidate } from "@/lib/task-rewards";
 import type { TaskHistoryLoadMap, TaskHistoryLoadOptions } from "@/lib/task-history";
+import { fetchLatestTaskRow } from "@/lib/task-db-mutations";
 import { classifyTaskStateRuntimeAction, type TaskStateRuntimeCanonicalIntent } from "@/lib/task-state-runtime-actions";
 import {
   executeTaskHistoryOutcomeBatch,
@@ -27,6 +28,7 @@ type Message = {
 
 export type TaskHistorySyncOptions = {
   historicalOverride?: boolean;
+  refreshCanonicalTaskBeforeCommit?: boolean;
   historicalOverrideDelayUntilDate?: string | null;
   historyEntries?: TaskHistoryActionInput[];
   historySnapshot?: DbTaskHistory[];
@@ -89,6 +91,27 @@ export function useTaskHistoryActions({
 
   function notifyHistoryMutation(taskId: string, nextHistory?: DbTaskHistory[]) {
     void onHistoryMutation?.(taskId, nextHistory);
+  }
+
+  async function readFreshCanonicalTask(taskId: string): Promise<TaskStateRuntimeLocalTask | null> {
+    try {
+      const result = await fetchLatestTaskRow(client, taskId);
+      const canonicalRevision = result.data?.canonical_revision;
+      if (result.error || !result.data || typeof canonicalRevision !== "number" || !Number.isInteger(canonicalRevision) || canonicalRevision < 1) {
+        return null;
+      }
+      return result.data as TaskStateRuntimeLocalTask;
+    } catch {
+      return null;
+    }
+  }
+
+  function showCanonicalTaskRefreshFailure() {
+    setMessage({ tone: "warn", text: "Could not refresh this Task before applying its historical changes." });
+  }
+
+  function isStaleStartConflict(result: { success: false; error: { code: string | null; status: number | null } }) {
+    return result.error.status === 409 || result.error.code === "STALE_REVISION";
   }
 
   async function finishHistoryBatchMutation(
@@ -163,9 +186,18 @@ export function useTaskHistoryActions({
     const uniqueEntryDates = Array.from(new Set(entryDates)).sort();
     if (uniqueEntryDates.length === 0) return true;
 
-    const canonicalTask = options?.currentTask
+    let canonicalTask = options?.currentTask
       ?? tasks.find((candidate) => candidate.id === taskId) as TaskStateRuntimeLocalTask | undefined
       ?? null;
+
+    if (options?.refreshCanonicalTaskBeforeCommit) {
+      const freshTask = await readFreshCanonicalTask(taskId);
+      if (!freshTask) {
+        showCanonicalTaskRefreshFailure();
+        return false;
+      }
+      canonicalTask = freshTask;
+    }
     if (!canonicalTask) {
       setMessage({ tone: "warn", text: "The canonical Calendar action could not find the current Task." });
       return false;
@@ -202,6 +234,27 @@ export function useTaskHistoryActions({
       } catch (error) {
         setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical History batch could not be invoked." });
         return false;
+      }
+      if (options?.refreshCanonicalTaskBeforeCommit
+        && !batchResult.success
+        && batchResult.completedChildren.length === 0
+        && isStaleStartConflict(batchResult)) {
+        const retryTask = await readFreshCanonicalTask(taskId);
+        if (!retryTask) {
+          showCanonicalTaskRefreshFailure();
+          return false;
+        }
+        try {
+          batchResult = await (historyBatchExecutor ?? executeTaskHistoryOutcomeBatch)({
+            task: retryTask,
+            replayIdentity,
+            outcome: status,
+            entries,
+          });
+        } catch (error) {
+          setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical History batch could not be invoked." });
+          return false;
+        }
       }
       return finishHistoryBatchMutation(taskId, batchKey, batchResult, options);
     }
@@ -265,6 +318,31 @@ export function useTaskHistoryActions({
       } catch (error) {
         setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical Calendar command could not be invoked." });
         return false;
+      }
+      if (!canonicalResult.success
+        && options?.refreshCanonicalTaskBeforeCommit
+        && isStaleStartConflict(canonicalResult)) {
+        const retryTask = await readFreshCanonicalTask(taskId);
+        if (!retryTask) {
+          showCanonicalTaskRefreshFailure();
+          return false;
+        }
+        currentTask = retryTask;
+        const retryAction = classifyTaskStateRuntimeAction({
+          canonicalIntent,
+          replayIdentity: replayAttempt.identity,
+          task: currentTask,
+        });
+        if (retryAction.kind !== "canonical_action") {
+          setMessage({ tone: "warn", text: retryAction.kind === "unsupported_state_mutation" ? retryAction.reason : "The canonical Calendar action could not be classified." });
+          return false;
+        }
+        try {
+          canonicalResult = await canonicalCommandExecutor(retryAction, currentTask);
+        } catch (error) {
+          setMessage({ tone: "warn", text: error instanceof Error ? error.message : "The canonical Calendar command could not be invoked." });
+          return false;
+        }
       }
       if (!canonicalResult.success) {
         setMessage({ tone: "warn", text: canonicalResult.error.message });

@@ -738,7 +738,7 @@ async function runTaskUpdateAttempt(
   };
 }
 
-async function fetchLatestTaskRow(client: SupabaseClient, taskId: string) {
+export async function fetchLatestTaskRow(client: SupabaseClient, taskId: string) {
   return client
     .from("adhdice_clean_tasks")
     .select("*")

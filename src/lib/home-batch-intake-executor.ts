@@ -85,7 +85,7 @@ export type BatchIntakeExecutionAuthorities = {
     taskId: string,
     outcome: Extract<TaskStatus, "done" | "did_my_best" | "missed">,
     dates: string[],
-    options?: { historicalOverride?: boolean },
+    options?: { historicalOverride?: boolean; refreshCanonicalTaskBeforeCommit?: boolean },
   ) => Promise<boolean>;
   addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
   addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
@@ -270,7 +270,10 @@ export async function executeBatchIntakePlan(
   emitProgress(initialStage);
 
   for (const group of plan.taskGroups) {
-    const success = await authorities.syncTaskHistoryEntries(group.taskId, group.outcome, group.dates, { historicalOverride: true });
+    const success = await authorities.syncTaskHistoryEntries(group.taskId, group.outcome, group.dates, {
+      historicalOverride: true,
+      refreshCanonicalTaskBeforeCommit: true,
+    });
     const error = success ? undefined : "Canonical Task History did not commit this group.";
     taskGroups.push({ groupKey: group.key, rowId: group.rowIds[0], status: success ? "applied" : "failed", ...(error ? { error } : {}) });
     rows.push(...group.rowIds.map((rowId) => ({ rowId, status: success ? "applied" as const : "failed" as const, ...(error ? { error } : {}) })));

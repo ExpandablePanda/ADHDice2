@@ -166,20 +166,25 @@ test("Task multi-date shorthand expands the QA fixture into 15 flat occurrences 
     ["multi-date-task-3", 1, 1],
   ]);
 
-  const receivedDates: string[][] = [];
+  const receivedGroups: Array<{ taskId: string; dates: string[]; options?: { historicalOverride?: boolean; refreshCanonicalTaskBeforeCommit?: boolean } }> = [];
   const progress: Array<{ processed: number; total: number }> = [];
-  const firstTaskPlan = { ...plan, taskGroups: [plan.taskGroups[0]!] };
-  const result = await executeBatchIntakePlan(firstTaskPlan, {
-    syncTaskHistoryEntries: async (_taskId, _outcome, dates) => { receivedDates.push(dates); return true; },
+  const result = await executeBatchIntakePlan(plan, {
+    syncTaskHistoryEntries: async (taskId, _outcome, dates, options) => { receivedGroups.push({ taskId, dates, options }); return true; },
     addWaterEntries: async () => ({ success: true, rows: [] }),
     addWeightEntries: async () => ({ success: true, rows: [] }),
     addMealEntries: async () => ({ success: true, rows: [] }),
     handleManualFocusEntries: async () => ({ success: true, rows: [] }),
   }, { onProgress: (next) => progress.push({ processed: next.processed, total: next.total }) });
-  assert.deepEqual(receivedDates, [["2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-02", "2026-10-03"]]);
-  assert.equal(result.rows.length, 6);
-  assert.equal(progress.at(-1)?.total, 6);
-  assert.equal(progress.at(-1)?.processed, 6);
+  assert.deepEqual(receivedGroups.map(({ taskId, dates }) => [taskId, dates.length, dates]), [
+    ["multi-date-task-0", 6, ["2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-02", "2026-10-03"]],
+    ["multi-date-task-1", 3, ["2026-09-29", "2026-09-30", "2026-10-02"]],
+    ["multi-date-task-2", 5, ["2026-09-27", "2026-09-29", "2026-09-30", "2026-10-02", "2026-10-03"]],
+    ["multi-date-task-3", 1, ["2026-09-29"]],
+  ]);
+  assert.ok(receivedGroups.every(({ options }) => options?.historicalOverride === true && options.refreshCanonicalTaskBeforeCommit === true));
+  assert.equal(result.rows.length, 15);
+  assert.equal(progress.at(-1)?.total, 15);
+  assert.equal(progress.at(-1)?.processed, 15);
 });
 
 test("Task multi-date shorthand normalizes outcomes, dates, duplicate dates, and heading precedence", () => {
