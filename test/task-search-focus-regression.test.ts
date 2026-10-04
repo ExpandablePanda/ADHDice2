@@ -174,6 +174,7 @@ function materialize(
     "onSearchChange" in (element.props ?? {})
     || "onClick" in (element.props ?? {})
     || "onChange" in (element.props ?? {})
+    || "onAllSearchChange" in (element.props ?? {})
     || "onSelect" in (element.props ?? {})
     || "option" in (element.props ?? {})
     || "widthClassName" in (element.props ?? {})
@@ -229,6 +230,10 @@ function findButtons(nodes: ElementNode[]): ElementNode[] {
     ...(node.type === "button" ? [node] : []),
     ...findButtons(node.children ?? []),
   ]);
+}
+
+function findButtonByText(nodes: ElementNode[], text: string): ElementNode | null {
+  return findButtons(nodes).find((button) => textContent(button.props.children).trim() === text) ?? null;
 }
 
 function textContent(value: unknown): string {
@@ -336,13 +341,14 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
   assert.equal(submittedSearch, "ab");
 });
 
-test("Lists rail search is case-insensitive, path-aware, navigation-only, and restores the hierarchy", () => {
+test("Lists rail search is entered from active All and restores navigation-only hierarchy behavior", () => {
   (globalThis as { window?: unknown }).window = { clearTimeout, setTimeout };
   (globalThis as { document?: { activeElement: ElementNode | null } }).document = { activeElement: null };
 
   const runtime = createHookRuntime();
   const components = compileModule(runtime);
   const nodes = new Map<string, ElementNode>();
+  const selectedBuckets: string[] = [];
   const selectedEntries: string[] = [];
   const directoryEntries = [
     { id: "folder-health", kind: "folder", label: "Health", path: "Life / Health" },
@@ -354,7 +360,7 @@ test("Lists rail search is case-insensitive, path-aware, navigation-only, and re
     actionLabel: "Focus",
     activeCount: 1,
     allListDirectoryEntries: directoryEntries,
-    appVersion: "7.16.72",
+    appVersion: "7.16.73",
     archiveCount: 0,
     currentFolderBreadcrumbs: [],
     currentFolderId: null,
@@ -368,7 +374,11 @@ test("Lists rail search is case-insensitive, path-aware, navigation-only, and re
     listColumnMenuRef: { current: null },
     listColumnPickerColumns: [],
     listVisibleColumns: [],
-    lists: [{ id: "root-list", label: "Inbox", structureKind: "list", count: 1 }],
+    lists: [
+      { id: "all", label: "All", structureKind: "list", count: 2 },
+      { id: "inbox", label: "Inbox", structureKind: "list", count: 1 },
+      { id: "priority_5", label: "Priority", structureKind: "list", count: 1 },
+    ],
     metric: { doneTasks: [], label: "1", percent: 50, remainingTasks: [], summary: "1 task", totalCount: 1 },
     onCycleMomentum: () => undefined,
     onOpenArchive: () => undefined,
@@ -378,8 +388,17 @@ test("Lists rail search is case-insensitive, path-aware, navigation-only, and re
     onOpenListSettings: () => undefined,
     onOpenMomentumDetails: () => undefined,
     onOpenTrash: () => undefined,
-    onSelectBucket: () => undefined,
-    onSelectDirectoryEntry: (entry: { id: string }) => selectedEntries.push(entry.id),
+    onSelectBucket: (bucket: string) => {
+      selectedBuckets.push(bucket);
+      props.selectedBucket = bucket;
+      render();
+    },
+    onSelectDirectoryEntry: (entry: { id: string; kind?: string; folderId?: string | null }) => {
+      selectedEntries.push(entry.id);
+      props.currentFolderId = entry.kind === "list" ? entry.folderId : entry.id;
+      props.selectedBucket = entry.kind === "list" ? entry.id : "all";
+      render();
+    },
     onToggleRail: () => undefined,
     onExpandAllColumns: () => undefined,
     onShrinkAllColumns: () => undefined,
@@ -392,7 +411,7 @@ test("Lists rail search is case-insensitive, path-aware, navigation-only, and re
     onMoveStructure: undefined,
     openFolderRails: [],
     search: "",
-    selectedBucket: "all",
+    selectedBucket: "inbox",
     shortcuts: [],
     taskTypeOptions: [{ label: "Task", value: "task" }],
     trashCount: 0,
@@ -408,8 +427,19 @@ test("Lists rail search is case-insensitive, path-aware, navigation-only, and re
 
   const railInput = () => findInputByAriaLabel(rendered, "Search lists and folders");
   const railResults = () => findButtons(rendered).filter((button) => textContent(button.props.children).includes("Health") || textContent(button.props.children).includes("Vitals"));
+  assert.equal(railInput(), null);
+  assert.equal(findButtonByText(rendered, "All")?.props["aria-pressed"], false);
+
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  assert.deepEqual(selectedBuckets, ["all"]);
+  assert.equal(railInput(), null);
+  assert.equal(findButtonByText(rendered, "All")?.props["aria-pressed"], true);
+
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
   assert.ok(railInput());
   assert.equal((railInput() as ElementNode).props.placeholder, "Search lists and folders…");
+  assert.equal((railInput() as ElementNode).props.autoFocus, true);
+  assert.equal(findButtonByText(rendered, "All"), null);
 
   ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "METRICS" } });
   assert.equal((railInput() as ElementNode).props.value, "METRICS");
@@ -417,31 +447,42 @@ test("Lists rail search is case-insensitive, path-aware, navigation-only, and re
   assert.match(textContent(railResults()[0]?.props.children), /Vitals/);
   assert.equal(railResults()[0]?.props.onPointerDown, undefined);
   assert.equal(railResults()[0]?.props.draggable, undefined);
-  assert.equal(hasFunctionComponent(rawTree, "TaskListRailHierarchy"), false);
+  assert.equal(hasFunctionComponent(rawTree, "TaskListRailHierarchy"), true);
+  assert.equal(findButtonByText(rendered, "Priority")?.props["data-rail-drag-id"], undefined);
 
   (railResults()[0]?.props.onClick as () => void)();
   assert.deepEqual(selectedEntries, ["list-nested"]);
-  assert.equal((railInput() as ElementNode).props.value, "");
-  assert.equal(hasFunctionComponent(rawTree, "TaskListRailHierarchy"), true);
+  assert.equal(railInput(), null);
+  assert.equal(findButtonByText(rendered, "All")?.props["aria-pressed"], false);
   assert.equal(props.view, "list");
   assert.equal(props.search, "");
-  assert.equal(props.selectedBucket, "all");
+  assert.equal(props.selectedBucket, "list-nested");
+  assert.equal(props.currentFolderId, "folder-health");
 
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
   ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "missing" } });
   assert.match(textContent(rendered), /No lists or folders found\./);
   const clearButton = findButtons(rendered).find((button) => button.props["aria-label"] === "Clear lists and folders search");
   assert.ok(clearButton);
   (clearButton?.props.onClick as () => void)();
-  assert.equal((railInput() as ElementNode).props.value, "");
+  assert.equal(railInput(), null);
+  assert.ok(findButtonByText(rendered, "All"));
 
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
   ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "health" } });
   ((railInput() as ElementNode).props.onKeyDown as (event: { key: string; preventDefault: () => void }) => void)({ key: "Escape", preventDefault() {} });
-  assert.equal((railInput() as ElementNode).props.value, "");
+  assert.equal(railInput(), null);
 
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "health" } });
   props.view = "table";
   props.isRailHidden = true;
   render();
   assert.equal(railInput(), null);
+  props.isRailHidden = false;
+  render();
+  assert.ok(findButtonByText(rendered, "All"));
 });
 
 test("Tasks header New menu keeps Task first, requests named types, and closes after selection", () => {

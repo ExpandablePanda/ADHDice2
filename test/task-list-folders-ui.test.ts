@@ -126,7 +126,7 @@ test("rendered normal and folder chips own pointer handlers and grab state on th
   assert.match(renderedChipSource, /cursor-grabbing/);
   assert.match(renderedChipSource, /event\.currentTarget\.setPointerCapture\(event\.pointerId\)/);
   assert.match(renderedChipSource, /pointer-events-none cursor-inherit/);
-  assert.match(renderedChipSource, /data-style-component="TasksRailChip"\s+data-style-role="tasks\.rail\.chip"/);
+  assert.match(renderedChipSource, /data-style-component="TasksRailChip"[\s\S]*?data-style-role="tasks\.rail\.chip"/);
   assert.match(renderedChipSource, /type="button"/);
 });
 
@@ -170,7 +170,7 @@ test("folder, root-list, nested-list, and system chips share the compact rail va
   assert.match(primitivesSource, /TASK_TABLE_CHIP_BASE_CLASS = `inline-flex items-center justify-center rounded-full border px-2 py-1 whitespace-nowrap/);
   assert.match(railSource, /<TaskListRailHierarchy[\s\S]*?lists=\{lists\}/);
   assert.match(railSource, /currentFolderId=\{rail\.folderId\}[\s\S]*?lists=\{rail\.lists\}/);
-  assert.match(railSource, /const reorderable = isRailListReorderable\(list\) && Boolean\(onMoveStructure\)/);
+  assert.match(railSource, /const reorderable = reorderableEnabled && isRailListReorderable\(list\) && Boolean\(onMoveStructure\)/);
   assert.match(railSource, /return Boolean\(list\.structureKind\)[\s\S]*?getStructuralMetadataBlockedReason\(list\) === null/);
 });
 
@@ -209,4 +209,23 @@ test("All Lists opens the selected folder branch and nested list ancestors", () 
   assert.match(appSource, /if \(entry\.kind === "folder"\) \{\s*setCurrentFolderId\(entry\.id\);\s*return;/);
   assert.match(appSource, /setCurrentFolderId\(entry\.kind === "list" \? entry\.folderId : null\);\s*setSelectedBucket\(entry\.id\)/);
   assert.match(appSource, /openFolderRails: taskListFolderBreadcrumbs\.map\(\(folder\) =>/);
+});
+
+test("All chip owns the ephemeral inline rail search while All Lists and Task search stay separate", () => {
+  const headerStart = railSource.indexOf("export function TaskOperationsHeader");
+  const headerSource = railSource.slice(headerStart);
+
+  assert.doesNotMatch(headerSource, /<TaskListRailSearch/);
+  assert.match(railSource, /function TaskListRailInlineSearch/);
+  assert.match(railSource, /isAllSearchActive && list\.structureKind === "list" && list\.id === "all"/);
+  assert.match(railSource, /list\.structureKind === "list" && list\.id === "all" && selectedBucket === "all" && onEnterAllSearch/);
+  assert.match(headerSource, /const \[isRailSearchActive, setIsRailSearchActive\] = useState\(false\)/);
+  assert.match(headerSource, /filterTaskListDirectoryEntries\(allListDirectoryEntries, railSearch\)/);
+  assert.match(headerSource, /isRailSearchActive && railSearch\.trim\(\)/);
+  assert.match(headerSource, /onSelectDirectoryEntry\?\.\(entry\);\s*exitRailSearch\(\);/);
+  assert.match(headerSource, /view === "table" && isRailHidden && \(isRailSearchActive \|\| railSearch\)/);
+  assert.match(headerSource, /<TaskChipButton onClick=\{\(\) => setIsAllListsOpen\(\(current\) => !current\)\}>/);
+  assert.match(headerSource, /<TaskSearchBox[\s\S]*?onSearchChange=\{onSearchChange\}[\s\S]*?search=\{search\}/);
+  assert.match(railSource, /reorderableEnabled && isRailListReorderable\(list\) && Boolean\(onMoveStructure\)/);
+  assert.match(railSource, /reorderableEnabled=\{!isAllSearchActive\}/);
 });

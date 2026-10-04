@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.72`.
+- Current working app version: `7.16.73`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.73 Tasks Lists Rail Search
+
+Lists rail search is now entered by clicking the already-active All chip again;
+the All chip morphs into an inline search field instead of showing a permanent
+search row. Search remains local, case-insensitive, label/path-aware, nested,
+navigation-only, and ephemeral. Normal hierarchy reorder behavior and the
+separate All Lists menu remain unchanged. No SQL, Edge deployment, schema
+change, list persistence change, or production data mutation was performed.
 
 ## 2026-10-04 7.16.72 Tasks Lists Rail Search
 
