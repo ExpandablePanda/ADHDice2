@@ -4,11 +4,11 @@ import test from "node:test";
 
 import {
   audioFileExtension,
+  GROQ_TRANSCRIPTION_MODEL,
+  GROQ_TRANSCRIPTIONS_URL,
   isSupportedAudioMimeType,
   MAX_AUDIO_BYTES,
   normalizeAudioMimeType,
-  OPENAI_TRANSCRIPTION_MODEL,
-  OPENAI_TRANSCRIPTIONS_URL,
   transcriptFromProviderPayload,
 } from "../supabase/functions/scratch-transcribe/domain.ts";
 
@@ -36,21 +36,30 @@ test("Edge Function contract requires authenticated users and validates multipar
   assert.equal(MAX_AUDIO_BYTES, 10 * 1024 * 1024);
 });
 
-test("provider selection and credential stay server-side, with a sanitized response", () => {
-  assert.match(edgeSource, /Deno\.env\.get\("OPENAI_API_KEY"\)/);
-  assert.match(edgeSource, /Authorization: `Bearer \$\{openAiApiKey\}`/);
-  assert.match(edgeSource, /OPENAI_TRANSCRIPTION_MODEL/);
-  assert.match(edgeSource, /OPENAI_TRANSCRIPTIONS_URL/);
+test("Groq provider selection and credential stay server-side", () => {
+  assert.match(edgeSource, /Deno\.env\.get\("GROQ_API_KEY"\)/);
+  assert.match(edgeSource, /Authorization: `Bearer \$\{groqApiKey\}`/);
+  assert.match(edgeSource, /GROQ_TRANSCRIPTION_MODEL/);
+  assert.match(edgeSource, /GROQ_TRANSCRIPTIONS_URL/);
+  assert.doesNotMatch(edgeSource, /OPENAI_API_KEY|OPENAI_TRANSCRIPTION_MODEL|OPENAI_TRANSCRIPTIONS_URL|gpt-4o-mini-transcribe/);
   assert.match(edgeSource, /return json\(\{ transcript \}, 200\)/);
   assert.doesNotMatch(edgeSource, /NEXT_PUBLIC|SUPABASE_SERVICE_ROLE|console\.log/);
   assert.doesNotMatch(edgeSource, /\.storage\b|upload\(/);
-  assert.equal(OPENAI_TRANSCRIPTION_MODEL, "gpt-4o-mini-transcribe");
-  assert.equal(OPENAI_TRANSCRIPTIONS_URL, "https://api.openai.com/v1/audio/transcriptions");
+  assert.equal(GROQ_TRANSCRIPTION_MODEL, "whisper-large-v3-turbo");
+  assert.equal(GROQ_TRANSCRIPTIONS_URL, "https://api.groq.com/openai/v1/audio/transcriptions");
 });
 
-test("the provider receives the actual audio MIME and the function does not persist audio", () => {
+test("Groq receives file/model/response_format and the function does not persist audio", () => {
   assert.match(edgeSource, /new File\(\[uploadedFile\], filename, \{ type: mimeType \}\)/);
   assert.match(edgeSource, /providerForm\.append\("file"/);
+  assert.match(edgeSource, /providerForm\.append\("model", GROQ_TRANSCRIPTION_MODEL\)/);
   assert.match(edgeSource, /providerForm\.append\("response_format", "json"\)/);
+  assert.match(edgeSource, /transcriptFromProviderPayload\(providerPayload\)/);
   assert.doesNotMatch(edgeSource, /supabase\.storage|from\("adhdice_/);
+});
+
+test("provider failures remain sanitized, including Groq rate limits", () => {
+  assert.match(edgeSource, /if \(providerResponse\.status === 429\) \{[\s\S]*return json\(\{ error: "Transcription service is temporarily unavailable\." \}, 503\);/);
+  assert.match(edgeSource, /if \(!providerResponse\.ok\) \{[\s\S]*return json\(\{ error: "Transcription service rejected the recording\." \}, 502\);/);
+  assert.doesNotMatch(edgeSource, /providerResponse\.text\(\)|providerResponse\.headers|providerResponse\.url/);
 });

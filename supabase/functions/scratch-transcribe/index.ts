@@ -5,8 +5,8 @@ import {
   isSupportedAudioMimeType,
   MAX_AUDIO_BYTES,
   normalizeAudioMimeType,
-  OPENAI_TRANSCRIPTION_MODEL,
-  OPENAI_TRANSCRIPTIONS_URL,
+  GROQ_TRANSCRIPTION_MODEL,
+  GROQ_TRANSCRIPTIONS_URL,
   transcriptFromProviderPayload,
 } from "./domain.ts";
 
@@ -24,8 +24,8 @@ export default {
       return json({ error: "A verified Supabase user is required." }, 401);
     }
 
-    const openAiApiKey = Deno.env.get("OPENAI_API_KEY");
-    if (!openAiApiKey) return json({ error: "Transcription is not configured." }, 503);
+    const groqApiKey = Deno.env.get("GROQ_API_KEY");
+    if (!groqApiKey) return json({ error: "Transcription is not configured." }, 503);
 
     const declaredBytes = Number(request.headers.get("content-length"));
     if (Number.isFinite(declaredBytes) && declaredBytes > MAX_AUDIO_BYTES) {
@@ -58,20 +58,23 @@ export default {
       : `scratch-recording.${extension}`;
     const providerForm = new FormData();
     providerForm.append("file", new File([uploadedFile], filename, { type: mimeType }));
-    providerForm.append("model", OPENAI_TRANSCRIPTION_MODEL);
+    providerForm.append("model", GROQ_TRANSCRIPTION_MODEL);
     providerForm.append("response_format", "json");
 
     let providerResponse: Response;
     try {
-      providerResponse = await fetch(OPENAI_TRANSCRIPTIONS_URL, {
+      providerResponse = await fetch(GROQ_TRANSCRIPTIONS_URL, {
         body: providerForm,
-        headers: { Authorization: `Bearer ${openAiApiKey}` },
+        headers: { Authorization: `Bearer ${groqApiKey}` },
         method: "POST",
       });
     } catch {
       return json({ error: "Transcription service is temporarily unavailable." }, 503);
     }
 
+    if (providerResponse.status === 429) {
+      return json({ error: "Transcription service is temporarily unavailable." }, 503);
+    }
     if (!providerResponse.ok) {
       return json({ error: "Transcription service rejected the recording." }, 502);
     }

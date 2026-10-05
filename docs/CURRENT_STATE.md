@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-04
+Last reviewed: 2026-10-05
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.90`.
+- Current working app version: `7.16.91`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -14,23 +14,28 @@ Role: active working
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
 
-## 2026-10-05 7.16.90 Scratch Paper Recorded Audio Transcription
+## 2026-10-05 7.16.91 Scratch Paper Groq Transcription Provider
 
-Scratch Paper dictation now records temporary microphone audio through the
-browser `MediaRecorder`, sends one authenticated multipart upload to the
+Scratch Paper dictation continues to record temporary microphone audio through
+the browser `MediaRecorder`, sends one authenticated multipart upload to the
 source-only `scratch-transcribe` Supabase Edge Function, and inserts only the
 validated returned transcript through the existing serialized caret/token-safe
-path. Browser SpeechRecognition, `window.SpeechRecognition`, and
-`window.webkitSpeechRecognition` are no longer used. The recorder supports
-audio-input selection with a user-scoped local preference, capability-based
-Safari/Chromium MIME selection, a bounded recording duration, and complete
-MediaStream/Blob cleanup. No audio is persisted in ADHDice or Supabase Storage;
-only Scratch note text is saved through the existing explicit manual Save Note
-path. The Edge Function requires `OPENAI_API_KEY` as a server-side secret and
-uses the isolated `gpt-4o-mini-transcribe` provider model. Production Edge
-deployment and browser microphone/transcription QA remain pending Andrew's
-authorized workflow. This release supersedes 7.16.88's browser Web Speech
-implementation.
+path. The 7.16.90 recorder architecture remains authoritative: browser
+SpeechRecognition, `window.SpeechRecognition`, and
+`window.webkitSpeechRecognition` are not used; audio-input selection,
+capability-based Safari/Chromium MIME selection, the bounded recording
+duration, MediaStream/Blob cleanup, cancellation fencing, and token-safe
+insertion remain unchanged. The transcription provider is now Groq's
+`whisper-large-v3-turbo` model at the OpenAI-compatible transcription endpoint;
+the required server-side secret is `GROQ_API_KEY`. No audio is persisted in
+ADHDice, Supabase Storage, or Postgres; only Scratch note text is saved through
+the existing explicit manual Save Note path. Dictate audio remains temporary.
+Saved Voice Memo audio is a separate future explicit feature and Dictate must
+not silently store recordings. The `scratch-transcribe` function remains
+source-only until deployment, and browser end-to-end microphone/transcription
+QA remains pending until the function is deployed through Andrew's authorized
+workflow. This release supersedes 7.16.90's OpenAI provider configuration and
+7.16.88's browser Web Speech implementation.
 
 ## 2026-10-05 7.16.89 Task Creation Date Defaults and Folder Metadata Composer
 

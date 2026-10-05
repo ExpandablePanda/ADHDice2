@@ -1,6 +1,6 @@
 export const MAX_AUDIO_BYTES = 10 * 1024 * 1024;
-export const OPENAI_TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
-export const OPENAI_TRANSCRIPTIONS_URL = "https://api.openai.com/v1/audio/transcriptions";
+export const GROQ_TRANSCRIPTION_MODEL = "whisper-large-v3-turbo";
+export const GROQ_TRANSCRIPTIONS_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 
 const SUPPORTED_AUDIO_MIME_TYPES = new Set([
   "audio/flac",
