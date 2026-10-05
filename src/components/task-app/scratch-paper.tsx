@@ -1,11 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
+import { ChevronLeft, ChevronRight, Mic, MicOff, Plus } from "lucide-react";
 
 import type { ScratchNote, ScratchNoteStatus, ScratchNoteTaskLink, Task, TaskStatus } from "@/lib/database.types";
 import type { ScratchNoteDraft } from "@/hooks/useScratchNotes";
+import { useScratchDictation } from "@/hooks/useScratchDictation";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
+import { restoreScratchEditorOffset } from "@/lib/scratch-paper-dictation";
 import {
   buildScratchTaskLinkToken,
   extractScratchSlashCommand,
@@ -16,6 +18,7 @@ import {
   replaceScratchRangeWithTaskToken,
 } from "@/lib/scratch-paper-task-links";
 import { formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
+import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { TASK_TABLE_INPUT_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 
 type TaskStatusOptionsResolver = (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
@@ -38,7 +41,7 @@ type ScratchSlashDebugState = {
 
 type ScratchPickerSource = "none" | "toolbar" | "typed-slash";
 type ScratchPickerOpenEvent = "beforeinput" | "input" | "keydown" | "toolbar";
-type ScratchPickerCloseReason = "escape" | "outside" | "selection" | "sync-no-query" | "blur" | "none";
+type ScratchPickerCloseReason = "dictation" | "escape" | "outside" | "selection" | "sync-no-query" | "blur" | "none";
 type ScratchFocusedElement = "editor" | "other" | "picker-input";
 
 export type ScratchPaperData = ScratchPaperActions & {
@@ -48,6 +51,30 @@ export type ScratchPaperData = ScratchPaperActions & {
   notes: ScratchNote[];
   tasks: Task[];
 };
+
+type ScratchDictationState = ReturnType<typeof useScratchDictation>;
+
+function ScratchDictationControl({ dictation }: { dictation: ScratchDictationState }) {
+  const isUnavailable = !dictation.isSupported;
+  return (
+    <>
+      <AdhdChip
+        aria-label={dictation.isListening ? "Stop dictation" : "Dictate note body"}
+        aria-pressed={dictation.isListening}
+        disabled={isUnavailable}
+        icon={dictation.isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+        onClick={dictation.toggle}
+        onMouseDown={(event) => event.preventDefault()}
+        onPointerDown={(event) => event.preventDefault()}
+        title={isUnavailable ? "Voice dictation is not available in this browser." : undefined}
+        toneClassName={dictation.isListening ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff]" : undefined}
+      >
+        {dictation.isListening ? "Listening…" : "Dictate"}
+      </AdhdChip>
+      {dictation.error ? <span aria-live="polite" className="text-[11px] text-[#c64c62] dark:text-[#ffb1c0]">{dictation.error}</span> : null}
+    </>
+  );
+}
 
 function linkedTaskIdsForNote(noteId: string, links: ScratchNoteTaskLink[]) {
   return links.filter((link) => link.note_id === noteId).map((link) => link.task_id);
@@ -211,45 +238,27 @@ function getScratchEditorOffset(editor: HTMLElement) {
   return serializeScratchEditor(fragment);
 }
 
-function restoreScratchEditorOffset(editor: HTMLElement, offset: number) {
-  const selection = window.getSelection();
-  if (!selection) return;
+function getScratchEditorSerializedOffset(editor: HTMLElement, node: Node, offset: number) {
+  if (!editor.contains(node)) return null;
   const range = document.createRange();
-  let remaining = offset;
+  range.selectNodeContents(editor);
+  range.setEnd(node, offset);
+  return serializeScratchEditor(range.cloneContents()).length;
+}
 
-  function place(node: Node): boolean {
-    if (node instanceof HTMLElement && node.dataset.taskToken) {
-      const tokenLength = node.dataset.taskToken.length;
-      if (remaining <= tokenLength) {
-        range.setStartAfter(node);
-        return true;
-      }
-      remaining -= tokenLength;
-      return false;
-    }
-    if (node.nodeType === Node.TEXT_NODE) {
-      const length = node.textContent?.length ?? 0;
-      if (remaining <= length) {
-        range.setStart(node, remaining);
-        return true;
-      }
-      remaining -= length;
-      return false;
-    }
-    for (const child of Array.from(node.childNodes)) {
-      if (place(child)) return true;
-    }
-    return false;
-  }
-
-  if (!place(editor)) {
-    range.selectNodeContents(editor);
-    range.collapse(false);
-  } else {
-    range.collapse(true);
-  }
-  selection.removeAllRanges();
-  selection.addRange(range);
+function getScratchEditorSelection(editor: HTMLElement) {
+  const selection = window.getSelection();
+  if (!selection?.rangeCount || !selection.anchorNode || !selection.focusNode) return null;
+  const anchorOffset = getScratchEditorSerializedOffset(editor, selection.anchorNode, selection.anchorOffset);
+  const focusOffset = getScratchEditorSerializedOffset(editor, selection.focusNode, selection.focusOffset);
+  if (anchorOffset === null || focusOffset === null) return null;
+  return {
+    caretOffset: focusOffset,
+    range: {
+      end: Math.max(anchorOffset, focusOffset),
+      start: Math.min(anchorOffset, focusOffset),
+    },
+  };
 }
 
 function ScratchInlineEditor({
@@ -309,13 +318,13 @@ function ScratchInlineEditor({
   function rememberSelection(notify = true) {
     const editor = resolvedEditorRef.current;
     if (!editor) return null;
-    const offset = getScratchEditorOffset(editor);
-    if (offset === null) return null;
-    caretOffsetRef.current = offset.length;
+    const selection = getScratchEditorSelection(editor);
+    if (!selection) return null;
+    caretOffsetRef.current = selection.caretOffset;
     if (notify) {
-      onSelectionRangeChange({ end: offset.length, start: offset.length });
+      onSelectionRangeChange(selection.range);
     }
-    return offset.length;
+    return selection.caretOffset;
   }
 
   function emitEditorChange(editor: HTMLDivElement, inputEvent: InputEvent | null = null) {
@@ -396,7 +405,7 @@ function ScratchInlineEditor({
         }
         emitEditorChange(event.currentTarget);
       }}
-      onMouseUp={rememberSelection}
+      onMouseUp={() => { rememberSelection(); }}
       ref={resolvedEditorRef}
       role="textbox"
       suppressContentEditableWarning
@@ -558,7 +567,29 @@ function ScratchCurrentNoteEditor({
     };
   }, [dismissTaskPicker, isLinking]);
 
+  const handleDictationBody = useCallback((nextBody: string, range: { end: number; start: number }) => {
+    initializedRef.current = true;
+    setBody(nextBody);
+    setCaretInsertRange(range);
+    setIsDirty(true);
+    setFocusedElement("editor");
+    const tokenTaskIds = new Set(parseScratchTaskTokenSegments(nextBody).flatMap((segment) => segment.kind === "task" ? [segment.taskId] : []));
+    setLinkedTaskIds((current) => current.filter((taskId) => tokenTaskIds.has(taskId) || !tasks.some((task) => task.id === taskId)));
+  }, [tasks]);
+
+  const dictation = useScratchDictation({
+    body,
+    dismissPicker: () => dismissTaskPicker("dictation"),
+    editorRef,
+    getCaretRange: () => caretInsertRange,
+    isPickerOpen: isLinking,
+    noteKey: currentNoteId ?? "new",
+    onBodyChange: handleDictationBody,
+  });
+  const { stop: stopDictation } = dictation;
+
   const loadNote = useCallback((note: ScratchNote | null) => {
+    stopDictation();
     const noteTaskIds = note ? linkedTaskIdsForNote(note.id, links) : [];
     setCurrentNoteId(note?.id ?? null);
     onCurrentNoteIdChange(note?.id ?? null);
@@ -574,7 +605,7 @@ function ScratchCurrentNoteEditor({
     setLastOpenEvent("none");
     setLastCloseReason("none");
     setIsDirty(false);
-  }, [links, onCurrentNoteIdChange, tasks]);
+  }, [links, onCurrentNoteIdChange, stopDictation, tasks]);
 
   useEffect(() => {
     let noteToLoad: ScratchNote | null | undefined;
@@ -651,12 +682,14 @@ function ScratchCurrentNoteEditor({
 
   async function switchTo(note: ScratchNote | undefined) {
     if (!note || note.id === currentNoteId) return;
+    stopDictation();
     const hasDraftContent = Boolean(body.trim() || title.trim() || linkedTaskIds.length > 0);
     if (isDirty && (currentNoteId || hasDraftContent) && !await save()) return;
     loadNote(note);
   }
 
   async function startNewNote() {
+    stopDictation();
     const hasDraftContent = Boolean(body.trim() || title.trim() || linkedTaskIds.length > 0);
     if (isDirty && (currentNoteId || hasDraftContent) && !await save()) return;
     initializedRef.current = true;
@@ -664,6 +697,7 @@ function ScratchCurrentNoteEditor({
   }
 
   async function changeCurrentStatus(status: ScratchNoteStatus) {
+    stopDictation();
     if (!currentNoteId || (isDirty && !await save()) || !await onSetStatus(currentNoteId, status)) return;
     const nextNote = activeNotes.find((note) => note.id !== currentNoteId);
     loadNote(nextNote ?? null);
@@ -722,6 +756,7 @@ function ScratchCurrentNoteEditor({
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         {!isTitleVisible && !title ? <TaskTableChipButton onClick={() => setIsTitleVisible(true)}>Add title</TaskTableChipButton> : null}
+        <ScratchDictationControl dictation={dictation} />
         <TaskTableChipButton
           onClick={() => {
             openTaskPicker(undefined, "toolbar", "toolbar");
@@ -760,6 +795,7 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
   const [isTitleVisible, setIsTitleVisible] = useState(Boolean(note.title));
   const [caretInsertRange, setCaretInsertRange] = useState<{ end: number; start: number } | null>(null);
   const [taskInsertRange, setTaskInsertRange] = useState<{ end: number; start: number } | null>(null);
+  const [isDirty, setIsDirty] = useState(false);
   const [pickerSource, setPickerSource] = useState<ScratchPickerSource>("none");
   const [lastOpenEvent, setLastOpenEvent] = useState<ScratchPickerOpenEvent | "none">("none");
   const [lastCloseReason, setLastCloseReason] = useState<ScratchPickerCloseReason>("none");
@@ -823,6 +859,7 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
 
   function updateDraftBody(nextBody: string, _caretOffset: number, slashCommand: ReturnType<typeof extractScratchSlashCommand>) {
     setBody(nextBody);
+    setIsDirty(true);
     const tokenTaskIds = new Set(parseScratchTaskTokenSegments(nextBody).flatMap((segment) => segment.kind === "task" ? [segment.taskId] : []));
     setLinkedTaskIds((current) => current.filter((taskId) => tokenTaskIds.has(taskId) || !tasks.some((task) => task.id === taskId)));
     if (slashCommand) {
@@ -841,10 +878,30 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
     setFocusedElement("editor");
   }
 
+  const handleDictationBody = useCallback((nextBody: string, range: { end: number; start: number }) => {
+    setBody(nextBody);
+    setCaretInsertRange(range);
+    setIsDirty(true);
+    setFocusedElement("editor");
+    const tokenTaskIds = new Set(parseScratchTaskTokenSegments(nextBody).flatMap((segment) => segment.kind === "task" ? [segment.taskId] : []));
+    setLinkedTaskIds((current) => current.filter((taskId) => tokenTaskIds.has(taskId) || !tasks.some((task) => task.id === taskId)));
+  }, [tasks]);
+
+  const dictation = useScratchDictation({
+    body,
+    dismissPicker: () => dismissTaskPicker("dictation"),
+    editorRef,
+    enabled: isEditing,
+    getCaretRange: () => caretInsertRange,
+    isPickerOpen: isLinking,
+    noteKey: note.id,
+    onBodyChange: handleDictationBody,
+  });
+
   if (isEditing) {
     return (
-      <article className="space-y-2 rounded-[1rem] border border-[#e9e3f7] bg-white/85 p-3 dark:border-white/10 dark:bg-white/[0.04]" ref={pickerAreaRef}>
-        {isTitleVisible || title ? <input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => setTitle(event.target.value)} placeholder="Optional title" value={title} /> : null}
+      <article className="space-y-2 rounded-[1rem] border border-[#e9e3f7] bg-white/85 p-3 dark:border-white/10 dark:bg-white/[0.04]" data-dirty={isDirty ? "true" : "false"} ref={pickerAreaRef}>
+        {isTitleVisible || title ? <input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => { setTitle(event.target.value); setIsDirty(true); }} placeholder="Optional title" value={title} /> : null}
         <div className="relative rounded-[0.95rem] border border-[#ddd2ff] bg-white dark:border-white/15 dark:bg-white/8">
           <ScratchInlineEditor
             body={body}
@@ -869,11 +926,13 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
                 onLink={(task) => {
                   setLinkedTaskIds((current) => current.includes(task.id) ? current : [...current, task.id]);
                   setBody((current) => replaceScratchRangeWithTaskToken(current, taskInsertRange ?? { end: current.length, start: current.length }, task));
+                  setIsDirty(true);
                   dismissTaskPicker("selection");
                 }}
                 onUnlink={(taskId) => {
                   setLinkedTaskIds((current) => current.filter((id) => id !== taskId));
                   setBody((current) => removeScratchTaskToken(current, taskId));
+                  setIsDirty(true);
                 }}
                 query={taskQuery}
                 setQuery={setTaskQuery}
@@ -884,6 +943,7 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
         </div>
         <div className="flex flex-wrap gap-1.5">
           {!isTitleVisible && !title ? <TaskTableChipButton onClick={() => setIsTitleVisible(true)}>Add title</TaskTableChipButton> : null}
+          <ScratchDictationControl dictation={dictation} />
           <TaskTableChipButton
             onClick={() => {
               openTaskPicker(undefined, "toolbar", "toolbar");
@@ -891,9 +951,9 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
           >
             / Link Task
           </TaskTableChipButton>
-          <TaskTableChipButton onClick={() => setIsEditing(false)}>Cancel</TaskTableChipButton>
+          <TaskTableChipButton onClick={() => { dictation.stop(); setIsDirty(false); setIsEditing(false); }}>Cancel</TaskTableChipButton>
           <TaskTableChipButton
-            onClick={() => { void onUpdate(note.id, { body, linkedTaskIds, title }).then((saved) => saved && setIsEditing(false)); }}
+            onClick={() => { dictation.stop(); void onUpdate(note.id, { body, linkedTaskIds, title }).then((saved) => { if (saved) { setIsDirty(false); setIsEditing(false); } }); }}
             toneClassName="border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff]"
           >Save</TaskTableChipButton>
         </div>

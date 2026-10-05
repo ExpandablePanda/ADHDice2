@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.87`.
+- Current working app version: `7.16.88`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.88 Scratch Paper Voice Dictation
+
+Scratch Paper now supports browser voice dictation into token-aware note
+bodies. Final recognized text inserts at the saved serialized caret or
+selection while preserving inline Task tokens, marks the draft dirty, and uses
+the existing explicit Save Note create/update path. Recognition is fenced to
+the active note and cleaned up on stop, note changes, resolution, and
+unmounting; unsupported browsers and recognition errors fail non-blockingly.
+Only recognized text is persisted by ADHDice. No audio is stored.
 
 ## 2026-10-04 7.16.87 Right-click Smart Action Chip
 
