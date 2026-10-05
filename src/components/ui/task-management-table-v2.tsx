@@ -146,6 +146,15 @@ import {
 import { TaskContentFolderEditableHeader, type TaskContentFolderEditSurface } from "@/components/task-app/task-content-folder-editable-header";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskBehaviorProfiles, TaskBehaviorPolicy, TaskBehaviorPolicyField } from "@/lib/task-state-engine/behavior-policy";
+import {
+  isTaskContextSmartActionEligible,
+  readTaskContextSmartAction,
+  writeTaskContextSmartAction,
+  getTaskContextSmartActionLabel,
+  type TaskContextSmartAction,
+  type TaskContextSmartActionInput,
+  type TaskContextSmartActionTarget,
+} from "@/lib/task-context-smart-action";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
@@ -461,10 +470,10 @@ export async function reconcileTableDueMutation({
   schedule: { dueOn: string; dueTime: string };
   snapshots: Array<{ generation: number; snapshot: PrototypeTaskRow | null; taskId: string }>;
   getCurrentGeneration: (taskId: string) => number;
-}): Promise<void> {
-  await Promise.all(snapshots.map(async ({ generation, snapshot, taskId }) => {
+}): Promise<boolean> {
+  const results = await Promise.all(snapshots.map(async ({ generation, snapshot, taskId }) => {
     if (!onTaskDueChange) {
-      return;
+      return true;
     }
 
     let didPersist = true;
@@ -480,7 +489,9 @@ export async function reconcileTableDueMutation({
     if (snapshot && getCurrentGeneration(taskId) === generation) {
       onRollback(taskId, snapshot);
     }
+    return false;
   }));
+  return results.every(Boolean);
 }
 
 function getPrototypeTaskRowKey(task: PrototypeTaskRow) {
@@ -529,12 +540,13 @@ type TaskRowContextMenuProps = {
   onDismiss: () => void;
   onDuplicateTask?: () => void;
   onEditTask?: () => void;
-  onMoveIntoParent?: (parentTaskId: string) => void | Promise<void>;
+  onMoveIntoParent?: (parentTaskId: string) => void | boolean | Promise<boolean>;
   onMoveToTaskContentFolder?: (folderId: string | null, taskIds: string[]) => void | Promise<void>;
   onOpenInNewTab?: () => void;
   onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
   onOpenHistory?: () => void;
   onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
+  onRepeatSmartAction?: (action: TaskContextSmartAction) => void;
   onRemoveFromCurrentList?: () => void;
   removeFromCurrentListLabel?: string;
   onPromoteToMilestone?: () => void;
@@ -552,6 +564,8 @@ type TaskRowContextMenuProps = {
   selectedTaskCount: number;
   selectedTaskIds?: string[];
   task: Pick<PrototypeTaskRow, "id" | "status" | "title" | "task_content_folder_id">;
+  smartActionEligibility?: (action: TaskContextSmartAction) => boolean;
+  userId?: string | null;
 };
 
 export function TaskRowContextMenu({
@@ -573,6 +587,7 @@ export function TaskRowContextMenu({
   onOpenDetails,
   onOpenHistory,
   onOpenQuickEdit,
+  onRepeatSmartAction,
   onRemoveFromCurrentList,
   removeFromCurrentListLabel,
   onPromoteToMilestone,
@@ -589,7 +604,9 @@ export function TaskRowContextMenu({
   quickEditTitle = "Quick edit",
   selectedTaskCount,
   selectedTaskIds = [],
+  smartActionEligibility,
   task,
+  userId,
 }: TaskRowContextMenuProps) {
   const [isChoosingParent, setIsChoosingParent] = useState(false);
   const [isChoosingFolder, setIsChoosingFolder] = useState(false);
@@ -597,6 +614,24 @@ export function TaskRowContextMenu({
   const [newFolderName, setNewFolderName] = useState("");
   const [parentSearch, setParentSearch] = useState("");
   const [folderSearch, setFolderSearch] = useState("");
+  const [, setSmartActionStorageRevision] = useState(0);
+  const storedSmartAction = readTaskContextSmartAction(userId);
+  useEffect(() => {
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+    const storageKey = `${"adhdice-task-context-smart-action:v1"}:${userId}`;
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === storageKey) {
+        setSmartActionStorageRevision((current) => current + 1);
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [userId]);
+  const eligibleSmartAction = storedSmartAction && (!smartActionEligibility || smartActionEligibility(storedSmartAction))
+    ? storedSmartAction
+    : null;
   const filteredMoveIntoParentOptions = useMemo(() => {
     const normalizedSearch = parentSearch.trim().toLowerCase();
     if (!normalizedSearch) {
@@ -637,6 +672,20 @@ export function TaskRowContextMenu({
             {task.title}
           </p>
         </div>
+
+        {eligibleSmartAction && onRepeatSmartAction ? (
+          <div className="border-b border-[#f0ebfb] px-1 py-2 dark:border-white/10">
+            <TaskTableChipButton
+              aria-label={getTaskContextSmartActionLabel(eligibleSmartAction)}
+              className="w-full justify-start gap-2"
+              onClick={() => onRepeatSmartAction(eligibleSmartAction)}
+              toneClassName="border-[#cfc3ff] bg-[#f1ecff] text-[#6f57f6] shadow-[0_4px_14px_rgba(111,87,246,0.16)] dark:border-[#57458f] dark:bg-[#2a2148] dark:text-[#cabfff]"
+            >
+              <Repeat2 className="h-3.5 w-3.5" />
+              <span className="truncate">{getTaskContextSmartActionLabel(eligibleSmartAction)}</span>
+            </TaskTableChipButton>
+          </div>
+        ) : null}
 
         {isCreatingFolder ? (
           <form
@@ -1350,6 +1399,7 @@ type TaskManagementTableV2Props = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
+  userId?: string | null;
   todayDateKey?: string;
   taskDisplayStatusByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
   attentionReasonByTaskId?: Readonly<Record<string, TaskAttentionReason>>;
@@ -2743,6 +2793,7 @@ export function TaskManagementTableV2({
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
+  userId = null,
   todayDateKey = "",
   taskDisplayStatusByTaskId = {},
   attentionReasonByTaskId = {},
@@ -3081,6 +3132,7 @@ export function TaskManagementTableV2({
   const pendingMetadataTargetTaskIdRef = useRef<string | null>(null);
   const estimatedTimeInputRef = useRef<HTMLInputElement | null>(null);
   const pendingEditorFocusFrameRef = useRef<{ frame: number; token: number } | null>(null);
+  const smartActionCaptureRef = useRef<{ mode: OverlayMode; taskId: string } | null>(null);
   const editorNavigationTaskIdRef = useRef<string | null>(null);
   const handledEditorFocusTokensRef = useRef(new Set<number>());
   const statusRailLongPressTimeoutRef = useRef<number | null>(null);
@@ -3697,6 +3749,98 @@ export function TaskManagementTableV2({
     () => rowContextMenuTask ? getTaskContentFolderMenuOptions(taskContentFolders, rowContextMenuTask) : [],
     [rowContextMenuTask, taskContentFolders],
   );
+  function getRowContextMenuSmartActionTarget(task: PrototypeTaskRow): TaskContextSmartActionTarget {
+    const listIds = task.lists.flatMap((label) => {
+      const option = allListOptions.find((candidate) => normalizeTaskListLabel(candidate.label) === normalizeTaskListLabel(label));
+      return option ? [option.id] : [];
+    });
+    return {
+      listIds,
+      parentTaskId: task.parent_task_id ?? null,
+      status: task.status as TaskStatus,
+      taskContentFolderId: task.task_content_folder_id ?? null,
+    };
+  }
+  function isRowContextMenuSmartActionEligible(action: TaskContextSmartAction) {
+    if (!rowContextMenuTask) {
+      return false;
+    }
+    const availableStatuses = getPolicyFilteredStatuses({
+      customRulesetId: rowContextMenuTask.customRulesetId,
+      dueOn: rowContextMenuTask.dueOn,
+      repeatFrequency: rowContextMenuTask.repeat,
+      status: rowContextMenuTask.status,
+      taskId: rowContextMenuTask.id,
+      taskType: rowContextMenuTask.taskType,
+    });
+    return isTaskContextSmartActionEligible(action, getRowContextMenuSmartActionTarget(rowContextMenuTask), {
+      availableFolderIds: rowContextMenuTaskContentFolderOptions.map((option) => option.id),
+      availableListIds: allListOptions.map((option) => option.id),
+      availableParentIds: rowContextMenuMoveIntoParentOptions.map((option) => option.id),
+      availableStatuses: availableStatuses.filter((status): status is TaskStatus => status !== "unscheduled" && status !== "upcoming"),
+      canApplyDue: Boolean(onTaskDueChange),
+      canApplyDuplicate: Boolean(onDuplicateTask),
+      canApplyEnergy: Boolean(onTaskEnergyChange),
+      canApplyFolder: Boolean(onMoveTaskToContentFolder),
+      canApplyList: Boolean(onToggleTaskList),
+      canApplyParent: Boolean(onMoveTaskIntoParent),
+      canApplyPriority: Boolean(onTaskPriorityChange),
+      canApplyRepeat: Boolean(onTaskRepeatChange),
+      canApplyRestore: Boolean(onRestoreTask),
+      canApplyTags: Boolean(onTaskTagsChange),
+      canRemoveFromCurrentList: Boolean(canRemoveFromCurrentList?.(rowContextMenuTask.id) && onRemoveFromCurrentList),
+    });
+  }
+  function applyRowContextMenuSmartAction(action: TaskContextSmartAction) {
+    const task = rowContextMenuTask;
+    if (!task || !isRowContextMenuSmartActionEligible(action)) {
+      return;
+    }
+    setRowContextMenu(null);
+    rememberTaskContextSmartAction(action);
+    switch (action.kind) {
+      case "status":
+        setTaskStatus(task.id, action.status);
+        return;
+      case "due":
+        setTaskDue(task.id, action.dueOn, action.dueTime);
+        return;
+      case "priority":
+        setTaskPriorities(task.id, action.priorities);
+        return;
+      case "energy":
+        setTaskEnergy(task.id, action.energy);
+        return;
+      case "repeat":
+        setTaskRepeatValue(task.id, action.value);
+        return;
+      case "tags":
+        setTaskTags(task.id, action.tags);
+        return;
+      case "list": {
+        const list = allListOptions.find((option) => option.id === action.listId);
+        if (list) {
+          toggleTaskList(task.id, list.label);
+        }
+        return;
+      }
+      case "folder":
+        void onMoveTaskToContentFolder?.(task.id, action.folderId);
+        return;
+      case "parent":
+        void onMoveTaskIntoParent?.(task.id, action.parentTaskId);
+        return;
+      case "restore":
+        onRestoreTask?.(task.id);
+        return;
+      case "remove":
+        onRemoveFromCurrentList?.(task.id);
+        return;
+      case "duplicate":
+        onDuplicateTask?.(task.id);
+        return;
+    }
+  }
   const contentFolderMoveOptions = useMemo(
     () => contentFolderContextMenu
       ? getTaskContentFolderMoveOptions(taskContentFolders, contentFolderContextMenu.folderId)
@@ -4719,6 +4863,27 @@ export function TaskManagementTableV2({
     return null;
   }
 
+  function rememberTaskContextSmartAction(action: TaskContextSmartActionInput) {
+    if (!userId) {
+      return;
+    }
+    writeTaskContextSmartAction(userId, { ...action, version: 1 } as TaskContextSmartAction);
+  }
+
+  function rememberCapturedTaskContextSmartAction(
+    taskId: string,
+    mode: OverlayMode,
+    action: TaskContextSmartActionInput,
+  ) {
+    const capture = smartActionCaptureRef.current;
+    const capturedMode = capture?.mode === "lists" ? "lists" : capture?.mode;
+    if (!capture || capture.taskId !== taskId || capturedMode !== mode) {
+      return;
+    }
+    rememberTaskContextSmartAction(action);
+    smartActionCaptureRef.current = null;
+  }
+
   function modeSupportsBatchQuickEdit(mode: OverlayMode) {
     return BATCH_QUICK_EDIT_MODES.includes(mode);
   }
@@ -5095,6 +5260,10 @@ export function TaskManagementTableV2({
       onTaskDueChange,
       schedule: { dueOn, dueTime },
       snapshots,
+    }).then((didPersist) => {
+      if (didPersist) {
+        rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "due", dueOn, dueTime });
+      }
     });
   }
 
@@ -5154,6 +5323,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskStatusChange?.(targetTaskId, status, undefined, { suppressSharedScrollAnchor: true });
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "status", status });
   }
 
   function openTaskDelay(taskId: string, sourceElement?: HTMLElement | null) {
@@ -5172,7 +5342,16 @@ export function TaskManagementTableV2({
       return;
     }
     if (status === "unscheduled") {
-      onTaskDueChange?.(taskId, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
+      const didPersist = onTaskDueChange?.(taskId, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
+      if (didPersist && typeof (didPersist as Promise<boolean>).then === "function") {
+        void (didPersist as Promise<boolean>).then((succeeded) => {
+          if (succeeded !== false) {
+            rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "due", dueOn: "", dueTime: "" });
+          }
+        });
+      } else if (didPersist !== false) {
+        rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "due", dueOn: "", dueTime: "" });
+      }
       return;
     }
     setTaskStatus(taskId, status);
@@ -5194,6 +5373,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskEnergyChange?.(targetTaskId, energy);
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "energy", energy });
   }
 
   function setTaskType(taskId: string, selectionValue: string) {
@@ -5276,6 +5456,8 @@ export function TaskManagementTableV2({
     }));
     // Repeat changes also fan out through the existing per-task save callback so
     // recurrence/history behavior stays owned by the normal single-row path.
+    const persistenceResults: Array<void | Promise<boolean>> = [];
+    let persistenceFailed = false;
     for (const targetTaskId of targetTaskIds) {
       const generation = repeatMutationGenerationRef.current.get(targetTaskId) ?? 0;
       let persistenceResult: void | Promise<boolean>;
@@ -5293,9 +5475,11 @@ export function TaskManagementTableV2({
         });
       } catch {
         clearPendingTaskRepeat(targetTaskId, generation);
+        persistenceFailed = true;
         continue;
       }
       if (persistenceResult !== undefined) {
+        persistenceResults.push(persistenceResult);
         void persistenceResult.then((succeeded) => {
           if (!succeeded) {
             clearPendingTaskRepeat(targetTaskId, generation);
@@ -5304,6 +5488,13 @@ export function TaskManagementTableV2({
           clearPendingTaskRepeat(targetTaskId, generation);
         });
       }
+    }
+    if (!persistenceFailed) {
+      void Promise.all(persistenceResults.map((result) => Promise.resolve(result).then((succeeded) => succeeded !== false))).then((results) => {
+        if (results.every(Boolean)) {
+          rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "repeat", value: { ...value, repeatDaysOfWeek: [...value.repeatDaysOfWeek] } });
+        }
+      });
     }
   }
 
@@ -5445,6 +5636,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskPriorityChange?.(targetTaskId, priorities);
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "priority", priorities: [...priorities] });
   }
 
   function setTaskTags(taskId: string, tags: string[]) {
@@ -5455,6 +5647,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskTagsChange?.(targetTaskId, nextTags);
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "tags", tags: [...nextTags] });
   }
 
   function setTaskLinkedNoteIds(taskId: string, linkedNoteIds: string[]) {
@@ -5575,6 +5768,10 @@ export function TaskManagementTableV2({
     for (const candidate of targetTasks) {
       onTaskTagsChange?.(candidate.id, nextTagsByTaskId.get(candidate.id) ?? candidate.tags);
     }
+    const nextTags = nextTagsByTaskId.get(taskId);
+    if (nextTags) {
+      rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "tags", tags: [...nextTags] });
+    }
   }
 
   function toggleTaskList(taskId: string, listLabel: string) {
@@ -5601,6 +5798,14 @@ export function TaskManagementTableV2({
     if (listId) {
       for (const candidate of changedTasks) {
         onToggleTaskList?.(candidate.id, listId);
+      }
+      if (changedTasks.some((candidate) => candidate.id === taskId)) {
+        rememberCapturedTaskContextSmartAction(taskId, overlayMode, {
+          kind: "list",
+          label: listLabel,
+          listId,
+          operation: shouldRemove ? "remove" : "add",
+        });
       }
     }
   }
@@ -7157,6 +7362,7 @@ export function TaskManagementTableV2({
 
   function openTaskOverlayFromContextMenu(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null) {
     setRowContextMenu(null);
+    smartActionCaptureRef.current = { mode, taskId };
     const nextQuickEditTargetTaskIds = mode === "repeat" || mode === "status"
       ? resolveTableActionTargetTaskIds(taskId)
       : modeSupportsBatchQuickEdit(mode)
@@ -9684,9 +9890,11 @@ export function TaskManagementTableV2({
                 openInspector(rowContextMenuTask.id, "delay", sourceElement);
               } : undefined}
               onDismiss={() => setRowContextMenu(null)}
+              onRepeatSmartAction={applyRowContextMenuSmartAction}
               onDuplicateTask={onDuplicateTask ? () => {
                 setRowContextMenu(null);
                 onDuplicateTask(rowContextMenuTask.id);
+                rememberTaskContextSmartAction({ kind: "duplicate" });
               } : undefined}
               onEditTask={onOpenTaskEditor ? () => {
                 setRowContextMenu(null);
@@ -9694,16 +9902,32 @@ export function TaskManagementTableV2({
               } : undefined}
               onMoveIntoParent={onMoveTaskIntoParent ? async (parentTaskId) => {
                 setRowContextMenu(null);
-                await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
+                const didMove = await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
+                if (didMove !== false) {
+                  const option = rowContextMenuMoveIntoParentOptions.find((entry) => entry.id === parentTaskId);
+                  if (option) {
+                    rememberTaskContextSmartAction({ kind: "parent", label: option.label, parentTaskId });
+                  }
+                }
+                return didMove !== false;
               } : undefined}
               onMoveToTaskContentFolder={onMoveTaskToContentFolder ? async (folderId, targetTaskIds) => {
                 setRowContextMenu(null);
+                let didMove = true;
                 if (targetTaskIds.length > 1 && onMoveTasksToContentFolder) {
-                  await onMoveTasksToContentFolder(targetTaskIds, folderId);
-                  return;
+                  didMove = (await onMoveTasksToContentFolder(targetTaskIds, folderId)) !== false;
+                } else {
+                  for (const targetTaskId of targetTaskIds) {
+                    if ((await onMoveTaskToContentFolder(targetTaskId, folderId)) === false) {
+                      didMove = false;
+                    }
+                  }
                 }
-                for (const targetTaskId of targetTaskIds) {
-                  await onMoveTaskToContentFolder(targetTaskId, folderId);
+                if (didMove) {
+                  const option = rowContextMenuTaskContentFolderOptions.find((entry) => entry.id === folderId);
+                  if (option) {
+                    rememberTaskContextSmartAction({ kind: "folder", folderId, label: option.label });
+                  }
                 }
               } : undefined}
               onOpenInNewTab={onOpenTaskInNewTab ? () => {
@@ -9719,6 +9943,7 @@ export function TaskManagementTableV2({
               onRemoveFromCurrentList={canRemoveFromCurrentList?.(rowContextMenuTask.id) && onRemoveFromCurrentList ? () => {
                 onRemoveFromCurrentList(rowContextMenuTask.id);
                 setRowContextMenu(null);
+                rememberTaskContextSmartAction({ kind: "remove" });
               } : undefined}
               removeFromCurrentListLabel={currentListLabel ? `Remove from ${currentListLabel}` : undefined}
               onPromoteToMilestone={onPromoteTaskToMilestone && milestonePromotionTaskIds.has(rowContextMenuTask.id) ? () => {
@@ -9732,6 +9957,7 @@ export function TaskManagementTableV2({
               onRestoreTask={onRestoreTask ? () => {
                 setRowContextMenu(null);
                 onRestoreTask(rowContextMenuTask.id);
+                rememberTaskContextSmartAction({ kind: "restore" });
               } : undefined}
               onUnlinkTask={onUnlinkTask && childTaskParentInfoByTaskId.has(rowContextMenuTask.id) ? () => {
                 setRowContextMenu(null);
@@ -9772,6 +9998,8 @@ export function TaskManagementTableV2({
               selectedTaskCount={selectedTaskIds.length}
               selectedTaskIds={selectedTaskIds}
               task={rowContextMenuTask}
+              smartActionEligibility={isRowContextMenuSmartActionEligible}
+              userId={userId}
             />
           </div>
         ) : null}

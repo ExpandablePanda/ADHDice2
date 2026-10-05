@@ -87,6 +87,13 @@ import type { TaskBehaviorPolicy, TaskBehaviorPolicyField, TaskBehaviorPolicyRes
 import { resolveTaskTypeRowPresentation } from "@/lib/task-type-presentation";
 import { buildTaskTypeSelectionOptions, resolveTaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskTypePresentation } from "@/lib/task-type-presentation";
+import {
+  isTaskContextSmartActionEligible,
+  writeTaskContextSmartAction,
+  type TaskContextSmartAction,
+  type TaskContextSmartActionInput,
+  type TaskContextSmartActionTarget,
+} from "@/lib/task-context-smart-action";
 import { TaskTypeTitleIcon } from "./task-type-identity";
 import {
   buildTaskContentFolderMemberSummary,
@@ -279,6 +286,7 @@ type TasksTableSourceProps = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: TaskEditorLinkedNote[];
   allTagOptions?: string[];
+  userId?: string | null;
   allTasks?: Task[];
   childTaskCreationBlockedTaskIds?: string[];
   childTaskPreviewByParentTaskId?: ChildTaskPreviewLookup;
@@ -659,6 +667,7 @@ export function TasksTableAdapter({
           allListOptions={tableProps.allListOptions}
           allNoteOptions={noteOptions}
           allTagOptions={tableProps.allTagOptions}
+          userId={tableProps.userId}
           taskDisplayStatusByTaskId={tableProps.rowContext.taskDisplayStatusByTaskId}
           attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
@@ -2164,6 +2173,31 @@ function DueQuickPanel({
   );
 }
 
+function StatusQuickPanel({
+  currentStatus,
+  onClose,
+  onSelect,
+  options,
+}: {
+  currentStatus: TaskDisplayStatus;
+  onClose: () => void;
+  onSelect: (status: TaskDisplayStatus) => void;
+  options: Array<{ label: string; value: TaskDisplayStatus }>;
+}) {
+  return (
+    <TaskListQuickPanelShell onClose={onClose} title="Status">
+      <TaskStatusCircleRail
+        className="flex-wrap"
+        currentStatus={currentStatus}
+        onSetStatus={(status) => onSelect(status)}
+        options={options}
+        preserveCurrentStatus
+        statusLabelPrefix="Set status to"
+      />
+    </TaskListQuickPanelShell>
+  );
+}
+
 function DelayQuickPanel({
   dueOn,
   onClose,
@@ -2522,6 +2556,7 @@ function TasksSimpleList({
   const [contentFolderContextMenu, setContentFolderContextMenu] = useState<TaskContentFolderContextMenuState | null>(null);
   const [activeTaskContentFolderEdit, setActiveTaskContentFolderEdit] = useState<TaskContentFolderEditSurface>(null);
   const [activeQuickPanel, setActiveQuickPanel] = useState<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
+  const smartActionCaptureRef = useRef<{ mode: ListQuickPanelMode; taskId: string } | null>(null);
   const [visibleMetadataTaskIds, setVisibleMetadataTaskIds] = useState<Set<string>>(() => new Set());
   const [editingTaskTitleId, setEditingTaskTitleId] = useState<string | null>(null);
   const [collapsedStepSectionsByTaskId, setCollapsedStepSectionsByTaskId] = useState<Record<string, boolean>>({});
@@ -2867,6 +2902,109 @@ function TasksSimpleList({
   const rowContextMenuTaskContentFolderOptions = useMemo<TaskContentFolderMenuOption[]>(() => {
     return rowContextMenuTask ? getTaskContentFolderMenuOptions(tableProps.taskContentFolders ?? [], rowContextMenuTask) : [];
   }, [rowContextMenuTask, tableProps.taskContentFolders]);
+  const rememberTaskContextSmartAction = (action: TaskContextSmartActionInput) => {
+    if (tableProps.userId) {
+      writeTaskContextSmartAction(tableProps.userId, { ...action, version: 1 } as TaskContextSmartAction);
+    }
+  };
+  const rememberCapturedTaskContextSmartAction = (
+    taskId: string,
+    mode: ListQuickPanelMode,
+    action: TaskContextSmartActionInput,
+  ) => {
+    const capture = smartActionCaptureRef.current;
+    if (!capture || capture.taskId !== taskId || capture.mode !== mode) {
+      return;
+    }
+    rememberTaskContextSmartAction(action);
+    smartActionCaptureRef.current = null;
+  };
+  const getRowContextMenuSmartActionTarget = (task: Task): TaskContextSmartActionTarget => ({
+    listIds: (tableProps.rowContext.listMembershipsByTaskId[task.id] ?? []).map((membership) => membership.id),
+    parentTaskId: task.parent_task_id ?? null,
+    status: task.status,
+    taskContentFolderId: task.task_content_folder_id ?? null,
+  });
+  const isRowContextMenuSmartActionEligible = (action: TaskContextSmartAction) => {
+    if (!rowContextMenuTask) {
+      return false;
+    }
+    const availableStatuses = getPolicyFilteredTaskStatuses({
+      customRulesetId: rowContextMenuTask.custom_ruleset_id,
+      dueOn: rowContextMenuTask.due_on,
+      repeatFrequency: rowContextMenuTask.repeat_frequency,
+      status: rowContextMenuTask.status,
+      taskId: rowContextMenuTask.id,
+      taskType: rowContextMenuTask.task_type,
+    }).filter((status): status is TaskStatus => status !== "unscheduled" && status !== "upcoming");
+    return isTaskContextSmartActionEligible(action, getRowContextMenuSmartActionTarget(rowContextMenuTask), {
+      availableFolderIds: rowContextMenuTaskContentFolderOptions.map((option) => option.id),
+      availableListIds: (tableProps.allListOptions ?? []).map((option) => option.id),
+      availableParentIds: rowContextMenuMoveIntoParentOptions.map((option) => option.id),
+      availableStatuses,
+      canApplyDue: Boolean(tableProps.onSetDue),
+      canApplyDuplicate: Boolean(tableProps.onDuplicateTask),
+      canApplyEnergy: Boolean(tableProps.onSetEnergy),
+      canApplyFolder: Boolean(tableProps.onMoveTaskToContentFolder),
+      canApplyList: Boolean(tableProps.onToggleTaskList),
+      canApplyParent: Boolean(tableProps.onMoveTaskIntoParent),
+      canApplyPriority: Boolean(tableProps.onSetPriority),
+      canApplyRepeat: Boolean(tableProps.onSetRepeat),
+      canApplyRestore: Boolean(tableProps.onRestoreTask),
+      canApplyTags: Boolean(tableProps.onSetTags),
+      canRemoveFromCurrentList: Boolean(canRemoveFromCurrentList(rowContextMenuTask.id) && tableProps.onToggleTaskList),
+    });
+  };
+  const applyRowContextMenuSmartAction = (action: TaskContextSmartAction) => {
+    const task = rowContextMenuTask;
+    if (!task || !isRowContextMenuSmartActionEligible(action)) {
+      return;
+    }
+    setRowContextMenu(null);
+    rememberTaskContextSmartAction(action);
+    switch (action.kind) {
+      case "status":
+        tableProps.onSetStatus?.(task.id, action.status, task, queueMeasuredListStatusScrollAnchor(task.id));
+        return;
+      case "due":
+        tableProps.onSetDue?.(task.id, { dueOn: action.dueOn, dueTime: action.dueTime });
+        return;
+      case "priority":
+        tableProps.onSetPriority?.(task.id, action.priorities);
+        return;
+      case "energy":
+        tableProps.onSetEnergy?.(task.id, action.energy);
+        return;
+      case "repeat":
+        void tableProps.onSetRepeat?.(task.id, action.value.repeatFrequency, action.value);
+        return;
+      case "tags":
+        tableProps.onSetTags?.(task.id, action.tags);
+        return;
+      case "list":
+        tableProps.onToggleTaskList?.(task.id, action.listId);
+        return;
+      case "folder":
+        void tableProps.onMoveTaskToContentFolder?.(task.id, action.folderId);
+        return;
+      case "parent":
+        void tableProps.onMoveTaskIntoParent?.(task.id, action.parentTaskId);
+        return;
+      case "restore":
+        tableProps.onRestoreTask?.(task.id);
+        return;
+      case "remove": {
+        const currentListId = tableProps.currentListId ?? selectedBucket;
+        if (currentListId) {
+          tableProps.onToggleTaskList?.(task.id, currentListId);
+        }
+        return;
+      }
+      case "duplicate":
+        tableProps.onDuplicateTask?.(task.id);
+        return;
+    }
+  };
   const contentFolderMoveOptions = useMemo(
     () => contentFolderContextMenu
       ? getTaskContentFolderMoveOptions(tableProps.taskContentFolders ?? [], contentFolderContextMenu.folderId)
@@ -3055,6 +3193,7 @@ function TasksSimpleList({
               allListOptions={tableProps.allListOptions}
               allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
               allTagOptions={tableProps.allTagOptions}
+              userId={tableProps.userId}
               taskDisplayStatusByTaskId={tableProps.rowContext.taskDisplayStatusByTaskId}
               attentionReasonByTaskId={tableProps.rowContext.taskAttentionReasonByTaskId}
               childTaskCreationBlockedTaskIds={tableProps.childTaskCreationBlockedTaskIds}
@@ -3665,6 +3804,41 @@ function TasksSimpleList({
                 </div>
               </div>
             </div>
+            {activePanelMode === "status" ? (
+              <StatusQuickPanel
+                currentStatus={displayStatus}
+                onClose={closeQuickPanel}
+                onSelect={(status) => {
+                  if (status === "delayed") {
+                    smartActionCaptureRef.current = null;
+                    if (canTaskDelay({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus }) && isListManualActionAllowed(task, "delay") && tableProps.onDelayTaskUntil) {
+                      openQuickPanel(task.id, "delay");
+                    }
+                    return;
+                  }
+                  if (status === "unscheduled") {
+                    const didPersist = tableProps.onSetDue?.(task.id, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
+                    if (didPersist && typeof (didPersist as Promise<boolean>).then === "function") {
+                      void (didPersist as Promise<boolean>).then((succeeded) => {
+                        if (succeeded !== false) {
+                          rememberCapturedTaskContextSmartAction(task.id, "status", { kind: "due", dueOn: "", dueTime: "" });
+                        }
+                      });
+                    } else if (didPersist !== false) {
+                      rememberCapturedTaskContextSmartAction(task.id, "status", { kind: "due", dueOn: "", dueTime: "" });
+                    }
+                  } else {
+                    tableProps.onSetStatus?.(task.id, status, task, queueMeasuredListStatusScrollAnchor(task.id));
+                    rememberCapturedTaskContextSmartAction(task.id, "status", { kind: "status", status });
+                  }
+                  closeQuickPanel();
+                }}
+                options={getPolicyFilteredTaskStatuses({ customRulesetId: task.custom_ruleset_id, dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: displayStatus, taskId: task.id, taskType: task.task_type }).map((status) => ({
+                  label: formatTaskStatusLabel(status),
+                  value: status,
+                }))}
+              />
+            ) : null}
             {activePanelMode === "delay" ? (
               <DelayQuickPanel
                 dueOn={task.due_on}
@@ -3677,7 +3851,10 @@ function TasksSimpleList({
               <TagsQuickPanel
                 allTagOptions={tableProps.allTagOptions ?? []}
                 onClose={closeQuickPanel}
-                onSave={(tags) => tableProps.onSetTags?.(task.id, tags)}
+                onSave={(tags) => {
+                  tableProps.onSetTags?.(task.id, tags);
+                  rememberCapturedTaskContextSmartAction(task.id, "tags", { kind: "tags", tags: [...tags] });
+                }}
                 tags={task.tags ?? []}
               />
             ) : null}
@@ -3687,7 +3864,16 @@ function TasksSimpleList({
                 dueTime={task.due_time}
                 onClose={closeQuickPanel}
                 onSave={(schedule) => {
-                  tableProps.onSetDue?.(task.id, schedule);
+                  const didPersist = tableProps.onSetDue?.(task.id, schedule);
+                  if (didPersist && typeof (didPersist as Promise<boolean>).then === "function") {
+                    void (didPersist as Promise<boolean>).then((succeeded) => {
+                      if (succeeded !== false) {
+                        rememberCapturedTaskContextSmartAction(task.id, "due", { kind: "due", ...schedule });
+                      }
+                    });
+                  } else if (didPersist !== false) {
+                    rememberCapturedTaskContextSmartAction(task.id, "due", { kind: "due", ...schedule });
+                  }
                   closeQuickPanel();
                 }}
                 todayDateKey={rowContext.todayDateKey}
@@ -3697,7 +3883,10 @@ function TasksSimpleList({
               <PriorityQuickPanel
                 activePriorities={activePriorities}
                 onClose={closeQuickPanel}
-                onSave={(priorities) => tableProps.onSetPriority?.(task.id, priorities)}
+                onSave={(priorities) => {
+                  tableProps.onSetPriority?.(task.id, priorities);
+                  rememberCapturedTaskContextSmartAction(task.id, "priority", { kind: "priority", priorities: [...priorities] });
+                }}
               />
             ) : null}
             {activePanelMode === "repeat" ? (
@@ -3705,17 +3894,28 @@ function TasksSimpleList({
                 dueOn={task.due_on}
                 onClearBalance={tableProps.onClearQuotaBalance ? () => tableProps.onClearQuotaBalance?.(task.id) : undefined}
                 onClose={closeQuickPanel}
-                onSave={(value) => tableProps.onSetRepeat?.(task.id, value.repeatFrequency, {
-                  repeatDayOfMonth: value.repeatDayOfMonth,
-                  repeatDaysOfWeek: value.repeatDaysOfWeek,
-                  repeatInterval: value.repeatInterval,
-                  repeatMonthlyMode: value.repeatMonthlyMode,
-                      repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
-                      repeatMonthlyWeekday: value.repeatMonthlyWeekday,
-                      repeatEndOn: value.repeatEndOn,
-                      repeatQuotaCount: value.repeatQuotaCount,
-                      repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
-                })}
+                onSave={(value) => {
+                  const didPersist = tableProps.onSetRepeat?.(task.id, value.repeatFrequency, {
+                    repeatDayOfMonth: value.repeatDayOfMonth,
+                    repeatDaysOfWeek: value.repeatDaysOfWeek,
+                    repeatInterval: value.repeatInterval,
+                    repeatMonthlyMode: value.repeatMonthlyMode,
+                    repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
+                    repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+                    repeatEndOn: value.repeatEndOn,
+                    repeatQuotaCount: value.repeatQuotaCount,
+                    repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
+                  });
+                  if (didPersist && typeof (didPersist as Promise<boolean>).then === "function") {
+                    void (didPersist as Promise<boolean>).then((succeeded) => {
+                      if (succeeded !== false) {
+                        rememberCapturedTaskContextSmartAction(task.id, "repeat", { kind: "repeat", value: { ...value, repeatDaysOfWeek: [...value.repeatDaysOfWeek] } });
+                      }
+                    });
+                  } else {
+                    rememberCapturedTaskContextSmartAction(task.id, "repeat", { kind: "repeat", value: { ...value, repeatDaysOfWeek: [...value.repeatDaysOfWeek] } });
+                  }
+                }}
                 repeatDayOfMonth={task.repeat_day_of_month}
                 repeatDaysOfWeek={task.repeat_days_of_week ?? []}
                 repeatFrequency={task.repeat_frequency}
@@ -3734,7 +3934,14 @@ function TasksSimpleList({
                 listDefinitions={rowContext.listDefinitions}
                 listMemberships={listMemberships}
                 onClose={closeQuickPanel}
-                onToggleList={(listId) => tableProps.onToggleTaskList?.(task.id, listId)}
+                onToggleList={(listId) => {
+                  const isCurrentlyMember = listMemberships.some((membership) => membership.id === listId);
+                  tableProps.onToggleTaskList?.(task.id, listId);
+                  const label = rowContext.listDefinitions.find((definition) => definition.id === listId)?.name;
+                  if (label) {
+                    rememberCapturedTaskContextSmartAction(task.id, "list", { kind: "list", label, listId, operation: isCurrentlyMember ? "remove" : "add" });
+                  }
+                }}
               />
             ) : null}
             {activePanelMode === "estimated" ? (
@@ -3760,7 +3967,10 @@ function TasksSimpleList({
               <EnergyQuickPanel
                 energy={task.energy}
                 onClose={closeQuickPanel}
-                onSave={(energy) => tableProps.onSetEnergy?.(task.id, energy)}
+                onSave={(energy) => {
+                  tableProps.onSetEnergy?.(task.id, energy);
+                  rememberCapturedTaskContextSmartAction(task.id, "energy", { kind: "energy", energy });
+                }}
               />
             ) : null}
             {activePanelMode === "link" ? (
@@ -3883,26 +4093,44 @@ function TasksSimpleList({
                 setRowContextMenu(null);
               } : undefined}
               onDismiss={() => setRowContextMenu(null)}
+              onRepeatSmartAction={applyRowContextMenuSmartAction}
               onDuplicateTask={tableProps.onDuplicateTask ? () => {
                 tableProps.onDuplicateTask?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
+                rememberTaskContextSmartAction({ kind: "duplicate" });
               } : undefined}
               onEditTask={tableProps.onOpenTaskEditor ? () => {
                 tableProps.onOpenTaskEditor?.(rowContextMenuTask.id, visibleTaskIds);
                 setRowContextMenu(null);
               } : undefined}
               onMoveIntoParent={tableProps.onMoveTaskIntoParent ? async (parentTaskId) => {
-                await tableProps.onMoveTaskIntoParent?.(rowContextMenuTask.id, parentTaskId);
                 setRowContextMenu(null);
+                const didMove = await tableProps.onMoveTaskIntoParent?.(rowContextMenuTask.id, parentTaskId);
+                if (didMove !== false) {
+                  const option = rowContextMenuMoveIntoParentOptions.find((entry) => entry.id === parentTaskId);
+                  if (option) {
+                    rememberTaskContextSmartAction({ kind: "parent", label: option.label, parentTaskId });
+                  }
+                }
+                return didMove !== false;
               } : undefined}
               onMoveToTaskContentFolder={tableProps.onMoveTaskToContentFolder ? async (folderId, targetTaskIds) => {
                 setRowContextMenu(null);
+                let didMove = true;
                 if (targetTaskIds.length > 1 && tableProps.onMoveTasksToContentFolder) {
-                  await tableProps.onMoveTasksToContentFolder(targetTaskIds, folderId);
-                  return;
+                  didMove = (await tableProps.onMoveTasksToContentFolder(targetTaskIds, folderId)) !== false;
+                } else {
+                  for (const targetTaskId of targetTaskIds) {
+                    if ((await tableProps.onMoveTaskToContentFolder?.(targetTaskId, folderId)) === false) {
+                      didMove = false;
+                    }
+                  }
                 }
-                for (const targetTaskId of targetTaskIds) {
-                  await tableProps.onMoveTaskToContentFolder?.(targetTaskId, folderId);
+                if (didMove) {
+                  const option = rowContextMenuTaskContentFolderOptions.find((entry) => entry.id === folderId);
+                  if (option) {
+                    rememberTaskContextSmartAction({ kind: "folder", folderId, label: option.label });
+                  }
                 }
               } : undefined}
               onOpenInNewTab={tableProps.onOpenTaskInNewTab ? () => {
@@ -3935,6 +4163,7 @@ function TasksSimpleList({
                 const mappedMode = listModeMap[mode];
                 setRowContextMenu(null);
                 if (mappedMode) {
+                  smartActionCaptureRef.current = { mode: mappedMode, taskId: rowContextMenuTask.id };
                   openQuickPanel(rowContextMenuTask.id, mappedMode);
                   return;
                 }
@@ -3946,6 +4175,7 @@ function TasksSimpleList({
                   tableProps.onToggleTaskList?.(rowContextMenuTask.id, currentListId);
                 }
                 setRowContextMenu(null);
+                rememberTaskContextSmartAction({ kind: "remove" });
               } : undefined}
               removeFromCurrentListLabel={currentListLabel ? `Remove from ${currentListLabel}` : undefined}
               onPromoteToMilestone={tableProps.onPromoteTaskToMilestone && tableProps.milestonePromotionTaskIds?.has(rowContextMenuTask.id) ? () => {
@@ -3959,6 +4189,7 @@ function TasksSimpleList({
               onRestoreTask={tableProps.onRestoreTask ? () => {
                 tableProps.onRestoreTask?.(rowContextMenuTask.id);
                 setRowContextMenu(null);
+                rememberTaskContextSmartAction({ kind: "restore" });
               } : undefined}
               moveIntoParentOptions={rowContextMenuMoveIntoParentOptions}
               taskContentFolderOptions={rowContextMenuTaskContentFolderOptions}
@@ -3990,6 +4221,8 @@ function TasksSimpleList({
               selectedTaskCount={selectedTaskIds.length}
               selectedTaskIds={selectedTaskIds}
               task={rowContextMenuTask}
+              smartActionEligibility={isRowContextMenuSmartActionEligible}
+              userId={tableProps.userId}
             />
           ) : null}
           {contentFolderContextMenu && tableProps.onRenameTaskContentFolder && tableProps.onDeleteTaskContentFolder ? (() => {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.86`.
+- Current working app version: `7.16.87`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.87 Right-click Smart Action Chip
+
+Task right-click menus now expose one user-local Smart Action that repeats the
+last eligible resolved context-menu action in both Table and List views. The
+action is stored under a versioned user-scoped localStorage key and is checked
+against the current Task, behavior policy, and available destinations before it
+is shown. Unsafe and destructive actions remain excluded, including trash,
+permanent delete, structural unlinking, free-text edits, and numeric text entry.
 
 ## 2026-10-04 7.16.85 Task Type descriptions are Settings-only metadata
 

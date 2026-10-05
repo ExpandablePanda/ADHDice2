@@ -8010,6 +8010,7 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          userId={currentUserId}
           todayDateKey={todayKey}
           taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
           attentionReasonByTaskId={taskAttentionReasonByTaskId}
@@ -8490,6 +8491,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  userId: currentUserId,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
@@ -8674,6 +8676,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  userId: currentUserId,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
