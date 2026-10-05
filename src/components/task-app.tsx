@@ -137,6 +137,7 @@ import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
+import { useVoiceMemos } from "@/hooks/useVoiceMemos";
 import { useTaskActions } from "@/hooks/useTaskActions";
 import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
@@ -1369,6 +1370,7 @@ export function TaskApp() {
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
+  const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
     [focusCategories],
@@ -7769,6 +7771,7 @@ export function TaskApp() {
     onUpdate: scratchNotes.updateNote,
     tasks,
     userId: currentUserId,
+    voiceMemos,
   };
 
   const taskOperationsHeaderProps = {
@@ -8333,6 +8336,7 @@ export function TaskApp() {
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
             onTranscribeScratchAudio={onTranscribeScratchAudio}
+            voiceMemos={voiceMemos}
             addWaterEntries={addHealthWaterEntries}
             addWeightEntries={addHealthWeightEntries}
             addMealEntries={addHealthMealEntries}
@@ -9031,9 +9035,14 @@ export function TaskApp() {
             client={client}
             currentUser={currentUser}
             onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
+            onOpenSourceNote={(noteId) => {
+              setNotePageOpenNoteId(noteId);
+              setActivePage("Notes");
+            }}
             openNoteId={notePageOpenNoteId}
             scratchPaper={scratchPaperData}
             tasks={tasks}
+            voiceMemos={voiceMemos}
           />
         ) : activePage === "Settings" ? (
           <TaskSettingsPage

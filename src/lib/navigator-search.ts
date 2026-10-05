@@ -121,6 +121,7 @@ const PAGE_SHELL_LABELS: Readonly<Record<string, string>> = {
   "settings-import-export": "Import / Export",
   "notes-scratch-paper": "Scratch Paper",
   "notes-library": "Notes Library",
+  "notes-voice-memos": "Voice Memos",
   "test-task-table": "Task Table #2",
   "test-d20": "D20 Face Mapper",
   "test-dice-face": "Dice Face Mapper",

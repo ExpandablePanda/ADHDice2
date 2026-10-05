@@ -271,7 +271,7 @@ function isOverconstrainedError(error: unknown) {
   return error instanceof DOMException && (error.name === "OverconstrainedError" || error.name === "ConstraintNotSatisfiedError");
 }
 
-function stopScratchMediaStream(stream: ScratchMediaStream | null) {
+export function stopScratchMediaStream(stream: ScratchMediaStream | null) {
   for (const track of stream?.getTracks() ?? []) {
     try {
       track.stop();

@@ -1480,6 +1480,40 @@ export type ScratchNoteTaskLinkInsert = {
 
 export type ScratchNoteTaskLinkUpdate = Record<string, never>;
 
+export type VoiceMemoOriginKind = "home_scratchpad" | "scratch_note" | "memo_library";
+
+export type VoiceMemo = {
+  id: string;
+  user_id: string;
+  title: string | null;
+  storage_path: string;
+  mime_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  origin_kind: VoiceMemoOriginKind;
+  scratch_note_id: string | null;
+  transcript: string | null;
+  transcribed_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type VoiceMemoInsert = {
+  id?: string;
+  user_id: string;
+  title?: string | null;
+  storage_path: string;
+  mime_type: string;
+  size_bytes: number;
+  duration_seconds: number;
+  origin_kind: VoiceMemoOriginKind;
+  scratch_note_id?: string | null;
+  transcript?: string | null;
+  transcribed_at?: string | null;
+};
+
+export type VoiceMemoUpdate = Partial<Pick<VoiceMemo, "title" | "transcript" | "transcribed_at" | "updated_at">>;
+
 export type HealthWeightUnit = "lb" | "kg";
 export type HealthMetricType = "steps" | "active_energy_kcal" | "exercise_minutes" | "sleep_minutes" | "body_mass_kg";
 export type HealthMetricSource = "apple_health_import" | "manual";
@@ -3163,6 +3197,12 @@ export type Database = {
         Row: ScratchNoteTaskLink;
         Insert: ScratchNoteTaskLinkInsert;
         Update: ScratchNoteTaskLinkUpdate;
+        Relationships: [];
+      };
+      adhdice_voice_memos: {
+        Row: VoiceMemo;
+        Insert: VoiceMemoInsert;
+        Update: VoiceMemoUpdate;
         Relationships: [];
       };
       adhdice_health_profiles: {

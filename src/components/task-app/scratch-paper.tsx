@@ -20,6 +20,8 @@ import {
 import { formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { TASK_TABLE_INPUT_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import { ScratchDictationControl } from "./scratch-dictation-control";
+import { VoiceMemoCard, VoiceMemoRecorder } from "./voice-memo";
+import type { VoiceMemoData } from "@/hooks/useVoiceMemos";
 
 type TaskStatusOptionsResolver = (task: Task, currentStatus?: TaskStatus) => readonly TaskStatus[];
 
@@ -30,6 +32,7 @@ type ScratchPaperActions = {
   onSetStatus: (noteId: string, status: ScratchNoteStatus) => Promise<boolean>;
   onSetTaskStatus: (taskId: string, status: Task["status"]) => void;
   onTranscribeAudio: (audio: Blob) => Promise<string>;
+  voiceMemos: VoiceMemoData;
   getTaskStatusOptions?: TaskStatusOptionsResolver;
   onUpdate: (noteId: string, draft: ScratchNoteDraft) => Promise<boolean>;
   userId: string | null;
@@ -53,6 +56,27 @@ export type ScratchPaperData = ScratchPaperActions & {
   notes: ScratchNote[];
   tasks: Task[];
 };
+
+function ScratchNoteVoiceMemos({ note, voiceMemos, userId }: { note: ScratchNote; userId: string | null; voiceMemos: VoiceMemoData }) {
+  const memos = voiceMemos.memos.filter((memo) => memo.scratch_note_id === note.id);
+  return (
+    <div className="space-y-2 border-t border-[#eee9fa] pt-2 dark:border-white/10">
+      <p className="text-[11px] font-semibold text-[#6f57f6] dark:text-[#cabfff]">Voice Memos</p>
+      <VoiceMemoRecorder contextLabel="Scratch Paper" onSaveMemo={voiceMemos.createMemo} originKind="scratch_note" scratchNoteId={note.id} userId={userId} />
+      {memos.map((memo) => (
+        <VoiceMemoCard
+          getPlaybackUrl={voiceMemos.getPlaybackUrl}
+          key={memo.id}
+          memo={memo}
+          onDelete={voiceMemos.deleteMemo}
+          onRename={voiceMemos.renameMemo}
+          onTranscribe={voiceMemos.transcribeMemo}
+          sourceNoteTitle={note.title}
+        />
+      ))}
+    </div>
+  );
+}
 
 function linkedTaskIdsForNote(noteId: string, links: ScratchNoteTaskLink[]) {
   return links.filter((link) => link.note_id === noteId).map((link) => link.task_id);
@@ -471,9 +495,11 @@ function ScratchCurrentNoteEditor({
   links,
   tasks,
   userId,
+  voiceMemos,
 }: ScratchPaperData & { onCurrentNoteIdChange: (noteId: string | null) => void }) {
   const activeNotes = useMemo(() => notes.filter((note) => note.status === "active"), [notes]);
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
+  const currentNote = currentNoteId ? notes.find((note) => note.id === currentNoteId) ?? null : null;
   const [body, setBody] = useState("");
   const [title, setTitle] = useState("");
   const [linkedTaskIds, setLinkedTaskIds] = useState<string[]>([]);
@@ -757,6 +783,7 @@ function ScratchCurrentNoteEditor({
         {currentNoteId ? <TaskTableChipButton onClick={() => { void changeCurrentStatus("trashed"); }} toneClassName="border-[#ffd5dc] bg-[#fff2f4] text-[#c64c62] dark:border-[#4d2130] dark:bg-[#2a1620] dark:text-[#ffb1c0]">Trash</TaskTableChipButton> : null}
         <span className="text-[11px] text-[#8d87a7] dark:text-white/40">Shift+Enter adds a line. Enter saves.</span>
       </div>
+      {currentNote ? <ScratchNoteVoiceMemos note={{ ...currentNote, title: title || null }} userId={userId} voiceMemos={voiceMemos} /> : null}
       {process.env.NODE_ENV === "development" ? (
         <p className="break-all text-[9px] leading-tight text-[#8d87a7] dark:text-white/35">
           pickerSource: {pickerSource} | pickerOpen: {isLinking ? "true" : "false"} | focusedElement: {focusedElement} | lastOpenEvent: {lastOpenEvent} | lastCloseReason: {lastCloseReason} | taskQuery: {taskQuery || "(empty)"} | detectedSlashQuery: {slashDebug.detectedSlashQuery ?? "none"} | typedSlashEvent: {slashDebug.typedSlashEvent ? "yes" : "no"} | resultsCount: {debugResultsCount}
@@ -766,7 +793,7 @@ function ScratchCurrentNoteEditor({
   );
 }
 
-function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOpenTask, onSetStatus, onSetTaskStatus, onTranscribeAudio, onUpdate, tasks, userId }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[] }) {
+function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOpenTask, onSetStatus, onSetTaskStatus, onTranscribeAudio, onUpdate, tasks, userId, voiceMemos }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[] }) {
   const noteTaskIds = linkedTaskIdsForNote(note.id, links);
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(note.title ?? "");
@@ -946,6 +973,7 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
             pickerSource: {pickerSource} | pickerOpen: {isLinking ? "true" : "false"} | focusedElement: {focusedElement} | lastOpenEvent: {lastOpenEvent} | lastCloseReason: {lastCloseReason} | taskQuery: {taskQuery || "(empty)"} | resultsCount: {filterScratchLinkableTasks(tasks, taskQuery, linkedTaskIds).slice(0, 6).length}
           </p>
         ) : null}
+        <ScratchNoteVoiceMemos note={note} userId={userId} voiceMemos={voiceMemos} />
       </article>
     );
   }
@@ -965,6 +993,7 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
           <TaskTableChipButton onClick={() => { void onSetStatus(note.id, "trashed"); }} toneClassName="border-[#ffd5dc] bg-[#fff2f4] text-[#c64c62] dark:border-[#4d2130] dark:bg-[#2a1620] dark:text-[#ffb1c0]">Trash</TaskTableChipButton>
         ) : null}
       </div>
+      <ScratchNoteVoiceMemos note={note} userId={userId} voiceMemos={voiceMemos} />
     </article>
   );
 }

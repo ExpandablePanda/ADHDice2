@@ -19,6 +19,7 @@ export type UseScratchDictationOptions = {
   enabled?: boolean;
   getCaretRange: () => ScratchEditorRange | null;
   isPickerOpen?: boolean;
+  microphoneLabel?: string;
   noteKey: string;
   onBodyChange: (body: string, range: ScratchEditorRange) => void;
   onTranscribeAudio: (audio: Blob) => Promise<string>;
@@ -48,6 +49,7 @@ export function useScratchDictation({
   enabled = true,
   getCaretRange,
   isPickerOpen = false,
+  microphoneLabel = "Scratch Paper microphone",
   noteKey,
   onBodyChange,
   onTranscribeAudio,
@@ -60,6 +62,7 @@ export function useScratchDictation({
     enabled,
     getCaretRange,
     isPickerOpen,
+    microphoneLabel,
     noteKey,
     onBodyChange,
     onTranscribeAudio,
@@ -109,12 +112,13 @@ export function useScratchDictation({
       enabled,
       getCaretRange,
       isPickerOpen,
+      microphoneLabel,
       noteKey,
       onBodyChange,
       onTranscribeAudio,
       userId,
     });
-  }, [body, dismissPicker, editorRef, enabled, getCaretRange, isPickerOpen, noteKey, onBodyChange, onTranscribeAudio, optionsStore, userId]);
+  }, [body, dismissPicker, editorRef, enabled, getCaretRange, isPickerOpen, microphoneLabel, noteKey, onBodyChange, onTranscribeAudio, optionsStore, userId]);
 
   const isSupported = useSyncExternalStore(
     () => () => undefined,
@@ -159,6 +163,7 @@ export function useScratchDictation({
     isRecording: status === "recording",
     isSupported,
     isTranscribing: status === "transcribing",
+    microphoneLabel,
     recordingSeconds,
     selectedDeviceId,
     selectMicrophone,

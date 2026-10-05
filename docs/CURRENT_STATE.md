@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.92`.
+- Current working app version: `7.16.93`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,35 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-05 7.16.93 Voice Memo V1 + Memo Library
+
+Voice Memos are now a first-class saved-audio domain distinct from Dictate.
+Home Scratchpad memos use the `home_scratchpad` origin and render below the
+Scratchpad composer; saved Scratch Paper memos use `scratch_note`, retain a
+nullable source-note reference, and render with that note when available;
+independent memos created in Notes → Voice Memos use `memo_library`. One
+user-scoped `useVoiceMemos` collection feeds Home filtering, Scratch Paper
+attachments, and the global Notes → Voice Memos shell. No new top-level
+`AppPage` was added.
+
+The `supabase/add_voice_memos_7_16_93.sql` source migration adds the
+owner-scoped `adhdice_voice_memos` table, private `adhdice-voice-memos`
+Storage bucket, and authenticated user-folder Storage RLS policies. Browser
+save generates the memo UUID before uploading, writes the durable metadata
+only after a successful upload, and attempts Storage cleanup if metadata
+insertion fails. Delete removes Storage first and leaves the row available for
+retry when Storage removal fails. Playback uses short-lived signed URLs and
+does not persist them.
+
+Voice Memo recording shares the existing MediaRecorder MIME/device helpers and
+user-scoped microphone preference, stops into a temporary local preview, and
+requires an explicit Save Memo or Discard action. Saved audio is transcribed
+only on demand through the existing authenticated `scratch-transcribe`
+authority; Dictate remains temporary audio that inserts text and never creates
+Voice Memo rows or Storage objects. The source migration was not applied.
+Browser QA is blocked until Andrew reviews/applies the migration and deploys
+the required existing transcription authority through the authorized workflow.
 
 ## 2026-10-05 7.16.92 Home Scratchpad Dictation Parity
 

@@ -10,23 +10,29 @@ import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { NOTES_PAGE_SHELL_CANONICAL_LAYOUT, NOTES_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { PageShellHeader } from "./page-shell-header";
 import { ScratchPaperPageSection, type ScratchPaperData } from "./scratch-paper";
+import { VoiceMemoLibrary } from "./voice-memo";
+import type { VoiceMemoData } from "@/hooks/useVoiceMemos";
 
 type NotesPageProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
   onOpenNoteHandled?: () => void;
+  onOpenSourceNote?: (noteId: string) => void;
   openNoteId?: string | null;
   tasks: Task[];
   scratchPaper: ScratchPaperData;
+  voiceMemos: VoiceMemoData;
 };
 
 export function NotesPageComponent({
   client,
   currentUser,
   onOpenNoteHandled,
+  onOpenSourceNote,
   openNoteId,
   tasks,
   scratchPaper,
+  voiceMemos,
 }: NotesPageProps) {
   const layout = usePageShellLayout(currentUser.id, "notes", NOTES_PAGE_SHELL_IDS, NOTES_PAGE_SHELL_CANONICAL_LAYOUT.sizes, NOTES_PAGE_SHELL_CANONICAL_LAYOUT);
   const [notes, setNotes] = useState<Note[]>([]);
@@ -163,7 +169,7 @@ export function NotesPageComponent({
   return (
     <section className="px-4 pb-32">
       <div className="flex items-center justify-between">
-        <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} subtitle="Scratch Paper + Knowledge Base" title="Notes" />
+        <PageShellHeader actions={<PageShellLayoutControls layout={layout} />} subtitle="Scratch Paper + Knowledge Base + Voice Memos" title="Notes" />
         <button
           className="mb-2 flex h-10 w-10 items-center justify-center rounded-full font-bold text-xl bg-[#6f57f6] text-white dark:bg-[#9b87ff] dark:text-[#171127]"
           onClick={openNew}
@@ -274,6 +280,14 @@ export function NotesPageComponent({
           ))}
         </div>
       )}
+      </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
+
+      <PageShell id="notes-voice-memos" label="Voice Memos">
+      <PageShellSurface className="rounded-[1.5rem] border border-[#e9e3f7] bg-[#f8f6ff] p-4 shadow-[0_18px_45px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/[0.03]">
+      <PageShellBody>
+        <VoiceMemoLibrary data={voiceMemos} onOpenSourceNote={onOpenSourceNote} scratchNotes={scratchPaper.notes} />
       </PageShellBody>
       </PageShellSurface>
       </PageShell>

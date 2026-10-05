@@ -26,7 +26,7 @@ export function ScratchDictationControl({ dictation }: { dictation: ScratchDicta
         <label className="inline-flex max-w-[15rem] items-center gap-1 text-[11px] text-[#8d87a7] dark:text-white/45">
           <span>Mic:</span>
           <select
-            aria-label="Scratch Paper microphone"
+            aria-label={dictation.microphoneLabel}
             className="min-w-0 max-w-[12rem] rounded-md border border-[#ddd2ff] bg-white px-1.5 py-1 text-[11px] text-[#69627f] outline-none dark:border-white/15 dark:bg-white/8 dark:text-white/70"
             disabled={dictation.isRecording || isBusy}
             onChange={(event) => dictation.selectMicrophone(event.target.value)}

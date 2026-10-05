@@ -81,6 +81,8 @@ import {
   TaskCurrentStreakChip,
 } from "@/components/ui/task-table-primitives";
 import { ScratchDictationControl } from "./scratch-dictation-control";
+import { VoiceMemoCard, VoiceMemoRecorder } from "./voice-memo";
+import type { VoiceMemoData } from "@/hooks/useVoiceMemos";
 
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
@@ -374,6 +376,7 @@ export function HomePage({
   taskContentFolders,
   userId,
   onTranscribeScratchAudio,
+  voiceMemos,
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
@@ -422,6 +425,7 @@ export function HomePage({
   taskContentFolders: readonly TaskContentFolderRow[];
   userId: string | null;
   onTranscribeScratchAudio: (audio: Blob) => Promise<string>;
+  voiceMemos: VoiceMemoData;
   behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
   behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
   namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
@@ -641,6 +645,7 @@ export function HomePage({
       return { end: textarea.selectionEnd, start: textarea.selectionStart };
     },
     noteKey: "home-scratchpad",
+    microphoneLabel: "Home Scratchpad microphone",
     onBodyChange: handleScratchpadDictationBody,
     onTranscribeAudio: onTranscribeScratchAudio,
     userId,
@@ -1919,6 +1924,7 @@ export function HomePage({
             </label>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               <ScratchDictationControl dictation={scratchpadDictation} />
+              <VoiceMemoRecorder contextLabel="Home Scratchpad" onSaveMemo={voiceMemos.createMemo} originKind="home_scratchpad" userId={userId} />
               <AdhdChip onClick={saveScratchpadDraft} selected type="button">Save</AdhdChip>
               <AdhdChip onClick={moveScratchpadDraftToItems} type="button">Move lines to items</AdhdChip>
               <AdhdChip onClick={parseScratchpadBatch} type="button">Parse Batch Intake</AdhdChip>
@@ -1931,6 +1937,19 @@ export function HomePage({
                   <p className="text-[11px] text-[#7d7598] dark:text-white/55">Prefixes: t Task · w Water · wt Weight · f Focus · b/l/d/s Meal slots. Focus supports category, optional session title, duration, time, and trailing date. Use quotes for commas.</p>
                 </AdhdDropdownPanel> : null}
               </div>
+            </div>
+            {voiceMemos.error ? <p className="mt-2 text-[11px] text-[#c64c62] dark:text-[#ffb1c0]">{voiceMemos.error}</p> : null}
+            <div className="mt-3 grid gap-3">
+              {voiceMemos.memos.filter((memo) => memo.origin_kind === "home_scratchpad").map((memo) => (
+                <VoiceMemoCard
+                  getPlaybackUrl={voiceMemos.getPlaybackUrl}
+                  key={memo.id}
+                  memo={memo}
+                  onDelete={voiceMemos.deleteMemo}
+                  onRename={voiceMemos.renameMemo}
+                  onTranscribe={voiceMemos.transcribeMemo}
+                />
+              ))}
             </div>
             {isCreateOpen && convertingScratchpadItemId ? (
               <div className="mt-3">
