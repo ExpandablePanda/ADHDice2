@@ -3,11 +3,13 @@
 import { useCallback, useEffect, useState, useSyncExternalStore, type RefObject } from "react";
 
 import {
+  getScratchMicrophoneStorageKey,
   restoreScratchEditorOffset,
   ScratchDictationController,
   type ScratchDictationControllerOptions,
+  type ScratchDictationStatus,
   type ScratchEditorRange,
-  type ScratchSpeechRecognitionFactory,
+  type ScratchMicrophoneDevice,
 } from "@/lib/scratch-paper-dictation";
 
 export type UseScratchDictationOptions = {
@@ -19,7 +21,8 @@ export type UseScratchDictationOptions = {
   isPickerOpen?: boolean;
   noteKey: string;
   onBodyChange: (body: string, range: ScratchEditorRange) => void;
-  recognitionFactory?: ScratchSpeechRecognitionFactory;
+  onTranscribeAudio: (audio: Blob) => Promise<string>;
+  userId: string | null;
 };
 
 class ScratchDictationOptionsStore {
@@ -47,7 +50,8 @@ export function useScratchDictation({
   isPickerOpen = false,
   noteKey,
   onBodyChange,
-  recognitionFactory,
+  onTranscribeAudio,
+  userId,
 }: UseScratchDictationOptions) {
   const latestOptions: UseScratchDictationOptions = {
     body,
@@ -58,11 +62,13 @@ export function useScratchDictation({
     isPickerOpen,
     noteKey,
     onBodyChange,
-    recognitionFactory,
+    onTranscribeAudio,
+    userId,
   };
   const [optionsStore] = useState(() => new ScratchDictationOptionsStore(latestOptions));
 
-  const [isListening, setIsListening] = useState(false);
+  const [recordingSeconds, setRecordingSeconds] = useState(0);
+  const [devices, setDevices] = useState<ScratchMicrophoneDevice[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [controller] = useState(() => {
     const controllerOptions: ScratchDictationControllerOptions = {
@@ -85,9 +91,12 @@ export function useScratchDictation({
           });
         }
       },
+      onDevicesChange: setDevices,
       onError: setError,
-      onListeningChange: setIsListening,
-      recognitionFactory,
+      onRecordingTimeChange: setRecordingSeconds,
+      storage: undefined,
+      transcribeAudio: (audio) => optionsStore.get().onTranscribeAudio(audio),
+      microphoneStorageKey: getScratchMicrophoneStorageKey(userId),
     };
     return new ScratchDictationController(controllerOptions);
   });
@@ -102,29 +111,60 @@ export function useScratchDictation({
       isPickerOpen,
       noteKey,
       onBodyChange,
-      recognitionFactory,
+      onTranscribeAudio,
+      userId,
     });
-  }, [body, dismissPicker, editorRef, enabled, getCaretRange, isPickerOpen, noteKey, onBodyChange, optionsStore, recognitionFactory]);
+  }, [body, dismissPicker, editorRef, enabled, getCaretRange, isPickerOpen, noteKey, onBodyChange, onTranscribeAudio, optionsStore, userId]);
 
   const isSupported = useSyncExternalStore(
     () => () => undefined,
     () => controller.isSupported,
     () => false,
   );
+  const status = useSyncExternalStore(
+    (listener) => controller.subscribe(listener),
+    () => controller.status,
+    () => "unsupported" as ScratchDictationStatus,
+  );
+  const selectedDeviceId = useSyncExternalStore(
+    (listener) => controller.subscribe(listener),
+    () => controller.selectedMicrophoneDeviceId,
+    () => "",
+  );
   useEffect(() => {
-    if (!enabled) controller.stop();
+    void controller.refreshDevices();
+  }, [controller]);
+  useEffect(() => {
+    if (!enabled) controller.cancel();
   }, [controller, enabled]);
-  useEffect(() => () => controller.stop(), [controller]);
+  useEffect(() => () => controller.cancel(), [controller]);
 
-  const start = useCallback(() => controller.start(), [controller]);
+  const start = useCallback(() => { void controller.start(); }, [controller]);
   const stop = useCallback(() => controller.stop(), [controller]);
+  const cancel = useCallback(() => controller.cancel(), [controller]);
+  const selectMicrophone = useCallback((deviceId: string) => controller.setSelectedMicrophoneDevice(deviceId), [controller]);
   const toggle = useCallback(() => {
-    if (controller.isListening) {
+    if (controller.isRecording) {
       controller.stop();
-    } else {
-      controller.start();
+    } else if (!controller.isTranscribing) {
+      void controller.start();
     }
   }, [controller]);
 
-  return { error, isListening, isSupported, start, stop, toggle };
+  return {
+    cancel,
+    devices,
+    error,
+    isListening: status === "recording" || status === "requesting_permission",
+    isRecording: status === "recording",
+    isSupported,
+    isTranscribing: status === "transcribing",
+    recordingSeconds,
+    selectedDeviceId,
+    selectMicrophone,
+    start,
+    status,
+    stop,
+    toggle,
+  };
 }

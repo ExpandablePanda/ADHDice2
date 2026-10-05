@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.89`.
+- Current working app version: `7.16.90`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,24 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-05 7.16.90 Scratch Paper Recorded Audio Transcription
+
+Scratch Paper dictation now records temporary microphone audio through the
+browser `MediaRecorder`, sends one authenticated multipart upload to the
+source-only `scratch-transcribe` Supabase Edge Function, and inserts only the
+validated returned transcript through the existing serialized caret/token-safe
+path. Browser SpeechRecognition, `window.SpeechRecognition`, and
+`window.webkitSpeechRecognition` are no longer used. The recorder supports
+audio-input selection with a user-scoped local preference, capability-based
+Safari/Chromium MIME selection, a bounded recording duration, and complete
+MediaStream/Blob cleanup. No audio is persisted in ADHDice or Supabase Storage;
+only Scratch note text is saved through the existing explicit manual Save Note
+path. The Edge Function requires `OPENAI_API_KEY` as a server-side secret and
+uses the isolated `gpt-4o-mini-transcribe` provider model. Production Edge
+deployment and browser microphone/transcription QA remain pending Andrew's
+authorized workflow. This release supersedes 7.16.88's browser Web Speech
+implementation.
 
 ## 2026-10-05 7.16.89 Task Creation Date Defaults and Folder Metadata Composer
 

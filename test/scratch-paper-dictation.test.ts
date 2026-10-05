@@ -3,35 +3,79 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import {
-  createScratchSpeechRecognition,
-  insertScratchDictationText,
+  enumerateScratchAudioInputDevices,
+  filterScratchAudioInputDevices,
+  getScratchMicrophoneStorageKey,
+  isScratchRecordingSupported,
+  MAX_SCRATCH_RECORDING_SECONDS,
   ScratchDictationController,
+  selectScratchRecordingMimeType,
+  type ScratchDictationStatus,
   type ScratchEditorRange,
-  type ScratchSpeechRecognition,
-  type ScratchSpeechRecognitionErrorEvent,
-  type ScratchSpeechRecognitionResult,
-  type ScratchSpeechRecognitionResultEvent,
+  type ScratchMediaDevices,
+  type ScratchMediaRecorder,
+  type ScratchMediaRecorderConstructor,
+  type ScratchMediaStream,
 } from "../src/lib/scratch-paper-dictation.ts";
 import { buildScratchTaskLinkToken } from "../src/lib/scratch-paper-task-links.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 
 const scratchSource = readFileSync(new URL("../src/components/task-app/scratch-paper.tsx", import.meta.url), "utf8");
 const dictationHookSource = readFileSync(new URL("../src/hooks/useScratchDictation.ts", import.meta.url), "utf8");
+const transcriptionClientSource = readFileSync(new URL("../src/lib/scratch-paper-transcription.ts", import.meta.url), "utf8");
 
 function range(start: number, end = start): ScratchEditorRange {
   return { end, start };
 }
 
-class FakeRecognition implements ScratchSpeechRecognition {
-  continuous = false;
-  interimResults = true;
-  lang = "";
-  maxAlternatives = 0;
-  onend: (() => void) | null = null;
-  onerror: ((event: ScratchSpeechRecognitionErrorEvent) => void) | null = null;
-  onresult: ((event: ScratchSpeechRecognitionResultEvent) => void) | null = null;
+function flushAsyncWork() {
+  return new Promise<void>((resolve) => queueMicrotask(() => queueMicrotask(resolve)));
+}
+
+class FakeStorage {
+  private readonly values = new Map<string, string>();
+
+  constructor(initial: Record<string, string> = {}) {
+    for (const [key, value] of Object.entries(initial)) this.values.set(key, value);
+  }
+
+  getItem(key: string) {
+    return this.values.get(key) ?? null;
+  }
+
+  setItem(key: string, value: string) {
+    this.values.set(key, value);
+  }
+}
+
+class FakeStream implements ScratchMediaStream {
+  readonly tracks = [{ stopCalls: 0, stop() { this.stopCalls += 1; } }];
+
+  getTracks() {
+    return this.tracks;
+  }
+}
+
+class FakeRecorder implements ScratchMediaRecorder {
+  static supportedMimeTypes = new Set(["audio/webm;codecs=opus", "audio/webm"]);
+  static last: FakeRecorder | null = null;
+  static isTypeSupported(mimeType: string) {
+    return FakeRecorder.supportedMimeTypes.has(mimeType);
+  }
+
+  readonly mimeType: string;
+  readonly stream: ScratchMediaStream;
+  ondataavailable: ((event: { data: Blob }) => void) | null = null;
+  onerror: ((event: unknown) => void) | null = null;
+  onstop: (() => void) | null = null;
   startCalls = 0;
   stopCalls = 0;
+
+  constructor(stream: ScratchMediaStream, options?: MediaRecorderOptions) {
+    this.stream = stream;
+    this.mimeType = options?.mimeType ?? "audio/webm";
+    FakeRecorder.last = this;
+  }
 
   start() {
     this.startCalls += 1;
@@ -39,251 +83,250 @@ class FakeRecognition implements ScratchSpeechRecognition {
 
   stop() {
     this.stopCalls += 1;
+    this.onstop?.();
   }
 
-  emit(transcript: string, isFinal: boolean, resultIndex = 0) {
-    const result: ScratchSpeechRecognitionResult = { isFinal, 0: { transcript } };
-    this.onresult?.({ resultIndex, results: [result] });
-  }
-
-  emitError(error?: string) {
-    this.onerror?.({ error });
-  }
-
-  emitEnd() {
-    this.onend?.();
+  emitChunk(text: string) {
+    this.ondataavailable?.({ data: new Blob([text], { type: this.mimeType }) });
   }
 }
 
+const fakeRecorderConstructor = FakeRecorder as unknown as ScratchMediaRecorderConstructor;
+
 function controllerHarness({
-  body: initialBody,
+  body: initialBody = "",
   caret = null,
+  devices = [{ deviceId: "mic-1", kind: "audioinput", label: "Desk microphone" }],
   noteKey: initialNoteKey = "note-a",
-  pickerOpen = false,
+  storage,
+  transcribeAudio = async () => "transcript",
 }: {
-  body: string;
+  body?: string;
   caret?: ScratchEditorRange | null;
+  devices?: Array<{ deviceId: string; kind: string; label: string }>;
   noteKey?: string;
-  pickerOpen?: boolean;
-}) {
+  storage?: FakeStorage;
+  transcribeAudio?: (audio: Blob) => Promise<string>;
+} = {}) {
   let body = initialBody;
   let currentCaret = caret;
   let noteKey = initialNoteKey;
-  let isPickerOpen = pickerOpen;
-  let dirtyCount = 0;
-  let saveCount = 0;
-  let isListening = false;
+  let isPickerOpen = false;
   let error: string | null = null;
-  let dismissCount = 0;
-  const recognition = new FakeRecognition();
-  const controller = new ScratchDictationController({
-    dismissPicker: () => {
-      dismissCount += 1;
-      isPickerOpen = false;
+  let status: ScratchDictationStatus = "idle";
+  const submittedAudio: Blob[] = [];
+  const requestedConstraints: MediaStreamConstraints[] = [];
+  const stream = new FakeStream();
+  const mediaDevices: ScratchMediaDevices = {
+    enumerateDevices: async () => devices,
+    getUserMedia: async (constraints) => {
+      requestedConstraints.push(constraints);
+      return stream;
     },
+  };
+  const controller = new ScratchDictationController({
+    dismissPicker: () => { isPickerOpen = false; },
     getBody: () => body,
     getCaretRange: () => currentCaret,
     getNoteKey: () => noteKey,
     isPickerOpen: () => isPickerOpen,
+    mediaDevices,
+    mediaRecorderConstructor: fakeRecorderConstructor,
+    microphoneStorageKey: getScratchMicrophoneStorageKey("user-a"),
     onBodyChange: (nextBody, nextRange) => {
       body = nextBody;
       currentCaret = nextRange;
-      dirtyCount += 1;
     },
     onError: (nextError) => { error = nextError; },
-    onListeningChange: (nextListening) => { isListening = nextListening; },
-    recognitionFactory: () => recognition,
+    onStatusChange: (nextStatus) => { status = nextStatus; },
+    storage,
+    transcribeAudio: async (audio) => {
+      submittedAudio.push(audio);
+      return transcribeAudio(audio);
+    },
   });
 
   return {
     controller,
     get body() { return body; },
-    get caret() { return currentCaret; },
-    get dirtyCount() { return dirtyCount; },
-    get dismissCount() { return dismissCount; },
+    get currentCaret() { return currentCaret; },
     get error() { return error; },
-    get isListening() { return isListening; },
-    get noteKey() { return noteKey; },
-    get recognition() { return recognition; },
-    get saveCount() { return saveCount; },
-    set body(nextBody: string) { body = nextBody; },
-    set caret(nextCaret: ScratchEditorRange | null) { currentCaret = nextCaret; },
-    set noteKey(nextNoteKey: string) { noteKey = nextNoteKey; },
-    set saveCount(nextSaveCount: number) { saveCount = nextSaveCount; },
+    get requestedConstraints() { return requestedConstraints; },
+    get status() { return status; },
+    get submittedAudio() { return submittedAudio; },
+    get stream() { return stream; },
+    set body(value: string) { body = value; },
+    set noteKey(value: string) { noteKey = value; },
+    set pickerOpen(value: boolean) { isPickerOpen = value; },
   };
 }
 
-test("dictation helper inserts at the beginning, end, and middle of plain text", () => {
-  assert.deepEqual(insertScratchDictationText("Hello", range(0), "Start"), {
-    body: "Start Hello",
-    caretOffset: 6,
-  });
-  assert.deepEqual(insertScratchDictationText("Hello", range(5), "world"), {
-    body: "Hello world",
-    caretOffset: 11,
-  });
-  assert.deepEqual(insertScratchDictationText("Hello world", range(5), "beautiful"), {
-    body: "Hello beautiful world",
-    caretOffset: 15,
-  });
+test("recording support requires media capture and MediaRecorder", () => {
+  assert.equal(isScratchRecordingSupported(null, fakeRecorderConstructor), false);
+  assert.equal(isScratchRecordingSupported({ getUserMedia: async () => new FakeStream(), enumerateDevices: async () => [] }, null), false);
+  assert.equal(isScratchRecordingSupported({ getUserMedia: async () => new FakeStream(), enumerateDevices: async () => [] }, fakeRecorderConstructor), true);
 });
 
-test("dictation helper replaces an ordinary selected range", () => {
-  assert.deepEqual(insertScratchDictationText("Hello cruel world", range(6, 11), "kind"), {
-    body: "Hello kind world",
-    caretOffset: 10,
-  });
+test("audio device enumeration filters to audioinput devices", async () => {
+  const devices = [
+    { deviceId: "mic", kind: "audioinput", label: "Mic" },
+    { deviceId: "camera", kind: "videoinput", label: "Camera" },
+    { deviceId: "", kind: "audioinput", label: "Default" },
+  ];
+  assert.deepEqual(filterScratchAudioInputDevices(devices), [{ deviceId: "mic", label: "Mic" }]);
+  assert.deepEqual(await enumerateScratchAudioInputDevices({ enumerateDevices: async () => devices, getUserMedia: async () => new FakeStream() }), [{ deviceId: "mic", label: "Mic" }]);
 });
 
-test("dictation helper preserves Task tokens before and after insertion", () => {
+test("selected microphone deviceId is used and only audio permission is requested", async () => {
+  const storageKey = getScratchMicrophoneStorageKey("user-a")!;
+  const harness = controllerHarness({ storage: new FakeStorage({ [storageKey]: "mic-1" }) });
+  await harness.controller.start();
+  assert.deepEqual(harness.requestedConstraints[0], { audio: { deviceId: { exact: "mic-1" } }, video: false });
+  assert.equal(harness.status, "recording");
+  harness.controller.cancel();
+});
+
+test("a missing stored microphone falls back to the default microphone", async () => {
+  const storageKey = getScratchMicrophoneStorageKey("user-a")!;
+  const storage = new FakeStorage({ [storageKey]: "removed-mic" });
+  const harness = controllerHarness({ storage });
+  await harness.controller.refreshDevices();
+  assert.equal(harness.controller.selectedMicrophoneDeviceId, "");
+  await harness.controller.start();
+  assert.deepEqual(harness.requestedConstraints[0], { audio: true, video: false });
+  harness.controller.cancel();
+});
+
+test("MediaRecorder MIME selection is capability based and can fall back to browser default", () => {
+  assert.equal(selectScratchRecordingMimeType(fakeRecorderConstructor), "audio/webm;codecs=opus");
+  assert.equal(selectScratchRecordingMimeType({ isTypeSupported: () => false } as ScratchMediaRecorderConstructor), "");
+});
+
+test("recording starts, stop combines chunks, stops every track, and submits one Blob", async () => {
+  const harness = controllerHarness();
+  await harness.controller.start();
+  const recorder = FakeRecorder.last!;
+  recorder.emitChunk("one ");
+  recorder.emitChunk("two");
+  harness.controller.stop();
+  await flushAsyncWork();
+  assert.equal(recorder.startCalls, 1);
+  assert.equal(recorder.stopCalls, 1);
+  assert.equal(harness.stream.tracks[0].stopCalls, 1);
+  assert.equal(harness.submittedAudio.length, 1);
+  assert.equal(await harness.submittedAudio[0]!.text(), "one two");
+  assert.equal(harness.status, "idle");
+});
+
+test("cancelling an active recording stops the recorder and tracks without submitting audio", async () => {
+  const harness = controllerHarness();
+  await harness.controller.start();
+  const recorder = FakeRecorder.last!;
+  harness.controller.cancel();
+  await flushAsyncWork();
+  assert.equal(recorder.stopCalls, 1);
+  assert.equal(harness.stream.tracks[0].stopCalls, 1);
+  assert.equal(harness.submittedAudio.length, 0);
+  assert.equal(harness.status, "idle");
+});
+
+test("successful transcript uses the saved caret and preserves Task tokens", async () => {
   const task = createTask({ id: "task-1", status: "pending", title: "Dentist" });
   const token = buildScratchTaskLinkToken(task);
   const body = `Call ${token} tomorrow`;
-  const afterToken = insertScratchDictationText(body, range(`Call ${token}`.length), "because I need to reschedule");
-  assert.equal(afterToken.body, `Call ${token} because I need to reschedule tomorrow`);
-  assert.equal(afterToken.body.includes(token), true);
-
-  const beforeToken = insertScratchDictationText(`tomorrow ${token}`, range(9), "today");
-  assert.equal(beforeToken.body, `tomorrow today ${token}`);
-  assert.equal(beforeToken.body.includes(token), true);
-});
-
-test("dictation helper never splits or corrupts a Task token", () => {
-  const task = createTask({ id: "task-2", status: "pending", title: "Laundry" });
-  const token = buildScratchTaskLinkToken(task);
-  const insertion = insertScratchDictationText(token, range(4), "carefully");
-  assert.equal(insertion.body, `carefully ${token}`);
-  assert.equal(insertion.body.includes(token), true);
-});
-
-test("final transcript chunks append in sequence while interim results are ignored", () => {
-  const harness = controllerHarness({ body: "" });
-  harness.controller.start();
-  harness.recognition.emit("interim", false);
-  assert.equal(harness.body, "");
-  harness.recognition.emit("first", true);
-  harness.recognition.emit("second", true);
-  assert.equal(harness.body, "first second");
-  assert.equal(harness.dirtyCount, 2);
-  assert.equal(harness.saveCount, 0);
-});
-
-test("dictation without a saved caret defaults to the note end", () => {
-  const harness = controllerHarness({ body: "Existing text", caret: null });
-  harness.controller.start();
-  harness.recognition.emit("more", true);
-  assert.equal(harness.body, "Existing text more");
-  assert.deepEqual(harness.caret, range(harness.body.length));
-});
-
-test("starting dictation dismisses the Task picker and dictated slash stays ordinary text", () => {
-  const harness = controllerHarness({ body: "", pickerOpen: true });
-  harness.controller.start();
-  assert.equal(harness.dismissCount, 1);
-  harness.recognition.emit("/", true);
-  assert.equal(harness.body, "/");
-  assert.equal(harness.dismissCount, 1);
-  assert.match(scratchSource, /if \(slashCommand\) \{\s+openTaskPicker\(slashCommand/);
-});
-
-test("recognition error preserves text and exits Listening state", () => {
-  const harness = controllerHarness({ body: "already dictated" });
-  harness.controller.start();
-  harness.recognition.emit("safe", true);
-  const dictatedBody = harness.body;
-  harness.recognition.emitError("not-allowed");
-  assert.equal(harness.body, dictatedBody);
-  assert.equal(harness.isListening, false);
-  assert.equal(harness.error, "Microphone permission was denied.");
-});
-
-test("service end exits Listening state and explicit stop ends recognition", () => {
-  const harness = controllerHarness({ body: "" });
-  harness.controller.start();
-  harness.recognition.emitEnd();
-  assert.equal(harness.isListening, false);
-
-  harness.controller.start();
+  const insertionOffset = body.indexOf(" tomorrow");
+  const harness = controllerHarness({ body, caret: range(insertionOffset), transcribeAudio: async () => "because I need to reschedule" });
+  await harness.controller.start();
+  FakeRecorder.last!.emitChunk("audio");
   harness.controller.stop();
-  assert.equal(harness.isListening, false);
-  assert.equal(harness.recognition.stopCalls, 1);
+  await flushAsyncWork();
+  assert.equal(harness.body, `Call ${token} because I need to reschedule tomorrow`);
+  assert.equal(harness.body.includes(token), true);
+  assert.equal(harness.currentCaret?.start, harness.body.indexOf(" tomorrow"));
 });
 
-test("switching notes stops and fences the old recognition session", () => {
-  const harness = controllerHarness({ body: "Note A" });
-  harness.controller.start();
-  const oldBody = harness.body;
-  harness.noteKey = "note-b";
+test("blank transcript does not mutate the note and shows a neutral message", async () => {
+  const harness = controllerHarness({ body: "keep this", transcribeAudio: async () => "   " });
+  await harness.controller.start();
+  FakeRecorder.last!.emitChunk("audio");
   harness.controller.stop();
-  harness.recognition.emit("late result", true);
-  assert.equal(harness.body, oldBody);
-  assert.equal(harness.recognition.stopCalls, 1);
+  await flushAsyncWork();
+  assert.equal(harness.body, "keep this");
+  assert.equal(harness.error, "No speech detected.");
+  assert.equal(harness.status, "error");
 });
 
-test("starting a New Note can cleanly stop the old session", () => {
-  const harness = controllerHarness({ body: "Old note", noteKey: "note-a" });
-  harness.controller.start();
-  harness.noteKey = "new";
+test("transcription error preserves the note", async () => {
+  const harness = controllerHarness({ body: "keep this", transcribeAudio: async () => { throw new Error("provider secret"); } });
+  await harness.controller.start();
+  FakeRecorder.last!.emitChunk("audio");
   harness.controller.stop();
-  harness.recognition.emit("late", true);
-  assert.equal(harness.body, "Old note");
-  assert.equal(harness.isListening, false);
+  await flushAsyncWork();
+  assert.equal(harness.body, "keep this");
+  assert.equal(harness.error, "Transcription failed. Try again.");
 });
 
-test("unsupported browser fails gracefully", () => {
-  const harness = controllerHarness({ body: "" });
-  const errors: string[] = [];
-  const unsupported = new ScratchDictationController({
+test("permission denial fails cleanly", async () => {
+  const harness = controllerHarness();
+  const deniedDevices: ScratchMediaDevices = {
+    enumerateDevices: async () => [],
+    getUserMedia: async () => { throw new DOMException("denied", "NotAllowedError"); },
+  };
+  const controller = new ScratchDictationController({
     getBody: () => "",
     getCaretRange: () => null,
     getNoteKey: () => "note-a",
+    mediaDevices: deniedDevices,
+    mediaRecorderConstructor: fakeRecorderConstructor,
     onBodyChange: () => undefined,
-    onError: (message) => { if (message) errors.push(message); },
-    onListeningChange: () => undefined,
+    onError: (message) => { if (message) harness.body = message; },
+    onStatusChange: () => undefined,
+    transcribeAudio: async () => "",
   });
-  assert.equal(unsupported.isSupported, false);
-  assert.equal(unsupported.start(), false);
-  assert.deepEqual(errors, ["Voice dictation is not available in this browser."]);
-  assert.equal(harness.controller.isSupported, true);
+  assert.equal(await controller.start(), false);
+  assert.equal(harness.body, "Microphone permission was denied.");
 });
 
-test("the browser adapter configures continuous final-only recognition", () => {
-  const originalWindow = globalThis.window;
-  const originalNavigator = globalThis.navigator;
-  class BrowserRecognition extends FakeRecognition {}
-  Object.defineProperty(globalThis, "window", { configurable: true, value: { SpeechRecognition: BrowserRecognition } });
-  Object.defineProperty(globalThis, "navigator", { configurable: true, value: { language: "en-GB" } });
-  try {
-    const recognition = createScratchSpeechRecognition();
-    assert.ok(recognition);
-    assert.equal(recognition.continuous, true);
-    assert.equal(recognition.interimResults, false);
-    assert.equal(recognition.lang, "en-GB");
-    assert.equal(recognition.maxAlternatives, 1);
-  } finally {
-    Object.defineProperty(globalThis, "window", { configurable: true, value: originalWindow });
-    Object.defineProperty(globalThis, "navigator", { configurable: true, value: originalNavigator });
-  }
+test("note switching fences a late transcript and cancels recording", async () => {
+  let resolveTranscript: ((value: string) => void) | null = null;
+  const harness = controllerHarness({ body: "Note A", transcribeAudio: () => new Promise((resolve) => { resolveTranscript = resolve; }) });
+  await harness.controller.start();
+  FakeRecorder.last!.emitChunk("audio");
+  harness.controller.stop();
+  harness.noteKey = "note-b";
+  harness.controller.cancel();
+  resolveTranscript?.("late transcript");
+  await flushAsyncWork();
+  assert.equal(harness.body, "Note A");
+  assert.equal(harness.stream.tracks[0].stopCalls, 1);
 });
 
-test("Scratch Paper exposes one shared Dictate control for current and existing-note edit modes", () => {
+test("New Note, Resolve, Trash, and unmount cleanup use cancellation rather than transcription", () => {
+  assert.match(scratchSource, /cancelDictation\(\);/);
+  assert.match(scratchSource, /loadNote\(null\)/);
+  assert.match(scratchSource, /changeCurrentStatus\(status: ScratchNoteStatus\)[\s\S]{0,100}cancelDictation\(\);/);
+  assert.match(scratchSource, /dictation\.cancel\(\); void onUpdate/);
+  assert.match(dictationHookSource, /if \(!enabled\) controller\.cancel\(\)/);
+  assert.match(dictationHookSource, /useEffect\(\(\) => \(\) => controller\.cancel\(\), \[controller\]\)/);
+});
+
+test("the recorder lifecycle has a bounded maximum and no Web Speech dependency", () => {
+  assert.equal(MAX_SCRATCH_RECORDING_SECONDS, 120);
+  assert.doesNotMatch(readFileSync(new URL("../src/lib/scratch-paper-dictation.ts", import.meta.url), "utf8"), /SpeechRecognition|webkitSpeechRecognition/);
+  assert.doesNotMatch(dictationHookSource, /SpeechRecognition|webkitSpeechRecognition/);
+  assert.doesNotMatch(scratchSource, /SpeechRecognition|webkitSpeechRecognition|Listening…/);
+});
+
+test("audio is sent only to the transcription function and never to Storage", () => {
+  assert.match(transcriptionClientSource, /functions\.invoke<unknown>\("scratch-transcribe"/);
+  assert.doesNotMatch(transcriptionClientSource, /\.storage\b|audio-upload|audio recording/i);
+});
+
+test("Scratch Paper keeps one shared recorder implementation for both editors and preserves manual save/slash links", () => {
   assert.equal((scratchSource.match(/<ScratchDictationControl dictation=\{dictation\} \/>/g) ?? []).length, 2);
-  assert.match(scratchSource, /enabled: isEditing/);
+  assert.equal((scratchSource.match(/useScratchDictation\(/g) ?? []).length, 2);
+  assert.match(scratchSource, /if \(slashCommand\) \{\s+openTaskPicker\(slashCommand/);
   assert.match(scratchSource, /onUpdate\(note\.id, \{ body, linkedTaskIds, title \}\)/);
   assert.match(scratchSource, /onCreate\(\{ body, linkedTaskIds, title \}\)/);
-});
-
-test("dictation lifecycle cleanup is wired through the shared hook", () => {
-  assert.match(dictationHookSource, /useEffect\(\(\) => \(\) => controller\.stop\(\), \[controller\]\)/);
-  assert.match(dictationHookSource, /if \(!enabled\) controller\.stop\(\)/);
-  assert.match(scratchSource, /stopDictation\(\);\s+const hasDraftContent/);
-});
-
-test("Scratch Task chips retain render, open, and status-change bindings", () => {
-  assert.match(scratchSource, /data-task-token=\{token\}/);
-  assert.match(scratchSource, /onOpenTask=\{onOpenTask\}/);
-  assert.match(scratchSource, /onSetTaskStatus=\{onSetTaskStatus\}/);
-  assert.match(scratchSource, /const selection = getScratchEditorSelection\(editor\)/);
-  assert.match(scratchSource, /onSelectionRangeChange\(selection\.range\)/);
-  assert.match(scratchSource, /onKeyDown=\{\(event\) => \{/);
+  assert.match(scratchSource, /<ScratchInlineEditor/);
 });

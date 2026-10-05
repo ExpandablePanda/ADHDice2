@@ -29,8 +29,10 @@ type ScratchPaperActions = {
   onOpenTask: (taskId: string) => void;
   onSetStatus: (noteId: string, status: ScratchNoteStatus) => Promise<boolean>;
   onSetTaskStatus: (taskId: string, status: Task["status"]) => void;
+  onTranscribeAudio: (audio: Blob) => Promise<string>;
   getTaskStatusOptions?: TaskStatusOptionsResolver;
   onUpdate: (noteId: string, draft: ScratchNoteDraft) => Promise<boolean>;
+  userId: string | null;
 };
 
 type ScratchSlashDebugState = {
@@ -56,22 +58,47 @@ type ScratchDictationState = ReturnType<typeof useScratchDictation>;
 
 function ScratchDictationControl({ dictation }: { dictation: ScratchDictationState }) {
   const isUnavailable = !dictation.isSupported;
+  const isBusy = dictation.status === "requesting_permission" || dictation.status === "transcribing";
+  const recordingLabel = `Recording ${String(Math.floor(dictation.recordingSeconds / 60)).padStart(2, "0")}:${String(dictation.recordingSeconds % 60).padStart(2, "0")}`;
+  const buttonLabel = dictation.isRecording
+    ? recordingLabel
+    : dictation.status === "requesting_permission"
+      ? "Requesting microphone…"
+      : dictation.isTranscribing
+        ? "Transcribing…"
+        : "Dictate";
+  const message = dictation.error ?? (isUnavailable ? "Voice recording unavailable in this browser." : null);
   return (
     <>
+      {dictation.isSupported ? (
+        <label className="inline-flex max-w-[15rem] items-center gap-1 text-[11px] text-[#8d87a7] dark:text-white/45">
+          <span>Mic:</span>
+          <select
+            aria-label="Scratch Paper microphone"
+            className="min-w-0 max-w-[12rem] rounded-md border border-[#ddd2ff] bg-white px-1.5 py-1 text-[11px] text-[#69627f] outline-none dark:border-white/15 dark:bg-white/8 dark:text-white/70"
+            disabled={dictation.isRecording || isBusy}
+            onChange={(event) => dictation.selectMicrophone(event.target.value)}
+            value={dictation.selectedDeviceId}
+          >
+            <option value="">Default microphone</option>
+            {dictation.devices.map((device) => <option key={device.deviceId} value={device.deviceId}>{device.label}</option>)}
+          </select>
+        </label>
+      ) : null}
       <AdhdChip
-        aria-label={dictation.isListening ? "Stop dictation" : "Dictate note body"}
-        aria-pressed={dictation.isListening}
-        disabled={isUnavailable}
-        icon={dictation.isListening ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
+        aria-label={dictation.isRecording ? "Stop recording" : "Dictate note body"}
+        aria-pressed={dictation.isRecording}
+        disabled={isUnavailable || isBusy}
+        icon={dictation.isRecording ? <MicOff className="h-3 w-3" /> : <Mic className="h-3 w-3" />}
         onClick={dictation.toggle}
         onMouseDown={(event) => event.preventDefault()}
         onPointerDown={(event) => event.preventDefault()}
         title={isUnavailable ? "Voice dictation is not available in this browser." : undefined}
-        toneClassName={dictation.isListening ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff]" : undefined}
+        toneClassName={dictation.isRecording ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff]" : undefined}
       >
-        {dictation.isListening ? "Listening…" : "Dictate"}
+        {buttonLabel}
       </AdhdChip>
-      {dictation.error ? <span aria-live="polite" className="text-[11px] text-[#c64c62] dark:text-[#ffb1c0]">{dictation.error}</span> : null}
+      {message ? <span aria-live="polite" className={`text-[11px] ${dictation.error ? "text-[#c64c62] dark:text-[#ffb1c0]" : "text-[#8d87a7] dark:text-white/45"}`}>{message}</span> : null}
     </>
   );
 }
@@ -488,9 +515,11 @@ function ScratchCurrentNoteEditor({
   onOpenTask,
   onSetStatus,
   onSetTaskStatus,
+  onTranscribeAudio,
   onUpdate,
   links,
   tasks,
+  userId,
 }: ScratchPaperData & { onCurrentNoteIdChange: (noteId: string | null) => void }) {
   const activeNotes = useMemo(() => notes.filter((note) => note.status === "active"), [notes]);
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
@@ -585,11 +614,13 @@ function ScratchCurrentNoteEditor({
     isPickerOpen: isLinking,
     noteKey: currentNoteId ?? "new",
     onBodyChange: handleDictationBody,
+    onTranscribeAudio,
+    userId,
   });
-  const { stop: stopDictation } = dictation;
+  const { cancel: cancelDictation } = dictation;
 
   const loadNote = useCallback((note: ScratchNote | null) => {
-    stopDictation();
+    cancelDictation();
     const noteTaskIds = note ? linkedTaskIdsForNote(note.id, links) : [];
     setCurrentNoteId(note?.id ?? null);
     onCurrentNoteIdChange(note?.id ?? null);
@@ -605,7 +636,7 @@ function ScratchCurrentNoteEditor({
     setLastOpenEvent("none");
     setLastCloseReason("none");
     setIsDirty(false);
-  }, [links, onCurrentNoteIdChange, stopDictation, tasks]);
+  }, [cancelDictation, links, onCurrentNoteIdChange, tasks]);
 
   useEffect(() => {
     let noteToLoad: ScratchNote | null | undefined;
@@ -682,14 +713,14 @@ function ScratchCurrentNoteEditor({
 
   async function switchTo(note: ScratchNote | undefined) {
     if (!note || note.id === currentNoteId) return;
-    stopDictation();
+    cancelDictation();
     const hasDraftContent = Boolean(body.trim() || title.trim() || linkedTaskIds.length > 0);
     if (isDirty && (currentNoteId || hasDraftContent) && !await save()) return;
     loadNote(note);
   }
 
   async function startNewNote() {
-    stopDictation();
+    cancelDictation();
     const hasDraftContent = Boolean(body.trim() || title.trim() || linkedTaskIds.length > 0);
     if (isDirty && (currentNoteId || hasDraftContent) && !await save()) return;
     initializedRef.current = true;
@@ -697,7 +728,7 @@ function ScratchCurrentNoteEditor({
   }
 
   async function changeCurrentStatus(status: ScratchNoteStatus) {
-    stopDictation();
+    cancelDictation();
     if (!currentNoteId || (isDirty && !await save()) || !await onSetStatus(currentNoteId, status)) return;
     const nextNote = activeNotes.find((note) => note.id !== currentNoteId);
     loadNote(nextNote ?? null);
@@ -784,7 +815,7 @@ function ScratchCurrentNoteEditor({
   );
 }
 
-function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOpenTask, onSetStatus, onSetTaskStatus, onUpdate, tasks }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[] }) {
+function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOpenTask, onSetStatus, onSetTaskStatus, onTranscribeAudio, onUpdate, tasks, userId }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[] }) {
   const noteTaskIds = linkedTaskIdsForNote(note.id, links);
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(note.title ?? "");
@@ -896,6 +927,8 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
     isPickerOpen: isLinking,
     noteKey: note.id,
     onBodyChange: handleDictationBody,
+    onTranscribeAudio,
+    userId,
   });
 
   if (isEditing) {
@@ -951,9 +984,9 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
           >
             / Link Task
           </TaskTableChipButton>
-          <TaskTableChipButton onClick={() => { dictation.stop(); setIsDirty(false); setIsEditing(false); }}>Cancel</TaskTableChipButton>
+          <TaskTableChipButton onClick={() => { dictation.cancel(); setIsDirty(false); setIsEditing(false); }}>Cancel</TaskTableChipButton>
           <TaskTableChipButton
-            onClick={() => { dictation.stop(); void onUpdate(note.id, { body, linkedTaskIds, title }).then((saved) => { if (saved) { setIsDirty(false); setIsEditing(false); } }); }}
+            onClick={() => { dictation.cancel(); void onUpdate(note.id, { body, linkedTaskIds, title }).then((saved) => { if (saved) { setIsDirty(false); setIsEditing(false); } }); }}
             toneClassName="border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff]"
           >Save</TaskTableChipButton>
         </div>

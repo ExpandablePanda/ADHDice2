@@ -56,12 +56,12 @@ function resolveSafeInsertionRange(body: string, range: ScratchEditorRange): Scr
 
 function needsBoundarySpace(left: string, right: string) {
   if (!left || !right || /\s$/.test(left) || /^\s/.test(right)) return false;
-  if (/[([{\"']$/.test(left) || /^[\])},.!?;:]/.test(right)) return false;
+  if (/[([{"']$/.test(left) || /^[\])},.!?;:]/.test(right)) return false;
   return true;
 }
 
 /**
- * Inserts final speech text into the serialized Scratch Paper body.
+ * Inserts final transcription text into the serialized Scratch Paper body.
  * Task tokens are treated as indivisible ranges and are never partially replaced.
  */
 export function insertScratchDictationText(
@@ -123,60 +123,154 @@ export function restoreScratchEditorOffset(editor: HTMLElement, offset: number) 
   selection.addRange(range);
 }
 
-export type ScratchSpeechRecognitionResult = {
-  isFinal: boolean;
-  [index: number]: { transcript?: string } | undefined;
+export type ScratchDictationStatus =
+  | "idle"
+  | "requesting_permission"
+  | "recording"
+  | "transcribing"
+  | "error"
+  | "unsupported";
+
+export type ScratchMicrophoneDevice = {
+  deviceId: string;
+  label: string;
 };
 
-export type ScratchSpeechRecognitionResultEvent = {
-  resultIndex?: number;
-  results: ArrayLike<ScratchSpeechRecognitionResult>;
+export type ScratchMediaDeviceInfo = {
+  deviceId: string;
+  kind: string;
+  label: string;
 };
 
-export type ScratchSpeechRecognitionErrorEvent = {
-  error?: string;
+export type ScratchMediaStream = {
+  getTracks: () => Array<{ stop: () => void }>;
 };
 
-export type ScratchSpeechRecognition = {
-  continuous: boolean;
-  interimResults: boolean;
-  lang: string;
-  maxAlternatives: number;
-  onend: (() => void) | null;
-  onerror: ((event: ScratchSpeechRecognitionErrorEvent) => void) | null;
-  onresult: ((event: ScratchSpeechRecognitionResultEvent) => void) | null;
+export type ScratchMediaDevices = {
+  enumerateDevices: () => Promise<readonly ScratchMediaDeviceInfo[]>;
+  getUserMedia: (constraints: MediaStreamConstraints) => Promise<ScratchMediaStream>;
+};
+
+export type ScratchMediaRecorder = {
+  mimeType: string;
+  ondataavailable: ((event: { data: Blob }) => void) | null;
+  onerror: ((event: unknown) => void) | null;
+  onstop: (() => void) | null;
   start: () => void;
   stop: () => void;
 };
 
-export type ScratchSpeechRecognitionConstructor = new () => ScratchSpeechRecognition;
-export type ScratchSpeechRecognitionFactory = () => ScratchSpeechRecognition | null;
-
-type SpeechRecognitionWindow = Window & {
-  SpeechRecognition?: ScratchSpeechRecognitionConstructor;
-  webkitSpeechRecognition?: ScratchSpeechRecognitionConstructor;
+export type ScratchMediaRecorderConstructor = {
+  new (stream: ScratchMediaStream, options?: MediaRecorderOptions): ScratchMediaRecorder;
+  isTypeSupported?: (mimeType: string) => boolean;
 };
 
-export function getScratchSpeechRecognitionConstructor() {
-  if (typeof window === "undefined") return null;
-  const speechWindow = window as SpeechRecognitionWindow;
-  return speechWindow.SpeechRecognition ?? speechWindow.webkitSpeechRecognition ?? null;
+export const SCRATCH_RECORDING_MIME_TYPES = [
+  "audio/mp4;codecs=mp4a.40.2",
+  "audio/mp4",
+  "audio/webm;codecs=opus",
+  "audio/webm",
+  "audio/ogg;codecs=opus",
+  "audio/ogg",
+] as const;
+export const MAX_SCRATCH_RECORDING_SECONDS = 120;
+
+const SCRATCH_MICROPHONE_STORAGE_PREFIX = "adhdice-scratch-microphone:";
+
+function getBrowserMediaDevices(): ScratchMediaDevices | null {
+  if (typeof navigator === "undefined" || !navigator.mediaDevices) return null;
+  return navigator.mediaDevices as unknown as ScratchMediaDevices;
 }
 
-export function isScratchSpeechRecognitionSupported() {
-  return getScratchSpeechRecognitionConstructor() !== null;
+function getBrowserMediaRecorderConstructor(): ScratchMediaRecorderConstructor | null {
+  if (typeof globalThis.MediaRecorder !== "function") return null;
+  return globalThis.MediaRecorder as unknown as ScratchMediaRecorderConstructor;
 }
 
-export function createScratchSpeechRecognition(): ScratchSpeechRecognition | null {
-  const Constructor = getScratchSpeechRecognitionConstructor();
-  if (!Constructor) return null;
+export function isScratchRecordingSupported(
+  mediaDevices: ScratchMediaDevices | null = getBrowserMediaDevices(),
+  recorderConstructor: ScratchMediaRecorderConstructor | null = getBrowserMediaRecorderConstructor(),
+) {
+  return Boolean(mediaDevices?.getUserMedia && recorderConstructor);
+}
 
-  const recognition = new Constructor();
-  recognition.continuous = true;
-  recognition.interimResults = false;
-  recognition.lang = typeof navigator !== "undefined" ? navigator.language || "en-US" : "en-US";
-  recognition.maxAlternatives = 1;
-  return recognition;
+export function selectScratchRecordingMimeType(
+  recorderConstructor: ScratchMediaRecorderConstructor | null = getBrowserMediaRecorderConstructor(),
+) {
+  if (!recorderConstructor?.isTypeSupported) return "";
+  for (const mimeType of SCRATCH_RECORDING_MIME_TYPES) {
+    try {
+      if (recorderConstructor.isTypeSupported(mimeType)) return mimeType;
+    } catch {
+      // A browser may reject an individual capability probe.
+    }
+  }
+  return "";
+}
+
+export function filterScratchAudioInputDevices(devices: readonly ScratchMediaDeviceInfo[]) {
+  return devices
+    .filter((device) => device.kind === "audioinput" && Boolean(device.deviceId))
+    .map(({ deviceId, label }) => ({ deviceId, label }));
+}
+
+export async function enumerateScratchAudioInputDevices(mediaDevices: ScratchMediaDevices | null = getBrowserMediaDevices()) {
+  if (!mediaDevices?.enumerateDevices) return [];
+  try {
+    return filterScratchAudioInputDevices(await mediaDevices.enumerateDevices());
+  } catch {
+    return [];
+  }
+}
+
+export function getScratchMicrophoneStorageKey(userId: string | null | undefined) {
+  return userId ? `${SCRATCH_MICROPHONE_STORAGE_PREFIX}${userId}` : null;
+}
+
+export function readStoredScratchMicrophoneDeviceId(
+  storageKey: string | null,
+  storage: Pick<Storage, "getItem"> | null = typeof window === "undefined" ? null : window.localStorage,
+) {
+  if (!storageKey || !storage) return "";
+  try {
+    return storage.getItem(storageKey) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+function writeStoredScratchMicrophoneDeviceId(
+  storageKey: string | null,
+  deviceId: string,
+  storage: Pick<Storage, "setItem"> | null,
+) {
+  if (!storageKey || !storage) return;
+  try {
+    storage.setItem(storageKey, deviceId);
+  } catch {
+    // Microphone preference storage is best effort only.
+  }
+}
+
+function defaultErrorMessage(error: unknown) {
+  const name = error instanceof DOMException ? error.name : "";
+  if (name === "NotAllowedError" || name === "SecurityError") return "Microphone permission was denied.";
+  if (name === "NotFoundError" || name === "DevicesNotFoundError") return "No microphone was found.";
+  return "Voice recording unavailable.";
+}
+
+function isOverconstrainedError(error: unknown) {
+  return error instanceof DOMException && (error.name === "OverconstrainedError" || error.name === "ConstraintNotSatisfiedError");
+}
+
+function stopScratchMediaStream(stream: ScratchMediaStream | null) {
+  for (const track of stream?.getTracks() ?? []) {
+    try {
+      track.stop();
+    } catch {
+      // Track cleanup is best effort if the browser already stopped it.
+    }
+  }
 }
 
 export type ScratchDictationControllerOptions = {
@@ -185,131 +279,286 @@ export type ScratchDictationControllerOptions = {
   getCaretRange: () => ScratchEditorRange | null;
   getNoteKey: () => string;
   isPickerOpen?: () => boolean;
+  mediaDevices?: ScratchMediaDevices | null;
+  mediaRecorderConstructor?: ScratchMediaRecorderConstructor | null;
+  microphoneStorageKey?: string | null;
   onBodyChange: (body: string, range: ScratchEditorRange) => void;
+  onDevicesChange?: (devices: ScratchMicrophoneDevice[]) => void;
   onError: (message: string | null) => void;
-  onListeningChange: (isListening: boolean) => void;
-  recognitionFactory?: ScratchSpeechRecognitionFactory;
+  onRecordingTimeChange?: (seconds: number) => void;
+  onSelectedDeviceChange?: (deviceId: string) => void;
+  onStatusChange?: (status: ScratchDictationStatus) => void;
+  now?: () => number;
+  storage?: Pick<Storage, "getItem" | "setItem"> | null;
+  transcribeAudio: (audio: Blob) => Promise<string>;
 };
 
-function speechErrorMessage(error: string | undefined) {
-  if (error === "not-allowed" || error === "service-not-allowed") {
-    return "Microphone permission was denied.";
-  }
-  return "Voice dictation unavailable.";
-}
+type ScratchRecordingSession = {
+  body: string;
+  chunks: Blob[];
+  id: number;
+  insertionRange: ScratchEditorRange;
+  mimeType: string;
+  noteKey: string;
+  recorder: ScratchMediaRecorder | null;
+  startedAt: number;
+  stream: ScratchMediaStream | null;
+  transcriptionStarted: boolean;
+};
 
 export class ScratchDictationController {
   private readonly options: ScratchDictationControllerOptions;
-  private readonly recognitionFactory: ScratchSpeechRecognitionFactory;
-  private activeSession: {
-    body: string;
-    id: number;
-    insertionRange: ScratchEditorRange;
-    noteKey: string;
-    recognition: ScratchSpeechRecognition;
-  } | null = null;
+  private activeSession: ScratchRecordingSession | null = null;
+  private readonly mediaDevices: ScratchMediaDevices | null;
+  private readonly mediaRecorderConstructor: ScratchMediaRecorderConstructor | null;
+  private readonly microphoneStorageKey: string | null;
   private nextSessionId = 0;
+  private recordingTimer: ReturnType<typeof setInterval> | null = null;
+  private selectedDeviceId: string;
+  private statusValue: ScratchDictationStatus;
+  private readonly now: () => number;
+  private readonly listeners = new Set<() => void>();
 
   constructor(options: ScratchDictationControllerOptions) {
     this.options = options;
-    this.recognitionFactory = options.recognitionFactory ?? createScratchSpeechRecognition;
-  }
-
-  get isListening() {
-    return this.activeSession !== null;
+    this.mediaDevices = options.mediaDevices ?? getBrowserMediaDevices();
+    this.mediaRecorderConstructor = options.mediaRecorderConstructor ?? getBrowserMediaRecorderConstructor();
+    this.microphoneStorageKey = options.microphoneStorageKey ?? null;
+    this.selectedDeviceId = readStoredScratchMicrophoneDeviceId(this.microphoneStorageKey, options.storage);
+    this.statusValue = isScratchRecordingSupported(this.mediaDevices, this.mediaRecorderConstructor) ? "idle" : "unsupported";
+    this.now = options.now ?? Date.now;
   }
 
   get isSupported() {
-    return this.recognitionFactory === createScratchSpeechRecognition
-      ? isScratchSpeechRecognitionSupported()
-      : true;
+    return this.statusValue !== "unsupported";
   }
 
-  start() {
-    this.stop();
+  get isRecording() {
+    return this.statusValue === "recording";
+  }
+
+  get isTranscribing() {
+    return this.statusValue === "transcribing";
+  }
+
+  get status() {
+    return this.statusValue;
+  }
+
+  get selectedMicrophoneDeviceId() {
+    return this.selectedDeviceId;
+  }
+
+  subscribe(listener: () => void) {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  async refreshDevices() {
+    const devices = await enumerateScratchAudioInputDevices(this.mediaDevices);
+    const labeledDevices = devices.filter((device) => device.label.trim().length > 0);
+    this.options.onDevicesChange?.(labeledDevices);
+    if (this.selectedDeviceId && !devices.some((device) => device.deviceId === this.selectedDeviceId)) {
+      this.setSelectedMicrophoneDevice("");
+    }
+    return labeledDevices;
+  }
+
+  setSelectedMicrophoneDevice(deviceId: string) {
+    this.selectedDeviceId = deviceId;
+    writeStoredScratchMicrophoneDeviceId(this.microphoneStorageKey, deviceId, this.options.storage ?? (typeof window === "undefined" ? null : window.localStorage));
+    this.options.onSelectedDeviceChange?.(deviceId);
+    for (const listener of this.listeners) listener();
+  }
+
+  async start() {
+    this.cancel();
     this.options.onError(null);
-    if (!this.isSupported) {
-      this.options.onError("Voice dictation is not available in this browser.");
+    if (!this.isSupported || !this.mediaDevices || !this.mediaRecorderConstructor) {
+      this.setStatus("unsupported");
+      this.options.onError("Voice recording unavailable in this browser.");
       return false;
     }
 
-    if (this.options.isPickerOpen?.()) {
-      this.options.dismissPicker?.();
-    }
+    if (this.options.isPickerOpen?.()) this.options.dismissPicker?.();
 
-    const recognition = this.recognitionFactory();
-    if (!recognition) {
-      this.options.onError("Voice dictation unavailable.");
-      return false;
-    }
-
-    const id = ++this.nextSessionId;
     const body = this.options.getBody();
     const savedRange = this.options.getCaretRange() ?? { end: body.length, start: body.length };
-    const session = {
+    const session: ScratchRecordingSession = {
       body,
-      id,
+      chunks: [],
+      id: ++this.nextSessionId,
       insertionRange: savedRange,
+      mimeType: "",
       noteKey: this.options.getNoteKey(),
-      recognition,
+      recorder: null,
+      startedAt: 0,
+      stream: null,
+      transcriptionStarted: false,
     };
     this.activeSession = session;
-    recognition.onresult = (event) => this.handleResult(session, event);
-    recognition.onend = () => this.finishSession(session);
-    recognition.onerror = (event) => this.finishSession(session, speechErrorMessage(event.error));
-    this.options.onListeningChange(true);
+    this.setStatus("requesting_permission");
+
+    let stream: ScratchMediaStream;
+    try {
+      stream = await this.getUserMedia();
+    } catch (error) {
+      if (this.activeSession?.id !== session.id) return false;
+      this.failSession(session, defaultErrorMessage(error));
+      return false;
+    }
+
+    if (!this.isActiveSession(session) || this.options.getNoteKey() !== session.noteKey) {
+      stopScratchMediaStream(stream);
+      return false;
+    }
+    session.stream = stream;
+    await this.refreshDevices();
 
     try {
-      recognition.start();
+      const mimeType = selectScratchRecordingMimeType(this.mediaRecorderConstructor);
+      const recorder = mimeType
+        ? new this.mediaRecorderConstructor(stream, { mimeType })
+        : new this.mediaRecorderConstructor(stream);
+      session.mimeType = recorder.mimeType || mimeType;
+      session.recorder = recorder;
+      recorder.ondataavailable = (event) => {
+        if (this.isActiveSession(session) && event.data && event.data.size > 0) session.chunks.push(event.data);
+      };
+      recorder.onstop = () => this.handleRecorderStop(session);
+      recorder.onerror = () => this.failSession(session, "Recording failed. Try again.");
+      recorder.start();
+      session.startedAt = this.now();
+      this.startRecordingTimer(session);
+      this.setStatus("recording");
       return true;
     } catch {
-      this.finishSession(session, "Voice dictation unavailable.");
+      this.failSession(session, "Voice recording unavailable.");
       return false;
     }
   }
 
+  /** Stop the active recording and submit its temporary audio for transcription. */
   stop() {
     const session = this.activeSession;
     if (!session) return;
-    this.activeSession = null;
-    this.options.onListeningChange(false);
+    if (this.statusValue !== "recording" || !session.recorder) {
+      if (this.statusValue === "requesting_permission") this.cancel();
+      return;
+    }
+
+    this.stopRecordingTimer();
+    this.setStatus("transcribing");
     try {
-      session.recognition.stop();
+      session.recorder.stop();
     } catch {
-      // A browser may throw when the service has already ended.
+      this.failSession(session, "Recording failed. Try again.");
     }
+    stopScratchMediaStream(session.stream);
+    session.stream = null;
   }
 
-  private finishSession(session: NonNullable<ScratchDictationController["activeSession"]>, error?: string) {
-    if (this.activeSession?.id !== session.id) return;
+  /** Fence and clean up an active recording or in-flight transcription. */
+  cancel() {
+    const session = this.activeSession;
     this.activeSession = null;
-    this.options.onListeningChange(false);
-    if (error) {
+    this.stopRecordingTimer();
+    if (session?.recorder) {
       try {
-        session.recognition.stop();
+        session.recorder.stop();
       } catch {
-        // The browser may already have stopped the service after an error.
+        // The browser may have already stopped the recorder.
       }
-      this.options.onError(error);
+    }
+    stopScratchMediaStream(session?.stream ?? null);
+    if (session) session.chunks.length = 0;
+    this.setStatus(this.isSupported ? "idle" : "unsupported");
+  }
+
+  private async getUserMedia() {
+    if (!this.mediaDevices) throw new Error("Media devices unavailable.");
+    const audio = this.selectedDeviceId ? { deviceId: { exact: this.selectedDeviceId } } : true;
+    const constraints: MediaStreamConstraints = { audio, video: false };
+    try {
+      return await this.mediaDevices.getUserMedia(constraints);
+    } catch (error) {
+      if (!this.selectedDeviceId || !isOverconstrainedError(error)) throw error;
+      this.setSelectedMicrophoneDevice("");
+      return this.mediaDevices.getUserMedia({ audio: true, video: false });
     }
   }
 
-  private handleResult(
-    session: NonNullable<ScratchDictationController["activeSession"]>,
-    event: ScratchSpeechRecognitionResultEvent,
-  ) {
-    if (this.activeSession?.id !== session.id || this.options.getNoteKey() !== session.noteKey) return;
-    const firstChangedResult = Math.max(0, Math.trunc(event.resultIndex ?? 0));
-    for (let index = firstChangedResult; index < event.results.length; index += 1) {
-      const result = event.results[index];
-      if (!result?.isFinal) continue;
-      const transcript = result[0]?.transcript ?? "";
-      if (!transcript) continue;
+  private isActiveSession(session: ScratchRecordingSession) {
+    return this.activeSession?.id === session.id;
+  }
 
-      const inserted = insertScratchDictationText(session.body, session.insertionRange, transcript);
-      session.body = inserted.body;
-      session.insertionRange = { end: inserted.caretOffset, start: inserted.caretOffset };
-      this.options.onBodyChange(session.body, session.insertionRange);
+  private setStatus(status: ScratchDictationStatus) {
+    this.statusValue = status;
+    this.options.onStatusChange?.(status);
+    for (const listener of this.listeners) listener();
+  }
+
+  private startRecordingTimer(session: ScratchRecordingSession) {
+    this.options.onRecordingTimeChange?.(0);
+    this.recordingTimer = setInterval(() => {
+      if (!this.isActiveSession(session)) return;
+      const seconds = Math.max(0, Math.floor((this.now() - session.startedAt) / 1000));
+      this.options.onRecordingTimeChange?.(seconds);
+      if (seconds >= MAX_SCRATCH_RECORDING_SECONDS) this.stop();
+    }, 250);
+  }
+
+  private stopRecordingTimer() {
+    if (this.recordingTimer !== null) {
+      clearInterval(this.recordingTimer);
+      this.recordingTimer = null;
     }
+  }
+
+  private failSession(session: ScratchRecordingSession, message: string) {
+    if (!this.isActiveSession(session)) return;
+    this.activeSession = null;
+    this.stopRecordingTimer();
+    stopScratchMediaStream(session.stream);
+    session.stream = null;
+    session.chunks.length = 0;
+    this.setStatus("error");
+    this.options.onError(message);
+  }
+
+  private handleRecorderStop(session: ScratchRecordingSession) {
+    if (!this.isActiveSession(session) || session.transcriptionStarted) return;
+    session.transcriptionStarted = true;
+    session.recorder = null;
+    const chunks = session.chunks.splice(0);
+    const audioBlob = new Blob(chunks, { type: session.mimeType });
+    if (audioBlob.size === 0) {
+      this.failSession(session, "No audio recorded.");
+      return;
+    }
+
+    let temporaryAudio: Blob | null = audioBlob;
+    void (async () => {
+      try {
+        const transcript = await this.options.transcribeAudio(temporaryAudio as Blob);
+        if (!this.isActiveSession(session) || this.options.getNoteKey() !== session.noteKey) return;
+        const normalizedTranscript = transcript.trim();
+        if (!normalizedTranscript) {
+          this.failSession(session, "No speech detected.");
+          return;
+        }
+        const inserted = insertScratchDictationText(session.body, session.insertionRange, normalizedTranscript);
+        session.body = inserted.body;
+        session.insertionRange = { end: inserted.caretOffset, start: inserted.caretOffset };
+        this.options.onBodyChange(session.body, session.insertionRange);
+        this.activeSession = null;
+        this.setStatus("idle");
+      } catch {
+        if (this.isActiveSession(session)) this.failSession(session, "Transcription failed. Try again.");
+      } finally {
+        temporaryAudio = null;
+        chunks.length = 0;
+      }
+    })();
   }
 }

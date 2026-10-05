@@ -178,6 +178,7 @@ import {
 } from "@/lib/focus-utils";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
+import { transcribeScratchAudio } from "@/lib/scratch-paper-transcription";
 import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
@@ -1367,6 +1368,7 @@ export function TaskApp() {
   }
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
+  const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
     [focusCategories],
@@ -7763,8 +7765,10 @@ export function TaskApp() {
       }
       void updateTaskStatus(task, status);
     },
+    onTranscribeAudio: onTranscribeScratchAudio,
     onUpdate: scratchNotes.updateNote,
     tasks,
+    userId: currentUserId,
   };
 
   const taskOperationsHeaderProps = {
