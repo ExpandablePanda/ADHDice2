@@ -5,6 +5,7 @@ import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
 import { TaskCreationComposer } from "../src/components/task-app/task-creation-composer.tsx";
+import { TaskTypeIdentity, TaskTypeSelect } from "../src/components/task-app/task-type-identity.tsx";
 import { buildNewTaskDraft } from "../src/components/task-app/task-editor-model.ts";
 import { buildChildTaskCreationDraft } from "../src/lib/task-child-creation.ts";
 import { buildTaskTypeSelectionOptions } from "../src/lib/task-type.ts";
@@ -149,13 +150,47 @@ test("composer keyboard focus uses control-native emphasis without changing sele
   assert.match(composer, /onClick=\{\(\) => setEnergy\(option\.value\)\}/);
 });
 
-test("Task Type selector options are title/icon only while descriptions remain available", () => {
+test("Task Type descriptions are Settings-only while normal selectors retain their shared behavior", () => {
   const identity = read("../src/components/task-app/task-type-identity.tsx");
   const settings = read("../src/components/task-app/task-type-behavior-settings.tsx");
-  assert.match(identity, /showDescription = true/);
+  const tasksPage = read("../src/components/task-app/tasks-page.tsx");
+  const table = read("../src/components/ui/task-management-table-v2.tsx");
+  const list = read("../src/components/task-app/tasks-list-adapter.tsx");
+  const options = buildTaskTypeSelectionOptions([{
+    accent_key: "blue",
+    description: "Settings-only description",
+    icon_key: "briefcase",
+    id: "work",
+    name: "Work",
+    task_type: "custom",
+  }]);
+  const normalIdentityMarkup = renderToStaticMarkup(createElement(TaskTypeIdentity, { option: options[1]! }));
+  const settingsIdentityMarkup = renderToStaticMarkup(createElement(TaskTypeIdentity, { option: options[1]!, showDescription: true }));
+  const selectorMarkup = renderToStaticMarkup(createElement(TaskTypeSelect, {
+    label: "Task Type",
+    onChange: () => undefined,
+    options,
+    value: "work",
+  }));
+  const composerMarkup = renderToStaticMarkup(createElement(TaskCreationComposer, {
+    allTags: [],
+    initialDueOn: "2030-01-31",
+    onCancel: () => undefined,
+    onCreate: async () => null,
+    taskTypeOptions: options,
+  }));
+
+  assert.match(identity, /showDescription = false/);
   assert.match(identity, /const detail = showDescription \? description \?\? option\.description : undefined/);
   assert.match(identity, /<TaskTypeIdentity compact=\{isCompact\} dense=\{isCompact\} option=\{option\} showDescription=\{false\}/);
-  assert.match(settings, /<TaskTypeIdentity option=\{selectedOption\} \/>/);
+  assert.match(settings, /<TaskTypeIdentity option=\{selectedOption\} showDescription=\{true\} \/>/);
+  assert.doesNotMatch(normalIdentityMarkup, /Settings-only description/);
+  assert.match(settingsIdentityMarkup, /Settings-only description/);
+  assert.doesNotMatch(selectorMarkup, /Settings-only description/);
+  assert.doesNotMatch(composerMarkup, /Settings-only description/);
+  for (const source of [tasksPage, table, list]) {
+    assert.doesNotMatch(source, /showDescription=\{true\}/);
+  }
 });
 
 test("Task Type open-on-focus is opt-in and keeps the default selector behavior", () => {

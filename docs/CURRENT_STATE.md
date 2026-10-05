@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.84`.
+- Current working app version: `7.16.85`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.85 Task Type descriptions are Settings-only metadata
+
+Task Type descriptions remain persisted/configurable metadata and remain
+editable in Task Type / Behavior Settings. Normal Task Type menus, selectors,
+and identity surfaces now show only the icon and Task Type name, preserving
+their existing accents, ordering, selection behavior, and keyboard interaction.
 
 ## 2026-10-04 7.16.84 Default Task Due Date
 

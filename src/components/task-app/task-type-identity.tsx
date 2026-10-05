@@ -16,7 +16,7 @@ export function TaskTypeIdentity({
   label,
   option,
   selected = false,
-  showDescription = true,
+  showDescription = false,
 }: {
   compact?: boolean;
   description?: string;

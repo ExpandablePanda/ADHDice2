@@ -694,6 +694,12 @@ test("settings UI model exposes Task and named Custom settings", () => {
   assert.match(settingsSource, /onCustomRulesetChange\?\.\(selectedRuleset\.id, "availableActions", nextActions\)/);
   assert.match(settingsSource, /onCreateCustomRuleset\(newRulesetName, customTaskTypeDraft, customTaskTypePresentationDraft\)/);
   assert.match(settingsSource, /buildDefaultCustomTaskTypeDraft/);
+  assert.match(settingsSource, /<TaskTypeIdentity option=\{selectedOption\} showDescription=\{true\} \/>/);
+  assert.match(settingsSource, /Short description/);
+  assert.match(settingsSource, /aria-label=\{`Description for \$\{selectedRuleset\.name\}`\}/);
+  assert.match(settingsSource, /validateTaskTypeDescription\(rulesetDescriptionDraft\)/);
+  assert.match(settingsSource, /description: descriptionValidation\.description/);
+  assert.match(settingsSource, />\{isSavingPresentation \? "Saving…" : "Save description"\}</);
   assert.match(settingsSource, /Nothing is saved until you choose Create/);
   assert.match(settingsSource, /onClick=\{cancelCreate\}/);
   assert.match(behaviorProfilesHookSource, /nameInput: string, draftPolicy: TaskBehaviorPolicy/);
