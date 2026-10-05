@@ -137,7 +137,7 @@ import {
 } from "@/lib/task-table-alignment";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { TaskChildCreationComposer } from "@/components/task-app/task-creation-composer";
-import type { TaskCreationMetadata } from "@/lib/task-creation";
+import type { TaskCreationDraft, TaskCreationMetadata, TaskCreationSubmission } from "@/lib/task-creation";
 import {
   buildTaskContentFolderContextMenuState,
   TaskContentFolderContextMenu,
@@ -1457,7 +1457,7 @@ type TaskManagementTableV2Props = {
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
   onAddFolderToContentFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
-  onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
@@ -9656,6 +9656,8 @@ export function TaskManagementTableV2({
                         collapsed={entry.collapsed}
                         depth={entry.depth}
                         folder={entry.folder}
+                        allTags={allTagOptions}
+                        todayDateKey={todayDateKey}
                         memberSummary={folderMemberSummaryById.get(entry.folder.id)}
                         memberCount={entry.visibleTaskCount}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}

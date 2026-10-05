@@ -8,6 +8,8 @@ import { buildTaskTypeSelectionOptions, type TaskTypeSelectionOption } from "@/l
 import { isTaskTypeIconKey, searchTaskTypeIcons } from "@/lib/task-type-presentation";
 import { TaskTypeIcon } from "@/components/ui/lucide-icon";
 import { AdhdIconButton } from "@/components/ui-system";
+import { TaskCreationComposer } from "./task-creation-composer";
+import type { TaskCreationDraft, TaskCreationSubmission } from "@/lib/task-creation";
 import {
   TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS,
   TASK_TABLE_INACTIVE_CHIP_CLASS,
@@ -17,7 +19,6 @@ import {
   TaskInlineChildDraftInput,
   TaskTableChipButton,
 } from "@/components/ui/task-table-primitives";
-import { TaskTypeSelect } from "./task-type-identity";
 
 export type TaskContentFolderEditSurface = {
   folderId: string;
@@ -29,10 +30,12 @@ type Props = {
   collapsed: boolean;
   depth?: number;
   folder: Pick<TaskContentFolder, "icon_key" | "id" | "name">;
+  allTags: string[];
+  todayDateKey: string;
   memberSummary?: TaskContentFolderMemberSummary;
   memberCount: number;
   onContextMenu: (event: React.MouseEvent<HTMLDivElement>) => void;
-  onAddTaskToFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
+  onAddTaskToFolder?: (folderId: string, draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
   onAddFolderToFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
   customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   onRename?: (folderId: string, name: string) => Promise<boolean>;
@@ -48,6 +51,8 @@ export function TaskContentFolderEditableHeader({
   collapsed,
   depth = 0,
   folder,
+  allTags,
+  todayDateKey,
   memberSummary,
   memberCount,
   onContextMenu,
@@ -62,19 +67,13 @@ export function TaskContentFolderEditableHeader({
   onUpdateIcon,
 }: Props) {
   const [draftName, setDraftName] = useState(folder.name);
-  const [taskTitleDraft, setTaskTitleDraft] = useState("");
-  const [taskTypeSelectionValue, setTaskTypeSelectionValue] = useState("task");
-  const [taskCreationPending, setTaskCreationPending] = useState(false);
-  const [taskCreationError, setTaskCreationError] = useState<string | null>(null);
   const [folderNameDraft, setFolderNameDraft] = useState("");
   const [folderCreationPending, setFolderCreationPending] = useState(false);
   const [folderCreationError, setFolderCreationError] = useState<string | null>(null);
   const [iconQuery, setIconQuery] = useState("");
   const submittingRenameRef = useRef(false);
-  const submittingTaskRef = useRef(false);
   const switchingSurfaceRef = useRef(false);
   const chooserRef = useRef<HTMLDivElement | null>(null);
-  const taskDraftInputRef = useRef<HTMLInputElement | null>(null);
   const folderDraftInputRef = useRef<HTMLInputElement | null>(null);
   const currentIconKey = isTaskTypeIconKey(folder.icon_key) ? folder.icon_key : "folder";
   const filteredIcons = searchTaskTypeIcons(iconQuery);
@@ -108,17 +107,6 @@ export function TaskContentFolderEditableHeader({
   }, [folder.name, isRenaming]);
 
   useEffect(() => {
-    if (!isAddingTask) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the local add draft after the Folder action surface closes.
-      setTaskTitleDraft("");
-      setTaskTypeSelectionValue("task");
-      setTaskCreationError(null);
-      setTaskCreationPending(false);
-      submittingTaskRef.current = false;
-    }
-  }, [isAddingTask]);
-
-  useEffect(() => {
     if (!isAddingFolder) {
       // eslint-disable-next-line react-hooks/set-state-in-effect -- Reset the local Folder draft after the action surface closes.
       setFolderNameDraft("");
@@ -126,10 +114,6 @@ export function TaskContentFolderEditableHeader({
       setFolderCreationPending(false);
     }
   }, [isAddingFolder]);
-
-  useEffect(() => {
-    if (isAddingTask) taskDraftInputRef.current?.focus();
-  }, [isAddingTask]);
 
   useEffect(() => {
     if (isAddingFolder) folderDraftInputRef.current?.focus();
@@ -188,28 +172,6 @@ export function TaskContentFolderEditableHeader({
     }
   }
 
-  async function submitTaskCreation() {
-    if (submittingTaskRef.current || !onAddTaskToFolder) return;
-    const title = taskTitleDraft.trim();
-    if (!title) {
-      setTaskCreationError("Enter a Task title.");
-      return;
-    }
-    submittingTaskRef.current = true;
-    setTaskCreationPending(true);
-    setTaskCreationError(null);
-    const didPersist = await onAddTaskToFolder(folder.id, title, taskTypeSelectionValue);
-    submittingTaskRef.current = false;
-    setTaskCreationPending(false);
-    if (didPersist) {
-      setTaskTitleDraft("");
-      setTaskTypeSelectionValue("task");
-      onSurfaceChange(null);
-    } else {
-      setTaskCreationError("Task could not be added to this Folder.");
-    }
-  }
-
   async function submitFolderCreation() {
     if (folderCreationPending || !onAddFolderToFolder) return;
     const name = folderNameDraft.trim();
@@ -227,15 +189,6 @@ export function TaskContentFolderEditableHeader({
     } else {
       setFolderCreationError("Folder could not be created.");
     }
-  }
-
-  function cancelTaskCreation() {
-    setTaskTitleDraft("");
-    setTaskTypeSelectionValue("task");
-    setTaskCreationError(null);
-    setTaskCreationPending(false);
-    submittingTaskRef.current = false;
-    onSurfaceChange(null);
   }
 
   function cancelFolderCreation() {
@@ -473,9 +426,6 @@ export function TaskContentFolderEditableHeader({
               aria-label={`Add Task to ${folder.name}`}
               onClick={(event) => {
                 event.stopPropagation();
-                setTaskCreationError(null);
-                setTaskTitleDraft("");
-                setTaskTypeSelectionValue("task");
                 onSurfaceChange({ folderId: folder.id, kind: "add" });
               }}
               onPointerDown={stopActionPointer}
@@ -524,55 +474,29 @@ export function TaskContentFolderEditableHeader({
         </span>
       </div>
       {isAddingTask ? (
-        <div className="ml-8 w-[24rem] max-w-[min(24rem,calc(100vw-5rem))]">
-          <form
-            aria-label={`Add Task to ${folder.name}`}
-            className="mt-2 flex w-full flex-col gap-2 rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2.5 dark:border-white/10 dark:bg-[#1b1530]/80"
-            data-inline-child-draft={folder.id}
-            onClick={(event) => event.stopPropagation()}
-            onKeyDown={(event) => {
-              if (event.key === "Escape") {
-                event.preventDefault();
-                cancelTaskCreation();
-              }
-            }}
-            onPointerDown={(event) => event.stopPropagation()}
-            onSubmit={(event) => {
+        <div
+          className="ml-8 w-full max-w-[52rem] rounded-[0.85rem] border border-[#e5dcfb] bg-white p-2.5 dark:border-white/10 dark:bg-[#1b1530]/80"
+          data-inline-child-draft={folder.id}
+          onClick={(event) => event.stopPropagation()}
+          onKeyDown={(event) => {
+            if (event.key === "Escape") {
               event.preventDefault();
-              void submitTaskCreation();
-            }}
-          >
-            <div className="flex min-w-0 w-full">
-              <TaskInlineChildDraftInput
-                ariaLabel={`Add Task to ${folder.name}`}
-                childLabel="Task"
-                disabled={taskCreationPending}
-                inputRef={taskDraftInputRef}
-                onCancel={cancelTaskCreation}
-                onChange={setTaskTitleDraft}
-                onCommit={() => { void submitTaskCreation(); }}
-                placeholder="Task title..."
-                value={taskTitleDraft}
-              />
-            </div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium text-[#6f678f] dark:text-white/60">Task Type:</span>
-              <TaskTypeSelect
-                ariaLabel="Task Type"
-                disabled={taskCreationPending}
-                label="Task Type"
-                onChange={setTaskTypeSelectionValue}
-                options={taskTypeOptions}
-                size="compact"
-                value={taskTypeSelectionValue}
-              />
-              <div className="ml-auto flex items-center gap-1.5">
-                <TaskTableChipButton disabled={taskCreationPending} onClick={cancelTaskCreation} toneClassName={TASK_TABLE_INACTIVE_CHIP_CLASS} type="button">Cancel</TaskTableChipButton>
-                <TaskTableChipButton disabled={taskCreationPending} toneClassName={TASK_LIST_QUICK_PANEL_PRIMARY_CHIP_CLASS} type="submit">{taskCreationPending ? "Adding..." : "Add"}</TaskTableChipButton>
-              </div>
-            </div>
-            {taskCreationError ? <p className="text-xs font-medium text-[#d94e67] dark:text-[#ff9eaf]">{taskCreationError}</p> : null}
-          </form>
+              onSurfaceChange(null);
+            }
+          }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <TaskCreationComposer
+            allTags={allTags}
+            initialDueOn={todayDateKey}
+            key={folder.id}
+            onCancel={() => onSurfaceChange(null)}
+            onCreate={async (draft) => onAddTaskToFolder?.(folder.id, draft) ?? null}
+            onCreated={() => onSurfaceChange(null)}
+            submitLabel="Add"
+            taskTypeOptions={taskTypeOptions}
+            titleLabel={`Task title for ${folder.name}`}
+          />
         </div>
       ) : null}
       {isAddingFolder ? (

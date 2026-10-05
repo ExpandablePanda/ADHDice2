@@ -45,8 +45,9 @@ test("all migrated creation routes create canonically before opening the shared 
   assert.match(calendar, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task", \{ dueOn \}\)/);
   assert.match(calendar, /routeToCurrentBucket: true/);
 
-  const normal = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const duplicateTaskInPlace"));
-  assert.match(normal, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task", \{ dueOn: todayKey \}\)/);
+  const normal = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const createHomeTodoTaskWithType"));
+  assert.match(normal, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.doesNotMatch(normal, /dueOn: todayKey/);
   assert.match(normal, /routeToCurrentBucket: true/);
   assert.doesNotMatch(normal, /TaskCreationComposer|setTaskCreationInitialTypeSelection|setIsTaskCreationComposerOpen/);
 
@@ -60,5 +61,5 @@ test("all migrated creation routes create canonically before opening the shared 
   assert.match(health, /createTaskAndOpenSharedEditor/);
 
   const scratch = app.slice(app.indexOf("const openScratchLinkedTaskTemplate"), app.indexOf("const {\n    deferTask"));
-  assert.match(scratch, /createTaskAndOpenSharedEditor\(buildNewTaskDraft\(title, \{ dueOn: todayKey \}\)\)/);
+  assert.match(scratch, /createTaskAndOpenSharedEditor\(buildNewTaskDraft\(title\)\)/);
 });

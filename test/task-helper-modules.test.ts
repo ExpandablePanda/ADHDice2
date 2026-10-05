@@ -807,6 +807,20 @@ test("import parser captures parent metadata and nested steps", () => {
   assert.equal(parsed.tasks[1]?.subtasks[1]?.title, "PM");
 });
 
+test("import parser leaves undated tasks unscheduled and only resolves relative dates from the supplied logical day", () => {
+  const parsed = parseImportedTaskLines([
+    "Undated *time-9am",
+    "Explicit date *due-2026-06-12 *time-9am",
+    "Logical today *due-Today",
+  ], { todayDateKey: "2026-06-10" });
+
+  assert.equal(parsed.tasks[0]?.dueOn, null);
+  assert.equal(parsed.tasks[0]?.dueTime, null);
+  assert.equal(parsed.tasks[1]?.dueOn, "2026-06-12");
+  assert.equal(parsed.tasks[1]?.dueTime, "09:00");
+  assert.equal(parsed.tasks[2]?.dueOn, "2026-06-10");
+});
+
 test("import progress counts parsed parents and every supported descendant", () => {
   const parsed = parseImportedTaskLines([
     "Task A",

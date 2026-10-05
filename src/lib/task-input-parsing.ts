@@ -83,7 +83,7 @@ export function parseImportedTaskLines(
   lines: string[],
   options?: { todayDateKey?: string },
 ) {
-  const todayDateKey = options?.todayDateKey ?? formatDateKey(new Date());
+  const todayDateKey = options?.todayDateKey ?? null;
   const tasks: ImportedTaskDraft[] = [];
   const warnings: ImportedTaskWarning[] = [];
   let currentTask: ImportedTaskDraft | null = null;
@@ -186,6 +186,8 @@ function parseParentTaskLine(
     }
   }
 
+  if (!task.dueOn) task.dueTime = null;
+
   if (!task.title) {
     return null;
   }
@@ -229,6 +231,8 @@ function parseStepLine(
       warnings.push({ line, message: handled.warning });
     }
   }
+
+  if (!subtask.dueOn) subtask.dueTime = null;
 
   if (!subtask.title) {
     return null;
@@ -300,7 +304,7 @@ function applyParentMetadataToken(
   task: ImportedTaskDraft,
   field: string,
   rawValue: string,
-  todayDateKey: string,
+  todayDateKey: string | null,
 ) {
   const value = rawValue.trim();
 
@@ -406,7 +410,7 @@ function applyStepMetadataToken(
   subtask: ImportedTaskSubtask,
   field: string,
   rawValue: string,
-  todayDateKey: string,
+  todayDateKey: string | null,
 ) {
   const value = rawValue.trim();
 
@@ -508,13 +512,13 @@ function applyStepMetadataToken(
   return { warning: `Unknown step metadata field "${field}" was skipped.` };
 }
 
-function parseDueDateValue(value: string, todayDateKey: string) {
+function parseDueDateValue(value: string, todayDateKey: string | null) {
   const normalized = normalizeOptionValue(value);
   if (normalized === "today") {
     return todayDateKey;
   }
   if (normalized === "tomorrow") {
-    return shiftDateKey(todayDateKey, 1);
+    return todayDateKey ? shiftDateKey(todayDateKey, 1) : null;
   }
 
   const isoMatch = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);

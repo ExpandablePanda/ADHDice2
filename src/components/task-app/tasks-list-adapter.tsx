@@ -52,7 +52,7 @@ import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingH
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { formatLocalDate } from "@/lib/utils";
 import { formatTaskPriorityLevel, getSelectedTaskPriorityToneClass, getTaskPriorityLevel, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
-import type { TaskCreationMetadata } from "@/lib/task-creation";
+import type { TaskCreationDraft, TaskCreationMetadata, TaskCreationSubmission } from "@/lib/task-creation";
 import {
   TASK_TABLE_ACTIVE_LIST_CHIP_CLASS,
   TASK_TABLE_INLINE_RENAME_EDITOR_CLASS,
@@ -276,7 +276,7 @@ type TasksTableSourceProps = {
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
   onAddFolderToContentFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
-  onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
@@ -3366,6 +3366,8 @@ function TasksSimpleList({
                         collapsed={entry.collapsed}
                         depth={entry.depth}
                         folder={entry.folder}
+                        allTags={tableProps.allTagOptions ?? []}
+                        todayDateKey={tableProps.rowContext.todayDateKey}
                         memberSummary={folderMemberSummaryById.get(entry.folder.id)}
                         memberCount={entry.visibleTaskCount}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}

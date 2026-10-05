@@ -593,12 +593,15 @@ test("Import routes parents, Steps, and Substeps through canonical creation and 
     "-- Substep",
     "--- Deep substep",
     "Second Parent",
+    "Undated Parent",
   ]);
-  assert.deepEqual(result, { errorCount: 0, importedCount: 2, warningCount: 0 });
-  assert.equal(calls.length, 5);
-  assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import", "task_import", "task_import"]);
+  assert.deepEqual(result, { errorCount: 0, importedCount: 3, warningCount: 0 });
+  assert.equal(calls.length, 6);
+  assert.deepEqual(calls.map((call) => call.source), ["task_import", "task_import", "task_import", "task_import", "task_import", "task_import"]);
   assert.equal(calls[0]?.payload.due_on, "2026-08-20");
   assert.equal(calls[0]?.payload.repeat_frequency, "daily");
+  assert.equal(calls[5]?.payload.due_on, null);
+  assert.equal(calls[5]?.payload.due_time, null);
   assert.equal(calls.every((call) => call.payload.task_type === "task"), true);
   assert.equal(calls[1]?.payload.parent_task_id, tasks[0]?.id);
   assert.equal(calls[2]?.payload.parent_task_id, tasks[1]?.id);

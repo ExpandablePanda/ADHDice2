@@ -105,7 +105,7 @@ import {
   parsePositiveInteger,
   type TaskDraft,
 } from "./task-app/task-editor-model";
-import type { TaskCreationMetadata } from "@/lib/task-creation";
+import type { TaskCreationDraft, TaskCreationMetadata, TaskCreationSubmission } from "@/lib/task-creation";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
@@ -5021,23 +5021,24 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
-  const addTaskToContentFolder = useCallback(async (folderId: string, rawTitle: string, taskTypeSelectionValue = "task") => {
-    const title = rawTitle.trim();
+  const addTaskToContentFolder = useCallback(async (folderId: string, draft: TaskCreationDraft): Promise<TaskCreationSubmission> => {
+    const title = draft.title.trim();
     if (!title) {
-      setMessage({ tone: "warn", text: "Task title can't be empty." });
-      return false;
+      return { error: "Task title can't be empty.", taskId: null };
     }
-    const selection = resolveTaskTypeSelection(taskTypeSelectionValue, customBehaviorRulesets);
+    const selection = resolveTaskTypeSelection(draft.taskTypeSelection, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
-      return false;
+      return { error: "That Task Type is no longer available.", taskId: null };
     }
     const createdTask = await addTask({
-      ...buildNewTaskDraft(title, { dueOn: todayKey }),
+      ...buildNewTaskDraft(title),
+      ...draft.metadata,
+      ...buildTaskPriorityUpdate(draft.metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
-    if (!createdTask) return false;
+    if (!createdTask) return { error: "Task could not be created.", taskId: null };
 
     const didMove = await taskContentFolderActions.moveTaskToFolder(createdTask, folderId);
     if (!didMove) {
@@ -5045,10 +5046,10 @@ export function TaskApp() {
         tone: "warn",
         text: `"${createdTask.title}" was created, but it could not be added to the Folder.`,
       });
-      return false;
+      return { error: "The Task was created, but it could not be added to the Folder.", taskId: createdTask.id };
     }
-    return true;
-  }, [addTask, customBehaviorRulesets, setMessage, taskContentFolderActions.moveTaskToFolder, todayKey]);
+    return createdTask;
+  }, [addTask, customBehaviorRulesets, setMessage, taskContentFolderActions.moveTaskToFolder]);
   async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
     const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
     const action = taskManualActionForStatus(status);
@@ -5373,10 +5374,10 @@ export function TaskApp() {
 
   const openInlineNewListTaskComposer = useCallback(() => {
     void createTaskAndOpenSharedEditor(
-      buildNewTaskDraft("New Task", { dueOn: todayKey }),
+      buildNewTaskDraft("New Task"),
       { routeToCurrentBucket: true },
     );
-  }, [createTaskAndOpenSharedEditor, todayKey]);
+  }, [createTaskAndOpenSharedEditor]);
 
   const openTaskComposerForType = useCallback((selectionValue: string) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
@@ -5386,11 +5387,11 @@ export function TaskApp() {
     }
 
     void createTaskAndOpenSharedEditor({
-      ...buildNewTaskDraft("New Task", { dueOn: todayKey }),
+      ...buildNewTaskDraft("New Task"),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     }, { routeToCurrentBucket: true });
-  }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage, todayKey]);
+  }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
 
   const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string, metadata: HomeTodoTaskMetadata) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
@@ -5471,8 +5472,8 @@ export function TaskApp() {
   }, [createTaskAndOpenSharedEditor, todayKey]);
 
   const openScratchLinkedTaskTemplate = useCallback((title: string) => (
-    createTaskAndOpenSharedEditor(buildNewTaskDraft(title, { dueOn: todayKey }))
-  ), [createTaskAndOpenSharedEditor, todayKey]);
+    createTaskAndOpenSharedEditor(buildNewTaskDraft(title))
+  ), [createTaskAndOpenSharedEditor]);
 
   const {
     deferTask,
@@ -8170,7 +8171,7 @@ export function TaskApp() {
                 embeddedInModal
                 message={message}
                 onImport={async (lines, options) => {
-                  const result = await importTasks(lines, options);
+                  const result = await importTasks(lines, { ...options, todayDateKey: todayKey });
                   if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
                     setIsImportWidgetMenuOpen(false);
                   }

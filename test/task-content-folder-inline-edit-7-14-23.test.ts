@@ -37,25 +37,33 @@ test("Folder quick actions remain bulk member actions and preserve neutral row c
   assert.match(tableSource, /onAddTaskToContentFolder/);
   assert.match(listSource, /onAddTaskToContentFolder/);
   assert.match(appSource, /const addTaskToContentFolder = useCallback/);
-  assert.match(appSource, /resolveTaskTypeSelection\(taskTypeSelectionValue, customBehaviorRulesets\)/);
+  assert.match(appSource, /resolveTaskTypeSelection\(draft\.taskTypeSelection, customBehaviorRulesets\)/);
   assert.match(appSource, /custom_ruleset_id: selection\.customRulesetId/);
   assert.match(appSource, /task_type: selection\.taskType/);
-  assert.match(appSource, /addTask\(\{[\s\S]*buildNewTaskDraft\(title, \{ dueOn: todayKey \}\)/);
+  assert.match(appSource, /addTask\(\{[\s\S]*buildNewTaskDraft\(title\)[\s\S]*\.\.\.draft\.metadata/);
+  assert.match(appSource, /buildTaskPriorityUpdate\(draft\.metadata\.priority_level\)/);
   assert.match(appSource, /taskContentFolderActions\.moveTaskToFolder\(createdTask, folderId\)/);
+  assert.match(appSource, /createdTask\.title[\s\S]*was created, but it could not be added to the Folder/);
 });
 
-test("Folder Add Task is compact, typed, shared by Table/List, and resets its local selection", () => {
-  assert.match(headerSource, /taskTypeSelectionValue/);
+test("Folder Add Task reuses the shared metadata composer and logical Today", () => {
+  assert.match(headerSource, /TaskCreationComposer/);
+  assert.match(headerSource, /allTags: string\[\]/);
+  assert.match(headerSource, /todayDateKey: string/);
+  assert.match(headerSource, /initialDueOn=\{todayDateKey\}/);
+  assert.match(headerSource, /onCreate=\{async \(draft\) => onAddTaskToFolder\?\.\(folder\.id, draft\)/);
+  assert.match(headerSource, /onCreated=\{\(\) => onSurfaceChange\(null\)\}/);
+  assert.doesNotMatch(headerSource, /taskTypeSelectionValue/);
   assert.match(headerSource, /buildTaskTypeSelectionOptions\(customBehaviorRulesets\)/);
-  assert.match(headerSource, /<TaskTypeSelect[\s\S]*options=\{taskTypeOptions\}[\s\S]*size="compact"/);
-  assert.match(headerSource, /w-\[24rem\] max-w-\[min\(24rem,calc\(100vw-5rem\)\)\]/);
-  assert.match(headerSource, /onAddTaskToFolder\(folder\.id, title, taskTypeSelectionValue\)/);
-  assert.match(headerSource, /setTaskTypeSelectionValue\("task"\)/);
+  assert.match(headerSource, /data-inline-child-draft=\{folder\.id\}/);
+  assert.match(headerSource, /onSurfaceChange\(null\)/);
   assert.match(headerSource, /event\.key === "Escape"/);
   assert.match(tableSource, /customBehaviorRulesets=\{customBehaviorRulesets\}/);
   assert.match(listSource, /customBehaviorRulesets=\{tableProps\.customBehaviorRulesets\}/);
-  assert.match(tableSource, /onAddTaskToContentFolder\?: \(folderId: string, title: string, taskTypeSelectionValue: string\)/);
-  assert.match(listSource, /onAddTaskToContentFolder\?: \(folderId: string, title: string, taskTypeSelectionValue: string\)/);
+  assert.match(tableSource, /onAddTaskToContentFolder\?: \(folderId: string, draft: TaskCreationDraft\)/);
+  assert.match(listSource, /onAddTaskToContentFolder\?: \(folderId: string, draft: TaskCreationDraft\)/);
+  assert.match(tableSource, /allTags=\{allTagOptions\}/);
+  assert.match(listSource, /allTags=\{tableProps\.allTagOptions \?\? \[\]\}/);
 });
 
 test("Folder title, actions, and count use left-aligned content sizing", () => {

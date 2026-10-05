@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.88`.
+- Current working app version: `7.16.89`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-05 7.16.89 Task Creation Date Defaults and Folder Metadata Composer
+
+Logical Today is preloaded only in visible pre-save metadata creation
+composers. Home To-do/Urgent, Folder Add Task, and Step/Substep composers keep
+Today as a UI convenience that the user can clear; Due Time remains blank and
+clears with the date. Create-then-edit flows remain unscheduled unless an
+explicit date is supplied, including normal New Task, Task Type, and
+Scratch-linked creation. Calendar dates and intentional scheduled templates
+remain explicit. Multi-Task imports remain unscheduled without date metadata,
+preserve explicit imported dates, and resolve relative Today/Tomorrow tokens
+from the current logical-day authority rather than an ad-hoc browser date.
 
 ## 2026-10-04 7.16.88 Scratch Paper Voice Dictation
 

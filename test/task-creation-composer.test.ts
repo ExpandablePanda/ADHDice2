@@ -25,11 +25,13 @@ test("7.16.45 Home work surfaces keep V8 state local to Home", () => {
   }
 });
 
-test("Table and List New Task restore the canonical full-editor flow", () => {
+test("Table and List New Task restore the canonical full-editor flow without a date", () => {
   const app = read("../src/components/task-app.tsx");
   const composer = read("../src/components/task-app/task-creation-composer.tsx");
   assert.match(app, /const openInlineNewListTaskComposer = useCallback\(\(\) => \{/);
-  assert.match(app, /openInlineNewListTaskComposer[\s\S]*createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task", \{ dueOn: todayKey \}\)/);
+  assert.match(app, /openInlineNewListTaskComposer[\s\S]*createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  const createThenEditFlow = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const createHomeTodoTaskWithType"));
+  assert.doesNotMatch(createThenEditFlow, /dueOn: todayKey/);
   assert.match(app, /openInlineNewListTaskComposer[\s\S]*routeToCurrentBucket: true/);
   assert.doesNotMatch(app, /isTaskCreationComposerOpen|taskCreationInitialTypeSelection|createTaskFromComposer/);
   assert.match(composer, /if \(isCreating \|\| !title\.trim\(\)\) return;/);
@@ -41,12 +43,14 @@ test("Table and List New Task restore the canonical full-editor flow", () => {
   assert.match(composer, /resetDraft\(\);[\s\S]*onCancel\(\);/);
 });
 
-test("Task creation defaults use logical Today, reset to it, and keep manual No Date clearing", () => {
+test("Visible metadata composers default to logical Today, while create-then-edit stays unscheduled", () => {
   const composer = read("../src/components/task-app/task-creation-composer.tsx");
   const app = read("../src/components/task-app.tsx");
   const home = read("../src/components/task-app/home-page.tsx");
   const list = read("../src/components/task-app/tasks-list-adapter.tsx");
   const table = read("../src/components/ui/task-management-table-v2.tsx");
+  const folder = read("../src/components/task-app/task-content-folder-editable-header.tsx");
+  const importParser = read("../src/lib/task-input-parsing.ts");
   const logicalToday = "2030-01-31";
   const markup = renderToStaticMarkup(createElement(TaskCreationComposer, {
     allTags: [],
@@ -71,11 +75,15 @@ test("Task creation defaults use logical Today, reset to it, and keep manual No 
   assert.equal((list.match(/initialDueOn=\{todayDateKey\}/g) ?? []).length, 2);
   assert.match(table, /todayDateKey\?: string/);
   assert.match(table, /initialDueOn=\{todayDateKey\}/);
-  assert.match(app, /const openInlineNewListTaskComposer[\s\S]*buildNewTaskDraft\("New Task", \{ dueOn: todayKey \}\)/);
-  assert.match(app, /const openTaskComposerForType[\s\S]*buildNewTaskDraft\("New Task", \{ dueOn: todayKey \}\)/);
-  assert.match(app, /const addTaskToContentFolder[\s\S]*buildNewTaskDraft\(title, \{ dueOn: todayKey \}\)/);
+  assert.match(folder, /<TaskCreationComposer/);
+  assert.match(folder, /initialDueOn=\{todayDateKey\}/);
+  assert.match(app, /importTasks\(lines, \{ \.\.\.options, todayDateKey: todayKey \}\)/);
+  assert.doesNotMatch(importParser, /formatDateKey\(new Date\(\)\)/);
+  assert.match(app, /const openInlineNewListTaskComposer[\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.match(app, /const openTaskComposerForType[\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.match(app, /const addTaskToContentFolder[\s\S]*buildNewTaskDraft\(title\)/);
   assert.match(app, /const openHealthReminderTemplate[\s\S]*buildHealthReminderTemplate\(templateKey, todayKey\)[\s\S]*buildNewTaskDraft\(template\.title, \{ dueOn: todayKey \}\)/);
-  assert.match(app, /const openScratchLinkedTaskTemplate[\s\S]*buildNewTaskDraft\(title, \{ dueOn: todayKey \}\)/);
+  assert.match(app, /const openScratchLinkedTaskTemplate[\s\S]*buildNewTaskDraft\(title\)/);
 });
 
 test("explicit Calendar dates, duplicate dates, and special No Date workflows win over the default", () => {
@@ -90,8 +98,11 @@ test("explicit Calendar dates, duplicate dates, and special No Date workflows wi
   assert.match(duplicate, /due_time: task\.due_time/);
   assert.match(model, /options\?: \{ dueOn\?: string \| null \}/);
   assert.equal(buildNewTaskDraft("Explicit No Date", { dueOn: null }).due_on, null);
+  assert.equal(buildNewTaskDraft("New Task").due_time, null);
   assert.equal(buildChildTaskCreationDraft({ parentTaskId: "parent-1", title: "Imported child" }).draft?.due_on, null);
-  assert.match(app, /buildNewTaskDraft\(title, \{ dueOn: todayKey \}\),[\s\S]*\.\.\.metadata/);
+  assert.match(app, /buildNewTaskDraft\(title\),[\s\S]*\.\.\.metadata/);
+  assert.match(app, /buildHealthReminderTemplate\(templateKey, todayKey\)[\s\S]*buildNewTaskDraft\(template\.title, \{ dueOn: todayKey \}\)/);
+  assert.match(app, /openScratchLinkedTaskTemplate[\s\S]*buildNewTaskDraft\(title\)/);
 });
 
 test("shared creation composer exposes Home metadata semantics for Home and child creation", () => {
@@ -216,6 +227,7 @@ test("Table, List, Task Type menu, and keyboard New Task share the corrected ful
   assert.match(app, /onOpenComposer: openInlineNewListTaskComposer/);
   assert.match(app, /const openTaskComposerForType = useCallback\(\(selectionValue: string\) =>/);
   assert.match(app, /openTaskComposerForType[\s\S]*createTaskAndOpenSharedEditor\([\s\S]*task_type: selection\.taskType/);
+  assert.match(app, /openTaskComposerForType[\s\S]*buildNewTaskDraft\("New Task"\)/);
   assert.doesNotMatch(app, /onOpenComposer: \(\) => <TaskCreationComposer/);
 });
 

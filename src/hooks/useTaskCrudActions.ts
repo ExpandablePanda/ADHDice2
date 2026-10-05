@@ -40,6 +40,7 @@ export type TaskImportProgress = {
 
 export type TaskImportOptions = {
   onProgress?: (progress: TaskImportProgress) => void;
+  todayDateKey?: string;
 };
 
 type DeleteTasksOptions = {
@@ -91,7 +92,7 @@ export function useTaskCrudActions({
       return { errorCount: 0, importedCount: 0, warningCount: 0 } satisfies ImportTasksResult;
     }
 
-    const parsed = parseImportedTaskLines(lines);
+    const parsed = parseImportedTaskLines(lines, { todayDateKey: options?.todayDateKey });
     if (parsed.tasks.length === 0) {
       const warningText = formatWarningBlock(parsed.warnings);
       setMessage({
