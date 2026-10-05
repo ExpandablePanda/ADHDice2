@@ -98,6 +98,51 @@ test("explicit Unscheduled marker survives Edge validation and canonical command
   assert.equal(normalizeTaskStateCommand(command).payload.manual_action, "unscheduled_status");
 });
 
+test("repeat End Date is accepted only for validated recurring schedule intents", () => {
+  const repeating = {
+    type: "set_repeat",
+    task_id: "task-1",
+    replay_identity: "repeat-end-date-1",
+    schedule: {
+      schedule_model: "fixed",
+      repeat_frequency: "weekly",
+      repeat_interval: 1,
+      repeat_days_of_week: [4],
+      anchor_date: "2026-10-01",
+      repeat_end_on: "2026-10-15",
+    },
+  } as const;
+  assert.deepEqual(validateTaskStateCommandIntent(repeating), repeating);
+  assert.equal(scheduleCommand(repeating.schedule, repeating.replay_identity).scheduleBoundary?.repeat_end_on, "2026-10-15");
+
+  const cleared = {
+    ...repeating,
+    replay_identity: "repeat-end-date-clear-1",
+    schedule: { ...repeating.schedule, repeat_end_on: null },
+  } as const;
+  assert.deepEqual(validateTaskStateCommandIntent(cleared), cleared);
+  assert.equal(scheduleCommand(cleared.schedule, cleared.replay_identity).scheduleBoundary?.repeat_end_on, null);
+
+  for (const invalid of ["2026-02-30", "2026-1-15", "not-a-date", 20261015, {}, []]) {
+    assert.equal(validateTaskStateCommandIntent({
+      ...repeating,
+      replay_identity: `repeat-end-date-invalid-${String(invalid)}`,
+      schedule: { ...repeating.schedule, repeat_end_on: invalid },
+    }), null, `invalid End Date ${String(invalid)} must be rejected`);
+  }
+
+  assert.equal(validateTaskStateCommandIntent({
+    ...repeating,
+    replay_identity: "repeat-end-date-unscheduled",
+    schedule: { schedule_model: "unscheduled", repeat_frequency: "none", repeat_end_on: "2026-10-15" },
+  }), null);
+  assert.equal(validateTaskStateCommandIntent({
+    ...repeating,
+    replay_identity: "repeat-end-date-one-time",
+    schedule: { schedule_model: "one_time", repeat_frequency: "none", one_time_due_on: "2026-10-10", repeat_end_on: "2026-10-15" },
+  }), null);
+});
+
 function monthlyBoundary(overrides: Partial<CanonicalTaskScheduleBoundary> = {}) {
   return {
     id: "previous-boundary",

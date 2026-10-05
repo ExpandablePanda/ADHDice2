@@ -14,7 +14,7 @@ const TASK_KEYS = new Set([
   "scheduled_on", "due_time", "estimated_minutes", "actual_seconds", "tags", "external_link_label",
   "external_link_url", "one_step_at_a_time", "subtasks_auto_reset", "repeat_frequency", "repeat_interval",
   "repeat_days_of_week", "repeat_day_of_month", "repeat_monthly_mode", "repeat_monthly_ordinal",
-  "repeat_monthly_weekday", "repeat_quota_count", "repeat_quota_balance_enabled", "pinned_at", "pin_order", "sort_order", "completed_at", "trashed_at",
+  "repeat_monthly_weekday", "repeat_end_on", "repeat_quota_count", "repeat_quota_balance_enabled", "pinned_at", "pin_order", "sort_order", "completed_at", "trashed_at",
 ]);
 const FORBIDDEN_TASK_KEYS = new Set([
   "id", "user_id", "revision", "created_at", "updated_at", "canonicalization_status", "entity_kind",

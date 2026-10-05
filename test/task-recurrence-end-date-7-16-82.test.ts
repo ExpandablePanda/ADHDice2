@@ -229,6 +229,14 @@ test("canonical creation persists, validates, and normalizes recurrence End Date
   });
   assert.equal(plan.task.repeat_end_on, endOn);
   assert.equal(plan.schedule.repeat_end_on, endOn);
+  const unboundedPlan = buildCanonicalTaskCreationPlan({
+    draft: creationDraft({ repeat_end_on: null }),
+    entityKind: "parent",
+    profile: { timezone: "UTC", day_start_time: "00:00", settings_revision: 1 },
+    now: "2026-10-01T12:00:00.000Z",
+  });
+  assert.equal(unboundedPlan.task.repeat_end_on, null);
+  assert.equal(unboundedPlan.schedule.repeat_end_on, null);
   assert.equal(buildCanonicalTaskCreationPlan({
     draft: creationDraft({ repeat_frequency: "none", repeat_end_on: endOn }),
     entityKind: "parent",
@@ -264,5 +272,5 @@ test("shared repeat editor helpers and import metadata carry End Date and clear 
 
 test("version and source-only SQL contract are present", () => {
   assert.match(readFileSync(new URL("../supabase/patch_task_recurrence_end_date_7_16_82.sql", import.meta.url), "utf8"), /add column if not exists repeat_end_on date/);
-  assert.match(readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8"), /7\.16\.82/);
+  assert.match(readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8"), /7\.16\.83/);
 });

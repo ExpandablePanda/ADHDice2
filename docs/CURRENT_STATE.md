@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.82`.
+- Current working app version: `7.16.83`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.83 Recurrence End Date Edge Function Compatibility
+
+7.16.83 fixes the `task-create-canonical` Edge Function contract omission by
+adding the nullable `repeat_end_on` Task intent key to its trusted allowlist.
+The 7.16.82 recurrence End Date SQL remains unapplied. The
+`task-state-command` and `task-create-canonical` Edge Functions have not been
+redeployed, so the live/browser recurrence QA failure is not fixed yet. Live
+recurrence QA must wait until ChatGPT reviews and authorizes the coordinated SQL
+and Edge Function deployment.
 
 ## 2026-10-04 7.16.82 Recurrence End Date
 
