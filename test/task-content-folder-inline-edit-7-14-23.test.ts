@@ -40,7 +40,7 @@ test("Folder quick actions remain bulk member actions and preserve neutral row c
   assert.match(appSource, /resolveTaskTypeSelection\(taskTypeSelectionValue, customBehaviorRulesets\)/);
   assert.match(appSource, /custom_ruleset_id: selection\.customRulesetId/);
   assert.match(appSource, /task_type: selection\.taskType/);
-  assert.match(appSource, /addTask\(\{[\s\S]*buildNewTaskDraft\(title\)/);
+  assert.match(appSource, /addTask\(\{[\s\S]*buildNewTaskDraft\(title, \{ dueOn: todayKey \}\)/);
   assert.match(appSource, /taskContentFolderActions\.moveTaskToFolder\(createdTask, folderId\)/);
 });
 

@@ -1908,6 +1908,7 @@ export function HomePage({
               <div className="mt-3">
                 <TaskCreationComposer
                   allTags={allTags}
+                  initialDueOn={behaviorPolicyLogicalDate}
                   initialTitle={state.scratchpadItems.find((item) => item.id === convertingScratchpadItemId)?.text ?? ""}
                   key={convertingScratchpadItemId}
                   onCancel={cancelCreateTask}
@@ -1979,6 +1980,7 @@ export function HomePage({
             <div className="mt-3">
               <TaskCreationComposer
                 allTags={allTags}
+                initialDueOn={behaviorPolicyLogicalDate}
                 initialPriority={activeHomeTab === "urgent" ? "5" : "0"}
                 onCancel={cancelCreateTask}
                 onCreate={handleCreateTask}

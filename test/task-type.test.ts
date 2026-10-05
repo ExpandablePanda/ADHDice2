@@ -194,7 +194,7 @@ test("Tasks New menu uses shared Task Type choices and canonical typed creation"
   assert.match(creationHandler, /resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
   assert.match(creationHandler, /custom_ruleset_id: selection\.customRulesetId/);
   assert.match(creationHandler, /task_type: selection\.taskType/);
-  assert.match(creationHandler, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.match(creationHandler, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task", \{ dueOn: todayKey \}\)/);
   assert.match(creationHandler, /routeToCurrentBucket: true/);
   assert.doesNotMatch(creationHandler, /TaskCreationComposer|setTaskCreationInitialTypeSelection|setIsTaskCreationComposerOpen/);
   assert.doesNotMatch(creationHandler, /updateTask\(/);

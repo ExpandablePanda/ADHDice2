@@ -1350,6 +1350,7 @@ type TaskManagementTableV2Props = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
+  todayDateKey?: string;
   taskDisplayStatusByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
   attentionReasonByTaskId?: Readonly<Record<string, TaskAttentionReason>>;
   childTaskCreationBlockedTaskIds?: string[];
@@ -2742,6 +2743,7 @@ export function TaskManagementTableV2({
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
+  todayDateKey = "",
   taskDisplayStatusByTaskId = {},
   attentionReasonByTaskId = {},
   childTaskCreationBlockedTaskIds = [],
@@ -6033,6 +6035,7 @@ export function TaskManagementTableV2({
         <TaskChildCreationComposer
           allTags={allTagOptions}
           childLabel={childLabel}
+          initialDueOn={todayDateKey}
           key={`${parentTaskId}:${childLabel}`}
           onCancel={() => cancelTableStepComposer(parentTaskId)}
           onCreateChildTask={onCreateChildTask ?? (async () => ({ error: "Child task creation is unavailable.", taskId: null }))}

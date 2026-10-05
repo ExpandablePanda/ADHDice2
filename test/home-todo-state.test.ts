@@ -1455,7 +1455,7 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   assert.match(homeCreation, /resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
   assert.match(homeCreation, /custom_ruleset_id: selection\.customRulesetId/);
   assert.match(homeCreation, /task_type: selection\.taskType/);
-  assert.match(homeCreation, /addTask\([\s\S]*buildNewTaskDraft\(title\)/);
+  assert.match(homeCreation, /addTask\([\s\S]*buildNewTaskDraft\(title, \{ dueOn: todayKey \}\)/);
   assert.match(homeCreation, /\.\.\.metadata/);
   assert.match(homeCreation, /buildTaskPriorityUpdate\(metadata\.priority_level\)/);
   assert.match(homeCreation, /if \(!selection\) \{[\s\S]*setMessage\(\{ tone: "warn", text: "That Task Type is no longer available\." \}\);[\s\S]*return null;/);

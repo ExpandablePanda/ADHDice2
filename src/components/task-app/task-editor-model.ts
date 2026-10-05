@@ -7,11 +7,11 @@ import { buildTaskPriorityUpdate } from "@/lib/task-priority";
 
 export type TaskDraft = Omit<TaskInsert, "user_id">;
 
-export function buildNewTaskDraft(title: string): TaskDraft {
+export function buildNewTaskDraft(title: string, options?: { dueOn?: string | null }): TaskDraft {
   return {
     actual_seconds: 0,
     completed_at: null,
-    due_on: null,
+    due_on: options?.dueOn ?? null,
     due_time: null,
     energy: "none",
     estimated_minutes: null,

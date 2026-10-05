@@ -44,6 +44,7 @@ function energyTone(energy: TaskEnergy) {
 
 export function TaskCreationComposer({
   allTags,
+  initialDueOn,
   initialPriority = "0",
   initialTitle = "",
   initialTaskTypeSelection = "task",
@@ -55,6 +56,7 @@ export function TaskCreationComposer({
   titleLabel = "Task title",
 }: {
   allTags: string[];
+  initialDueOn: string;
   initialPriority?: TaskPriorityLevelOption;
   initialTitle?: string;
   initialTaskTypeSelection?: string;
@@ -67,7 +69,7 @@ export function TaskCreationComposer({
 }) {
   const [title, setTitle] = useState(initialTitle);
   const [taskTypeSelection, setTaskTypeSelection] = useState(initialTaskTypeSelection);
-  const [dueOn, setDueOn] = useState("");
+  const [dueOn, setDueOn] = useState(initialDueOn);
   const [dueTime, setDueTime] = useState("");
   const [repeatValue, setRepeatValue] = useState<TaskRepeatEditorValue>({
     repeatFrequency: "none",
@@ -126,7 +128,7 @@ export function TaskCreationComposer({
   function resetDraft() {
     setTitle(initialTitle);
     setTaskTypeSelection(initialTaskTypeSelection);
-    setDueOn("");
+    setDueOn(initialDueOn);
     setDueTime("");
     setRepeatValue({
       repeatFrequency: "none",
@@ -309,6 +311,7 @@ export function TaskCreationComposer({
 export function TaskChildCreationComposer({
   allTags,
   childLabel,
+  initialDueOn,
   onCancel,
   onCreateChildTask,
   onCreated,
@@ -317,6 +320,7 @@ export function TaskChildCreationComposer({
 }: {
   allTags: string[];
   childLabel: "Step" | "Substep";
+  initialDueOn: string;
   onCancel: () => void;
   onCreateChildTask: (parentTaskId: string, title: string, taskTypeSelectionValue: string, metadata: TaskCreationMetadata) => Promise<TaskChildCreationResult>;
   onCreated?: () => void;
@@ -326,6 +330,7 @@ export function TaskChildCreationComposer({
   return (
     <TaskCreationComposer
       allTags={allTags}
+      initialDueOn={initialDueOn}
       onCancel={onCancel}
       onCreate={(draft) => onCreateChildTask(parentTaskId, draft.title, draft.taskTypeSelection, draft.metadata)}
       onCreated={onCreated}

@@ -638,6 +638,7 @@ export function TasksTableAdapter({
       agentPlanNode={
         <TaskManagementTableV2
           allowInlineInspector
+          todayDateKey={tableProps.rowContext.todayDateKey}
           getAllRows={() => (tableProps.allTasks ?? tableProps.tasks)
             .filter(isTaskVisibleInPrimaryViews)
             .map((task) => rowModelCache.getOrCreate(task, {
@@ -1361,6 +1362,7 @@ function StepsCardPreview({
           <TaskChildCreationComposer
             allTags={allTagOptions}
             childLabel="Step"
+            initialDueOn={todayDateKey}
             key={`${parentTaskId}:Step`}
             onCancel={() => onCancelParentStepDraft?.()}
             onCreateChildTask={onCreateChildTask}
@@ -1813,6 +1815,7 @@ function StepsCardPreview({
                     <TaskChildCreationComposer
                       allTags={allTagOptions}
                       childLabel="Substep"
+                      initialDueOn={todayDateKey}
                       key={`${item.id}:Substep`}
                       onCancel={() => setSubstepDraftParentId(null)}
                       onCreateChildTask={onCreateChildTask}
@@ -3048,6 +3051,7 @@ function TasksSimpleList({
           {tableProps.requestedOpenTaskId ? (
             <TaskManagementTableV2
               allowInlineInspector
+              todayDateKey={tableProps.rowContext.todayDateKey}
               allListOptions={tableProps.allListOptions}
               allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
               allTagOptions={tableProps.allTagOptions}

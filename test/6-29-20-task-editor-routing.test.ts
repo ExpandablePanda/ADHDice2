@@ -72,7 +72,7 @@ test("Home and Table request the shared overlay without changing the active page
 test("inline New Task routes the created parent to the shared full editor", async () => {
   const app = await source("../src/components/task-app.tsx");
   const composer = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const duplicateTaskInPlace"));
-  assert.match(composer, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.match(composer, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task", \{ dueOn: todayKey \}\)/);
   assert.match(composer, /routeToCurrentBucket: true/);
   assert.doesNotMatch(composer, /TaskCreationComposer|setTaskCreationInitialTypeSelection|setIsTaskCreationComposerOpen/);
   const helper = app.slice(app.indexOf("const createTaskAndOpenSharedEditor"), app.indexOf("const openCalendarDateTaskEditor"));

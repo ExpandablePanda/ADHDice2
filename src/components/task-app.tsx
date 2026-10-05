@@ -5033,7 +5033,7 @@ export function TaskApp() {
       return false;
     }
     const createdTask = await addTask({
-      ...buildNewTaskDraft(title),
+      ...buildNewTaskDraft(title, { dueOn: todayKey }),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
@@ -5048,7 +5048,7 @@ export function TaskApp() {
       return false;
     }
     return true;
-  }, [addTask, customBehaviorRulesets, setMessage, taskContentFolderActions.moveTaskToFolder]);
+  }, [addTask, customBehaviorRulesets, setMessage, taskContentFolderActions.moveTaskToFolder, todayKey]);
   async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
     const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
     const action = taskManualActionForStatus(status);
@@ -5366,17 +5366,17 @@ export function TaskApp() {
 
   const openCalendarDateTaskEditor = useCallback((dueOn: string) => (
     createTaskAndOpenSharedEditor(
-      { ...buildNewTaskDraft("New Task"), due_on: dueOn },
+      buildNewTaskDraft("New Task", { dueOn }),
       { routeToCurrentBucket: true },
     )
   ), [createTaskAndOpenSharedEditor]);
 
   const openInlineNewListTaskComposer = useCallback(() => {
     void createTaskAndOpenSharedEditor(
-      buildNewTaskDraft("New Task"),
+      buildNewTaskDraft("New Task", { dueOn: todayKey }),
       { routeToCurrentBucket: true },
     );
-  }, [createTaskAndOpenSharedEditor]);
+  }, [createTaskAndOpenSharedEditor, todayKey]);
 
   const openTaskComposerForType = useCallback((selectionValue: string) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
@@ -5386,11 +5386,11 @@ export function TaskApp() {
     }
 
     void createTaskAndOpenSharedEditor({
-      ...buildNewTaskDraft("New Task"),
+      ...buildNewTaskDraft("New Task", { dueOn: todayKey }),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     }, { routeToCurrentBucket: true });
-  }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
+  }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage, todayKey]);
 
   const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string, metadata: HomeTodoTaskMetadata) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
@@ -5400,13 +5400,13 @@ export function TaskApp() {
     }
 
     return addTask({
-      ...buildNewTaskDraft(title),
+      ...buildNewTaskDraft(title, { dueOn: todayKey }),
       ...metadata,
       ...buildTaskPriorityUpdate(metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
-  }, [addTask, customBehaviorRulesets, setMessage]);
+  }, [addTask, customBehaviorRulesets, setMessage, todayKey]);
 
   const taskTypeOptions = useMemo(
     () => buildTaskTypeSelectionOptions(customBehaviorRulesets),
@@ -5457,9 +5457,9 @@ export function TaskApp() {
   }, [saveTaskEditor, taskLinkedNotesByTaskId, taskListMembershipsByTaskId, taskSubtasksByTaskId, toggleTaskManualListMembership]);
 
   const openHealthReminderTemplate = useCallback((templateKey: HealthReminderTemplateKey) => {
-    const template = buildHealthReminderTemplate(templateKey, todayISO());
+    const template = buildHealthReminderTemplate(templateKey, todayKey);
     return createTaskAndOpenSharedEditor({
-      ...buildNewTaskDraft(template.title),
+      ...buildNewTaskDraft(template.title, { dueOn: todayKey }),
       estimated_minutes: template.estimatedMinutes,
       notes: template.notes,
       repeat_day_of_month: template.repeatDayOfMonth,
@@ -5468,11 +5468,11 @@ export function TaskApp() {
       repeat_interval: template.repeatInterval,
       tags: template.tags,
     });
-  }, [createTaskAndOpenSharedEditor]);
+  }, [createTaskAndOpenSharedEditor, todayKey]);
 
   const openScratchLinkedTaskTemplate = useCallback((title: string) => (
-    createTaskAndOpenSharedEditor(buildNewTaskDraft(title))
-  ), [createTaskAndOpenSharedEditor]);
+    createTaskAndOpenSharedEditor(buildNewTaskDraft(title, { dueOn: todayKey }))
+  ), [createTaskAndOpenSharedEditor, todayKey]);
 
   const {
     deferTask,
@@ -8010,6 +8010,7 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          todayDateKey={todayKey}
           taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
           attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.83`.
+- Current working app version: `7.16.84`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-04 7.16.84 Default Task Due Date
+
+Task creation UIs now preload Due Date with the current ADHDice logical Today
+date, allowing immediate keyboard date adjustment while preserving explicit
+Calendar/template dates and manual No Date clearing. Due Time remains empty by
+default. The default is threaded from the existing `todayKey` /
+`behaviorPolicyLogicalDate` authorities; no persistence invariant changed.
 
 ## 2026-10-04 7.16.83 Recurrence End Date Edge Function Compatibility
 
