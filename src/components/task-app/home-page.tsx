@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, Trash2 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -32,6 +32,7 @@ import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
 import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { useScratchDictation } from "@/hooks/useScratchDictation";
 import { addMealFromLibraryFood, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, parseBatchIntake, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealFoodProposalDraft, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
 import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
 import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
@@ -79,6 +80,7 @@ import {
   TASK_TABLE_CHIP_BASE_CLASS,
   TaskCurrentStreakChip,
 } from "@/components/ui/task-table-primitives";
+import { ScratchDictationControl } from "./scratch-dictation-control";
 
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
@@ -371,6 +373,7 @@ export function HomePage({
   tasks,
   taskContentFolders,
   userId,
+  onTranscribeScratchAudio,
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
@@ -418,6 +421,7 @@ export function HomePage({
   tasks: Task[];
   taskContentFolders: readonly TaskContentFolderRow[];
   userId: string | null;
+  onTranscribeScratchAudio: (audio: Blob) => Promise<string>;
   behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
   behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
   namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
@@ -481,6 +485,7 @@ export function HomePage({
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
   const [routineChildDropTarget, setRoutineChildDropTarget] = useState<HomeRoutineChildDropTarget | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
+  const scratchpadRef = useRef<HTMLTextAreaElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const rowActionMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -621,7 +626,28 @@ export function HomePage({
     if (!scratchpadDraftDirtyRef.current) setScratchpadDraft(state.scratchpadText);
   }, [state.scratchpadText]);
 
+  const handleScratchpadDictationBody = useCallback((nextBody: string) => {
+    scratchpadDraftDirtyRef.current = true;
+    setScratchpadDraft(nextBody);
+  }, []);
+
+  const scratchpadDictation = useScratchDictation({
+    body: scratchpadDraft,
+    editorRef: scratchpadRef,
+    enabled: activeHomeTab === "scratchpad",
+    getCaretRange: () => {
+      const textarea = scratchpadRef.current;
+      if (!textarea || typeof textarea.selectionStart !== "number" || typeof textarea.selectionEnd !== "number") return null;
+      return { end: textarea.selectionEnd, start: textarea.selectionStart };
+    },
+    noteKey: "home-scratchpad",
+    onBodyChange: handleScratchpadDictationBody,
+    onTranscribeAudio: onTranscribeScratchAudio,
+    userId,
+  });
+
   function selectHomeTab(nextTab: HomePanelTab) {
+    if (nextTab !== "scratchpad") scratchpadDictation.cancel();
     setActiveHomeTab(nextTab);
     setIsSearchOpen(false);
     setIsCreateOpen(false);
@@ -1881,6 +1907,7 @@ export function HomePage({
                 <textarea
                   aria-label="Scratchpad note"
                   className="health-input min-h-40 w-full resize-y leading-6"
+                  ref={scratchpadRef}
                   onChange={(event) => {
                     scratchpadDraftDirtyRef.current = true;
                     setScratchpadDraft(event.target.value);
@@ -1891,6 +1918,7 @@ export function HomePage({
                 />
             </label>
             <div className="mt-2 flex flex-wrap items-center gap-2">
+              <ScratchDictationControl dictation={scratchpadDictation} />
               <AdhdChip onClick={saveScratchpadDraft} selected type="button">Save</AdhdChip>
               <AdhdChip onClick={moveScratchpadDraftToItems} type="button">Move lines to items</AdhdChip>
               <AdhdChip onClick={parseScratchpadBatch} type="button">Parse Batch Intake</AdhdChip>

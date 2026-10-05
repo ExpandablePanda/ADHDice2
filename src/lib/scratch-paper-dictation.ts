@@ -83,6 +83,14 @@ export function insertScratchDictationText(
 }
 
 export function restoreScratchEditorOffset(editor: HTMLElement, offset: number) {
+  const selectionEditor = editor as HTMLElement & {
+    setSelectionRange?: (start: number, end: number) => void;
+  };
+  if (typeof selectionEditor.setSelectionRange === "function") {
+    selectionEditor.setSelectionRange(offset, offset);
+    return;
+  }
+
   const selection = window.getSelection();
   if (!selection) return;
   const range = document.createRange();

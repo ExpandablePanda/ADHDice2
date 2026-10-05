@@ -8332,6 +8332,7 @@ export function TaskApp() {
             tasks={tasks}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
+            onTranscribeScratchAudio={onTranscribeScratchAudio}
             addWaterEntries={addHealthWaterEntries}
             addWeightEntries={addHealthWeightEntries}
             addMealEntries={addHealthMealEntries}

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.91`.
+- Current working app version: `7.16.92`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,16 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-05 7.16.92 Home Scratchpad Dictation Parity
+
+Dictate now works in both Home Scratchpad and Notes Scratch Paper through the
+same browser MediaRecorder, temporary recorded-audio, and Groq transcription
+authority. Home Scratchpad captures its textarea selection, inserts only the
+returned transcript into the dirty draft, restores focus/caret placement, and
+leaves the existing explicit Save action authoritative. Dictate audio remains
+temporary and is not written to Supabase Storage or Postgres. Saved Voice Memo
+persistence remains the next separate feature.
 
 ## 2026-10-05 7.16.91 Scratch Paper Groq Transcription Provider
 

@@ -15,7 +15,7 @@ import {
 export type UseScratchDictationOptions = {
   body: string;
   dismissPicker?: () => void;
-  editorRef?: RefObject<HTMLDivElement | null>;
+  editorRef?: RefObject<HTMLElement | null>;
   enabled?: boolean;
   getCaretRange: () => ScratchEditorRange | null;
   isPickerOpen?: boolean;
