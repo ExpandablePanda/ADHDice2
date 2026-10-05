@@ -63,18 +63,23 @@ begin
   end if;
   definition := pg_get_functiondef('public.adhdice_execute_task_state_command(uuid,jsonb)'::regprocedure);
   if position('repeat_end_on = case' in definition) = 0 then
-    definition := replace(
+    if position('repeat_frequency = case' in definition) = 0
+       or position('repeat_quota_count = case' in definition) = 0
+       or position('repeat_frequency = case' in definition) > position('repeat_quota_count = case' in definition) then
+      raise exception 'Could not patch the canonical Task State command RPC: current repeat_frequency assignment shape is missing.';
+    end if;
+    definition := regexp_replace(
       definition,
-      $needle$         active_occurrence_due_on = case when v_projection ? 'active_occurrence_due_on' then nullif(v_projection->>'active_occurrence_due_on', '')::date else active_occurrence_due_on end,
-         repeat_quota_count = case$needle$,
-      $replacement$         active_occurrence_due_on = case when v_projection ? 'active_occurrence_due_on' then nullif(v_projection->>'active_occurrence_due_on', '')::date else active_occurrence_due_on end,
-         repeat_end_on = case
+      $needle$(         repeat_frequency = case.*?)(         repeat_quota_count = case)$needle$,
+      $replacement$\1         repeat_end_on = case
            when v_schedule <> '{}'::jsonb and coalesce(v_schedule->>'repeat_frequency', 'none') in ('per_week', 'per_month', 'daily', 'weekly', 'monthly', 'custom', 'daily_until_complete')
              then nullif(v_schedule->>'repeat_end_on', '')::date
            when v_schedule <> '{}'::jsonb then null
            else repeat_end_on
          end,
-         repeat_quota_count = case$replacement$
+\2$replacement$,
+      1,
+      's'
     );
     if position('repeat_end_on = case' in definition) = 0 then
       raise exception 'Could not patch the canonical Task State command RPC for repeat_end_on.';

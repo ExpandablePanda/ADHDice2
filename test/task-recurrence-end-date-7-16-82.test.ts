@@ -270,7 +270,28 @@ test("shared repeat editor helpers and import metadata carry End Date and clear 
   assert.equal(parsed.tasks[0]?.repeatEndOn, endOn);
 });
 
-test("version and source-only SQL contract are present", () => {
-  assert.match(readFileSync(new URL("../supabase/patch_task_recurrence_end_date_7_16_82.sql", import.meta.url), "utf8"), /add column if not exists repeat_end_on date/);
-  assert.match(readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8"), /7\.16\.83/);
+test("7.16.86 reconciles the live recurrence migration anchor without changing its SQL contract", () => {
+  const migration = readFileSync(new URL("../supabase/patch_task_recurrence_end_date_7_16_82.sql", import.meta.url), "utf8");
+  const taskStateRpcPatch = migration.slice(migration.indexOf("do $rpc$"), migration.indexOf("$rpc$;", migration.indexOf("do $rpc$")));
+
+  assert.match(migration, /alter table public\.adhdice_clean_tasks\s+add column if not exists repeat_end_on date/);
+  assert.match(migration, /alter table public\.adhdice_task_schedule_boundaries\s+add column if not exists repeat_end_on date/);
+  assert.match(migration, /adhdice_clean_tasks_repeat_end_on_check/);
+  assert.match(migration, /adhdice_clean_tasks_repeat_end_on_due_check/);
+  assert.match(migration, /adhdice_task_schedule_boundaries_repeat_end_on_check/);
+  assert.match(migration, /to_regprocedure\('public\.adhdice_create_canonical_task\(uuid,jsonb\)'\)/);
+  assert.match(migration, /repeat_end_on, repeat_quota_count/);
+  assert.match(migration, /v_repeat_end_on := nullif\(v_schedule->>'repeat_end_on', ''\)::date/);
+  assert.match(migration, /v_repeat_frequency = 'none' and v_repeat_end_on is not null/);
+  assert.match(migration, /else repeat_end_on/);
+  assert.match(migration, /when v_schedule <> '\{\}'::jsonb then null/);
+
+  assert.doesNotMatch(taskStateRpcPatch, /active_occurrence_due_on = case[\s\S]*repeat_quota_count = case/);
+  assert.match(taskStateRpcPatch, /repeat_frequency = case[\s\S]*repeat_quota_count = case/);
+  assert.match(taskStateRpcPatch, /position\('repeat_frequency = case' in definition\) = 0/);
+  assert.match(taskStateRpcPatch, /position\('repeat_quota_count = case' in definition\) = 0/);
+  assert.match(taskStateRpcPatch, /current repeat_frequency assignment shape is missing/);
+  assert.match(taskStateRpcPatch, /repeat_end_on = case[\s\S]*coalesce\(v_schedule->>'repeat_frequency', 'none'\)[\s\S]*daily_until_complete[\s\S]*else repeat_end_on/);
+
+  assert.match(readFileSync(new URL("../src/lib/app-version.ts", import.meta.url), "utf8"), /7\.16\.86/);
 });

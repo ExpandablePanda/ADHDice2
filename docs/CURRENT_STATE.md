@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.85`.
+- Current working app version: `7.16.86`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -21,6 +21,16 @@ editable in Task Type / Behavior Settings. Normal Task Type menus, selectors,
 and identity surfaces now show only the icon and Task Type name, preserving
 their existing accents, ordering, selection behavior, and keyboard interaction.
 
+## 2026-10-04 7.16.86 Reconcile live recurrence End Date SQL
+
+The 7.16.82 recurrence End Date SQL is live. The `task-state-command` and
+`task-create-canonical` Edge Functions are live with the 7.16.83 contract.
+The first SQL attempt failed transactionally because its Task State command RPC
+source anchor was stale; the corrected migration using the current
+`repeat_frequency = case` assignment succeeded. 7.16.86 reconciles the
+checked-in migration text with that successful live SQL. No additional SQL
+execution is required for 7.16.86.
+
 ## 2026-10-04 7.16.84 Default Task Due Date
 
 Task creation UIs now preload Due Date with the current ADHDice logical Today
@@ -33,11 +43,8 @@ default. The default is threaded from the existing `todayKey` /
 
 7.16.83 fixes the `task-create-canonical` Edge Function contract omission by
 adding the nullable `repeat_end_on` Task intent key to its trusted allowlist.
-The 7.16.82 recurrence End Date SQL remains unapplied. The
-`task-state-command` and `task-create-canonical` Edge Functions have not been
-redeployed, so the live/browser recurrence QA failure is not fixed yet. Live
-recurrence QA must wait until ChatGPT reviews and authorizes the coordinated SQL
-and Edge Function deployment.
+The `task-state-command` and `task-create-canonical` Edge Functions are live
+with this contract.
 
 ## 2026-10-04 7.16.82 Recurrence End Date
 
@@ -48,8 +55,8 @@ the final valid occurrence retains normal History and completion semantics.
 Quota final periods are date-truncated without prorating the configured target,
 and balance does not carry into a later nonexistent period. End Time remains
 intentionally deferred because the Task State Engine is logical-date based.
-The source-only migration is `supabase/patch_task_recurrence_end_date_7_16_82.sql`;
-SQL remains unapplied pending review and explicit deployment approval.
+The migration is `supabase/patch_task_recurrence_end_date_7_16_82.sql`; its SQL
+is live as recorded in the 7.16.86 reconciliation above.
 
 ## 2026-10-04 7.16.81 Remove stock profile avatar fallback
 
