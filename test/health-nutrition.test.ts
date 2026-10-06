@@ -5,6 +5,7 @@ import {
   calculateHealthFoodNutrition,
   getHealthFoodMeasurementOptions,
   lookupOpenFoodFactsByBarcode,
+  parseHealthNutritionDetailsInput,
   normalizeOpenFoodFactsProduct,
 } from "../src/lib/health-nutrition.ts";
 
@@ -20,6 +21,27 @@ const goldfishServing = {
   servingMeasureValue: 30,
   servingMeasureUnit: "g" as const,
 };
+
+test("Custom Food nutrition input accepts US-formatted numbers and stores numeric values", () => {
+  const cases = [
+    ["2890", 2890],
+    ["2,890", 2890],
+    ["2890.5", 2890.5],
+    ["2,890.5", 2890.5],
+    ["0.5", 0.5],
+  ] as const;
+
+  for (const [rawValue, expected] of cases) {
+    assert.deepEqual(parseHealthNutritionDetailsInput({ sodium_mg: rawValue }), { sodium_mg: expected });
+    assert.equal(typeof parseHealthNutritionDetailsInput({ sodium_mg: rawValue })?.sodium_mg, "number");
+  }
+});
+
+test("Custom Food nutrition input rejects malformed and negative values", () => {
+  for (const rawValue of ["1.2.3", "2,,890", "1,23", "abc", "-1"]) {
+    assert.equal(parseHealthNutritionDetailsInput({ sodium_mg: rawValue }), null, rawValue);
+  }
+});
 
 test("open food facts products normalize into health lookup results", () => {
   const result = normalizeOpenFoodFactsProduct({
