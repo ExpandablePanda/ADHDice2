@@ -26,6 +26,7 @@ const voiceMemoSource = readFileSync(new URL("../src/components/task-app/voice-m
 const voiceMemoHookSource = readFileSync(new URL("../src/hooks/useVoiceMemos.ts", import.meta.url), "utf8");
 const dictationSource = readFileSync(new URL("../src/lib/scratch-paper-dictation.ts", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_voice_memos_7_16_93.sql", import.meta.url), "utf8");
+const iosInfoPlistSource = readFileSync(new URL("../ios/App/App/Info.plist", import.meta.url), "utf8");
 
 class FakeStream implements ScratchMediaStream {
   readonly tracks = [{ stopCalls: 0, stop() { this.stopCalls += 1; } }];
@@ -78,6 +79,17 @@ test("Voice Memo and Dictate remain visibly separate actions", () => {
   assert.match(scratchSource, /<VoiceMemoRecorder(?:[^>]+)?contextLabel="Scratch Paper"/);
   assert.match(voiceMemoSource, /Save Memo/);
   assert.match(voiceMemoSource, /Discard/);
+});
+
+test("iOS declares microphone permission for Voice Memo and Dictate recording", () => {
+  const microphonePurpose = iosInfoPlistSource.match(
+    /<key>NSMicrophoneUsageDescription<\/key>\s*<string>([^<]*)<\/string>/,
+  )?.[1]?.trim() ?? "";
+
+  assert.ok(microphonePurpose.length > 0);
+  assert.equal(microphonePurpose, "ADHDice uses the microphone to record Voice Memos and convert spoken notes into text.");
+  assert.match(iosInfoPlistSource, /<key>NSCameraUsageDescription<\/key>/);
+  assert.match(iosInfoPlistSource, /<key>NSHealthShareUsageDescription<\/key>/);
 });
 
 test("stopping a Voice Memo creates a local preview without persistence", async () => {

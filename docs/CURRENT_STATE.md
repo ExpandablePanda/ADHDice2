@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.95`.
+- Current working app version: `7.16.96`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-05 7.16.96 iOS Microphone Privacy Permission
+
+The native iOS `Info.plist` now declares `NSMicrophoneUsageDescription` for
+the shared browser `MediaRecorder` microphone path. This corrects the
+immediate termination when Home → Scratchpad → Record Memo or Scratch Paper
+Dictate first requests microphone access. The existing recorder architecture,
+Voice Memo persistence, and transcription behavior are unchanged.
 
 ## 2026-09-30 7.16.21 iOS native-development consolidation checkpoint
 
