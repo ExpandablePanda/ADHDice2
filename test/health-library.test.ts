@@ -720,6 +720,50 @@ test("Custom Food barcode Clear restores its scan baseline and ignores stale loo
   assert.doesNotMatch(library, />Lookup<\//);
 });
 
+test("Custom Food save reports validation/failure, gates in-flight saves, and preserves the requested form order", () => {
+  const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const saveHandler = library.slice(library.indexOf("async function handleSaveFood"), library.indexOf("async function completeFoodSave"));
+  const resetHandler = library.slice(library.indexOf("function resetFoodDraft"), library.indexOf("function clearFoodScan"));
+  const formStart = library.indexOf('title={foodDraft.id ? "Edit custom food"');
+  const form = library.slice(formStart, library.indexOf("</HealthCollapsiblePanel>", formStart));
+  const brandIndex = form.indexOf('<LibraryField label="Brand">');
+  const foodNameIndex = form.indexOf('<LibraryField label="Food name">');
+  const caloriesIndex = form.indexOf('<LibraryField label="Calories per serving">');
+  const fatIndex = form.indexOf('<LibraryField label="Fat (g)">');
+  const carbsIndex = form.indexOf('<LibraryField label="Carbs (g)">');
+  const proteinIndex = form.indexOf('<LibraryField label="Protein (g)">');
+  const failedSave = saveHandler.match(/if \(!saved\) \{[\s\S]*?return;\s*\}/)?.[0] ?? "";
+
+  assert.match(library, /function getFoodDraftValidationMessage\(draft: FoodDraft\)/);
+  assert.match(library, /Enter a food name\./);
+  assert.match(library, /Calories per serving must be a valid non-negative number\./);
+  assert.match(library, /Serving quantity must be greater than 0\./);
+  assert.match(library, /Enter a serving unit\./);
+  assert.match(library, /Serving measure value must be greater than 0\./);
+  assert.match(library, /Choose a serving measure unit or clear the measure value\./);
+  assert.match(library, /Enter a serving measure value or choose No measure\./);
+  assert.match(library, /Nutrition Details contains an invalid number\./);
+  assert.match(saveHandler, /if \(isSavingFood\) \{\s*return;/);
+  assert.match(saveHandler, /const validationMessage = getFoodDraftValidationMessage\(foodDraft\)/);
+  assert.match(saveHandler, /setFoodSaveFeedback\(""\)/);
+  assert.match(saveHandler, /setFoodSaveFeedback\(validationMessage\)/);
+  assert.match(library, /foodSaveFeedback \? <p aria-live="polite"[\s\S]*?\{foodSaveFeedback\}/);
+  assert.match(library, /disabled=\{isSavingFood\}[\s\S]*?\{isSavingFood \? "Saving\.\.\." : "Save food"\}/);
+  assert.match(saveHandler, /setIsSavingFood\(true\)/);
+  assert.match(saveHandler, /setIsSavingFood\(false\)/);
+  assert.match(saveHandler, /setFoodSaveFeedback\(FOOD_SAVE_FAILURE_MESSAGE\)/);
+  assert.doesNotMatch(failedSave, /resetFoodDraft\(\)/);
+  assert.match(saveHandler, /resetFoodDraft\(\);/);
+  assert.match(resetHandler, /setFoodSaveFeedback\(""\)/);
+  assert.match(resetHandler, /setFoodDraft\(EMPTY_FOOD_DRAFT\)/);
+  assert.ok(brandIndex >= 0 && brandIndex < foodNameIndex);
+  assert.ok(caloriesIndex >= 0 && caloriesIndex < fatIndex);
+  assert.ok(fatIndex < carbsIndex && carbsIndex < proteinIndex);
+  assert.match(library, /disabled=\{isSavingFood \|\| Boolean\(updatingFoodLogsId\) \|\| editingFoodHasUnsavedChanges\}/);
+  assert.match(library, /disabled=\{isSavingFood\} onClick=\{\(\) => \{ void completeFoodSave\("update"\); \}\}/);
+  assert.match(library, /disabled=\{isSavingFood\} onClick=\{\(\) => \{ void completeFoodSave\("future"\); \}\}/);
+});
+
 test("Task History selected actions use semantic inverted status fills", () => {
   const source = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
   assert.match(source, /TASK_STATUS_INVERTED_CHIP_STYLES/);

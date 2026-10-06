@@ -102,6 +102,8 @@ const EMPTY_FOOD_DRAFT: FoodDraft = {
   nutritionDetails: createEmptyNutritionDetailDraft(),
 };
 
+const FOOD_SAVE_FAILURE_MESSAGE = "Could not save this custom food. Your draft is still here; try again.";
+
 type FoodImportRow = {
   draft: HealthCustomFoodImportDraft;
   id: string;
@@ -201,6 +203,7 @@ export function HealthLibraryPanel({
   const [isSavingFoodImport, setIsSavingFoodImport] = useState(false);
   const [foodSaveConfirmation, setFoodSaveConfirmation] = useState<FoodSaveConfirmation | null>(null);
   const [isSavingFood, setIsSavingFood] = useState(false);
+  const [foodSaveFeedback, setFoodSaveFeedback] = useState("");
   const [updatingFoodLogsId, setUpdatingFoodLogsId] = useState<string | null>(null);
   const [ingredientSearchQuery, setIngredientSearchQuery] = useState("");
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
@@ -253,6 +256,7 @@ export function HealthLibraryPanel({
     setIsBarcodeScannerOpen(false);
     setBarcodeLookupStatus("idle");
     setBarcodeLookupMessage("");
+    setFoodSaveFeedback("");
     setFoodDraft(EMPTY_FOOD_DRAFT);
   }
 
@@ -271,28 +275,19 @@ export function HealthLibraryPanel({
   }
 
   async function handleSaveFood() {
-    const calories = Number.parseInt(foodDraft.calories, 10);
-    const servingQuantity = nullablePositiveNumber(foodDraft.servingQuantity);
-    const servingMeasureValue = nullablePositiveNumber(foodDraft.servingMeasureValue);
-    const nutritionDetails = parseHealthNutritionDetailsInput(foodDraft.nutritionDetails);
-    const hasInvalidNutritionDetail = HEALTH_NUTRITION_FIELD_REGISTRY.some((field) => {
-      const rawValue = foodDraft.nutritionDetails[field.key]?.trim() ?? "";
-      return rawValue.length > 0 && typeof nutritionDetails?.[field.key] !== "number";
-    });
-    const hasMeasureValue = foodDraft.servingMeasureValue.trim().length > 0;
-    const hasMeasureUnit = Boolean(foodDraft.servingMeasureUnit);
-    if (
-      !foodDraft.foodName.trim()
-      || !Number.isFinite(calories)
-      || calories < 0
-      || servingQuantity === null
-      || !foodDraft.servingUnit.trim()
-      || (hasMeasureValue && (servingMeasureValue === null || !hasMeasureUnit))
-      || (!hasMeasureValue && hasMeasureUnit)
-      || hasInvalidNutritionDetail
-    ) {
+    if (isSavingFood) {
       return;
     }
+    setFoodSaveFeedback("");
+    const validationMessage = getFoodDraftValidationMessage(foodDraft);
+    if (validationMessage) {
+      setFoodSaveFeedback(validationMessage);
+      return;
+    }
+    const calories = Number.parseInt(foodDraft.calories, 10);
+    const servingQuantity = nullablePositiveNumber(foodDraft.servingQuantity)!;
+    const servingMeasureValue = nullablePositiveNumber(foodDraft.servingMeasureValue);
+    const nutritionDetails = parseHealthNutritionDetailsInput(foodDraft.nutritionDetails);
     const servingLabel = composeHealthFoodStructuredServingLabel({
       servingQuantity,
       servingUnit: foodDraft.servingUnit,
@@ -325,9 +320,18 @@ export function HealthLibraryPanel({
       setFoodSaveConfirmation({ affectedCount: editingFoodLogCount, input: foodInput });
       return;
     }
-    const saved = await saveFood(foodInput);
-    if (saved) {
+    setIsSavingFood(true);
+    try {
+      const saved = await saveFood(foodInput);
+      if (!saved) {
+        setFoodSaveFeedback(FOOD_SAVE_FAILURE_MESSAGE);
+        return;
+      }
       resetFoodDraft();
+    } catch {
+      setFoodSaveFeedback(FOOD_SAVE_FAILURE_MESSAGE);
+    } finally {
+      setIsSavingFood(false);
     }
   }
 
@@ -341,12 +345,15 @@ export function HealthLibraryPanel({
     try {
       const saved = await saveFood(pending.input);
       if (!saved) {
+        setFoodSaveFeedback(FOOD_SAVE_FAILURE_MESSAGE);
         return;
       }
       if (choice === "update") {
         await updatePreviousFoodLogs(saved);
       }
       resetFoodDraft();
+    } catch {
+      setFoodSaveFeedback(FOOD_SAVE_FAILURE_MESSAGE);
     } finally {
       setIsSavingFood(false);
     }
@@ -407,6 +414,7 @@ export function HealthLibraryPanel({
     setIsBarcodeScannerOpen(false);
     setBarcodeLookupStatus("idle");
     setBarcodeLookupMessage("");
+    setFoodSaveFeedback("");
     setFoodDraft(foodToDraft(food));
   }
 
@@ -641,20 +649,20 @@ export function HealthLibraryPanel({
             </HealthCollapsiblePanel>
             <HealthCollapsiblePanel subtitle="Nutrition is stored per serving." title={foodDraft.id ? "Edit custom food" : "New custom food"} variant="subpanel">
               <div className="grid gap-3 sm:grid-cols-2">
-                <LibraryField label="Food name">
-                  <HealthAutocomplete
-                    ariaLabel="Food name"
-                    onChange={(value) => setFoodDraft((current) => ({ ...current, foodName: value }))}
-                    suggestions={foodNameSuggestions}
-                    value={foodDraft.foodName}
-                  />
-                </LibraryField>
                 <LibraryField label="Brand">
                   <HealthAutocomplete
                     ariaLabel="Brand"
                     onChange={(value) => setFoodDraft((current) => ({ ...current, brandName: value }))}
                     suggestions={brandSuggestions}
                     value={foodDraft.brandName}
+                  />
+                </LibraryField>
+                <LibraryField label="Food name">
+                  <HealthAutocomplete
+                    ariaLabel="Food name"
+                    onChange={(value) => setFoodDraft((current) => ({ ...current, foodName: value }))}
+                    suggestions={foodNameSuggestions}
+                    value={foodDraft.foodName}
                   />
                 </LibraryField>
                 <LibraryField label="Barcode">
@@ -709,14 +717,14 @@ export function HealthLibraryPanel({
                 <LibraryField label="Calories per serving">
                   <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="numeric" onChange={(event) => setFoodDraft((current) => ({ ...current, calories: event.target.value }))} value={foodDraft.calories} />
                 </LibraryField>
-                <LibraryField label="Protein (g)">
-                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, protein: event.target.value }))} value={foodDraft.protein} />
+                <LibraryField label="Fat (g)">
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, fat: event.target.value }))} value={foodDraft.fat} />
                 </LibraryField>
                 <LibraryField label="Carbs (g)">
                   <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, carbs: event.target.value }))} value={foodDraft.carbs} />
                 </LibraryField>
-                <LibraryField label="Fat (g)">
-                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, fat: event.target.value }))} value={foodDraft.fat} />
+                <LibraryField label="Protein (g)">
+                  <input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setFoodDraft((current) => ({ ...current, protein: event.target.value }))} value={foodDraft.protein} />
                 </LibraryField>
               </div>
               <div className="mt-4 grid gap-3">
@@ -752,19 +760,20 @@ export function HealthLibraryPanel({
                 </details>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <AdhdChip onClick={() => { void handleSaveFood(); }} selected>
-                  Save food
+                <AdhdChip disabled={isSavingFood} onClick={() => { void handleSaveFood(); }} selected>
+                  {isSavingFood ? "Saving..." : "Save food"}
                 </AdhdChip>
+                {foodSaveFeedback ? <p aria-live="polite" className="basis-full text-xs text-[#b34b63] dark:text-[#ffabbc]" role="alert">{foodSaveFeedback}</p> : null}
                 {editingFood && editingFoodLogCount > 0 ? (
                   <AdhdChip
-                    disabled={Boolean(updatingFoodLogsId) || editingFoodHasUnsavedChanges}
+                    disabled={isSavingFood || Boolean(updatingFoodLogsId) || editingFoodHasUnsavedChanges}
                     onClick={() => { void handleUpdatePreviousLogs(editingFood); }}
                     title={editingFoodHasUnsavedChanges ? "Save or cancel the current food edits before updating previous logs." : undefined}
                   >
                     {updatingFoodLogsId === editingFood.id ? "Updating previous logs..." : `Update Previous Logs · ${editingFoodLogCount} ${editingFoodLogCount === 1 ? "entry" : "entries"}`}
                   </AdhdChip>
                 ) : null}
-                {foodDraft.id ? <AdhdChip onClick={resetFoodDraft}>Cancel</AdhdChip> : null}
+                {foodDraft.id ? <AdhdChip disabled={isSavingFood} onClick={resetFoodDraft}>Cancel</AdhdChip> : null}
               </div>
             </HealthCollapsiblePanel>
           </div>
@@ -1054,6 +1063,44 @@ function NutritionLine({ calories, protein, carbs, fat }: { calories: number | n
 
 function formatNutritionValue(value: number | null) {
   return typeof value === "number" && Number.isFinite(value) ? String(Math.round(value)) : "—";
+}
+
+function getFoodDraftValidationMessage(draft: FoodDraft) {
+  const calories = Number.parseInt(draft.calories, 10);
+  const servingQuantity = nullablePositiveNumber(draft.servingQuantity);
+  const servingMeasureValue = nullablePositiveNumber(draft.servingMeasureValue);
+  const nutritionDetails = parseHealthNutritionDetailsInput(draft.nutritionDetails);
+  const hasInvalidNutritionDetail = HEALTH_NUTRITION_FIELD_REGISTRY.some((field) => {
+    const rawValue = draft.nutritionDetails[field.key]?.trim() ?? "";
+    return rawValue.length > 0 && typeof nutritionDetails?.[field.key] !== "number";
+  });
+  const hasMeasureValue = draft.servingMeasureValue.trim().length > 0;
+  const hasMeasureUnit = Boolean(draft.servingMeasureUnit);
+  if (!draft.foodName.trim()) {
+    return "Enter a food name.";
+  }
+  if (!Number.isFinite(calories) || calories < 0) {
+    return "Calories per serving must be a valid non-negative number.";
+  }
+  if (servingQuantity === null) {
+    return "Serving quantity must be greater than 0.";
+  }
+  if (!draft.servingUnit.trim()) {
+    return "Enter a serving unit.";
+  }
+  if (hasMeasureValue && servingMeasureValue === null) {
+    return "Serving measure value must be greater than 0.";
+  }
+  if (hasMeasureValue && !hasMeasureUnit) {
+    return "Choose a serving measure unit or clear the measure value.";
+  }
+  if (!hasMeasureValue && hasMeasureUnit) {
+    return "Enter a serving measure value or choose No measure.";
+  }
+  if (hasInvalidNutritionDetail) {
+    return "Nutrition Details contains an invalid number.";
+  }
+  return null;
 }
 
 function foodToDraft(food: HealthFoodLibraryItem): FoodDraft {
