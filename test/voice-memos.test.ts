@@ -193,13 +193,21 @@ test("Scratch Paper source navigation stays in the Scratch Paper domain", () => 
   assert.match(scratchSource, /loadNote\(note\)/);
   assert.match(scratchSource, /setFilter\(targetNote\.status\)/);
   assert.match(scratchSource, /id=\{`scratch-note-\$\{note\.id\}`\}/);
+  assert.match(voiceMemoSource, /sourceNoteAvailable/);
+  assert.match(voiceMemoSource, /sourceNoteAvailable=\{memo\.scratch_note_id \? sourceNoteIds\.has\(memo\.scratch_note_id\) : false\}/);
   assert.doesNotMatch(taskAppSource, /onOpenSourceNote=/);
   assert.doesNotMatch(notesSource, /setEditing\(.*requestedScratchNoteId/);
 });
 
+test("a live untitled Scratch Paper source remains actionable while a missing source is unavailable", () => {
+  assert.match(voiceMemoSource, /if \(sourceNoteAvailable\) return "Scratch Paper"/);
+  assert.match(voiceMemoSource, /memo\.origin_kind === "scratch_note" && memo\.scratch_note_id && sourceNoteAvailable && onOpenSourceNote/);
+  assert.match(voiceMemoSource, /Scratch Paper · source note unavailable/);
+});
+
 test("missing Scratch Paper sources remain unavailable without a broken action", () => {
   assert.match(voiceMemoSource, /Scratch Paper · source note unavailable/);
-  assert.match(voiceMemoSource, /sourceNoteTitle && onOpenSourceNote/);
+  assert.match(voiceMemoSource, /sourceNoteAvailable && onOpenSourceNote/);
 });
 
 test("memo metadata keeps the original Scratch note ID", () => {
@@ -251,4 +259,9 @@ test("Voice Memo state fences user identity changes and preserves same-user cach
   assert.match(voiceMemoHookSource, /setMemos\(\[\]\)/);
   assert.match(voiceMemoHookSource, /memoOwnerUserId === userId \? memos : \[\]/);
   assert.match(voiceMemoHookSource, /if \(!isCurrentScope\(scope\)\) return;/);
+  assert.match(voiceMemoHookSource, /setMemoOwnerUserId\(scope\.userId\);\s+setMemos\(\[\]\);\s+setError\(null\);\s+setIsLoading\(false\);/);
+  assert.match(voiceMemoHookSource, /if \(!isCurrentScope\(scope\)\) return \{ error: "Voice Memos are unavailable until you are signed in\.", memo: null \};/);
+  assert.match(voiceMemoHookSource, /if \(!isCurrentScope\(scope\)\) return false;/);
+  assert.match(voiceMemoHookSource, /if \(!isCurrentScope\(scope\)\) return null;/);
+  assert.match(voiceMemoHookSource, /enabled, refresh/);
 });

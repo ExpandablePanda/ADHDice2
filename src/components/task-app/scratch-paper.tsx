@@ -71,6 +71,7 @@ function ScratchNoteVoiceMemos({ note, voiceMemos, userId }: { note: ScratchNote
           onDelete={voiceMemos.deleteMemo}
           onRename={voiceMemos.renameMemo}
           onTranscribe={voiceMemos.transcribeMemo}
+          sourceNoteAvailable
           sourceNoteTitle={note.title}
         />
       ))}

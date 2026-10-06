@@ -30,10 +30,11 @@ function formatCreatedAt(value: string) {
   }
 }
 
-function originLabel(memo: VoiceMemo, sourceNoteTitle?: string | null) {
+function originLabel(memo: VoiceMemo, sourceNoteTitle?: string | null, sourceNoteAvailable = false) {
   if (memo.origin_kind === "home_scratchpad") return "Home Scratchpad";
   if (memo.origin_kind === "memo_library") return "Memo Library";
-  if (sourceNoteTitle) return `Scratch Paper · ${sourceNoteTitle}`;
+  if (sourceNoteAvailable && sourceNoteTitle) return `Scratch Paper · ${sourceNoteTitle}`;
+  if (sourceNoteAvailable) return "Scratch Paper";
   return "Scratch Paper · source note unavailable";
 }
 
@@ -181,6 +182,7 @@ export function VoiceMemoCard({
   onOpenSourceNote,
   onRename,
   onTranscribe,
+  sourceNoteAvailable,
   sourceNoteTitle,
 }: {
   getPlaybackUrl: VoiceMemoData["getPlaybackUrl"];
@@ -189,6 +191,7 @@ export function VoiceMemoCard({
   onOpenSourceNote?: (noteId: string) => void;
   onRename: VoiceMemoData["renameMemo"];
   onTranscribe: VoiceMemoData["transcribeMemo"];
+  sourceNoteAvailable?: boolean;
   sourceNoteTitle?: string | null;
 }) {
   const [playbackUrl, setPlaybackUrl] = useState<string | null>(null);
@@ -255,16 +258,16 @@ export function VoiceMemoCard({
         <span aria-hidden="true">·</span>
         <span>{formatDuration(memo.duration_seconds)}</span>
         <span aria-hidden="true">·</span>
-        {memo.origin_kind === "scratch_note" && memo.scratch_note_id && sourceNoteTitle && onOpenSourceNote ? (
+        {memo.origin_kind === "scratch_note" && memo.scratch_note_id && sourceNoteAvailable && onOpenSourceNote ? (
           <button
-            aria-label={`Open ${originLabel(memo, sourceNoteTitle)}`}
+            aria-label={`Open ${originLabel(memo, sourceNoteTitle, sourceNoteAvailable)}`}
             className="underline decoration-dotted underline-offset-2"
             onClick={() => onOpenSourceNote(memo.scratch_note_id as string)}
             type="button"
           >
-            {originLabel(memo, sourceNoteTitle)}
+            {originLabel(memo, sourceNoteTitle, sourceNoteAvailable)}
           </button>
-        ) : <span>{originLabel(memo, sourceNoteTitle)}</span>}
+        ) : <span>{originLabel(memo, sourceNoteTitle, sourceNoteAvailable)}</span>}
       </div>
       <div className="flex flex-wrap items-center gap-1.5">
         <AdhdChip disabled={isLoadingPlayback} icon={<Play className="h-3 w-3" />} onClick={() => { void play(); }}>{isLoadingPlayback ? "Loading…" : "Play"}</AdhdChip>
@@ -287,6 +290,7 @@ export function VoiceMemoLibrary({
   scratchNotes: Array<{ id: string; title: string | null }>;
 }) {
   const sourceTitles = useMemo(() => new Map(scratchNotes.map((note) => [note.id, note.title])), [scratchNotes]);
+  const sourceNoteIds = useMemo(() => new Set(scratchNotes.map((note) => note.id)), [scratchNotes]);
   return (
     <div className="space-y-4">
       <div>
@@ -307,6 +311,7 @@ export function VoiceMemoLibrary({
             onOpenSourceNote={onOpenSourceNote}
             onRename={data.renameMemo}
             onTranscribe={data.transcribeMemo}
+            sourceNoteAvailable={memo.scratch_note_id ? sourceNoteIds.has(memo.scratch_note_id) : false}
             sourceNoteTitle={memo.scratch_note_id ? sourceTitles.get(memo.scratch_note_id) : null}
           />
         ))}
