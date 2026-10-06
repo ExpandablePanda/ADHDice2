@@ -48,6 +48,15 @@ import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 import { resolveTaskBehaviorPolicyForTask, type TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import { isActiveCanonicalTaskEntityRow } from "@/lib/task-realtime-reconciliation";
 import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-performance-diagnostics";
+import {
+  createTaskHistoryFastCycleController,
+  getNextTaskHistoryFastCycleAction,
+  getTaskHistoryFastCycleActionLabel,
+  getTaskHistoryFastCycleActions,
+  getTaskHistoryFastCycleCurrentAction,
+  type TaskHistoryFastCycleAction,
+  type TaskHistoryFastCyclePending,
+} from "@/lib/task-history-fast-cycle";
 import type {
   CustomBehaviorRuleset,
   Task,
@@ -471,6 +480,13 @@ export function TaskHistoryModal({
   const [isMultiSelect, setIsMultiSelect] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const isSavingRef = useRef(false);
+  const isClosingRef = useRef(false);
+  const [pendingCycle, setPendingCycle] = useState<TaskHistoryFastCyclePending | null>(null);
+  const [fastCycleController] = useState(() => createTaskHistoryFastCycleController({
+    commit: async () => false,
+    onPendingChange: setPendingCycle,
+  }));
+  const previousTaskIdRef = useRef(task.id);
   const [taskTitleDraft, setTaskTitleDraft] = useState(taskTitle);
   const [taskSearchQuery, setTaskSearchQuery] = useState("");
   const [isTaskSearchOpen, setIsTaskSearchOpen] = useState(false);
@@ -507,21 +523,41 @@ export function TaskHistoryModal({
     return () => document.removeEventListener("pointerdown", handlePointerDown);
   }, [isTaskSearchOpen]);
 
-  function selectTask(taskId: string) {
+  useEffect(() => {
+    if (previousTaskIdRef.current === task.id) return;
+    previousTaskIdRef.current = task.id;
+    // A task can also change from outside the search flow. Retire the old
+    // temporary intent safely; the search flow flushes before switching.
+    fastCycleController.cancel();
+  }, [fastCycleController, task.id]);
+
+  useEffect(() => () => fastCycleController.dispose(), [fastCycleController]);
+
+  async function selectTask(taskId: string) {
     if (!onSelectTask) return;
+    if (isSavingRef.current) return;
+    await fastCycleController.flush();
+    if (isSavingRef.current) return;
     setTaskSearchQuery("");
     taskSearchOpenRef.current = false;
     setIsTaskSearchOpen(false);
     onSelectTask(taskId);
   }
 
-  function handleModalClose() {
+  async function handleModalClose() {
     if (taskSearchOpenRef.current) {
       taskSearchOpenRef.current = false;
       setIsTaskSearchOpen(false);
       return;
     }
-    onClose();
+    if (isClosingRef.current || isSavingRef.current) return;
+    isClosingRef.current = true;
+    try {
+      await fastCycleController.flush();
+      onClose();
+    } finally {
+      isClosingRef.current = false;
+    }
   }
 
   async function commitTaskTitle() {
@@ -722,14 +758,33 @@ export function TaskHistoryModal({
     && task.status !== "archived"
     && task.status !== "trashed"
     && calendarActionStatuses.includes("delayed");
-  const canClearSelectedDate = selectedDates.length > 0
-    && selectedDates.every((dateKey) => isTaskHistoryEntryClearable({
+  function canClearDates(dateKeys: readonly string[]) {
+    return dateKeys.length > 0
+      && dateKeys.every((dateKey) => isTaskHistoryEntryClearable({
       calendarOverride: calendarOverridesByDate.get(dateKey),
       entry: historyByDate.get(dateKey),
       entryDate: dateKey,
       task,
       todayDateKey: today,
-    }));
+      }));
+  }
+  const canClearSelectedDate = canClearDates(selectedDates);
+  const fastCycleActions = !isMultiSelect && !selectedIsFuture
+    ? getTaskHistoryFastCycleActions({
+      calendarActionStatuses,
+      calendarOverrideActions,
+      canClear: canClearSelectedDate,
+    })
+    : [];
+  const currentFastCycleAction = getTaskHistoryFastCycleCurrentAction({
+    calendarOverrideState: calendarOverridesByDate.get(selectedDate)?.overrideState,
+    entryStatus: selectedEntry?.status,
+    sourceKind: selectedTimelineDay?.sourceKind,
+    state: selectedCalendarState,
+  });
+  const pendingCycleForSelectedDate = pendingCycle?.taskId === task.id && pendingCycle.dateKey === selectedDate
+    ? pendingCycle
+    : null;
   type CalendarActionStatus = "clear" | "complete" | "delayed" | "did_my_best" | "done" | "missed";
   const visibleCalendarActionStatuses: CalendarActionStatus[] = canClearSelectedDate
     ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
@@ -747,7 +802,19 @@ export function TaskHistoryModal({
     }
   }
 
+  function fastCycleActionTone(action: TaskHistoryFastCycleAction) {
+    if (action === "automatic") return "border-[#d7d2e5] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70";
+    if (action === "blank") return "border-transparent bg-transparent text-[#6b6681] dark:border-transparent dark:bg-transparent dark:text-white/60";
+    if (action === "done") return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
+    if (action === "did_my_best") return "border-[#f2d36f] bg-[#fff7d6] text-[#b28700] dark:border-[#6c5521] dark:bg-[#3a2b05] dark:text-[#f3d38a]";
+    if (action === "missed") return "border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]";
+    if (action === "not_due") return "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]";
+    return "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]";
+  }
+
   function cellTone(dateKey: string) {
+    const pendingForDate = pendingCycle?.taskId === task.id && pendingCycle.dateKey === dateKey ? pendingCycle : null;
+    if (pendingForDate) return fastCycleActionTone(pendingForDate.action);
     const entry = historyByDate.get(dateKey);
     if (!entry) {
       const virtualState = calendarRead?.states[dateKey] ?? null;
@@ -774,6 +841,8 @@ export function TaskHistoryModal({
   }
 
   function calendarStateLabel(dateKey: string) {
+    const pendingForDate = pendingCycle?.taskId === task.id && pendingCycle.dateKey === dateKey ? pendingCycle : null;
+    if (pendingForDate) return getTaskHistoryFastCycleActionLabel(pendingForDate.action);
     const entry = historyByDate.get(dateKey);
     const state = entry?.status ?? calendarRead?.states[dateKey] ?? "not_due";
     if (state === "blank") return "Blank";
@@ -782,9 +851,105 @@ export function TaskHistoryModal({
     return formatTaskStatusLabel(state);
   }
 
-  function selectDate(dateKey: string) {
+  async function handleSetStatus(
+    status: "clear" | "complete" | "did_my_best" | "done" | "missed",
+    targetDates = selectedDates,
+  ): Promise<boolean | void> {
+    if (isSavingRef.current || targetDates.length === 0 || (status === "clear" && !canClearDates(targetDates)) || (status === "complete" && targetDates.length > 1)) {
+      return false;
+    }
+    const editableDates = status === "clear" ? [...targetDates] : targetDates.filter((dateKey) => dateKey <= today);
+    if (editableDates.length === 0) return false;
+    isSavingRef.current = true;
+    setIsSaving(true);
+    try {
+      return await onSetStatuses(editableDates, status);
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function handleSaveDelayedStatus(nextDueOn: string) {
+    if (isSavingRef.current || !onSetDelayedStatus) {
+      return;
+    }
+    isSavingRef.current = true;
+    setIsSaving(true);
+    try {
+      await onSetDelayedStatus(selectedDate, nextDueOn);
+      setShowDelayEditor(false);
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function handleSetCalendarOverride(overrideState: TaskHistoryCalendarOverrideAction, targetDate?: string): Promise<boolean | void> {
+    if (isSavingRef.current || !onSetCalendarOverride) return false;
+    const targetDates = targetDate !== undefined
+      ? targetDate > today ? [] : [targetDate]
+      : isMultiSelect
+      ? selectedDates.filter((dateKey) => dateKey <= today)
+      : selectedIsFuture
+        ? []
+        : [selectedDate];
+    if (targetDates.length === 0 || (isMultiSelect && overrideState !== "not_due")) return false;
+    isSavingRef.current = true;
+    setIsSaving(true);
+    let completed = true;
+    try {
+      for (const dateKey of targetDates) {
+        const saved = await onSetCalendarOverride(dateKey, overrideState);
+        if (saved === false) {
+          completed = false;
+          break;
+        }
+      }
+      return completed;
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
+  async function commitFastCycle(pendingEdit: TaskHistoryFastCyclePending) {
+    if (pendingEdit.taskId !== task.id
+      || pendingEdit.dateKey !== selectedDate
+      || isMultiSelect
+      || pendingEdit.dateKey > today
+      || !fastCycleActions.includes(pendingEdit.action)) {
+      return false;
+    }
+    if (pendingEdit.action === "automatic") return handleSetStatus("clear", [pendingEdit.dateKey]);
+    if (pendingEdit.action === "blank") return handleSetCalendarOverride("blank_due", pendingEdit.dateKey);
+    if (pendingEdit.action === "not_due") return handleSetCalendarOverride("not_due", pendingEdit.dateKey);
+    if (pendingEdit.action === "due") return handleSetCalendarOverride("due_open", pendingEdit.dateKey);
+    return handleSetStatus(pendingEdit.action, [pendingEdit.dateKey]);
+  }
+
+  useEffect(() => {
+    fastCycleController.setCommit(commitFastCycle);
+  });
+
+  function cycleSelectedDate(dateKey: string) {
+    if (isMultiSelect || isSavingRef.current || dateKey > today) return;
+    const currentAction = pendingCycleForSelectedDate?.action ?? currentFastCycleAction;
+    const nextAction = getNextTaskHistoryFastCycleAction(fastCycleActions, currentAction);
+    if (!nextAction) return;
+    fastCycleController.schedule({ action: nextAction, dateKey, taskId: task.id });
+  }
+
+  async function selectDate(dateKey: string) {
     setShowDelayEditor(false);
     if (!isMultiSelect) {
+      if (dateKey === selectedDate) {
+        cycleSelectedDate(dateKey);
+        return;
+      }
+      if (isSavingRef.current) return;
+      await fastCycleController.flush();
+      if (isSavingRef.current) return;
       setSelectedDate(dateKey);
       setSelectedDates([dateKey]);
       setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
@@ -808,8 +973,11 @@ export function TaskHistoryModal({
     setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
   }
 
-  function toggleMultiSelect() {
+  async function toggleMultiSelect() {
     setShowDelayEditor(false);
+    if (isSavingRef.current) return;
+    if (!isMultiSelect) await fastCycleController.flush();
+    if (isSavingRef.current) return;
     if (isMultiSelect) {
       setSelectedDates([selectedDate]);
     } else if (selectedDate > today) {
@@ -817,60 +985,6 @@ export function TaskHistoryModal({
       setSelectedDates([today]);
     }
     setIsMultiSelect(!isMultiSelect);
-  }
-
-  async function handleSetStatus(status: "clear" | "complete" | "did_my_best" | "done" | "missed") {
-    if (isSavingRef.current || selectedDates.length === 0 || (status === "clear" && !canClearSelectedDate) || (status === "complete" && selectedDates.length > 1)) {
-      return;
-    }
-    const editableDates = status === "clear"
-      ? selectedDates
-      : selectedDates.filter((dateKey) => dateKey <= today);
-    if (editableDates.length === 0) return;
-    isSavingRef.current = true;
-    setIsSaving(true);
-    try {
-      await onSetStatuses(editableDates, status);
-    } finally {
-      isSavingRef.current = false;
-      setIsSaving(false);
-    }
-  }
-
-  async function handleSaveDelayedStatus(nextDueOn: string) {
-    if (isSavingRef.current || !onSetDelayedStatus) {
-      return;
-    }
-    isSavingRef.current = true;
-    setIsSaving(true);
-    try {
-      await onSetDelayedStatus(selectedDate, nextDueOn);
-      setShowDelayEditor(false);
-    } finally {
-      isSavingRef.current = false;
-      setIsSaving(false);
-    }
-  }
-
-  async function handleSetCalendarOverride(overrideState: TaskHistoryCalendarOverrideAction) {
-    if (isSavingRef.current || !onSetCalendarOverride) return;
-    const targetDates = isMultiSelect
-      ? selectedDates.filter((dateKey) => dateKey <= today)
-      : selectedIsFuture
-        ? []
-        : [selectedDate];
-    if (targetDates.length === 0 || (isMultiSelect && overrideState !== "not_due")) return;
-    isSavingRef.current = true;
-    setIsSaving(true);
-    try {
-      for (const dateKey of targetDates) {
-        const completed = await onSetCalendarOverride(dateKey, overrideState);
-        if (completed === false) break;
-      }
-    } finally {
-      isSavingRef.current = false;
-      setIsSaving(false);
-    }
   }
 
   function isSelectedStatus(status: TaskStatus) {
@@ -889,6 +1003,13 @@ export function TaskHistoryModal({
     return "text-[#2f8a66] dark:text-[#87ddb7]";
   }
 
+  async function runAfterPendingCycle(action: () => Promise<unknown> | unknown) {
+    if (isSavingRef.current) return;
+    await fastCycleController.flush();
+    if (isSavingRef.current) return;
+    await action();
+  }
+
   const taskSelectedActions = (
     <div className="flex flex-wrap gap-2">
       <TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>
@@ -899,13 +1020,15 @@ export function TaskHistoryModal({
           disabled={isSaving || selectedDates.length === 0 || (!isMultiSelect && (selectedIsFuture || (status === "delayed" && !canDelaySelectedDate)))}
           key={status}
           onClick={() => {
-            if (status === "delayed") {
-              if (!canDelaySelectedDate) return;
-              setShowDelayEditor(true);
-              return;
-            }
-            setShowDelayEditor(false);
-            void handleSetStatus(status);
+            void runAfterPendingCycle(async () => {
+              if (status === "delayed") {
+                if (!canDelaySelectedDate) return;
+                setShowDelayEditor(true);
+                return;
+              }
+              setShowDelayEditor(false);
+              await handleSetStatus(status);
+            });
           }}
           toneClassName={status === "clear"
             ? `${TASK_TABLE_INACTIVE_CHIP_CLASS} disabled:opacity-50`
@@ -920,7 +1043,7 @@ export function TaskHistoryModal({
           className="gap-2"
           disabled={isSaving}
           key={overrideState}
-          onClick={() => { void handleSetCalendarOverride(overrideState); }}
+          onClick={() => { void runAfterPendingCycle(() => handleSetCalendarOverride(overrideState)); }}
           toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : overrideState === "blank_due" ? "border-[#c8c2d8] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
         >{overrideState === "not_due" ? "Not Due" : overrideState === "blank_due" ? "Blank" : "Due"}</TaskTableChipButton>
       ))}
@@ -974,12 +1097,12 @@ export function TaskHistoryModal({
       }}
       selectedDayAction={taskSelectedActions}
       selectedDayContent={<div className="mt-3">
-        <p className="text-xs text-[#827a97] dark:text-white/52">{isMultiSelect ? `${selectedDates.length} dates selected. The selected result will be saved to every selected date.` : selectedIsFuture ? "Future dates cannot be edited yet." : selectedIsDue ? "This date is part of the task's due schedule." : "This date is outside the inferred due schedule and will be treated as a manual history entry."}</p>
+        {pendingCycleForSelectedDate ? <p className="text-xs text-[#827a97] dark:text-white/52">Pending preview — not saved yet.</p> : <p className="text-xs text-[#827a97] dark:text-white/52">{isMultiSelect ? `${selectedDates.length} dates selected. The selected result will be saved to every selected date.` : selectedIsFuture ? "Future dates cannot be edited yet." : selectedIsDue ? "This date is part of the task's due schedule." : "This date is outside the inferred due schedule and will be treated as a manual history entry."}</p>}
         {!isMultiSelect && selectedEntry ? <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{[formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable", formatTaskHistoryEditedLine(selectedEntry)].filter((value): value is string => Boolean(value)).join(" • ")}</p> : null}
         {showDelayEditor && canDelaySelectedDate ? <div className="mt-3"><TaskDelayPicker anchorDateKey={selectedDate === today ? today : selectedDate} description={selectedDate === today ? "Delay today’s live task without changing past rewards or completion history." : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."} inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]" onCancel={() => setShowDelayEditor(false)} onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)} primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" saveLabel="Save delayed status" /></div> : null}
       </div>}
       selectedDayLabel={formatTaskHistoryCalendarDay(selectedDate, stateEngineContext?.timezone ?? "UTC")}
-      selectedDayStatus={calendarStateLabel(selectedDate)}
+      selectedDayStatus={pendingCycleForSelectedDate ? `Pending: ${getTaskHistoryFastCycleActionLabel(pendingCycleForSelectedDate.action)}` : calendarStateLabel(selectedDate)}
     />
   ) : null;
 
