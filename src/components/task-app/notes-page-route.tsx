@@ -13,7 +13,6 @@ type NotesPageRouteProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
   onOpenNoteHandled?: () => void;
-  onOpenSourceNote?: (noteId: string) => void;
   openNoteId?: string | null;
   tasks: Task[];
   scratchPaper: ScratchPaperData;

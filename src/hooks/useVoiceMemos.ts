@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useState } from "react";
 
 import type { VoiceMemo, VoiceMemoOriginKind } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import { transcribeScratchAudio } from "@/lib/scratch-paper-transcription";
+import { VoiceMemoScopeFence, type VoiceMemoScopeToken } from "@/lib/voice-memo-scope";
 import {
   buildVoiceMemoInsert,
   deleteVoiceMemoStorageThenRow,
@@ -60,17 +61,39 @@ export function useVoiceMemos(client: SupabaseClient, userId: string | null, ena
   const [memos, setMemos] = useState<VoiceMemo[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [scopeFence] = useState(() => new VoiceMemoScopeFence(userId));
+  const [memoOwnerUserId, setMemoOwnerUserId] = useState<string | null>(userId);
+  const isCurrentScope = useCallback((scope: VoiceMemoScopeToken) => scopeFence.isCurrent(scope), [scopeFence]);
+
+  useLayoutEffect(() => {
+    const scope = scopeFence.syncUser(userId);
+    const timeoutId = window.setTimeout(() => {
+      if (!isCurrentScope(scope)) return;
+      setMemoOwnerUserId(scope.userId);
+      setMemos([]);
+      setError(null);
+      setIsLoading(false);
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [isCurrentScope, scopeFence, userId]);
 
   const refresh = useCallback(async () => {
-    if (!enabled || !client || !userId) {
+    const scope = scopeFence.capture();
+    if (!scope || !enabled || !client || !userId || scope.userId !== userId) {
       return;
+    }
+    if (memoOwnerUserId !== scope.userId) {
+      setMemos([]);
+      setError(null);
     }
     setIsLoading(true);
     const { data, error: loadError } = await client
       .from("adhdice_voice_memos")
       .select("*")
-      .eq("user_id", userId)
+      .eq("user_id", scope.userId)
       .order("created_at", { ascending: false });
+    if (!isCurrentScope(scope)) return;
+    setMemoOwnerUserId(scope.userId);
     if (loadError) {
       setError(messageFromError());
     } else {
@@ -78,7 +101,7 @@ export function useVoiceMemos(client: SupabaseClient, userId: string | null, ena
       setError(null);
     }
     setIsLoading(false);
-  }, [client, enabled, userId]);
+  }, [client, enabled, isCurrentScope, memoOwnerUserId, scopeFence, userId]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -89,14 +112,15 @@ export function useVoiceMemos(client: SupabaseClient, userId: string | null, ena
   }, [enabled, refresh]);
 
   const createMemo = useCallback(async (input: VoiceMemoCreateInput): Promise<VoiceMemoSaveResult> => {
-    if (!client || !userId) return { error: "Voice Memos are unavailable until you are signed in.", memo: null };
+    const scope = scopeFence.capture();
+    if (!scope || !client || !userId || scope.userId !== userId) return { error: "Voice Memos are unavailable until you are signed in.", memo: null };
     if (input.audio.size <= 0) return { error: "The recording is empty. Try again.", memo: null };
     if (input.audio.size > MAX_VOICE_MEMO_FILE_BYTES) return { error: "The recording is too large. Try a shorter memo.", memo: null };
     if (input.originKind === "scratch_note" && !input.scratchNoteId) return { error: "Save the Scratch Paper note before recording a memo.", memo: null };
 
     const memoId = createBrowserUuidV4();
     const mimeType = input.audio.type || "audio/webm";
-    const storagePath = getVoiceMemoStoragePath(userId, memoId, mimeType);
+    const storagePath = getVoiceMemoStoragePath(scope.userId, memoId, mimeType);
     const metadata = buildVoiceMemoInsert({
       duration_seconds: normalizedDuration(input.durationSeconds),
       id: memoId,
@@ -106,7 +130,7 @@ export function useVoiceMemos(client: SupabaseClient, userId: string | null, ena
       size_bytes: input.audio.size,
       storage_path: storagePath,
       title: input.title?.trim() || null,
-      user_id: userId,
+      user_id: scope.userId,
     });
     const storage = client.storage.from(VOICE_MEMO_BUCKET);
 
@@ -130,68 +154,79 @@ export function useVoiceMemos(client: SupabaseClient, userId: string | null, ena
           if (uploadError) throw uploadError;
         },
       });
+      if (!isCurrentScope(scope)) return { error: "Voice Memos are unavailable until you are signed in.", memo: null };
+      setMemoOwnerUserId(scope.userId);
       setMemos((current) => [memo, ...current.filter((entry) => entry.id !== memo.id)]);
       setError(null);
       return { error: null, memo };
     } catch {
-      setError(userVisibleError());
+      if (isCurrentScope(scope)) setError(userVisibleError());
       return { error: userVisibleError(), memo: null };
     }
-  }, [client, userId]);
+  }, [client, isCurrentScope, scopeFence, userId]);
 
   const renameMemo = useCallback(async (memo: VoiceMemo, title: string) => {
-    if (!client || !userId) return false;
+    const scope = scopeFence.capture();
+    if (!scope || !client || !userId || scope.userId !== userId) return false;
     const nextTitle = title.trim() || null;
     const { data, error: updateError } = await client
       .from("adhdice_voice_memos")
       .update({ title: nextTitle, updated_at: new Date().toISOString() })
       .eq("id", memo.id)
-      .eq("user_id", userId)
+      .eq("user_id", scope.userId)
       .select("*")
       .single();
+    if (!isCurrentScope(scope)) return false;
     if (updateError || !data) {
       setError("Voice Memo title could not be updated.");
       return false;
     }
     setMemos((current) => current.map((entry) => entry.id === memo.id ? data : entry));
     return true;
-  }, [client, userId]);
+  }, [client, isCurrentScope, scopeFence, userId]);
 
   const getPlaybackUrl = useCallback(async (memo: VoiceMemo) => {
-    if (!client || !userId || memo.user_id !== userId) return null;
+    const scope = scopeFence.capture();
+    if (!scope || !client || !userId || scope.userId !== userId || memo.user_id !== scope.userId) return null;
     const { data, error: urlError } = await client.storage.from(VOICE_MEMO_BUCKET).createSignedUrl(memo.storage_path, VOICE_MEMO_SIGNED_URL_SECONDS);
+    if (!isCurrentScope(scope)) return null;
     if (urlError || !data?.signedUrl) {
       setError("Voice Memo playback is unavailable. Try again.");
       return null;
     }
     return data.signedUrl;
-  }, [client, userId]);
+  }, [client, isCurrentScope, scopeFence, userId]);
 
   const transcribeMemo = useCallback(async (memo: VoiceMemo) => {
-    if (!client || !userId || memo.user_id !== userId) return false;
+    const scope = scopeFence.capture();
+    if (!scope || !client || !userId || scope.userId !== userId || memo.user_id !== scope.userId) return false;
     try {
       const { data: audio, error: downloadError } = await client.storage.from(VOICE_MEMO_BUCKET).download(memo.storage_path);
       if (downloadError || !audio) throw downloadError ?? new Error("Voice Memo audio is unavailable.");
+      if (!isCurrentScope(scope)) return false;
       const transcript = await transcribeScratchAudio(client, audio);
+      if (!isCurrentScope(scope)) return false;
       const { data, error: updateError } = await client
         .from("adhdice_voice_memos")
         .update({ transcript, transcribed_at: new Date().toISOString(), updated_at: new Date().toISOString() })
         .eq("id", memo.id)
-        .eq("user_id", userId)
+        .eq("user_id", scope.userId)
         .select("*")
         .single();
+      if (!isCurrentScope(scope)) return false;
       if (updateError || !data) throw updateError ?? new Error("Voice Memo transcript could not be saved.");
       setMemos((current) => current.map((entry) => entry.id === memo.id ? data : entry));
       setError(null);
       return true;
     } catch {
-      setError("Voice Memo transcription failed. The saved audio is unchanged.");
+      if (isCurrentScope(scope)) setError("Voice Memo transcription failed. The saved audio is unchanged.");
       return false;
     }
-  }, [client, userId]);
+  }, [client, isCurrentScope, scopeFence, userId]);
 
   const deleteMemo = useCallback(async (memo: VoiceMemo) => {
-    if (!client || !userId || memo.user_id !== userId) return false;
+    const scope = scopeFence.capture();
+    if (!scope || !client || !userId || scope.userId !== userId || memo.user_id !== scope.userId) return false;
     try {
       await deleteVoiceMemoStorageThenRow({
         deleteRow: async () => {
@@ -199,7 +234,7 @@ export function useVoiceMemos(client: SupabaseClient, userId: string | null, ena
             .from("adhdice_voice_memos")
             .delete()
             .eq("id", memo.id)
-            .eq("user_id", userId);
+            .eq("user_id", scope.userId);
           if (deleteError) throw deleteError;
         },
         removeStorageObject: async () => {
@@ -207,14 +242,26 @@ export function useVoiceMemos(client: SupabaseClient, userId: string | null, ena
           if (removeError) throw removeError;
         },
       });
+      if (!isCurrentScope(scope)) return false;
       setMemos((current) => current.filter((entry) => entry.id !== memo.id));
       setError(null);
       return true;
     } catch {
-      setError("Voice Memo could not be deleted. The saved memo is still available to retry.");
+      if (isCurrentScope(scope)) setError("Voice Memo could not be deleted. The saved memo is still available to retry.");
       return false;
     }
-  }, [client, userId]);
+  }, [client, isCurrentScope, scopeFence, userId]);
 
-  return { createMemo, deleteMemo, error, getPlaybackUrl, isLoading, memos, refresh, renameMemo, transcribeMemo, userId };
+  return {
+    createMemo,
+    deleteMemo,
+    error: memoOwnerUserId === userId ? error : null,
+    getPlaybackUrl,
+    isLoading: memoOwnerUserId === userId ? isLoading : false,
+    memos: memoOwnerUserId === userId ? memos : [],
+    refresh,
+    renameMemo,
+    transcribeMemo,
+    userId,
+  };
 }

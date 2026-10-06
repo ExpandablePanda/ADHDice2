@@ -257,6 +257,7 @@ export function VoiceMemoCard({
         <span aria-hidden="true">·</span>
         {memo.origin_kind === "scratch_note" && memo.scratch_note_id && sourceNoteTitle && onOpenSourceNote ? (
           <button
+            aria-label={`Open ${originLabel(memo, sourceNoteTitle)}`}
             className="underline decoration-dotted underline-offset-2"
             onClick={() => onOpenSourceNote(memo.scratch_note_id as string)}
             type="button"

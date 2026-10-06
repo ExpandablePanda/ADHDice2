@@ -9035,10 +9035,6 @@ export function TaskApp() {
             client={client}
             currentUser={currentUser}
             onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
-            onOpenSourceNote={(noteId) => {
-              setNotePageOpenNoteId(noteId);
-              setActivePage("Notes");
-            }}
             openNoteId={notePageOpenNoteId}
             scratchPaper={scratchPaperData}
             tasks={tasks}

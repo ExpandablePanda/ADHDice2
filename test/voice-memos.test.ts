@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   deleteVoiceMemoStorageThenRow,
+  buildVoiceMemoInsert,
   getVoiceMemoStoragePath,
   MAX_VOICE_MEMO_FILE_BYTES,
   persistVoiceMemo,
@@ -15,10 +16,12 @@ import {
   type VoiceMemoRecordingPreview,
 } from "../src/lib/voice-memo-recording.ts";
 import { getScratchMicrophoneStorageKey, type ScratchMediaRecorder, type ScratchMediaRecorderConstructor, type ScratchMediaStream } from "../src/lib/scratch-paper-dictation.ts";
+import { VoiceMemoScopeFence } from "../src/lib/voice-memo-scope.ts";
 
 const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
 const scratchSource = readFileSync(new URL("../src/components/task-app/scratch-paper.tsx", import.meta.url), "utf8");
 const notesSource = readFileSync(new URL("../src/components/task-app/notes-page.tsx", import.meta.url), "utf8");
+const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const voiceMemoSource = readFileSync(new URL("../src/components/task-app/voice-memo.tsx", import.meta.url), "utf8");
 const voiceMemoHookSource = readFileSync(new URL("../src/hooks/useVoiceMemos.ts", import.meta.url), "utf8");
 const dictationSource = readFileSync(new URL("../src/lib/scratch-paper-dictation.ts", import.meta.url), "utf8");
@@ -72,7 +75,7 @@ test("Voice Memo and Dictate remain visibly separate actions", () => {
   assert.match(homeSource, /<ScratchDictationControl dictation=\{scratchpadDictation\} \/>/);
   assert.match(homeSource, /<VoiceMemoRecorder contextLabel="Home Scratchpad"/);
   assert.match(scratchSource, /<ScratchDictationControl dictation=\{dictation\} \/>/);
-  assert.match(scratchSource, /<VoiceMemoRecorder contextLabel="Scratch Paper"/);
+  assert.match(scratchSource, /<VoiceMemoRecorder(?:[^>]+)?contextLabel="Scratch Paper"/);
   assert.match(voiceMemoSource, /Save Memo/);
   assert.match(voiceMemoSource, /Discard/);
 });
@@ -105,6 +108,31 @@ test("stopping a Voice Memo creates a local preview without persistence", async 
   assert.equal(preview?.durationSeconds, 4);
   assert.equal(await preview!.audio.text(), "memo audio");
   assert.equal(persistenceCalls, 0);
+  assert.equal(stream.tracks[0]!.stopCalls, 1);
+});
+
+test("Scratch Paper memo recording is keyed to the note context and cannot drift", async () => {
+  assert.match(scratchSource, /<VoiceMemoRecorder key=\{`scratch-note-\$\{note\.id\}`\}/);
+  assert.match(voiceMemoSource, /useEffect\(\(\) => \(\) => controller\.cancel\(\), \[controller\]\)/);
+  assert.match(voiceMemoSource, /URL\.revokeObjectURL\(previewUrl\)/);
+
+  const stream = new FakeStream();
+  let preview: VoiceMemoRecordingPreview | null = null;
+  const controller = new VoiceMemoRecordingController({
+    mediaDevices: {
+      enumerateDevices: async () => [],
+      getUserMedia: async () => stream,
+    },
+    mediaRecorderConstructor: fakeRecorderConstructor,
+    onError: () => undefined,
+    onPreviewChange: (nextPreview) => { preview = nextPreview; },
+  });
+  await controller.start();
+  FakeRecorder.last!.emitChunk("old note audio");
+  controller.stop();
+  controller.cancel();
+  assert.equal(preview, null);
+  assert.equal(controller.status, "idle");
   assert.equal(stream.tracks[0]!.stopCalls, 1);
 });
 
@@ -158,6 +186,37 @@ test("origin filtering, library creation, and shared microphone preference stay 
   assert.match(voiceMemoSource, /aria-label=\{`\$\{contextLabel\} microphone`\}/);
 });
 
+test("Scratch Paper source navigation stays in the Scratch Paper domain", () => {
+  assert.match(notesSource, /requestedScratchNoteId/);
+  assert.match(notesSource, /onOpenSourceNote=\{setRequestedScratchNoteId\}/);
+  assert.match(scratchSource, /activeNotes\.find\(\(note\) => note\.id === requestedScratchNoteId\)/);
+  assert.match(scratchSource, /loadNote\(note\)/);
+  assert.match(scratchSource, /setFilter\(targetNote\.status\)/);
+  assert.match(scratchSource, /id=\{`scratch-note-\$\{note\.id\}`\}/);
+  assert.doesNotMatch(taskAppSource, /onOpenSourceNote=/);
+  assert.doesNotMatch(notesSource, /setEditing\(.*requestedScratchNoteId/);
+});
+
+test("missing Scratch Paper sources remain unavailable without a broken action", () => {
+  assert.match(voiceMemoSource, /Scratch Paper · source note unavailable/);
+  assert.match(voiceMemoSource, /sourceNoteTitle && onOpenSourceNote/);
+});
+
+test("memo metadata keeps the original Scratch note ID", () => {
+  const metadata = buildVoiceMemoInsert({
+    duration_seconds: 4,
+    id: "memo-a",
+    mime_type: "audio/webm",
+    origin_kind: "scratch_note",
+    scratch_note_id: "note-a",
+    size_bytes: 4,
+    storage_path: "user-a/memo-a.webm",
+    title: null,
+    user_id: "user-a",
+  });
+  assert.equal(metadata.scratch_note_id, "note-a");
+});
+
 test("Scratch note deletion preserves memo rows through a nullable SET NULL reference", () => {
   assert.match(migrationSource, /scratch_note_id uuid references public\.adhdice_scratch_notes\(id\) on delete set null/i);
   assert.doesNotMatch(migrationSource, /scratch_note_id uuid references public\.adhdice_scratch_notes\(id\) on delete cascade/i);
@@ -177,4 +236,19 @@ test("RLS and private Storage source are user-scoped with no public URL path", (
   assert.match(migrationSource, /for insert[\s\S]*bucket_id = 'adhdice-voice-memos'/i);
   assert.match(migrationSource, /for delete[\s\S]*bucket_id = 'adhdice-voice-memos'/i);
   assert.doesNotMatch(voiceMemoHookSource, /service_role|SUPABASE_SERVICE_ROLE|getPublicUrl/);
+});
+
+test("Voice Memo state fences user identity changes and preserves same-user cache scope", () => {
+  const fence = new VoiceMemoScopeFence("user-a");
+  const userAToken = fence.capture();
+  assert.equal(fence.isCurrent(userAToken), true);
+  assert.equal(fence.syncUser("user-a").generation, userAToken.generation);
+  assert.equal(fence.isCurrent(userAToken), true);
+  const userBToken = fence.syncUser("user-b");
+  assert.notEqual(userBToken.generation, userAToken.generation);
+  assert.equal(fence.isCurrent(userAToken), false);
+  assert.equal(fence.isCurrent(userBToken), true);
+  assert.match(voiceMemoHookSource, /setMemos\(\[\]\)/);
+  assert.match(voiceMemoHookSource, /memoOwnerUserId === userId \? memos : \[\]/);
+  assert.match(voiceMemoHookSource, /if \(!isCurrentScope\(scope\)\) return;/);
 });

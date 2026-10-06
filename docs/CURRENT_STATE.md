@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.93`.
+- Current working app version: `7.16.94`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -42,6 +42,24 @@ authority; Dictate remains temporary audio that inserts text and never creates
 Voice Memo rows or Storage objects. The source migration was not applied.
 Browser QA is blocked until Andrew reviews/applies the migration and deploys
 the required existing transcription authority through the authorized workflow.
+
+## 2026-10-05 7.16.94 Voice Memo Context + User-Scope Corrections
+
+The 7.16.93 Voice Memo architecture remains authoritative. Scratch Paper memo
+recorders are now keyed to the saved Scratch note ID, so changing notes cancels
+the old recording, discards its local preview, releases the stream, and revokes
+the temporary object URL before another note can be used. Memo Library source
+navigation now targets Notes-local Scratch Paper state: active notes are
+selected through the existing Scratch editor/save-switch path, while resolved
+and trashed notes are revealed in their matching filtered card view without a
+status mutation. Knowledge Base `adhdice_notes` navigation is unchanged.
+
+The Voice Memo client collection now fences rows, errors, loading state, and
+async refresh/mutation results by authenticated user identity. Same-user page
+navigation retains the normal memo cache; a user change immediately hides and
+then clears the prior user's memo state. The `supabase/add_voice_memos_7_16_93.sql`
+source migration was not changed or applied. Browser QA remains pending
+migration application through the authorized workflow.
 
 ## 2026-10-05 7.16.92 Home Scratchpad Dictation Parity
 

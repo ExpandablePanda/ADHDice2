@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { NoteEditorComponent } from "./note-editor";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -17,7 +17,6 @@ type NotesPageProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
   onOpenNoteHandled?: () => void;
-  onOpenSourceNote?: (noteId: string) => void;
   openNoteId?: string | null;
   tasks: Task[];
   scratchPaper: ScratchPaperData;
@@ -28,7 +27,6 @@ export function NotesPageComponent({
   client,
   currentUser,
   onOpenNoteHandled,
-  onOpenSourceNote,
   openNoteId,
   tasks,
   scratchPaper,
@@ -41,6 +39,8 @@ export function NotesPageComponent({
   const [editing, setEditing] = useState<Note | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [quickCapture, setQuickCapture] = useState("");
+  const [requestedScratchNoteId, setRequestedScratchNoteId] = useState<string | null>(null);
+  const handleScratchNoteRevealHandled = useCallback(() => setRequestedScratchNoteId(null), []);
 
   useEffect(() => {
     void client
@@ -183,7 +183,11 @@ export function NotesPageComponent({
       <PageShell id="notes-scratch-paper" label="Scratch Paper">
       <PageShellSurface className="rounded-[1.5rem] border border-[#e9e3f7] bg-[#f8f6ff] p-4 shadow-[0_18px_45px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/[0.03]">
       <PageShellBody>
-        <ScratchPaperPageSection {...scratchPaper} />
+        <ScratchPaperPageSection
+          {...scratchPaper}
+          onScratchNoteRevealHandled={handleScratchNoteRevealHandled}
+          requestedScratchNoteId={requestedScratchNoteId}
+        />
       </PageShellBody>
       </PageShellSurface>
       </PageShell>
@@ -287,7 +291,7 @@ export function NotesPageComponent({
       <PageShell id="notes-voice-memos" label="Voice Memos">
       <PageShellSurface className="rounded-[1.5rem] border border-[#e9e3f7] bg-[#f8f6ff] p-4 shadow-[0_18px_45px_rgba(81,61,168,0.1)] dark:border-white/10 dark:bg-white/[0.03]">
       <PageShellBody>
-        <VoiceMemoLibrary data={voiceMemos} onOpenSourceNote={onOpenSourceNote} scratchNotes={scratchPaper.notes} />
+        <VoiceMemoLibrary data={voiceMemos} onOpenSourceNote={setRequestedScratchNoteId} scratchNotes={scratchPaper.notes} />
       </PageShellBody>
       </PageShellSurface>
       </PageShell>

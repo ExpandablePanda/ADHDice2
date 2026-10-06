@@ -62,7 +62,7 @@ function ScratchNoteVoiceMemos({ note, voiceMemos, userId }: { note: ScratchNote
   return (
     <div className="space-y-2 border-t border-[#eee9fa] pt-2 dark:border-white/10">
       <p className="text-[11px] font-semibold text-[#6f57f6] dark:text-[#cabfff]">Voice Memos</p>
-      <VoiceMemoRecorder contextLabel="Scratch Paper" onSaveMemo={voiceMemos.createMemo} originKind="scratch_note" scratchNoteId={note.id} userId={userId} />
+      <VoiceMemoRecorder key={`scratch-note-${note.id}`} contextLabel="Scratch Paper" onSaveMemo={voiceMemos.createMemo} originKind="scratch_note" scratchNoteId={note.id} userId={userId} />
       {memos.map((memo) => (
         <VoiceMemoCard
           getPlaybackUrl={voiceMemos.getPlaybackUrl}
@@ -493,10 +493,16 @@ function ScratchCurrentNoteEditor({
   onTranscribeAudio,
   onUpdate,
   links,
+  onScratchNoteRevealHandled,
+  requestedScratchNoteId,
   tasks,
   userId,
   voiceMemos,
-}: ScratchPaperData & { onCurrentNoteIdChange: (noteId: string | null) => void }) {
+}: ScratchPaperData & {
+  onCurrentNoteIdChange: (noteId: string | null) => void;
+  onScratchNoteRevealHandled?: () => void;
+  requestedScratchNoteId?: string | null;
+}) {
   const activeNotes = useMemo(() => notes.filter((note) => note.status === "active"), [notes]);
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
   const currentNote = currentNoteId ? notes.find((note) => note.id === currentNoteId) ?? null : null;
@@ -524,6 +530,7 @@ function ScratchCurrentNoteEditor({
   const pickerAreaRef = useRef<HTMLDivElement | null>(null);
   const initializedRef = useRef(false);
   const saveInFlightRef = useRef(false);
+  const scratchNoteRevealAttemptRef = useRef<string | null>(null);
 
   const dismissTaskPicker = useCallback((reason: ScratchPickerCloseReason = "none") => {
     setTaskQuery("");
@@ -629,7 +636,7 @@ function ScratchCurrentNoteEditor({
     return () => window.clearTimeout(timeoutId);
   }, [activeNotes, currentNoteId, isDirty, loadNote]);
 
-  async function save() {
+  const save = useCallback(async () => {
     if (saveInFlightRef.current || (!currentNoteId && !body.trim() && !title.trim() && linkedTaskIds.length === 0)) return null;
     saveInFlightRef.current = true;
     setIsSaving(true);
@@ -649,7 +656,7 @@ function ScratchCurrentNoteEditor({
       saveInFlightRef.current = false;
       setIsSaving(false);
     }
-  }
+  }, [body, currentNoteId, linkedTaskIds, onCreate, onCurrentNoteIdChange, onUpdate, title]);
 
   function linkTask(task: Task) {
     initializedRef.current = true;
@@ -688,13 +695,37 @@ function ScratchCurrentNoteEditor({
   const currentIndex = currentNoteId ? activeNotes.findIndex((note) => note.id === currentNoteId) : -1;
   const debugResultsCount = filterScratchLinkableTasks(tasks, taskQuery, linkedTaskIds).slice(0, 6).length;
 
-  async function switchTo(note: ScratchNote | undefined) {
-    if (!note || note.id === currentNoteId) return;
+  const switchTo = useCallback(async (note: ScratchNote | undefined) => {
+    if (!note) return false;
+    if (note.id === currentNoteId) return true;
     cancelDictation();
     const hasDraftContent = Boolean(body.trim() || title.trim() || linkedTaskIds.length > 0);
-    if (isDirty && (currentNoteId || hasDraftContent) && !await save()) return;
+    if (isDirty && (currentNoteId || hasDraftContent) && !await save()) return false;
     loadNote(note);
-  }
+    return true;
+  }, [body, cancelDictation, currentNoteId, isDirty, linkedTaskIds.length, loadNote, save, title]);
+
+  useEffect(() => {
+    if (!requestedScratchNoteId) {
+      scratchNoteRevealAttemptRef.current = null;
+      return;
+    }
+    if (scratchNoteRevealAttemptRef.current === requestedScratchNoteId) return;
+    const requestedNote = activeNotes.find((note) => note.id === requestedScratchNoteId);
+    if (!requestedNote) return;
+    scratchNoteRevealAttemptRef.current = requestedScratchNoteId;
+    const timeoutId = window.setTimeout(() => {
+      void switchTo(requestedNote).then((didSwitch) => {
+        if (scratchNoteRevealAttemptRef.current !== requestedScratchNoteId) return;
+        if (!didSwitch) {
+          scratchNoteRevealAttemptRef.current = null;
+          return;
+        }
+        onScratchNoteRevealHandled?.();
+      });
+    }, 0);
+    return () => window.clearTimeout(timeoutId);
+  }, [activeNotes, onScratchNoteRevealHandled, requestedScratchNoteId, switchTo]);
 
   async function startNewNote() {
     cancelDictation();
@@ -979,7 +1010,7 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
   }
 
   return (
-    <article className="space-y-2 rounded-[1rem] border border-[#e9e3f7] bg-white/85 p-3 dark:border-white/10 dark:bg-white/[0.04]">
+    <article id={`scratch-note-${note.id}`} className="space-y-2 rounded-[1rem] border border-[#e9e3f7] bg-white/85 p-3 dark:border-white/10 dark:bg-white/[0.04]">
       {note.title ? <h3 className="text-sm font-semibold text-[#2f294a] dark:text-white">{note.title}</h3> : null}
       {note.body || noteTaskIds.length > 0 ? <ScratchRenderedBody body={note.body} getTaskStatusOptions={getTaskStatusOptions} linkedTaskIds={noteTaskIds} onOpenTask={onOpenTask} onSetTaskStatus={onSetTaskStatus} tasks={tasks} /> : null}
       {allLinkedComplete && note.status === "active" ? (
@@ -1030,7 +1061,10 @@ export function ScratchPaperWidget(props: ScratchPaperData & { onViewNotes: () =
   );
 }
 
-export function ScratchPaperPageSection(props: ScratchPaperData) {
+export function ScratchPaperPageSection({ onScratchNoteRevealHandled, requestedScratchNoteId, ...props }: ScratchPaperData & {
+  onScratchNoteRevealHandled?: () => void;
+  requestedScratchNoteId?: string | null;
+}) {
   const [filter, setFilter] = useState<"all" | ScratchNoteStatus>("all");
   const [search, setSearch] = useState("");
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
@@ -1040,12 +1074,31 @@ export function ScratchPaperPageSection(props: ScratchPaperData) {
     return matchesFilter && (!query || `${note.title ?? ""} ${note.body}`.toLowerCase().includes(query));
   }), [filter, props.notes, search]);
 
+  useEffect(() => {
+    if (!requestedScratchNoteId) return;
+    const targetNote = props.notes.find((note) => note.id === requestedScratchNoteId);
+    if (!targetNote || targetNote.status === "active") return;
+    let frame: number | null = null;
+    const timeoutId = window.setTimeout(() => {
+      setFilter(targetNote.status);
+      setSearch("");
+      frame = window.requestAnimationFrame(() => {
+        document.getElementById(`scratch-note-${targetNote.id}`)?.scrollIntoView({ block: "nearest" });
+        onScratchNoteRevealHandled?.();
+      });
+    }, 0);
+    return () => {
+      window.clearTimeout(timeoutId);
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [onScratchNoteRevealHandled, props.notes, requestedScratchNoteId]);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="text-lg font-semibold text-[#2f294a] dark:text-white">Scratch Paper</h2><p className="text-sm text-[#827a9e] dark:text-white/45">Quick notes that can stay linked to current tasks.</p></div>
       </div>
-      <ScratchCurrentNoteEditor {...props} onCurrentNoteIdChange={setCurrentNoteId} />
+      <ScratchCurrentNoteEditor {...props} onCurrentNoteIdChange={setCurrentNoteId} onScratchNoteRevealHandled={onScratchNoteRevealHandled} requestedScratchNoteId={requestedScratchNoteId} />
       <div className="my-4 flex flex-wrap gap-1.5">
         {(["all", "active", "resolved", "trashed"] as const).map((value) => (
           <TaskTableChipButton key={value} onClick={() => setFilter(value)} toneClassName={filter === value ? "border-[#ddd2ff] bg-[#6f57f6] text-white" : undefined}>
