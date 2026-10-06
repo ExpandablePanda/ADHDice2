@@ -14,6 +14,7 @@ import type {
 } from "@/lib/database.types";
 import {
   aggregateHealthNutritionDetails,
+  getHealthFoodMeasurementOptions,
   normalizeHealthNutritionDetails,
   scaleHealthNutritionDetails,
   type HealthNutritionCoverage,
@@ -195,6 +196,11 @@ export type HealthFoodLogHistory = {
   entries: HealthMealEntry[];
 };
 
+export type HealthFoodConsumedServing = {
+  quantity: number;
+  unit: string;
+};
+
 export type HealthDailyCaloriePoint = {
   date: string;
   label: string;
@@ -213,6 +219,48 @@ function compareHealthMealEntriesNewestFirst(left: HealthMealEntry, right: Healt
   return right.entry_date.localeCompare(left.entry_date)
     || right.created_at.localeCompare(left.created_at)
     || right.id.localeCompare(left.id);
+}
+
+export function getValidHealthFoodConsumedServing(
+  food: Pick<HealthFoodLibraryItem, "serving_unit" | "serving_measure_unit">,
+  quantity: unknown,
+  unit: unknown,
+): HealthFoodConsumedServing | null {
+  const parsedQuantity = typeof quantity === "number"
+    ? quantity
+    : typeof quantity === "string" && quantity.trim()
+      ? Number(quantity)
+      : NaN;
+  const trimmedUnit = typeof unit === "string" ? unit.trim() : "";
+  if (!Number.isFinite(parsedQuantity) || parsedQuantity <= 0 || !trimmedUnit) {
+    return null;
+  }
+  const supported = getHealthFoodMeasurementOptions({
+    servingMeasureUnit: food.serving_measure_unit,
+    servingUnit: food.serving_unit,
+  });
+  return supported.some((option) => option.value === trimmedUnit)
+    ? { quantity: parsedQuantity, unit: trimmedUnit }
+    : null;
+}
+
+export function getLatestHealthFoodConsumedServing(
+  food: HealthFoodLibraryItem,
+  mealEntries: HealthMealEntry[],
+): HealthFoodConsumedServing | null {
+  const sourceMatches = food.id
+    ? mealEntries.filter((entry) => entry.source_food_id === food.id)
+    : [];
+  const foodIdentity = getHealthFoodIdentityKey(food);
+  const matches = sourceMatches.length > 0
+    ? sourceMatches
+      : foodIdentity
+      ? mealEntries.filter((entry) => !entry.source_food_id && getHealthFoodIdentityKey(entry) === foodIdentity)
+      : [];
+  const latest = [...matches].sort(compareHealthMealEntriesNewestFirst)[0];
+  return latest
+    ? getValidHealthFoodConsumedServing(food, latest.consumed_quantity, latest.consumed_unit)
+    : null;
 }
 
 export function buildHealthFoodLogHistoryIndex(mealEntries: HealthMealEntry[]) {

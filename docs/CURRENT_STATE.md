@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.94`.
+- Current working app version: `7.16.95`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -60,6 +60,25 @@ navigation retains the normal memo cache; a user change immediately hides and
 then clears the prior user's memo state. The `supabase/add_voice_memos_7_16_93.sql`
 source migration was not changed or applied. Browser QA remains pending
 migration application through the authorized workflow.
+
+## 2026-10-05 7.16.95 Meal Ledger Remember Last Serving
+
+Meal Ledger Food selections now remember the most recently actually logged
+consumed quantity and unit when the current Food Library definition still
+supports that measurement. This is a convenience draft default only: the user
+can edit Amount and Measurement before saving, and the newly saved actual meal
+becomes the next history value naturally.
+
+Actual `mealEntries` are the only remembered-serving authority. Stable
+`source_food_id` matching is preferred, with the existing Food identity
+matching used only for compatible legacy actual rows without a source ID; plan
+rows, unsaved drafts, recipes, Saved Meals, Quick Entry, and unmatched barcode
+lookups do not become serving history. The Food Library serving definition
+remains the nutrition and measurement/conversion authority, and unsupported or
+invalid historical values fall back to `1 serving` without conversion.
+
+No SQL, migration, schema, database column, or local-storage preference
+change was made.
 
 ## 2026-10-05 7.16.92 Home Scratchpad Dictation Parity
 

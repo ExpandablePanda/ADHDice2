@@ -321,6 +321,7 @@ test("Favorite reuse fills the active Breakfast, Lunch, Dinner, or Snack editor"
   assert.match(favoriteHandlerSource, /applyLookupResult\(\{/);
   assert.match(favoriteHandlerSource, /foodName: selection\.foodName/);
   assert.match(favoriteHandlerSource, /servingMeasureUnit: selection\.servingMeasureUnit/);
+  assert.match(favoriteHandlerSource, /foodLibraryItem: item/);
   assert.match(foodSource, /`Use in \$\{getMealSlotLabel\(activeMealEntrySlot\)\}`/);
   assert.match(source, /activeMealEntrySlot === slot \? renderMealEntryEditor\(\) : null/);
   assert.match(saveSource, /entry_date: foodHistoryDate,/);
@@ -345,14 +346,43 @@ test("Recent Food reuse cannot invisibly fill a closed editor", () => {
 });
 
 test("Recent Food reuse fills the active editor without changing date or meal slot", () => {
-  assert.match(recentHandlerSource, /foodName: item\.food_name/);
-  assert.match(recentHandlerSource, /providerItemId: item\.provider_item_id \?\? item\.id/);
-  assert.match(recentHandlerSource, /sourceFoodId: item\.source_food_id \?\? item\.food_snapshot\?\.source_food_id/);
+  assert.match(recentHandlerSource, /foodName: snapshot\?\.food_name \|\| item\.food_name/);
+  assert.match(recentHandlerSource, /calories: snapshot\?\.calories \?\? item\.calories/);
+  assert.match(recentHandlerSource, /providerItemId: snapshot\?\.provider_item_id \?\? item\.provider_item_id \?\? item\.id/);
+  assert.match(recentHandlerSource, /sourceFoodId: item\.source_food_id \?\? snapshot\?\.source_food_id/);
+  assert.match(recentHandlerSource, /consumedQuantity: item\.consumed_quantity/);
+  assert.match(recentHandlerSource, /consumedUnit: item\.consumed_unit/);
   assert.match(lookupHandlerSource, /setMealDraft\(\(current\) => \(\{\s+\.\.\.current,/);
   assert.doesNotMatch(lookupHandlerSource, /date:|mealSlot:/);
   assert.match(saveSource, /entry_date: foodHistoryDate,/);
   assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
   assert.match(inlineEditorSource, /disabled=\{!canSaveMeal\}/);
+});
+
+test("Food Library selection surfaces share the remembered-serving resolver", () => {
+  assert.match(lookupHandlerSource, /getLatestHealthFoodConsumedServing\(result\.foodLibraryItem, mealEntries\)/);
+  assert.match(lookupHandlerSource, /quantity: initialConsumedServing \? String\(initialConsumedServing\.quantity\) : "1"/);
+  assert.match(lookupHandlerSource, /measurement: initialConsumedServing\?\.unit \?\? "serving"/);
+  assert.match(favoriteHandlerSource, /foodLibraryItem: item/);
+  assert.match(source, /foodLibraryItem: item/);
+  assert.match(source, /matchingCustomFoods\.map\(\(item\) => \(/);
+});
+
+test("plan editing bypasses remembered history while new plans may reuse the shared food path", () => {
+  assert.match(lookupHandlerSource, /mealEditorMode === "plan" && editingMealPlanId !== null/);
+  assert.doesNotMatch(lookupHandlerSource, /mealPlanEntries/);
+  assert.match(source, /setMealDraft\(mealDraftFromHealthMealPlan\(plan\)\)/);
+  assert.match(source, /onClick=\{\(\) => openMealComposerForSlot\(slot, "plan"\)\}/);
+});
+
+test("Recipes, Saved Meals, Quick Entry, and barcode lookup keep their normal defaults", () => {
+  const recipeSource = source.slice(source.indexOf('if (suggestion.kind === "recipe")'), source.indexOf("const nutrition = getSavedMealNutrition"));
+  const savedMealSource = source.slice(source.indexOf("const nutrition = getSavedMealNutrition"), source.indexOf("function updateImportParseStatus"));
+  assert.doesNotMatch(recipeSource, /foodLibraryItem/);
+  assert.doesNotMatch(savedMealSource, /foodLibraryItem/);
+  assert.match(source.slice(source.indexOf("function openQuickEntry"), source.indexOf("function closeQuickEntry")), /servingQuantity: 1/);
+  assert.doesNotMatch(source.slice(source.indexOf("function runBarcodeLookup"), source.indexOf("function handleMealBarcodeDetected")), /foodLibraryItem/);
+  assert.match(lookupHandlerSource, /quantity: initialConsumedServing \? String\(initialConsumedServing\.quantity\) : "1"/);
 });
 
 test("canonical persistence, editing, deletion, and totals remain unchanged", () => {
