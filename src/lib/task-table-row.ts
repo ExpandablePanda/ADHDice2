@@ -7,12 +7,14 @@ import { getTaskHistoryLastDone, getTaskHistoryLastHandled, isTaskFinishedOnDate
 import type { TaskHistoryStreakSummary } from "@/lib/task-history-streak-summaries";
 import type { TaskListDefinition } from "@/lib/task-lists";
 import type { TaskAttentionReason } from "@/lib/task-attention";
-import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { formatTaskPriorityLevel, getTaskPriorityLevel, type TaskPriorityLevelOption } from "@/lib/task-priority";
 import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
 import { getTaskTrashTimestamp } from "@/lib/task-trash";
 import { normalizeTaskType } from "@/lib/task-type";
+import { quotaProgressForTask } from "@/lib/task-state-engine/quota";
+import type { TaskHistoryOutcome } from "@/lib/task-state-engine/types";
 
 const isDevelopment = process.env.NODE_ENV !== "production";
 let buildTaskTableRowDebugCount = 0;
@@ -25,6 +27,8 @@ export type TaskTableRowContext = {
   listMemberships: Array<{ id: string; isManual: boolean }>;
   subtasks: Task[];
   taskHistory: TaskHistory[];
+  quotaCurrentPeriodHistory?: TaskHistory[];
+  isQuotaCurrentPeriodHistoryReady?: boolean;
   taskHistoryStreakSummary?: TaskHistoryStreakSummary;
   attentionReason?: TaskAttentionReason | null;
   directlyExcludedFromTracking?: boolean;
@@ -41,6 +45,8 @@ export function createStableTaskRowModelCache() {
         displayStatus: context.displayStatus,
         focused: context.focusedTaskIdSet.has(task.id),
         history: context.taskHistory,
+        quotaCurrentPeriodHistory: context.quotaCurrentPeriodHistory,
+        isQuotaCurrentPeriodHistoryReady: context.isQuotaCurrentPeriodHistoryReady,
         linkedNotes: context.linkedNotes,
         listDefinitions: context.listDefinitions,
         listMemberships: context.listMemberships,
@@ -79,7 +85,7 @@ function buildTaskTableSubtasks(subtasks: Task[], parentId: string | null = null
       customRulesetId: subtask.custom_ruleset_id,
       dueOn: subtask.due_on,
       id: subtask.id,
-      status: subtask.status,
+      status: normalizeTaskDisplayStatus(subtask.status),
       taskType: normalizeTaskType(subtask.task_type),
       title: subtask.title,
     }));
@@ -108,6 +114,16 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     }
     : getTaskHistoryLastHandled(context.taskHistory, context.todayDateKey);
   const priorities: PrototypeTaskRow["priorities"] = [formatTaskPriorityLevel(getTaskPriorityLevel(task)) as TaskPriorityLevelOption];
+  const repeatQuotaProgress = context.isQuotaCurrentPeriodHistoryReady
+    ? quotaProgressForTask({
+      task,
+      logicalDate: context.todayDateKey,
+      history: (context.quotaCurrentPeriodHistory ?? []).map((row) => ({
+        logicalDate: row.entry_date,
+        outcome: row.status as TaskHistoryOutcome,
+      })),
+    })
+    : null;
 
   const listLabels = context.listDefinitions.flatMap((listDefinition) =>
     context.listMemberships.some((membership) => membership.id === listDefinition.id)
@@ -154,8 +170,13 @@ export function buildTaskTableRow(task: Task, context: TaskTableRowContext): Pro
     repeatMonthlyMode: task.repeat_monthly_mode,
     repeatMonthlyOrdinal: task.repeat_monthly_ordinal,
     repeatMonthlyWeekday: task.repeat_monthly_weekday,
+    repeatEndOn: task.repeat_end_on,
+    repeatQuotaCount: task.repeat_quota_count,
+    repeatQuotaBalanceEnabled: task.repeat_quota_balance_enabled,
+    repeatQuotaBalance: task.repeat_quota_balance,
+    repeatQuotaProgress,
     subtasksAutoReset: task.subtasks_auto_reset ?? false,
-    status: context.displayStatus ?? task.status,
+    status: normalizeTaskDisplayStatus(context.displayStatus ?? task.status),
     finishedToday: context.finishedTodayByTaskId
       ? context.finishedTodayByTaskId[task.id] === true
       : isTaskFinishedOnDate(context.taskHistory, context.todayDateKey),

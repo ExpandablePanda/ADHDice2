@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { buildTaskHistoryFacts } from "../src/lib/task-history.ts";
-import { buildManualMembershipMap, canSetRoutineTaskMembership, evaluateTaskListMemberships, getBuiltInTaskLists, getTaskListCapabilities, isAppOwnedSystemTaskListId, isManualTaskListDestination, isTaskListSettingsEligible, parseTaskListRules, resolveEffectiveTaskListRules, taskBelongsToList, taskListUsesRuleEvaluation, type TaskListDefinition } from "../src/lib/task-lists.ts";
+import { buildManualMembershipMap, canSetRoutineTaskMembership, evaluateTaskListMemberships, getBuiltInTaskLists, getTaskListCapabilities, isAppOwnedSystemTaskListId, isManualTaskListDestination, isTaskListSettingsEligible, matchesTaskListRules, parseTaskListRules, resolveEffectiveTaskListRules, taskBelongsToList, taskListUsesRuleEvaluation, type TaskListDefinition } from "../src/lib/task-lists.ts";
 import { createTask, getTaskBucket } from "../src/lib/task-buckets.ts";
 
 function createTaskListEvaluationContext(
@@ -89,6 +89,19 @@ test("task list evaluation honors manual memberships and date-added rules", () =
   assert.deepEqual(parsed, {
     rules: [{ connector: undefined, rule: { field: "date_added", op: "is_today" } }],
   });
+});
+
+test("legacy Upcoming smart rules normalize to Not Due and match its display status", () => {
+  const task = createTask({ id: "legacy-upcoming", status: "not_due", title: "Future task" });
+  const legacyRules = parseTaskListRules({
+    combinator: "all",
+    rules: [{ field: "status", op: "is", value: "upcoming" }],
+  });
+  assert.deepEqual(legacyRules?.rules[0]?.rule, { field: "status", op: "is", value: "not_due" });
+  assert.equal(matchesTaskListRules(task, legacyRules!, [], createTaskListEvaluationContext()), true);
+  assert.equal(matchesTaskListRules(task, {
+    rules: [{ rule: { field: "status", op: "is", value: "upcoming" } }],
+  }, [], createTaskListEvaluationContext()), true);
 });
 
 test("built-in task lists keep Routine system-owned while allowing dedicated manual assignment", () => {

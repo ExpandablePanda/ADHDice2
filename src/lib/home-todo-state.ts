@@ -4,7 +4,8 @@ import type { TaskListMembership } from "@/lib/task-lists";
 import type { TaskCreationMetadata } from "@/lib/task-creation";
 import { formatDueTimeLabel } from "@/lib/task-cockpit";
 import { shiftDateKey } from "@/lib/date-key";
-import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { buildTaskHierarchyAdapter, type TaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { getTaskContentFolderPath, type TaskContentFolderRow } from "@/lib/task-content-folders";
 
 export type HomeTodoStateV1 = {
   clientUpdatedAt: string;
@@ -49,8 +50,41 @@ export type HomeTodoStateV6 = {
   routineSectionIdByTaskId: Record<string, string>;
 };
 
+export type HomeScratchpadItem = {
+  id: string;
+  text: string;
+  createdAt: string;
+};
+
+export type HomeTodoStateV7 = {
+  clientUpdatedAt: string;
+  schemaVersion: 7;
+  taskIds: string[];
+  taskDayOffsets: Record<string, number>;
+  tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routineSections: HomeRoutineSectionDefinition[];
+  routineSectionIdByTaskId: Record<string, string>;
+  urgentTaskIds: string[];
+  scratchpadItems: HomeScratchpadItem[];
+};
+
+export type HomeTodoStateV8 = {
+  clientUpdatedAt: string;
+  schemaVersion: 8;
+  taskIds: string[];
+  taskDayOffsets: Record<string, number>;
+  tasksPerDay: HomeTodoTasksPerDay;
+  routineTaskIds: string[];
+  routineSections: HomeRoutineSectionDefinition[];
+  routineSectionIdByTaskId: Record<string, string>;
+  urgentTaskIds: string[];
+  scratchpadText: string;
+  scratchpadItems: HomeScratchpadItem[];
+};
+
 export type HomeTodoStateV2 = HomeTodoStateV4;
-export type HomeTodoState = HomeTodoStateV6;
+export type HomeTodoState = HomeTodoStateV8;
 
 type HomeTodoStateCandidate = {
   clientUpdatedAt?: unknown;
@@ -64,6 +98,9 @@ type HomeTodoStateCandidate = {
   routineSectionNames?: unknown;
   routineSections?: unknown;
   routineSectionIdByTaskId?: unknown;
+  urgentTaskIds?: unknown;
+  scratchpadText?: unknown;
+  scratchpadItems?: unknown;
 };
 
 export const HOME_TODO_TASKS_PER_DAY_OPTIONS = [10, 11, 12, 13, 14, 15] as const;
@@ -74,15 +111,18 @@ export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTION
 export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
 export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
-export const EMPTY_HOME_TODO_STATE: HomeTodoStateV6 = {
+export const EMPTY_HOME_TODO_STATE: HomeTodoStateV8 = {
   clientUpdatedAt: new Date(0).toISOString(),
-  schemaVersion: 6,
+  schemaVersion: 8,
   taskIds: [],
   taskDayOffsets: {},
   tasksPerDay: DEFAULT_HOME_TODO_TASKS_PER_DAY,
   routineTaskIds: [],
   routineSections: [],
   routineSectionIdByTaskId: {},
+  urgentTaskIds: [],
+  scratchpadText: "",
+  scratchpadItems: [],
 };
 
 export type HomeTodoDaySection<T = string> = {
@@ -261,7 +301,10 @@ export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
     || state.tasksPerDay !== DEFAULT_HOME_TODO_TASKS_PER_DAY
     || state.routineTaskIds.length > 0
     || state.routineSections.length > 0
-    || Object.keys(state.routineSectionIdByTaskId).length > 0;
+    || Object.keys(state.routineSectionIdByTaskId).length > 0
+    || state.urgentTaskIds.length > 0
+    || state.scratchpadText.trim().length > 0
+    || state.scratchpadItems.length > 0;
 }
 
 export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
@@ -413,13 +456,13 @@ export async function createHomeTodoTask(
   return createdTask;
 }
 
-export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
+export function normalizeHomeTodoState(value: unknown): HomeTodoStateV8 {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     return { ...EMPTY_HOME_TODO_STATE };
   }
   const candidate = value as HomeTodoStateCandidate;
   const seen = new Set<string>();
-  const taskIds = Array.isArray(candidate.taskIds)
+  const normalizedTaskIds = Array.isArray(candidate.taskIds)
     ? candidate.taskIds.filter((taskId): taskId is string => {
       if (typeof taskId !== "string" || !taskId.trim() || seen.has(taskId)) return false;
       seen.add(taskId);
@@ -429,6 +472,9 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
   const parsedUpdatedAt = typeof candidate.clientUpdatedAt === "string"
     ? Date.parse(candidate.clientUpdatedAt)
     : Number.NaN;
+  const urgentTaskIds = normalizeHomeUrgentTaskIds(candidate.urgentTaskIds);
+  const urgentTaskIdSet = new Set(urgentTaskIds);
+  const taskIds = normalizedTaskIds.filter((taskId) => !urgentTaskIdSet.has(taskId));
   const taskIdSet = new Set(taskIds);
   const taskDayOffsets = candidate.taskDayOffsets && typeof candidate.taskDayOffsets === "object" && !Array.isArray(candidate.taskDayOffsets)
     ? Object.fromEntries(Object.entries(candidate.taskDayOffsets as Record<string, unknown>).filter(([taskId, offset]) => (
@@ -460,18 +506,130 @@ export function normalizeHomeTodoState(value: unknown): HomeTodoStateV6 {
     migratedRoutineSections.routineSectionIdByTaskId,
     false,
   );
+  const scratchpadText = Number(candidate.schemaVersion) >= 8 && typeof candidate.scratchpadText === "string"
+    ? candidate.scratchpadText
+    : "";
+  const scratchpadItems = normalizeHomeScratchpadItems(candidate.scratchpadItems);
   return {
     clientUpdatedAt: Number.isFinite(parsedUpdatedAt)
       ? new Date(parsedUpdatedAt).toISOString()
       : EMPTY_HOME_TODO_STATE.clientUpdatedAt,
-    schemaVersion: 6,
+    schemaVersion: 8,
     taskIds,
     taskDayOffsets,
     tasksPerDay: normalizeHomeTodoTasksPerDay(candidate.tasksPerDay),
     routineTaskIds,
     routineSections: normalizedRoutineSections.routineSections,
     routineSectionIdByTaskId: normalizedRoutineSections.routineSectionIdByTaskId,
+    urgentTaskIds,
+    scratchpadText,
+    scratchpadItems,
   };
+}
+
+export function normalizeHomeUrgentTaskIds(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  return value.filter((taskId): taskId is string => {
+    if (typeof taskId !== "string") return false;
+    const normalizedTaskId = taskId.trim();
+    if (!normalizedTaskId || seen.has(normalizedTaskId)) return false;
+    seen.add(normalizedTaskId);
+    return true;
+  }).map((taskId) => taskId.trim());
+}
+
+export function normalizeHomeScratchpadItems(value: unknown): HomeScratchpadItem[] {
+  if (!Array.isArray(value)) return [];
+  const seen = new Set<string>();
+  const items: HomeScratchpadItem[] = [];
+  for (const entry of value) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const candidate = entry as { id?: unknown; text?: unknown; createdAt?: unknown };
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : "";
+    const text = typeof candidate.text === "string" ? candidate.text.trim() : "";
+    const createdAt = typeof candidate.createdAt === "string" ? candidate.createdAt.trim() : "";
+    if (!id || !text || seen.has(id) || !Number.isFinite(Date.parse(createdAt))) continue;
+    seen.add(id);
+    items.push({ id, text, createdAt: new Date(createdAt).toISOString() });
+  }
+  return items;
+}
+
+export function createHomeScratchpadItem(
+  text: string,
+  now = new Date(),
+  existingIds: readonly string[] = [],
+) {
+  const normalizedText = text.trim();
+  if (!normalizedText) return null;
+  const existingIdSet = new Set(existingIds);
+  const randomId = globalThis.crypto?.randomUUID?.() ?? `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
+  let id = `scratchpad-${randomId}`;
+  let suffix = 2;
+  while (existingIdSet.has(id)) {
+    id = `scratchpad-${randomId}-${suffix}`;
+    suffix += 1;
+  }
+  return {
+    id,
+    text: normalizedText,
+    createdAt: new Date(now).toISOString(),
+  } satisfies HomeScratchpadItem;
+}
+
+export function parseHomeScratchpadLines(value: string) {
+  return value.split(/\r\n|\n|\r/).map((line) => line.trim()).filter(Boolean);
+}
+
+export function createHomeScratchpadItems(
+  text: string,
+  now = new Date(),
+  existingIds: readonly string[] = [],
+) {
+  const items: HomeScratchpadItem[] = [];
+  const ids = [...existingIds];
+  for (const line of parseHomeScratchpadLines(text)) {
+    const item = createHomeScratchpadItem(line, now, ids);
+    if (!item) continue;
+    items.push(item);
+    ids.push(item.id);
+  }
+  return items;
+}
+
+export function moveHomeScratchpadTextToItems(
+  state: Pick<HomeTodoState, "scratchpadText" | "scratchpadItems">,
+  text: string,
+  now = new Date(),
+) {
+  const items = createHomeScratchpadItems(text, now, state.scratchpadItems.map((item) => item.id));
+  if (!items.length) return null;
+  return {
+    scratchpadText: "",
+    scratchpadItems: [...state.scratchpadItems, ...items],
+  };
+}
+
+export function reorderHomeScratchpadItems(
+  items: readonly HomeScratchpadItem[],
+  orderedIds: readonly string[],
+) {
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const seen = new Set<string>();
+  const next: HomeScratchpadItem[] = [];
+  for (const id of orderedIds) {
+    const item = itemById.get(id);
+    if (!item || seen.has(id)) continue;
+    seen.add(id);
+    next.push(item);
+  }
+  for (const item of items) {
+    if (seen.has(item.id)) continue;
+    seen.add(item.id);
+    next.push(item);
+  }
+  return next;
 }
 
 export function isHomeTodoTaskEligible(
@@ -499,6 +657,16 @@ export function isHomeTodoTaskEligible(
     parentId = parent.parent_task_id;
   }
   return true;
+}
+
+export function getHomeTasksByCanonicalMembership(
+  tasks: readonly Task[],
+  listMembershipsByTaskId: Readonly<Record<string, readonly Pick<TaskListMembership, "id">[]>>,
+  membershipId: string,
+  taskById = new Map(tasks.map((task) => [task.id, task])),
+) {
+  return tasks.filter((task) => isHomeTodoTaskEligible(task, tasks, taskById)
+    && (listMembershipsByTaskId[task.id] ?? []).some((membership) => membership.id === membershipId));
 }
 
 export function getHomeRoutineTaskIds(
@@ -627,6 +795,23 @@ export function buildHomeTodoHierarchy(
   return labels;
 }
 
+export function buildHomeTaskRowHierarchy(
+  task: Task,
+  tasks: readonly Task[],
+  taskContentFolders: readonly TaskContentFolderRow[],
+  taskById = new Map(tasks.map((item) => [item.id, item])),
+  taskHierarchy: TaskHierarchyAdapter<Task> = buildTaskHierarchyAdapter(tasks),
+) {
+  const parentHierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
+  const rootTask = task.parent_task_id === null
+    ? task
+    : taskHierarchy.getParentChain(task.id).at(-1);
+  const folderPath = rootTask?.task_content_folder_id
+    ? getTaskContentFolderPath(taskContentFolders, rootTask.task_content_folder_id)
+    : [];
+  return [...folderPath, ...parentHierarchy];
+}
+
 export function getHomeTodoSearchText(
   task: Pick<Task, "notes" | "pinned_at" | "tags" | "title">,
   hierarchy: readonly string[],
@@ -654,6 +839,36 @@ export function reconcileHomeTodoTaskIds(taskIds: readonly string[], tasks: read
     const task = taskById.get(taskId);
     return Boolean(task && isHomeTodoTaskEligible(task, tasks, taskById));
   });
+}
+
+export function reconcileHomeUrgentTaskIds(taskIds: readonly string[], tasks: readonly Task[]) {
+  return reconcileHomeTodoTaskIds(taskIds, tasks);
+}
+
+export function moveHomeUrgentTaskIdToTodo(
+  state: Pick<HomeTodoState, "taskIds" | "taskDayOffsets" | "urgentTaskIds">,
+  taskId: string,
+  dayOffset: number,
+) {
+  const normalizedDayOffset = Number.isInteger(dayOffset) && dayOffset >= 0 && dayOffset <= 7 ? dayOffset : 0;
+  return {
+    urgentTaskIds: state.urgentTaskIds.filter((candidate) => candidate !== taskId),
+    taskIds: state.taskIds.includes(taskId) ? [...state.taskIds] : [...state.taskIds, taskId],
+    taskDayOffsets: { ...state.taskDayOffsets, [taskId]: normalizedDayOffset },
+  };
+}
+
+export function moveHomeTodoTaskIdToUrgent(
+  state: Pick<HomeTodoState, "taskIds" | "taskDayOffsets" | "urgentTaskIds">,
+  taskId: string,
+) {
+  return {
+    urgentTaskIds: state.urgentTaskIds.includes(taskId)
+      ? [...state.urgentTaskIds]
+      : [...state.urgentTaskIds, taskId],
+    taskIds: state.taskIds.filter((candidate) => candidate !== taskId),
+    taskDayOffsets: Object.fromEntries(Object.entries(state.taskDayOffsets).filter(([candidate]) => candidate !== taskId)),
+  };
 }
 
 /**

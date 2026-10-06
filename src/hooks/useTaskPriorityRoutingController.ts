@@ -14,7 +14,7 @@ type UseTaskPriorityRoutingControllerInput = {
   routeTask: (taskId: string, route: TaskRoutingBucket | null) => Promise<void> | void;
   saveFocusSelection: (nextTaskIds: string[]) => Promise<void>;
   setMessage: Dispatch<SetStateAction<Message | null>>;
-  updateTask: (taskId: string, updates: Partial<Task>) => Promise<void>;
+  updateTask: (taskId: string, updates: Partial<Task>) => Promise<boolean>;
 };
 
 export function useTaskPriorityRoutingController({
@@ -70,13 +70,13 @@ export function useTaskPriorityRoutingController({
   async function setTaskPriority(taskId: string, priority: TaskPrioritySelectionInput) {
     const normalizedPriority = normalizeTaskPrioritySelectionInput(priority);
     if (!normalizedPriority) {
-      return;
+      return false;
     }
 
     if (normalizedPriority.focusAction === "add") {
       await saveFocusSelection(Array.from(new Set([...focusedTaskIds, taskId])));
       void routeTask(taskId, "today");
-      return;
+      return true;
     }
 
     if (normalizedPriority.focusAction === "remove") {
@@ -84,8 +84,10 @@ export function useTaskPriorityRoutingController({
     }
 
     if (normalizedPriority.priorityLevel !== null) {
-      await updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
+      return updateTask(taskId, buildTaskPriorityUpdate(normalizedPriority.priorityLevel));
     }
+
+    return true;
   }
 
   return {

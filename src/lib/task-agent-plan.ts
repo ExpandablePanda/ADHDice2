@@ -13,6 +13,7 @@ import type { TaskListDefinition } from "@/lib/task-lists";
 import { formatActualSecondsLabel, formatRepeatSummary } from "@/lib/task-formatting";
 import { computeTaskSpecificHistoryStats, getTaskHistoryLastHandled } from "@/lib/task-history";
 import { getTaskPriorityLevel } from "@/lib/task-priority";
+import { normalizeTaskDisplayStatus } from "@/lib/task-display-status";
 
 function formatEnergyLabel(value: string) {
   return value
@@ -40,8 +41,9 @@ function isClosedSubtaskStatus(status: TaskStatus) {
 }
 
 export function toAgentPlanStatus(status: TaskStatus): AgentPlanStatus {
-  if (status === "in_progress" || status === "done" || status === "missed" || status === "did_my_best" || status === "upcoming" || status === "not_due" || status === "archived" || status === "trashed") {
-    return status;
+  const normalizedStatus = normalizeTaskDisplayStatus(status);
+  if (normalizedStatus === "in_progress" || normalizedStatus === "done" || normalizedStatus === "missed" || normalizedStatus === "did_my_best" || normalizedStatus === "not_due" || normalizedStatus === "archived" || normalizedStatus === "trashed") {
+    return normalizedStatus;
   }
 
   return "pending";

@@ -1,5 +1,5 @@
 import type { Task, TaskHistory } from "@/lib/database.types";
-import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import {
   resolveActiveTaskStatus,
   type ActiveStatusReadInput,
@@ -41,6 +41,9 @@ function activeStatusTaskIdentity(
         repeat_monthly_mode: boundary.repeat_monthly_mode,
         repeat_monthly_ordinal: boundary.repeat_monthly_ordinal,
         repeat_monthly_weekday: boundary.repeat_monthly_weekday,
+        repeat_end_on: boundary.repeat_end_on,
+        repeat_quota_count: boundary.repeat_quota_count ?? null,
+        repeat_quota_balance_enabled: boundary.repeat_quota_balance_enabled === true,
         schedule_model: boundary.schedule_model,
       }
       : null,
@@ -57,6 +60,9 @@ function activeStatusTaskIdentity(
     repeat_monthly_mode: task.repeat_monthly_mode,
     repeat_monthly_ordinal: task.repeat_monthly_ordinal,
     repeat_monthly_weekday: task.repeat_monthly_weekday,
+    repeat_end_on: task.repeat_end_on,
+    repeat_quota_count: task.repeat_quota_count,
+    repeat_quota_balance_enabled: task.repeat_quota_balance_enabled,
     status: task.status,
     task_type: task.task_type,
     terminal_state: task.terminal_state,
@@ -205,7 +211,9 @@ export function projectTasksForActiveStatusRead(
     const hasCanonicalStatus = Object.hasOwn(statusesByTaskId, task.id);
     const hasCanonicalDueOn = Object.hasOwn(dueOnByTaskId, task.id);
     const status = hasCanonicalStatus ? statusesByTaskId[task.id]! : task.status;
-    const projectedStatus = status === "unscheduled" ? task.status : status;
+    const projectedStatus = status === "unscheduled"
+      ? normalizeTaskDisplayStatus(task.status)
+      : normalizeTaskDisplayStatus(status);
     const dueOn = hasCanonicalDueOn ? dueOnByTaskId[task.id] ?? null : task.due_on;
     // The database-backed Task row remains valid when the engine-only display
     // status is unscheduled. Callers must consume the map for presentation.

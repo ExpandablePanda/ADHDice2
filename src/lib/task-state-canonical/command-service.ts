@@ -1,6 +1,7 @@
 import type { Task, TaskStatus } from "../database.types.ts";
-import { daysBetween } from "../task-state-engine/calendar.ts";
+import { shiftDateKey } from "../task-state-engine/calendar.ts";
 import { evaluateTaskState } from "../task-state-engine/engine.ts";
+import { quotaPeriodBounds, quotaPeriodFactFor, type QuotaPeriodFactDraft } from "../task-state-engine/quota.ts";
 import type {
   TaskHistoryOutcome,
   TaskStateEngineInput,
@@ -16,6 +17,7 @@ import type {
   CanonicalLogicalDayContext,
   CanonicalTaskCalendarOverride,
   CanonicalTaskHistoryFact,
+  CanonicalTaskQuotaPeriodFact,
   CanonicalTaskOccurrence,
   CanonicalTaskOccurrenceEffectiveOverride,
   CanonicalTaskRewardEntitlement,
@@ -41,6 +43,8 @@ export type CanonicalCompatibilityProjection = {
   completedAt: string | null;
   activeStatusLogicalDate: string | null;
   activeOccurrenceDueOn: string | null;
+  repeatQuotaBalance?: number | null;
+  repeatQuotaBalancePeriod?: string | null;
 };
 
 export type CanonicalTaskStateCommandBase = {
@@ -124,6 +128,10 @@ export type CanonicalClearOutcomeCommand = CanonicalTaskStateCommandBase & {
   occurrence?: CanonicalTaskOccurrence;
 };
 
+export type CanonicalClearQuotaBalanceCommand = CanonicalTaskStateCommandBase & {
+  type: "clear_quota_balance";
+};
+
 export type CanonicalRolloverCommand = CanonicalTaskStateCommandBase & {
   type: "rollover";
   /** Server-derived stale workflow evidence; never accepted from browser intent. */
@@ -143,6 +151,7 @@ export type CanonicalTaskStateCommand =
   | CanonicalScheduleCommand
   | CanonicalCalendarOverrideCommand
   | CanonicalClearOutcomeCommand
+  | CanonicalClearQuotaBalanceCommand
   | CanonicalRolloverCommand;
 
 export type CanonicalCommandEnvelope = {
@@ -192,7 +201,29 @@ export type CanonicalHistoryFactPlan = Pick<
   | "timezone"
   | "day_start_time"
   | "idempotence_identity"
->;
+> & {
+  /** Explicit planner decision consumed by the persistence reward gate. */
+  reward_eligible?: boolean;
+};
+
+export type CanonicalQuotaPeriodFactPlan = Pick<
+  CanonicalTaskQuotaPeriodFact,
+  | "period_kind"
+  | "period_key"
+  | "period_start"
+  | "period_end"
+  | "base_quota"
+  | "incoming_balance"
+  | "successful_days"
+  | "next_balance"
+  | "balance_enabled"
+  | "event_kind"
+  | "schedule_boundary_id"
+  | "idempotence_identity"
+> & {
+  command_id?: string | null;
+  source?: string;
+};
 
 export type CanonicalRewardEntitlementPlan = {
   identity: string;
@@ -221,6 +252,7 @@ export type CanonicalNormalizedCommandResult = {
   occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null;
   calendarOverride: CanonicalTaskCalendarOverride | null;
   rewardEntitlement: CanonicalRewardEntitlementPlan | null;
+  quotaPeriodFacts: CanonicalQuotaPeriodFactPlan[];
   warnings: string[];
 };
 
@@ -239,6 +271,7 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
   task: CanonicalTaskRow;
 }) {
   const { normalizedResult } = input.plan;
+  if (normalizedResult.commandType === "clear_quota_balance") return false;
   const patchChangesTask = Object.entries(normalizedResult.canonicalTaskPatch).some(([field, value]) => (
     input.task[field as keyof CanonicalTaskRow] !== value
   ));
@@ -249,7 +282,9 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
     || projection.dueOn !== input.task.due_on
     || projection.completedAt !== input.task.completed_at
     || projection.activeStatusLogicalDate !== input.task.active_status_logical_date
-    || projection.activeOccurrenceDueOn !== input.task.active_occurrence_due_on) {
+    || projection.activeOccurrenceDueOn !== input.task.active_occurrence_due_on
+    || projection.repeatQuotaBalance !== input.task.repeat_quota_balance
+    || projection.repeatQuotaBalancePeriod !== input.task.repeat_quota_balance_period) {
     return false;
   }
 
@@ -260,7 +295,8 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
     && normalizedResult.scheduleBoundary === null
     && normalizedResult.occurrenceEffectiveOverride === null
     && normalizedResult.calendarOverride === null
-    && normalizedResult.rewardEntitlement === null;
+    && normalizedResult.rewardEntitlement === null
+    && (normalizedResult.quotaPeriodFacts ?? []).length === 0;
 }
 
 /**
@@ -279,13 +315,21 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
       completed_at: projection.completedAt,
       active_status_logical_date: projection.activeStatusLogicalDate,
       active_occurrence_due_on: projection.activeOccurrenceDueOn,
+      ...(projection.repeatQuotaBalance !== undefined ? { repeat_quota_balance: projection.repeatQuotaBalance } : {}),
+      ...(projection.repeatQuotaBalancePeriod !== undefined ? { repeat_quota_balance_period: projection.repeatQuotaBalancePeriod } : {}),
     },
     ...(normalizedResult.rewardEntitlement
-      ? { reward_program_version: normalizedResult.rewardEntitlement.rewardProgramVersion }
+      ? {
+          reward_program_version: normalizedResult.rewardEntitlement.rewardProgramVersion,
+          reward_eligible: true,
+        }
       : {}),
   };
   if (command.commandType === "clear_outcome") {
     payload.clear_logical_date = command.payload.clear_logical_date;
+  }
+  if (command.commandType === "clear_quota_balance") {
+    payload.clear_quota_balance = true;
   }
   if (command.commandType === "set_due_date" && command.payload.manual_action === "unscheduled_status") {
     payload.manual_action = "unscheduled_status";
@@ -299,6 +343,13 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
       source_legacy_history_id: null,
       revision: 1,
     };
+  }
+  if (normalizedResult.quotaPeriodFacts.length > 0) {
+    payload.quota_period_facts = normalizedResult.quotaPeriodFacts.map((fact) => ({
+      ...fact,
+      command_id: command.commandId,
+      source: "task_state_command",
+    }));
   }
   if ((normalizedResult.automaticHistoryFacts ?? []).length > 0) {
     payload.automatic_history_facts = normalizedResult.automaticHistoryFacts.map((fact) => ({
@@ -388,6 +439,7 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
     case "schedule_change": return command.changeKind === "due_date" ? "set_due_date" : "set_repeat";
     case "calendar_override": return "calendar_override";
     case "clear_outcome": return "clear_outcome";
+    case "clear_quota_balance": return "clear_quota_balance";
     case "rollover": return "reconcile_rollover";
   }
 }
@@ -435,6 +487,12 @@ function projectionFromEngine(
     activeOccurrenceDueOn: Object.hasOwn(result.proposedTaskPatch, "activeOccurrenceDueOn")
       ? result.proposedTaskPatch.activeOccurrenceDueOn ?? null
       : task.active_occurrence_due_on,
+    repeatQuotaBalance: Object.hasOwn(result.proposedTaskPatch, "repeatQuotaBalance")
+      ? result.proposedTaskPatch.repeatQuotaBalance ?? null
+      : task.repeat_quota_balance,
+    repeatQuotaBalancePeriod: Object.hasOwn(result.proposedTaskPatch, "repeatQuotaBalancePeriod")
+      ? result.proposedTaskPatch.repeatQuotaBalancePeriod ?? null
+      : task.repeat_quota_balance_period,
   };
 }
 
@@ -486,7 +544,7 @@ function projectionForWorkflowClear(task: Task, logicalDate: string): CanonicalC
   let status: TaskStatus = task.status;
   if (task.status === "in_progress") {
     if (!task.due_on) status = "pending";
-    else if (task.due_on > logicalDate) status = daysBetween(logicalDate, task.due_on) <= 7 ? "upcoming" : "not_due";
+    else if (task.due_on > logicalDate) status = "not_due";
     else status = "pending";
   }
   return {
@@ -495,6 +553,8 @@ function projectionForWorkflowClear(task: Task, logicalDate: string): CanonicalC
     completedAt: task.completed_at,
     activeStatusLogicalDate: null,
     activeOccurrenceDueOn: null,
+    repeatQuotaBalance: task.repeat_quota_balance,
+    repeatQuotaBalancePeriod: task.repeat_quota_balance_period,
   };
 }
 
@@ -516,7 +576,22 @@ function projectionFromTask(task: Task): CanonicalCompatibilityProjection {
     completedAt: task.completed_at,
     activeStatusLogicalDate: task.active_status_logical_date,
     activeOccurrenceDueOn: task.active_occurrence_due_on,
+    repeatQuotaBalance: task.repeat_quota_balance,
+    repeatQuotaBalancePeriod: task.repeat_quota_balance_period,
   };
+}
+
+function quotaBalancePeriodKey(task: Task, logicalDate: string) {
+  if (task.repeat_frequency !== "per_week" && task.repeat_frequency !== "per_month") return null;
+  return quotaPeriodBounds(logicalDate, task.repeat_frequency === "per_week" ? "week" : "month").key;
+}
+
+function quotaBalancePeriodKeyForBoundary(boundary: CanonicalTaskScheduleBoundary) {
+  if (boundary.repeat_frequency !== "per_week" && boundary.repeat_frequency !== "per_month") return null;
+  return quotaPeriodBounds(
+    boundary.effective_from_logical_date,
+    boundary.repeat_frequency === "per_week" ? "week" : "month",
+  ).key;
 }
 
 function restoredContainerState(task: CanonicalTaskRow): "active" | "archived" {
@@ -603,11 +678,12 @@ function engineOccurrenceDueOnFor(
   logicalDate: string,
   outcome: TaskHistoryOutcome,
 ) {
-  return result?.proposedHistoryChanges.find((change) => (
-    change.type === "insert"
-    && change.row.logicalDate === logicalDate
-    && change.row.outcome === outcome
-  ))?.row.occurrenceDueOn ?? null;
+  const change = result?.proposedHistoryChanges.find((candidate) => (
+    candidate.type === "insert"
+    && candidate.row.logicalDate === logicalDate
+    && candidate.row.outcome === outcome
+  ));
+  return change?.type === "insert" ? change.row.occurrenceDueOn ?? null : null;
 }
 
 function rewardPlan(
@@ -615,7 +691,7 @@ function rewardPlan(
   fact: CanonicalHistoryFactPlan | null,
   behaviorPolicy: ReturnType<typeof evaluateTaskState>["behaviorPolicy"] | undefined,
 ): CanonicalRewardEntitlementPlan | null {
-  if (!fact || behaviorPolicy?.rewards === "disabled" || !["done", "did_my_best", "complete"].includes(fact.outcome)) return null;
+  if (!fact || fact.reward_eligible !== true || behaviorPolicy?.rewards === "disabled" || !["done", "did_my_best", "complete"].includes(fact.outcome)) return null;
   const outcome = fact.outcome as "done" | "did_my_best" | "complete";
   return {
     identity: `task-reward-entitlement:${envelope.taskId}:${fact.logical_date}:v1`,
@@ -651,8 +727,43 @@ function initialResult(
     occurrenceEffectiveOverride: null,
     calendarOverride: null,
     rewardEntitlement: null,
+    quotaPeriodFacts: [],
     warnings: [],
   };
+}
+
+function quotaFactPlanFromDraft(draft: QuotaPeriodFactDraft): CanonicalQuotaPeriodFactPlan {
+  return {
+    period_kind: draft.periodKind,
+    period_key: draft.periodKey,
+    period_start: draft.periodStart,
+    period_end: draft.periodEnd,
+    base_quota: draft.baseQuota,
+    incoming_balance: draft.incomingBalance,
+    successful_days: draft.successfulDays,
+    next_balance: draft.nextBalance,
+    balance_enabled: draft.balanceEnabled,
+    event_kind: draft.eventKind,
+    schedule_boundary_id: draft.scheduleBoundaryId!,
+    idempotence_identity: draft.idempotenceIdentity,
+    command_id: null,
+    source: "task_state_command",
+  };
+}
+
+function historyAfterEngineResult(input: TaskStateEngineInput, result: ReturnType<typeof evaluateTaskState>) {
+  const rows = input.history.map((row) => ({ ...row }));
+  for (const change of result.proposedHistoryChanges) {
+    if (change.type === "delete") {
+      const index = rows.findIndex((row) => row.id === change.rowId);
+      if (index >= 0) rows.splice(index, 1);
+    } else if (change.type === "insert") {
+      const index = rows.findIndex((row) => row.logicalDate === change.row.logicalDate);
+      if (index >= 0) rows.splice(index, 1);
+      rows.push(change.row);
+    }
+  }
+  return rows;
 }
 
 export function planTaskStateCommand(
@@ -678,7 +789,7 @@ export function planTaskStateCommand(
   }
 
   let engineResult: ReturnType<typeof evaluateTaskState> | undefined;
-  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "clear_outcome", "rollover"].includes(input.type)
+  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "clear_outcome", "clear_quota_balance", "rollover"].includes(input.type)
     || (input.type === "restore" && task.container_state !== "active");
   if (needsEngineProjection && !state.engineInput) {
     throw new CanonicalCommandPlanningError(
@@ -714,8 +825,8 @@ export function planTaskStateCommand(
       : null;
     const outcomeDate = input.type === "handled_outcome"
       ? input.logicalDate ?? input.logicalDay.logicalDate
-      : null;
-    const action = input.type === "handled_outcome"
+      : undefined;
+    const action: TaskStateEngineInput["action"] = input.type === "handled_outcome"
       ? {
           type: "record_outcome" as const,
           outcome: input.outcome,
@@ -726,7 +837,7 @@ export function planTaskStateCommand(
             replaceExisting: true,
             previousOutcome: existingOutcomeRow.outcome,
           } : {}),
-          ...(outcomeDate < input.logicalDay.logicalDate ? { historicalOverride: true } : {}),
+          ...(outcomeDate && outcomeDate < input.logicalDay.logicalDate ? { historicalOverride: true } : {}),
         }
       : input.type === "complete"
         ? {
@@ -799,6 +910,7 @@ export function planTaskStateCommand(
   let scheduleBoundary: CanonicalTaskScheduleBoundary | null = null;
   let occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null = null;
   let calendarOverride: CanonicalTaskCalendarOverride | null = null;
+  let quotaPeriodFacts: CanonicalQuotaPeriodFactPlan[] = [];
 
   switch (input.type) {
     case "handled_outcome": {
@@ -836,6 +948,13 @@ export function planTaskStateCommand(
           };
       projection.status = "complete";
       projection.dueOn = null;
+      // Permanent completion ends future quota obligations. The append-only
+      // History and quota-period ledger remain authoritative for the past;
+      // the compatibility projection must not display a live debt or credit.
+      if (task.repeat_frequency === "per_week" || task.repeat_frequency === "per_month") {
+        projection.repeatQuotaBalance = null;
+        projection.repeatQuotaBalancePeriod = null;
+      }
       patch.terminal_state = "permanently_complete";
       patch.container_state = task.container_state ?? "active";
       patch.terminal_completed_at = projection.completedAt;
@@ -921,6 +1040,16 @@ export function planTaskStateCommand(
     }
     case "schedule_change": {
       projection = requireProjection(engineResult, task);
+      if (input.scheduleBoundary.repeat_frequency !== "per_week" && input.scheduleBoundary.repeat_frequency !== "per_month") {
+        projection.repeatQuotaBalance = null;
+        projection.repeatQuotaBalancePeriod = null;
+      } else if (input.scheduleBoundary.repeat_quota_balance_enabled !== true) {
+        projection.repeatQuotaBalance = 0;
+        projection.repeatQuotaBalancePeriod = null;
+      } else {
+        projection.repeatQuotaBalance = 0;
+        projection.repeatQuotaBalancePeriod = quotaBalancePeriodKeyForBoundary(input.scheduleBoundary);
+      }
       scheduleBoundary = input.scheduleBoundary;
       automaticHistoryFacts = engineResult?.proposedHistoryChanges.flatMap((change) => (
         change.type === "insert"
@@ -939,6 +1068,27 @@ export function planTaskStateCommand(
     case "clear_outcome": {
       projection = requireProjection(engineResult, task);
       occurrence = input.occurrence ?? null;
+      break;
+    }
+    case "clear_quota_balance": {
+      if ((task.repeat_frequency !== "per_week" && task.repeat_frequency !== "per_month") || task.repeat_quota_balance_enabled !== true) {
+        throw new CanonicalCommandPlanningError("QUOTA_BALANCE_NOT_ENABLED", "Clear Balance requires an enabled quota balance.");
+      }
+      projection = {
+        ...projectionFromTask(task),
+        repeatQuotaBalance: 0,
+        repeatQuotaBalancePeriod: quotaBalancePeriodKey(task, command.logicalDay.logicalDate),
+      };
+      if (state.engineInput?.task.recurrence.kind === "quota") {
+        quotaPeriodFacts = [quotaFactPlanFromDraft(quotaPeriodFactFor({
+          recurrence: state.engineInput.task.recurrence,
+          periodDate: command.logicalDay.logicalDate,
+          history: state.engineInput.history,
+          quotaPeriodFacts: state.engineInput.quotaPeriodFacts,
+          eventKind: "clear_balance",
+          idempotenceIdentity: `${command.idempotenceIdentity}:quota-clear`,
+        }))];
+      }
       break;
     }
     case "rollover": {
@@ -971,6 +1121,23 @@ export function planTaskStateCommand(
         if (change.type !== "insert" || change.row.outcome !== "missed" || change.row.provenance !== "rollover") return [];
         return [automaticHistoryFactFor(command, change.row, input.scheduleBoundaryId ?? null)];
       }) ?? [];
+      if (task.terminal_state !== "permanently_complete"
+        && state.engineInput?.task.recurrence.kind === "quota" && engineResult) {
+        const recurrence = state.engineInput.task.recurrence;
+        const currentBounds = quotaPeriodBounds(command.logicalDay.logicalDate, recurrence.period);
+        const priorDate = shiftDateKey(currentBounds.start, -1);
+        if ((!recurrence.activationDate || priorDate >= recurrence.activationDate)
+          && recurrence.scheduleBoundaryId) {
+          quotaPeriodFacts = [quotaFactPlanFromDraft(quotaPeriodFactFor({
+            recurrence,
+            periodDate: priorDate,
+            history: historyAfterEngineResult(state.engineInput, engineResult),
+            quotaPeriodFacts: state.engineInput.quotaPeriodFacts,
+            eventKind: "period_close",
+            idempotenceIdentity: `task-quota-period-close:${command.taskId}:${recurrence.scheduleBoundaryId}:${recurrence.period}:${quotaPeriodBounds(priorDate, recurrence.period).key}`,
+          }))];
+        }
+      }
       break;
     }
   }
@@ -983,6 +1150,10 @@ export function planTaskStateCommand(
   normalizedResult.scheduleBoundary = scheduleBoundary;
   normalizedResult.occurrenceEffectiveOverride = occurrenceEffectiveOverride;
   normalizedResult.calendarOverride = calendarOverride;
+  normalizedResult.quotaPeriodFacts = quotaPeriodFacts;
+  if (historyFact && ["done", "did_my_best", "complete"].includes(historyFact.outcome)) {
+    historyFact.reward_eligible = engineResult?.rewardEligibility.eligible === true;
+  }
   normalizedResult.rewardEntitlement = rewardPlan(command, historyFact, engineResult?.behaviorPolicy);
   return { command, normalizedResult };
 }

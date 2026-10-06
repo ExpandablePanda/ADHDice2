@@ -45,7 +45,8 @@ test("7.10.23 mobile responsive contracts stay on the active production seams", 
   assert.match(home, /<span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>[\s\S]*<span className="ml-1 shrink-0 text-sm font-medium leading-5 text-\[#26324f\] dark:text-white">/);
   assert.doesNotMatch(home, /h-7 w-7 shrink-0 items-center justify-center rounded-full border/);
   assert.doesNotMatch(home, /border-black bg-white text-xs font-semibold/);
-  assert.match(home, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" \}\)/);
+  assert.match(home, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
+  assert.doesNotMatch(home, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7"/);
   assert.doesNotMatch(home, /flex shrink-0 flex-col items-center/);
   assert.doesNotMatch(home, /basis-full/);
   assert.match(home, /min-w-0 max-w-full text-left/);

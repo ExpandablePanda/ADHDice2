@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-09-30
+Last reviewed: 2026-10-05
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.21`.
+- Current working app version: `7.16.95`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -23,7 +23,932 @@ persistence seams. No production SQL, Supabase, or Edge deployment occurred.
 Capacitor sync and the signing-free iOS simulator build passed; real-device
 HealthKit/device QA remains a verification gate. Browser/manual QA remains
 Andrew-owned and unverified here.
+## 2026-10-05 7.16.93 Voice Memo V1 + Memo Library
 
+Voice Memos are now a first-class saved-audio domain distinct from Dictate.
+Home Scratchpad memos use the `home_scratchpad` origin and render below the
+Scratchpad composer; saved Scratch Paper memos use `scratch_note`, retain a
+nullable source-note reference, and render with that note when available;
+independent memos created in Notes → Voice Memos use `memo_library`. One
+user-scoped `useVoiceMemos` collection feeds Home filtering, Scratch Paper
+attachments, and the global Notes → Voice Memos shell. No new top-level
+`AppPage` was added.
+
+The `supabase/add_voice_memos_7_16_93.sql` source migration adds the
+owner-scoped `adhdice_voice_memos` table, private `adhdice-voice-memos`
+Storage bucket, and authenticated user-folder Storage RLS policies. Browser
+save generates the memo UUID before uploading, writes the durable metadata
+only after a successful upload, and attempts Storage cleanup if metadata
+insertion fails. Delete removes Storage first and leaves the row available for
+retry when Storage removal fails. Playback uses short-lived signed URLs and
+does not persist them.
+
+Voice Memo recording shares the existing MediaRecorder MIME/device helpers and
+user-scoped microphone preference, stops into a temporary local preview, and
+requires an explicit Save Memo or Discard action. Saved audio is transcribed
+only on demand through the existing authenticated `scratch-transcribe`
+authority; Dictate remains temporary audio that inserts text and never creates
+Voice Memo rows or Storage objects. The source migration was not applied.
+Browser QA is blocked until Andrew reviews/applies the migration and deploys
+the required existing transcription authority through the authorized workflow.
+
+## 2026-10-05 7.16.94 Voice Memo Context + User-Scope Corrections
+
+The 7.16.93 Voice Memo architecture remains authoritative. Scratch Paper memo
+recorders are now keyed to the saved Scratch note ID, so changing notes cancels
+the old recording, discards its local preview, releases the stream, and revokes
+the temporary object URL before another note can be used. Memo Library source
+navigation now targets Notes-local Scratch Paper state: active notes are
+selected through the existing Scratch editor/save-switch path, while resolved
+and trashed notes are revealed in their matching filtered card view without a
+status mutation. Knowledge Base `adhdice_notes` navigation is unchanged.
+
+The Voice Memo client collection now fences rows, errors, loading state, and
+async refresh/mutation results by authenticated user identity. Same-user page
+navigation retains the normal memo cache; a user change immediately hides and
+then clears the prior user's memo state. The `supabase/add_voice_memos_7_16_93.sql`
+source migration was not changed or applied. Browser QA remains pending
+migration application through the authorized workflow.
+
+## 2026-10-05 7.16.95 Meal Ledger Remember Last Serving
+
+Meal Ledger Food selections now remember the most recently actually logged
+consumed quantity and unit when the current Food Library definition still
+supports that measurement. This is a convenience draft default only: the user
+can edit Amount and Measurement before saving, and the newly saved actual meal
+becomes the next history value naturally.
+
+Actual `mealEntries` are the only remembered-serving authority. Stable
+`source_food_id` matching is preferred, with the existing Food identity
+matching used only for compatible legacy actual rows without a source ID; plan
+rows, unsaved drafts, recipes, Saved Meals, Quick Entry, and unmatched barcode
+lookups do not become serving history. The Food Library serving definition
+remains the nutrition and measurement/conversion authority, and unsupported or
+invalid historical values fall back to `1 serving` without conversion.
+
+No SQL, migration, schema, database column, or local-storage preference
+change was made.
+
+## 2026-10-05 7.16.92 Home Scratchpad Dictation Parity
+
+Dictate now works in both Home Scratchpad and Notes Scratch Paper through the
+same browser MediaRecorder, temporary recorded-audio, and Groq transcription
+authority. Home Scratchpad captures its textarea selection, inserts only the
+returned transcript into the dirty draft, restores focus/caret placement, and
+leaves the existing explicit Save action authoritative. Dictate audio remains
+temporary and is not written to Supabase Storage or Postgres. Saved Voice Memo
+persistence remains the next separate feature.
+
+## 2026-10-05 7.16.91 Scratch Paper Groq Transcription Provider
+
+Scratch Paper dictation continues to record temporary microphone audio through
+the browser `MediaRecorder`, sends one authenticated multipart upload to the
+source-only `scratch-transcribe` Supabase Edge Function, and inserts only the
+validated returned transcript through the existing serialized caret/token-safe
+path. The 7.16.90 recorder architecture remains authoritative: browser
+SpeechRecognition, `window.SpeechRecognition`, and
+`window.webkitSpeechRecognition` are not used; audio-input selection,
+capability-based Safari/Chromium MIME selection, the bounded recording
+duration, MediaStream/Blob cleanup, cancellation fencing, and token-safe
+insertion remain unchanged. The transcription provider is now Groq's
+`whisper-large-v3-turbo` model at the OpenAI-compatible transcription endpoint;
+the required server-side secret is `GROQ_API_KEY`. No audio is persisted in
+ADHDice, Supabase Storage, or Postgres; only Scratch note text is saved through
+the existing explicit manual Save Note path. Dictate audio remains temporary.
+Saved Voice Memo audio is a separate future explicit feature and Dictate must
+not silently store recordings. The `scratch-transcribe` function remains
+source-only until deployment, and browser end-to-end microphone/transcription
+QA remains pending until the function is deployed through Andrew's authorized
+workflow. This release supersedes 7.16.90's OpenAI provider configuration and
+7.16.88's browser Web Speech implementation.
+
+## 2026-10-05 7.16.89 Task Creation Date Defaults and Folder Metadata Composer
+
+Logical Today is preloaded only in visible pre-save metadata creation
+composers. Home To-do/Urgent, Folder Add Task, and Step/Substep composers keep
+Today as a UI convenience that the user can clear; Due Time remains blank and
+clears with the date. Create-then-edit flows remain unscheduled unless an
+explicit date is supplied, including normal New Task, Task Type, and
+Scratch-linked creation. Calendar dates and intentional scheduled templates
+remain explicit. Multi-Task imports remain unscheduled without date metadata,
+preserve explicit imported dates, and resolve relative Today/Tomorrow tokens
+from the current logical-day authority rather than an ad-hoc browser date.
+
+## 2026-10-04 7.16.88 Scratch Paper Voice Dictation
+
+Scratch Paper now supports browser voice dictation into token-aware note
+bodies. Final recognized text inserts at the saved serialized caret or
+selection while preserving inline Task tokens, marks the draft dirty, and uses
+the existing explicit Save Note create/update path. Recognition is fenced to
+the active note and cleaned up on stop, note changes, resolution, and
+unmounting; unsupported browsers and recognition errors fail non-blockingly.
+Only recognized text is persisted by ADHDice. No audio is stored.
+
+## 2026-10-04 7.16.87 Right-click Smart Action Chip
+
+Task right-click menus now expose one user-local Smart Action that repeats the
+last eligible resolved context-menu action in both Table and List views. The
+action is stored under a versioned user-scoped localStorage key and is checked
+against the current Task, behavior policy, and available destinations before it
+is shown. Unsafe and destructive actions remain excluded, including trash,
+permanent delete, structural unlinking, free-text edits, and numeric text entry.
+
+## 2026-10-04 7.16.85 Task Type descriptions are Settings-only metadata
+
+Task Type descriptions remain persisted/configurable metadata and remain
+editable in Task Type / Behavior Settings. Normal Task Type menus, selectors,
+and identity surfaces now show only the icon and Task Type name, preserving
+their existing accents, ordering, selection behavior, and keyboard interaction.
+
+## 2026-10-04 7.16.86 Reconcile live recurrence End Date SQL
+
+The 7.16.82 recurrence End Date SQL is live. The `task-state-command` and
+`task-create-canonical` Edge Functions are live with the 7.16.83 contract.
+The first SQL attempt failed transactionally because its Task State command RPC
+source anchor was stale; the corrected migration using the current
+`repeat_frequency = case` assignment succeeded. 7.16.86 reconciles the
+checked-in migration text with that successful live SQL. No additional SQL
+execution is required for 7.16.86.
+
+## 2026-10-04 7.16.84 Default Task Due Date
+
+Task creation UIs now preload Due Date with the current ADHDice logical Today
+date, allowing immediate keyboard date adjustment while preserving explicit
+Calendar/template dates and manual No Date clearing. Due Time remains empty by
+default. The default is threaded from the existing `todayKey` /
+`behaviorPolicyLogicalDate` authorities; no persistence invariant changed.
+
+## 2026-10-04 7.16.83 Recurrence End Date Edge Function Compatibility
+
+7.16.83 fixes the `task-create-canonical` Edge Function contract omission by
+adding the nullable `repeat_end_on` Task intent key to its trusted allowlist.
+The `task-state-command` and `task-create-canonical` Edge Functions are live
+with this contract.
+
+## 2026-10-04 7.16.82 Recurrence End Date
+
+Recurring Tasks now support an inclusive nullable `repeat_end_on` End Date,
+preserved in canonical schedule boundaries and enforced by Task State Engine
+recurrence generation. No occurrence is generated after the configured date;
+the final valid occurrence retains normal History and completion semantics.
+Quota final periods are date-truncated without prorating the configured target,
+and balance does not carry into a later nonexistent period. End Time remains
+intentionally deferred because the Task State Engine is logical-date based.
+The migration is `supabase/patch_task_recurrence_end_date_7_16_82.sql`; its SQL
+is live as recorded in the 7.16.86 reconciliation above.
+
+## 2026-10-04 7.16.81 Remove stock profile avatar fallback
+
+Removed the legacy stock profile-photo fallback. Profile surfaces now show a
+neutral initial placeholder until the authenticated user's real avatar is
+available. Existing profile-media lazy hydration, session caching,
+request-deduplication, stale-account protection, and uploaded avatar/logo
+behavior remain in place. No SQL, Supabase migration, profile data mutation,
+or auth change was performed.
+
+## 2026-10-04 7.16.80 Fence Pending Dice Reset Against Concurrent Rewards
+
+Pending Dice Bank reset is now concurrency-fenced against the exact account
+revision and pending-dice count captured when the destructive confirmation
+opened. The guarded RPC locks the account before checking both values, verifies
+the unclaimed inventory before and after deletion, and fails closed on stale or
+inconsistent state. A stale reset refreshes the account and pending queue,
+updates the open bank session, and requires a new confirmation. The
+7.16.79 zero-argument reset patch is superseded by
+`supabase/patch_pending_reward_dice_reset_7_16_80.sql`; SQL remains unapplied
+pending ChatGPT review and explicit deployment approval.
+
+## 2026-10-04 7.16.79 Reset Pending Dice Bank
+
+The Pending Roll Bank intro now offers a confirmed `Reset Bank` action. The
+source-only owner-scoped reset RPC atomically discards only unclaimed pending
+reward items, zeroes the pending account, advances its revision, and returns
+the authoritative account snapshot without touching earned economy, reward
+roll/claim, Task, History, or Achievement state. The controller applies that
+snapshot, clears the loaded queue, and closes the modal only after success;
+failed resets retain the visible bank until authoritative reconciliation.
+
+The forward migration was superseded before deployment by the 7.16.80 guarded
+correction. Browser/live reset QA remains pending SQL review and explicit
+deployment approval.
+
+## 2026-10-04 7.16.78 Home Task-row structural breadcrumbs
+
+All Home Task rows now use the same canonical structural breadcrumb, showing
+Folder ancestry before parent Task ancestry across Urgent, To-do, Attention,
+Missed, and Routine. Routine Steps and Substeps resolve Folder context through
+their root Task, while Tasks without Folder membership retain parent-only
+breadcrumbs and top-level Tasks without either context show no breadcrumb.
+
+## 2026-10-04 7.16.77 Home Attention and Missed Folder context
+
+Home Attention/Missed rows now show canonical Folder ancestry before existing
+parent Task ancestry, giving derived Tasks their full structural context
+without changing membership or hierarchy.
+
+## 2026-10-04 7.16.76 Home Attention and Missed row identity
+
+Home Attention/Missed derived rows now fall back to canonical Task IDs for React
+row identity, eliminating missing-key warnings without changing membership or
+behavior.
+
+## 2026-10-04 7.16.75 Home Attention and Missed task views
+
+Home now exposes canonical Attention and Missed task views. They mirror existing
+Task list membership and do not create Home-local membership or ordering state.
+Derived rows retain the shared Task editor, status control, hierarchy context,
+streak signals, and Attention reason presentation, while Home search, creation,
+settings, reorder, and membership actions remain limited to their existing
+Home-owned tabs.
+
+## 2026-10-04 7.16.74 Exit All Search on Rail Navigation
+
+Navigating to any other list or folder now exits the All-chip search state so
+the inline search cannot remain visible after All stops being the active rail
+selection. The existing All-chip entry, result-selection, Escape, clear, Hide
+Lists, and reorder behavior remain unchanged. No SQL, Edge deployment, schema
+change, list persistence change, or production data mutation was performed.
+
+## 2026-10-04 7.16.73 Tasks Lists Rail Search
+
+Lists rail search is now entered by clicking the already-active All chip again;
+the All chip morphs into an inline search field instead of showing a permanent
+search row. Search remains local, case-insensitive, label/path-aware, nested,
+navigation-only, and ephemeral. Normal hierarchy reorder behavior and the
+separate All Lists menu remain unchanged. No SQL, Edge deployment, schema
+change, list persistence change, or production data mutation was performed.
+
+## 2026-10-04 7.16.72 Tasks Lists Rail Search
+
+Tasks now exposes direct list/folder search above the Lists rail using the
+existing list-directory authority. Search mode is navigation-only; clearing it
+restores the normal reorderable hierarchy. The All Lists menu remains available
+and shares the same label/path matching semantics. No SQL, Edge deployment,
+schema change, list persistence change, or production data mutation was
+performed.
+
+## 2026-10-04 7.16.71 Restore Calendar X Close Behavior
+
+Task History/Calendar now closes immediately when the visible X is clicked by
+calling the explicit `onClose` callback directly. ModalShell Escape and
+backdrop dismissal still use `handleModalClose`, so an open Task search may be
+dismissed first; search outside-click behavior and the 7.16.70 Calendar search
+and switching behavior remain unchanged. No SQL, Edge deployment, schema
+change, or production data mutation was performed.
+
+## 2026-10-04 7.16.70 Calendar Search Header and Derived Status
+
+Calendar search now sits beside the editable Task title in a wrapping header
+row, while the Task type label remains above and the close control stays at the
+far right. Search result context now uses the canonical derived current Task
+status from `taskDisplayStatusByTaskId`, falling back to persisted `task.status`
+only when the projection has no value. Parent context, local case-insensitive
+search, ID-based duplicate selection, and Task switching remain unchanged. No
+SQL, Edge deployment, schema change, or production data mutation was performed.
+
+## 2026-10-04 7.16.68 Thin full-screen loading ring
+
+The full-screen ADHDice workspace loader keeps its existing radius, size, logo,
+animation, colors, positioning, full-screen layout, and dark-mode behavior while
+reducing both the pale background circle and animated purple arc from
+`strokeWidth="7"` to `strokeWidth="4"`. No SQL, Edge deployment, schema change,
+or production data mutation was performed.
+
+## 2026-10-04 7.16.69 Calendar Task Search / Switcher
+
+Task History/Calendar now supports compact in-modal search across already
+loaded non-permanently-deleted canonical Task entities, including parent Tasks,
+Steps, and Substeps. Selecting a result switches the existing Calendar modal by
+Task ID, loads the selected Task's bounded History detail and Calendar overrides,
+resets Task-local modal state, and preserves the originating app page and shared
+Edit Task overlay. The existing Task History and Calendar authorities remain
+unchanged. No SQL, Edge deployment, schema change, or production data mutation
+was performed.
+
+## 2026-10-04 7.16.67 Keep Edit Task Calendar on the current page
+
+Task History/Calendar is now owned by the global shared Task editor flow rather
+than the Tasks-only workspace flow. Opening Calendar from Home or another
+page-independent shared editor keeps the originating page visible, preserves
+the selected editor state while the modal is open, and returns to that editor
+when Calendar closes. Tasks still uses the same single TaskHistoryModal host
+and unchanged History/Calendar handlers. No SQL, Edge deployment, schema
+change, or production data mutation was performed.
+
+## 2026-10-04 7.16.66 Fractional Meal calories at Health write boundary
+
+Health Meal persistence now normalizes finite, non-negative top-level calories
+to the integer database contract before constructing local rows or remote
+payloads. Fractional consumed nutrition remains precise in
+`nutrition_snapshot`, while protein, carbs, fat, consumed quantity, and
+serving fraction retain their decimal values. Shared Meal input construction,
+single Meal saves, and batch Meal saves use the same boundary contract. No SQL,
+Edge deployment, schema change, parser change, Custom Food model change, or
+production data mutation was performed.
+
+## 2026-10-04 7.16.65 Explicit consumed unit confirmation
+
+Batch Intake resolved library foods that have an incompatible parsed unit now
+show a blank `Choose…` consumed-unit selection while retaining only the
+selected Custom Food's canonical measurement options. The existing consumed
+selection update clears the review issue and revalidates quantity/compatibility;
+calculated nutrition stays hidden until confirmation. Valid compatible units,
+missing-unit defaults, manual foods, source evidence, and Meal execution remain
+unchanged. No parser, schema, SQL, Edge deployment, Custom Food model, or
+production data changed.
+
+## 2026-10-04 7.16.64 Custom Food proposal unit resolution
+
+Batch Intake Meal proposals now resolve consumed units through the selected
+Custom Food's existing measurement options. Parsed quantities and compatible
+units survive in-place proposal replacement; absent units use the saved serving
+unit, while incompatible parser units fall back to a valid canonical option and
+remain blocked with a consumed-unit review message until corrected. Custom
+serving units and optional mass/volume conversions remain authoritative through
+`getHealthFoodMeasurementOptions` and existing nutrition calculation. No parser,
+schema, SQL, Edge deployment, Custom Food model, or production data changed.
+
+## 2026-10-04 7.16.63 Simplified resolved Meal review
+
+Batch Intake review now shows resolved library foods with their saved Custom
+Food identity and source evidence, consumed quantity/unit, and calculated
+nutrition only. Saved serving-definition controls and summary are hidden for
+library foods; manual foods retain their editable serving-definition fields.
+Applied locking, proposal correction, Meal execution, Custom Food data, and
+Health Food editor behavior remain unchanged. No SQL, Edge deployment, schema
+change, or production data mutation was performed.
+
+## 2026-10-03 7.16.62 Universal Batch Intake parse correction
+
+Batch Intake preserves parsed source evidence while allowing parsed
+interpretations to be corrected in-place before Apply. Meal food proposals now
+edit Food, Quantity, and Unit within their own proposal card; custom-food
+selection and manual fallback replace that same proposal child without adding a
+second food. Occurrence-level food search remains explicitly an Add another
+food action. Parsed Water and Weight units are editable within their canonical
+choice sets, while Task and Focus review behavior, source evidence, cumulative
+Applied locking, and existing domain persistence authorities remain unchanged.
+No SQL, Edge deployment, schema change, Home V8 change, or production data
+mutation was performed.
+
+## 2026-10-03 7.16.61 Focus review group identity synchronization
+
+Focus Batch Intake review now recomputes the ephemeral canonical group identity
+when a shared session title changes, propagates the new title and identity to
+unapplied siblings, and lets the derived review grouping merge matching groups
+without changing flat draft IDs. Changing to a saved Focus category preserves
+the session title while inheriting that category's type and subtypes; selecting
+No saved category preserves the current editable metadata and uses the retained
+category candidate for deterministic unresolved grouping. Applied Focus groups
+remain locked. The 7.16.60 parser grammar, inline dates, existing Focus
+execution authority, and execution payload shape are unchanged. No SQL, Edge
+deployment, Focus schema change, Home V8 change, or production data mutation
+was performed.
+
+## 2026-10-03 7.16.60 Focus shorthand category, session title, and inline date
+
+Explicit Focus shorthand now separates the exact saved Focus category from an
+optional session title, inherits the saved category's Focus type and subtypes,
+and supports a trailing inline historical date using the existing Scratchpad
+date inference. Inline dates override the active heading for their line only.
+Focus review grouping includes canonical category identity and normalized
+session title, so repeated Sleep/CPAP or Sleep/Nap occurrences stay together
+without merging distinct session titles. Existing Coding shorthand, loose pair
+parsing, Focus execution through `handleManualFocusEntries`, and per-row retry
+semantics remain unchanged. No SQL, Edge deployment, Home V8 change, schema
+change, or production data mutation was performed.
+
+## 2026-10-03 7.16.59 History canonical schedule projection preservation
+
+History freshness reads and canonical commit reconciliation now preserve the
+read-only canonical schedule projection while taking canonical revision and
+persisted Task-row values from the fresh server row. The existing targeted
+Task-plus-boundary reconciliation is used after successful History mutations to
+cover concurrent schedule changes. Task History now renders a recoverable
+authority-unavailable state instead of crashing when an active canonical Task
+temporarily lacks its client-side boundary projection. No SQL, Edge deployment,
+Home V8 change, or production data mutation was performed.
+
+## 2026-10-03 7.16.58 Batch Intake canonical revision freshness
+
+Batch Intake historical Task writes now perform a bounded fresh read of the
+canonical Task immediately before commit, so grouped and single-date actions
+start from the server's current `canonical_revision` even when the React Task
+snapshot or Task Realtime subscription is stale. If a first attempt receives a
+stale-start conflict before any grouped child commits, the Task is refreshed
+once and the same replay identity is retried exactly once. Partial grouped
+commits are reconciled through the existing History refresh path without an
+automatic retry. No SQL, Edge deployment, Home V8 change, or production data
+mutation was performed.
+
+## 2026-10-03 7.16.57 Task Shorthand Multi-Date Occurrences
+
+Scratchpad Task shorthand now accepts `t: <Task> - <Outcome> <date> <date> ...`
+with canonical Done, DMB, Did My Best, and Missed outcomes. Each valid inline
+date becomes one flat Task History occurrence under the same exact-matched
+canonical Task group; inline dates override an active heading, while missing or
+malformed dates remain visible for review. Existing simple and comma-separated
+Task shorthand, canonical exact-only matching, partial Apply, row-based progress,
+and canonical Task History execution remain unchanged. No SQL, Edge deployment,
+Home V8 change, or production data mutation was performed.
+
+## 2026-10-03 7.16.56 Batch Intake readability, task context, partial Apply, and visible progress
+
+Home Batch Intake review now uses readable scoped typography and dark light-mode
+informational text, concise per-occurrence Task evidence, canonical Task Content
+Folder/root hierarchy context, and a sticky action footer with the existing
+row-based Apply progress. Apply now runs the executable ready subset while
+unresolved drafts remain visible for review; Health readiness is required only
+when the executable plan contains Health rows. No SQL, Edge deployment, Home V8
+change, canonical authority change, or production data mutation was performed.
+
+## 2026-10-03 7.16.55 Scratchpad Shorthand V1
+
+Scratchpad now accepts the optional, documented V1 shorthand grammar for Task,
+Water, Weight, Focus, and explicit Meal-slot intake. Explicit lines take
+precedence over loose section parsing while legacy loose notes remain supported.
+Meal shorthand creates one ephemeral occurrence with food proposals; lazy Health
+library reconciliation performs exact-only Custom Food matching and preserves
+raw token evidence, quantity/unit requests, and canonical Health execution.
+Sleep/CPAP/Nap shorthand remains deferred. No SQL, Edge deployment, Home V8
+change, canonical authority change, or production data mutation was performed.
+
+## 2026-10-03 7.16.54 Batch Intake Meal occurrences with multiple foods
+
+Batch Intake Meals now use an explicit ephemeral occurrence/food hierarchy.
+Each Meal occurrence owns slot, date, and time; each food child owns its
+canonical Custom Food identity, consumed quantity/unit, nutrition snapshot,
+draft identity, write identity, and execution result. Manual `+ Meal` creates
+an empty occurrence, while custom-food selection and manual-food fallback add
+independent children without replacing siblings. Parsed Meal source text stays
+immutable review evidence and matched foods remain attached to that source
+occurrence.
+
+Execution remains flat and canonical: each valid food child becomes one
+Health meal entry through `useHealth.addMealEntries`, sharing the occurrence
+context. Applied children lock shared slot/date/time, while unapplied siblings
+remain editable, removable, and retryable. No SQL, Edge deployment, Home V8
+change, schema change, or production data mutation was performed.
+
+## 2026-10-03 7.16.53 Batch Intake grouped occurrences and consumed Custom Food quantities
+
+Batch Intake review now presents one ephemeral group per canonical Task, Custom
+Food, Focus category, or explicit Water/Weight group, with independent flat
+occurrence drafts beneath it. Adding an occurrence creates fresh draft/write
+identities while preserving row-based progress, retry, Applied locking, and the
+existing Task History, Health, and Focus authorities. Parsed Meal source
+evidence remains untouched, and different selected foods remain separate groups.
+
+Structured Meal occurrences now record consumed quantity/unit and calculate
+nutrition through the existing Health food calculation authority; the stored
+Custom Food definition remains unchanged. No SQL, Edge deployment, Home V8
+change, or production data mutation was performed.
+
+## 2026-10-03 7.16.52 Batch Intake repeated occurrences, custom food matching, and exact Focus duration parsing
+
+Batch Intake now supports per-record `+ Another` occurrences for Task,
+Water, Weight, structured Meal, and Focus Session rows. Duplicates receive
+fresh draft/write identities, remain editable and included, and do not inherit
+Applied or Failed execution state; Applied source rows remain locked.
+
+Manual and parsed Meal review can search the existing Health Custom Nutrition
+Library. Manual selections preserve canonical food identity and nutrition
+metadata, while parsed Meal selections create separate structured executable
+rows and leave the raw parsed Meal as immutable review evidence. Health
+activation remains lazy while the Batch Intake review requires it.
+
+Focus parsing recognizes only exact saved category titles paired with valid
+durations such as `1h`, `1h 30m`, `90m`, and `30 minutes`. The paired source
+lines become one parsed Focus proposal with category metadata and require a
+reviewed completion time before the existing Focus batch authority can apply
+it. No SQL, Edge deployment, Home V8 change, or production data mutation was
+performed.
+
+## 2026-10-03 7.16.51 Home Finished Today stale-while-revalidate refresh
+
+Home Finished Today now retains the last-known-good current-day History result
+while same-context refreshes run, eliminating ready/loading flicker without
+reducing mutation, Realtime, rollover, gap-recovery, navigation, or trailing
+single-flight refresh freshness. Initial loads still use the loading state, and
+initial failures still expose the existing retryable error state. No SQL, Edge
+deployment, or production data mutation was performed.
+
+## 2026-10-03 7.16.50 Batch Intake retry-result preservation
+
+Batch Intake Apply now merges each current-attempt execution result into the
+open review's cumulative result. Rows and Task groups absent from a retry stay
+visible, failed rows can become Applied, and an Applied row or group cannot be
+downgraded by a later result. Applied rows therefore remain locked across
+unrelated retries while retry progress continues to report only the current
+execution plan. Parse Batch Intake, opening Manual Batch, and closing the
+review still clear the ephemeral result history. No SQL, Edge deployment,
+Home V8 change, or production data mutation was performed.
+
+## 2026-10-03 7.16.49 Scratchpad Manual Batch Intake
+
+Scratchpad Batch Intake now supports an ephemeral Manual Batch entry path in
+the shared Batch Intake Review workspace. Users can add structured Task
+History, Water, Weight, Meal, and Focus Session rows, edit or exclude them,
+and apply them through the existing typed review, validation, execution,
+canonical-authority, progress, and retry pipeline. Parsed Meals remain
+review-only, while structured manual Meals use a Health-owned batch snapshot
+write and manual Focus rows use a Focus-owned batch history write. Health and
+Focus continue to activate lazily only while the review requires them. No Home
+V8 change, SQL, Edge deployment, or production data mutation was performed.
+
+## 2026-10-03 7.16.48 Batch Intake apply progress and non-quota Repeat serialization
+
+Batch Intake Apply now reports actual completed Task History groups and Health
+batch rows through the shared progress-bar pattern; retry totals are derived
+from the current executable plan, while successful rows remain Applied and
+failed rows remain retryable. Canonical Task State schedule intents now omit
+quota fields for non-quota recurrence, so Weekdays and other ordinary Repeat
+changes satisfy the existing Edge validator; quota recurrence retains its
+validated fields. No SQL or Edge deployment was performed.
+
+## 2026-10-03 7.16.47 On-Time and Home Realtime lifecycle hardening
+
+Browser refresh, Fast Refresh/HMR, and React development remounts could reuse a
+same-topic channel from the global browser Supabase singleton while its prior
+`removeChannel()` was still pending. On-Time and Home now serialize prior
+channel removal before creating, configuring, and subscribing a replacement;
+each effect removes only the channel it owns and canceled effects cannot
+subscribe late. On-Time cache, hydration, migration, writes, dirty cleanup
+flush, and channel error status behavior remain unchanged. Home V8 state,
+local cache, client timestamps, Realtime merge, and debounce/write behavior
+remain unchanged. No application-data semantics changed; no SQL or Edge
+deployment was performed.
+
+## 2026-10-03 7.16.46 Scratchpad Batch Intake Phase 1
+
+Home Scratchpad now has a non-destructive Parse Batch Intake review workflow.
+The deterministic parser proposes historical Task outcomes, Water, Weight,
+review-only Meals, and visible deferred/unsupported rows. Apply groups Task
+History through the existing canonical authority and uses Health-owned Water and
+Weight batch writes; partial failures remain in the review surface for retry.
+Health hydration remains inactive during ordinary Home use and activates only
+while a review containing Health rows is open. No SQL or Edge deployment was
+performed.
+
+## 2026-10-03 7.16.45 Home Urgent return contract, status alignment, and Scratchpad V8
+
+Urgent search-add now preserves the canonical Task priority mutation result, so
+Home moves a Task into its exclusive Urgent queue only after Priority 5 commits.
+Home task rows use the shared small status-circle geometry without local forced
+circle or glyph sizing. The synced `adhdice_home_todo_state` JSON is now V8 with
+saved multiline `scratchpadText`; Move lines to items atomically appends staged
+Scratchpad rows and clears the saved notepad, while conversion still creates a
+normal canonical Task in To-do Today before removing the source row. No SQL or
+Edge deployment was performed.
+
+## 2026-10-03 7.16.44 Home queue exclusivity correction
+
+Home V7 normalization now enforces mutual exclusivity between Urgent and
+To-do. If stale or malformed Home state overlaps, Urgent wins and the matching
+To-do day offset is removed. To-do search identifies Tasks already in Urgent
+and requires the explicit Urgent-to-To-do day-placement action instead of
+creating a dual membership. No SQL or Edge deployment was performed.
+
+## 2026-10-03 7.16.43 Home queue/search corrections
+
+Urgent and Home To-do are mutually exclusive even when a normal canonical Task
+enters Urgent through search. Urgent search-add reuses the canonical Priority 5
+promotion before the shared Home membership transition, so a failed promotion
+leaves the existing Home membership and day offset unchanged. Home search
+results now stay in normal shell flow while retaining their max-height and
+internal scrolling, so they no longer clip under the Home shell. No SQL or
+Edge deployment was performed.
+
+## 2026-10-03 7.16.42 Home Urgent Queue and Scratchpad
+
+Home now opens to the Urgent tab by default. Urgent is an independent ordered
+Home queue of normal canonical Tasks; it is separate from Home To-do, does not
+use `task.is_urgent`, and does not create a second Task or History authority.
+Every Task entering Urgent is promoted through the canonical Task metadata
+mutation path to Priority 5. Leaving Urgent never lowers or restores Priority.
+Moving Urgent to To-do uses explicit existing Home day placement (Today through
+the visible week or Later), while moving To-do to Urgent removes To-do day
+membership and keeps Priority 5.
+
+The synced `adhdice_home_todo_state` JSON is V7 with `urgentTaskIds` and
+non-Task `scratchpadItems`. V1-V6 normalize those fields to empty arrays while
+preserving existing To-do and Routine data. Scratchpad captures are synced text
+only; successful conversion runs the real TaskCreationComposer, creates a
+normal canonical Task in Home To-do Today, and removes the source only after
+creation succeeds. Failed or canceled conversion preserves the capture.
+
+## 2026-10-02 7.16.40 Bound rollover Edge work and projection refresh ownership
+
+The live `task-state-command` v47 rollover failure was CPU exhaustion, not
+memory exhaustion: one `reconcile_rollover_sweep` request processed roughly 33
+child commands serially, causing repeated canonical reads, deferred
+Achievement calls, current-projection writes, and related source-fence reads
+until Supabase returned HTTP 546 after about 60.7 seconds with
+`cpu_time_used=2000 ms` and memory near 21 MB. The browser Safari access-control
+message occurred during the resulting read overload; matching gateway OPTIONS
+and GET requests returned HTTP 200, so this ticket does not change CORS, RLS, or
+projection permissions.
+
+Client rollover reconciliation now sends stable serial chunks of at most 8
+commands. The trusted Edge boundary enforces the same maximum and rejects stale
+or oversized direct sweeps. Each chunk has deterministic replay identity; a
+failed chunk stops later chunks, preserves earlier committed chunks, and keeps
+failed-finalization child identities replayable. Each Edge chunk finalizes only
+its committed History fact IDs through the existing incremental finalizer; no
+full Achievement rebuild is introduced.
+
+Normal logical-day current-projection repair now observes the explicit rollover
+ownership guard and stops between batches while rollover work is active. The
+existing targeted reconciliation resumes after rollover completion or failure
+cleanup. No SQL was applied, no Edge Function was deployed, no production data
+was mutated, and browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-10-02 7.16.41 Pre-deployment behavioral hardening for bounded rollover
+
+Behavioral execution coverage now runs the production `executeTaskRolloverSweep()`
+coordinator with injected Edge responses. It proves a 33-task campaign invokes
+five serial chunks of `8, 8, 8, 8, 1`, preserves candidate and replay identity
+order, retains settled prior chunks across partial and network failures, and
+retries Achievement finalization with the same child replay identities. Empty
+candidate success and pending-finalization fail-closed behavior are covered.
+
+The 7.16.40 runtime behavior was unchanged because these tests exposed no
+runtime defect. The Edge max-8 validation and logical-day projection rollover
+guard remain covered. No SQL was added or applied, no Edge Function was
+deployed, no production data was mutated, and browser/manual QA remains
+Andrew-owned and unverified.
+
+## 2026-10-02 7.16.39 Bounded canonical History authority for quota progress
+
+The 7.16.37/7.16.38 quota progress math was correct, but normal Task rows
+consumed `taskHistoryByTaskId`, the intentionally lazy full-History cache from
+`useWorkspaceData`. That cache is absent until semantic History is requested,
+so a real canonical History period could incorrectly render `0/3`.
+
+Active weekly and monthly quota Tasks now share one bounded canonical read from
+`adhdice_task_history_facts`, grouped by entity ID and limited to the common
+Monday/month-start lower bound through the current logical date. The read is
+refreshed for History Realtime INSERT/UPDATE/DELETE, direct History mutations,
+logical-day rollover, and quota Task configuration changes. Table, List, and
+Step/Substep rows consume the same authority. Full lifetime History is not
+bootstrapped, and ordinary recurrence receives no new History read.
+
+Quota progress is omitted while the bounded source is loading or unavailable;
+a ready empty period intentionally renders `0/count`. No SQL was required or
+applied, no Edge Function was deployed, no production data was mutated, and
+browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-10-02 7.16.38 Count backdated current-period successes toward quota
+
+Quota success credit is now bounded by the current Monday-Sunday or natural
+calendar-month period and the live logical date, without applying the quota
+activation date. Same-period canonical History `done` and `did_my_best` rows
+therefore count even when their logical dates precede a mid-period activation;
+prior-period History remains excluded and duplicate logical dates still count
+once. This supersedes the 7.16.28 rule only for same-period success credit.
+
+Activation remains authoritative for obligation eligibility, first-period
+base-quota capacity, mandatory-date calculation, and automatic Missed
+generation. No pre-activation obligation is created. The shared 7.16.37
+progress formatter/UI is unchanged, so intentional values such as `3 Per Week
+· 4/3` remain uncapped. Balance-disabled surplus behavior, balance-enabled
+next-period arithmetic, Clear Balance, and canonical quota period facts remain
+engine-owned.
+
+Focused quota engine, progress, calendar/mandatory-date, and balance coverage
+was updated for weekly and monthly mid-period activation. No SQL was required
+or applied, no Edge Function was deployed, no production data was mutated, and
+browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-10-02 7.16.37 Quota progress readout and remaining hardening
+
+Active X Per Week and X Per Month Repeat metadata now derives a current-period
+progress result through `quotaProgressForTask` in
+`src/lib/task-state-engine/quota.ts`. The result uses the effective canonical
+schedule boundary, Monday-Sunday or natural-calendar-month bounds, and
+canonical History `done`/`did_my_best` dates deduplicated by logical date.
+At 7.16.37, History before activation was excluded from the numerator; the
+7.16.38 correction above supersedes that rule for the same current period,
+while prior periods remain excluded. The configured quota count remains the
+denominator. The shared Repeat formatter exposes values such as `5 Per Week ·
+1/5` in Table, List, and Steps surfaces while ordinary recurrence labels are
+unchanged. Existing History reconciliation and row revisions cause the readout
+to update without a second cache or polling.
+
+Focused pure, formatter, and row read-model coverage was added for progress
+boundaries, edits, deletion/outcome replacement semantics, balance separation,
+and current denominator changes. No SQL was required or applied, no Edge
+Function was deployed, no production data was mutated, and browser/manual QA
+remains Andrew-owned and unverified.
+
+## 2026-10-02 7.16.34 Incremental Achievement reconciliation foundation
+
+The source-only Achievement foundation now has one canonical
+`entity_kind -> track_id` dependency authority, bounded occurrence-match
+synchronization, and a targeted progress/award evaluator that writes only the
+requested tracks. Its formulas reuse the existing full-rebuild formulas, and
+disposable PostgreSQL parity coverage compares the targeted path with the full
+authoritative rebuild across source transitions, metric families, streaks,
+permanent awards, collections, notifications, metadata, and dedupe behavior.
+
+The existing `adhdice_evaluate_achievements()` and full rebuild remain the
+active production runtime in 7.16.34. The new forward migration is
+`supabase/patch_achievement_incremental_reconciliation_7_16_34.sql`; it has not
+been applied to Supabase. No Edge Function was deployed, no production data
+was mutated, and browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-10-02 7.16.35 Incremental Achievement runtime cutover source
+
+The source-only 7.16.35 forward migration wires ordinary Achievement source
+changes, canonical Task State automatic-History finalization, History batches,
+and rollover batches to bounded occurrence resolution, central dependency
+mapping, occurrence-match synchronization, and targeted progress evaluation.
+Affected occurrence resolution includes same-date History siblings,
+superseded source snapshots, deleted-source occurrence IDs, and all Step-set
+versions for affected roots. The existing full evaluator and
+`adhdice_rebuild_achievement_progress()` remain explicit repair/reference
+paths; they are not used by normal source triggers or batch finalization.
+
+The migration is
+`supabase/patch_achievement_incremental_runtime_7_16_35.sql`. The Edge source
+now forwards only committed child `history_fact_id`/`history_fact_ids` to one
+finalizer call per History or rollover batch. Required production order is
+7.16.34 foundation, 7.16.35 runtime cutover, then live verification. The
+migration has not been applied to Supabase, no Edge Function was deployed, no
+production data was mutated, and browser/manual QA remains Andrew-owned and
+unverified.
+
+## 2026-10-02 7.16.36 Deferred deleted-source Achievement correction
+
+Deleted Achievement sources now read the transaction-local
+`adhdice.achievement_deferred_user_id` marker with the same same-user contract
+as insert/update sources. Deferred History deletes still resolve and deactivate
+their occurrence and refresh affected Step-set evidence, but leave the one
+incremental evaluation to the bounded History/rollover finalizer; non-deferred
+Focus deletion retains immediate incremental evaluation and failure recording.
+The source-only forward migration is
+`supabase/patch_achievement_incremental_runtime_7_16_36.sql` and has not been
+applied.
+
+The canonical `set_outcome` command contract guarantees that every valid
+committed History-batch child returns a primary `history_fact_id`; automatic
+History ID arrays are auxiliary and may be empty. The SQL finalizer retains
+its fail-closed empty-array guard for stale or malformed callers. No SQL or
+Supabase mutation was applied, no Edge Function was deployed, no production
+data was mutated, and browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-10-01 7.16.33 Achievement rebuild temp-table alias correction
+
+The 7.16.32 user-scoped Achievement evidence snapshot remains unchanged. This
+patch corrects the temp-table occurrence-count aggregate to reference its
+unqualified column name, and the source-only 7.16.33 forward migration applies
+only that function-definition correction to environments with 7.16.32 already
+installed. Local PostgreSQL execution coverage invokes the rebuilt function
+through the corrected query; no SQL or Supabase mutation, Edge deployment, or
+browser/manual QA was performed.
+
+## 2026-10-01 7.16.32 History batch Achievement reconciliation timeout correction
+
+The deferred History batch finalizer still performs one authoritative
+Achievement evaluation, but `adhdice_rebuild_achievement_progress` now takes a
+single user-scoped snapshot of qualifying occurrence evidence and reuses it for
+streaks, occurrence-track matches, and progress aggregates. Award and
+notification inserts retain their existing user-scoped dedupe keys and
+conflict-safe behavior. The source-only migration is
+`supabase/patch_achievement_rebuild_performance_7_16_32.sql`; no SQL or
+Supabase mutation, Edge deployment, or browser/manual QA was performed.
+
+## 2026-10-01 7.16.28 Final quota correctness corrections
+
+Quota success counting now begins at the effective quota activation date, so
+History from a prior schedule cannot satisfy a newly activated weekly or
+monthly quota. Clear Balance reconstruction resets only incoming debt/credit;
+current-period successes and base quota still determine outgoing balance, with
+canonical `period_close` facts remaining authoritative when present. Engine and
+planner coverage now exercises skipped weekly/monthly periods, individual
+mandatory Missed facts, Clear Balance in an earlier skipped period, period-close
+planning, and idempotent retry behavior.
+
+Complete now accepts either the planner-approved reward pair or no reward fields
+for rewards-disabled Task Types, including quota Tasks. The consolidated schema
+source carries guarded owner-safe quota boundary/command FK parity with the
+canonical schema and runtime migration. SQL remains source-only: no Supabase
+mutation or Edge deployment occurred, and browser/manual/live SQL QA remains
+unverified.
+
+## 2026-10-01 7.16.29 Bootstrap SQL validation correction
+
+The consolidated bootstrap schema now uses unique PostgreSQL-safe names for
+the two ruleset-revision `needs_action_triggers` CHECK constraints. This is a
+baseline SQL validation correction only; quota behavior and migration semantics
+are unchanged. Disposable PostgreSQL validation remains local and source-only.
+
+## 2026-10-01 7.16.27 Quota pre-deployment correctness pass
+
+This source-only correction aligns canonical Task creation monthly/quota INSERT
+positions, admits the serialized Clear Balance marker through the narrow RPC
+payload contract, and prevents quota rollover side effects from being treated
+as semantic no-ops. Permanent Complete now clears the compatibility quota
+balance and period projection while preserving immutable History and quota
+ledger facts; later rollover does not recreate a completed Task obligation.
+
+The quota migration package is split so enum values install in an earlier
+committed migration boundary before dependent quota DDL. No SQL or Supabase
+mutation was applied and no Edge function was deployed.
+
+## 2026-10-01 7.16.26 Quota recurrence and production storage safety consolidation
+
+The `codex/7.16` release branch now combines the complete 7.16.22/7.16.23
+quota recurrence implementation with the production localStorage safety fixes
+from 7.16.24/7.16.25. Quota recurrence remains owned by the canonical Task,
+History, quota-period fact, Task State command, projection, and source-only SQL
+paths. Focus browser persistence remains quota-safe and best-effort, with
+Supabase and in-memory React state authoritative for Focus History.
+
+No SQL or Supabase mutation was applied, no Edge function was deployed, and
+browser/manual QA remains Andrew-owned and unverified.
+
+## 2026-09-30 7.16.23 Quota recurrence canonical/deployment corrections
+
+Quota recurrence now treats the canonical quota-period ledger plus canonical
+History as the balance authority. Natural period rollover persists one
+idempotent `period_close` fact, Clear Balance persists one idempotent
+append-only adjustment fact, and cached Task balance fields remain
+rebuildable projections. Facts are loaded by the canonical read model and
+included in current-projection source fencing. The first partial period is
+bounded by eligible logical-day capacity since its schedule boundary; later
+complete periods use configured quota. Reward entitlement persistence now
+requires the planner's explicit reward-eligible decision, so voluntary
+Balance-off surplus outcomes do not create rewards, banked rolls, or quota
+increments.
+
+The deployable source package is
+`supabase/patch_task_quota_recurrence_runtime_7_16_23.sql`. It installs the
+quota-aware Task State command RPC, canonical Task creation RPC, quota ledger
+constraints and projection fence after the 7.16.22 quota migration. The
+canonical bootstrap schema and consolidated `schema.sql` contain the same
+quota-period structures, owner-safe relationships, indexes, grants, and RLS
+assumptions. SQL remains source-only and has NOT been applied; Edge functions
+have NOT been deployed. Browser/manual and live Supabase QA remain pending.
+
+## 2026-09-30 7.16.22 X Per Week / X Per Month quota recurrence
+
+Tasks now support first-class `X Per Week` and `X Per Month` recurrence through
+the shared Repeat editor, Table/List metadata, child-task surfaces, canonical
+Task creation, schedule boundaries, Active Status, Calendar, rollover, and
+Task State command paths. Weeks are Monday-Sunday and months use natural
+calendar bounds. The quota count is bounded to the physical period capacity;
+Done and Did My Best count once per logical day, Complete is terminal, Missed
+is only accepted when the remaining-days formula makes that date mandatory, and
+Delay is unavailable. Optional dates stay Not Due and do not create automatic
+misses.
+
+Optional balance mode carries an uncapped signed balance into the next logical
+period. Negative debt is shown in danger styling, positive credit in success
+styling, and zero is omitted from the compact label. Clear Balance is a
+canonical, non-no-op command that resets the current period projection and
+records an append-only quota period fact protected by owner-scoped RLS. The
+Task balance fields remain a rebuildable projection over canonical History and
+quota facts; they are not a separate browser-owned authority.
+
+The source-only quota migration is
+`supabase/patch_task_quota_recurrence_7_16_22.sql`; it was authored but not
+applied. Edge source was updated but not deployed. Focused source tests were
+run; browser/manual/live Supabase QA remains Andrew-owned and unverified.
+## 2026-10-01 7.16.25 Finish Focus localStorage quota hardening
+
+Focus sandbox tab-order persistence now uses the shared quota-safe local-storage
+seam for both reads and writes. The existing
+`adhdice.focusSandboxTabOrder.v1` key, default `[0, 1]` order, and Focus tab
+reorder behavior remain unchanged. Quota or unavailable-storage failures are
+best-effort and nonfatal.
+
+This release contains no quota recurrence work, no SQL/Supabase/Edge changes,
+and no Realtime warning work. Browser/manual QA remains Andrew-owned and
+unverified here.
+
+## 2026-10-01 7.16.24 localStorage quota safety hotfix
+
+The production Safari quota incident was caused by the obsolete unscoped
+`adhdice-profile` cache and uncaught Focus-owned browser-storage writes after a
+successful durable Focus completion. Storage migration v5 removes only the
+exact legacy profile key; scoped `adhdice-profile:<userId>` entries and the
+sessionStorage profile-media cache remain unchanged. The migration runner also
+contains storage access and final version-write failures so unavailable or full
+browser storage cannot crash startup.
+
+Focus categories, counters, countdown metadata, active-session compatibility,
+runtime migration IDs, and Focus reallocation preferences now use the shared
+quota-safe local-storage behavior. Focus History remains authoritative in
+Supabase and in-memory React state; the old full `adhdice_focus_history` mirror
+is no longer written. During a complete Supabase hydration, matching legacy
+entries may provide compatibility labels and the cache is retired only after
+all cached IDs are verified remotely. Legacy-only entries are retained rather
+than silently discarded because their durable counterpart was not verified.
+
+This release contains no quota recurrence work, no SQL/Supabase/Edge changes,
+and no Realtime warning work. Browser/manual QA remains Andrew-owned and
+unverified here.
 ## 2026-09-30 7.16.21 Side and 7.16 consolidation checkpoint
 
 The completed `codex/Side` Home progress, persistent Routine sections, shared

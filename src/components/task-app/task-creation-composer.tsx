@@ -44,6 +44,9 @@ function energyTone(energy: TaskEnergy) {
 
 export function TaskCreationComposer({
   allTags,
+  initialDueOn,
+  initialPriority = "0",
+  initialTitle = "",
   initialTaskTypeSelection = "task",
   onCancel,
   onCreate,
@@ -53,6 +56,9 @@ export function TaskCreationComposer({
   titleLabel = "Task title",
 }: {
   allTags: string[];
+  initialDueOn: string;
+  initialPriority?: TaskPriorityLevelOption;
+  initialTitle?: string;
   initialTaskTypeSelection?: string;
   onCancel: () => void;
   onCreate: (draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
@@ -61,9 +67,9 @@ export function TaskCreationComposer({
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
   titleLabel?: string;
 }) {
-  const [title, setTitle] = useState("");
+  const [title, setTitle] = useState(initialTitle);
   const [taskTypeSelection, setTaskTypeSelection] = useState(initialTaskTypeSelection);
-  const [dueOn, setDueOn] = useState("");
+  const [dueOn, setDueOn] = useState(initialDueOn);
   const [dueTime, setDueTime] = useState("");
   const [repeatValue, setRepeatValue] = useState<TaskRepeatEditorValue>({
     repeatFrequency: "none",
@@ -73,10 +79,11 @@ export function TaskCreationComposer({
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
   });
   const [tags, setTags] = useState<string[]>([]);
   const [tagDraft, setTagDraft] = useState("");
-  const [priority, setPriority] = useState<TaskPriorityLevelOption>("0");
+  const [priority, setPriority] = useState<TaskPriorityLevelOption>(initialPriority);
   const [energy, setEnergy] = useState<TaskEnergy>("none");
   const [isCreating, setIsCreating] = useState(false);
   const [creationError, setCreationError] = useState<string | null>(null);
@@ -119,9 +126,9 @@ export function TaskCreationComposer({
   }
 
   function resetDraft() {
-    setTitle("");
+    setTitle(initialTitle);
     setTaskTypeSelection(initialTaskTypeSelection);
-    setDueOn("");
+    setDueOn(initialDueOn);
     setDueTime("");
     setRepeatValue({
       repeatFrequency: "none",
@@ -131,10 +138,11 @@ export function TaskCreationComposer({
       repeatMonthlyMode: "day_of_month",
       repeatMonthlyOrdinal: null,
       repeatMonthlyWeekday: null,
+      repeatEndOn: null,
     });
     setTags([]);
     setTagDraft("");
-    setPriority("0");
+    setPriority(initialPriority);
     setEnergy("none");
   }
 
@@ -303,6 +311,7 @@ export function TaskCreationComposer({
 export function TaskChildCreationComposer({
   allTags,
   childLabel,
+  initialDueOn,
   onCancel,
   onCreateChildTask,
   onCreated,
@@ -311,6 +320,7 @@ export function TaskChildCreationComposer({
 }: {
   allTags: string[];
   childLabel: "Step" | "Substep";
+  initialDueOn: string;
   onCancel: () => void;
   onCreateChildTask: (parentTaskId: string, title: string, taskTypeSelectionValue: string, metadata: TaskCreationMetadata) => Promise<TaskChildCreationResult>;
   onCreated?: () => void;
@@ -320,6 +330,7 @@ export function TaskChildCreationComposer({
   return (
     <TaskCreationComposer
       allTags={allTags}
+      initialDueOn={initialDueOn}
       onCancel={onCancel}
       onCreate={(draft) => onCreateChildTask(parentTaskId, draft.title, draft.taskTypeSelection, draft.metadata)}
       onCreated={onCreated}

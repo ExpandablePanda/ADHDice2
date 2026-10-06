@@ -802,7 +802,7 @@ test("due-date edits recalculate open status in update, editor, and batch flows"
     },
   });
   await editor.saveTaskEditor({ ...baseTask, due_on: "2026-06-24" }, { taskId: baseTask.id });
-  assert.equal(editorValues?.status, "upcoming");
+  assert.equal(editorValues?.status, "not_due");
 
   await editor.saveTaskEditor({ ...editorTask, due_on: "2026-06-24" }, { taskId: editorTask.id });
   assert.equal(editorValues?.status, "done");
@@ -1288,8 +1288,8 @@ test("Test D keeps an identity-bearing Missed occurrence as historical evidence 
     });
     return action.updateTask(taskId, { due_on: dueOn }).then(() => {
       // The explicit Missed row remains identity-bearing History. A future
-      // cursor is Upcoming; moving the cursor onto today is Pending.
-      const expectedStatus = dueOn > "2026-08-04" ? "upcoming" : "pending";
+      // A future cursor is Not Due; moving the cursor onto today is Pending.
+      const expectedStatus = dueOn > "2026-08-04" ? "not_due" : "pending";
       assert.equal(committedTask.status, expectedStatus);
       assert.equal(optimisticTasks[0]?.status, expectedStatus);
     });

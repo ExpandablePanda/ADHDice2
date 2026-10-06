@@ -17,6 +17,7 @@ import {
   getHealthFoodAutocompleteValues,
   getHealthFoodDisplaySuggestions,
   getHealthFoodIdentityKey,
+  getLatestHealthFoodConsumedServing,
   buildHealthDailyCalorieSeries,
   buildHealthFoodLogHistoryIndex,
   buildHealthWaterHistory,
@@ -29,6 +30,7 @@ import {
   sumWaterForDate,
   waterAmountToMilliliters,
 } from "../src/lib/health-library.ts";
+import type { HealthMealEntry } from "../src/lib/database.types.ts";
 
 const food = {
   attribution: null,
@@ -57,6 +59,33 @@ const food = {
   updated_at: "2026-07-27T12:00:00.000Z",
   user_id: "user-1",
 };
+
+function actualMeal(overrides: Partial<HealthMealEntry> = {}): HealthMealEntry {
+  return {
+    attribution: food.attribution,
+    barcode: food.barcode,
+    brand_name: food.brand_name,
+    calories: food.calories,
+    carbs_g: food.carbs_g,
+    created_at: "2026-08-25T10:00:00.000Z",
+    entry_date: "2026-08-25",
+    fat_g: food.fat_g,
+    food_name: food.food_name,
+    id: "meal-1",
+    logged_at: "2026-08-25T10:00:00.000Z",
+    meal_slot: "breakfast",
+    protein_g: food.protein_g,
+    provider: food.provider,
+    provider_item_id: food.provider_item_id,
+    serving_label: food.serving_label,
+    updated_at: "2026-08-25T10:00:00.000Z",
+    user_id: food.user_id,
+    source_food_id: food.id,
+    consumed_quantity: 1,
+    consumed_unit: "serving",
+    ...overrides,
+  };
+}
 
 test("recipe totals and per-serving nutrition use ingredient quantities", () => {
   const recipe = {
@@ -530,6 +559,52 @@ test("food history index counts and sorts identity-matched meals without mutatin
     "meal-many-3",
     "meal-many-4",
   ]);
+});
+
+test("latest actual Food serving uses newest compatible quantity and unit", () => {
+  const measuredFood = { ...food, serving_measure_value: 100, serving_measure_unit: "g" as const };
+  assert.deepEqual(getLatestHealthFoodConsumedServing(measuredFood, [
+    actualMeal({ id: "meal-older", logged_at: "2026-08-20T12:00:00.000Z", consumed_quantity: 200, consumed_unit: "g" }),
+    actualMeal({ id: "meal-newer", logged_at: "2026-08-21T12:00:00.000Z", consumed_quantity: 290, consumed_unit: "g" }),
+  ]), { quantity: 290, unit: "g" });
+  assert.deepEqual(getLatestHealthFoodConsumedServing(food, [
+    actualMeal({ consumed_quantity: 2, consumed_unit: "serving" }),
+  ]), { quantity: 2, unit: "serving" });
+  assert.deepEqual(getLatestHealthFoodConsumedServing(measuredFood, [
+    actualMeal({ id: "meal-older", logged_at: "2026-08-20T12:00:00.000Z", consumed_quantity: 290, consumed_unit: "g" }),
+    actualMeal({ id: "meal-newer", logged_at: "2026-08-21T12:00:00.000Z", consumed_quantity: 350, consumed_unit: "g" }),
+  ]), { quantity: 350, unit: "g" });
+});
+
+test("source_food_id wins over legacy identity fallback, while legacy rows remain compatible", () => {
+  assert.deepEqual(getLatestHealthFoodConsumedServing(food, [
+    actualMeal({ id: "legacy-newer", logged_at: "2026-08-22T12:00:00.000Z", source_food_id: null, consumed_quantity: 9, consumed_unit: "serving" }),
+    actualMeal({ id: "stable-older", logged_at: "2026-08-21T12:00:00.000Z", source_food_id: food.id, consumed_quantity: 2, consumed_unit: "serving" }),
+  ]), { quantity: 2, unit: "serving" });
+  assert.deepEqual(getLatestHealthFoodConsumedServing(food, [
+    actualMeal({ source_food_id: null, consumed_quantity: 3, consumed_unit: "serving" }),
+  ]), { quantity: 3, unit: "serving" });
+});
+
+test("different stable food identities do not inherit a same-name serving", () => {
+  assert.equal(getLatestHealthFoodConsumedServing(food, [
+    actualMeal({ source_food_id: "different-food", consumed_quantity: 8, consumed_unit: "serving" }),
+  ]), null);
+});
+
+test("invalid newest structured serving data and unsupported units fall back safely", () => {
+  const measuredFood = { ...food, serving_measure_value: 100, serving_measure_unit: "g" as const };
+  const validOlder = actualMeal({ id: "valid-older", logged_at: "2026-08-20T12:00:00.000Z", consumed_quantity: 290, consumed_unit: "g" });
+  assert.equal(getLatestHealthFoodConsumedServing(measuredFood, [
+    validOlder,
+    actualMeal({ id: "zero-newer", logged_at: "2026-08-21T12:00:00.000Z", consumed_quantity: 0, consumed_unit: "g" }),
+  ]), null);
+  assert.equal(getLatestHealthFoodConsumedServing(measuredFood, [
+    actualMeal({ consumed_quantity: 290, consumed_unit: "cup" }),
+  ]), null);
+  assert.equal(getLatestHealthFoodConsumedServing(measuredFood, [
+    actualMeal({ consumed_quantity: 290, consumed_unit: null }),
+  ]), null);
 });
 
 test("Health Food preserves nutrition behavior while using flat category-filtered picker and local tab preference", () => {

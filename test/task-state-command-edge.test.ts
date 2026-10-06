@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
-import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, type TaskStateCommandIntent, validateRolloverSweepIntent, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
+import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, MAX_ROLLOVER_SWEEP_COMMANDS, type TaskStateCommandIntent, validateRolloverSweepIntent, validateTaskStateCommandIntent } from "../supabase/functions/task-state-command/domain.ts";
 import {
   executeRolloverSweep,
   executeTrustedTaskStateCommand,
@@ -163,6 +163,23 @@ test("rollover sweep validates unique canonical children and keeps the sweep bou
   assert.deepEqual(validateRolloverSweepIntent(valid), valid);
   assert.equal(validateRolloverSweepIntent({ ...valid, commands: [{ ...command, task_id: "task-1" }, command] }), null);
   assert.equal(validateRolloverSweepIntent({ ...valid, commands: [{ ...command, expected_revision: undefined }] }), null);
+  assert.equal(MAX_ROLLOVER_SWEEP_COMMANDS, 8);
+  assert.equal(validateRolloverSweepIntent({
+    ...valid,
+    commands: Array.from({ length: MAX_ROLLOVER_SWEEP_COMMANDS }, (_, index) => ({
+      ...command,
+      task_id: `task-${index}`,
+      replay_identity: `rollover:task-${index}`,
+    })),
+  })?.commands.length, 8);
+  assert.equal(validateRolloverSweepIntent({
+    ...valid,
+    commands: Array.from({ length: MAX_ROLLOVER_SWEEP_COMMANDS + 1 }, (_, index) => ({
+      ...command,
+      task_id: `task-${index}`,
+      replay_identity: `rollover:task-${index}`,
+    })),
+  }), null);
 });
 
 test("trusted rollover fails closed when a canonical workflow occurrence reference is broken", async () => {
@@ -309,6 +326,7 @@ function rolloverReadModel(taskId: string) {
 test("one rollover sweep defers each committed child and evaluates Achievements exactly once", async () => {
   const deferredCalls: boolean[] = [];
   const finalizerOperationIds: string[] = [];
+  let finalizedHistoryFactIds: string[] = [];
   const projectionTaskIds: string[] = [];
   const result = await executeRolloverSweep({
     userId: "owner-1",
@@ -350,8 +368,9 @@ test("one rollover sweep defers each committed child and evaluates Achievements 
         projectionTaskIds.push(taskId);
         return { status: "written", projection: {} as never, writerResult: null } satisfies CurrentTaskProjectionRebuildResult;
       },
-      finalizeAchievements: async ({ operationId }) => {
+      finalizeAchievements: async ({ operationId, historyFactIds }) => {
         finalizerOperationIds.push(operationId);
+        finalizedHistoryFactIds = historyFactIds;
         return { data: { status: "completed" }, error: null };
       },
     },
@@ -362,6 +381,7 @@ test("one rollover sweep defers each committed child and evaluates Achievements 
   assert.deepEqual(deferredCalls, [true, true]);
   assert.deepEqual(projectionTaskIds, ["task-1", "task-2"]);
   assert.equal(finalizerOperationIds.length, 1);
+  assert.deepEqual(finalizedHistoryFactIds, ["history-task-1", "history-task-2"]);
   const completedAchievement = ((result.body as Record<string, unknown>).achievement ?? {}) as Record<string, unknown>;
   assert.equal(completedAchievement.status, "completed");
   assert.equal(completedAchievement.operation_id, finalizerOperationIds[0]);
@@ -1463,11 +1483,14 @@ test("a true rollover semantic no-op returns success without invoking the canoni
             activeOccurrenceDueOn: task.active_occurrence_due_on,
           },
           historyFact: null,
+          automaticHistoryFacts: [],
+          automaticHistoryDeleteIds: [],
           occurrence: null,
           scheduleBoundary: null,
           occurrenceEffectiveOverride: null,
           calendarOverride: null,
           rewardEntitlement: null,
+          quotaPeriodFacts: [],
           warnings: [],
         },
       }) as ReturnType<typeof planTaskStateCommand>,
@@ -1478,6 +1501,40 @@ test("a true rollover semantic no-op returns success without invoking the canoni
   assert.equal((result.body as { no_action?: boolean }).no_action, true);
   assert.equal((result.body as { next_revision?: number }).next_revision, 4);
   assert.equal(rpcCalls, 0);
+});
+
+test("quota rollover facts and balance-only projection changes invoke the canonical RPC", async () => {
+  for (const kind of ["period-close", "balance-only"] as const) {
+    let rpcCalls = 0;
+    const result = await executeTrustedTaskStateCommand({
+      userId: "owner-1",
+      intent: { type: "reconcile_rollover", task_id: "task-1", replay_identity: `rollover:${kind}`, expected_revision: 4 },
+      adminClient: { rpc: async () => { rpcCalls += 1; return { data: { state: "committed" }, error: null }; } } as unknown as TrustedTaskStateCommandClient,
+      dependencies: {
+        loadReplayOperation: async () => ({ data: null, error: null }),
+        loadCanonicalState: async () => ({ data: canonicalReadModel, error: null }),
+        buildEngineInput: (() => ({} as TaskStateEngineInput)),
+        serializePlan: (() => ({})),
+        planCommand: ({ task }) => ({
+          command: { commandId: `quota-${kind}`, commandType: "reconcile_rollover" },
+          normalizedResult: {
+            commandId: `quota-${kind}`, commandType: "reconcile_rollover", state: "accepted", conflictCode: null,
+            expectedRevision: task.canonical_revision, nextRevision: task.canonical_revision + 1, canonicalTaskPatch: {},
+            compatibilityProjection: {
+              status: task.status, dueOn: task.due_on, completedAt: task.completed_at,
+              activeStatusLogicalDate: task.active_status_logical_date, activeOccurrenceDueOn: task.active_occurrence_due_on,
+              ...(kind === "balance-only" ? { repeatQuotaBalance: 1, repeatQuotaBalancePeriod: "2026-08-10" } : {}),
+            },
+            historyFact: null, automaticHistoryFacts: [], automaticHistoryDeleteIds: [], occurrence: null,
+            scheduleBoundary: null, occurrenceEffectiveOverride: null, calendarOverride: null, rewardEntitlement: null,
+            quotaPeriodFacts: kind === "period-close" ? [{}] : [], warnings: [],
+          },
+        }) as ReturnType<typeof planTaskStateCommand>,
+      },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(rpcCalls, 1, kind);
+  }
 });
 
 test("a non-rollover semantic no-op still uses the canonical RPC", async () => {

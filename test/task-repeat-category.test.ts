@@ -88,6 +88,9 @@ test("preset normalization resets incompatible recurrence fields immediately", (
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatQuotaCount: null,
+    repeatQuotaBalanceEnabled: false,
+    repeatEndOn: null,
   });
   assert.deepEqual(normalizePresetRepeatSelection("daily", current).repeatInterval, 1);
   assert.deepEqual(normalizePresetRepeatSelection("daily_until_complete", current).repeatInterval, 1);
@@ -155,6 +158,7 @@ test("repeat editor updates retain explicit nullable clears for canonical set_re
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
     anchor_date: "2026-08-05",
+    repeat_end_on: null,
   });
 });
 
@@ -178,6 +182,9 @@ test("custom cadence helpers persist unit-specific canonical values", () => {
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
+    repeat_quota_count: null,
+    repeat_quota_balance_enabled: false,
+    repeat_end_on: null,
   });
 
   const weeks = buildCustomCadenceMutation({
@@ -188,6 +195,7 @@ test("custom cadence helpers persist unit-specific canonical values", () => {
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
   });
   assert.deepEqual(weeks, {
     repeatFrequency: "weekly",
@@ -197,6 +205,7 @@ test("custom cadence helpers persist unit-specific canonical values", () => {
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
   });
 
   const dayOfMonth = buildCustomCadenceMutation({
@@ -250,6 +259,9 @@ test("custom cadence helpers persist unit-specific canonical values", () => {
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
+    repeat_quota_count: null,
+    repeat_quota_balance_enabled: false,
+    repeat_end_on: null,
   });
   assert.equal(createTaskRepeatEditorDraft({
     repeatFrequency: "daily_until_complete",
@@ -300,6 +312,9 @@ test("custom Until complete preserves weekly and monthly recurrence fields", () 
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
+    repeat_quota_count: null,
+    repeat_quota_balance_enabled: false,
+    repeat_end_on: null,
   });
   const weeklyAction = classifyTaskStateRuntimeAction({
     replayIdentity: "duc-weekly",

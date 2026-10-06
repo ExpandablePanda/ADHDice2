@@ -12,7 +12,7 @@ import { sha256Hex } from "../src/lib/task-state-canonical/digest.ts";
 import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
 import type { CanonicalTaskRow, CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
-import type { TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
+import type { TaskQuotaPeriodFact, TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 import { buildTrustedTaskStateCommand } from "../supabase/functions/task-state-command/domain.ts";
@@ -246,6 +246,45 @@ test("clear_outcome RPC serialization preserves its clear date without side effe
   assert.equal(payload.occurrence_effective_override, undefined);
 });
 
+test("Clear Balance commits an auditable zero projection for enabled quota Tasks", () => {
+  const planningState = state({
+    repeat_frequency: "per_week",
+    repeat_quota_count: 3,
+    repeat_quota_balance_enabled: true,
+    repeat_quota_balance: -3,
+    repeat_quota_balance_period: "2026-08-10",
+  });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: {
+      ...planningState.engineInput!.task,
+      recurrence: {
+        kind: "quota",
+        period: "week",
+        count: 3,
+        balanceEnabled: true,
+        incomingBalance: -3,
+        incomingBalancePeriodKey: "2026-08-10",
+      },
+    },
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    type: "clear_quota_balance",
+    commandId: "00000000-0000-4000-8000-000000000099",
+  }));
+  const serialized = serializeCanonicalTaskStateCommandForRpc(plan);
+  const payload = serialized.payload as Record<string, unknown>;
+  const projection = payload.compatibility_projection as Record<string, unknown>;
+
+  assert.equal(plan.command.commandType, "clear_quota_balance");
+  assert.equal(plan.normalizedResult.historyFact, null);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.equal(projection.repeat_quota_balance, 0);
+  assert.equal(projection.repeat_quota_balance_period, "2026-08-10");
+  assert.equal(payload.clear_quota_balance, true);
+  assert.equal(isCanonicalTaskStateCommandSemanticNoOp({ plan, task: planningState.task }), false);
+});
+
 test("clearing today's explicit Missed recomputes Pending from the remaining schedule", () => {
   const planningState = state({ status: "missed", due_on: "2026-08-10" });
   planningState.engineInput = {
@@ -339,7 +378,7 @@ test("handled Done uses the engine-derived projection for a recurring task", () 
     outcome: "done",
   }));
   assert.equal(plan.normalizedResult.historyFact?.outcome, "done");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });
 
 test("fixed weekly command persists the engine-resolved early-success occurrence", () => {
@@ -843,6 +882,36 @@ test("rollover without stale In Progress is a no-op with no History or reward", 
   assert.equal(isCanonicalTaskStateCommandSemanticNoOp({ plan, task: planningState.task }), true);
 });
 
+test("quota period-close and balance projection changes are never semantic no-ops", () => {
+  const planningState = state({ repeat_quota_balance: -2, repeat_quota_balance_period: "2026-08-03" });
+  const base = {
+    command: { commandId: "quota-rollover", commandType: "reconcile_rollover" },
+    normalizedResult: {
+      commandId: "quota-rollover", commandType: "reconcile_rollover", state: "accepted", conflictCode: null,
+      expectedRevision: 4, nextRevision: 5, canonicalTaskPatch: {},
+      compatibilityProjection: {
+        status: planningState.task.status, dueOn: planningState.task.due_on, completedAt: planningState.task.completed_at,
+        activeStatusLogicalDate: planningState.task.active_status_logical_date,
+        activeOccurrenceDueOn: planningState.task.active_occurrence_due_on,
+        repeatQuotaBalance: planningState.task.repeat_quota_balance,
+        repeatQuotaBalancePeriod: planningState.task.repeat_quota_balance_period,
+      },
+      historyFact: null, automaticHistoryFacts: [], automaticHistoryDeleteIds: [], occurrence: null,
+      scheduleBoundary: null, occurrenceEffectiveOverride: null, calendarOverride: null,
+      rewardEntitlement: null, quotaPeriodFacts: [], warnings: [],
+    },
+  } as ReturnType<typeof planTaskStateCommand>;
+  assert.equal(isCanonicalTaskStateCommandSemanticNoOp({ plan: base, task: planningState.task }), true);
+  assert.equal(isCanonicalTaskStateCommandSemanticNoOp({
+    plan: { ...base, normalizedResult: { ...base.normalizedResult, quotaPeriodFacts: [{} as never] } },
+    task: planningState.task,
+  }), false);
+  assert.equal(isCanonicalTaskStateCommandSemanticNoOp({
+    plan: { ...base, normalizedResult: { ...base.normalizedResult, compatibilityProjection: { ...base.normalizedResult.compatibilityProjection, repeatQuotaBalance: 0 } } },
+    task: planningState.task,
+  }), false);
+});
+
 test("stale canonical revision is rejected before a normalized write plan", () => {
   const plan = planTaskStateCommand(state({ canonical_revision: 5 }), command());
   assert.equal(plan.normalizedResult.state, "rejected");
@@ -875,6 +944,92 @@ test("terminal, container, and workflow axes remain independent", () => {
   });
   assert.equal(trashed.normalizedResult.canonicalTaskPatch.terminal_state, "permanently_complete");
   assert.equal(trashed.normalizedResult.canonicalTaskPatch.container_state, "trashed");
+});
+
+test("rewards-disabled quota Complete serializes without reward entitlement fields", () => {
+  const planningState = state({
+    repeat_frequency: "per_week",
+    repeat_quota_count: 3,
+    repeat_quota_balance_enabled: true,
+    repeat_quota_balance: -2,
+    repeat_quota_balance_period: "2026-08-03",
+  });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    behaviorPolicy: { ...STANDARD_TASK_BEHAVIOR_POLICY, rewards: "disabled" },
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-10",
+      recurrence: {
+        kind: "quota",
+        period: "week",
+        count: 3,
+        balanceEnabled: true,
+        activationDate: "2026-08-10",
+        scheduleBoundaryId: "quota-boundary-disabled-rewards",
+      },
+    },
+  };
+  const plan = planTaskStateCommand(planningState, {
+    ...command({ commandId: "00000000-0000-4000-8000-000000000101" }),
+    type: "complete",
+  });
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+  const historyFact = payload.history_fact as Record<string, unknown>;
+
+  assert.equal(plan.normalizedResult.historyFact?.outcome, "complete");
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.equal(payload.reward_eligible, undefined);
+  assert.equal(payload.reward_program_version, undefined);
+  assert.equal(historyFact.reward_eligible, false);
+  assert.equal(plan.normalizedResult.compatibilityProjection.repeatQuotaBalance, null);
+});
+
+test("permanent Complete clears every quota compatibility balance while retaining its historical command fact", () => {
+  for (const balance of [-3, 0, 4] as const) {
+    const planningState = state({
+      repeat_frequency: "per_week",
+      repeat_quota_count: 3,
+      repeat_quota_balance_enabled: true,
+      repeat_quota_balance: balance,
+      repeat_quota_balance_period: "2026-08-03",
+    });
+    const plan = planTaskStateCommand(planningState, {
+      ...command({ commandId: `00000000-0000-4000-8000-0000000001${balance + 4}` }),
+      type: "complete",
+    });
+    assert.equal(plan.normalizedResult.compatibilityProjection.repeatQuotaBalance, null);
+    assert.equal(plan.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, null);
+    assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, null);
+    assert.equal(plan.normalizedResult.historyFact?.outcome, "complete");
+  }
+  const disabled = planTaskStateCommand(state({
+    repeat_frequency: "per_month", repeat_quota_count: 3, repeat_quota_balance_enabled: false,
+    repeat_quota_balance: 0, repeat_quota_balance_period: null,
+  }), { ...command({ commandId: "00000000-0000-4000-8000-000000000099" }), type: "complete" });
+  assert.equal(disabled.normalizedResult.compatibilityProjection.repeatQuotaBalance, null);
+  assert.equal(disabled.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, null);
+
+  const terminalState = state({
+    terminal_state: "permanently_complete", status: "complete", due_on: null,
+    repeat_frequency: "per_week", repeat_quota_count: 3, repeat_quota_balance_enabled: true,
+    repeat_quota_balance: null, repeat_quota_balance_period: null,
+  });
+  terminalState.engineInput = {
+    ...terminalState.engineInput!,
+    task: {
+      ...terminalState.engineInput!.task,
+      lifecycle: "complete",
+      activeStatus: "complete",
+      dueOn: null,
+      recurrence: { kind: "quota", period: "week", count: 3, balanceEnabled: true, scheduleBoundaryId: "quota-boundary" },
+    },
+  };
+  const rollover = planTaskStateCommand(terminalState, trustedCommand({
+    type: "reconcile_rollover", task_id: "task-1", replay_identity: "rollover:complete:quota", expected_revision: 4,
+  }, terminalState.task, boundary("rolling")));
+  assert.equal(rollover.normalizedResult.compatibilityProjection.dueOn, null);
+  assert.deepEqual(rollover.normalizedResult.quotaPeriodFacts, []);
 });
 
 test("Trash restore preserves proven Active and Archived container provenance", () => {
@@ -1083,7 +1238,7 @@ test("clearing workflow restores a future due projection without changing lifecy
     ...command({ commandId: "00000000-0000-4000-8000-000000000012" }),
     type: "workflow_clear",
   });
-  assert.equal(upcoming.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(upcoming.normalizedResult.compatibilityProjection.status, "not_due");
   assert.equal(upcoming.normalizedResult.canonicalTaskPatch.workflow_state, "none");
 
   const notDue = planTaskStateCommand(state({ status: "in_progress", due_on: "2026-08-30" }), {
@@ -1122,6 +1277,169 @@ test("rolling and fixed schedule plans preserve their model authority", () => {
   assert.equal(rolling.normalizedResult.scheduleBoundary?.schedule_model, "rolling");
   assert.equal(fixed.normalizedResult.scheduleBoundary?.schedule_model, "fixed");
   assert.deepEqual(fixed.normalizedResult.scheduleBoundary?.repeat_days_of_week, [1, 3, 5]);
+});
+
+test("quota schedule changes start a new prospective balance projection", () => {
+  const quotaState = state({
+    repeat_frequency: "per_week",
+    repeat_quota_count: 3,
+    repeat_quota_balance_enabled: true,
+    repeat_quota_balance: -4,
+    repeat_quota_balance_period: "2026-08-10",
+  });
+  quotaState.engineInput = {
+    ...quotaState.engineInput!,
+    task: {
+      ...quotaState.engineInput!.task,
+      dueOn: "2026-08-10",
+      recurrence: {
+        kind: "quota",
+        period: "week",
+        count: 3,
+        balanceEnabled: true,
+        activationDate: "2026-08-10",
+        scheduleBoundaryId: "boundary-old-quota",
+      },
+    },
+  };
+
+  let sequence = 0;
+  const plan = (schedule: Partial<CanonicalTaskScheduleBoundary>) => planTaskStateCommand(quotaState, command({
+    type: "schedule_change",
+    changeKind: "repeat",
+    commandId: `00000000-0000-4000-8000-${String(++sequence).padStart(12, "0")}`,
+    scheduleBoundary: {
+      ...boundary("fixed"),
+      id: "boundary-new-quota",
+      repeat_frequency: "per_week",
+      repeat_quota_count: 3,
+      repeat_quota_balance_enabled: true,
+      ...schedule,
+    },
+  }));
+
+  const switchedPeriod = plan({
+    repeat_frequency: "per_month",
+    repeat_quota_count: 5,
+  });
+  assert.equal(switchedPeriod.normalizedResult.compatibilityProjection.repeatQuotaBalance, 0);
+  assert.equal(switchedPeriod.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, "2026-08");
+  assert.equal(switchedPeriod.normalizedResult.scheduleBoundary?.repeat_frequency, "per_month");
+
+  const changedCount = plan({ repeat_quota_count: 5 });
+  assert.equal(changedCount.normalizedResult.compatibilityProjection.repeatQuotaBalance, 0);
+  assert.equal(changedCount.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, "2026-08-10");
+
+  const balanceOff = plan({ repeat_quota_balance_enabled: false });
+  assert.equal(balanceOff.normalizedResult.compatibilityProjection.repeatQuotaBalance, 0);
+  assert.equal(balanceOff.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, null);
+
+  const normal = plan({ repeat_frequency: "none", repeat_quota_count: null, repeat_quota_balance_enabled: false });
+  assert.equal(normal.normalizedResult.compatibilityProjection.repeatQuotaBalance, null);
+  assert.equal(normal.normalizedResult.compatibilityProjection.repeatQuotaBalancePeriod, null);
+});
+
+test("quota rollover planner emits close evidence across skipped weekly and monthly periods and retries idempotently", () => {
+  for (const scenario of [
+    {
+      period: "week" as const,
+      today: "2026-10-13",
+      activationDate: "2026-09-28",
+      closePeriodKey: "2026-10-05",
+      expectedMisses: [
+        "2026-10-02", "2026-10-03", "2026-10-04",
+        "2026-10-06", "2026-10-07", "2026-10-08", "2026-10-09", "2026-10-10", "2026-10-11",
+        "2026-10-12",
+      ],
+    },
+    {
+      period: "month" as const,
+      today: "2027-03-05",
+      activationDate: "2027-01-01",
+      closePeriodKey: "2027-02",
+      expectedMisses: [
+        "2027-01-29", "2027-01-30", "2027-01-31",
+        "2027-02-23", "2027-02-24", "2027-02-25", "2027-02-26", "2027-02-27", "2027-02-28",
+      ],
+    },
+  ]) {
+    const planningState = state({
+      due_on: scenario.activationDate,
+      repeat_frequency: scenario.period === "week" ? "per_week" : "per_month",
+      repeat_quota_count: 3,
+      repeat_quota_balance_enabled: true,
+      repeat_quota_balance: 0,
+      repeat_quota_balance_period: scenario.period === "week" ? "2026-09-28" : "2027-01",
+    });
+    planningState.engineInput = {
+      ...planningState.engineInput!,
+      now: `${scenario.today}T14:00:00.000Z`,
+      task: {
+        ...planningState.engineInput!.task,
+        dueOn: scenario.activationDate,
+        recurrence: {
+          kind: "quota",
+          period: scenario.period,
+          count: 3,
+          balanceEnabled: true,
+          activationDate: scenario.activationDate,
+          scheduleBoundaryId: `boundary-quota-${scenario.period}`,
+          incomingBalance: 0,
+        },
+      },
+      history: [],
+      quotaPeriodFacts: [],
+    };
+    const rollover = (revision: number, commandId: string) => command({
+      type: "rollover",
+      commandId,
+      expectedRevision: revision,
+      logicalDay: { ...logicalDay, logicalDate: scenario.today },
+      scheduleBoundaryId: `boundary-quota-${scenario.period}`,
+      idempotenceIdentity: `quota-rollover:${scenario.period}:${scenario.today}`,
+    });
+    const firstPlan = planTaskStateCommand(planningState, rollover(4, `00000000-0000-4000-8000-0000000002${scenario.period === "week" ? "1" : "2"}`));
+    const automaticDates = firstPlan.normalizedResult.automaticHistoryFacts.map((fact) => fact.logical_date);
+    assert.deepEqual(automaticDates, scenario.expectedMisses, scenario.period);
+    const firstFact = firstPlan.normalizedResult.quotaPeriodFacts[0];
+    assert.equal(firstFact?.period_key, scenario.closePeriodKey, scenario.period);
+    assert.equal(firstFact?.incoming_balance, -3, scenario.period);
+    assert.equal(firstFact?.successful_days, 0, scenario.period);
+    assert.equal(firstFact?.next_balance, -6, scenario.period);
+
+    const retryHistory = automaticDates.map((date) => automaticMissedHistory(date, date));
+    const retryFacts: TaskQuotaPeriodFact[] = firstPlan.normalizedResult.quotaPeriodFacts.map((fact, index) => ({
+      id: `planned-close-${scenario.period}-${index}`,
+      entityId: "task-1",
+      scheduleBoundaryId: fact.schedule_boundary_id,
+      periodKind: fact.period_kind,
+      periodKey: fact.period_key,
+      periodStart: fact.period_start,
+      periodEnd: fact.period_end,
+      baseQuota: fact.base_quota,
+      incomingBalance: fact.incoming_balance,
+      successfulDays: fact.successful_days,
+      nextBalance: fact.next_balance,
+      balanceEnabled: fact.balance_enabled,
+      eventKind: fact.event_kind,
+      commandId: fact.command_id ?? null,
+      idempotenceIdentity: fact.idempotence_identity,
+      createdAt: "2027-03-06T01:00:00.000Z",
+      revision: 1,
+    }));
+    const retryState = {
+      task: { ...planningState.task, canonical_revision: 5 },
+      engineInput: {
+        ...planningState.engineInput!,
+        history: retryHistory,
+        quotaPeriodFacts: retryFacts,
+      },
+    };
+    const retryPlan = planTaskStateCommand(retryState, rollover(5, `00000000-0000-4000-8000-0000000002${scenario.period === "week" ? "3" : "4"}`));
+    assert.deepEqual(retryPlan.normalizedResult.automaticHistoryFacts, [], scenario.period);
+    assert.equal(retryPlan.normalizedResult.quotaPeriodFacts[0]?.idempotence_identity, firstFact?.idempotence_identity, scenario.period);
+    assert.equal(retryPlan.normalizedResult.quotaPeriodFacts[0]?.next_balance, -6, scenario.period);
+  }
 });
 
 function trustedReadModel(row: CanonicalTaskRow, schedule: CanonicalTaskScheduleBoundary) {
@@ -1316,7 +1634,7 @@ test("canonical Daily success projection derives its own date after ambiguous ol
       scheduledDueOn: null,
     }));
 
-    assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming", outcome);
+    assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due", outcome);
     assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-24", outcome);
     assert.equal(plan.normalizedResult.historyFact?.scheduled_due_on, "2026-08-23", outcome);
     assert.equal(plan.command.payload.occurrenceKey, null, outcome);
@@ -1643,7 +1961,7 @@ test("trusted repeat planner replays from the last success with the proposed cad
   const plan = planTaskStateCommand(planningState, command);
 
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-14");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });
 
 test("trusted Calendar override planner evaluates the proposed override before commit", () => {
@@ -1667,7 +1985,7 @@ test("trusted Calendar override planner evaluates the proposed override before c
   const plan = planTaskStateCommand(planningState, planned);
 
   assert.equal(plan.normalizedResult.calendarOverride?.override_state, "not_due");
-  assert.equal(plan.normalizedResult.compatibilityProjection.status, "upcoming");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
   assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-08-11");
   assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });

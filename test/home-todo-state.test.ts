@@ -3,30 +3,42 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 
 import type { Task } from "../src/lib/database.types.ts";
+import type { TaskContentFolderRow } from "../src/lib/task-content-folders.ts";
 import {
+  buildHomeTaskRowHierarchy,
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
   buildHomeTodoDaySections,
   buildHomeTodoHierarchy,
+  createHomeScratchpadItem,
+  createHomeScratchpadItems,
   createHomeTodoTask,
   formatHomeRoutineDueLabel,
   formatHomeTodoDateLabel,
+  getHomeTasksByCanonicalMembership,
   getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
   hasMeaningfulHomeTodoState,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
+  moveHomeScratchpadTextToItems,
   moveHomeRoutineTaskIdToSection,
   moveHomeTodoTaskId,
   moveHomeTodoTaskIdToEdge,
   moveHomeTodoTaskIdToVisibleEdge,
+  moveHomeTodoTaskIdToUrgent,
+  moveHomeUrgentTaskIdToTodo,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoRoutineSectionNames,
   normalizeHomeTodoState,
+  normalizeHomeScratchpadItems,
+  parseHomeScratchpadLines,
   reconcileHomeRoutineSectionAssignments,
   reconcileHomeRoutineTaskIds,
   reconcileHomeTodoTaskIds,
+  reconcileHomeUrgentTaskIds,
+  reorderHomeScratchpadItems,
   shouldPersistHomeRoutineReconciliation,
   sortHomeTodoSearchResults,
   type HomeTodoTaskMetadata,
@@ -59,20 +71,23 @@ const homeTaskMetadata: HomeTodoTaskMetadata = {
   tags: [],
 };
 
-test("Home state V1/V4 payloads normalize to V6 with independent Routine defaults", () => {
+test("Home state V1/V4 payloads normalize to V8 with independent Routine defaults", () => {
   assert.deepEqual(normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
     schemaVersion: 1,
     taskIds: ["a", "a", "", 4, "b"],
   }), {
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
-    schemaVersion: 6,
+    schemaVersion: 8,
     taskIds: ["a", "b"],
     taskDayOffsets: {},
     tasksPerDay: 10,
     routineTaskIds: [],
     routineSections: [],
     routineSectionIdByTaskId: {},
+    urgentTaskIds: [],
+    scratchpadText: "",
+    scratchpadItems: [],
   });
 });
 
@@ -533,7 +548,7 @@ test("Home Routine persistence reconciliation waits for Home hydration", () => {
   assert.equal(shouldPersistHomeRoutineReconciliation("saving"), true);
 });
 
-test("Home V6 bootstrap recognizes meaningful state outside To-do taskIds", () => {
+test("Home V8 bootstrap recognizes meaningful state outside To-do taskIds", () => {
   const empty = normalizeHomeTodoState(null);
   assert.equal(hasMeaningfulHomeTodoState(empty), false);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, taskIds: ["todo"] }), true);
@@ -542,9 +557,179 @@ test("Home V6 bootstrap recognizes meaningful state outside To-do taskIds", () =
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineTaskIds: ["routine"] }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineSections: [{ id: "section-1", name: "Morning" }] }), true);
   assert.equal(hasMeaningfulHomeTodoState({ ...empty, routineSectionIdByTaskId: { routine: "section-1" } }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, urgentTaskIds: ["urgent"] }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, scratchpadText: "Call dentist\nPick up prescription" }), true);
+  assert.equal(hasMeaningfulHomeTodoState({ ...empty, scratchpadItems: [{ id: "note", text: "Capture", createdAt: "2026-10-03T12:00:00.000Z" }] }), true);
 });
 
-test("Home V5 Routine chunks migrate to stable explicit V6 sections", () => {
+test("Home V7 to V8 migration preserves existing state and initializes the notepad", () => {
+  const migrated = normalizeHomeTodoState({
+    clientUpdatedAt: "2026-10-02T12:00:00.000Z",
+    schemaVersion: 7,
+    taskIds: ["todo-b", "todo-a"],
+    taskDayOffsets: { "todo-a": 2 },
+    tasksPerDay: 15,
+    routineTaskIds: ["routine"],
+    routineSections: [{ id: "morning", name: "Morning" }],
+    routineSectionIdByTaskId: { routine: "morning" },
+    scratchpadItems: [{ id: "note", text: "Legacy capture", createdAt: "2026-10-03T12:00:00.000Z" }],
+  });
+  assert.deepEqual(migrated, {
+    clientUpdatedAt: "2026-10-02T12:00:00.000Z",
+    schemaVersion: 8,
+    taskIds: ["todo-b", "todo-a"],
+    taskDayOffsets: { "todo-a": 2 },
+    tasksPerDay: 15,
+    routineTaskIds: ["routine"],
+    routineSections: [{ id: "morning", name: "Morning" }],
+    routineSectionIdByTaskId: { routine: "morning" },
+    urgentTaskIds: [],
+    scratchpadText: "",
+    scratchpadItems: [{ id: "note", text: "Legacy capture", createdAt: "2026-10-03T12:00:00.000Z" }],
+  });
+});
+
+test("Home V1 through V6 migration defaults Urgent and Scratchpad without dropping legacy data", () => {
+  for (const schemaVersion of [1, 2, 3, 4, 5, 6]) {
+    const normalized = normalizeHomeTodoState({
+      schemaVersion,
+      taskIds: ["todo"],
+      routineTaskIds: ["routine"],
+      routinesPerSection: 3,
+      routineSectionNames: { "0": "Morning" },
+    });
+    assert.deepEqual(normalized.urgentTaskIds, []);
+    assert.deepEqual(normalized.scratchpadItems, []);
+    assert.deepEqual(normalized.taskIds, ["todo"]);
+    assert.deepEqual(normalized.routineTaskIds, ["routine"]);
+  }
+});
+
+test("Home V8 round trip preserves Urgent order, multiline text, and Scratchpad order/content", () => {
+  const state = normalizeHomeTodoState({
+    schemaVersion: 8,
+    urgentTaskIds: ["urgent-b", "urgent-a"],
+    scratchpadText: "Call dentist\n\nFix billing page",
+    scratchpadItems: [
+      { id: "note-b", text: "Second note", createdAt: "2026-10-03T12:01:00.000Z" },
+      { id: "note-a", text: "First note", createdAt: "2026-10-03T12:00:00.000Z" },
+    ],
+  });
+  assert.deepEqual(normalizeHomeTodoState(state).urgentTaskIds, ["urgent-b", "urgent-a"]);
+  assert.equal(normalizeHomeTodoState(state).scratchpadText, "Call dentist\n\nFix billing page");
+  assert.deepEqual(normalizeHomeTodoState(state).scratchpadItems, state.scratchpadItems);
+});
+
+test("Home V8 normalization repairs Urgent/To-do overlap with Urgent precedence", () => {
+  assert.deepEqual(normalizeHomeTodoState({
+    schemaVersion: 8,
+    taskIds: ["a", "b", "a", "d"],
+    taskDayOffsets: { a: 0, b: 3, d: 7, stale: 2 },
+    urgentTaskIds: ["b", "c", "b"],
+  }), {
+    clientUpdatedAt: "1970-01-01T00:00:00.000Z",
+    schemaVersion: 8,
+    taskIds: ["a", "d"],
+    taskDayOffsets: { a: 0, d: 7 },
+    tasksPerDay: 10,
+    routineTaskIds: [],
+    routineSections: [],
+    routineSectionIdByTaskId: {},
+    urgentTaskIds: ["b", "c"],
+    scratchpadText: "",
+    scratchpadItems: [],
+  });
+  const stable = normalizeHomeTodoState({
+    schemaVersion: 8,
+    taskIds: ["a", "b"],
+    taskDayOffsets: { a: 0, b: 1 },
+    urgentTaskIds: ["c", "d"],
+  });
+  assert.deepEqual(normalizeHomeTodoState(stable), stable);
+});
+
+test("Home Urgent membership stays independent from To-do and uses shared eligibility", () => {
+  const tasks = [task("active"), task("done", { status: "complete" }), task("trashed", { trashed_at: "2026-10-03T12:00:00.000Z" })];
+  assert.deepEqual(reconcileHomeUrgentTaskIds(["active", "done", "active", "missing", "trashed"], tasks), ["active"]);
+  const state = normalizeHomeTodoState({ taskIds: ["today", "future", "later"], taskDayOffsets: { today: 0, future: 3, later: 7 }, urgentTaskIds: ["urgent"] });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "today"), {
+    taskIds: ["future", "later"],
+    taskDayOffsets: { future: 3, later: 7 },
+    urgentTaskIds: ["urgent", "today"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "future"), {
+    taskIds: ["today", "later"],
+    taskDayOffsets: { today: 0, later: 7 },
+    urgentTaskIds: ["urgent", "future"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "later"), {
+    taskIds: ["today", "future"],
+    taskDayOffsets: { today: 0, future: 3 },
+    urgentTaskIds: ["urgent", "later"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent(state, "new"), {
+    taskIds: ["today", "future", "later"],
+    taskDayOffsets: { today: 0, future: 3, later: 7 },
+    urgentTaskIds: ["urgent", "new"],
+  });
+  assert.deepEqual(moveHomeTodoTaskIdToUrgent({ ...state, urgentTaskIds: ["urgent", "today"] }, "today"), {
+    taskIds: ["future", "later"],
+    taskDayOffsets: { future: 3, later: 7 },
+    urgentTaskIds: ["urgent", "today"],
+  });
+  assert.deepEqual(moveHomeUrgentTaskIdToTodo(state, "urgent", 1), {
+    taskIds: ["today", "future", "later", "urgent"],
+    taskDayOffsets: { today: 0, future: 3, later: 7, urgent: 1 },
+    urgentTaskIds: [],
+  });
+  assert.deepEqual(moveHomeUrgentTaskIdToTodo(state, "urgent", 7), {
+    taskIds: ["today", "future", "later", "urgent"],
+    taskDayOffsets: { today: 0, future: 3, later: 7, urgent: 7 },
+    urgentTaskIds: [],
+  });
+});
+
+test("Home Scratchpad helpers trim, reject malformed entries, create unique IDs, and reorder stably", () => {
+  assert.deepEqual(normalizeHomeScratchpadItems([
+    { id: " note ", text: "  Keep this  ", createdAt: "2026-10-03T12:00:00.000Z" },
+    { id: "note", text: "duplicate", createdAt: "2026-10-03T12:00:00.000Z" },
+    { id: "blank", text: " ", createdAt: "2026-10-03T12:00:00.000Z" },
+    { id: "bad-date", text: "Bad", createdAt: "not-a-date" },
+  ]), [{ id: "note", text: "Keep this", createdAt: "2026-10-03T12:00:00.000Z" }]);
+  const item = createHomeScratchpadItem("  Capture  ", new Date("2026-10-03T12:02:00.000Z"), ["scratchpad-fixed"]);
+  assert.equal(item?.text, "Capture");
+  assert.equal(item?.createdAt, "2026-10-03T12:02:00.000Z");
+  assert.deepEqual(reorderHomeScratchpadItems([
+    { id: "a", text: "A", createdAt: "2026-10-03T12:00:00.000Z" },
+    { id: "b", text: "B", createdAt: "2026-10-03T12:01:00.000Z" },
+  ], ["b", "missing"] as string[]).map((entry) => entry.id), ["b", "a"]);
+});
+
+test("Home Scratchpad line staging trims, skips blanks, preserves order, and keeps duplicate text", () => {
+  assert.deepEqual(parseHomeScratchpadLines(" Call dentist \n\n Pick up prescription\r\nFix billing page \n"), [
+    "Call dentist",
+    "Pick up prescription",
+    "Fix billing page",
+  ]);
+  const items = createHomeScratchpadItems(
+    " Same line \n\nSame line",
+    new Date("2026-10-03T12:03:00.000Z"),
+    ["scratchpad-existing"],
+  );
+  assert.deepEqual(items.map((item) => item.text), ["Same line", "Same line"]);
+  assert.equal(new Set(items.map((item) => item.id)).size, 2);
+  const moved = moveHomeScratchpadTextToItems({
+    scratchpadText: "old draft",
+    scratchpadItems: [{ id: "existing", text: "Existing", createdAt: "2026-10-03T12:00:00.000Z" }],
+  }, " First \n\nSecond ", new Date("2026-10-03T12:04:00.000Z"));
+  assert.equal(moved?.scratchpadText, "");
+  assert.deepEqual(moved?.scratchpadItems.map((item) => item.text), ["Existing", "First", "Second"]);
+  assert.equal(new Set(moved?.scratchpadItems.map((item) => item.id)).size, 3);
+  assert.ok(moved?.scratchpadItems.slice(1).every((item) => item.createdAt === "2026-10-03T12:04:00.000Z"));
+  assert.equal(moveHomeScratchpadTextToItems({ scratchpadText: "", scratchpadItems: [] }, " \n\t"), null);
+});
+
+test("Home V5 Routine chunks migrate to stable explicit V8 sections", () => {
   const migrated = normalizeHomeTodoState({
     clientUpdatedAt: "2026-07-28T12:00:00.000Z",
     schemaVersion: 5,
@@ -552,7 +737,7 @@ test("Home V5 Routine chunks migrate to stable explicit V6 sections", () => {
     routinesPerSection: 3,
     routineSectionNames: { "0": "  Morning ", "1": "Evening" },
   });
-  assert.equal(migrated.schemaVersion, 6);
+  assert.equal(migrated.schemaVersion, 8);
   assert.deepEqual(migrated.routineSections, [
     { id: "routine-section-0", name: "Morning" },
     { id: "routine-section-1", name: "Evening" },
@@ -567,14 +752,14 @@ test("Home V5 Routine chunks migrate to stable explicit V6 sections", () => {
   assert.deepEqual(buildHomeRoutineSections(migrated.routineTaskIds, migrated.routineSections, migrated.routineSectionIdByTaskId).map((section) => section.groupIds), [["a", "b", "c"], ["d"]]);
 });
 
-test("Home V4 Routine capacity migrates to V6 without losing order", () => {
+test("Home V4 Routine capacity migrates to V8 without losing order", () => {
   const migrated = normalizeHomeTodoState({
     schemaVersion: 4,
     taskIds: [],
     routineTaskIds: ["routine-b", "routine-a"],
     routinesPerPhase: 4,
   });
-  assert.equal(migrated.schemaVersion, 6);
+  assert.equal(migrated.schemaVersion, 8);
   assert.deepEqual(migrated.routineSections, [{ id: "routine-section-0", name: "Section 1" }]);
   assert.deepEqual(migrated.routineTaskIds, ["routine-b", "routine-a"]);
   assert.deepEqual(migrated.routineSectionIdByTaskId, { "routine-b": "routine-section-0", "routine-a": "routine-section-0" });
@@ -624,7 +809,7 @@ test("Home V6 preserves Routine assignments outside Home To-do membership", () =
 
 test("Home V6 assignments have one section per Routine and safe stale fallback", () => {
   const state = normalizeHomeTodoState({
-    schemaVersion: 6,
+    schemaVersion: 8,
     routineTaskIds: ["a", "b"],
     routineSections: [{ id: "morning", name: "Morning" }, { id: "evening", name: "Evening" }],
     routineSectionIdByTaskId: { a: "morning", b: "unknown", stale: "evening" },
@@ -738,13 +923,16 @@ test("Home state rejects malformed Routine order, capacity, and names while pres
     routineSectionNames: { "0": "  Morning  ", "1": " ", "-1": "Invalid", bad: "Invalid", "2": 3 },
   }), {
     clientUpdatedAt: new Date(0).toISOString(),
-    schemaVersion: 6,
+    schemaVersion: 8,
     taskIds: ["todo-a"],
     taskDayOffsets: { "todo-a": 2 },
     tasksPerDay: 15,
     routineTaskIds: ["routine-a"],
     routineSections: [{ id: "routine-section-0", name: "Morning" }],
     routineSectionIdByTaskId: { "routine-a": "routine-section-0" },
+    urgentTaskIds: [],
+    scratchpadText: "",
+    scratchpadItems: [],
   });
 });
 
@@ -864,15 +1052,179 @@ test("Home todo search sorts full hierarchy paths together", () => {
   assert.deepEqual(results.map((entry) => entry.task.id), ["a", "a-child", "b", "b-child"]);
 });
 
+test("Home Attention and Missed projections use canonical memberships without mutating Home state", () => {
+  const attention = task("attention", { status: "missed" });
+  const missed = task("missed");
+  const statusOnlyMissed = task("status-only-missed", { status: "missed" });
+  const completeAttention = task("complete-attention", { status: "complete" });
+  const tasks = [attention, missed, statusOnlyMissed, completeAttention];
+  const memberships = {
+    attention: [{ id: "attention" }],
+    missed: [{ id: "missed" }],
+    "status-only-missed": [],
+    "complete-attention": [{ id: "attention" }],
+  };
+  const state = normalizeHomeTodoState({ taskIds: ["missed"], urgentTaskIds: ["attention"], routineTaskIds: ["routine"] });
+
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, memberships, "attention").map((entry) => entry.id), ["attention"]);
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, memberships, "missed").map((entry) => entry.id), ["missed"]);
+  assert.deepEqual(state.taskIds, ["missed"]);
+  assert.deepEqual(state.urgentTaskIds, ["attention"]);
+  assert.deepEqual(state.routineTaskIds, ["routine"]);
+
+  const refreshedMemberships = { ...memberships, missed: [{ id: "missed" }, { id: "attention" }] };
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, refreshedMemberships, "attention").map((entry) => entry.id), ["attention", "missed"]);
+  assert.deepEqual(getHomeTasksByCanonicalMembership(tasks, { ...refreshedMemberships, missed: [] }, "missed").map((entry) => entry.id), []);
+});
+
+test("Home Task rows combine canonical root Folder paths with parent Task ancestry", () => {
+  const folders = [
+    { id: "projects", name: "Projects", parent_folder_id: null },
+    { id: "games", name: "Games", parent_folder_id: "projects" },
+  ] as TaskContentFolderRow[];
+  const root = task("root", { title: "Madden Franchise", task_content_folder_id: "games" });
+  const step = task("step", { title: "Weekly Tasks", parent_task_id: root.id });
+  const substep = task("substep", { title: "Review Stats", parent_task_id: step.id });
+  const parentOnly = task("parent-only", { title: "Parent Task" });
+  const childWithoutFolder = task("child-without-folder", { title: "Child Task", parent_task_id: parentOnly.id });
+  const tasks = [root, step, substep, parentOnly, childWithoutFolder];
+
+  assert.deepEqual(buildHomeTaskRowHierarchy(root, tasks, folders), ["Projects", "Games"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(step, tasks, folders), ["Projects", "Games", "Madden Franchise"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(substep, tasks, folders), ["Projects", "Games", "Madden Franchise", "Weekly Tasks"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(childWithoutFolder, tasks, folders), ["Parent Task"]);
+  assert.deepEqual(buildHomeTaskRowHierarchy(task("plain", { title: "Plain Task" }), [task("plain", { title: "Plain Task" })], folders), []);
+  assert.equal(buildHomeTaskRowHierarchy(step, tasks, folders).includes("Weekly Tasks"), false);
+});
+
 test("Home To-do search includes existing members and guards duplicate adds", () => {
   const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
-  assert.match(source, /const isTodoSearch = activeHomeTab === "todo"/);
-  assert.match(source, /isHomeTodoTaskEligible\(task, tasks, taskById\) && \(isTodoSearch \|\| !selected\.has\(task\.id\)\)/);
-  assert.match(source, /isInTodo: isTodoSearch && selected\.has\(task\.id\)/);
+  assert.match(source, /const todoTaskIdSet = new Set\(reconciledTaskIds\)/);
+  assert.match(source, /const urgentTaskIdSet = new Set\(reconciledUrgentTaskIds\)/);
+  assert.match(source, /isInTodo = todoTaskIdSet\.has\(task\.id\)/);
+  assert.match(source, /isInUrgent = urgentTaskIdSet\.has\(task\.id\)/);
+  assert.match(source, /activeHomeTab === "urgent" \? isInUrgent : activeHomeTab === "todo" \? isInTodo \|\| isInUrgent : false/);
+  assert.match(source, /promoteHomeSearchResultToUrgent/);
   assert.match(source, /taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]/);
   assert.match(source, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
   assert.match(source, /sortHomeTodoSearchResults\(tasks/);
+  assert.match(source, /membershipLabel.*"In Urgent"/);
   assert.match(source, /In To-do/);
+});
+
+test("Home derived tabs use canonical membership, retain task controls, and avoid Home-local actions", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const homeStateSource = readFileSync(new URL("../src/lib/home-todo-state.ts", import.meta.url), "utf8");
+  const renderSource = source.slice(source.indexOf("function renderHomeTask"), source.indexOf("\n  useEffect", source.indexOf("function renderHomeTask")));
+  const derivedViewStart = source.lastIndexOf(') : activeHomeTab === "attention" ?');
+  const derivedViewEnd = source.indexOf(') : (', derivedViewStart);
+  const derivedViewSource = source.slice(derivedViewStart, derivedViewEnd);
+
+  assert.match(source, /export type HomePanelTab = "urgent" \| "todo" \| "attention" \| "missed" \| "routine" \| "scratchpad"/);
+  assert.match(source, /getHomeTasksByCanonicalMembership\(tasks, listMembershipsByTaskId, "attention", taskById\)/);
+  assert.match(source, /getHomeTasksByCanonicalMembership\(tasks, listMembershipsByTaskId, "missed", taskById\)/);
+  assert.match(homeStateSource, /export function getHomeTasksByCanonicalMembership[\s\S]*isHomeTodoTaskEligible\(task, tasks, taskById\)/);
+  assert.match(source, /activeHomeTab === "attention" \|\| activeHomeTab === "missed" \? null/);
+  assert.match(source, /if \(creationTab === "attention" \|\| creationTab === "missed"\) return null/);
+  assert.match(source, /if \(activeHomeTab === "attention" \|\| activeHomeTab === "missed"\) return;/);
+  assert.match(source, /activeHomeTab === "todo" \? "To-do list"[\s\S]*activeHomeTab === "attention" \? "Attention"[\s\S]*activeHomeTab === "missed" \? "Missed"[\s\S]*activeHomeTab === "routine" \? "Routine"[\s\S]*"Scratchpad"/);
+  assert.match(source, /<AdhdChip[\s\S]*>\s*Urgent\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*To-do\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Attention\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Missed\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Routine\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Scratchpad\s*<\/AdhdChip>/);
+  assert.match(source, /No tasks need Attention right now\./);
+  assert.match(source, /No missed tasks right now\./);
+  assert.match(source, /const isDerived = mode === "attention" \|\| mode === "missed"/);
+  assert.match(renderSource, /const hierarchy = buildHomeTaskRowHierarchy\(task, tasks, taskContentFolders, taskById, taskHierarchy\)/);
+  assert.doesNotMatch(renderSource, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
+  assert.match(source, /renderHomeTask\(task, index, handle, "urgent"\)/);
+  assert.match(source, /renderHomeTask\(task, index, handle, "todo"\)/);
+  assert.match(source, /renderHomeTask\([\s\S]*"routine"[\s\S]*\)/);
+  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
+  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
+  assert.match(renderSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(renderSource, /!isRoutineChild && !isDerived \? \(/);
+  assert.match(renderSource, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
+  assert.match(renderSource, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
+  assert.match(renderSource, /attentionReason=\{taskAttentionReasonByTaskId\[task\.id\]\}/);
+  assert.doesNotMatch(homeStateSource, /taskAttentionReasonByTaskId/);
+  assert.doesNotMatch(derivedViewSource, /SortableList|updateTaskIds|updateUrgentTaskIds|updateRoutineTaskIds|onSetRoutineMembership|Move to Top|Move to Bottom|Remove from Home To-do|Remove from Attention|Remove from Missed/);
+});
+
+test("Home derived task rows use canonical Task-ID keys and preserve Routine row keys", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const renderStart = source.indexOf("function renderHomeTask");
+  const renderEnd = source.indexOf("\n  useEffect", renderStart);
+  const renderSource = source.slice(renderStart, renderEnd);
+  const derivedViewStart = source.lastIndexOf(') : activeHomeTab === "attention" ?');
+  const derivedViewEnd = source.indexOf(') : (', derivedViewStart);
+  const derivedViewSource = source.slice(derivedViewStart, derivedViewEnd);
+
+  assert.match(renderSource, /key=\{rowKey \?\? task\.id\}/);
+  assert.doesNotMatch(renderSource, /key=\{index\}/);
+  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
+  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
+  assert.match(source, /renderHomeTask\(\s*task,\s*reconciledRoutineTaskIds\.indexOf\(group\.anchorId\),\s*isAnchor \? handle : null,\s*"routine",\s*`\$\{group\.anchorId\}-\$\{task\.id\}`,/);
+});
+
+test("Home Urgent search uses guarded Priority 5 promotion before the shared exclusive move", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const urgentSearchSource = readFileSync(new URL("../src/lib/home-urgent-search.ts", import.meta.url), "utf8");
+  const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const searchAddStart = source.indexOf("async function addSearchResult");
+  const searchAddEnd = source.indexOf("\n  function saveScratchpadDraft", searchAddStart);
+  const searchAddSource = source.slice(searchAddStart, searchAddEnd);
+  const priorityIndex = urgentSearchSource.indexOf('await onSetTaskPriority(taskId, "5")');
+  const failureGuardIndex = urgentSearchSource.indexOf("if (!promoted) return false;");
+  const moveIndex = urgentSearchSource.indexOf("moveTodoTaskToUrgent(taskId)");
+  assert.match(source, /reconcileHomeUrgentTaskIds\(state\.urgentTaskIds, tasks\)/);
+  assert.match(searchAddSource, /promoteHomeSearchResultToUrgent/);
+  assert.match(urgentSearchSource, /await onSetTaskPriority\(taskId, "5"\)/);
+  assert.match(urgentSearchSource, /moveTodoTaskToUrgent\(taskId\)/);
+  assert.ok(priorityIndex >= 0 && priorityIndex < failureGuardIndex && failureGuardIndex < moveIndex);
+  assert.match(source, /priority_level: 5 as const/);
+  assert.match(source, /moveUrgentTaskToTodo\(task\.id, destination\.dayOffset\)/);
+  assert.match(source, /moveTodoTaskToUrgent\(task\.id\)/);
+  assert.match(source, /Move to Urgent/);
+  assert.match(source, /Move to To-do/);
+  assert.match(source, /Remove from Urgent/);
+  assert.match(source, /onReorder=\{\(nextTasks\) => updateUrgentTaskIds\(\(\) => nextTasks\.map\(\(task\) => task\.id\)\)\}/);
+  assert.match(taskAppSource, /onSetTaskPriority=\{\(taskId, priority\) => setTaskPriority\(taskId, priority\)\}/);
+  assert.doesNotMatch(searchAddSource, /task\.is_urgent|is_urgent|task\.status|task\.due_on|task\.repeat/);
+});
+
+test("Home shared Task search stays in shell flow for Urgent, To-do, and Routine while Scratchpad remains separate", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const panelStart = source.indexOf('{isSearchOpen && query.trim() ? (');
+  const panelEnd = source.indexOf("\n          ) : null}", panelStart);
+  const panelSource = source.slice(panelStart, panelEnd);
+  assert.match(panelSource, /max-h-\[min\(55vh,26rem\)\] overflow-y-auto/);
+  assert.doesNotMatch(panelSource, /absolute|inset-x-0|top-full/);
+  assert.match(source, /activeHomeTab === "scratchpad"/);
+  assert.match(source, /activeHomeTab === "urgent"/);
+  assert.match(source, /activeHomeTab === "todo"/);
+  assert.match(source, /activeHomeTab === "routine"/);
+  assert.match(source, /<textarea/);
+  assert.match(source, /placeholder="Write freely…"/);
+  assert.match(source, /Move lines to items/);
+});
+
+test("Home Scratchpad is non-Task state and conversion preserves source until canonical creation succeeds", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  const composerSource = readFileSync(new URL("../src/components/task-app/task-creation-composer.tsx", import.meta.url), "utf8");
+  assert.match(source, /placeholder="Write freely…"/);
+  assert.match(source, /saveScratchpadText\(scratchpadDraft\)/);
+  assert.match(source, /moveScratchpadTextToItems\(scratchpadDraft\)/);
+  assert.match(source, /setScratchpadDraft\(""\)/);
+  assert.match(source, /onKeyDown=\{\(event\) => \{[\s\S]*event\.key === "Escape"/);
+  assert.match(source, /updateScratchpadItem\(itemId, scratchpadEditDraft\)/);
+  assert.match(source, /Convert to Task/);
+  assert.match(source, /initialTitle=\{state\.scratchpadItems\.find/);
+  assert.match(source, /updateTaskDayOffset\(createdTask\.id, 0\)/);
+  assert.match(source, /deleteScratchpadItem\(conversionItemId\)/);
+  assert.match(hookSource, /moveHomeScratchpadTextToItems/);
+  assert.match(hookSource, /scratchpadText: text/);
+  assert.match(hookSource, /reorderHomeScratchpadItems/);
+  assert.match(composerSource, /initialTitle\?: string/);
+  assert.match(composerSource, /const \[title, setTitle\] = useState\(initialTitle\)/);
 });
 
 test("shared drag reorder moves Home task ids without mutating the source", () => {
@@ -896,10 +1248,10 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /items=\{visibleTasks\}/);
   assert.match(source, /mergeHomeTodoVisibleTaskIds\(\s*taskIds,\s*visibleTasks\.map\(\(task\) => task\.id\),\s*nextTasks\.map\(\(task\) => task\.id\),\s*\)/);
   assert.doesNotMatch(source, /updateTaskIds\(\(\) => reconciledTaskIds\)/);
-  assert.match(source, /const durableTaskIndex = state\.taskIds\.indexOf\(task\.id\)/);
-  assert.match(source, /const renderedDayOffset = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
-  assert.match(source, /const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0/);
-  assert.match(source, /const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
+  assert.match(source, /const durableTaskIndex = isUrgent \? state\.urgentTaskIds\.indexOf\(task\.id\) : state\.taskIds\.indexOf\(task\.id\)/);
+  assert.match(source, /const renderedDayOffset = isUrgent \? null : daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
+  assert.match(source, /const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && \(isUrgent \|\| renderedDayOffset === 0\)/);
+  assert.match(source, /const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === \(isUrgent \? state\.urgentTaskIds\.length : state\.taskIds\.length\) - 1/);
   assert.match(source, /const routineSectionIndex = isRoutine && routineSectionGroupIds \? routineSectionGroupIds\.indexOf\(task\.id\) : index/);
   assert.match(source, /const isAtRoutineTop = isRoutine && routineSectionIndex === 0/);
   assert.match(source, /const isAtRoutineBottom = isRoutine && routineSectionIndex === routineSectionLength - 1/);
@@ -943,7 +1295,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(sortableSource, /processPointerMove\(event\.clientY\)/);
   assert.match(hookSource, /state: outgoing/);
   assert.match(hookSource, /tasksPerDay: nextTasksPerDay/);
-  assert.match(hookSource, /schemaVersion: 6/);
+  assert.match(hookSource, /schemaVersion: 8/);
   assert.match(hookSource, /routineSections/);
   assert.match(hookSource, /routineSectionIdByTaskId/);
   assert.match(hookSource, /createRoutineSection/);
@@ -959,7 +1311,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(taskAppSource, /taskHistoryStreakSummaries=\{effectiveTaskHistoryStreakSummaries\}/);
   assert.match(taskAppSource, /manualMembershipsByTaskId=\{manualMembershipsByTaskId\}/);
   assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
-  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 4);
+  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 5);
   assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
   assert.match(source, /const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2"/);
   assert.match(source, /max-sm:-ml-3 sm:-ml-2 shrink-0/);
@@ -979,7 +1331,8 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /<Settings2 aria-hidden="true" \/>/);
   assert.match(source, /aria-haspopup="menu"/);
   assert.match(source, /role="menu"/);
-  assert.match(source, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" \}\)/);
+  assert.match(source, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
+  assert.doesNotMatch(source, /renderTaskStatusCircle\(displayStatus, "sm", \{ className: "!h-7 !w-7"/);
   assert.doesNotMatch(source, /flex shrink-0 flex-col items-center/);
   assert.doesNotMatch(source, /basis-full/);
   assert.match(source, /<ArrowUpToLine aria-hidden="true"/);
@@ -987,13 +1340,13 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)\)/);
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)\)/);
   assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
-  assert.match(source, /!isRoutineChild \? \(/);
+  assert.match(source, /!isRoutineChild && !isDerived \? \(/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
-  assert.match(source, /const durableTaskIndex = state\.taskIds\.indexOf\(task\.id\)/);
-  assert.match(source, /const renderedDayOffset = daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
-  assert.match(source, /const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0/);
-  assert.match(source, /const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state\.taskIds\.length - 1 && renderedDayOffset === 7/);
+  assert.match(source, /const durableTaskIndex = isUrgent \? state\.urgentTaskIds\.indexOf\(task\.id\) : state\.taskIds\.indexOf\(task\.id\)/);
+  assert.match(source, /const renderedDayOffset = isUrgent \? null : daySections\.find\(\(section\) => section\.taskIds\.includes\(task\.id\)\)/);
+  assert.match(source, /const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && \(isUrgent \|\| renderedDayOffset === 0\)/);
+  assert.match(source, /const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === \(isUrgent \? state\.urgentTaskIds\.length : state\.taskIds\.length\) - 1/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)/);
   assert.match(source, /moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)/);
   assert.match(source, /updateTaskDayOffset\(task\.id, 0\)/);
@@ -1013,7 +1366,8 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /<div className="relative mt-2" ref=\{searchRef\}>/);
   assert.match(source, /<TaskStatusCircleRail/);
   assert.match(source, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
-  assert.match(source, /useState<HomePanelTab>\("todo"\)/);
+  assert.match(source, /useState<HomePanelTab>\("urgent"\)/);
+  assert.match(source, /<AdhdChip[\s\S]*>\s*Urgent\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*To-do\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Attention\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Missed\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Routine\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Scratchpad\s*<\/AdhdChip>/);
   assert.match(source, /getHomeRoutineTaskIds/);
   assert.match(source, /manualMembershipsByTaskId/);
   assert.match(source, /routineTaskIds/);
@@ -1022,15 +1376,17 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /routineTasks\.map/);
   assert.match(source, /No Routine tasks yet\./);
   assert.match(source, /activeHomeTab === "routine"/);
-  assert.match(source, /const isTodoSearch = activeHomeTab === "todo"/);
-  assert.match(source, /isHomeTodoTaskEligible\(task, tasks, taskById\) && \(isTodoSearch \|\| !selected\.has\(task\.id\)\)/);
-  assert.match(source, /isInTodo: isTodoSearch && selected\.has\(task\.id\)/);
+  assert.match(source, /const isRoutineSearch = activeHomeTab === "routine"/);
+  assert.match(source, /const todoTaskIdSet = new Set\(reconciledTaskIds\)/);
+  assert.match(source, /const urgentTaskIdSet = new Set\(reconciledUrgentTaskIds\)/);
+  assert.match(source, /isInTodo = todoTaskIdSet\.has\(task\.id\)/);
+  assert.match(source, /isInUrgent = urgentTaskIdSet\.has\(task\.id\)/);
   assert.match(source, /async function addSearchResult\(taskId: string\)/);
   assert.match(source, /taskIds\.includes\(taskId\) \? taskIds : \[\.\.\.taskIds, taskId\]/);
   assert.match(source, /In To-do/);
   assert.match(source, /onSetRoutineMembership\(taskId, true\)/);
   assert.match(source, /onSetRoutineMembership\(task\.id, false\)/);
-  assert.match(source, /activeHomeTab === "todo"\s*\? \(taskId\) => updateTaskIds/);
+  assert.match(source, /creationTab === "todo" \|\| creationTab === "scratchpad"/);
   assert.match(source, /<TaskCreationComposer[\s\S]*onCreate=\{handleCreateTask\}/);
   assert.match(creationComposerSource, /const \[taskTypeSelection, setTaskTypeSelection\] = useState\(initialTaskTypeSelection\)/);
   assert.match(creationComposerSource, /<TaskTypeSelect[\s\S]*ariaLabel="Task Type"[\s\S]*options=\{taskTypeOptions\}[\s\S]*value=\{taskTypeSelection\}/);
@@ -1070,9 +1426,26 @@ test("Home Routine section updates use canonical Routine ordering", () => {
   assert.match(updateSource, /nextRoutineState\.routineTaskIds\) === JSON\.stringify\(current\.routineTaskIds\)/);
 });
 
+test("useHomeTodoState exposes V8 Urgent and Scratchpad mutations through shared persistence", () => {
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  assert.match(hookSource, /const commitState = useCallback/);
+  assert.match(hookSource, /const updateUrgentTaskIds = useCallback/);
+  assert.match(hookSource, /const moveUrgentTaskToTodo = useCallback/);
+  assert.match(hookSource, /const moveTodoTaskToUrgent = useCallback/);
+  assert.match(hookSource, /const saveScratchpadText = useCallback/);
+  assert.match(hookSource, /const moveScratchpadTextToItems = useCallback/);
+  assert.match(hookSource, /const updateScratchpadItem = useCallback/);
+  assert.match(hookSource, /const deleteScratchpadItem = useCallback/);
+  assert.match(hookSource, /const reorderScratchpadItems = useCallback/);
+  assert.match(hookSource, /schemaVersion: 8/);
+  assert.match(hookSource, /persistCache\(next, userId\)/);
+  assert.match(hookSource, /scheduleWrite\(\)/);
+});
+
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
   const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   assert.match(source, /<TaskHomePage[\s\S]*onCreateTaskWithType=\{createHomeTodoTaskWithType\}/);
+  assert.match(source, /<TaskHomePage[\s\S]*onSetTaskPriority=\{\(taskId, priority\) => setTaskPriority\(taskId, priority\)\}/);
   assert.match(source, /<TaskHomePage[\s\S]*taskTypeOptions=\{taskTypeOptions\}/);
   assert.doesNotMatch(source, /const createTaskFromComposer = useCallback/);
   assert.doesNotMatch(source, /createTaskAndOpenSharedEditor\([\s\S]*draft\.metadata/);
@@ -1082,7 +1455,7 @@ test("TaskApp passes Home creation through the shared canonical addTask seam", (
   assert.match(homeCreation, /resolveTaskTypeSelection\(selectionValue, customBehaviorRulesets\)/);
   assert.match(homeCreation, /custom_ruleset_id: selection\.customRulesetId/);
   assert.match(homeCreation, /task_type: selection\.taskType/);
-  assert.match(homeCreation, /addTask\([\s\S]*buildNewTaskDraft\(title\)/);
+  assert.match(homeCreation, /addTask\([\s\S]*buildNewTaskDraft\(title, \{ dueOn: todayKey \}\)/);
   assert.match(homeCreation, /\.\.\.metadata/);
   assert.match(homeCreation, /buildTaskPriorityUpdate\(metadata\.priority_level\)/);
   assert.match(homeCreation, /if \(!selection\) \{[\s\S]*setMessage\(\{ tone: "warn", text: "That Task Type is no longer available\." \}\);[\s\S]*return null;/);
@@ -1123,7 +1496,7 @@ test("Home Routine child drag reuses TaskApp sibling reorder without changing Ho
   assert.match(taskAppSource, /<TaskHomePage[\s\S]*onReorderChildTask=\{\(taskId, instruction\) => \{ void reorderChildTask\(taskId, instruction\); \}\}/);
   assert.match(homeSource, /items=\{sectionRoutineGroups\}/);
   assert.match(homeSource, /mergeHomeTodoVisibleTaskIds\([\s\S]*section\.groupIds[\s\S]*nextGroups\.map/);
-  assert.match(homeSource, /!isRoutineChild \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(homeSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
 });
 
 test("Home row gear menus and long-press fast actions preserve Home behavior", () => {
@@ -1222,7 +1595,7 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   assert.match(source, /if \(!rowActionMenuRef\.current\?\.contains\(event\.target as Node\)\) setRowActionMenu\(null\)/);
   assert.match(source, /setActiveHomeTab\(nextTab\);[\s\S]*setRowActionMenu\(null\);[\s\S]*setIsFastActionMode\(false\)/);
   assert.doesNotMatch(source, /moveDayMenuTaskId|moveDayMenuRef/);
-  assert.match(source, /!isRoutineChild \? \(/);
+  assert.match(source, /!isRoutineChild && !isDerived \? \(/);
 });
 
 test("Home To-do consumes canonical streak and Attention projections without changing Routine metadata", () => {

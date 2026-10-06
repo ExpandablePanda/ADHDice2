@@ -235,8 +235,8 @@ test("live due-date and History mutations reach the shared Table/List row status
     syncLiveTask: true,
   }), true);
   const historyRow = rowFor(createStableTaskRowModelCache(), historyTasks[0]!, historyRows);
-  assert.equal(historyRow.displayStatus, "upcoming");
-  assert.equal(historyRow.row.status, "upcoming");
+  assert.equal(historyRow.displayStatus, "not_due");
+  assert.equal(historyRow.row.status, "not_due");
 });
 
 test("schedule-only callbacks pass the returned task for immediate Effective Timeline streak refresh", async () => {

@@ -105,6 +105,15 @@ test("task ui state migration drops invalid columns and repairs bucket/view/stat
   assert.equal(migrated.visibleColumnsByView.matrix.includes("fake_column_3" as never), false);
 });
 
+test("legacy Upcoming status filters normalize to Not Due without duplication", () => {
+  const migrated = migrateLegacyTaskUiState({
+    ...DEFAULT_TASK_UI_STATE,
+    statusFilters: ["upcoming", "not_due", "pending"],
+  });
+
+  assert.deepEqual(migrated.statusFilters, ["not_due", "pending"]);
+});
+
 test("task ui state migration removes the retired Trash status filter", () => {
   const migrated = migrateLegacyTaskUiState({
     ...DEFAULT_TASK_UI_STATE,

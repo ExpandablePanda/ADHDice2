@@ -3,10 +3,11 @@
 import { ArrowRight, BookOpen, Clock, Ellipsis, Star, Trash2, X } from "lucide-react";
 import type { TaskStatus } from "@/lib/database.types";
 import { formatOptionLabel } from "@/lib/task-label-format";
+import { normalizeTaskDisplayStatus } from "@/lib/task-display-status";
 
 export function renderTaskStatusIcon(status: TaskStatus) {
   const iconClassName = "h-4 w-4";
-  switch (status) {
+  switch (normalizeTaskDisplayStatus(status)) {
     case "pending":
       return <Ellipsis className={iconClassName} />;
     case "in_progress":
@@ -19,8 +20,6 @@ export function renderTaskStatusIcon(status: TaskStatus) {
       return <Star className={iconClassName} />;
     case "complete":
       return <span className="text-sm font-bold leading-none">✓</span>;
-    case "upcoming":
-      return <Clock className={iconClassName} />;
     case "not_due":
       return (
         <span className="flex items-center gap-[2px]" aria-hidden="true">

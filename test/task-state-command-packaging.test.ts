@@ -92,6 +92,7 @@ test("task-state-command uses no broad alias and has a narrow resolvable local g
     "src/lib/task-state-engine/effective-timeline.ts",
     "src/lib/task-state-engine/engine.ts",
     "src/lib/task-state-engine/persistence-projection.ts",
+    "src/lib/task-state-engine/quota.ts",
     "src/lib/task-state-engine/recurrence.ts",
     "src/lib/task-state-engine/types.ts",
     "src/lib/task-tracking.ts",

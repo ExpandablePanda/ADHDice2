@@ -42,6 +42,7 @@ function updateRepeatDraft(current: BatchTaskEditDraft, selection: BatchTaskEdit
     repeatMonthlyMode: current.repeatMonthlyMode,
     repeatMonthlyOrdinal: current.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: current.repeatMonthlyWeekday,
+    repeatEndOn: null,
   };
   if (selection === "custom") {
     return {

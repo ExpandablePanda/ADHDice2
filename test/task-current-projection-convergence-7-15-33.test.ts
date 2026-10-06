@@ -680,8 +680,8 @@ test("7.15.33 locks the four live-derived source shapes and converges both reads
     IDS.delayed,
   ]);
   const expected = {
-    [IDS.rollingStatusAndDue]: { status: "upcoming", dueOn: "2026-09-24" },
-    [IDS.rollingDueOnly]: { status: "upcoming", dueOn: "2026-09-25" },
+    [IDS.rollingStatusAndDue]: { status: "not_due", dueOn: "2026-09-24" },
+    [IDS.rollingDueOnly]: { status: "not_due", dueOn: "2026-09-25" },
     [IDS.weeklyDueOnly]: { status: "missed", dueOn: "2026-09-12" },
     [IDS.delayed]: { status: "delayed", dueOn: "2026-12-29" },
   } as const;

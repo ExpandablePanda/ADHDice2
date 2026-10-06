@@ -1,7 +1,7 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
+import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -9,6 +9,7 @@ import { AdhdDropdownPanel } from "@/components/ui-system/adhd-dropdown-panel";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
 import { TaskCreationComposer } from "./task-creation-composer";
+import { HomeBatchIntakeReview } from "./home-batch-intake-review";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
@@ -23,12 +24,21 @@ import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engin
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskListMembership } from "@/lib/task-lists";
+import type { TaskContentFolderRow } from "@/lib/task-content-folders";
 import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { HomeCurrentDayHistoryLoadStatus } from "@/lib/home-current-day-history-runtime";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import type { TaskCreationDraft } from "@/lib/task-creation";
+import { buildTaskHierarchyAdapter } from "@/lib/task-hierarchy";
+import { useScratchDictation } from "@/hooks/useScratchDictation";
+import { addMealFromLibraryFood, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, parseBatchIntake, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, type BatchIntakeDraft, type BatchIntakeManualKind, type BatchIntakeMealFoodProposalDraft, type BatchIntakeMealOccurrenceDraft } from "@/lib/home-batch-intake";
+import { applyBatchIntakeTaskMatches } from "@/lib/home-batch-intake-matching";
+import { executeBatchIntakePlan, buildBatchIntakeExecutionPlan, mergeBatchIntakeExecutionResults, type BatchFocusWriteResult, type BatchHealthWriteResult, type BatchIntakeApplyProgress, type BatchIntakeExecutionResult } from "@/lib/home-batch-intake-executor";
+import type { HealthFoodLibraryItem, HealthMealEntryInsert, HealthProfile, HealthWaterEntryInsert, HealthWeightEntryInsert } from "@/lib/database.types";
+import type { FocusCategory, FocusManualEntryInput, HistoricalFocusSession } from "@/lib/types";
+import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 import {
   filterHomeFinishedItems,
   getHomeFinishedTodayFilterDetails,
@@ -39,6 +49,7 @@ import {
   type HomeRecordMetricKey,
 } from "@/lib/home-progress";
 import {
+  buildHomeTaskRowHierarchy,
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
   buildHomeRoutineGroups,
@@ -48,7 +59,9 @@ import {
   formatHomeRoutineDueLabel,
   getHomeRoutineStreakMetadata,
   getHomeRoutineTaskIds,
+  getHomeTasksByCanonicalMembership,
   getHomeTodoSearchText,
+  reconcileHomeUrgentTaskIds,
   shouldPersistHomeRoutineReconciliation,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
@@ -57,13 +70,19 @@ import {
   reconcileHomeRoutineTaskIds,
   sortHomeTodoSearchResults,
   type HomeRoutineGroup,
+  type HomeScratchpadItem,
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
+import { promoteHomeSearchResultToUrgent } from "@/lib/home-urgent-search";
+import type { TaskPriorityLevelOption } from "@/lib/task-priority";
 import {
   TASK_TABLE_LIST_CHIP_CLASS,
   TASK_TABLE_CHIP_BASE_CLASS,
   TaskCurrentStreakChip,
 } from "@/components/ui/task-table-primitives";
+import { ScratchDictationControl } from "./scratch-dictation-control";
+import { VoiceMemoCard, VoiceMemoRecorder } from "./voice-memo";
+import type { VoiceMemoData } from "@/hooks/useVoiceMemos";
 
 const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-[#26324f] dark:text-white";
 const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2";
@@ -71,7 +90,7 @@ const HOME_TODO_ACTION_CLASS = "max-sm:!h-7 max-sm:!w-7";
 const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 const HOME_GEAR_LONG_PRESS_MS = 475;
 const HOME_GEAR_LONG_PRESS_MOVE_PX = 8;
-type HomePanelTab = "todo" | "routine";
+export type HomePanelTab = "urgent" | "todo" | "attention" | "missed" | "routine" | "scratchpad";
 type HomeRowActionMenuView = "actions" | "move-day" | "move-routine-section";
 
 type HomeRowActionMenuState = {
@@ -333,6 +352,7 @@ export function HomePage({
   manualMembershipsByTaskId,
   allTags,
   onCreateTaskWithType,
+  onSetTaskPriority,
   onSetRoutineMembership,
   onReorderChildTask,
   onOpenTask,
@@ -353,7 +373,10 @@ export function HomePage({
   calendarNowMs,
   calendarTimeZone,
   tasks,
+  taskContentFolders,
   userId,
+  onTranscribeScratchAudio,
+  voiceMemos,
   behaviorProfiles,
   behaviorPolicyRevisions,
   namedCustomRulesetBehaviorPolicyRevisions,
@@ -361,11 +384,24 @@ export function HomePage({
   behaviorPolicyLoading = false,
   behaviorPolicyLogicalDate,
   taskTypeOptions,
+  healthProfile,
+  healthFoods,
+  healthLoading,
+  addWaterEntries,
+  addWeightEntries,
+  addMealEntries,
+  focusCategories,
+  focusHistory,
+  handleManualFocusEntries,
+  syncTaskHistoryEntries,
+  onBatchIntakeHealthActivationChange,
+  onBatchIntakeFocusActivationChange,
 }: {
   listMembershipsByTaskId: Record<string, TaskListMembership[]>;
   manualMembershipsByTaskId: Readonly<Record<string, readonly string[]>>;
   allTags: string[];
   onCreateTaskWithType: (title: string, taskTypeSelectionValue: string, metadata: HomeTodoTaskMetadata) => Promise<Task | null>;
+  onSetTaskPriority: (taskId: string, priority: TaskPriorityLevelOption) => Promise<boolean>;
   onSetRoutineMembership: (taskId: string, included: boolean) => Promise<boolean>;
   onReorderChildTask: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenTask: (taskId: string) => void;
@@ -386,7 +422,10 @@ export function HomePage({
   calendarNowMs: number;
   calendarTimeZone: string;
   tasks: Task[];
+  taskContentFolders: readonly TaskContentFolderRow[];
   userId: string | null;
+  onTranscribeScratchAudio: (audio: Blob) => Promise<string>;
+  voiceMemos: VoiceMemoData;
   behaviorProfiles?: TaskBehaviorPolicyResolutionContext["behaviorProfiles"];
   behaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["behaviorPolicyRevisions"];
   namedCustomRulesetBehaviorPolicyRevisions?: TaskBehaviorPolicyResolutionContext["namedCustomRulesetBehaviorPolicyRevisions"];
@@ -394,13 +433,52 @@ export function HomePage({
   behaviorPolicyLoading?: boolean;
   behaviorPolicyLogicalDate: string;
   taskTypeOptions: ReadonlyArray<TaskTypeSelectionOption>;
+  healthProfile: HealthProfile | null;
+  healthFoods: HealthFoodLibraryItem[];
+  healthLoading: boolean;
+  addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
+  addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
+  addMealEntries: (inputs: Array<Omit<HealthMealEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
+  focusCategories: FocusCategory[];
+  focusHistory: HistoricalFocusSession[];
+  handleManualFocusEntries: (inputs: FocusManualEntryInput[]) => Promise<BatchFocusWriteResult>;
+  syncTaskHistoryEntries: (taskId: string, outcome: "done" | "did_my_best" | "missed", dates: string[], options?: { historicalOverride?: boolean; refreshCanonicalTaskBeforeCommit?: boolean }) => Promise<boolean>;
+  onBatchIntakeHealthActivationChange?: (active: boolean) => void;
+  onBatchIntakeFocusActivationChange?: (active: boolean) => void;
 }) {
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
-  const { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay } = useHomeTodoState(userId);
+  const {
+    createRoutineSection,
+    deleteScratchpadItem,
+    moveTodoTaskToUrgent,
+    moveUrgentTaskToTodo,
+    reorderScratchpadItems,
+    moveScratchpadTextToItems,
+    saveScratchpadText,
+    state,
+    syncStatus,
+    updateRoutineSectionName,
+    updateRoutineTaskIds,
+    updateRoutineTaskSection,
+    updateScratchpadItem,
+    updateTaskDayOffset,
+    updateTaskIds,
+    updateTasksPerDay,
+    updateUrgentTaskIds,
+  } = useHomeTodoState(userId);
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
-  const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("todo");
+  const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("urgent");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
+  const [scratchpadDraft, setScratchpadDraft] = useState("");
+  const [isShorthandHelpOpen, setIsShorthandHelpOpen] = useState(false);
+  const [editingScratchpadItemId, setEditingScratchpadItemId] = useState<string | null>(null);
+  const [scratchpadEditDraft, setScratchpadEditDraft] = useState("");
+  const [convertingScratchpadItemId, setConvertingScratchpadItemId] = useState<string | null>(null);
+  const [batchIntakeDrafts, setBatchIntakeDrafts] = useState<BatchIntakeDraft[] | null>(null);
+  const [batchIntakeApplying, setBatchIntakeApplying] = useState(false);
+  const [batchIntakeApplyProgress, setBatchIntakeApplyProgress] = useState<BatchIntakeApplyProgress | null>(null);
+  const [batchIntakeExecutionResult, setBatchIntakeExecutionResult] = useState<BatchIntakeExecutionResult | null>(null);
   const [isDoLaterOpen, setIsDoLaterOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [statusMenuTaskId, setStatusMenuTaskId] = useState<string | null>(null);
@@ -411,6 +489,7 @@ export function HomePage({
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
   const [routineChildDropTarget, setRoutineChildDropTarget] = useState<HomeRoutineChildDropTarget | null>(null);
   const searchRef = useRef<HTMLDivElement | null>(null);
+  const scratchpadRef = useRef<HTMLTextAreaElement | null>(null);
   const statusMenuRef = useRef<HTMLDivElement | null>(null);
   const rowActionMenuRef = useRef<HTMLDivElement | null>(null);
   const longPressTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -418,10 +497,29 @@ export function HomePage({
   const suppressGearClickRef = useRef(false);
   const suppressGearClickResetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
+  const scratchpadDraftDirtyRef = useRef(false);
+  const scratchpadEditCanceledRef = useRef(false);
   const routineSectionRenameCanceledRef = useRef(false);
   const routineChildDragStateRef = useRef<HomeRoutineChildDragState | null>(null);
   const routineChildDropTargetRef = useRef<HomeRoutineChildDropTarget | null>(null);
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const taskHierarchy = useMemo(() => buildTaskHierarchyAdapter(tasks), [tasks]);
+
+  const batchIntakeHasHealthRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "water" || draft.kind === "weight" || draft.kind === "meal"));
+  const batchIntakeHasFocusRows = Boolean(batchIntakeDrafts?.some((draft) => draft.kind === "focus"));
+  useEffect(() => {
+    onBatchIntakeHealthActivationChange?.(Boolean(batchIntakeDrafts && batchIntakeHasHealthRows));
+    return () => onBatchIntakeHealthActivationChange?.(false);
+  }, [batchIntakeDrafts, batchIntakeHasHealthRows, onBatchIntakeHealthActivationChange]);
+  useEffect(() => {
+    onBatchIntakeFocusActivationChange?.(Boolean(batchIntakeDrafts && batchIntakeHasFocusRows));
+    return () => onBatchIntakeFocusActivationChange?.(false);
+  }, [batchIntakeDrafts, batchIntakeHasFocusRows, onBatchIntakeFocusActivationChange]);
+
+  const effectiveBatchIntakeDrafts = useMemo(() => {
+    if (!batchIntakeDrafts || healthLoading || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
+    return reconcileBatchIntakeMealFoodProposals(batchIntakeDrafts, healthFoods, { createWriteId: (proposal) => proposal.writeId ?? createBrowserUuidV4() });
+  }, [batchIntakeDrafts, healthFoods, healthLoading]);
 
   useEffect(() => () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -435,6 +533,14 @@ export function HomePage({
   const todoTasks = useMemo(
     () => reconciledTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task)),
     [reconciledTaskIds, taskById],
+  );
+  const reconciledUrgentTaskIds = useMemo(
+    () => reconcileHomeUrgentTaskIds(state.urgentTaskIds, tasks),
+    [state.urgentTaskIds, tasks],
+  );
+  const urgentTasks = useMemo(
+    () => reconciledUrgentTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task)),
+    [reconciledUrgentTaskIds, taskById],
   );
   const routineTaskIds = useMemo(
     () => getHomeRoutineTaskIds(tasks, listMembershipsByTaskId, manualMembershipsByTaskId),
@@ -453,20 +559,43 @@ export function HomePage({
     [routineGroups],
   );
   const routineTaskIdSet = useMemo(() => new Set(routineTasks.map((task) => task.id)), [routineTasks]);
+  const attentionTasks = useMemo(
+    () => getHomeTasksByCanonicalMembership(tasks, listMembershipsByTaskId, "attention", taskById),
+    [listMembershipsByTaskId, taskById, tasks],
+  );
+  const missedTasks = useMemo(
+    () => getHomeTasksByCanonicalMembership(tasks, listMembershipsByTaskId, "missed", taskById),
+    [listMembershipsByTaskId, taskById, tasks],
+  );
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
-    if (!needle) return [];
-    const isTodoSearch = activeHomeTab === "todo";
-    const selected = isTodoSearch ? new Set(reconciledTaskIds) : routineTaskIdSet;
+    if (!needle || activeHomeTab === "attention" || activeHomeTab === "missed") return [];
+    const isRoutineSearch = activeHomeTab === "routine";
+    const todoTaskIdSet = new Set(reconciledTaskIds);
+    const urgentTaskIdSet = new Set(reconciledUrgentTaskIds);
     return sortHomeTodoSearchResults(tasks
-      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && (isTodoSearch || !selected.has(task.id)))
+      .filter((task) => isHomeTodoTaskEligible(task, tasks, taskById) && (!isRoutineSearch || !routineTaskIdSet.has(task.id)))
       .map((task) => {
         const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
         const searchable = getHomeTodoSearchText(task, hierarchy, listMembershipsByTaskId[task.id] ?? []);
-        return { hierarchy, isInTodo: isTodoSearch && selected.has(task.id), searchable, task };
+        const isInTodo = todoTaskIdSet.has(task.id);
+        const isInUrgent = urgentTaskIdSet.has(task.id);
+        return {
+          hierarchy,
+          isInTodo,
+          isInUrgent,
+          isSearchResultDisabled: activeHomeTab === "urgent" ? isInUrgent : activeHomeTab === "todo" ? isInTodo || isInUrgent : false,
+          membershipLabel: activeHomeTab === "urgent"
+            ? isInUrgent ? "In Urgent" : null
+            : activeHomeTab === "todo"
+              ? isInUrgent ? "In Urgent" : isInTodo ? "In To-do" : null
+              : null,
+          searchable,
+          task,
+        };
       })
       .filter((item) => item.searchable.includes(needle)));
-  }, [activeHomeTab, listMembershipsByTaskId, query, reconciledTaskIds, routineTaskIdSet, taskById, tasks]);
+  }, [activeHomeTab, listMembershipsByTaskId, query, reconciledTaskIds, reconciledUrgentTaskIds, routineTaskIdSet, taskById, tasks]);
 
   const { laterTaskIds, sections: daySections } = useMemo(
     () => buildHomeTodoDaySections(todoTasks.map((task) => task.id), state.tasksPerDay, new Date(calendarNowMs), calendarTimeZone, state.taskDayOffsets),
@@ -492,12 +621,46 @@ export function HomePage({
     updateRoutineTaskIds((currentRoutineTaskIds) => reconcileHomeRoutineTaskIds(currentRoutineTaskIds, routineTaskIds));
   }, [routineTaskIds, syncStatus, tasks.length, updateRoutineTaskIds]);
 
+  useEffect(() => {
+    if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
+    updateUrgentTaskIds((currentUrgentTaskIds) => reconcileHomeUrgentTaskIds(currentUrgentTaskIds, tasks));
+  }, [syncStatus, tasks, updateUrgentTaskIds]);
+
+  useEffect(() => {
+    if (!scratchpadDraftDirtyRef.current) setScratchpadDraft(state.scratchpadText);
+  }, [state.scratchpadText]);
+
+  const handleScratchpadDictationBody = useCallback((nextBody: string) => {
+    scratchpadDraftDirtyRef.current = true;
+    setScratchpadDraft(nextBody);
+  }, []);
+
+  const scratchpadDictation = useScratchDictation({
+    body: scratchpadDraft,
+    editorRef: scratchpadRef,
+    enabled: activeHomeTab === "scratchpad",
+    getCaretRange: () => {
+      const textarea = scratchpadRef.current;
+      if (!textarea || typeof textarea.selectionStart !== "number" || typeof textarea.selectionEnd !== "number") return null;
+      return { end: textarea.selectionEnd, start: textarea.selectionStart };
+    },
+    noteKey: "home-scratchpad",
+    microphoneLabel: "Home Scratchpad microphone",
+    onBodyChange: handleScratchpadDictationBody,
+    onTranscribeAudio: onTranscribeScratchAudio,
+    userId,
+  });
+
   function selectHomeTab(nextTab: HomePanelTab) {
+    if (nextTab !== "scratchpad") scratchpadDictation.cancel();
     setActiveHomeTab(nextTab);
     setIsSearchOpen(false);
+    setIsCreateOpen(false);
+    setConvertingScratchpadItemId(null);
     setRowActionMenu(null);
     setIsFastActionMode(false);
     setIsSettingsOpen(false);
+    setIsShorthandHelpOpen(false);
   }
 
   function clearGearLongPressTimer() {
@@ -585,26 +748,52 @@ export function HomePage({
   }
 
   async function handleCreateTask(draft: TaskCreationDraft) {
+    const creationTab = activeHomeTab;
+    if (creationTab === "attention" || creationTab === "missed") return null;
+    const conversionItemId = convertingScratchpadItemId;
+    const metadata = creationTab === "urgent"
+      ? { ...draft.metadata, priority_level: 5 as const }
+      : draft.metadata;
     const createdTask = await createHomeTodoTask(
       draft.title,
       draft.taskTypeSelection,
       onCreateTaskWithType,
-      activeHomeTab === "todo"
+      creationTab === "todo" || creationTab === "scratchpad"
         ? (taskId) => updateTaskIds((taskIds) => [...taskIds, taskId])
-        : () => {},
-      draft.metadata,
+        : creationTab === "urgent"
+          ? (taskId) => updateUrgentTaskIds((taskIds) => [...taskIds, taskId])
+          : () => {},
+      metadata,
     );
-    if (createdTask && activeHomeTab === "routine") {
+    if (createdTask && creationTab === "routine") {
       await onSetRoutineMembership(createdTask.id, true);
+    }
+    if (createdTask && creationTab === "scratchpad" && conversionItemId) {
+      updateTaskDayOffset(createdTask.id, 0);
+      deleteScratchpadItem(conversionItemId);
     }
     return createdTask;
   }
 
   function cancelCreateTask() {
     setIsCreateOpen(false);
+    setConvertingScratchpadItemId(null);
   }
 
   async function addSearchResult(taskId: string) {
+    if (activeHomeTab === "attention" || activeHomeTab === "missed") return;
+    if (activeHomeTab === "urgent") {
+      const promoted = await promoteHomeSearchResultToUrgent({
+        moveTodoTaskToUrgent,
+        onSetTaskPriority,
+        taskId,
+        urgentTaskIds: reconciledUrgentTaskIds,
+      });
+      if (!promoted) return;
+      setQuery("");
+      setIsSearchOpen(false);
+      return;
+    }
     if (activeHomeTab === "routine") {
       const enabled = await onSetRoutineMembership(taskId, true);
       if (enabled) {
@@ -613,7 +802,226 @@ export function HomePage({
       }
       return;
     }
+    if (reconciledUrgentTaskIds.includes(taskId)) return;
     updateTaskIds((taskIds) => taskIds.includes(taskId) ? taskIds : [...taskIds, taskId]);
+  }
+
+  function saveScratchpadDraft() {
+    if (!saveScratchpadText(scratchpadDraft)) return;
+    scratchpadDraftDirtyRef.current = false;
+  }
+
+  function moveScratchpadDraftToItems() {
+    if (!moveScratchpadTextToItems(scratchpadDraft)) return;
+    scratchpadDraftDirtyRef.current = false;
+    setScratchpadDraft("");
+  }
+
+  function parseScratchpadBatch() {
+    const parsed = parseBatchIntake(scratchpadDraft, {
+      focusCategories,
+      preferredWeightUnit: healthProfile?.preferred_weight_unit,
+      referenceDate: behaviorPolicyLogicalDate,
+    });
+    setBatchIntakeDrafts(applyBatchIntakeTaskMatches(parsed, tasks, taskContentFolders).map((draft) => (
+      draft.kind === "water" || draft.kind === "weight" || draft.kind === "focus" || (draft.kind === "meal" && draft.entryMode === "food_proposal")
+        ? { ...draft, writeId: createBrowserUuidV4() }
+        : draft
+    )));
+    setBatchIntakeApplyProgress(null);
+    setBatchIntakeExecutionResult(null);
+  }
+
+  function openManualBatch() {
+    setBatchIntakeDrafts([]);
+    setBatchIntakeApplyProgress(null);
+    setBatchIntakeExecutionResult(null);
+  }
+
+  function addManualBatchRow(kind: BatchIntakeManualKind) {
+    setBatchIntakeDrafts((current) => [
+      ...(current ?? []),
+      createManualBatchIntakeDraft(kind, {
+        date: behaviorPolicyLogicalDate,
+        id: createBrowserUuidV4(),
+        preferredWeightUnit: healthProfile?.preferred_weight_unit,
+      }),
+    ]);
+  }
+
+  function addBatchIntakeOccurrence(sourceDraft: BatchIntakeDraft) {
+    if (sourceDraft.kind === "unsupported" || (sourceDraft.kind === "meal" && sourceDraft.entryMode !== "occurrence")) return;
+    const duplicate = duplicateManualBatchIntakeDraft(sourceDraft, {
+      id: createBrowserUuidV4(),
+      writeId: createBrowserUuidV4(),
+    });
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const sourceIndex = current.reduce((lastIndex, draft, index) => draft.groupId === sourceDraft.groupId ? index : lastIndex, -1);
+      if (sourceIndex < 0) return [...current, duplicate];
+      return [...current.slice(0, sourceIndex + 1), duplicate, ...current.slice(sourceIndex + 1)];
+    });
+  }
+
+  function changeBatchIntakeDraft(nextDraft: BatchIntakeDraft) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const previous = current.find((draft) => draft.id === nextDraft.id);
+      if (!previous) return current;
+      if (previous.kind === "meal" && nextDraft.kind === "meal") {
+        if (previous.entryMode === "occurrence" && nextDraft.entryMode === "occurrence") {
+          const sharedContextChanged = previous.mealSlot !== nextDraft.mealSlot || previous.date !== nextDraft.date || previous.time !== nextDraft.time;
+          const appliedFoodChild = current.some((draft) => draft.kind === "meal" && draft.entryMode === "food" && draft.mealOccurrenceId === previous.id && batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied"));
+          if (sharedContextChanged && appliedFoodChild) return current;
+        }
+        return current.map((draft) => draft.id === nextDraft.id ? nextDraft : draft);
+      }
+      if (previous.kind === "focus" && nextDraft.kind === "focus") {
+        const appliedDraftIds = new Set(
+          batchIntakeExecutionResult?.rows
+            .filter((row) => row.status === "applied")
+            .map((row) => row.rowId) ?? [],
+        );
+        return changeBatchIntakeFocusDraftGroup(current, nextDraft, appliedDraftIds);
+      }
+      const sourceGroup = current.filter((draft) => draft.groupId === previous.groupId);
+      const appliedInSourceGroup = sourceGroup.some((draft) => batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied"));
+      const sharedIdentityChanged = previous.kind === "task" && nextDraft.kind === "task"
+        ? previous.selectedTaskId !== nextDraft.selectedTaskId
+        : false;
+      if (sharedIdentityChanged && appliedInSourceGroup) return current;
+
+      const sharedKind = nextDraft.kind === "task" || nextDraft.kind === "focus";
+      return current.map((draft) => {
+        if (draft.id === nextDraft.id) return nextDraft;
+        if (!sharedKind || draft.groupId !== previous.groupId) return draft;
+        const draftApplied = batchIntakeExecutionResult?.rows.some((row) => row.rowId === draft.id && row.status === "applied");
+        if (draftApplied) return draft;
+        if (nextDraft.kind === "task" && draft.kind === "task") {
+          return { ...draft, groupId: nextDraft.groupId, selectedTaskId: nextDraft.selectedTaskId, taskTitle: nextDraft.taskTitle };
+        }
+        if (nextDraft.kind === "focus" && draft.kind === "focus") {
+          return {
+            ...draft,
+            categoryId: nextDraft.categoryId,
+            focusSubtype: nextDraft.focusSubtype,
+            focusSubtype2: nextDraft.focusSubtype2,
+            focusType: nextDraft.focusType,
+            groupId: nextDraft.groupId,
+            title: nextDraft.title,
+          };
+        }
+        return draft;
+      });
+    });
+  }
+
+  function addMealFoodToOccurrence(occurrence: BatchIntakeMealOccurrenceDraft, food: HealthFoodLibraryItem) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === occurrence.id);
+      if (!liveOccurrence) return current;
+      const derived = addMealFromLibraryFood(liveOccurrence, food, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
+      const sourceIndex = current.reduce((lastIndex, draft, index) => draft.groupId === liveOccurrence.groupId ? index : lastIndex, -1);
+      if (sourceIndex < 0) return [...current, derived];
+      return [...current.slice(0, sourceIndex + 1), derived, ...current.slice(sourceIndex + 1)];
+    });
+  }
+
+  function addManualMealFoodToOccurrence(occurrence: BatchIntakeMealOccurrenceDraft) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === occurrence.id);
+      if (!liveOccurrence) return current;
+      const derived = createManualMealFood(liveOccurrence, { id: createBrowserUuidV4(), writeId: createBrowserUuidV4() });
+      const sourceIndex = current.reduce((lastIndex, draft, index) => draft.groupId === liveOccurrence.groupId ? index : lastIndex, -1);
+      if (sourceIndex < 0) return [...current, derived];
+      return [...current.slice(0, sourceIndex + 1), derived, ...current.slice(sourceIndex + 1)];
+    });
+  }
+
+  function resolveMealProposalToFood(proposal: BatchIntakeMealFoodProposalDraft, food: HealthFoodLibraryItem) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === proposal.mealOccurrenceId);
+      if (!liveOccurrence) return current;
+      const resolved = resolveBatchIntakeMealFoodProposal(proposal, liveOccurrence, food, { writeId: proposal.writeId ?? createBrowserUuidV4() });
+      return current.map((draft) => draft.id === proposal.id ? resolved : draft);
+    });
+  }
+
+  function useManualMealProposal(proposal: BatchIntakeMealFoodProposalDraft) {
+    setBatchIntakeDrafts((current) => {
+      if (!current) return current;
+      const liveOccurrence = current.find((draft): draft is BatchIntakeMealOccurrenceDraft => draft.kind === "meal" && draft.entryMode === "occurrence" && draft.id === proposal.mealOccurrenceId);
+      if (!liveOccurrence) return current;
+      const resolved = createManualMealFoodFromProposal(liveOccurrence, proposal, { writeId: proposal.writeId ?? createBrowserUuidV4() });
+      return current.map((draft) => draft.id === proposal.id ? resolved : draft);
+    });
+  }
+
+  function removeBatchIntakeRow(rowId: string) {
+    setBatchIntakeDrafts((current) => current?.filter((draft) => draft.id !== rowId) ?? null);
+    setBatchIntakeExecutionResult((current) => current ? { ...current, rows: current.rows.filter((row) => row.rowId !== rowId), taskGroups: current.taskGroups.filter((group) => group.rowId !== rowId) } : null);
+  }
+
+  function closeBatchIntakeReview() {
+    setBatchIntakeDrafts(null);
+    setBatchIntakeApplyProgress(null);
+    setBatchIntakeExecutionResult(null);
+  }
+
+  async function applyBatchIntake() {
+    if (!batchIntakeDrafts || batchIntakeApplying) return;
+    setBatchIntakeApplying(true);
+    try {
+      const plan = buildBatchIntakeExecutionPlan(effectiveBatchIntakeDrafts ?? [], {
+        preferredWeightUnit: healthProfile?.preferred_weight_unit,
+      });
+      const result = await executeBatchIntakePlan(plan, {
+        addMealEntries,
+        addWaterEntries,
+        addWeightEntries,
+        handleManualFocusEntries,
+        syncTaskHistoryEntries,
+      }, {
+        onProgress: setBatchIntakeApplyProgress,
+      });
+      setBatchIntakeExecutionResult((previous) => mergeBatchIntakeExecutionResults(previous, result));
+      const appliedIds = new Set(result.rows.filter((row) => row.status === "applied").map((row) => row.rowId));
+      if (appliedIds.size > 0) {
+        setBatchIntakeDrafts((current) => current?.map((draft) => appliedIds.has(draft.id) ? { ...draft, included: false } : draft) ?? null);
+      }
+    } finally {
+      setBatchIntakeApplying(false);
+    }
+  }
+
+  function beginScratchpadEdit(item: HomeScratchpadItem) {
+    scratchpadEditCanceledRef.current = false;
+    setEditingScratchpadItemId(item.id);
+    setScratchpadEditDraft(item.text);
+  }
+
+  function saveScratchpadEdit(itemId: string) {
+    if (scratchpadEditCanceledRef.current) {
+      scratchpadEditCanceledRef.current = false;
+      return;
+    }
+    updateScratchpadItem(itemId, scratchpadEditDraft);
+    setEditingScratchpadItemId(null);
+  }
+
+  function cancelScratchpadEdit() {
+    scratchpadEditCanceledRef.current = true;
+    setEditingScratchpadItemId(null);
+  }
+
+  function beginScratchpadConversion(item: HomeScratchpadItem) {
+    setEditingScratchpadItemId(null);
+    setConvertingScratchpadItemId(item.id);
+    setIsCreateOpen(true);
+    setIsSearchOpen(false);
   }
 
   useEffect(() => {
@@ -858,16 +1266,18 @@ export function HomePage({
     routineSectionGroupIds?: readonly string[],
   ) {
     const isRoutine = mode === "routine";
+    const isUrgent = mode === "urgent";
+    const isDerived = mode === "attention" || mode === "missed";
     const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
-    const hierarchy = buildHomeTodoHierarchy(task, tasks, taskById);
+    const hierarchy = buildHomeTaskRowHierarchy(task, tasks, taskContentFolders, taskById, taskHierarchy);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
     const statusMenuOpen = statusMenuTaskId === task.id;
     const fastActionOpen = isFastActionMode;
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
     const currentRoutineSectionId = isRoutine ? effectiveRoutineSectionState.routineSectionIdByTaskId[task.id] : null;
-    const durableTaskIndex = state.taskIds.indexOf(task.id);
-    const renderedDayOffset = daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
+    const durableTaskIndex = isUrgent ? state.urgentTaskIds.indexOf(task.id) : state.taskIds.indexOf(task.id);
+    const renderedDayOffset = isUrgent ? null : daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
     const moveDayDestinations = [
       ...daySections.map((section) => ({
@@ -877,24 +1287,26 @@ export function HomePage({
       })),
       { dayOffset: 7, isFull: false, label: "Later" },
     ];
-    const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && renderedDayOffset === 0;
-    const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === state.taskIds.length - 1 && renderedDayOffset === 7;
+    const isAtAbsoluteTop = !isRoutine && durableTaskIndex === 0 && (isUrgent || renderedDayOffset === 0);
+    const isAtAbsoluteBottom = !isRoutine && durableTaskIndex === (isUrgent ? state.urgentTaskIds.length : state.taskIds.length) - 1 && (isUrgent || renderedDayOffset === 7);
     const routineSectionIndex = isRoutine && routineSectionGroupIds ? routineSectionGroupIds.indexOf(task.id) : index;
     const routineSectionLength = routineSectionGroupIds?.length ?? routineGroups.length;
     const isAtRoutineTop = isRoutine && routineSectionIndex === 0;
     const isAtRoutineBottom = isRoutine && routineSectionIndex === routineSectionLength - 1;
     return (
       <AdhdCard
-        key={rowKey}
+        key={rowKey ?? task.id}
         className={`${isRoutineChild
           ? "grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-0"
-          : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}${isRoutineChild && routineChildDragState?.taskId === task.id ? " opacity-60" : ""}${isRoutineChild ? ` ${getRoutineChildDropIndicatorClassName(task.id)}` : ""}`}
+          : isDerived
+            ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0"
+            : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}${isRoutineChild && routineChildDragState?.taskId === task.id ? " opacity-60" : ""}${isRoutineChild ? ` ${getRoutineChildDropIndicatorClassName(task.id)}` : ""}`}
         padding="sm"
         onDragOver={isRoutineChild ? (event) => updateRoutineChildDropTarget(event, task, routineDepth) : undefined}
         onDrop={isRoutineChild ? (event) => dropRoutineChildOnTask(event, task, routineDepth) : undefined}
         style={isRoutineChild ? { marginLeft: `${Math.min(Math.max(routineDepth, 1), 3) * 0.75}rem` } : undefined}
       >
-        {!isRoutineChild ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
+        {!isRoutineChild && !isDerived ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
         {isRoutineChild ? (
           <button
             aria-label={`Drag to reorder ${routineDepth > 1 ? "substep" : "step"} ${task.title || "Untitled"}`}
@@ -912,7 +1324,7 @@ export function HomePage({
             <GripVertical aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         ) : null}
-        {!isRoutineChild ? (
+        {!isRoutineChild && !isDerived ? (
           <span className="ml-1 shrink-0 text-sm font-medium leading-5 text-[#26324f] dark:text-white">
             {index + 1}
           </span>
@@ -925,13 +1337,14 @@ export function HomePage({
             onClick={() => setStatusMenuTaskId((current) => current === task.id ? null : task.id)}
             type="button"
           >
-            {renderTaskStatusCircle(displayStatus, "sm", { className: "!h-7 !w-7", glyphClassName: "!h-4 !w-4 !text-sm" })}
+            {renderTaskStatusCircle(displayStatus, "sm")}
           </button>
           {statusMenuOpen ? (
             <div className="absolute left-0 top-full z-30 mt-2 rounded-full border border-[#e4def2] bg-white p-1 shadow-lg dark:border-white/15 dark:bg-[#201a35]">
               <TaskStatusCircleRail
                 currentStatus={displayStatus}
                 onSetStatus={(status) => {
+                  if (status === "unscheduled") return;
                   onSetStatus(task, status);
                   setStatusMenuTaskId(null);
                 }}
@@ -982,7 +1395,7 @@ export function HomePage({
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
-        {!isRoutineChild ? (
+        {!isRoutineChild && !isDerived ? (
           <div className="relative flex shrink-0 items-center gap-1" ref={rowActionMenuOpen ? rowActionMenuRef : undefined}>
             {fastActionOpen ? (
               <div className="flex shrink-0 items-center gap-0.5" onClickCapture={handleFastActionClickCapture}>
@@ -990,13 +1403,13 @@ export function HomePage({
                   <AdhdIconButton
                     aria-expanded={rowActionMenuOpen && rowActionMenuView === "move-day"}
                     aria-haspopup="menu"
-                    aria-label={`Move ${task.title || "Untitled task"} to day`}
+                    aria-label={isUrgent ? `Move ${task.title || "Untitled task"} to To-do` : `Move ${task.title || "Untitled task"} to day`}
                     className={HOME_TODO_ACTION_CLASS}
                     iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                     onClick={() => setRowActionMenu({ taskId: task.id, view: "move-day" })}
                     selected={rowActionMenuOpen && rowActionMenuView === "move-day"}
                     size="sm"
-                    title="Move to day"
+                    title={isUrgent ? "Move to To-do" : "Move to day"}
                   >
                     <CalendarDays aria-hidden="true" />
                   </AdhdIconButton>
@@ -1007,8 +1420,12 @@ export function HomePage({
                     className={HOME_TODO_ACTION_CLASS}
                     iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                     onClick={() => {
-                      updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
-                      updateTaskDayOffset(task.id, 0);
+                      if (isUrgent) {
+                        updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                      } else {
+                        updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                        updateTaskDayOffset(task.id, 0);
+                      }
                       setRowActionMenu(null);
                     }}
                     size="sm"
@@ -1023,8 +1440,12 @@ export function HomePage({
                     className={HOME_TODO_ACTION_CLASS}
                     iconClassName={HOME_TODO_ACTION_ICON_CLASS}
                     onClick={() => {
-                      updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
-                      updateTaskDayOffset(task.id, 7);
+                      if (isUrgent) {
+                        updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                      } else {
+                        updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                        updateTaskDayOffset(task.id, 7);
+                      }
                       setRowActionMenu(null);
                     }}
                     size="sm"
@@ -1071,12 +1492,14 @@ export function HomePage({
                     setRowActionMenu(null);
                     if (isRoutine) {
                       void onSetRoutineMembership(task.id, false);
+                    } else if (isUrgent) {
+                      updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                     } else {
                       updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                     }
                   }}
                   size="sm"
-                  title={isRoutine ? "Remove from Routine" : "Remove from Home To-do"}
+                  title={isRoutine ? "Remove from Routine" : isUrgent ? "Remove from Urgent" : "Remove from Home To-do"}
                   tone="danger"
                 >
                   <Minus aria-hidden="true" />
@@ -1117,7 +1540,7 @@ export function HomePage({
             {rowActionMenuOpen ? (
               <AdhdDropdownPanel
                 aria-label={rowActionMenuView === "move-day"
-                  ? `Move ${task.title || "Untitled task"} to day`
+                  ? isUrgent ? `Move ${task.title || "Untitled task"} to To-do` : `Move ${task.title || "Untitled task"} to day`
                   : rowActionMenuView === "move-routine-section"
                     ? `Move ${task.title || "Untitled task"} to section`
                     : `${task.title || "Untitled task"} actions`}
@@ -1173,7 +1596,8 @@ export function HomePage({
                           key={destination.dayOffset}
                           onClick={() => {
                             if (disabled) return;
-                            updateTaskDayOffset(task.id, destination.dayOffset);
+                            if (isUrgent) moveUrgentTaskToTodo(task.id, destination.dayOffset);
+                            else updateTaskDayOffset(task.id, destination.dayOffset);
                             setRowActionMenu(null);
                           }}
                           role="menuitemradio"
@@ -1209,14 +1633,30 @@ export function HomePage({
                     ) : null}
                     {!isRoutine ? (
                       <button
-                        aria-label={`Move ${task.title || "Untitled task"} to day`}
+                        aria-label={isUrgent ? `Move ${task.title || "Untitled task"} to To-do` : `Move ${task.title || "Untitled task"} to day`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
                         onClick={() => setRowActionMenu({ taskId: task.id, view: "move-day" })}
                         role="menuitem"
                         type="button"
                       >
                         <CalendarDays aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                        Move to day
+                        {isUrgent ? "Move to To-do" : "Move to day"}
+                      </button>
+                    ) : null}
+                    {!isRoutine && !isUrgent ? (
+                      <button
+                        aria-label={`Move ${task.title || "Untitled task"} to Urgent`}
+                        className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
+                        onClick={async () => {
+                          const promoted = await onSetTaskPriority(task.id, "5");
+                          if (!promoted) return;
+                          moveTodoTaskToUrgent(task.id);
+                          setRowActionMenu(null);
+                        }}
+                        role="menuitem"
+                        type="button"
+                      >
+                        Move to Urgent
                       </button>
                     ) : null}
                     {!isRoutine && !isAtAbsoluteTop ? (
@@ -1224,8 +1664,12 @@ export function HomePage({
                         aria-label={`Move ${task.title || "Untitled task"} to Top`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
                         onClick={() => {
-                          updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
-                          updateTaskDayOffset(task.id, 0);
+                          if (isUrgent) {
+                            updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                          } else {
+                            updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "top"));
+                            updateTaskDayOffset(task.id, 0);
+                          }
                           setRowActionMenu(null);
                         }}
                         role="menuitem"
@@ -1240,8 +1684,12 @@ export function HomePage({
                         aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
                         onClick={() => {
-                          updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
-                          updateTaskDayOffset(task.id, 7);
+                          if (isUrgent) {
+                            updateUrgentTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                          } else {
+                            updateTaskIds((taskIds) => moveHomeTodoTaskIdToEdge(taskIds, task.id, "bottom"));
+                            updateTaskDayOffset(task.id, 7);
+                          }
                           setRowActionMenu(null);
                         }}
                         role="menuitem"
@@ -1282,12 +1730,14 @@ export function HomePage({
                       </button>
                     ) : null}
                     <button
-                      aria-label={`Remove ${task.title || "Untitled task"} from ${isRoutine ? "Routine" : "Home To-do"}`}
+                      aria-label={`Remove ${task.title || "Untitled task"} from ${isRoutine ? "Routine" : isUrgent ? "Urgent" : "Home To-do"}`}
                       className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#d65775] hover:bg-[#fff1f3] dark:text-[#ffb0c1] dark:hover:bg-[#32161d]"
                       onClick={() => {
                         setRowActionMenu(null);
                         if (isRoutine) {
                           void onSetRoutineMembership(task.id, false);
+                        } else if (isUrgent) {
+                          updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                         } else {
                           updateTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                         }
@@ -1296,7 +1746,7 @@ export function HomePage({
                       type="button"
                     >
                       <Minus aria-hidden="true" className="h-3.5 w-3.5 shrink-0" />
-                      {isRoutine ? "Remove from Routine" : "Remove from Home To-do"}
+                      {isRoutine ? "Remove from Routine" : isUrgent ? "Remove from Urgent" : "Remove from Home To-do"}
                     </button>
                   </div>
                 )}
@@ -1352,9 +1802,17 @@ export function HomePage({
                   data-style-component="HomePage"
                   data-style-role="ui.section.title"
                 >
-                  {activeHomeTab === "todo" ? "To-do list" : "Routine"}
+                  {activeHomeTab === "urgent" ? "Urgent" : activeHomeTab === "todo" ? "To-do list" : activeHomeTab === "attention" ? "Attention" : activeHomeTab === "missed" ? "Missed" : activeHomeTab === "routine" ? "Routine" : "Scratchpad"}
                 </h1>
                 <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
+                  <AdhdChip
+                    aria-selected={activeHomeTab === "urgent"}
+                    onClick={() => selectHomeTab("urgent")}
+                    role="tab"
+                    selected={activeHomeTab === "urgent"}
+                  >
+                    Urgent
+                  </AdhdChip>
                   <AdhdChip
                     aria-selected={activeHomeTab === "todo"}
                     onClick={() => selectHomeTab("todo")}
@@ -1364,12 +1822,36 @@ export function HomePage({
                     To-do
                   </AdhdChip>
                   <AdhdChip
+                    aria-selected={activeHomeTab === "attention"}
+                    onClick={() => selectHomeTab("attention")}
+                    role="tab"
+                    selected={activeHomeTab === "attention"}
+                  >
+                    Attention
+                  </AdhdChip>
+                  <AdhdChip
+                    aria-selected={activeHomeTab === "missed"}
+                    onClick={() => selectHomeTab("missed")}
+                    role="tab"
+                    selected={activeHomeTab === "missed"}
+                  >
+                    Missed
+                  </AdhdChip>
+                  <AdhdChip
                     aria-selected={activeHomeTab === "routine"}
                     onClick={() => selectHomeTab("routine")}
                     role="tab"
                     selected={activeHomeTab === "routine"}
                   >
                     Routine
+                  </AdhdChip>
+                  <AdhdChip
+                    aria-selected={activeHomeTab === "scratchpad"}
+                    onClick={() => selectHomeTab("scratchpad")}
+                    role="tab"
+                    selected={activeHomeTab === "scratchpad"}
+                  >
+                    Scratchpad
                   </AdhdChip>
                 </div>
               </div>
@@ -1423,6 +1905,96 @@ export function HomePage({
             </div>
         </div>
         <PageShellBody>
+        {activeHomeTab === "attention" || activeHomeTab === "missed" ? null : activeHomeTab === "scratchpad" ? (
+          <div className="relative mt-2" ref={searchRef}>
+            <label className="grid gap-1.5">
+                <span className="sr-only">Scratchpad note</span>
+                <textarea
+                  aria-label="Scratchpad note"
+                  className="health-input min-h-40 w-full resize-y leading-6"
+                  ref={scratchpadRef}
+                  onChange={(event) => {
+                    scratchpadDraftDirtyRef.current = true;
+                    setScratchpadDraft(event.target.value);
+                  }}
+                  placeholder="Write freely…"
+                  rows={8}
+                  value={scratchpadDraft}
+                />
+            </label>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <ScratchDictationControl dictation={scratchpadDictation} />
+              <VoiceMemoRecorder contextLabel="Home Scratchpad" onSaveMemo={voiceMemos.createMemo} originKind="home_scratchpad" userId={userId} />
+              <AdhdChip onClick={saveScratchpadDraft} selected type="button">Save</AdhdChip>
+              <AdhdChip onClick={moveScratchpadDraftToItems} type="button">Move lines to items</AdhdChip>
+              <AdhdChip onClick={parseScratchpadBatch} type="button">Parse Batch Intake</AdhdChip>
+              <AdhdChip onClick={openManualBatch} type="button">Manual Batch</AdhdChip>
+              <div className="relative">
+                <AdhdChip aria-expanded={isShorthandHelpOpen} onClick={() => setIsShorthandHelpOpen((current) => !current)} type="button">Shorthand</AdhdChip>
+                {isShorthandHelpOpen ? <AdhdDropdownPanel aria-label="Scratchpad Shorthand V1 help" className="grid w-[min(24rem,calc(100vw-2rem))] gap-2 p-3" role="dialog">
+                  <div><p className="text-xs font-semibold text-[#332c55] dark:text-white">Scratchpad Shorthand V1</p><p className="mt-1 text-[11px] text-[#7d7598] dark:text-white/55">Optional compact grammar. Loose Scratchpad text remains supported.</p></div>
+                  <pre className="overflow-x-auto rounded-lg bg-[#faf8fe] p-2 text-[11px] leading-5 text-[#514875] dark:bg-white/5 dark:text-white/70">10/2{`\n`}t: nba 2k done, adhdice dmb{`\n`}t: NBA 2K - Done 9/27 9/28 9/29{`\n`}w: 20oz done, 15oz pending{`\n`}wt: 233.6{`\n`}f: Coding 1h @ 2:30pm{`\n`}f: Sleep, CPAP 4h 11m @ 11:45am 10/3{`\n`}b: turkey bacon 8, watermelon 290g</pre>
+                  <p className="text-[11px] text-[#7d7598] dark:text-white/55">Prefixes: t Task · w Water · wt Weight · f Focus · b/l/d/s Meal slots. Focus supports category, optional session title, duration, time, and trailing date. Use quotes for commas.</p>
+                </AdhdDropdownPanel> : null}
+              </div>
+            </div>
+            {voiceMemos.error ? <p className="mt-2 text-[11px] text-[#c64c62] dark:text-[#ffb1c0]">{voiceMemos.error}</p> : null}
+            <div className="mt-3 grid gap-3">
+              {voiceMemos.memos.filter((memo) => memo.origin_kind === "home_scratchpad").map((memo) => (
+                <VoiceMemoCard
+                  getPlaybackUrl={voiceMemos.getPlaybackUrl}
+                  key={memo.id}
+                  memo={memo}
+                  onDelete={voiceMemos.deleteMemo}
+                  onRename={voiceMemos.renameMemo}
+                  onTranscribe={voiceMemos.transcribeMemo}
+                />
+              ))}
+            </div>
+            {isCreateOpen && convertingScratchpadItemId ? (
+              <div className="mt-3">
+                <TaskCreationComposer
+                  allTags={allTags}
+                  initialDueOn={behaviorPolicyLogicalDate}
+                  initialTitle={state.scratchpadItems.find((item) => item.id === convertingScratchpadItemId)?.text ?? ""}
+                  key={convertingScratchpadItemId}
+                  onCancel={cancelCreateTask}
+                  onCreate={handleCreateTask}
+                  onCreated={() => {
+                    setIsCreateOpen(false);
+                    setConvertingScratchpadItemId(null);
+                  }}
+                  taskTypeOptions={taskTypeOptions}
+                />
+              </div>
+            ) : null}
+            {batchIntakeDrafts ? (
+              <HomeBatchIntakeReview
+                applyProgress={batchIntakeApplyProgress}
+                drafts={effectiveBatchIntakeDrafts ?? []}
+                executionResult={batchIntakeExecutionResult}
+                healthLoading={healthLoading}
+                healthFoods={healthFoods}
+                healthProfile={healthProfile}
+                isApplying={batchIntakeApplying}
+                focusCategories={focusCategories}
+                focusHistory={focusHistory}
+                onAddRow={addManualBatchRow}
+                onAddOccurrence={addBatchIntakeOccurrence}
+                onAddManualMealFood={addManualMealFoodToOccurrence}
+                onAddMealFood={addMealFoodToOccurrence}
+                onResolveMealProposal={resolveMealProposalToFood}
+                onUseManualMealProposal={useManualMealProposal}
+                onApply={() => { void applyBatchIntake(); }}
+                onCancel={closeBatchIntakeReview}
+                onChange={changeBatchIntakeDraft}
+                onRemoveRow={removeBatchIntakeRow}
+                taskContentFolders={taskContentFolders}
+                tasks={tasks}
+              />
+            ) : null}
+          </div>
+        ) : (
         <div className="relative mt-2" ref={searchRef}>
           <div className="flex flex-wrap items-end justify-between gap-2">
             <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Search tasks</span>
@@ -1455,18 +2027,25 @@ export function HomePage({
             <div className="mt-3">
               <TaskCreationComposer
                 allTags={allTags}
+                initialDueOn={behaviorPolicyLogicalDate}
+                initialPriority={activeHomeTab === "urgent" ? "5" : "0"}
                 onCancel={cancelCreateTask}
                 onCreate={handleCreateTask}
-                onCreated={() => setIsCreateOpen(false)}
+                onCreated={() => {
+                  setIsCreateOpen(false);
+                  setConvertingScratchpadItemId(null);
+                }}
                 taskTypeOptions={taskTypeOptions}
               />
             </div>
           ) : null}
           {isSearchOpen && query.trim() ? (
-            <div className="absolute inset-x-0 top-full z-30 mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
-              {searchResults.length ? searchResults.map(({ hierarchy, isInTodo, task }) => (
+            <div className="mt-2 max-h-[min(55vh,26rem)] overflow-y-auto rounded-[1.2rem] border border-[#e4def2] bg-white p-2 shadow-xl dark:border-white/15 dark:bg-[#201a35]">
+              {searchResults.length ? searchResults.map(({ hierarchy, isSearchResultDisabled, membershipLabel, task }) => (
                 <button
+                  aria-disabled={isSearchResultDisabled}
                   className="flex w-full items-center justify-between gap-3 rounded-xl px-3 py-2 text-left hover:bg-[#f6f2ff] dark:hover:bg-white/8"
+                  disabled={isSearchResultDisabled}
                   key={task.id}
                   onClick={() => {
                     void addSearchResult(task.id);
@@ -1483,7 +2062,14 @@ export function HomePage({
                       </span>
                     ) : null}
                   </span>
-                  {isInTodo ? (
+                  {membershipLabel === "In Urgent" ? (
+                    <span
+                      aria-label="Already in Urgent"
+                      className="inline-flex shrink-0 items-center rounded-full border border-[#ffd6de] bg-[#fff1f3] px-2 py-1 text-[11px] font-semibold text-[#d65775] dark:border-[#5f2a36] dark:bg-[#32161d] dark:text-[#ffb0c1]"
+                    >
+                      In Urgent
+                    </span>
+                  ) : membershipLabel === "In To-do" ? (
                     <span
                       aria-label="Already in To-do"
                       className="inline-flex shrink-0 items-center rounded-full border border-[#d8cff0] bg-[#f7f3ff] px-2 py-1 text-[11px] font-semibold text-[#6f57f6] dark:border-white/15 dark:bg-white/[0.06] dark:text-[#cabfff]"
@@ -1498,8 +2084,26 @@ export function HomePage({
             </div>
           ) : null}
         </div>
+        )}
 
-          {activeHomeTab === "todo" ? (
+          {activeHomeTab === "urgent" ? (
+            <>
+              <SortableList
+                className={HOME_TODO_LIST_CLASS}
+                getId={(task) => task.id}
+                getLabel={(task) => task.title || "Untitled task"}
+                items={urgentTasks}
+                onReorder={(nextTasks) => updateUrgentTaskIds(() => nextTasks.map((task) => task.id))}
+              >
+                {(task, index, handle) => renderHomeTask(task, index, handle, "urgent")}
+              </SortableList>
+              {!urgentTasks.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  Search above to add the first Task to Urgent.
+                </p>
+              ) : null}
+            </>
+          ) : activeHomeTab === "todo" ? (
             <>
               <SortableList
                 className={HOME_TODO_LIST_CLASS}
@@ -1547,7 +2151,7 @@ export function HomePage({
                 </p>
               ) : null}
             </>
-          ) : (
+          ) : activeHomeTab === "routine" ? (
             <>
               {routineSections.map((section) => {
                 const sectionRoutineGroups = section.groupIds
@@ -1590,6 +2194,101 @@ export function HomePage({
               {!routineGroups.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/[0.15] dark:bg-white/[0.03] dark:text-white/55">
                   No Routine tasks yet.
+                </p>
+              ) : null}
+            </>
+          ) : activeHomeTab === "attention" ? (
+            <>
+              <div className={HOME_TODO_LIST_CLASS}>
+                {attentionTasks.map((task, index) => renderHomeTask(task, index, null, "attention"))}
+              </div>
+              {!attentionTasks.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  No tasks need Attention right now.
+                </p>
+              ) : null}
+            </>
+          ) : activeHomeTab === "missed" ? (
+            <>
+              <div className={HOME_TODO_LIST_CLASS}>
+                {missedTasks.map((task, index) => renderHomeTask(task, index, null, "missed"))}
+              </div>
+              {!missedTasks.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  No missed tasks right now.
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <>
+              <p className="mt-5 text-xs font-semibold text-[#7d7598] dark:text-white/50">Staged items</p>
+              <SortableList
+                className={HOME_TODO_LIST_CLASS}
+                getId={(item) => item.id}
+                getLabel={(item) => item.text}
+                items={state.scratchpadItems}
+                onReorder={(nextItems) => reorderScratchpadItems(nextItems.map((item) => item.id))}
+              >
+                {(item, _index, handle) => (
+                  <AdhdCard className="grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-2" padding="sm">
+                    <span className="shrink-0">{handle}</span>
+                    <div className="min-w-0">
+                      {editingScratchpadItemId === item.id ? (
+                        <input
+                          aria-label={`Edit ${item.text}`}
+                          autoFocus
+                          className="health-input h-9 w-full"
+                          onBlur={() => saveScratchpadEdit(item.id)}
+                          onChange={(event) => setScratchpadEditDraft(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter") {
+                              event.preventDefault();
+                              saveScratchpadEdit(item.id);
+                            } else if (event.key === "Escape") {
+                              event.preventDefault();
+                              cancelScratchpadEdit();
+                            }
+                          }}
+                          value={scratchpadEditDraft}
+                        />
+                      ) : (
+                        <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>{item.text}</p>
+                      )}
+                    </div>
+                    <div className="flex shrink-0 items-center gap-1">
+                      <AdhdIconButton
+                        aria-label={`Edit ${item.text}`}
+                        className={HOME_TODO_ACTION_CLASS}
+                        iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                        onClick={() => beginScratchpadEdit(item)}
+                        size="sm"
+                        title="Edit"
+                      >
+                        <Pencil aria-hidden="true" />
+                      </AdhdIconButton>
+                      <AdhdChip onClick={() => beginScratchpadConversion(item)} type="button">Convert to Task</AdhdChip>
+                      <AdhdIconButton
+                        aria-label={`Delete ${item.text}`}
+                        className={HOME_TODO_ACTION_CLASS}
+                        iconClassName={HOME_TODO_ACTION_ICON_CLASS}
+                        onClick={() => {
+                          deleteScratchpadItem(item.id);
+                          if (editingScratchpadItemId === item.id) setEditingScratchpadItemId(null);
+                          if (convertingScratchpadItemId === item.id) cancelCreateTask();
+                        }}
+                        size="sm"
+                        title="Delete"
+                        tone="danger"
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </AdhdIconButton>
+                    </div>
+                  </AdhdCard>
+                )}
+              </SortableList>
+              {!state.scratchpadItems.length ? (
+                <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
+                  Move non-empty notepad lines here, then turn them into Tasks when you are ready.
                 </p>
               ) : null}
             </>

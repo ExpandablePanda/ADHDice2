@@ -638,7 +638,7 @@ test("manual due-date reconciliation preserves History while aligning live, visi
     task: futureAnchorTask,
     timezone: "UTC",
   })?.mutationPlan.taskUpdate ?? { due_on: "2026-08-08" };
-  assert.equal(futureAnchor.status, "upcoming");
+  assert.equal(futureAnchor.status, "not_due");
   const futureCalendarStates = resolveTaskHistoryCalendarStates({
     calendarEnd: "2026-08-08",
     calendarStart: "2026-08-04",
@@ -941,7 +941,7 @@ test("Daily Until Complete accepts Done through the shared action authority", ()
   assert.deepEqual(result?.validationErrors, []);
   assert.equal(result?.lifecycle, "active");
   assert.equal(result?.nextDueDate, "2026-08-01");
-  assert.equal(result?.mutationPlan.taskUpdate.status, "upcoming");
+  assert.equal(result?.mutationPlan.taskUpdate.status, "not_due");
   assert.notEqual(result?.mutationPlan.taskUpdate.status, "done");
   assert.equal(result?.mutationPlan.historyOutcome, "done");
 });
@@ -985,7 +985,7 @@ test("successful Daily Until Complete Done action leaves zero rollover repair pa
     task: original,
   });
   assert.ok(action);
-  assert.equal(action.mutationPlan.taskUpdate.status, "upcoming");
+  assert.equal(action.mutationPlan.taskUpdate.status, "not_due");
 
   const savedTask: Task = {
     ...original,

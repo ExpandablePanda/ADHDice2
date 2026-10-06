@@ -166,7 +166,7 @@ test("Done and Did My Best both resolve a Missed chain and reset the missed stre
   }
 });
 
-test("independent Daily canonical history keeps older Missed rows while read authority returns Upcoming", () => {
+test("independent Daily canonical history keeps older Missed rows while read authority returns Not Due", () => {
   for (const outcome of ["done", "did_my_best"] as const) {
     const sourceTask = task({ due_on: "2026-08-24", status: "missed" });
     const rows = [
@@ -175,7 +175,7 @@ test("independent Daily canonical history keeps older Missed rows while read aut
       history("2026-08-23", outcome),
     ];
 
-    assert.equal(readAt(sourceTask, rows, "2026-08-23T12:00:00.000Z"), "upcoming", outcome);
+    assert.equal(readAt(sourceTask, rows, "2026-08-23T12:00:00.000Z"), "not_due", outcome);
     assert.deepEqual(rows.map((row) => [row.entry_date, row.status]), [
       ["2026-08-20", "missed"],
       ["2026-08-21", "missed"],
@@ -202,7 +202,7 @@ test("migration Delayed History remains visible without driving current recurren
   })]);
 
   assert.equal(migratedDelayed[0]?.recurrence_authoritative, false);
-  assert.equal(read(sourceTask, migratedDelayed), "upcoming");
+  assert.equal(read(sourceTask, migratedDelayed), "not_due");
 
   const calendar = resolveTaskHistoryCalendarRead({
     compatibilityOnly: true,
@@ -241,6 +241,17 @@ test("the corrected display map supplies status counts and row parity", () => {
   assert.equal(displayStatusByTaskId[sourceTask.id], "pending");
   assert.equal(counts.pending, 1);
   assert.equal(counts.missed, 0);
+});
+
+test("legacy Upcoming display status counts as Not Due", () => {
+  const sourceTask = task({ status: "upcoming", due_on: "2026-08-20" });
+  const counts = buildCanonicalActiveStatusCounts([sourceTask], {}, {}, TODAY, {
+    displayStatusByTaskId: { [sourceTask.id]: "upcoming" },
+    includeSteps: false,
+  });
+
+  assert.equal(counts.not_due, 1);
+  assert.equal(counts.upcoming, 0);
 });
 
 test("modal canonical hydration invalidates the active-status projection without being required at startup", async () => {

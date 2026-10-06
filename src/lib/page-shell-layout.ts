@@ -178,7 +178,7 @@ export const SETTINGS_PAGE_SHELL_IDS = [
   "settings-import-export",
 ] as const;
 
-export const NOTES_PAGE_SHELL_IDS = ["notes-scratch-paper", "notes-library"] as const;
+export const NOTES_PAGE_SHELL_IDS = ["notes-scratch-paper", "notes-library", "notes-voice-memos"] as const;
 
 export const TEST_PAGE_SHELL_IDS = [
   "test-task-table",

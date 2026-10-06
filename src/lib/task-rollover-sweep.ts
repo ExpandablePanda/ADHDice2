@@ -4,6 +4,11 @@ import {
   type TaskRolloverSweepResponse,
   type TaskStateCommandClient,
 } from "@/lib/task-state-command-client";
+import { sha256Hex, stableSerialize } from "@/lib/task-state-canonical/digest";
+import {
+  chunkTaskRolloverCommands,
+  TASK_ROLLOVER_SWEEP_BATCH_SIZE,
+} from "@/lib/task-rollover-batch";
 import {
   classifyTaskStateRuntimeAction,
 } from "@/lib/task-state-runtime-actions";
@@ -27,12 +32,46 @@ export type TaskRolloverSweepExecutionResult = {
   achievementFinalizationPending: boolean;
 };
 
+function createRolloverChunkReplayIdentity(input: {
+  baseReplayIdentity: string;
+  chunk: TaskRolloverSweepIntent["commands"];
+  chunkIndex: number;
+  chunkCount: number;
+}) {
+  if (input.chunkCount === 1) return input.baseReplayIdentity;
+  const chunkFingerprint = sha256Hex(stableSerialize(input.chunk.map((command) => command.replay_identity))).slice(0, 12);
+  return `${input.baseReplayIdentity.slice(0, 196)}:chunk:${input.chunkIndex + 1}:${chunkFingerprint}`;
+}
+
+function recordRolloverChunkDiagnostic(input: {
+  diagnosticsEnabled: boolean;
+  totalCandidateCount: number;
+  chunkCount: number;
+  chunkIndex: number;
+  chunkSize: number;
+  committedCount: number;
+  durationMs: number;
+  failureState: string;
+}) {
+  if (!input.diagnosticsEnabled || typeof console === "undefined") return;
+  console.info("[rollover] sweep chunk", {
+    committedCount: input.committedCount,
+    chunkCount: input.chunkCount,
+    chunkIndex: input.chunkIndex,
+    chunkSize: input.chunkSize,
+    durationMs: Math.round(input.durationMs),
+    failureState: input.failureState,
+    totalCandidateCount: input.totalCandidateCount,
+  });
+}
+
 export async function executeTaskRolloverSweep(input: {
   client: TaskStateCommandClient | null;
   candidates: TaskRolloverSweepCandidate[];
   settledTaskIds: ReadonlySet<string>;
   achievementFinalizationPending: boolean;
   sweepReplayIdentity: string;
+  diagnosticsEnabled?: boolean;
   invoke?: RolloverSweepInvoke;
 }): Promise<TaskRolloverSweepExecutionResult> {
   const actionsByTaskId = new Map<string, { action: TaskStateRuntimeCanonicalAction; task: TaskStateRuntimeLocalTask }>();
@@ -69,57 +108,109 @@ export async function executeTaskRolloverSweep(input: {
     };
   }
 
-  let response: TaskRolloverSweepResponse;
-  try {
-    response = await (input.invoke ?? invokeTaskRolloverSweep)({
-      type: "reconcile_rollover_sweep",
-      replay_identity: input.sweepReplayIdentity,
-      commands,
-    }, { client: input.client });
-  } catch (error) {
+  if (commands.length === 0) {
     return {
       success: false,
       settledTaskIds: [],
       committedTasks: [],
-      errorMessage: error instanceof Error ? error.message : "The rollover sweep could not be invoked.",
-      achievementFinalizationPending: false,
+      errorMessage: "Rollover Achievement finalization requires replayable child commands.",
+      achievementFinalizationPending: true,
     };
   }
 
   const committedTasks: TaskRolloverSweepExecutionResult["committedTasks"] = [];
-  for (const child of response.childResults) {
-    if (!child.response) continue;
-    const action = actionsByTaskId.get(child.taskId);
-    if (!action) {
-      return {
-        success: false,
-        settledTaskIds: response.committedTaskIds,
-        committedTasks,
-        errorMessage: "The rollover sweep returned an unknown committed Task.",
-        achievementFinalizationPending: response.achievementFinalizationPending,
-      };
-    }
+  const settledTaskIds: string[] = [];
+  let errorMessage: string | null = null;
+  let achievementFinalizationPending = false;
+  const chunks = chunkTaskRolloverCommands(commands, TASK_ROLLOVER_SWEEP_BATCH_SIZE);
+  for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex += 1) {
+    const chunk = chunks[chunkIndex]!;
+    const startedAt = typeof performance === "undefined" ? 0 : performance.now();
+    let response: TaskRolloverSweepResponse;
     try {
-      committedTasks.push({
-        taskId: child.taskId,
-        task: reconcileCommittedTask(action.action, action.task, child.response),
-      });
+      response = await (input.invoke ?? invokeTaskRolloverSweep)({
+        type: "reconcile_rollover_sweep",
+        replay_identity: createRolloverChunkReplayIdentity({
+          baseReplayIdentity: input.sweepReplayIdentity,
+          chunk,
+          chunkCount: chunks.length,
+          chunkIndex,
+        }),
+        commands: chunk,
+      }, { client: input.client });
     } catch (error) {
-      return {
-        success: false,
-        settledTaskIds: response.committedTaskIds,
-        committedTasks,
-        errorMessage: error instanceof Error ? error.message : "The rollover sweep response was malformed.",
-        achievementFinalizationPending: response.achievementFinalizationPending,
-      };
+      errorMessage = error instanceof Error ? error.message : "The rollover sweep could not be invoked.";
+      recordRolloverChunkDiagnostic({
+        committedCount: 0,
+        chunkCount: chunks.length,
+        chunkIndex: chunkIndex + 1,
+        chunkSize: chunk.length,
+        diagnosticsEnabled: input.diagnosticsEnabled === true,
+        durationMs: typeof performance === "undefined" ? 0 : performance.now() - startedAt,
+        failureState: "invocation_failed",
+        totalCandidateCount: input.candidates.length,
+      });
+      break;
+    }
+
+    let malformedResponse = false;
+    for (const child of response.childResults) {
+      if (!child.response) continue;
+      const action = actionsByTaskId.get(child.taskId);
+      if (!action) {
+        malformedResponse = true;
+        errorMessage = "The rollover sweep returned an unknown committed Task.";
+        break;
+      }
+      try {
+        committedTasks.push({
+          taskId: child.taskId,
+          task: reconcileCommittedTask(action.action, action.task, child.response),
+        });
+      } catch (error) {
+        malformedResponse = true;
+        errorMessage = error instanceof Error ? error.message : "The rollover sweep response was malformed.";
+        break;
+      }
+    }
+
+    const chunkFinalizationPending = response.achievementFinalizationPending || response.achievementStatus === "failed";
+    achievementFinalizationPending = achievementFinalizationPending || chunkFinalizationPending;
+    // A chunk whose Achievement finalization failed must be replayed with the
+    // same child identities. Do not mark those Tasks settled or a retry would
+    // lose the committed History fact IDs needed by the finalizer.
+    if (!chunkFinalizationPending && !malformedResponse) {
+      settledTaskIds.push(...response.committedTaskIds);
+    }
+
+    const failed = malformedResponse || !response.success || response.error !== null || chunkFinalizationPending;
+    recordRolloverChunkDiagnostic({
+      committedCount: response.committedTaskIds.length,
+      chunkCount: chunks.length,
+      chunkIndex: chunkIndex + 1,
+      chunkSize: chunk.length,
+      diagnosticsEnabled: input.diagnosticsEnabled === true,
+      durationMs: typeof performance === "undefined" ? 0 : performance.now() - startedAt,
+      failureState: malformedResponse
+        ? "malformed_response"
+        : response.error?.code ?? (chunkFinalizationPending ? "achievement_finalization_pending" : failed ? "chunk_failed" : "none"),
+      totalCandidateCount: input.candidates.length,
+    });
+    if (failed) {
+      errorMessage = errorMessage ?? response.error?.message ?? (
+        chunkFinalizationPending
+          ? "Rollover Tasks committed, but Achievement reconciliation did not complete."
+          : "The rollover sweep did not complete."
+      );
+      break;
     }
   }
 
   return {
-    success: response.success,
-    settledTaskIds: response.committedTaskIds,
+    success: errorMessage === null,
+    settledTaskIds: [...new Set(settledTaskIds)],
     committedTasks,
-    errorMessage: response.error?.message ?? null,
-    achievementFinalizationPending: response.achievementFinalizationPending,
+    errorMessage,
+    achievementFinalizationPending,
   };
 }

@@ -37,6 +37,8 @@ declare
   v_schedule jsonb;
   v_effective_override jsonb;
   v_calendar_override jsonb;
+  v_quota_period_facts jsonb;
+  v_quota_fact jsonb;
   v_expected_entity_revision bigint;
   v_expected_boundary_sequence bigint;
   v_current_boundary_sequence bigint;
@@ -104,6 +106,7 @@ begin
   v_schedule := coalesce(v_payload->'schedule_boundary', '{}'::jsonb);
   v_effective_override := coalesce(v_payload->'occurrence_effective_override', '{}'::jsonb);
   v_calendar_override := coalesce(v_payload->'calendar_override', '{}'::jsonb);
+  v_quota_period_facts := coalesce(v_payload->'quota_period_facts', '[]'::jsonb);
   v_expected_entity_revision := nullif(p_command->>'expected_entity_revision', '')::bigint;
   v_expected_boundary_sequence := nullif(p_command->>'expected_boundary_sequence', '')::bigint;
 
@@ -120,7 +123,7 @@ begin
        'set_outcome', 'clear_outcome', 'complete_task', 'delay_occurrence',
        'set_due_date', 'set_repeat', 'calendar_override', 'archive_task',
        'trash_task', 'restore_task', 'start_in_progress', 'clear_in_progress',
-       'reconcile_rollover', 'hierarchy_change'
+       'reconcile_rollover', 'clear_quota_balance', 'hierarchy_change'
      )
      or v_idempotence_identity is null
      or v_accepted_payload_digest is null
@@ -144,7 +147,8 @@ begin
      or jsonb_typeof(v_occurrence) <> 'object'
      or jsonb_typeof(v_schedule) <> 'object'
      or jsonb_typeof(v_effective_override) <> 'object'
-     or jsonb_typeof(v_calendar_override) <> 'object' then
+     or jsonb_typeof(v_calendar_override) <> 'object'
+     or jsonb_typeof(v_quota_period_facts) <> 'array' then
     raise exception 'Task State command payload sections must be JSON objects.'
       using errcode = '22023';
   end if;
@@ -155,11 +159,27 @@ begin
       'task_patch', 'compatibility_projection', 'history_fact', 'automatic_history_facts',
       'automatic_history_delete_ids', 'occurrence',
       'schedule_boundary', 'occurrence_effective_override', 'calendar_override',
-      'reward_program_version', 'occurrence_key', 'clear_logical_date', 'manual_action'
+      'reward_program_version', 'reward_eligible', 'quota_period_facts', 'occurrence_key', 'clear_logical_date', 'clear_quota_balance', 'manual_action'
     )
   ) then
     raise exception 'Task State command payload contains an unknown section.'
       using errcode = '22023';
+  end if;
+
+  if v_payload ? 'reward_eligible'
+     and v_payload->>'reward_eligible' <> 'true' then
+    raise exception 'Reward eligibility is a positive server planner decision; false is not an entitlement request.'
+      using errcode = '22023';
+  end if;
+  if v_payload->>'reward_eligible' = 'true'
+     and nullif(v_payload->>'reward_program_version', '') is null then
+    raise exception 'Reward eligibility requires an explicit reward program version.'
+      using errcode = '22023';
+  end if;
+  if v_command_type not in ('reconcile_rollover', 'clear_quota_balance')
+     and v_quota_period_facts <> '[]'::jsonb then
+    raise exception 'Only rollover and Clear Balance commands may persist quota period facts.'
+      using errcode = '42501';
   end if;
 
   -- Runtime provenance is server-owned.  Reject a spoof before any replay
@@ -258,7 +278,12 @@ begin
     if v_history = '{}'::jsonb or v_history->>'outcome' <> 'complete'
        or v_history->>'event_kind' <> 'terminal_complete'
        or v_schedule <> '{}'::jsonb or v_effective_override <> '{}'::jsonb
-       or v_calendar_override <> '{}'::jsonb or (v_payload ? 'reward_program_version') = false then
+       or v_calendar_override <> '{}'::jsonb
+       or not (
+         (v_payload->>'reward_eligible' = 'true'
+          and nullif(v_payload->>'reward_program_version', '') is not null)
+         or (not (v_payload ? 'reward_eligible') and not (v_payload ? 'reward_program_version'))
+       ) then
       raise exception 'Complete command payload sections are incompatible.'
         using errcode = '22023';
     end if;
@@ -329,6 +354,21 @@ begin
       where key not in ('canonicalization_status')
     ) then
       raise exception 'Clear outcome command carries an unrelated canonical Task patch.'
+        using errcode = '22023';
+    end if;
+  elsif v_command_type = 'clear_quota_balance' then
+    if v_history <> '{}'::jsonb or v_occurrence <> '{}'::jsonb or v_schedule <> '{}'::jsonb
+       or v_effective_override <> '{}'::jsonb or v_calendar_override <> '{}'::jsonb
+       or v_payload ? 'reward_program_version'
+       or coalesce(v_payload->>'clear_quota_balance', 'false') <> 'true' then
+      raise exception 'Clear quota balance command payload sections are incompatible.'
+        using errcode = '22023';
+    end if;
+    if exists (
+      select 1 from jsonb_object_keys(v_task_patch) as patch_key(key)
+      where key not in ('canonicalization_status')
+    ) then
+      raise exception 'Clear quota balance command carries an unrelated canonical Task patch.'
         using errcode = '22023';
     end if;
   elsif v_command_type in ('start_in_progress', 'clear_in_progress') then
@@ -812,6 +852,32 @@ begin
          completed_at = case when v_projection ? 'completed_at' then nullif(v_projection->>'completed_at', '')::timestamptz else completed_at end,
          active_status_logical_date = case when v_projection ? 'active_status_logical_date' then nullif(v_projection->>'active_status_logical_date', '')::date else active_status_logical_date end,
          active_occurrence_due_on = case when v_projection ? 'active_occurrence_due_on' then nullif(v_projection->>'active_occurrence_due_on', '')::date else active_occurrence_due_on end,
+         repeat_quota_count = case
+           when v_schedule <> '{}'::jsonb and v_schedule->>'repeat_frequency' in ('per_week', 'per_month')
+             then nullif(v_schedule->>'repeat_quota_count', '')::integer
+           when v_schedule <> '{}'::jsonb then null
+           else repeat_quota_count
+         end,
+         repeat_quota_balance_enabled = case
+           when v_schedule <> '{}'::jsonb then coalesce((v_schedule->>'repeat_quota_balance_enabled')::boolean, false)
+           else repeat_quota_balance_enabled
+         end,
+         repeat_quota_balance = case
+           when v_projection ? 'repeat_quota_balance' then nullif(v_projection->>'repeat_quota_balance', '')::integer
+           when v_command_type = 'clear_quota_balance' then 0
+           when v_schedule <> '{}'::jsonb and coalesce(v_schedule->>'repeat_frequency', 'none') not in ('per_week', 'per_month') then null
+           when v_schedule <> '{}'::jsonb and coalesce((v_schedule->>'repeat_quota_balance_enabled')::boolean, false) = false then 0
+           else repeat_quota_balance
+         end,
+         repeat_quota_balance_period = case
+           when v_projection ? 'repeat_quota_balance_period' then nullif(v_projection->>'repeat_quota_balance_period', '')
+           when v_command_type = 'clear_quota_balance' then
+           case when repeat_frequency = 'per_week' then date_trunc('week', (v_logical_day_context->>'logical_date')::date)::date::text
+                when repeat_frequency = 'per_month' then to_char(date_trunc('month', (v_logical_day_context->>'logical_date')::date)::date, 'YYYY-MM')
+                else repeat_quota_balance_period end
+           when v_schedule <> '{}'::jsonb and coalesce(v_schedule->>'repeat_frequency', 'none') not in ('per_week', 'per_month') then null
+           when v_schedule <> '{}'::jsonb and coalesce((v_schedule->>'repeat_quota_balance_enabled')::boolean, false) = false then null
+           else repeat_quota_balance_period end,
          canonical_revision = v_next_revision,
          canonical_updated_at = now(),
          projection_source_canonical_revision = v_next_revision,
@@ -820,6 +886,25 @@ begin
          revision = revision + 1,
          updated_at = now()
    where user_id = p_user_id and id = v_entity_id;
+
+  if v_command_type = 'clear_quota_balance' then
+    if v_task.repeat_frequency not in ('per_week', 'per_month') then
+      raise exception 'Clear quota balance requires a quota recurrence.' using errcode = '22023';
+    end if;
+    if not coalesce(v_task.repeat_quota_balance_enabled, false) then
+      raise exception 'Clear quota balance requires balance mode to be enabled.' using errcode = '22023';
+    end if;
+    if jsonb_array_length(v_quota_period_facts) <> 1
+       or (v_quota_period_facts->0)->>'event_kind' <> 'clear_balance' then
+      raise exception 'Clear quota balance requires exactly one planned clear_balance fact.' using errcode = '22023';
+    end if;
+  elsif v_command_type = 'reconcile_rollover'
+     and exists (
+       select 1 from jsonb_array_elements(v_quota_period_facts) as quota_fact(value)
+       where value->>'event_kind' <> 'period_close'
+     ) then
+    raise exception 'Rollover quota facts must be period_close facts.' using errcode = '22023';
+  end if;
 
   -- Schedule boundaries are append-only canonical schedule authority.  The
   -- planner supplies a complete schema-aligned row; server-owned identity and
@@ -1000,6 +1085,7 @@ begin
     if v_occurrence_id is not null then
       v_history := jsonb_set(v_history, '{occurrence_id}', to_jsonb(v_occurrence_id), true);
     end if;
+    v_history := v_history - 'reward_eligible';
     insert into public.adhdice_task_history_facts
     select (jsonb_populate_record(null::public.adhdice_task_history_facts, v_history)).*
     on conflict (user_id, entity_id, logical_date) do update
@@ -1133,6 +1219,56 @@ begin
     end if;
   end if;
 
+  -- Quota ledger rows are planner-owned facts. SQL supplies only provenance,
+  -- owner, command, and timestamps; it never derives balance arithmetic from
+  -- the mutable Task projection.
+  for v_quota_fact in select value from jsonb_array_elements(v_quota_period_facts) as fact(value) loop
+    if v_quota_fact->>'event_kind' not in ('period_close', 'clear_balance')
+       or nullif(v_quota_fact->>'schedule_boundary_id', '') is null
+       or nullif(v_quota_fact->>'period_key', '') is null
+       or (v_quota_fact->>'period_kind') not in ('week', 'month')
+       or not exists (
+         select 1
+           from public.adhdice_task_schedule_boundaries boundary
+          where boundary.user_id = p_user_id
+            and boundary.entity_id = v_entity_id
+            and boundary.id = (v_quota_fact->>'schedule_boundary_id')::uuid
+            and boundary.repeat_frequency = case when v_quota_fact->>'period_kind' = 'week' then 'per_week' else 'per_month' end
+       ) then
+      raise exception 'Quota period fact is not owned by the command Task or its schedule authority.'
+        using errcode = '23503';
+    end if;
+    v_quota_fact := jsonb_set(v_quota_fact, '{id}', to_jsonb(gen_random_uuid()), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{user_id}', to_jsonb(p_user_id), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{entity_id}', to_jsonb(v_entity_id), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{entity_kind}', to_jsonb(v_entity_kind), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{command_id}', to_jsonb(v_command_id), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{source}', to_jsonb('task_state_command'::text), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{revision}', to_jsonb(1), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{created_at}', to_jsonb(now()), true);
+    v_quota_fact := jsonb_set(v_quota_fact, '{updated_at}', to_jsonb(now()), true);
+    begin
+      insert into public.adhdice_task_quota_period_facts
+      select (jsonb_populate_record(null::public.adhdice_task_quota_period_facts, v_quota_fact)).*;
+    exception when unique_violation then
+      if not exists (
+        select 1 from public.adhdice_task_quota_period_facts fact
+         where fact.user_id = p_user_id
+           and fact.idempotence_identity = v_quota_fact->>'idempotence_identity'
+      ) and not exists (
+        select 1 from public.adhdice_task_quota_period_facts fact
+         where fact.user_id = p_user_id
+           and fact.entity_id = v_entity_id
+           and fact.period_kind = v_quota_fact->>'period_kind'
+           and fact.period_key = v_quota_fact->>'period_key'
+           and fact.schedule_boundary_id = (v_quota_fact->>'schedule_boundary_id')::uuid
+           and fact.event_kind = 'period_close'
+      ) then
+        raise;
+      end if;
+    end;
+  end loop;
+
   if v_calendar_override <> '{}'::jsonb then
     -- Replaceable instructions retire the prior active row in this same
     -- transaction, preserving it as audit history and keeping the active
@@ -1170,6 +1306,7 @@ begin
   -- rules used by fulfillment before the entitlement is first inserted.
   -- Legacy reward claims are deliberately not consulted or written here.
   if v_history_id is not null and v_history_row.outcome in ('done', 'did_my_best', 'complete') then
+    if coalesce(v_payload->>'reward_eligible', 'false') = 'true' then
     if v_task.repeat_frequency = 'none' then
       v_reward_streak := 1;
     else
@@ -1238,6 +1375,7 @@ begin
        where user_id = p_user_id
          and entity_id = v_entity_id
          and logical_date = v_history_row.logical_date;
+    end if;
     end if;
   end if;
 

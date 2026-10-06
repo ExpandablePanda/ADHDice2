@@ -888,6 +888,7 @@ function fixedRecurrenceForTask(task: Task): Extract<TaskRecurrence, { kind: "we
       weekdays: task.repeat_days_of_week ?? [],
       ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
+      endOn: task.repeat_end_on,
     };
   }
   if (task.repeat_frequency === "monthly" || isFixedUntilCompleteRepeatTask(task)) {
@@ -900,6 +901,7 @@ function fixedRecurrenceForTask(task: Task): Extract<TaskRecurrence, { kind: "we
       weekday: task.repeat_monthly_weekday,
       ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
+      endOn: task.repeat_end_on,
     };
   }
   return null;
@@ -942,6 +944,9 @@ export function isTaskDueOnDate(task: Task, dateKey: string) {
   if (compareDateKeys(dateKey, anchorDateKey) < 0) {
     return false;
   }
+  if (task.repeat_end_on !== null && dateKey > task.repeat_end_on) {
+    return false;
+  }
 
   if (task.repeat_frequency === "none") {
     return dateKey === anchorDateKey;
@@ -979,6 +984,9 @@ export function getTaskRecoveryEarliestDate(
 function isHistoricalRecurringDueDate(task: Task, dateKey: string) {
   const anchorDateKey = task.due_on;
   if (!anchorDateKey || task.repeat_frequency === "none") {
+    return false;
+  }
+  if (task.repeat_end_on !== null && dateKey > task.repeat_end_on) {
     return false;
   }
 

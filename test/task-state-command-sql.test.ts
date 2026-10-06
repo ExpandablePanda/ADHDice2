@@ -50,6 +50,13 @@ test("runtime payload structure is command-specific and rejects provenance spoof
   assert.match(sql, /accepted_payload_digest.*sha256-/i);
 });
 
+test("Clear Balance admits only its serialized marker through the SQL contract", () => {
+  const allowlist = sql.match(/where key not in \([\s\S]*?\)\s*\) then\s*raise exception 'Task State command payload contains an unknown section\.'/i)?.[0] ?? "";
+  const clearBranch = sql.match(/elsif v_command_type = 'clear_quota_balance' then([\s\S]*?)elsif v_command_type = 'reconcile_rollover' then/i)?.[1] ?? "";
+  assert.match(allowlist, /'clear_quota_balance'/);
+  assert.match(clearBranch, /coalesce\(v_payload->>'clear_quota_balance', 'false'\) <> 'true'/);
+});
+
 test("canonical Delay requires a trusted occurrence, delayed History, and effective override", () => {
   const delayBranch = sql.match(/elsif v_command_type = 'delay_occurrence' then([\s\S]*?)elsif v_command_type in \('set_due_date', 'set_repeat'\) then/i)?.[1] ?? "";
   assert.match(delayBranch, /v_history = '\{\}'::jsonb/);

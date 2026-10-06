@@ -611,15 +611,15 @@ test("date bucket helpers classify due_on windows and normalize stale future sta
   });
 
   assert.equal(getTaskDueDateBucket(todayTask), "today");
-  assert.equal(getTaskDueDateBucket(tomorrowTask), "upcoming");
-  assert.equal(getTaskDueDateBucket(sevenDaysTask), "upcoming");
+  assert.equal(getTaskDueDateBucket(tomorrowTask), "not_due");
+  assert.equal(getTaskDueDateBucket(sevenDaysTask), "not_due");
   assert.equal(getTaskDueDateBucket(eightDaysTask), "not_due");
   assert.equal(getTaskDueDateBucket(overdueTask), "overdue");
   assert.equal(getTaskDueDateBucket(noDueDateTask), "none");
 
   assert.equal(getTaskDisplayStatus(todayTask), "pending");
-  assert.equal(getTaskDisplayStatus(tomorrowTask), "upcoming");
-  assert.equal(getTaskDisplayStatus(sevenDaysTask), "upcoming");
+  assert.equal(getTaskDisplayStatus(tomorrowTask), "not_due");
+  assert.equal(getTaskDisplayStatus(sevenDaysTask), "not_due");
   assert.equal(getTaskDisplayStatus(eightDaysTask), "not_due");
   assert.equal(getTaskDisplayStatus(overdueTask), "missed");
   assert.equal(getTaskDisplayStatus(noDueDateTask), "not_due");
@@ -628,7 +628,7 @@ test("date bucket helpers classify due_on windows and normalize stale future sta
   assert.equal(getTaskDisplayStatus(notDueTodayTask), "pending");
   assert.equal(getTaskDisplayStatus(delayedOverdueTask), "missed");
   assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: today, status: "pending" }, today), "pending");
-  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: tomorrow, status: "pending" }, today), "upcoming");
+  assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: tomorrow, status: "pending" }, today), "not_due");
   assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: eightDaysOut, status: "pending" }, today), "not_due");
   assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: tomorrow, status: "delayed" }, today), "delayed");
   assert.equal(normalizeOpenTaskStatusForDueDate({ due_on: today, status: "delayed" }, today), "pending");
@@ -722,13 +722,13 @@ test("rolled-forward recurring display status ignores today history for future a
     was_completed: true,
   };
 
-  assert.equal(getTaskDisplayStatusWithHistory(baseTask, [baseEntry], "2026-06-24"), "upcoming");
+  assert.equal(getTaskDisplayStatusWithHistory(baseTask, [baseEntry], "2026-06-24"), "not_due");
   assert.equal(getTaskDisplayStatusWithHistory({
     ...baseTask,
     due_on: "2026-06-25",
     id: "task-daily-rolled-forward",
     repeat_frequency: "daily",
-  }, [baseEntry], "2026-06-24"), "upcoming");
+  }, [baseEntry], "2026-06-24"), "not_due");
   assert.equal(getTaskDisplayStatusWithHistory({
     ...baseTask,
     due_on: "2026-07-02",
@@ -741,7 +741,7 @@ test("rolled-forward recurring display status ignores today history for future a
     id: "history-rolled-forward-missed",
     status: "missed",
     was_completed: false,
-  }], "2026-06-24"), "upcoming");
+  }], "2026-06-24"), "not_due");
 });
 
 test("date key utilities preserve local date-key behavior", () => {
@@ -787,7 +787,7 @@ test("task list counts preserve built-in bucket memberships", () => {
 
 test("import parser captures parent metadata and nested steps", () => {
   const parsed = parseImportedTaskLines([
-    "Clean Ears #hygiene *due-Today *repeat-Daily",
+    "Clean Ears #hygiene *due-Today *repeat-Daily *repeat_end-2026-06-15",
     "Moisturize",
     "-AM",
     "--Face",
@@ -800,10 +800,25 @@ test("import parser captures parent metadata and nested steps", () => {
   assert.deepEqual(parsed.tasks[0]?.tags, ["hygiene"]);
   assert.equal(parsed.tasks[0]?.dueOn, "2026-06-10");
   assert.equal(parsed.tasks[0]?.repeatFrequency, "daily");
+  assert.equal(parsed.tasks[0]?.repeatEndOn, "2026-06-15");
   assert.equal(parsed.tasks[1]?.subtasks[0]?.title, "AM");
   assert.equal(parsed.tasks[1]?.subtasks[0]?.children[0]?.title, "Face");
   assert.equal(parsed.tasks[1]?.subtasks[0]?.children[1]?.title, "Feet");
   assert.equal(parsed.tasks[1]?.subtasks[1]?.title, "PM");
+});
+
+test("import parser leaves undated tasks unscheduled and only resolves relative dates from the supplied logical day", () => {
+  const parsed = parseImportedTaskLines([
+    "Undated *time-9am",
+    "Explicit date *due-2026-06-12 *time-9am",
+    "Logical today *due-Today",
+  ], { todayDateKey: "2026-06-10" });
+
+  assert.equal(parsed.tasks[0]?.dueOn, null);
+  assert.equal(parsed.tasks[0]?.dueTime, null);
+  assert.equal(parsed.tasks[1]?.dueOn, "2026-06-12");
+  assert.equal(parsed.tasks[1]?.dueTime, "09:00");
+  assert.equal(parsed.tasks[2]?.dueOn, "2026-06-10");
 });
 
 test("import progress counts parsed parents and every supported descendant", () => {
@@ -877,7 +892,7 @@ test("child task preview lookup uses the same display status semantics as parent
 
   const previewLookup = buildChildTaskPreviewLookup([parent, child], [], {}, "2026-06-22");
 
-  assert.equal(previewLookup[parent.id]?.items[0]?.status, "upcoming");
+  assert.equal(previewLookup[parent.id]?.items[0]?.status, "not_due");
 });
 
 test("task update conflict helpers only auto-reapply low-risk untouched fields", () => {

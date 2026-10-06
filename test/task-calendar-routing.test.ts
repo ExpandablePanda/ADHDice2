@@ -18,9 +18,9 @@ test("Calendar is wired through the existing Tasks view shell and editor flows",
   assert.match(app, /taskUiState\.includeStepsByView\.calendar/);
   assert.match(app, /calendarNode=\{calendarContentNode\}/);
   assert.match(app, /onAddTask=\{openCalendarDateTaskEditor\}/);
-  assert.match(app, /onOpenTask=\{openExistingTaskEditor\}/);
+  assert.match(app, /onOpenTask=\{\(task\) => openExistingTaskEditor\(task, calendarTasks\.map\(\(entry\) => entry\.id\)\)\}/);
   assert.match(app, /createTaskAndOpenSharedEditor/);
-  assert.match(app, /\{ \.\.\.buildNewTaskDraft\("New Task"\), due_on: dueOn \}/);
+  assert.match(app, /buildNewTaskDraft\("New Task", \{ dueOn \}\)/);
   assert.match(app, /openExistingTaskEditor\(createdTask\)/);
   assert.match(app, /childTaskPreviewByParentTaskId/);
   assert.match(calendar, /groupTasksByCalendarDate\(tasks\)/);

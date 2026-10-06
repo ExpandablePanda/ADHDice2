@@ -121,7 +121,7 @@ export function useTaskSubtaskActions({
       return false;
     }
     if (status === "upcoming" || status === "not_due") {
-      setMessage({ tone: "warn", text: "Upcoming and Not Due are derived canonical child states and cannot be written directly." });
+      setMessage({ tone: "warn", text: "Pending and Not Due are derived canonical child states and cannot be written directly." });
       return false;
     }
     const saved = await updateCanonicalTask(subtaskId, { status });

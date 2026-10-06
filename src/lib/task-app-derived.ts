@@ -13,7 +13,7 @@ import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import type {
   TaskBucketContext,
 } from "@/lib/task-buckets";
-import type { TaskDisplayStatus, TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters, TaskUiState } from "@/lib/task-ui-state";
 import type {
   TaskListDefinition,
@@ -29,6 +29,8 @@ import { normalizeTitleForDuplicateDetection } from "@/lib/task-search";
 import { getTaskContentFolderSearchDocument, type TaskContentFolderRow } from "@/lib/task-content-folders";
 import { todayISO } from "@/lib/utils";
 import { matchesTaskTypeSelections } from "@/lib/task-type";
+import { quotaProgressForTask, type QuotaProgress } from "@/lib/task-state-engine/quota";
+import type { TaskHistoryOutcome } from "@/lib/task-state-engine/types";
 
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
 
@@ -109,6 +111,11 @@ export type ChildTaskPreview = {
   repeatMonthlyMode: Task["repeat_monthly_mode"];
   repeatMonthlyOrdinal: Task["repeat_monthly_ordinal"];
   repeatMonthlyWeekday: Task["repeat_monthly_weekday"];
+  repeatEndOn: string | null;
+  repeatQuotaCount?: number | null;
+  repeatQuotaBalanceEnabled?: boolean;
+  repeatQuotaBalance?: number | null;
+  repeatQuotaProgress?: QuotaProgress | null;
   scheduledOn: string | null;
   status: TaskDisplayStatus;
   storedStatus: TaskStatus;
@@ -240,7 +247,7 @@ export function buildCanonicalActiveStatusCounts(
   options: { childTaskIds?: ReadonlySet<string>; displayStatusByTaskId?: TaskDisplayStatusByTaskId; includeSteps?: boolean; parentTaskIds?: ReadonlySet<string> } = {},
 ) {
   const counts = createEmptyTaskStatusCounts();
-  const displayStatus = (task: Pick<Task, "id" | "status">) => options.displayStatusByTaskId?.[task.id] ?? task.status;
+  const displayStatus = (task: Pick<Task, "id" | "status">) => normalizeTaskDisplayStatus(options.displayStatusByTaskId?.[task.id] ?? task.status);
   for (const task of parentTasks) {
     if (!options.parentTaskIds || options.parentTaskIds.has(task.id)) {
       counts[displayStatus(task)] += 1;
@@ -248,7 +255,7 @@ export function buildCanonicalActiveStatusCounts(
     if (options.includeSteps === false) continue;
     for (const item of childTaskPreviewByParentTaskId[task.id]?.items ?? []) {
       if (options.childTaskIds && !options.childTaskIds.has(item.id)) continue;
-      counts[options.displayStatusByTaskId?.[item.id] ?? item.status] += 1;
+      counts[normalizeTaskDisplayStatus(options.displayStatusByTaskId?.[item.id] ?? item.status)] += 1;
     }
   }
   return counts;
@@ -433,6 +440,8 @@ export function buildChildTaskPreviewLookup(
   adapter = buildTaskHierarchyAdapter(tasks),
   taskHistoryStreakSummaryByTaskId: TaskHistoryStreakSummaryMap = {},
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId = {},
+  quotaCurrentPeriodHistoryByTaskId: Record<string, TaskHistory[]> = {},
+  isQuotaCurrentPeriodHistoryReady = false,
 ): ChildTaskPreviewLookup {
   const focusedTaskIdSet = new Set(focusedTaskIds);
   const previewByParentTaskId: ChildTaskPreviewLookup = {};
@@ -471,6 +480,16 @@ export function buildChildTaskPreviewLookup(
             timestamp: streakSummary.lastHandledAt ?? null,
           }
           : getTaskHistoryLastHandled(taskHistoryByTaskId[descendant.id] ?? [], todayDateKey);
+        const repeatQuotaProgress = todayDateKey && isQuotaCurrentPeriodHistoryReady
+          ? quotaProgressForTask({
+            task: descendant,
+            logicalDate: todayDateKey,
+            history: (quotaCurrentPeriodHistoryByTaskId[descendant.id] ?? []).map((row) => ({
+              logicalDate: row.entry_date,
+              outcome: row.status as TaskHistoryOutcome,
+            })),
+          })
+          : null;
 
         return {
           actualSeconds: descendant.actual_seconds,
@@ -504,8 +523,13 @@ export function buildChildTaskPreviewLookup(
           repeatMonthlyMode: descendant.repeat_monthly_mode,
           repeatMonthlyOrdinal: descendant.repeat_monthly_ordinal,
           repeatMonthlyWeekday: descendant.repeat_monthly_weekday,
+          repeatEndOn: descendant.repeat_end_on,
+          repeatQuotaCount: descendant.repeat_quota_count,
+          repeatQuotaBalanceEnabled: descendant.repeat_quota_balance_enabled,
+          repeatQuotaBalance: descendant.repeat_quota_balance,
+          repeatQuotaProgress,
           scheduledOn: descendant.scheduled_on,
-          status: taskDisplayStatusByTaskId[descendant.id] ?? descendant.status,
+          status: normalizeTaskDisplayStatus(taskDisplayStatusByTaskId[descendant.id] ?? descendant.status),
           storedStatus: descendant.status,
           tags: descendant.tags ?? [],
           title: descendant.title,
@@ -528,6 +552,8 @@ export function buildTaskAppStructuralData({
   diagnosticDetails,
   focusedTaskIds,
   taskHistoryByTaskId,
+  quotaCurrentPeriodHistoryByTaskId,
+  isQuotaCurrentPeriodHistoryReady,
   taskHistoryStreakSummaryByTaskId,
   taskDisplayStatusByTaskId,
   tasks,
@@ -536,6 +562,8 @@ export function buildTaskAppStructuralData({
   diagnosticDetails?: DevelopmentComputationDiagnostic;
   focusedTaskIds: readonly string[];
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  quotaCurrentPeriodHistoryByTaskId?: Record<string, TaskHistory[]>;
+  isQuotaCurrentPeriodHistoryReady?: boolean;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   tasks: Task[];
@@ -544,7 +572,7 @@ export function buildTaskAppStructuralData({
   const startedAt = isDevelopment && typeof performance !== "undefined" ? performance.now() : 0;
   const hierarchy = buildTaskHierarchyAdapter(tasks);
   const result = {
-    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy, taskHistoryStreakSummaryByTaskId, taskDisplayStatusByTaskId),
+    childTaskPreviewByParentTaskId: buildChildTaskPreviewLookup(tasks, focusedTaskIds, taskHistoryByTaskId, todayDateKey, hierarchy, taskHistoryStreakSummaryByTaskId, taskDisplayStatusByTaskId, quotaCurrentPeriodHistoryByTaskId, isQuotaCurrentPeriodHistoryReady),
     hierarchy,
     taskHierarchyDiagnostics: buildTaskHierarchyDiagnostics(tasks, hierarchy),
     taskPrimaryVisibility: buildTaskPrimaryVisibility(tasks, hierarchy),
@@ -626,7 +654,7 @@ export function buildStableCanonicalTaskIndex({
   const resolvedTaskDisplayStatusByTaskId: TaskDisplayStatusByTaskId = {};
   const focusFilterFactsByTaskId: Record<string, ReturnType<typeof getTaskFocusFilterFacts>> = {};
   for (const task of tasks) {
-    resolvedTaskDisplayStatusByTaskId[task.id] = taskDisplayStatusByTaskId[task.id] ?? task.status;
+    resolvedTaskDisplayStatusByTaskId[task.id] = normalizeTaskDisplayStatus(taskDisplayStatusByTaskId[task.id] ?? task.status);
     focusFilterFactsByTaskId[task.id] = getTaskFocusFilterFacts(
       task,
       taskHistoryByTaskId[task.id] ?? [],
@@ -1017,7 +1045,7 @@ export function buildTaskAppWorkspaceFacts({
   const tags = new Set<string>();
   const visibleTaskBaseFactsByTaskId: Record<string, VisibleTaskBaseFacts> = {};
   const taskStatusCounts = primaryTasks.reduce<Record<TaskDisplayStatus, number>>((counts, task) => {
-    counts[taskDisplayStatusByTaskId[task.id] ?? task.status] += 1;
+    counts[normalizeTaskDisplayStatus(taskDisplayStatusByTaskId[task.id] ?? task.status)] += 1;
     if (!isTaskVisibleInPrimaryViews(task)) return counts;
     visibleTasks.push(task);
     const facts = buildVisibleTaskBaseFacts(task, bucketContext.todayDateKey ?? todayISO());
@@ -1103,6 +1131,8 @@ type ComputeTaskAppDerivedDataInput = {
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
   milestoneTaskIds?: ReadonlySet<string>;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
+  quotaCurrentPeriodHistoryByTaskId?: Record<string, TaskHistory[]>;
+  isQuotaCurrentPeriodHistoryReady?: boolean;
   taskHistoryStreakSummaryByTaskId?: TaskHistoryStreakSummaryMap;
   taskContentFolders?: readonly TaskContentFolderRow[];
   todayDateKey: string;
@@ -1129,6 +1159,8 @@ export function computeTaskAppDerivedData({
   milestoneSearchTokensByTaskId,
   milestoneTaskIds,
   taskHistoryByTaskId,
+  quotaCurrentPeriodHistoryByTaskId,
+  isQuotaCurrentPeriodHistoryReady,
   taskHistoryStreakSummaryByTaskId,
   taskContentFolders,
   todayDateKey,
@@ -1146,6 +1178,8 @@ export function computeTaskAppDerivedData({
     const emptyStructuralData = structuralData ?? buildTaskAppStructuralData({
       focusedTaskIds,
       taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
       taskHistoryStreakSummaryByTaskId,
       taskDisplayStatusByTaskId,
       tasks,
@@ -1227,6 +1261,8 @@ export function computeTaskAppDerivedData({
   const resolvedStructuralData = structuralData ?? buildTaskAppStructuralData({
     focusedTaskIds,
     taskHistoryByTaskId,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     taskHistoryStreakSummaryByTaskId,
     taskDisplayStatusByTaskId,
     tasks,
@@ -1340,7 +1376,7 @@ export function computeTaskAppDerivedData({
       return searchMatchesTaskGroup;
     }
 
-    const ownDisplayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
+    const ownDisplayStatus = normalizeTaskDisplayStatus(taskDisplayStatusByTaskId[task.id] ?? task.status);
     const matchesOwnStatus = taskUiState.statusFilters.includes(ownDisplayStatus);
     const matchingChildStatusItems = includeStepsInStatus
       ? matchingChildSearchItems.filter((item) => taskUiState.statusFilters.includes(item.status))
@@ -1359,7 +1395,7 @@ export function computeTaskAppDerivedData({
       : taskUiState.matchAny
         ? quickChecks.some(Boolean)
         : quickChecks.every(Boolean);
-    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(taskDisplayStatusByTaskId[task.id] ?? task.status);
+    const matchesStatus = taskUiState.statusFilters.length === 0 || taskUiState.statusFilters.includes(normalizeTaskDisplayStatus(taskDisplayStatusByTaskId[task.id] ?? task.status));
     const matchesEnergy = taskUiState.energyFilters.length === 0 || taskUiState.energyFilters.includes(task.energy);
     return matchesQuickFilters && matchesStatus && matchesEnergy;
   };

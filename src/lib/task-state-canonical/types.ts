@@ -55,6 +55,7 @@ export type CanonicalTaskStateRecord = CanonicalTaskStateColumns & {
 export type CanonicalCommandType =
   | "set_outcome"
   | "clear_outcome"
+  | "clear_quota_balance"
   | "complete_task"
   | "delay_occurrence"
   | "set_due_date"
@@ -119,7 +120,9 @@ export type CanonicalRepeatFrequency =
   | "weekly"
   | "monthly"
   | "custom"
-  | "daily_until_complete";
+  | "daily_until_complete"
+  | "per_week"
+  | "per_month";
 export type CanonicalScheduleAnchorKind =
   | "user_selected"
   | "first_schedule_boundary"
@@ -149,6 +152,10 @@ export type CanonicalTaskScheduleBoundary = {
   repeat_monthly_mode: "day_of_month" | "ordinal_weekday";
   repeat_monthly_ordinal: "first" | "second" | "third" | "fourth" | "last" | null;
   repeat_monthly_weekday: number | null;
+  repeat_end_on: string | null;
+  /** Optional for legacy test/read fixtures; canonical SQL defaults these fields. */
+  repeat_quota_count?: number | null;
+  repeat_quota_balance_enabled?: boolean;
   one_time_due_on: string | null;
   due_time: string | null;
   anchor_date: string | null;
@@ -168,6 +175,31 @@ export type CanonicalTaskScheduleBoundary = {
   idempotence_identity: string;
   schema_contract_version: "task-state-schema-v1";
   source_task_revision: number | null;
+  revision: number;
+  created_at: string;
+  updated_at: string;
+};
+
+/** Append-only quota period fact; the Task-row balance is only a read projection. */
+export type CanonicalTaskQuotaPeriodFact = {
+  id: string;
+  user_id: string;
+  entity_id: string;
+  entity_kind: CanonicalEntityKind;
+  period_kind: "week" | "month";
+  period_key: string;
+  period_start: string;
+  period_end: string;
+  schedule_boundary_id: string;
+  base_quota: number;
+  incoming_balance: number;
+  successful_days: number;
+  next_balance: number;
+  balance_enabled: boolean;
+  event_kind: "period_close" | "clear_balance";
+  command_id: string | null;
+  idempotence_identity: string;
+  source: string;
   revision: number;
   created_at: string;
   updated_at: string;

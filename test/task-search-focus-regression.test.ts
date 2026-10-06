@@ -130,7 +130,20 @@ function compileModule(runtime: ReturnType<typeof createHookRuntime>) {
           AdhdDropdownPanel: ({ children }: { children: unknown }) => children,
         };
       }
-      if (id === "@/lib/task-list-folders") return { getTaskListContainerKey: (folderId: string | null) => folderId ?? "root" };
+      if (id === "@/components/style-lab/style-lab-icon-slot") return { StyleLabIconPreviewSlot: ({ children }: { children: unknown }) => children };
+      if (id === "./task-type-identity") return {
+        TaskTypeIdentity: ({ option }: { option?: { label?: string } }) => ({ type: "span", props: { children: option?.label ?? "" } }),
+      };
+      if (id === "@/lib/task-list-folders") return {
+        filterTaskListDirectoryEntries: (entries: unknown[], query: string) => {
+          const normalizedQuery = query.trim().toLocaleLowerCase();
+          return entries.filter((entry) => {
+            const directoryEntry = entry as { label: string; path: string };
+            return !normalizedQuery || `${directoryEntry.label} ${directoryEntry.path}`.toLocaleLowerCase().includes(normalizedQuery);
+          });
+        },
+        getTaskListContainerKey: (folderId: string | null) => folderId ?? "root",
+      };
       if (id === "@/lib/task-list-rail-order") {
         return {
           getTaskListRailIndicatorLeft: () => 0,
@@ -160,6 +173,10 @@ function materialize(
   if (typeof element.type === "function" && (
     "onSearchChange" in (element.props ?? {})
     || "onClick" in (element.props ?? {})
+    || "onChange" in (element.props ?? {})
+    || "onAllSearchChange" in (element.props ?? {})
+    || "onSelect" in (element.props ?? {})
+    || "option" in (element.props ?? {})
     || "widthClassName" in (element.props ?? {})
   )) {
     return materialize(runtime.renderComponent(`${path}/search-box`, element.type as (props: Record<string, unknown>) => unknown, element.props ?? {}), `${path}/search-box-output`, runtime, nodes);
@@ -191,6 +208,23 @@ function findInput(nodes: ElementNode[]): ElementNode | null {
   return null;
 }
 
+function findInputByAriaLabel(nodes: ElementNode[], ariaLabel: string): ElementNode | null {
+  for (const node of nodes) {
+    if (node.type === "input" && node.props["aria-label"] === ariaLabel) return node;
+    const child = findInputByAriaLabel(node.children ?? [], ariaLabel);
+    if (child) return child;
+  }
+  return null;
+}
+
+function hasFunctionComponent(value: unknown, componentName: string): boolean {
+  if (Array.isArray(value)) return value.some((child) => hasFunctionComponent(child, componentName));
+  if (!value || typeof value !== "object") return false;
+  const element = value as { props?: { children?: unknown }; type?: unknown };
+  return (typeof element.type === "function" && element.type.name === componentName)
+    || hasFunctionComponent(element.props?.children, componentName);
+}
+
 function findButtons(nodes: ElementNode[]): ElementNode[] {
   return nodes.flatMap((node) => [
     ...(node.type === "button" ? [node] : []),
@@ -198,11 +232,16 @@ function findButtons(nodes: ElementNode[]): ElementNode[] {
   ]);
 }
 
+function findButtonByText(nodes: ElementNode[], text: string): ElementNode | null {
+  return findButtons(nodes).find((button) => textContent(button.props.children).trim() === text) ?? null;
+}
+
 function textContent(value: unknown): string {
   if (typeof value === "string") return value;
   if (Array.isArray(value)) return value.map(textContent).join("");
   if (!value || typeof value !== "object") return "";
-  return textContent((value as { props?: { children?: unknown } }).props?.children);
+  const props = (value as { props?: { children?: unknown; option?: { label?: string } } }).props;
+  return props?.children !== undefined ? textContent(props.children) : props?.option?.label ?? "";
 }
 
 test("Tasks header search keeps focus and DOM identity across the 180ms commit", async () => {
@@ -300,6 +339,150 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
   assert.equal((latestInput.props as SearchInputProps).value, "ab");
   (latestInput.props as SearchInputProps).onKeyDown?.({ key: "Enter", preventDefault() {} });
   assert.equal(submittedSearch, "ab");
+});
+
+test("Lists rail search is entered from active All and restores navigation-only hierarchy behavior", () => {
+  (globalThis as { window?: unknown }).window = { clearTimeout, setTimeout };
+  (globalThis as { document?: { activeElement: ElementNode | null } }).document = { activeElement: null };
+
+  const runtime = createHookRuntime();
+  const components = compileModule(runtime);
+  const nodes = new Map<string, ElementNode>();
+  const selectedBuckets: string[] = [];
+  const selectedEntries: string[] = [];
+  const directoryEntries = [
+    { id: "folder-health", kind: "folder", label: "Health", path: "Life / Health" },
+    { folderId: "folder-health", id: "list-nested", kind: "list", label: "Vitals", path: "Life / Health / Metrics" },
+  ];
+  let rendered: ElementNode[] = [];
+  let rawTree: unknown;
+  const props: Record<string, unknown> = {
+    actionLabel: "Focus",
+    activeCount: 1,
+    allListDirectoryEntries: directoryEntries,
+    appVersion: "7.16.73",
+    archiveCount: 0,
+    currentFolderBreadcrumbs: [],
+    currentFolderId: null,
+    filterRowsNode: null,
+    hideSearch: false,
+    isKeyboardShortcutsMenuOpen: false,
+    isRailHidden: false,
+    isListColumnMenuOpen: false,
+    keyboardShortcutsMenuRef: { current: null },
+    listColumnLabels: {},
+    listColumnMenuRef: { current: null },
+    listColumnPickerColumns: [],
+    listVisibleColumns: [],
+    lists: [
+      { id: "all", label: "All", structureKind: "list", count: 2 },
+      { id: "inbox", label: "Inbox", structureKind: "list", count: 1 },
+      { id: "priority_5", label: "Priority", structureKind: "list", count: 1 },
+    ],
+    metric: { doneTasks: [], label: "1", percent: 50, remainingTasks: [], summary: "1 task", totalCount: 1 },
+    onCycleMomentum: () => undefined,
+    onOpenArchive: () => undefined,
+    onOpenTaskComposerForType: () => undefined,
+    onOpenFocusPlanner: () => undefined,
+    onOpenImport: () => undefined,
+    onOpenListSettings: () => undefined,
+    onOpenMomentumDetails: () => undefined,
+    onOpenTrash: () => undefined,
+    onSelectBucket: (bucket: string) => {
+      selectedBuckets.push(bucket);
+      props.selectedBucket = bucket;
+      render();
+    },
+    onSelectDirectoryEntry: (entry: { id: string; kind?: string; folderId?: string | null }) => {
+      selectedEntries.push(entry.id);
+      props.currentFolderId = entry.kind === "list" ? entry.folderId : entry.id;
+      props.selectedBucket = entry.kind === "list" ? entry.id : "all";
+      render();
+    },
+    onToggleRail: () => undefined,
+    onExpandAllColumns: () => undefined,
+    onShrinkAllColumns: () => undefined,
+    onSearchChange: () => undefined,
+    onViewChange: () => undefined,
+    onToggleKeyboardShortcutsMenu: () => undefined,
+    onToggleListColumn: () => undefined,
+    onToggleListColumnMenu: () => undefined,
+    onNavigateFolder: () => undefined,
+    onMoveStructure: undefined,
+    openFolderRails: [],
+    search: "",
+    selectedBucket: "inbox",
+    shortcuts: [],
+    taskTypeOptions: [{ label: "Task", value: "task" }],
+    trashCount: 0,
+    todayCount: 1,
+    view: "list",
+  };
+  function render() {
+    rawTree = runtime.renderComponent("rail-search-header", components.TaskOperationsHeader, props);
+    rendered = materialize(rawTree, "rail-search-header-output", runtime, nodes);
+  }
+  runtime.bindRerender(render);
+  render();
+
+  const railInput = () => findInputByAriaLabel(rendered, "Search lists and folders");
+  const railResults = () => findButtons(rendered).filter((button) => textContent(button.props.children).includes("Health") || textContent(button.props.children).includes("Vitals"));
+  assert.equal(railInput(), null);
+  assert.equal(findButtonByText(rendered, "All")?.props["aria-pressed"], false);
+
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  assert.deepEqual(selectedBuckets, ["all"]);
+  assert.equal(railInput(), null);
+  assert.equal(findButtonByText(rendered, "All")?.props["aria-pressed"], true);
+
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  assert.ok(railInput());
+  assert.equal((railInput() as ElementNode).props.placeholder, "Search lists and folders…");
+  assert.equal((railInput() as ElementNode).props.autoFocus, true);
+  assert.equal(findButtonByText(rendered, "All"), null);
+
+  ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "METRICS" } });
+  assert.equal((railInput() as ElementNode).props.value, "METRICS");
+  assert.equal(railResults().length, 1);
+  assert.match(textContent(railResults()[0]?.props.children), /Vitals/);
+  assert.equal(railResults()[0]?.props.onPointerDown, undefined);
+  assert.equal(railResults()[0]?.props.draggable, undefined);
+  assert.equal(hasFunctionComponent(rawTree, "TaskListRailHierarchy"), true);
+  assert.equal(findButtonByText(rendered, "Priority")?.props["data-rail-drag-id"], undefined);
+
+  (railResults()[0]?.props.onClick as () => void)();
+  assert.deepEqual(selectedEntries, ["list-nested"]);
+  assert.equal(railInput(), null);
+  assert.equal(findButtonByText(rendered, "All")?.props["aria-pressed"], false);
+  assert.equal(props.view, "list");
+  assert.equal(props.search, "");
+  assert.equal(props.selectedBucket, "list-nested");
+  assert.equal(props.currentFolderId, "folder-health");
+
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "missing" } });
+  assert.match(textContent(rendered), /No lists or folders found\./);
+  const clearButton = findButtons(rendered).find((button) => button.props["aria-label"] === "Clear lists and folders search");
+  assert.ok(clearButton);
+  (clearButton?.props.onClick as () => void)();
+  assert.equal(railInput(), null);
+  assert.ok(findButtonByText(rendered, "All"));
+
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "health" } });
+  ((railInput() as ElementNode).props.onKeyDown as (event: { key: string; preventDefault: () => void }) => void)({ key: "Escape", preventDefault() {} });
+  assert.equal(railInput(), null);
+
+  (findButtonByText(rendered, "All")?.props.onClick as (event: object) => void)({});
+  ((railInput() as ElementNode).props.onChange as (event: { target: { value: string } }) => void)({ target: { value: "health" } });
+  props.view = "table";
+  props.isRailHidden = true;
+  render();
+  assert.equal(railInput(), null);
+  props.isRailHidden = false;
+  render();
+  assert.ok(findButtonByText(rendered, "All"));
 });
 
 test("Tasks header New menu keeps Task first, requests named types, and closes after selection", () => {

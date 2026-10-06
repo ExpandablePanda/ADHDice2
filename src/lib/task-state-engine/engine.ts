@@ -2,7 +2,6 @@ import {
   authoritativeRowsByDate,
   calendarStateForOutcome,
   dateRange,
-  daysBetween,
   logicalDateForTimestamp,
   shiftDateKey,
 } from "./calendar.ts";
@@ -14,6 +13,7 @@ import {
   occurrenceIdentity,
   resolveSuccessfulOccurrenceTarget,
   recurrenceAfterSuccess,
+  recurrenceOccurrenceIsAllowed,
   scheduledOccurrences,
 } from "./recurrence.ts";
 import {
@@ -33,6 +33,7 @@ import type {
   TaskStateEngineInput,
   TaskStateHistoryRow,
 } from "./types.ts";
+import { evaluateQuotaTaskState } from "./quota.ts";
 
 const HANDLED = new Set<TaskHistoryOutcome>(["done", "did_my_best", "missed", "delayed", "complete"]);
 const SUCCESS = new Set<TaskHistoryOutcome>(["done", "did_my_best", "complete"]);
@@ -49,8 +50,8 @@ function rewardIdentity(taskId: string, date: string, outcome: TaskHistoryOutcom
   return `task-reward:${taskId}:${date}:${outcome}`;
 }
 
-function statusForFutureDate(today: string, dueOn: string): TaskActiveStatus {
-  return daysBetween(today, dueOn) <= 7 ? "upcoming" : "not_due";
+function statusForFutureDate(): TaskActiveStatus {
+  return "not_due";
 }
 
 function streakFor(
@@ -223,6 +224,7 @@ export function findUnresolvedMissedOccurrence(
 
 function nextDueAfterFinalizedOccurrence(recurrence: TaskRecurrence, occurrenceDate: string) {
   if (recurrence.kind === "none") return null;
+  if (recurrence.kind === "quota") return null;
   if (recurrence.kind === "rolling") {
     return recurrenceAfterSuccess(recurrence, occurrenceDate, occurrenceDate, new Set()).nextDue;
   }
@@ -265,7 +267,7 @@ function automaticMissedRows(input: {
   if (task.recurrence.kind === "none") {
     dueDates = scheduleStart >= start && scheduleStart <= end ? [scheduleStart] : [];
   } else if (task.recurrence.kind === "rolling") {
-    dueDates = dateRange(start, end);
+    dueDates = dateRange(start, end).filter((date) => recurrenceOccurrenceIsAllowed(task.recurrence, date));
   } else {
     dueDates = scheduledOccurrences(task.recurrence, scheduleStart, start, end);
   }
@@ -300,6 +302,9 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const { task } = input;
   const behaviorPolicy = resolveTaskBehaviorPolicy(input.behaviorPolicy);
   const today = logicalDateForTimestamp(input.now, input.timezone, input.logicalDayRollover);
+  if (task.recurrence.kind === "quota") {
+    return evaluateQuotaTaskState({ ...input, behaviorPolicy });
+  }
   const nowIso = (input.now instanceof Date ? input.now : new Date(input.now)).toISOString();
   const changes: TaskHistoryChange[] = [];
   const errors: string[] = [];
@@ -387,8 +392,16 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
 
   if (action) {
     const allowed = allowedOutcomes(task.recurrence, unscheduled);
+    const recurrenceEndOn = task.recurrence.kind === "none" ? null : task.recurrence.endOn ?? null;
     let reason: string | null = null;
     if (task.lifecycle !== "active") reason = `Cannot record outcomes for ${task.lifecycle} tasks.`;
+    else if (!historicalOverride
+      && recurrenceEndOn
+      && actionDate > recurrenceEndOn
+      && !(action.occurrenceDueOn && action.occurrenceDueOn <= recurrenceEndOn)
+      && !(existingActionRow?.occurrenceDueOn && existingActionRow.occurrenceDueOn <= recurrenceEndOn)) {
+      reason = "The recurrence has ended; no new occurrence may be recorded after its End Date.";
+    }
     else if (existingActionRow && !action.replaceExisting) reason = "Only one outcome is allowed per task per logical day.";
     else if (!historicalOverride && SUCCESS.has(action.outcome) && actionOccurrenceIdentity && rows.some((row) => (
       row.outcome !== "missed"
@@ -497,6 +510,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       currentBehaviorPolicyEffectiveFromLogicalDate: input.currentBehaviorPolicyEffectiveFromLogicalDate,
       task,
       history: rows,
+      quotaPeriodFacts: input.quotaPeriodFacts,
       logicalDate: today,
       calendarStart,
       calendarEnd,
@@ -746,11 +760,15 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     .sort((a, b) => b.logicalDate.localeCompare(a.logicalDate))[0] ?? null;
   let activeStatus: TaskActiveStatus;
   let calendar: Record<string, ReturnType<typeof calendarStateForOutcome>> = {};
+  const recurrenceEndOn = task.recurrence.kind === "none" ? null : task.recurrence.endOn ?? null;
+  const recurrenceEndedBeforeToday = recurrenceEndOn !== null
+    && today > recurrenceEndOn
+    && (!nextDue || nextDue <= recurrenceEndOn);
   for (const [date, row] of byDate) calendar[date] = calendarStateForOutcome(row.outcome);
   if (!completed) {
     for (const date of dateRange(calendarStart, today)) {
       if (calendar[date]) continue;
-      if (date === today && (unscheduled || !nextDue || nextDue <= today || overdueAnchor)) calendar[date] = "open";
+      if (date === today && !recurrenceEndedBeforeToday && (unscheduled || !nextDue || nextDue <= today || overdueAnchor)) calendar[date] = "open";
       else if (date < today && overdueAnchor) calendar[date] = "missed";
       else calendar[date] = "no_entry";
     }
@@ -792,6 +810,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     currentBehaviorPolicyEffectiveFromLogicalDate: input.currentBehaviorPolicyEffectiveFromLogicalDate,
     task,
     history: rows,
+    quotaPeriodFacts: input.quotaPeriodFacts,
     logicalDate: today,
     calendarStart,
     calendarEnd,
@@ -861,7 +880,7 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   } else if (unscheduled) {
     activeStatus = "unscheduled";
   } else if (nextDue && nextDue > today) {
-    activeStatus = statusForFutureDate(today, nextDue);
+    activeStatus = statusForFutureDate();
   } else if (oneOffHandled || currentRecurrenceOutcome === "done") {
     activeStatus = "done";
   } else if (currentRecurrenceOutcome === "did_my_best") {

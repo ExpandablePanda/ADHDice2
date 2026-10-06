@@ -50,7 +50,7 @@ import {
   type TaskContentFolderMemberSummary,
   type TaskContentFolderMenuOption,
 } from "@/lib/task-content-folders";
-import type { TaskDisplayStatus } from "@/lib/task-display-status";
+import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import { TaskAttentionChip } from "@/components/task-app/task-attention-chip";
 import type { TaskAttentionReason } from "@/lib/task-attention";
 import type { TaskTableColumnFilters } from "@/lib/task-ui-state";
@@ -59,6 +59,7 @@ import { formatChildTaskPreviewDepthLabel, type ChildTaskPreview, type ChildTask
 import { buildChildTaskPreviewVisibility, filterChildTaskPreviewItemsToMatchingHierarchy, groupChildTaskPreviewItemsByStoredCompletion, type ChildTaskPreviewVisibility } from "@/lib/task-child-preview-collapse";
 import { isTaskEditorChildRouteSettled, resolveTaskEditorFocusPhase } from "@/lib/task-editor-focus-request";
 import { getSelectedTaskPriorityToneClass, getTaskPrioritySelection, getTaskPriorityToneClass, type TaskPriorityLevelOption, TASK_PRIORITY_LEVEL_OPTIONS } from "@/lib/task-priority";
+import type { QuotaProgress } from "@/lib/task-state-engine/quota";
 import type { TaskSiblingDropPlacement, TaskSiblingReorderInstruction } from "@/lib/task-sibling-reorder";
 import { TaskDelayPicker } from "@/components/task-app/task-delay-picker";
 import {
@@ -136,7 +137,7 @@ import {
 } from "@/lib/task-table-alignment";
 import { TaskTimerDial } from "@/components/task-app/task-timer-display";
 import { TaskChildCreationComposer } from "@/components/task-app/task-creation-composer";
-import type { TaskCreationMetadata } from "@/lib/task-creation";
+import type { TaskCreationDraft, TaskCreationMetadata, TaskCreationSubmission } from "@/lib/task-creation";
 import {
   buildTaskContentFolderContextMenuState,
   TaskContentFolderContextMenu,
@@ -145,13 +146,22 @@ import {
 import { TaskContentFolderEditableHeader, type TaskContentFolderEditSurface } from "@/components/task-app/task-content-folder-editable-header";
 import { resolveTaskTableLayoutPublishDecision, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import type { TaskBehaviorProfiles, TaskBehaviorPolicy, TaskBehaviorPolicyField } from "@/lib/task-state-engine/behavior-policy";
+import {
+  isTaskContextSmartActionEligible,
+  readTaskContextSmartAction,
+  writeTaskContextSmartAction,
+  getTaskContextSmartActionLabel,
+  type TaskContextSmartAction,
+  type TaskContextSmartActionInput,
+  type TaskContextSmartActionTarget,
+} from "@/lib/task-context-smart-action";
 
 type TaskEnergy = "high" | "low" | "medium" | "none";
 type TaskPriority = TaskPriorityLevelOption;
 type PendingTableTaskRepeat = PendingTaskRepeat & {
   rollbackValue: TaskRepeatReconciliationValue;
 };
-type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "weekly";
+type TaskRepeat = "custom" | "daily" | "daily_until_complete" | "monthly" | "none" | "per_week" | "per_month" | "weekly";
 export type TaskDueChangeHandler = (
   taskId: string,
   schedule: { dueOn: string; dueTime: string },
@@ -411,6 +421,10 @@ function buildPrototypeRowsSignature(rows: PrototypeTaskRow[]): string {
   repeatMonthlyMode: row.repeatMonthlyMode,
   repeatMonthlyOrdinal: row.repeatMonthlyOrdinal,
   repeatMonthlyWeekday: row.repeatMonthlyWeekday,
+  repeatEndOn: row.repeatEndOn,
+  repeatQuotaCount: row.repeatQuotaCount,
+  repeatQuotaBalanceEnabled: row.repeatQuotaBalanceEnabled,
+  repeatQuotaBalance: row.repeatQuotaBalance,
   status: row.status,
     subtasks: buildPrototypeSubtaskSignature(row.subtasks),
     tags: row.tags,
@@ -428,6 +442,10 @@ function clonePrototypeTaskRow(task: PrototypeTaskRow): PrototypeTaskRow {
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatEndOn: task.repeatEndOn,
+    repeatQuotaCount: task.repeatQuotaCount,
+    repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
+    repeatQuotaBalance: task.repeatQuotaBalance,
     subtasks: task.subtasks.map(clonePrototypeSubtask),
     tags: [...task.tags],
   };
@@ -452,10 +470,10 @@ export async function reconcileTableDueMutation({
   schedule: { dueOn: string; dueTime: string };
   snapshots: Array<{ generation: number; snapshot: PrototypeTaskRow | null; taskId: string }>;
   getCurrentGeneration: (taskId: string) => number;
-}): Promise<void> {
-  await Promise.all(snapshots.map(async ({ generation, snapshot, taskId }) => {
+}): Promise<boolean> {
+  const results = await Promise.all(snapshots.map(async ({ generation, snapshot, taskId }) => {
     if (!onTaskDueChange) {
-      return;
+      return true;
     }
 
     let didPersist = true;
@@ -471,7 +489,9 @@ export async function reconcileTableDueMutation({
     if (snapshot && getCurrentGeneration(taskId) === generation) {
       onRollback(taskId, snapshot);
     }
+    return false;
   }));
+  return results.every(Boolean);
 }
 
 function getPrototypeTaskRowKey(task: PrototypeTaskRow) {
@@ -520,12 +540,13 @@ type TaskRowContextMenuProps = {
   onDismiss: () => void;
   onDuplicateTask?: () => void;
   onEditTask?: () => void;
-  onMoveIntoParent?: (parentTaskId: string) => void | Promise<void>;
+  onMoveIntoParent?: (parentTaskId: string) => void | boolean | Promise<boolean>;
   onMoveToTaskContentFolder?: (folderId: string | null, taskIds: string[]) => void | Promise<void>;
   onOpenInNewTab?: () => void;
   onOpenDetails?: (sourceElement?: HTMLElement | null) => void;
   onOpenHistory?: () => void;
   onOpenQuickEdit?: (mode: TaskRowContextMenuQuickEditMode, sourceElement?: HTMLElement | null) => void;
+  onRepeatSmartAction?: (action: TaskContextSmartAction) => void;
   onRemoveFromCurrentList?: () => void;
   removeFromCurrentListLabel?: string;
   onPromoteToMilestone?: () => void;
@@ -543,6 +564,8 @@ type TaskRowContextMenuProps = {
   selectedTaskCount: number;
   selectedTaskIds?: string[];
   task: Pick<PrototypeTaskRow, "id" | "status" | "title" | "task_content_folder_id">;
+  smartActionEligibility?: (action: TaskContextSmartAction) => boolean;
+  userId?: string | null;
 };
 
 export function TaskRowContextMenu({
@@ -564,6 +587,7 @@ export function TaskRowContextMenu({
   onOpenDetails,
   onOpenHistory,
   onOpenQuickEdit,
+  onRepeatSmartAction,
   onRemoveFromCurrentList,
   removeFromCurrentListLabel,
   onPromoteToMilestone,
@@ -580,7 +604,9 @@ export function TaskRowContextMenu({
   quickEditTitle = "Quick edit",
   selectedTaskCount,
   selectedTaskIds = [],
+  smartActionEligibility,
   task,
+  userId,
 }: TaskRowContextMenuProps) {
   const [isChoosingParent, setIsChoosingParent] = useState(false);
   const [isChoosingFolder, setIsChoosingFolder] = useState(false);
@@ -588,6 +614,24 @@ export function TaskRowContextMenu({
   const [newFolderName, setNewFolderName] = useState("");
   const [parentSearch, setParentSearch] = useState("");
   const [folderSearch, setFolderSearch] = useState("");
+  const [, setSmartActionStorageRevision] = useState(0);
+  const storedSmartAction = readTaskContextSmartAction(userId);
+  useEffect(() => {
+    if (!userId || typeof window === "undefined") {
+      return;
+    }
+    const storageKey = `${"adhdice-task-context-smart-action:v1"}:${userId}`;
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key === storageKey) {
+        setSmartActionStorageRevision((current) => current + 1);
+      }
+    };
+    window.addEventListener("storage", handleStorage);
+    return () => window.removeEventListener("storage", handleStorage);
+  }, [userId]);
+  const eligibleSmartAction = storedSmartAction && (!smartActionEligibility || smartActionEligibility(storedSmartAction))
+    ? storedSmartAction
+    : null;
   const filteredMoveIntoParentOptions = useMemo(() => {
     const normalizedSearch = parentSearch.trim().toLowerCase();
     if (!normalizedSearch) {
@@ -628,6 +672,20 @@ export function TaskRowContextMenu({
             {task.title}
           </p>
         </div>
+
+        {eligibleSmartAction && onRepeatSmartAction ? (
+          <div className="border-b border-[#f0ebfb] px-1 py-2 dark:border-white/10">
+            <TaskTableChipButton
+              aria-label={getTaskContextSmartActionLabel(eligibleSmartAction)}
+              className="w-full justify-start gap-2"
+              onClick={() => onRepeatSmartAction(eligibleSmartAction)}
+              toneClassName="border-[#cfc3ff] bg-[#f1ecff] text-[#6f57f6] shadow-[0_4px_14px_rgba(111,87,246,0.16)] dark:border-[#57458f] dark:bg-[#2a2148] dark:text-[#cabfff]"
+            >
+              <Repeat2 className="h-3.5 w-3.5" />
+              <span className="truncate">{getTaskContextSmartActionLabel(eligibleSmartAction)}</span>
+            </TaskTableChipButton>
+          </div>
+        ) : null}
 
         {isCreatingFolder ? (
           <form
@@ -1135,7 +1193,7 @@ function InlineSubtaskEditor({
                   onSetStatus?.(subtask.id, status);
                   setOpenStatusPickerSubtaskId(null);
                 }}
-                options={(getAvailableStatuses?.(subtask) ?? TASK_SUBTASK_STATUS_OPTIONS.filter((option) => option.value !== "delayed" || canTaskDelay({ dueOn: subtask.dueOn, status: subtask.status })).map((option) => option.value)).map((status) => ({
+                options={(getAvailableStatuses?.(subtask) ?? TASK_SUBTASK_STATUS_OPTIONS.filter((option) => option.value !== "delayed" || canTaskDelay({ dueOn: subtask.dueOn, repeatFrequency: subtask.repeat, status: subtask.status })).map((option) => option.value)).map((status) => ({
                   label: formatTaskStatusLabel(status),
                   value: status,
                 }))}
@@ -1204,6 +1262,11 @@ export type PrototypeTaskRow = {
   repeatMonthlyMode: TaskRepeatMonthlyMode;
   repeatMonthlyOrdinal: TaskRepeatMonthlyOrdinal | null;
   repeatMonthlyWeekday: number | null;
+  repeatEndOn: string | null;
+  repeatQuotaCount?: number | null;
+  repeatQuotaBalanceEnabled?: boolean;
+  repeatQuotaBalance?: number | null;
+  repeatQuotaProgress?: QuotaProgress | null;
   subtasksAutoReset: boolean;
   status: TaskDisplayStatus;
   finishedToday: boolean;
@@ -1336,6 +1399,8 @@ type TaskManagementTableV2Props = {
   allListOptions?: Array<{ id: string; label: string }>;
   allNoteOptions?: Array<{ id: string; title: string }>;
   allTagOptions?: string[];
+  userId?: string | null;
+  todayDateKey?: string;
   taskDisplayStatusByTaskId?: Readonly<Record<string, TaskDisplayStatus>>;
   attentionReasonByTaskId?: Readonly<Record<string, TaskAttentionReason>>;
   childTaskCreationBlockedTaskIds?: string[];
@@ -1392,7 +1457,7 @@ type TaskManagementTableV2Props = {
   onToggleTaskContentFolderCollapsed?: (folderId: string) => void;
   onCreateTaskContentFolder?: (taskId: string, name: string) => Promise<boolean> | boolean;
   onAddFolderToContentFolder?: (parentFolderId: string, name: string) => Promise<boolean> | boolean;
-  onAddTaskToContentFolder?: (folderId: string, title: string, taskTypeSelectionValue: string) => Promise<boolean> | boolean;
+  onAddTaskToContentFolder?: (folderId: string, draft: TaskCreationDraft) => Promise<TaskCreationSubmission>;
   onRenameTaskContentFolder?: (folderId: string, name: string) => Promise<boolean>;
   onUpdateTaskContentFolderIcon?: (folderId: string, iconKey: string) => Promise<boolean>;
   onDeleteTaskContentFolder?: (folderId: string) => Promise<boolean>;
@@ -1432,7 +1497,8 @@ type TaskManagementTableV2Props = {
   onTaskPinToggle?: (taskId: string) => void;
   onRowClick?: (taskId: string) => void;
   onSelectAllVisible?: (taskIds?: string[]) => void;
-  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">) => void | Promise<boolean>;
+  onTaskRepeatChange?: (taskId: string, repeat: TaskRepeat, cadence?: Pick<PrototypeTaskRow, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">) => void | Promise<boolean>;
+  onTaskQuotaBalanceClear?: (taskId: string) => void | Promise<boolean> | boolean;
   onTaskStatusChange?: (taskId: string, status: TaskStatus, scrollAnchorTaskIds?: string[], options?: TableStatusChangeOptions) => void;
   onTaskSubtaskAdd?: (taskId: string) => string | null | Promise<string | null>;
   onTaskSubtaskAddChild?: (subtaskId: string) => string | null | Promise<string | null>;
@@ -1517,6 +1583,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
     subtasksAutoReset: false,
     status: "pending",
     finishedToday: false,
@@ -1560,6 +1627,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
     subtasksAutoReset: false,
     status: "in_progress",
     finishedToday: false,
@@ -1611,6 +1679,7 @@ const DEFAULT_ROWS: PrototypeTaskRow[] = [
     repeatMonthlyMode: "day_of_month",
     repeatMonthlyOrdinal: null,
     repeatMonthlyWeekday: null,
+    repeatEndOn: null,
     subtasksAutoReset: false,
     status: "pending",
     finishedToday: false,
@@ -1744,6 +1813,8 @@ const REPEAT_CATEGORY_OPTIONS: Array<{ label: string; value: TaskRepeatCategory 
   { label: "Weekdays", value: "weekdays" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
+  { label: "X Per Week", value: "per_week" },
+  { label: "X Per Month", value: "per_month" },
   { label: "Custom", value: "custom" },
 ];
 const STATUS_OPTIONS = TASK_DISPLAY_STATUS_OPTIONS;
@@ -1888,7 +1959,7 @@ function summarizeInlineItems<T>(items: T[], maxVisible = 1) {
 }
 const PRIORITY_SORT_ORDER: TaskPriority[] = ["0", "1", "2", "3", "4", "5"];
 const ENERGY_SORT_ORDER: TaskEnergy[] = ["none", "low", "medium", "high"];
-const REPEAT_SORT_ORDER: TaskRepeatCategory[] = ["none", "daily", "daily_until_complete", "weekdays", "weekly", "monthly", "custom"];
+const REPEAT_SORT_ORDER: TaskRepeatCategory[] = ["none", "daily", "daily_until_complete", "weekdays", "weekly", "monthly", "per_week", "per_month", "custom"];
 const STATUS_SORT_ORDER: TaskDisplayStatus[] = [
   "unscheduled",
   "pending",
@@ -1897,7 +1968,6 @@ const STATUS_SORT_ORDER: TaskDisplayStatus[] = [
   "done",
   "did_my_best",
   "missed",
-  "upcoming",
   "not_due",
   "archived",
   "trashed",
@@ -2069,6 +2139,11 @@ function formatChildTaskPreviewRepeat(item: ChildTaskPreview) {
     item.repeatMonthlyOrdinal,
     item.repeatMonthlyWeekday,
     item.repeatDayOfMonth,
+    item.repeatQuotaCount,
+    item.repeatQuotaBalanceEnabled,
+    item.repeatQuotaBalance,
+    item.repeatQuotaProgress,
+    item.repeatEndOn,
   );
 }
 
@@ -2257,11 +2332,11 @@ function SameTableStepCreationControl({
 }
 
 function statusTone(status: TaskDisplayStatus) {
-  return TASK_DISPLAY_STATUS_CHIP_STYLES[status] ?? "bg-[#f4f5f8] border border-[#e4deef] text-[#6b7285] dark:bg-white/8 dark:border-white/10 dark:text-white/60";
+  return TASK_DISPLAY_STATUS_CHIP_STYLES[normalizeTaskDisplayStatus(status)] ?? "bg-[#f4f5f8] border border-[#e4deef] text-[#6b7285] dark:bg-white/8 dark:border-white/10 dark:text-white/60";
 }
 
 function invertedStatusTone(status: TaskDisplayStatus) {
-  return TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES[status] ?? ACTIVE_LIST_CHIP_CLASS;
+  return TASK_DISPLAY_STATUS_INVERTED_CHIP_STYLES[normalizeTaskDisplayStatus(status)] ?? ACTIVE_LIST_CHIP_CLASS;
 }
 
 function energyTone(energy: TaskEnergy) {
@@ -2275,7 +2350,13 @@ function priorityTone(priority: TaskPriority) {
   return getTaskPriorityToneClass(priority);
 }
 
-function repeatTone(repeat: TaskRepeatCategory) {
+function repeatTone(repeat: TaskRepeatCategory, balance?: number | null) {
+  if (typeof balance === "number" && balance < 0) {
+    return "border-[#ffd6de] bg-[#fff1f3] text-[#d94e67] dark:border-[#5b2e3b] dark:bg-[#44232f] dark:text-[#ff9eaf]";
+  }
+  if (typeof balance === "number" && balance > 0) {
+    return "border-[#cdebd8] bg-[#eefbf2] text-[#2f8a54] dark:border-[#2f6d49] dark:bg-[#193c29] dark:text-[#9fe0b4]";
+  }
   return repeat === "none"
     ? "border-[#e4deef] bg-[#f4f5f8] text-[#68738c] dark:border-white/10 dark:bg-white/8 dark:text-white/60"
     : "border-[#ddd2ff] bg-[#efe9ff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]";
@@ -2290,10 +2371,13 @@ function taskRepeatEditorValue(task: PrototypeTaskRow): TaskRepeatEditorValue {
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatEndOn: task.repeatEndOn,
+    repeatQuotaCount: task.repeatQuotaCount,
+    repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
   };
 }
 
-function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">): TaskRepeatReconciliationValue {
+function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "repeatInterval" | "repeatDaysOfWeek" | "repeatDayOfMonth" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">): TaskRepeatReconciliationValue {
   return {
     repeat: task.repeat,
     repeatDayOfMonth: task.repeatDayOfMonth,
@@ -2302,6 +2386,9 @@ function taskRepeatReconciliationValue(task: Pick<PrototypeTaskRow, "repeat" | "
     repeatMonthlyMode: task.repeatMonthlyMode,
     repeatMonthlyOrdinal: task.repeatMonthlyOrdinal,
     repeatMonthlyWeekday: task.repeatMonthlyWeekday,
+    repeatEndOn: task.repeatEndOn,
+    repeatQuotaCount: task.repeatQuotaCount,
+    repeatQuotaBalanceEnabled: task.repeatQuotaBalanceEnabled,
   };
 }
 
@@ -2333,7 +2420,8 @@ function chunkItems<T>(items: T[], size: number) {
 }
 
 function formatStatusLabel(status: TaskDisplayStatus) {
-  return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+  const normalizedStatus = normalizeTaskDisplayStatus(status);
+  return STATUS_OPTIONS.find((option) => option.value === normalizedStatus)?.label ?? normalizedStatus;
 }
 
 function formatPriorityLabel(priority: TaskPriority) {
@@ -2351,7 +2439,7 @@ export type TaskMetadataSummaryRow = {
 };
 
 export function buildTaskMetadataSummary(
-  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "status" | "tags" | "taskType" | "title"> & {
+  task: Pick<PrototypeTaskRow, "actualSeconds" | "customRulesetId" | "dueOn" | "dueTime" | "energy" | "estimatedMinutes" | "linkLabel" | "linkUrl" | "lists" | "linkedNotes" | "notes" | "priorities" | "repeat" | "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled" | "repeatQuotaProgress" | "status" | "tags" | "taskType" | "title"> & {
     customBehaviorRulesets?: readonly CustomBehaviorRuleset[];
   },
   actualSeconds: number,
@@ -2371,6 +2459,10 @@ export function buildTaskMetadataSummary(
     repeat_monthly_mode: task.repeatMonthlyMode,
     repeat_monthly_ordinal: task.repeatMonthlyOrdinal,
     repeat_monthly_weekday: task.repeatMonthlyWeekday,
+    repeat_quota_count: task.repeatQuotaCount,
+    repeat_quota_balance_enabled: task.repeatQuotaBalanceEnabled,
+    repeat_quota_progress: task.repeatQuotaProgress,
+    repeat_end_on: task.repeatEndOn,
   }) ?? "No repeat";
 
   return [
@@ -2391,7 +2483,8 @@ export function buildTaskMetadataSummary(
 }
 
 function statusSortValue(status: TaskDisplayStatus) {
-  return STATUS_OPTIONS.find((option) => option.value === status)?.label ?? status;
+  const normalizedStatus = normalizeTaskDisplayStatus(status);
+  return STATUS_OPTIONS.find((option) => option.value === normalizedStatus)?.label ?? normalizedStatus;
 }
 
 function dueSortValue(task: PrototypeTaskRow) {
@@ -2700,6 +2793,8 @@ export function TaskManagementTableV2({
   allListOptions = [],
   allNoteOptions = [],
   allTagOptions = [],
+  userId = null,
+  todayDateKey = "",
   taskDisplayStatusByTaskId = {},
   attentionReasonByTaskId = {},
   childTaskCreationBlockedTaskIds = [],
@@ -2794,6 +2889,7 @@ export function TaskManagementTableV2({
   onRowClick,
   onSelectAllVisible,
   onTaskRepeatChange,
+  onTaskQuotaBalanceClear,
   onTaskStatusChange,
   onTaskSubtaskAdd,
   onTaskSubtaskAddChild,
@@ -3036,6 +3132,7 @@ export function TaskManagementTableV2({
   const pendingMetadataTargetTaskIdRef = useRef<string | null>(null);
   const estimatedTimeInputRef = useRef<HTMLInputElement | null>(null);
   const pendingEditorFocusFrameRef = useRef<{ frame: number; token: number } | null>(null);
+  const smartActionCaptureRef = useRef<{ mode: OverlayMode; taskId: string } | null>(null);
   const editorNavigationTaskIdRef = useRef<string | null>(null);
   const handledEditorFocusTokensRef = useRef(new Set<number>());
   const statusRailLongPressTimeoutRef = useRef<number | null>(null);
@@ -3186,7 +3283,7 @@ export function TaskManagementTableV2({
 
         return textFilterValue(task, columnId as TextFilterColumnId).toLowerCase().includes(normalizedQuery);
       })
-      && (structuredFilters.status.length === 0 || structuredFilters.status.includes(task.status))
+      && (structuredFilters.status.length === 0 || structuredFilters.status.includes(normalizeTaskDisplayStatus(task.status)))
       && (structuredFilters.priority.length === 0 || task.priorities.some((priority) => structuredFilters.priority.includes(priority)))
       && (structuredFilters.energy.length === 0 || structuredFilters.energy.includes(task.energy))
       && (structuredFilters.repeat.length === 0 || structuredFilters.repeat.includes(getTaskRepeatCategory(task.repeat, task.repeatDaysOfWeek, task.repeatInterval, task.repeatDayOfMonth, task.repeatMonthlyMode)))
@@ -3652,6 +3749,98 @@ export function TaskManagementTableV2({
     () => rowContextMenuTask ? getTaskContentFolderMenuOptions(taskContentFolders, rowContextMenuTask) : [],
     [rowContextMenuTask, taskContentFolders],
   );
+  function getRowContextMenuSmartActionTarget(task: PrototypeTaskRow): TaskContextSmartActionTarget {
+    const listIds = task.lists.flatMap((label) => {
+      const option = allListOptions.find((candidate) => normalizeTaskListLabel(candidate.label) === normalizeTaskListLabel(label));
+      return option ? [option.id] : [];
+    });
+    return {
+      listIds,
+      parentTaskId: task.parent_task_id ?? null,
+      status: task.status as TaskStatus,
+      taskContentFolderId: task.task_content_folder_id ?? null,
+    };
+  }
+  function isRowContextMenuSmartActionEligible(action: TaskContextSmartAction) {
+    if (!rowContextMenuTask) {
+      return false;
+    }
+    const availableStatuses = getPolicyFilteredStatuses({
+      customRulesetId: rowContextMenuTask.customRulesetId,
+      dueOn: rowContextMenuTask.dueOn,
+      repeatFrequency: rowContextMenuTask.repeat,
+      status: rowContextMenuTask.status,
+      taskId: rowContextMenuTask.id,
+      taskType: rowContextMenuTask.taskType,
+    });
+    return isTaskContextSmartActionEligible(action, getRowContextMenuSmartActionTarget(rowContextMenuTask), {
+      availableFolderIds: rowContextMenuTaskContentFolderOptions.map((option) => option.id),
+      availableListIds: allListOptions.map((option) => option.id),
+      availableParentIds: rowContextMenuMoveIntoParentOptions.map((option) => option.id),
+      availableStatuses: availableStatuses.filter((status): status is TaskStatus => status !== "unscheduled" && status !== "upcoming"),
+      canApplyDue: Boolean(onTaskDueChange),
+      canApplyDuplicate: Boolean(onDuplicateTask),
+      canApplyEnergy: Boolean(onTaskEnergyChange),
+      canApplyFolder: Boolean(onMoveTaskToContentFolder),
+      canApplyList: Boolean(onToggleTaskList),
+      canApplyParent: Boolean(onMoveTaskIntoParent),
+      canApplyPriority: Boolean(onTaskPriorityChange),
+      canApplyRepeat: Boolean(onTaskRepeatChange),
+      canApplyRestore: Boolean(onRestoreTask),
+      canApplyTags: Boolean(onTaskTagsChange),
+      canRemoveFromCurrentList: Boolean(canRemoveFromCurrentList?.(rowContextMenuTask.id) && onRemoveFromCurrentList),
+    });
+  }
+  function applyRowContextMenuSmartAction(action: TaskContextSmartAction) {
+    const task = rowContextMenuTask;
+    if (!task || !isRowContextMenuSmartActionEligible(action)) {
+      return;
+    }
+    setRowContextMenu(null);
+    rememberTaskContextSmartAction(action);
+    switch (action.kind) {
+      case "status":
+        setTaskStatus(task.id, action.status);
+        return;
+      case "due":
+        setTaskDue(task.id, action.dueOn, action.dueTime);
+        return;
+      case "priority":
+        setTaskPriorities(task.id, action.priorities);
+        return;
+      case "energy":
+        setTaskEnergy(task.id, action.energy);
+        return;
+      case "repeat":
+        setTaskRepeatValue(task.id, action.value);
+        return;
+      case "tags":
+        setTaskTags(task.id, action.tags);
+        return;
+      case "list": {
+        const list = allListOptions.find((option) => option.id === action.listId);
+        if (list) {
+          toggleTaskList(task.id, list.label);
+        }
+        return;
+      }
+      case "folder":
+        void onMoveTaskToContentFolder?.(task.id, action.folderId);
+        return;
+      case "parent":
+        void onMoveTaskIntoParent?.(task.id, action.parentTaskId);
+        return;
+      case "restore":
+        onRestoreTask?.(task.id);
+        return;
+      case "remove":
+        onRemoveFromCurrentList?.(task.id);
+        return;
+      case "duplicate":
+        onDuplicateTask?.(task.id);
+        return;
+    }
+  }
   const contentFolderMoveOptions = useMemo(
     () => contentFolderContextMenu
       ? getTaskContentFolderMoveOptions(taskContentFolders, contentFolderContextMenu.folderId)
@@ -4674,6 +4863,27 @@ export function TaskManagementTableV2({
     return null;
   }
 
+  function rememberTaskContextSmartAction(action: TaskContextSmartActionInput) {
+    if (!userId) {
+      return;
+    }
+    writeTaskContextSmartAction(userId, { ...action, version: 1 } as TaskContextSmartAction);
+  }
+
+  function rememberCapturedTaskContextSmartAction(
+    taskId: string,
+    mode: OverlayMode,
+    action: TaskContextSmartActionInput,
+  ) {
+    const capture = smartActionCaptureRef.current;
+    const capturedMode = capture?.mode === "lists" ? "lists" : capture?.mode;
+    if (!capture || capture.taskId !== taskId || capturedMode !== mode) {
+      return;
+    }
+    rememberTaskContextSmartAction(action);
+    smartActionCaptureRef.current = null;
+  }
+
   function modeSupportsBatchQuickEdit(mode: OverlayMode) {
     return BATCH_QUICK_EDIT_MODES.includes(mode);
   }
@@ -5036,6 +5246,7 @@ export function TaskManagementTableV2({
         repeatMonthlyMode: "day_of_month" as const,
         repeatMonthlyOrdinal: null,
         repeatMonthlyWeekday: null,
+        repeatEndOn: null,
       } : {}),
       lists: dueOn === offsetDate(0)
         ? Array.from(new Set(task.lists.filter((list) => list !== "Inbox").concat("Today")))
@@ -5049,11 +5260,15 @@ export function TaskManagementTableV2({
       onTaskDueChange,
       schedule: { dueOn, dueTime },
       snapshots,
+    }).then((didPersist) => {
+      if (didPersist) {
+        rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "due", dueOn, dueTime });
+      }
     });
   }
 
   function canDelayTask(task: PrototypeTaskRow) {
-    return canTaskDelay({ dueOn: task.dueOn, status: task.status }) && isManualActionAllowed(task, "delay");
+    return canTaskDelay({ dueOn: task.dueOn, repeatFrequency: task.repeat, status: task.status }) && isManualActionAllowed(task, "delay");
   }
 
   function clearStatusRailLongPress() {
@@ -5108,6 +5323,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskStatusChange?.(targetTaskId, status, undefined, { suppressSharedScrollAnchor: true });
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "status", status });
   }
 
   function openTaskDelay(taskId: string, sourceElement?: HTMLElement | null) {
@@ -5126,7 +5342,16 @@ export function TaskManagementTableV2({
       return;
     }
     if (status === "unscheduled") {
-      onTaskDueChange?.(taskId, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
+      const didPersist = onTaskDueChange?.(taskId, { dueOn: "", dueTime: "" }, { manualAction: "unscheduled_status" });
+      if (didPersist && typeof (didPersist as Promise<boolean>).then === "function") {
+        void (didPersist as Promise<boolean>).then((succeeded) => {
+          if (succeeded !== false) {
+            rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "due", dueOn: "", dueTime: "" });
+          }
+        });
+      } else if (didPersist !== false) {
+        rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "due", dueOn: "", dueTime: "" });
+      }
       return;
     }
     setTaskStatus(taskId, status);
@@ -5148,6 +5373,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskEnergyChange?.(targetTaskId, energy);
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "energy", energy });
   }
 
   function setTaskType(taskId: string, selectionValue: string) {
@@ -5202,6 +5428,9 @@ export function TaskManagementTableV2({
       repeatMonthlyMode: value.repeatMonthlyMode,
       repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+      repeatEndOn: value.repeatEndOn,
+      repeatQuotaCount: value.repeatQuotaCount,
+      repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
     };
     for (const targetTaskId of targetTaskIds) {
       const targetTask = getTaskById(targetTaskId);
@@ -5227,6 +5456,8 @@ export function TaskManagementTableV2({
     }));
     // Repeat changes also fan out through the existing per-task save callback so
     // recurrence/history behavior stays owned by the normal single-row path.
+    const persistenceResults: Array<void | Promise<boolean>> = [];
+    let persistenceFailed = false;
     for (const targetTaskId of targetTaskIds) {
       const generation = repeatMutationGenerationRef.current.get(targetTaskId) ?? 0;
       let persistenceResult: void | Promise<boolean>;
@@ -5238,12 +5469,17 @@ export function TaskManagementTableV2({
           repeatMonthlyMode: value.repeatMonthlyMode,
           repeatMonthlyOrdinal: value.repeatMonthlyOrdinal,
           repeatMonthlyWeekday: value.repeatMonthlyWeekday,
+          repeatEndOn: value.repeatEndOn,
+          repeatQuotaCount: value.repeatQuotaCount,
+          repeatQuotaBalanceEnabled: value.repeatQuotaBalanceEnabled,
         });
       } catch {
         clearPendingTaskRepeat(targetTaskId, generation);
+        persistenceFailed = true;
         continue;
       }
       if (persistenceResult !== undefined) {
+        persistenceResults.push(persistenceResult);
         void persistenceResult.then((succeeded) => {
           if (!succeeded) {
             clearPendingTaskRepeat(targetTaskId, generation);
@@ -5252,6 +5488,13 @@ export function TaskManagementTableV2({
           clearPendingTaskRepeat(targetTaskId, generation);
         });
       }
+    }
+    if (!persistenceFailed) {
+      void Promise.all(persistenceResults.map((result) => Promise.resolve(result).then((succeeded) => succeeded !== false))).then((results) => {
+        if (results.every(Boolean)) {
+          rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "repeat", value: { ...value, repeatDaysOfWeek: [...value.repeatDaysOfWeek] } });
+        }
+      });
     }
   }
 
@@ -5393,6 +5636,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskPriorityChange?.(targetTaskId, priorities);
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "priority", priorities: [...priorities] });
   }
 
   function setTaskTags(taskId: string, tags: string[]) {
@@ -5403,6 +5647,7 @@ export function TaskManagementTableV2({
     for (const targetTaskId of targetTaskIds) {
       onTaskTagsChange?.(targetTaskId, nextTags);
     }
+    rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "tags", tags: [...nextTags] });
   }
 
   function setTaskLinkedNoteIds(taskId: string, linkedNoteIds: string[]) {
@@ -5523,6 +5768,10 @@ export function TaskManagementTableV2({
     for (const candidate of targetTasks) {
       onTaskTagsChange?.(candidate.id, nextTagsByTaskId.get(candidate.id) ?? candidate.tags);
     }
+    const nextTags = nextTagsByTaskId.get(taskId);
+    if (nextTags) {
+      rememberCapturedTaskContextSmartAction(taskId, overlayMode, { kind: "tags", tags: [...nextTags] });
+    }
   }
 
   function toggleTaskList(taskId: string, listLabel: string) {
@@ -5549,6 +5798,14 @@ export function TaskManagementTableV2({
     if (listId) {
       for (const candidate of changedTasks) {
         onToggleTaskList?.(candidate.id, listId);
+      }
+      if (changedTasks.some((candidate) => candidate.id === taskId)) {
+        rememberCapturedTaskContextSmartAction(taskId, overlayMode, {
+          kind: "list",
+          label: listLabel,
+          listId,
+          operation: shouldRemove ? "remove" : "add",
+        });
       }
     }
   }
@@ -5933,6 +6190,11 @@ export function TaskManagementTableV2({
       repeatMonthlyMode: item.repeatMonthlyMode,
       repeatMonthlyOrdinal: item.repeatMonthlyOrdinal,
       repeatMonthlyWeekday: item.repeatMonthlyWeekday,
+      repeatEndOn: item.repeatEndOn,
+      repeatQuotaCount: item.repeatQuotaCount,
+      repeatQuotaBalanceEnabled: item.repeatQuotaBalanceEnabled,
+      repeatQuotaBalance: item.repeatQuotaBalance,
+      repeatQuotaProgress: item.repeatQuotaProgress,
       status: item.status,
       finishedToday: false,
       subtasks: [],
@@ -5978,6 +6240,7 @@ export function TaskManagementTableV2({
         <TaskChildCreationComposer
           allTags={allTagOptions}
           childLabel={childLabel}
+          initialDueOn={todayDateKey}
           key={`${parentTaskId}:${childLabel}`}
           onCancel={() => cancelTableStepComposer(parentTaskId)}
           onCreateChildTask={onCreateChildTask ?? (async () => ({ error: "Child task creation is unavailable.", taskId: null }))}
@@ -6330,11 +6593,13 @@ export function TaskManagementTableV2({
           inactiveToneClassName={INACTIVE_CHIP_CLASS}
           key="repeat-editor"
           onChange={(value) => setTaskRepeatValue(task.id, value)}
+          onClearBalance={onTaskQuotaBalanceClear ? () => onTaskQuotaBalanceClear(task.id) : undefined}
           onPresetApplied={(selection) => {
             if (selection === "none") {
               closeInspector();
             }
           }}
+          quotaBalance={task.repeatQuotaBalance}
           value={taskRepeatEditorValue(task)}
         />
       )];
@@ -7097,6 +7362,7 @@ export function TaskManagementTableV2({
 
   function openTaskOverlayFromContextMenu(taskId: string, mode: OverlayMode, sourceElement?: HTMLElement | null) {
     setRowContextMenu(null);
+    smartActionCaptureRef.current = { mode, taskId };
     const nextQuickEditTargetTaskIds = mode === "repeat" || mode === "status"
       ? resolveTableActionTargetTaskIds(taskId)
       : modeSupportsBatchQuickEdit(mode)
@@ -7980,7 +8246,7 @@ export function TaskManagementTableV2({
       return wrapInteractiveCell(
         wrapMeasuredContent(
           <div>
-            <span className={`${CHIP_BASE} ${repeatTone(task.repeat)}`}>
+            <span className={`${CHIP_BASE} ${repeatTone(task.repeat, task.repeatQuotaBalance)}`}>
               {formatRepeatCompactLabel(
                 task.repeat,
                 task.repeatInterval,
@@ -7989,6 +8255,11 @@ export function TaskManagementTableV2({
                 task.repeatMonthlyOrdinal,
                 task.repeatMonthlyWeekday,
                 task.repeatDayOfMonth,
+                task.repeatQuotaCount,
+                task.repeatQuotaBalanceEnabled,
+                task.repeatQuotaBalance,
+                task.repeatQuotaProgress,
+                task.repeatEndOn,
               )}
             </span>
           </div>
@@ -9385,6 +9656,8 @@ export function TaskManagementTableV2({
                         collapsed={entry.collapsed}
                         depth={entry.depth}
                         folder={entry.folder}
+                        allTags={allTagOptions}
+                        todayDateKey={todayDateKey}
                         memberSummary={folderMemberSummaryById.get(entry.folder.id)}
                         memberCount={entry.visibleTaskCount}
                         onContextMenu={(event) => openContentFolderContextMenu(entry.folder.id, event.clientX, event.clientY)}
@@ -9619,9 +9892,11 @@ export function TaskManagementTableV2({
                 openInspector(rowContextMenuTask.id, "delay", sourceElement);
               } : undefined}
               onDismiss={() => setRowContextMenu(null)}
+              onRepeatSmartAction={applyRowContextMenuSmartAction}
               onDuplicateTask={onDuplicateTask ? () => {
                 setRowContextMenu(null);
                 onDuplicateTask(rowContextMenuTask.id);
+                rememberTaskContextSmartAction({ kind: "duplicate" });
               } : undefined}
               onEditTask={onOpenTaskEditor ? () => {
                 setRowContextMenu(null);
@@ -9629,16 +9904,32 @@ export function TaskManagementTableV2({
               } : undefined}
               onMoveIntoParent={onMoveTaskIntoParent ? async (parentTaskId) => {
                 setRowContextMenu(null);
-                await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
+                const didMove = await onMoveTaskIntoParent(rowContextMenuTask.id, parentTaskId);
+                if (didMove !== false) {
+                  const option = rowContextMenuMoveIntoParentOptions.find((entry) => entry.id === parentTaskId);
+                  if (option) {
+                    rememberTaskContextSmartAction({ kind: "parent", label: option.label, parentTaskId });
+                  }
+                }
+                return didMove !== false;
               } : undefined}
               onMoveToTaskContentFolder={onMoveTaskToContentFolder ? async (folderId, targetTaskIds) => {
                 setRowContextMenu(null);
+                let didMove = true;
                 if (targetTaskIds.length > 1 && onMoveTasksToContentFolder) {
-                  await onMoveTasksToContentFolder(targetTaskIds, folderId);
-                  return;
+                  didMove = (await onMoveTasksToContentFolder(targetTaskIds, folderId)) !== false;
+                } else {
+                  for (const targetTaskId of targetTaskIds) {
+                    if ((await onMoveTaskToContentFolder(targetTaskId, folderId)) === false) {
+                      didMove = false;
+                    }
+                  }
                 }
-                for (const targetTaskId of targetTaskIds) {
-                  await onMoveTaskToContentFolder(targetTaskId, folderId);
+                if (didMove) {
+                  const option = rowContextMenuTaskContentFolderOptions.find((entry) => entry.id === folderId);
+                  if (option) {
+                    rememberTaskContextSmartAction({ kind: "folder", folderId, label: option.label });
+                  }
                 }
               } : undefined}
               onOpenInNewTab={onOpenTaskInNewTab ? () => {
@@ -9654,6 +9945,7 @@ export function TaskManagementTableV2({
               onRemoveFromCurrentList={canRemoveFromCurrentList?.(rowContextMenuTask.id) && onRemoveFromCurrentList ? () => {
                 onRemoveFromCurrentList(rowContextMenuTask.id);
                 setRowContextMenu(null);
+                rememberTaskContextSmartAction({ kind: "remove" });
               } : undefined}
               removeFromCurrentListLabel={currentListLabel ? `Remove from ${currentListLabel}` : undefined}
               onPromoteToMilestone={onPromoteTaskToMilestone && milestonePromotionTaskIds.has(rowContextMenuTask.id) ? () => {
@@ -9667,6 +9959,7 @@ export function TaskManagementTableV2({
               onRestoreTask={onRestoreTask ? () => {
                 setRowContextMenu(null);
                 onRestoreTask(rowContextMenuTask.id);
+                rememberTaskContextSmartAction({ kind: "restore" });
               } : undefined}
               onUnlinkTask={onUnlinkTask && childTaskParentInfoByTaskId.has(rowContextMenuTask.id) ? () => {
                 setRowContextMenu(null);
@@ -9707,6 +10000,8 @@ export function TaskManagementTableV2({
               selectedTaskCount={selectedTaskIds.length}
               selectedTaskIds={selectedTaskIds}
               task={rowContextMenuTask}
+              smartActionEligibility={isRowContextMenuSmartActionEligible}
+              userId={userId}
             />
           </div>
         ) : null}
@@ -10188,11 +10483,13 @@ export function TaskManagementTableV2({
                       dueOn={metadataTask.dueOn || null}
                       inactiveToneClassName={INACTIVE_CHIP_CLASS}
                       onChange={(value) => setTaskRepeatValue(metadataTask.id, value)}
+                      onClearBalance={onTaskQuotaBalanceClear ? () => onTaskQuotaBalanceClear(metadataTask.id) : undefined}
                       onPresetApplied={(selection) => {
                         if (selection === "none" || selection === "daily" || selection === "daily_until_complete") {
                           returnFullMetadataToSummary();
                         }
                       }}
+                      quotaBalance={metadataTask.repeatQuotaBalance}
                       value={taskRepeatEditorValue(metadataTask)}
                     />
                   );
@@ -10890,6 +11187,8 @@ export function TaskManagementTableV2({
                       dueOn={selectedTask.dueOn || null}
                       inactiveToneClassName={INACTIVE_CHIP_CLASS}
                       onChange={(value) => setTaskRepeatValue(selectedTask.id, value)}
+                      onClearBalance={onTaskQuotaBalanceClear ? () => onTaskQuotaBalanceClear(selectedTask.id) : undefined}
+                      quotaBalance={selectedTask.repeatQuotaBalance}
                       value={taskRepeatEditorValue(selectedTask)}
                     />
                   </section>

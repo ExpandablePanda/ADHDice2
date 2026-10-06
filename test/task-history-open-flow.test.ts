@@ -24,13 +24,34 @@ test("rollover History reads use an isolated lifecycle instead of claiming the m
 
 test("opening Task History stores the requested task ID before using bounded detail cache", () => {
   const handlerStart = appSource.indexOf("function openTaskHistoryForTask");
-  const handlerEnd = appSource.indexOf("\n  async function closeActualTimeEntry", handlerStart);
+  const handlerEnd = appSource.indexOf("\n  function openBatchDeleteModal", handlerStart);
   const handler = appSource.slice(handlerStart, handlerEnd);
   assert.match(handler, /setTaskHistoryModalTaskId\(taskId\)/);
   assert.match(handler, /loadTaskHistoryDetailWindow\(taskId/);
   assert.doesNotMatch(handler, /loadTaskHistoryForTask\(taskId/);
-  assert.match(handler, /tasks\.find\(\(entry\) => entry\.id === taskId\)/);
   assert.match(handler, /loadTaskCalendarOverridesForTask\(taskId, range\)/);
+  assert.doesNotMatch(handler, /setActivePage\(["']Tasks["']\)/);
+});
+
+test("global History ownership preserves the active page and shared editor state", () => {
+  const returnStart = appSource.indexOf("\n  return (\n    <main");
+  const homeBranchStart = appSource.indexOf(') : activePage === "Home" ?', returnStart);
+  const achievementsBranchStart = appSource.indexOf(') : activePage === "Achievements" ?', homeBranchStart);
+  const tasksBranchStart = appSource.indexOf(') : activePage === "Tasks" ?', achievementsBranchStart);
+  const appGlobalRender = appSource.slice(returnStart, homeBranchStart);
+  const taskWorkspaceFlowStart = appSource.indexOf("const taskWorkspaceFlowLayer");
+  const taskWorkspaceFlow = appSource.slice(taskWorkspaceFlowStart, tasksBranchStart);
+  const taskWorkspaceHostStart = taskWorkspaceFlow.indexOf("<TaskEditFlows");
+  const taskWorkspaceHost = taskWorkspaceFlow.slice(taskWorkspaceHostStart, taskWorkspaceFlow.indexOf("/>", taskWorkspaceHostStart) + 2);
+  const closeStart = appSource.indexOf("function closeTaskHistoryModal");
+  const close = appSource.slice(closeStart, appSource.indexOf("const batchDeleteFlow", closeStart));
+
+  assert.match(appGlobalRender, /taskHistoryFlow=\{taskHistoryFlow\}/);
+  assert.match(taskWorkspaceHost, /taskHistoryFlow=\{null\}/);
+  assert.doesNotMatch(taskWorkspaceHost, /taskHistoryFlow=\{taskHistoryFlow\}/);
+  assert.match(appSource, /const openTaskEditorFromId = \(taskId: string\) => \{[\s\S]*openSharedTaskEditor\(taskId, \{ preserveActivePage: true \}\);/);
+  assert.match(close, /setTaskHistoryModalTaskId\(null\)/);
+  assert.doesNotMatch(close, /setSharedTaskEditorOverlayTaskId|setActivePage/);
 });
 
 test("Task History Calendar overrides use the canonical calendar_override intent and refresh the task-scoped read", () => {

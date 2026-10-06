@@ -1107,7 +1107,7 @@ test("ordinary chronological rolling completions retain their interval", () => {
   });
 
   assert.equal(result.nextDueOn, "2026-08-16");
-  assert.equal(result.activeStatus, "upcoming");
+  assert.equal(result.activeStatus, "not_due");
 });
 
 
@@ -1487,14 +1487,14 @@ test("an inactive canonical Delay with a stale effective target cannot rebase th
   assert.notEqual(result.nextDueOn, oldDelay.effectiveDueOn);
 });
 
-test("clean Due tasks remain internally pending while future thresholds stay active-status-only", () => {
+test("clean Due tasks remain internally pending while all future dates are Not Due", () => {
   const due = timeline({ task: { dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-10" });
   assert.equal(due.days["2026-08-10"]?.state, "open");
   assert.equal(due.activeStatus, "pending");
 
-  const upcoming = timeline({ task: { dueOn: "2026-08-13", activeOccurrenceDueOn: "2026-08-13" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-13" });
+  const future = timeline({ task: { dueOn: "2026-08-13", activeOccurrenceDueOn: "2026-08-13" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-13" });
   const notDue = timeline({ task: { dueOn: "2026-08-19", activeOccurrenceDueOn: "2026-08-19" }, logicalDate: "2026-08-10", calendarStart: "2026-08-10", calendarEnd: "2026-08-19" });
-  assert.equal(upcoming.activeStatus, "upcoming");
+  assert.equal(future.activeStatus, "not_due");
   assert.equal(notDue.activeStatus, "not_due");
 });
 

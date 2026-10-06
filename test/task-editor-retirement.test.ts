@@ -42,11 +42,12 @@ test("all migrated creation routes create canonically before opening the shared 
   assert.ok(helper.indexOf("await addTask(initialTaskValues)") < helper.indexOf("openExistingTaskEditor(createdTask)"));
 
   const calendar = app.slice(app.indexOf("const openCalendarDateTaskEditor"), app.indexOf("const openInlineNewListTaskComposer"));
-  assert.match(calendar, /createTaskAndOpenSharedEditor\([\s\S]*due_on: dueOn/);
+  assert.match(calendar, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task", \{ dueOn \}\)/);
   assert.match(calendar, /routeToCurrentBucket: true/);
 
-  const normal = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const duplicateTaskInPlace"));
+  const normal = app.slice(app.indexOf("const openInlineNewListTaskComposer"), app.indexOf("const createHomeTodoTaskWithType"));
   assert.match(normal, /createTaskAndOpenSharedEditor\([\s\S]*buildNewTaskDraft\("New Task"\)/);
+  assert.doesNotMatch(normal, /dueOn: todayKey/);
   assert.match(normal, /routeToCurrentBucket: true/);
   assert.doesNotMatch(normal, /TaskCreationComposer|setTaskCreationInitialTypeSelection|setIsTaskCreationComposerOpen/);
 

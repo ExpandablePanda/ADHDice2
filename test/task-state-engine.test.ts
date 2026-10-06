@@ -160,7 +160,7 @@ test("schedule changes preserve an unresolved identity-bearing Missed occurrence
     history: [missed],
     action: { type: "change_schedule" },
   }));
-  assert.equal(first.activeStatus, "upcoming");
+  assert.equal(first.activeStatus, "not_due");
   assert.equal(first.unresolvedOccurrenceIdentity, "task:task-1:occurrence:2026-08-03");
   assert.equal(first.proposedHistoryChanges.length, 0);
 
@@ -176,13 +176,13 @@ test("schedule changes preserve an unresolved identity-bearing Missed occurrence
   assert.equal(second.proposedTaskPatch.activeStatusLogicalDate, undefined);
 });
 
-test("a schedule change without unresolved Missed derives the new Pending or Upcoming state", () => {
+test("a schedule change without unresolved Missed derives the new Pending or Not Due state", () => {
   const pending = evaluateTaskState(input({
     now: "2026-08-04T14:00:00.000Z",
     task: task({ activeStatus: "upcoming", dueOn: "2026-08-05" }),
     action: { type: "change_schedule" },
   }));
-  assert.equal(pending.activeStatus, "upcoming");
+  assert.equal(pending.activeStatus, "not_due");
 
   const today = evaluateTaskState(input({
     now: "2026-08-04T14:00:00.000Z",
@@ -228,7 +228,7 @@ test("Done and Did My Best consume the unresolved Missed occurrence exactly once
   }
 });
 
-test("independent Daily keeps older Missed History but derives Upcoming after a later success", () => {
+test("independent Daily keeps older Missed History but derives Not Due after a later success", () => {
   for (const outcome of ["done", "did_my_best"] as const) {
     const missedRows = [
       history("2026-08-20", "missed", {
@@ -252,7 +252,7 @@ test("independent Daily keeps older Missed History but derives Upcoming after a 
       ],
     }));
 
-    assert.equal(result.activeStatus, "upcoming", outcome);
+    assert.equal(result.activeStatus, "not_due", outcome);
     assert.equal(result.nextDueDate, "2026-08-24", outcome);
     assert.equal(result.unresolvedOccurrenceIdentity, null, outcome);
     assert.equal(result.proposedHistoryChanges.length, 0, outcome);
@@ -275,7 +275,7 @@ test("independent Daily success gets its own action-day identity when old Missed
     assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceIdentity : null, "task:task-1:occurrence:2026-08-23", outcome);
     assert.equal(inserted?.type === "insert" ? inserted.row.occurrenceDueOn : null, "2026-08-23", outcome);
     assert.equal(result.nextDueDate, "2026-08-24", outcome);
-    assert.equal(result.activeStatus, "upcoming", outcome);
+    assert.equal(result.activeStatus, "not_due", outcome);
   }
 });
 
@@ -756,7 +756,7 @@ test("legacy rolling success closes an advanced-cursor missed streak", () => {
     history: historyRows,
   }));
 
-  assert.equal(result.activeStatus, "upcoming");
+  assert.equal(result.activeStatus, "not_due");
   assert.equal(result.nextDueDate, "2026-09-04");
   assert.equal(result.unresolvedOccurrenceIdentity, null);
   assert.deepEqual(historyRows.map((row) => [row.occurrenceIdentity, row.occurrenceDueOn]), [
@@ -801,7 +801,7 @@ test("an active occurrence finalizes in place and advances the weekly cursor onc
   assert.equal(result.proposedHistoryChanges[0]?.type, "insert");
   assert.equal(result.proposedHistoryChanges[0]?.type === "insert" ? result.proposedHistoryChanges[0].row.occurrenceIdentity : null, "task:task-1:occurrence:2026-08-04");
   assert.equal(result.nextDueDate, "2026-08-11");
-  assert.equal(result.activeStatus, "upcoming");
+  assert.equal(result.activeStatus, "not_due");
   assert.equal(result.proposedTaskPatch.activeStatusLogicalDate, null);
   assert.equal(result.proposedTaskPatch.activeOccurrenceDueOn, null);
 });
@@ -1092,10 +1092,16 @@ test("an extra Not Due outcome does not consume a second fixed occurrence", () =
   assert.equal(result.nextDueDate, "2026-08-09");
 });
 
-test("future status boundary is Upcoming for 1-7 days and Not Due for 8+", () => {
-  for (const [dueOn, expected] of [["2026-08-06", "upcoming"], ["2026-08-07", "not_due"]] as const) {
-    assert.equal(evaluateTaskState(input({ task: task({ dueOn }) })).activeStatus, expected);
+test("all strictly future dates are Not Due, including tomorrow, seven days, and eight days away", () => {
+  for (const dueOn of ["2026-07-31", "2026-08-05", "2026-08-06", "2026-08-07"]) {
+    assert.equal(evaluateTaskState(input({ task: task({ dueOn }) })).activeStatus, "not_due", dueOn);
   }
+});
+
+test("one-time obligations are Open today and Not Due on every future date", () => {
+  const recurrence = { kind: "none" as const };
+  assert.equal(evaluateTaskState(input({ task: task({ dueOn: "2026-07-31", recurrence }) })).activeStatus, "not_due");
+  assert.equal(evaluateTaskState(input({ task: task({ dueOn: "2026-07-30", recurrence }) })).activeStatus, "pending");
 });
 
 test("Delay anchors from the action date, exits overdue, and preserves streak", () => {

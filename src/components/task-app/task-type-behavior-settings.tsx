@@ -632,7 +632,7 @@ export function TaskTypeBehaviorSettings({
 
       {selectedRuleset ? (
         <div className="mb-4 rounded-[1rem] border border-[#eee9f8] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.035]">
-          {selectedOption ? <div className="mb-3"><TaskTypeIdentity option={selectedOption} /></div> : null}
+          {selectedOption ? <div className="mb-3"><TaskTypeIdentity option={selectedOption} showDescription={true} /></div> : null}
           <label className="grid gap-1.5 text-xs font-semibold text-[#655d7d] dark:text-white/65" htmlFor="selected-custom-ruleset-name">
             Custom Task Type name
             <div className="flex flex-wrap gap-2">

@@ -75,13 +75,32 @@ function dependenciesFor(options: {
       commandId: input.intent.replay_identity,
       commandType: "handled_outcome",
     })) as never,
-    planCommand: (({ task }: { task: { canonical_revision: number } }) => ({
+    planCommand: (({ task }: { task: { canonical_revision: number; status: string; due_on: string | null; completed_at?: string | null; active_status_logical_date?: string | null; active_occurrence_due_on?: string | null; repeat_quota_balance?: number | null; repeat_quota_balance_period?: string | null } }) => ({
       command: { commandId: "planned", commandType: "handled_outcome" },
       normalizedResult: {
         state: "accepted",
         conflictCode: null,
         expectedRevision: task.canonical_revision,
         nextRevision: task.canonical_revision + 1,
+        canonicalTaskPatch: {},
+        compatibilityProjection: {
+          status: task.status,
+          dueOn: task.due_on,
+          completedAt: task.completed_at,
+          activeStatusLogicalDate: task.active_status_logical_date,
+          activeOccurrenceDueOn: task.active_occurrence_due_on,
+          repeatQuotaBalance: task.repeat_quota_balance,
+          repeatQuotaBalancePeriod: task.repeat_quota_balance_period,
+        },
+        historyFact: null,
+        automaticHistoryFacts: [],
+        automaticHistoryDeleteIds: [],
+        occurrence: null,
+        scheduleBoundary: null,
+        occurrenceEffectiveOverride: null,
+        calendarOverride: null,
+        rewardEntitlement: null,
+        quotaPeriodFacts: [],
       },
     })) as never,
     serializePlan: (() => ({})) as never,
@@ -109,6 +128,7 @@ test("batch validation is bounded, exact, date-safe, and rejects duplicate or pr
 test("three-date batch invokes normal canonical children sequentially with threaded revisions and deterministic replay identities", async () => {
   const childCalls: Array<{ date: string; expectedRevision: number; replayIdentity: string; deferAchievements?: boolean }> = [];
   let finalizerCalls = 0;
+  let finalizedHistoryFactIds: string[] = [];
   const result = await executeHistoryOutcomeBatch({
     userId,
     intent: batchIntent,
@@ -131,12 +151,14 @@ test("three-date batch invokes normal canonical children sequentially with threa
             next_revision: nextRevision,
             canonical_task_patch: {},
             compatibility_projection: {},
+            history_fact_id: `history-${intent.logical_date}`,
           },
           error: null,
         };
       },
-      finalize: async () => {
+      finalize: async ({ historyFactIds }) => {
         finalizerCalls += 1;
+        finalizedHistoryFactIds = historyFactIds;
         return { data: { status: "completed" }, error: null };
       },
     }),
@@ -154,7 +176,125 @@ test("three-date batch invokes normal canonical children sequentially with threa
   ]);
   assert.equal(childCalls.every((call) => call.deferAchievements === true), true);
   assert.equal(finalizerCalls, 1);
+  assert.deepEqual(finalizedHistoryFactIds, ["history-2026-08-17", "history-2026-08-18", "history-2026-08-19"]);
   assert.equal(body.final_committed_revision, 13);
+  assert.deepEqual(body.achievement && typeof body.achievement === "object" ? body.achievement : null, {
+    status: "completed",
+    operation_id: body.achievement && typeof body.achievement === "object"
+      ? (body.achievement as Record<string, unknown>).operation_id
+      : null,
+    error_code: null,
+  });
+  assert.equal(body.achievement_warning, null);
+});
+
+test("four-date History batch finalizes once with only committed History fact IDs", async () => {
+  const intent: HistoryOutcomeBatchIntent = {
+    ...batchIntent,
+    replay_identity: "four-date-runtime-cutover",
+    entries: [
+      { logical_date: "2026-08-20" },
+      { logical_date: "2026-08-21" },
+      { logical_date: "2026-08-22" },
+      { logical_date: "2026-08-23" },
+    ],
+  };
+  const childCalls: boolean[] = [];
+  let finalizerCalls = 0;
+  let finalizedHistoryFactIds: string[] = [];
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent,
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      invoke: async ({ intent: childIntent, deferAchievements }) => {
+        childCalls.push(deferAchievements === true);
+        return {
+          data: {
+            state: "committed",
+            task_id: taskId,
+            command_id: childIntent.replay_identity,
+            expected_revision: childIntent.expected_revision,
+            next_revision: (childIntent.expected_revision ?? 0) + 1,
+            history_fact_id: `history-${childIntent.logical_date}`,
+          },
+          error: null,
+        };
+      },
+      finalize: async ({ historyFactIds }) => {
+        finalizerCalls += 1;
+        finalizedHistoryFactIds = historyFactIds;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(body.state, "committed");
+  assert.deepEqual(childCalls, [true, true, true, true]);
+  assert.equal(finalizerCalls, 1);
+  assert.deepEqual(finalizedHistoryFactIds, [
+    "history-2026-08-20",
+    "history-2026-08-21",
+    "history-2026-08-22",
+    "history-2026-08-23",
+  ]);
+});
+
+test("quota History batch uses the same deferred child and single finalizer path", async () => {
+  let childCalls = 0;
+  let finalizerCalls = 0;
+  let finalizerOperationId = "";
+  const result = await executeHistoryOutcomeBatch({
+    userId,
+    intent: { ...batchIntent, task_id: "quota-task", replay_identity: "quota-calendar-batch-1" },
+    adminClient: {} as TrustedTaskStateCommandClient,
+    dependencies: dependenciesFor({
+      loadCanonicalState: async () => {
+        const model = readModel(batchIntent.expected_revision);
+        return {
+          data: {
+            ...model,
+            task: {
+              ...model.task,
+              repeat_frequency: "per_week",
+              repeat_quota_count: 3,
+              repeat_quota_balance_enabled: true,
+              repeat_quota_balance: 0,
+              repeat_quota_balance_period: "week",
+            },
+          },
+          error: null,
+        };
+      },
+      invoke: async ({ intent, deferAchievements }) => {
+        childCalls += 1;
+        assert.equal(deferAchievements, true);
+        return {
+          data: {
+            state: "committed",
+            task_id: "quota-task",
+            command_id: intent.replay_identity,
+            expected_revision: intent.expected_revision,
+            next_revision: (intent.expected_revision ?? 0) + 1,
+          },
+          error: null,
+        };
+      },
+      finalize: async ({ operationId }) => {
+        finalizerCalls += 1;
+        finalizerOperationId = operationId;
+        return { data: { status: "completed" }, error: null };
+      },
+    }),
+  });
+  const body = result.body as Record<string, unknown>;
+  assert.equal(result.status, 200);
+  assert.equal(body.state, "committed");
+  assert.equal(childCalls, 3);
+  assert.equal(finalizerCalls, 1);
+  assert.equal((body.achievement as Record<string, unknown>).status, "completed");
+  assert.equal((body.achievement as Record<string, unknown>).operation_id, finalizerOperationId);
+  assert.equal(body.achievement_warning, null);
 });
 
 test("batch action-availability preflight rejects before any child commits when a selected date is unavailable", async () => {
@@ -257,6 +397,7 @@ test("batch policy-authority preflight failure rejects before child mutation", a
 test("stale child stops after a committed prefix and finalizes Achievement before returning", async () => {
   const dates: string[] = [];
   const operationIds: string[] = [];
+  let finalizedHistoryFactIds: string[] = [];
   const staleResult = await executeHistoryOutcomeBatch({
     userId,
     intent: batchIntent,
@@ -265,10 +406,11 @@ test("stale child stops after a committed prefix and finalizes Achievement befor
       invoke: async ({ intent }) => {
         dates.push(intent.logical_date ?? "");
         if (dates.length === 2) return { data: null, error: { code: "40001", message: "stale" } };
-        return { data: { state: "committed", task_id: taskId, command_id: intent.replay_identity, expected_revision: intent.expected_revision, next_revision: (intent.expected_revision ?? 0) + 1 }, error: null };
+        return { data: { state: "committed", task_id: taskId, command_id: intent.replay_identity, expected_revision: intent.expected_revision, next_revision: (intent.expected_revision ?? 0) + 1, history_fact_id: `history-${intent.logical_date}` }, error: null };
       },
-      finalize: async ({ operationId }) => {
+      finalize: async ({ operationId, historyFactIds }) => {
         operationIds.push(operationId);
+        finalizedHistoryFactIds = historyFactIds;
         return { data: { status: "inactive" }, error: null };
       },
     }),
@@ -281,6 +423,7 @@ test("stale child stops after a committed prefix and finalizes Achievement befor
   assert.equal(staleBody.final_committed_revision, 11);
   assert.deepEqual((staleBody.error as Record<string, unknown>).kind, "command_rejected");
   assert.equal(operationIds.length, 1);
+  assert.deepEqual(finalizedHistoryFactIds, ["history-2026-08-17"]);
   assert.match(operationIds[0] ?? "", /^[0-9a-f-]{36}$/);
   assert.deepEqual(staleBody.achievement, { status: "inactive", operation_id: operationIds[0], error_code: null });
   assert.equal(staleBody.achievement_warning, null);

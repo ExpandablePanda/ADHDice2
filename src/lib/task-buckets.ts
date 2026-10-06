@@ -162,6 +162,7 @@ export function createTask(params: Partial<Task> & Pick<Task, "id" | "title" | "
     repeat_monthly_mode: "day_of_month",
     repeat_monthly_ordinal: null,
     repeat_monthly_weekday: null,
+    repeat_end_on: null,
     subtasks_auto_reset: false,
     completed_at: null,
     trashed_at: null,

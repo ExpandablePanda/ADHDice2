@@ -2,21 +2,23 @@ import {
   authoritativeRowsByDate,
   calendarStateForOutcome,
   dateRange,
-  daysBetween,
   shiftDateKey,
 } from "./calendar.ts";
 import {
   isScheduledOccurrence,
   occurrenceIdentity,
+  recurrenceOccurrenceIsAllowed,
   recurrenceAfterSuccess,
   scheduledOccurrences,
 } from "./recurrence.ts";
+import { quotaDateIsMandatory } from "./quota.ts";
 import type {
   TaskEffectiveTimeline,
   TaskEffectiveTimelineDay,
   TaskEffectiveTimelineObligation,
   TaskCalendarOverride,
   TaskHistoryOutcome,
+  TaskQuotaPeriodFact,
   TaskStateHistoryRow,
   TaskStateSnapshot,
   TaskWorkflowState,
@@ -39,6 +41,7 @@ export type BuildTaskEffectiveTimelineInput = {
   currentBehaviorPolicyEffectiveFromLogicalDate?: string;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
+  quotaPeriodFacts?: TaskQuotaPeriodFact[];
   logicalDate: string;
   calendarStart: string;
   calendarEnd: string;
@@ -327,7 +330,8 @@ function nextDueAfterCalendarCancellation(
 ) {
   if (recurrence.kind === "none") return null;
   if (recurrence.kind === "rolling") {
-    return shiftDateKey(cancelledDueOn, Math.max(1, recurrence.intervalDays));
+    const nextDue = shiftDateKey(cancelledDueOn, Math.max(1, recurrence.intervalDays));
+    return recurrenceOccurrenceIsAllowed(recurrence, nextDue) ? nextDue : null;
   }
   return scheduledOccurrences(
     recurrence,
@@ -574,12 +578,46 @@ export function buildTaskEffectiveTimeline(
     } else {
       let calculated: TaskEffectiveTimelineDay;
       const isFixedRecurrence = input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly";
+      const fixedRecurrence = isFixedRecurrence
+        ? input.task.recurrence as Extract<TaskStateSnapshot["recurrence"], { kind: "weekly" | "monthly" }>
+        : null;
+      const recurrenceEndOn = input.task.recurrence.kind === "none" ? null : input.task.recurrence.endOn ?? null;
+      const recurrenceEndedBeforeDate = recurrenceEndOn !== null
+        && date > recurrenceEndOn
+        && date !== activeDueOn;
+      const delayedFinalFixedOccurrence = Boolean(
+        activeDueOn
+        && fixedRecurrence
+        && date === activeDueOn
+        && fixedRecurrence.endOn != null
+        && activeDueOn > fixedRecurrence.endOn,
+      );
       const isFixedScheduledDate = Boolean(
         activeDueOn
-        && isFixedRecurrence
-        && isScheduledOccurrence(input.task.recurrence as Extract<TaskStateSnapshot["recurrence"], { kind: "weekly" | "monthly" }>, activeDueOn, date),
+        && fixedRecurrence
+        && (delayedFinalFixedOccurrence || isScheduledOccurrence(fixedRecurrence, activeDueOn, date)),
       );
-      if (completed || !activeDueOn) {
+      if (completed) {
+        calculated = calculatedDay(input.task.id, date, "no_entry", "none");
+      } else if (recurrenceEndedBeforeDate) {
+        calculated = calculatedDay(input.task.id, date, "no_entry", "none");
+      } else if (input.task.recurrence.kind === "quota") {
+        const isMandatory = quotaDateIsMandatory({
+          recurrence: input.task.recurrence,
+          logicalDate: date,
+          history: recurrenceExplicitRows,
+          quotaPeriodFacts: input.quotaPeriodFacts,
+        });
+        if (!isMandatory) {
+          calculated = calculatedDay(input.task.id, date, "not_due", "none");
+        } else if (date < input.logicalDate) {
+          calculated = calculatedDay(input.task.id, date, "open", "overdue", date);
+        } else if (date === input.logicalDate) {
+          calculated = calculatedDay(input.task.id, date, "open", "due", date);
+        } else {
+          calculated = calculatedDay(input.task.id, date, "scheduled", "due", date);
+        }
+      } else if (!activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
       } else if (date < activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
@@ -684,15 +722,10 @@ export function buildTaskEffectiveTimeline(
     if (currentDay?.state === "delayed" || (delayedUntilDate && delayedUntilDate > input.logicalDate)) return "delayed" as const;
     if (streaks.currentMissedStreak > 0 || currentDay?.state === "missed"
       || (behaviorPolicy.unresolvedOccurrence === "missed" && currentDay?.obligation === "overdue")) return "missed" as const;
-    if (currentDay?.state === "scheduled") return daysBetween(input.logicalDate, currentDay.logicalDate) <= 7 ? "upcoming" as const : "not_due" as const;
+    if (currentDay?.state === "scheduled") return "not_due" as const;
     if (currentDay?.state === "not_due" || currentDay?.state === "no_entry") {
       if (!activeDueOn && input.task.recurrence.kind === "none") return "unscheduled" as const;
-      const nextScheduledDueOn = input.task.recurrence.kind === "weekly" || input.task.recurrence.kind === "monthly"
-        ? scheduledOccurrences(input.task.recurrence, activeDueOn ?? input.logicalDate, input.logicalDate, shiftDateKey(input.logicalDate, 800)).at(0) ?? null
-        : activeDueOn;
-      return nextScheduledDueOn && nextScheduledDueOn > input.logicalDate && daysBetween(input.logicalDate, nextScheduledDueOn) <= 7
-        ? "upcoming" as const
-        : "not_due" as const;
+      return "not_due" as const;
     }
     return "pending" as const;
   })();

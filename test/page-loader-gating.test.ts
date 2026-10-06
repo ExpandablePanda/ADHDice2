@@ -8,7 +8,7 @@ test("inactive Health and Achievements domains do not start remote loading", asy
     readFile(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/hooks/useAchievementProgress.ts", import.meta.url), "utf8"),
   ]);
-  assert.match(app, /useHealth\([\s\S]*?activePage === "Health"\)/);
+  assert.match(app, /useHealth\([\s\S]*?isNativeIosPlatform \|\| activePage === "Health" \|\| batchIntakeHealthActive\)/);
   assert.match(app, /useAchievementProgress\([\s\S]*?activePage === "Achievements" \|\| \(activePage === "Tasks" && taskUiState\.tasksSurface === "report"\)/);
   assert.match(health, /if \(!active\) return/);
   assert.match(achievements, /!requestedUserId \|\| !active/);
@@ -36,7 +36,8 @@ test("one canonical full-screen loader gates auth restoration and initial app bo
   assert.doesNotMatch(loadingScreen, /<h1[\s>]/);
   assert.match(loadingScreen, /strokeDasharray="52 237\.03"/);
   assert.match(loadingScreen, /strokeLinecap="round"/);
-  assert.match(loadingScreen, /strokeWidth="7"/);
+  assert.equal((loadingScreen.match(/strokeWidth="4"/g) ?? []).length, 2);
+  assert.doesNotMatch(loadingScreen, /strokeWidth="7"/);
   assert.match(loadingScreen, /<g transform="rotate\(-90 50 50\)">/);
   assert.match(loadingScreen, /className="workspace-loading-ring-motion"/);
   assert.match(loadingScreen, /<animateTransform[\s\S]*?attributeName="transform"/);

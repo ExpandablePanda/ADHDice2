@@ -4,6 +4,7 @@ import type { CanonicalTaskStateCommand } from "../../../src/lib/task-state-cano
 import { deterministicUuid, sha256Digest } from "../../../src/lib/task-state-canonical/digest.ts";
 import { resolveCanonicalWorkflowOccurrence } from "../../../src/lib/task-state-canonical/engine-input.ts";
 import { occurrenceIdentity } from "../../../src/lib/task-state-engine/recurrence.ts";
+import { TASK_ROLLOVER_SWEEP_BATCH_SIZE } from "../../../src/lib/task-rollover-batch.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
 const TIME_KEY = /^(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d)?$/;
@@ -11,6 +12,7 @@ const COMMAND_TYPES = new Set([
   "set_outcome", "complete_task", "delay_occurrence", "set_due_date", "set_repeat",
   "calendar_override", "archive_task", "trash_task", "restore_task", "start_in_progress",
   "clear_in_progress", "clear_outcome", "reconcile_rollover",
+  "clear_quota_balance",
 ]);
 const COMMON_KEYS = new Set(["type", "task_id", "replay_identity", "expected_revision"]);
 const FORBIDDEN_KEYS = new Set([
@@ -22,13 +24,16 @@ const FORBIDDEN_KEYS = new Set([
 
 export type ScheduleChangeIntent = {
   schedule_model: "unscheduled" | "one_time" | "rolling" | "fixed";
-  repeat_frequency?: "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete";
+  repeat_frequency?: "none" | "daily" | "weekly" | "monthly" | "custom" | "daily_until_complete" | "per_week" | "per_month";
   repeat_interval?: number;
   repeat_days_of_week?: number[];
   repeat_day_of_month?: number | null;
   repeat_monthly_mode?: "day_of_month" | "ordinal_weekday";
   repeat_monthly_ordinal?: "first" | "second" | "third" | "fourth" | "last" | null;
   repeat_monthly_weekday?: number | null;
+  repeat_quota_count?: number | null;
+  repeat_quota_balance_enabled?: boolean;
+  repeat_end_on?: string | null;
   one_time_due_on?: string | null;
   due_time?: string | null;
   anchor_date?: string | null;
@@ -42,6 +47,7 @@ export type TaskStateCommandIntent =
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
+  | { type: "clear_quota_balance"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string }
   | { type: "archive_task" | "clear_in_progress"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "trash_task" | "restore_task"; task_id: string; replay_identity: string; expected_revision?: number; milestone_id?: string; expected_milestone_revision?: number; milestone_operation_id?: string }
@@ -126,21 +132,31 @@ export function buildTrustedTaskStateCommandReplayDescriptor(input: {
 function validScheduleIntent(value: unknown): value is ScheduleChangeIntent {
   if (!isRecord(value) || !exactOrSubsetKeys(value, new Set([
     "schedule_model", "repeat_frequency", "repeat_interval", "repeat_days_of_week", "repeat_day_of_month",
-    "repeat_monthly_mode", "repeat_monthly_ordinal", "repeat_monthly_weekday", "one_time_due_on", "due_time", "anchor_date",
+    "repeat_monthly_mode", "repeat_monthly_ordinal", "repeat_monthly_weekday", "repeat_quota_count", "repeat_quota_balance_enabled", "one_time_due_on", "due_time", "anchor_date",
+    "repeat_end_on",
   ]))) return false;
   if (!["unscheduled", "one_time", "rolling", "fixed"].includes(String(value.schedule_model))) return false;
-  if (value.repeat_frequency !== undefined && !["none", "daily", "weekly", "monthly", "custom", "daily_until_complete"].includes(String(value.repeat_frequency))) return false;
+  if (value.repeat_frequency !== undefined && !["none", "daily", "weekly", "monthly", "custom", "daily_until_complete", "per_week", "per_month"].includes(String(value.repeat_frequency))) return false;
   if ((value.schedule_model === "unscheduled" || value.schedule_model === "one_time")
     && value.repeat_frequency !== undefined && value.repeat_frequency !== "none") return false;
-  if (value.repeat_interval !== undefined && (!Number.isInteger(value.repeat_interval) || value.repeat_interval < 1)) return false;
-  if (value.repeat_days_of_week !== undefined && (!Array.isArray(value.repeat_days_of_week) || value.repeat_days_of_week.some((day) => !Number.isInteger(day) || day < 0 || day > 6))) return false;
-  if (value.repeat_day_of_month !== undefined && value.repeat_day_of_month !== null && (!Number.isInteger(value.repeat_day_of_month) || value.repeat_day_of_month < 1 || value.repeat_day_of_month > 31)) return false;
+  if (value.repeat_interval !== undefined && (typeof value.repeat_interval !== "number" || !Number.isInteger(value.repeat_interval) || value.repeat_interval < 1)) return false;
+  if (value.repeat_days_of_week !== undefined && (!Array.isArray(value.repeat_days_of_week) || value.repeat_days_of_week.some((day) => typeof day !== "number" || !Number.isInteger(day) || day < 0 || day > 6))) return false;
+  if (value.repeat_day_of_month !== undefined && value.repeat_day_of_month !== null && (typeof value.repeat_day_of_month !== "number" || !Number.isInteger(value.repeat_day_of_month) || value.repeat_day_of_month < 1 || value.repeat_day_of_month > 31)) return false;
   if (value.repeat_monthly_mode !== undefined && !["day_of_month", "ordinal_weekday"].includes(String(value.repeat_monthly_mode))) return false;
   if (value.repeat_monthly_ordinal !== undefined && value.repeat_monthly_ordinal !== null && !["first", "second", "third", "fourth", "last"].includes(String(value.repeat_monthly_ordinal))) return false;
-  if (value.repeat_monthly_weekday !== undefined && value.repeat_monthly_weekday !== null && (!Number.isInteger(value.repeat_monthly_weekday) || value.repeat_monthly_weekday < 0 || value.repeat_monthly_weekday > 6)) return false;
+  if (value.repeat_monthly_weekday !== undefined && value.repeat_monthly_weekday !== null && (typeof value.repeat_monthly_weekday !== "number" || !Number.isInteger(value.repeat_monthly_weekday) || value.repeat_monthly_weekday < 0 || value.repeat_monthly_weekday > 6)) return false;
+  const quotaFrequency = value.repeat_frequency === "per_week" || value.repeat_frequency === "per_month" ? value.repeat_frequency : null;
+  const quotaLimit = quotaFrequency === "per_week" ? 7 : quotaFrequency === "per_month" ? 31 : null;
+  if (value.repeat_quota_count !== undefined && value.repeat_quota_count !== null && (typeof value.repeat_quota_count !== "number" || !Number.isInteger(value.repeat_quota_count) || value.repeat_quota_count < 1 || value.repeat_quota_count > (quotaLimit ?? 31))) return false;
+  if (quotaLimit !== null && value.repeat_quota_count !== undefined && (typeof value.repeat_quota_count !== "number" || !Number.isInteger(value.repeat_quota_count) || value.repeat_quota_count < 1 || value.repeat_quota_count > quotaLimit)) return false;
+  if (value.repeat_quota_balance_enabled !== undefined && typeof value.repeat_quota_balance_enabled !== "boolean") return false;
+  if (quotaLimit === null && (value.repeat_quota_count !== undefined || value.repeat_quota_balance_enabled !== undefined)) return false;
   if (value.one_time_due_on !== undefined && !isOptionalDate(value.one_time_due_on)) return false;
   if (value.due_time !== undefined && value.due_time !== null && (typeof value.due_time !== "string" || !TIME_KEY.test(value.due_time))) return false;
   if (value.anchor_date !== undefined && !isOptionalDate(value.anchor_date)) return false;
+  if (value.repeat_end_on !== undefined && value.repeat_end_on !== null && !isValidCalendarDate(value.repeat_end_on)) return false;
+  if ((value.schedule_model === "unscheduled" || value.schedule_model === "one_time")
+    && value.repeat_end_on !== undefined && value.repeat_end_on !== null) return false;
   if (value.schedule_model === "one_time" && !isDate(value.one_time_due_on)) return false;
   return true;
 }
@@ -175,6 +191,10 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
   } else if (type === "clear_outcome") {
     ["logical_date", "occurrence_key", "scheduled_due_on"].forEach((key) => allowed.add(key));
     if (!isDate(value.logical_date)) return null;
+  } else if (type === "clear_quota_balance") {
+    // Clear Balance is intentionally parameterless beyond the command identity;
+    // the locked canonical Task supplies the current quota period and owner.
+    allowed.add("logical_date");
   } else if (type === "trash_task" || type === "restore_task") {
     ["milestone_id", "expected_milestone_revision", "milestone_operation_id"].forEach((key) => allowed.add(key));
   } else if (type === "start_in_progress") {
@@ -239,7 +259,7 @@ export function validateHistoryOutcomeBatchIntent(value: unknown): HistoryOutcom
 }
 
 const ROLLOVER_SWEEP_KEYS = new Set(["type", "replay_identity", "commands"]);
-export const MAX_ROLLOVER_SWEEP_COMMANDS = 256;
+export const MAX_ROLLOVER_SWEEP_COMMANDS = TASK_ROLLOVER_SWEEP_BATCH_SIZE;
 
 export function validateRolloverSweepIntent(value: unknown): RolloverSweepIntent | null {
   if (!isRecord(value)
@@ -292,6 +312,7 @@ function nullableScheduleField<T>(
 function materializeDelayOccurrence(readModel: CanonicalTaskStateReadModel, base: ReturnType<typeof commandBase>, now: string): CanonicalTaskOccurrence {
   const boundary = currentBoundary(readModel);
   if (boundary.schedule_model === "unscheduled") throw new Error("Delay requires a scheduled canonical occurrence.");
+  if (boundary.repeat_frequency === "per_week" || boundary.repeat_frequency === "per_month") throw new Error("Delay is unavailable for quota recurrence.");
   const scheduledDueOn = boundary.schedule_model === "one_time"
     ? boundary.one_time_due_on
     : readModel.task.active_occurrence_due_on ?? readModel.task.due_on;
@@ -330,6 +351,11 @@ function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: 
   if (!Number.isInteger(readModel.task.canonical_revision) || readModel.task.canonical_revision < 1) {
     throw new Error("Canonical Task State requires canonical_revision; legacy revision is not a substitute.");
   }
+  const expectedRevisionValue = intent.expected_revision ?? readModel.task.canonical_revision;
+  if (typeof expectedRevisionValue !== "number" || !Number.isInteger(expectedRevisionValue) || expectedRevisionValue < 1) {
+    throw new Error("Canonical Task State requires a positive expected revision.");
+  }
+  const expectedRevision = expectedRevisionValue;
   const replay = buildTrustedTaskStateCommandReplayDescriptor({ userId, intent });
   const expectedBoundarySequence = readModel.scheduleBoundaries.length > 0
     ? readModel.scheduleBoundaries.reduce((latest, boundary) => Math.max(latest, boundary.boundary_sequence), 0)
@@ -340,7 +366,7 @@ function commandBase(intent: TaskStateCommandIntent, userId: string, readModel: 
     taskId: readModel.task.id,
     entityKind,
     acceptedIntent: replay.acceptedIntent,
-    expectedRevision: intent.expected_revision ?? readModel.task.canonical_revision,
+    expectedRevision,
     expectedBoundarySequence,
     logicalDay,
     idempotenceIdentity: replay.idempotenceIdentity,
@@ -361,8 +387,21 @@ function serverScheduleBoundary(
   const recurring = scheduleModel === "rolling" || scheduleModel === "fixed";
   const repeatFrequency = recurring ? schedule.repeat_frequency ?? previous.repeat_frequency : "none";
   if (recurring && repeatFrequency === "none") throw new Error("A recurring schedule requires a repeat frequency.");
+  if (repeatFrequency === "per_week" || repeatFrequency === "per_month") {
+    const quotaLimit = repeatFrequency === "per_week" ? 7 : 31;
+    const quotaCount = Object.hasOwn(schedule, "repeat_quota_count")
+      ? schedule.repeat_quota_count
+      : previous.repeat_quota_count;
+    if (!Number.isInteger(quotaCount) || (quotaCount ?? 0) < 1 || (quotaCount ?? 0) > quotaLimit) {
+      throw new Error(`Quota count must be between 1 and ${quotaLimit}.`);
+    }
+  }
   const hasExplicitAnchor = schedule.anchor_date !== undefined && schedule.anchor_date !== null;
   const anchorDate = recurring ? schedule.anchor_date ?? previous.anchor_date : null;
+  const repeatEndOn = recurring ? nullableScheduleField(schedule, previous.repeat_end_on, "repeat_end_on") : null;
+  if (repeatEndOn !== null && anchorDate !== null && repeatEndOn < anchorDate) {
+    throw new Error("End Date must be on or after the recurrence schedule date.");
+  }
   return {
     ...previous,
     id: deterministicUuid(`${base.commandId}:schedule`),
@@ -379,6 +418,13 @@ function serverScheduleBoundary(
     repeat_monthly_mode: schedule.repeat_monthly_mode ?? previous.repeat_monthly_mode,
     repeat_monthly_ordinal: nullableScheduleField(schedule, previous.repeat_monthly_ordinal, "repeat_monthly_ordinal"),
     repeat_monthly_weekday: nullableScheduleField(schedule, previous.repeat_monthly_weekday, "repeat_monthly_weekday"),
+    repeat_end_on: repeatEndOn,
+    repeat_quota_count: repeatFrequency === "per_week" || repeatFrequency === "per_month"
+      ? nullableScheduleField(schedule, previous.repeat_quota_count ?? null, "repeat_quota_count")
+      : null,
+    repeat_quota_balance_enabled: repeatFrequency === "per_week" || repeatFrequency === "per_month"
+      ? schedule.repeat_quota_balance_enabled ?? previous.repeat_quota_balance_enabled === true
+      : false,
     one_time_due_on: scheduleModel === "one_time" ? schedule.one_time_due_on ?? null : null,
     due_time: nullableScheduleField(schedule, previous.due_time, "due_time"),
     anchor_date: anchorDate,
@@ -487,6 +533,12 @@ export function buildTrustedTaskStateCommand(input: {
       return { ...base, type: "calendar_override", calendarOverride: serverCalendarOverride(intent, base, logicalDay, now) };
     case "clear_outcome":
       return { ...base, type: "clear_outcome", logicalDate: intent.logical_date, occurrenceId: occurrence?.id ?? null, occurrenceKey: intent.occurrence_key ?? occurrence?.occurrence_key ?? null, scheduledDueOn: intent.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null, occurrence: occurrence ?? undefined };
+    case "clear_quota_balance":
+      if ((readModel.task.repeat_frequency !== "per_week" && readModel.task.repeat_frequency !== "per_month")
+        || readModel.task.repeat_quota_balance_enabled !== true) {
+        throw new Error("Clear Balance requires an enabled quota balance.");
+      }
+      return { ...base, type: "clear_quota_balance" };
     case "archive_task": return { ...base, type: "archive" };
     case "trash_task": return { ...base, type: "trash" };
     case "restore_task": return { ...base, type: "restore" };

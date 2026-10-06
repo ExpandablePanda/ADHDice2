@@ -84,8 +84,10 @@ test("rollover sweep defers every child and finalizes once with a deterministic 
   assert.match(sweep, /deferAchievements: true/);
   assert.match(sweep, /deterministicUuid\(`task-rollover-achievement:/);
   assert.equal((sweep.match(/finalizeBatchAchievements\(/g) ?? []).length, 1);
-  assert.match(sweep, /input\.intent\.commands\.length === 0/);
+  assert.match(sweep, /historyFactIds\.size > 0/);
+  assert.match(sweep, /historyFactIds: \[\.\.\.historyFactIds\]/);
   assert.match(sweep, /rolloverFinalizationFailure/);
+  assert.doesNotMatch(sweep, /adhdice_rebuild_achievement_progress/);
   assert.match(sweep, /state = error[\s\S]*partial.*failed/);
   assert.match(taskAppSource, /if \(!error && typeof window !== "undefined"\)/);
   assert.match(taskAppSource, /achievementFinalizationPending/);

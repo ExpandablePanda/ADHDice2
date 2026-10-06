@@ -17,6 +17,7 @@ import type {
   CanonicalTaskRewardEntitlement,
   CanonicalTaskRewardGrant,
   CanonicalTaskScheduleBoundary,
+  CanonicalTaskQuotaPeriodFact,
   CanonicalTaskStateColumns,
 } from "./types.ts";
 import { resolveTaskTrackingExclusion } from "../task-tracking.ts";
@@ -57,6 +58,7 @@ type CanonicalReadTableRows = {
   adhdice_user_profiles: CanonicalLogicalDayProfile;
   adhdice_task_command_operations: CanonicalTaskCommandOperation;
   adhdice_task_schedule_boundaries: CanonicalTaskScheduleBoundary;
+  adhdice_task_quota_period_facts: CanonicalTaskQuotaPeriodFact;
   adhdice_task_occurrences: CanonicalTaskOccurrence;
   adhdice_task_occurrence_effective_overrides: CanonicalTaskOccurrenceEffectiveOverride;
   adhdice_task_history_facts: CanonicalTaskHistoryFact;
@@ -113,6 +115,7 @@ export type CanonicalTaskStateReadModel = {
   rewardEntitlements: CanonicalTaskRewardEntitlement[];
   rewardGrants: CanonicalTaskRewardGrant[];
   rewardClaimConsumptions: CanonicalTaskRewardClaimConsumption[];
+  quotaPeriodFacts: CanonicalTaskQuotaPeriodFact[];
   /** Optional for compatibility with pre-7.13.31 read-model fixtures. */
   behaviorSelections?: TaskBehaviorSelection[];
   logicalDayProfile: {
@@ -152,13 +155,15 @@ export async function loadCanonicalTaskState(
   if (taskResult.error) return { data: null, error: readError(taskResult.error) };
   if (!taskResult.data) return { data: null, error: { message: "Canonical Task was not found for this owner." } };
 
-  const [profile, commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides, historyFacts, calendarOverrides,
+  const [profile, commandOperations, scheduleBoundaries, quotaPeriodFacts, occurrences, occurrenceEffectiveOverrides, historyFacts, calendarOverrides,
     rewardEntitlements, rewardGrants, rewardClaimConsumptions, behaviorSelections] = await Promise.all([
     client.from("adhdice_user_profiles").select("timezone,day_start_time,settings_revision").eq("user_id", input.userId).maybeSingle(),
     client.from("adhdice_task_command_operations").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("created_at", { ascending: false }),
     client.from("adhdice_task_schedule_boundaries").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("boundary_sequence", { ascending: false }),
+    client.from("adhdice_task_quota_period_facts").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
+      .order("period_start", { ascending: true }),
     client.from("adhdice_task_occurrences").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("scheduled_due_on", { ascending: true }),
     client.from("adhdice_task_occurrence_effective_overrides").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
@@ -179,6 +184,7 @@ export async function loadCanonicalTaskState(
     profile,
     commandOperations,
     scheduleBoundaries,
+    quotaPeriodFacts,
     occurrences,
     occurrenceEffectiveOverrides,
     historyFacts,
@@ -204,6 +210,7 @@ export async function loadCanonicalTaskState(
       task: taskResult.data as CanonicalTaskRow,
       commandOperations: commandOperations.data ?? [],
       scheduleBoundaries: scheduleBoundaries.data ?? [],
+      quotaPeriodFacts: quotaPeriodFacts.data ?? [],
       occurrences: occurrences.data ?? [],
       occurrenceEffectiveOverrides: occurrenceEffectiveOverrides.data ?? [],
       historyFacts: historyFacts.data ?? [],
@@ -280,13 +287,15 @@ export async function loadCanonicalTaskProjectionSource(
   if (taskResult.error) return { data: null, error: readError(taskResult.error) };
   if (!taskResult.data) return { data: null, error: { message: "Canonical Task was not found for this owner." } };
 
-  const [profile, commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides, historyFacts,
+  const [profile, commandOperations, scheduleBoundaries, quotaPeriodFacts, occurrences, occurrenceEffectiveOverrides, historyFacts,
     calendarOverrides, behaviorSelections] = await Promise.all([
     client.from("adhdice_user_profiles").select("timezone,day_start_time,settings_revision").eq("user_id", input.userId).maybeSingle(),
     client.from("adhdice_task_command_operations").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("created_at", { ascending: false }),
     client.from("adhdice_task_schedule_boundaries").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("boundary_sequence", { ascending: false }),
+    client.from("adhdice_task_quota_period_facts").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
+      .order("period_start", { ascending: true }),
     client.from("adhdice_task_occurrences").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
       .order("scheduled_due_on", { ascending: true }),
     client.from("adhdice_task_occurrence_effective_overrides").select("*").eq("user_id", input.userId).eq("entity_id", input.taskId)
@@ -299,7 +308,7 @@ export async function loadCanonicalTaskProjectionSource(
       .order("effective_from_logical_date", { ascending: true }),
   ]);
 
-  const results = [profile, commandOperations, scheduleBoundaries, occurrences, occurrenceEffectiveOverrides,
+  const results = [profile, commandOperations, scheduleBoundaries, quotaPeriodFacts, occurrences, occurrenceEffectiveOverrides,
     historyFacts, calendarOverrides, behaviorSelections];
   const failed = results.find((result, index) => result.error
     && !(index === results.length - 1 && isMissingBehaviorSelectionsError(readError(result.error))));
@@ -309,7 +318,7 @@ export async function loadCanonicalTaskProjectionSource(
     return { data: null, error: { message: "Canonical logical-day profile is unavailable or malformed." } };
   }
 
-  const scopedRows = [commandOperations.data, scheduleBoundaries.data, occurrences.data,
+  const scopedRows = [commandOperations.data, scheduleBoundaries.data, quotaPeriodFacts.data, occurrences.data,
     occurrenceEffectiveOverrides.data, historyFacts.data, calendarOverrides.data]
     .flat();
   if (scopedRows.some((row) => row.user_id !== input.userId || row.entity_id !== input.taskId)) {
@@ -324,6 +333,7 @@ export async function loadCanonicalTaskProjectionSource(
       task: taskResult.data as CanonicalTaskRow,
       commandOperations: commandOperations.data ?? [],
       scheduleBoundaries: scheduleBoundaries.data ?? [],
+      quotaPeriodFacts: quotaPeriodFacts.data ?? [],
       occurrences: occurrences.data ?? [],
       occurrenceEffectiveOverrides: occurrenceEffectiveOverrides.data ?? [],
       historyFacts: historyFacts.data ?? [],

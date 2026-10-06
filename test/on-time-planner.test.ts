@@ -70,7 +70,7 @@ test("authoritative display status preserves due-today, future, recurrence, Step
   const step = task({ id: "step", parent_task_id: dueToday.id, due_on: today, status: "upcoming" });
   const substep = task({ id: "substep", parent_task_id: step.id, due_on: today, status: "upcoming" });
   assert.equal(getTaskDisplayStatusWithHistory(dueToday, [], today), "pending");
-  assert.equal(getTaskDisplayStatusWithHistory(future, [], today), "upcoming");
+  assert.equal(getTaskDisplayStatusWithHistory(future, [], today), "not_due");
   assert.equal(getTaskDisplayStatusWithHistory(step, [], today), "pending");
   assert.equal(getTaskDisplayStatusWithHistory(substep, [], today), "pending");
   const recurring = task({ due_on: today, repeat_frequency: "daily", status: "pending" });

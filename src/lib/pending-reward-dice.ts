@@ -13,6 +13,12 @@ export type PendingRewardDiceAccountSnapshot = {
   updatedAt: string;
 };
 
+export type PendingRewardBankSnapshot = PendingRewardDiceAccountSnapshot;
+
+export type PendingRewardBankOpenSession = PendingRewardBankSnapshot & {
+  pendingRewards: PendingTaskReward[];
+};
+
 export type PendingRewardDiceMutationRow = {
   pending_dice: number;
   result_payload: unknown;
@@ -20,6 +26,28 @@ export type PendingRewardDiceMutationRow = {
   updated_at: string;
   was_replayed: boolean;
 };
+
+export type PendingRewardDiceResetRow = {
+  discarded_dice: number;
+  pending_dice: number;
+  revision: number;
+  updated_at: string;
+};
+
+export type PendingRewardBankResetResult = {
+  didReset: boolean;
+  conflict: boolean;
+  refreshedSession: PendingRewardBankOpenSession | null;
+};
+
+export const PENDING_REWARD_BANK_CONFLICT_MESSAGE = "Pending rewards changed before reset. Review the updated bank and try again.";
+
+export function isPendingRewardBankConflict(error: unknown) {
+  const message = error && typeof error === "object" && "message" in error
+    ? String((error as { message?: unknown }).message ?? "")
+    : error instanceof Error ? error.message : String(error ?? "");
+  return message.toLowerCase().includes("pending rewards changed before reset");
+}
 
 export function buildPendingRewardAwardOperationId(reward: PendingTaskReward) {
   return `task-reward:${getPendingTaskRewardKey(reward)}`;

@@ -320,9 +320,9 @@ test("Unscheduled calendar and Archive book glyphs remain distinct", async () =>
     new URL("../src/components/task-app/task-status-ui.tsx", import.meta.url),
     "utf8",
   ));
-  assert.match(source, /status === "unscheduled"[\s\S]*?return <CalendarDays className=\{iconSize\} \/>/);
-  assert.match(source, /status === "upcoming"[\s\S]*?return <Clock className=\{iconSize\} \/>/);
-  assert.doesNotMatch(source, /status === "unscheduled"[\s\S]*?inline-flex h-4 w-4/);
+  assert.match(source, /normalizedStatus === "unscheduled"[\s\S]*?return <CalendarDays className=\{iconSize\} \/>/);
+  assert.doesNotMatch(source, /status === "upcoming"[\s\S]*?return <Clock className=\{iconSize\} \/>/);
+  assert.doesNotMatch(source, /normalizedStatus === "unscheduled"[\s\S]*?inline-flex h-4 w-4/);
   assert.match(source, /return <BookOpen className=\{iconSize\} \/>/);
 });
 

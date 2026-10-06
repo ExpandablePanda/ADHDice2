@@ -291,7 +291,14 @@ function validateCanonicalPatch(
   return result;
 }
 
-function reconcileProjection(projection: JsonObject): Pick<Task, "status" | "due_on" | "completed_at" | "active_status_logical_date" | "active_occurrence_due_on"> {
+function requiredNullableInteger(object: JsonObject, key: string): number | null {
+  if (!hasOwn(object, key)) throw new Error(`Committed response is missing ${key}.`);
+  const value = object[key];
+  if (value !== null && !Number.isInteger(value)) throw new Error(`Committed response field ${key} must be an integer or null.`);
+  return value as number | null;
+}
+
+function reconcileProjection(projection: JsonObject): Pick<Task, "status" | "due_on" | "completed_at" | "active_status_logical_date" | "active_occurrence_due_on"> & Partial<Pick<Task, "repeat_quota_balance" | "repeat_quota_balance_period">> {
   if (!hasOwn(projection, "status") || !TASK_STATUS_VALUES.has(projection.status as Task["status"])) {
     throw new Error("Committed response is missing a valid compatibility status.");
   }
@@ -301,6 +308,8 @@ function reconcileProjection(projection: JsonObject): Pick<Task, "status" | "due
     completed_at: requiredNullableString(projection, "completed_at"),
     active_status_logical_date: requiredNullableString(projection, "active_status_logical_date"),
     active_occurrence_due_on: requiredNullableString(projection, "active_occurrence_due_on"),
+    ...(hasOwn(projection, "repeat_quota_balance") ? { repeat_quota_balance: requiredNullableInteger(projection, "repeat_quota_balance") } : {}),
+    ...(hasOwn(projection, "repeat_quota_balance_period") ? { repeat_quota_balance_period: requiredNullableString(projection, "repeat_quota_balance_period") } : {}),
   };
 }
 

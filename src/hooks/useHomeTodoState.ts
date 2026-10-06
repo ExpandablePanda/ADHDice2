@@ -8,14 +8,19 @@ import {
   EMPTY_HOME_TODO_STATE,
   getHomeRoutineSectionDefaultName,
   hasMeaningfulHomeTodoState,
+  moveHomeScratchpadTextToItems,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
+  moveHomeTodoTaskIdToUrgent,
+  moveHomeUrgentTaskIdToTodo,
   moveHomeRoutineTaskIdToSection,
+  reorderHomeScratchpadItems,
   reconcileHomeRoutineSectionAssignments,
   type HomeTodoState,
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
+import { startSerializedRealtimeChannel } from "@/lib/realtime-channel-lifecycle";
 
 const CACHE_PREFIX = "adhdice-home-todo";
 const WRITE_DELAY_MS = 650;
@@ -43,6 +48,7 @@ export function useHomeTodoState(userId: string | null) {
   const remoteSupportedRef = useRef(true);
   const writeTimerRef = useRef<number | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
+  const channelRemovalPromiseRef = useRef<Promise<void> | null>(null);
 
   useEffect(() => {
     stateRef.current = state;
@@ -88,6 +94,24 @@ export function useHomeTodoState(userId: string | null) {
       void flush();
     }, WRITE_DELAY_MS);
   }, [flush]);
+
+  const commitState = useCallback((value: unknown) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const normalized = normalizeHomeTodoState(value);
+    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
+    const next = normalizeHomeTodoState({
+      ...normalized,
+      clientUpdatedAt: nextTimestamp,
+      schemaVersion: 8,
+    });
+    dirtyRef.current = true;
+    stateRef.current = next;
+    setState(next);
+    persistCache(next, userId);
+    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
+    scheduleWrite();
+  }, [persistCache, scheduleWrite, userId]);
 
   const applyRemote = useCallback((value: unknown, remoteClientUpdatedAt?: string | null) => {
     if (!userId) return;
@@ -162,25 +186,33 @@ export function useHomeTodoState(userId: string | null) {
         }
       });
 
-    channelRef.current = client
-      .channel(`adhdice_home_todo_state:${userId}`)
-      .on("postgres_changes", {
-        event: "*",
-        filter: `user_id=eq.${userId}`,
-        schema: "public",
-        table: "adhdice_home_todo_state",
-      }, (payload) => {
-        const row = payload.new as { client_updated_at?: string; state?: unknown };
-        if (row.state) applyRemote(row.state, row.client_updated_at);
-      })
-      .subscribe();
+    const stopRealtimeChannel = startSerializedRealtimeChannel({
+      channelRef,
+      channelRemovalPromiseRef,
+      createChannel: () => client.channel(`adhdice_home_todo_state:${userId}`),
+      subscribe: (thisChannel) => {
+        const isCurrentChannel = () => alive && channelRef.current === thisChannel;
+        thisChannel
+          .on("postgres_changes", {
+            event: "*",
+            filter: `user_id=eq.${userId}`,
+            schema: "public",
+            table: "adhdice_home_todo_state",
+          }, (payload) => {
+            if (!isCurrentChannel()) return;
+            const row = payload.new as { client_updated_at?: string; state?: unknown };
+            if (row.state) applyRemote(row.state, row.client_updated_at);
+          })
+          .subscribe();
+      },
+      removeChannel: (thisChannel) => client.removeChannel(thisChannel),
+    });
 
     return () => {
       alive = false;
       if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
       if (dirtyRef.current) void flush();
-      if (channelRef.current) void client.removeChannel(channelRef.current);
-      channelRef.current = null;
+      stopRealtimeChannel();
     };
   }, [applyRemote, flush, scheduleWrite, userId]);
 
@@ -192,7 +224,7 @@ export function useHomeTodoState(userId: string | null) {
       return;
     }
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 6, taskIds });
+    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 8, taskIds });
     dirtyRef.current = true;
     stateRef.current = next;
     setState(next);
@@ -210,7 +242,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 8,
       tasksPerDay: nextTasksPerDay,
     });
     dirtyRef.current = true;
@@ -233,7 +265,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 8,
       taskDayOffsets,
     });
     dirtyRef.current = true;
@@ -270,7 +302,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...normalized,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 8,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -291,7 +323,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 8,
       routineSections: [...current.routineSections, section],
     });
     dirtyRef.current = true;
@@ -315,7 +347,7 @@ export function useHomeTodoState(userId: string | null) {
     const next = normalizeHomeTodoState({
       ...current,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 8,
       routineSections,
     });
     dirtyRef.current = true;
@@ -350,7 +382,7 @@ export function useHomeTodoState(userId: string | null) {
       ...current,
       ...nextRoutineState,
       clientUpdatedAt: nextTimestamp,
-      schemaVersion: 6,
+      schemaVersion: 8,
     });
     dirtyRef.current = true;
     stateRef.current = next;
@@ -360,5 +392,101 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
-  return { createRoutineSection, state, syncStatus, updateRoutineSectionName, updateRoutineTaskIds, updateRoutineTaskSection, updateTaskDayOffset, updateTaskIds, updateTasksPerDay };
+  const updateUrgentTaskIds = useCallback((updater: (taskIds: string[]) => string[]) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const urgentTaskIds = normalizeHomeTodoState({ ...current, urgentTaskIds: updater(current.urgentTaskIds) }).urgentTaskIds;
+    if (urgentTaskIds.length === current.urgentTaskIds.length && urgentTaskIds.every((taskId, index) => taskId === current.urgentTaskIds[index])) return;
+    commitState({ ...current, urgentTaskIds });
+  }, [commitState, userId]);
+
+  const moveUrgentTaskToTodo = useCallback((taskId: string, dayOffset: number) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const nextMembership = moveHomeUrgentTaskIdToTodo(current, taskId, dayOffset);
+    if (
+      JSON.stringify(nextMembership.urgentTaskIds) === JSON.stringify(current.urgentTaskIds)
+      && JSON.stringify(nextMembership.taskIds) === JSON.stringify(current.taskIds)
+      && JSON.stringify(nextMembership.taskDayOffsets) === JSON.stringify(current.taskDayOffsets)
+    ) return;
+    commitState({ ...current, ...nextMembership });
+  }, [commitState, userId]);
+
+  const moveTodoTaskToUrgent = useCallback((taskId: string) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const nextMembership = moveHomeTodoTaskIdToUrgent(current, taskId);
+    if (
+      JSON.stringify(nextMembership.urgentTaskIds) === JSON.stringify(current.urgentTaskIds)
+      && JSON.stringify(nextMembership.taskIds) === JSON.stringify(current.taskIds)
+      && JSON.stringify(nextMembership.taskDayOffsets) === JSON.stringify(current.taskDayOffsets)
+    ) return;
+    commitState({ ...current, ...nextMembership });
+  }, [commitState, userId]);
+
+  const saveScratchpadText = useCallback((text: string) => {
+    if (!userId) return false;
+    const current = stateRef.current;
+    if (current.scratchpadText === text) return true;
+    commitState({ ...current, scratchpadText: text });
+    return true;
+  }, [commitState, userId]);
+
+  const moveScratchpadTextToItems = useCallback((text: string) => {
+    if (!userId) return false;
+    const current = stateRef.current;
+    const nextScratchpadState = moveHomeScratchpadTextToItems(current, text);
+    if (!nextScratchpadState) return false;
+    commitState({ ...current, ...nextScratchpadState });
+    return true;
+  }, [commitState, userId]);
+
+  const updateScratchpadItem = useCallback((itemId: string, text: string) => {
+    if (!userId) return false;
+    const normalizedText = text.trim();
+    if (!normalizedText) return false;
+    const current = stateRef.current;
+    const itemIndex = current.scratchpadItems.findIndex((item) => item.id === itemId);
+    if (itemIndex < 0) return false;
+    if (current.scratchpadItems[itemIndex]!.text === normalizedText) return true;
+    const scratchpadItems = current.scratchpadItems.map((item, index) => index === itemIndex ? { ...item, text: normalizedText } : item);
+    commitState({ ...current, scratchpadItems });
+    return true;
+  }, [commitState, userId]);
+
+  const deleteScratchpadItem = useCallback((itemId: string) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const scratchpadItems = current.scratchpadItems.filter((item) => item.id !== itemId);
+    if (scratchpadItems.length === current.scratchpadItems.length) return;
+    commitState({ ...current, scratchpadItems });
+  }, [commitState, userId]);
+
+  const reorderScratchpadItems = useCallback((orderedIds: readonly string[]) => {
+    if (!userId) return;
+    const current = stateRef.current;
+    const scratchpadItems = reorderHomeScratchpadItems(current.scratchpadItems, orderedIds);
+    if (JSON.stringify(scratchpadItems) === JSON.stringify(current.scratchpadItems)) return;
+    commitState({ ...current, scratchpadItems });
+  }, [commitState, userId]);
+
+  return {
+    createRoutineSection,
+    deleteScratchpadItem,
+    moveTodoTaskToUrgent,
+    moveUrgentTaskToTodo,
+    reorderScratchpadItems,
+    moveScratchpadTextToItems,
+    saveScratchpadText,
+    state,
+    syncStatus,
+    updateRoutineSectionName,
+    updateRoutineTaskIds,
+    updateRoutineTaskSection,
+    updateScratchpadItem,
+    updateTaskDayOffset,
+    updateTaskIds,
+    updateTasksPerDay,
+    updateUrgentTaskIds,
+  };
 }

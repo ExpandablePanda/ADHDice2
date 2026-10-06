@@ -4,6 +4,7 @@ import dynamic from "next/dynamic";
 import Image from "next/image";
 import { App } from "@capacitor/app";
 import { APP_VERSION as CURRENT_APP_VERSION } from "@/lib/app-version";
+import { ProfileAvatarImage } from "@/components/profile-avatar";
 import { useNativeIosPlatform } from "@/lib/platform";
 import type { AuthChangeEvent, Session, User } from "@supabase/supabase-js";
 import {
@@ -105,7 +106,7 @@ import {
   parsePositiveInteger,
   type TaskDraft,
 } from "./task-app/task-editor-model";
-import type { TaskCreationMetadata } from "@/lib/task-creation";
+import type { TaskCreationDraft, TaskCreationMetadata, TaskCreationSubmission } from "@/lib/task-creation";
 import { CalmModeButton, DarkModeToggleButton } from "./task-app/theme-toggle";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusRequest, type TaskEditorInitialField } from "@/components/ui/task-management-table-v2";
@@ -141,9 +142,11 @@ import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
 import { useScratchNotes } from "@/hooks/useScratchNotes";
+import { useVoiceMemos } from "@/hooks/useVoiceMemos";
 import { useTaskActions } from "@/hooks/useTaskActions";
 import type { TaskCanonicalMutationState } from "@/hooks/useTaskUpdateAction";
 import { useTaskRewardController } from "@/hooks/useTaskRewardController";
+import type { PendingRewardBankOpenSession, PendingRewardBankSnapshot } from "@/lib/pending-reward-dice";
 import { useTaskUiState } from "@/hooks/useTaskUiState";
 import { useWorkspaceData } from "@/hooks/useWorkspaceData";
 import type { WorkspaceDomainMutationBarrier } from "@/lib/workspace-refresh-coordinator";
@@ -181,6 +184,7 @@ import {
 } from "@/lib/focus-utils";
 import { isSleepCategory } from "@/lib/focus-goals";
 import { createBrowserSupabaseClient, subscribeToBrowserAuth } from "@/lib/supabase";
+import { transcribeScratchAudio } from "@/lib/scratch-paper-transcription";
 import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
@@ -1088,7 +1092,7 @@ const TASK_LIST_RULE_OPERATOR_OPTIONS: Record<TaskListRuleField, Array<{ label: 
 };
 const priorityOptions: TaskPriorityLevelOption[] = ["0", "1", "2", "3", "4", "5"];
 const energyOptions: TaskEnergy[] = ["none", "low", "medium", "high"];
-const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "delayed", "done", "did_my_best", "missed", "complete", "upcoming", "not_due", "archived", "trashed"];
+const taskStatusOptions: TaskStatus[] = ["pending", "in_progress", "delayed", "done", "did_my_best", "missed", "complete", "not_due", "archived", "trashed"];
 const repeatFrequencyOptions: TaskRepeatFrequency[] = ["none", "daily", "daily_until_complete", "weekly", "monthly", "custom"];
 const repeatWeekdayOptions = [
   { label: "Sun", value: 0 },
@@ -1176,7 +1180,7 @@ export function TaskApp() {
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
   const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
-  const [activeRewardBankSession, setActiveRewardBankSession] = useState<import("@/lib/task-rewards").PendingTaskReward[] | null>(null);
+  const [activeRewardBankSession, setActiveRewardBankSession] = useState<PendingRewardBankOpenSession | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
   const [theme, setTheme] = useState<ThemeMode>("light");
   const [lowStim, setLowStim] = useState(false);
@@ -1224,6 +1228,8 @@ export function TaskApp() {
     userId: session?.user?.id,
   });
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
+  const [batchIntakeHealthActive, setBatchIntakeHealthActive] = useState(false);
+  const [batchIntakeFocusActive, setBatchIntakeFocusActive] = useState(false);
   const focusDomainMutationBarrierRef = useRef<WorkspaceDomainMutationBarrier>(() => {});
   const invalidateFocusDomainGeneration = useCallback(() => {
     focusDomainMutationBarrierRef.current();
@@ -1241,14 +1247,14 @@ export function TaskApp() {
     setFocusReallocationMode,
     suppressCategoryReload,
     handleToggleTimer, handleSetCountdownTarget, handleFinishTimer, handleAdjustTimer, handleResetTimer, handleDeleteTimer,
-    handleManualFocusEntry, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
+    handleManualFocusEntry, handleManualFocusEntries, handleSaveCategories, handleDeleteFocusCategory, handleSaveDailyGoalAdjustment,
     handleUpdateFocusHistoryEntry, handleDeleteFocusHistoryEntry,
     handleAdjustFocusCounter, handleCreateFocusCounter, handleDeleteFocusCounter, handleUpdateFocusCounter,
   } = useFocus(
     supabase,
     session?.user?.id ?? null,
     setMessage,
-    activePage === "Focus" || activePage === "Stats" || activePage === "Health",
+    activePage === "Focus" || activePage === "Stats" || activePage === "Health" || batchIntakeFocusActive,
     invalidateFocusDomainGeneration,
   );
   const {
@@ -1302,9 +1308,12 @@ export function TaskApp() {
     saveSavedMeal: saveHealthSavedMeal,
     saveProfile: saveHealthProfile,
     addMealEntry: addHealthMealEntry,
+    addMealEntries: addHealthMealEntries,
     addWaterEntry: addHealthWaterEntry,
+    addWaterEntries: addHealthWaterEntries,
     confirmWaterEntry: confirmHealthWaterEntry,
     addWeightEntry: addHealthWeightEntry,
+    addWeightEntries: addHealthWeightEntries,
     addWorkout: addHealthWorkout,
     updateMealEntry: updateHealthMealEntry,
     updateWaterEntry: updateHealthWaterEntry,
@@ -1313,7 +1322,7 @@ export function TaskApp() {
     weightEntries: healthWeightEntries,
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
-  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, isNativeIosPlatform || activePage === "Health");
+  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, isNativeIosPlatform || activePage === "Health" || batchIntakeHealthActive);
   const healthSyncUserId = session?.user?.id ?? null;
   const healthSyncReady = Boolean(
     isNativeIosPlatform
@@ -1439,6 +1448,8 @@ export function TaskApp() {
   }
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
+  const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
+  const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
     [focusCategories],
@@ -1738,6 +1749,8 @@ export function TaskApp() {
     setMessage(value);
   }, []);
   const [taskHistoryModalTaskId, setTaskHistoryModalTaskId] = useState<string | null>(null);
+  const [taskHistoryModalLoadingTaskId, setTaskHistoryModalLoadingTaskId] = useState<string | null>(null);
+  const taskHistoryModalLoadGenerationRef = useRef(0);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
   const [taskEditorNavigationTaskIds, setTaskEditorNavigationTaskIds] = useState<string[] | null>(null);
@@ -1986,9 +1999,11 @@ export function TaskApp() {
     reconcileRolloverWorkspace,
     refreshTaskActivitySummary,
     refreshHomeCurrentDayHistory,
+    refreshQuotaCurrentPeriodHistory,
     retryHomeCurrentDayHistory,
     refreshTaskHistoryStreakSummary,
     refreshTaskHistoryStreakSummaries,
+    reconcileTaskEntity,
     softRefreshWorkspace,
     taskHistoryByTaskId: sharedTaskHistoryByTaskId,
     taskHistoryLoadStateByTaskId,
@@ -1998,6 +2013,8 @@ export function TaskApp() {
     homeCurrentDayHistoryError,
     homeCurrentDayHistoryStatus,
     isHomeCurrentDayHistoryReady,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     taskActivitySummary,
     taskActivitySummaryStatus,
     currentTaskProjectionReadContext,
@@ -2083,6 +2100,7 @@ export function TaskApp() {
     setTasks,
     suppressCategoryReload,
     supabase,
+    isRolloverActive: () => taskRolloverCoordinator.isBusy(),
     tasks,
     taskListDataGeneration,
     logicalDayRollover: dayStartTime,
@@ -2152,9 +2170,10 @@ export function TaskApp() {
   const reconcileTaskHistoryMutation = useCallback((taskId: string, nextTaskHistory: DbTaskHistory[], nextTask?: Task) => {
     updateTaskHistoryForTask(taskId, nextTaskHistory);
     void refreshHomeCurrentDayHistory("history-mutation-settled");
+    void refreshQuotaCurrentPeriodHistory("history-mutation-settled", taskId);
     void refreshTaskActivitySummary("history-mutation-settled");
     return refreshTaskHistoryStreakSummary(taskId, nextTaskHistory, nextTask);
-  }, [refreshHomeCurrentDayHistory, refreshTaskActivitySummary, refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
+  }, [refreshHomeCurrentDayHistory, refreshQuotaCurrentPeriodHistory, refreshTaskActivitySummary, refreshTaskHistoryStreakSummary, updateTaskHistoryForTask]);
 
   const isRefreshBusy = refreshStatus === "updating" || isSoftWorkspaceRefreshing;
 
@@ -2719,10 +2738,11 @@ export function TaskApp() {
           achievementFinalizationPending,
           candidates: sweepCandidates,
           client: supabase,
+          diagnosticsEnabled,
           settledTaskIds,
           sweepReplayIdentity: rolloverSettingsKey,
         });
-        if (sweep.committedTasks.length > 0) {
+        if (sweep.committedTasks.length > 0 && !sweep.achievementFinalizationPending) {
           const committedByTaskId = new Map(sweep.committedTasks.map((entry) => [entry.taskId, entry.task] as const));
           setTasks((current) => keepCurrentTaskArrayIfSemanticallyEqual(
             current,
@@ -2742,7 +2762,7 @@ export function TaskApp() {
             settledTaskIds: sweep.settledTaskIds,
         };
       },
-      onOwnedSettled: async ({ error, settledTaskIds = [] }) => {
+      onOwnedSettled: async ({ achievementFinalizationPending: finalizationPending, error, settledTaskIds = [] }) => {
         const diagnostics = {
           authority, errorSummary: error?.message ?? null,
           executionMs: Math.round(performance.now() - startedAt), lastLogicalDateEvaluated: inputs.todayKey, lastRunSource: source,
@@ -2762,6 +2782,10 @@ export function TaskApp() {
           }
         }
         if (error) setMessage((previous) => previous ?? { tone: "warn", text: error.message });
+        if (finalizationPending) {
+          if (diagnosticsEnabled) console.info("[rollover] Achievement finalization pending; preserving child replay identities for retry.");
+          return;
+        }
         if (diagnosticsEnabled) console.info(`[rollover] Rollover completed; requesting targeted workspace reconciliation (task mutation=${didMutate}).`);
         await reconcileRolloverWorkspace();
       },
@@ -3192,6 +3216,13 @@ export function TaskApp() {
   const taskHistoryRevision = useMemo(
     () => createProjectionDomainRevision("task-history-authoritative", taskHistoryByTaskId),
     [taskHistoryByTaskId],
+  );
+  const quotaCurrentPeriodHistoryRevision = useMemo(
+    () => createProjectionDomainRevision("quota-current-period-history", {
+      history: quotaCurrentPeriodHistoryByTaskId,
+      ready: isQuotaCurrentPeriodHistoryReady,
+    }),
+    [isQuotaCurrentPeriodHistoryReady, quotaCurrentPeriodHistoryByTaskId],
   );
   const taskHistoryReadinessRevision = useMemo(
     () => createProjectionDomainRevision("full-task-history-readiness", isFullTaskHistoryLoaded),
@@ -4020,6 +4051,7 @@ export function TaskApp() {
   const hierarchyStatusRevision = combineProjectionRevisions(
     taskDomainRevision,
     taskHistoryRevision,
+    quotaCurrentPeriodHistoryRevision,
     taskHistoryStreakSummaryRevision,
     statusSettingsRevision,
     activeStatusRevision,
@@ -4038,9 +4070,9 @@ export function TaskApp() {
     () => projectionCache.getOrCreate("hierarchy-status", hierarchyStatusRevision, () => {
       const diagnostic = process.env.NODE_ENV === "development" ? structuralDiagnosticTracker.capture({
         activePage,
-        dependencies: { activeStatusRevision, statusSettingsRevision, taskDomainRevision, taskHistoryRevision, taskHistoryStreakSummaryRevision },
+        dependencies: { activeStatusRevision, quotaCurrentPeriodHistoryRevision, statusSettingsRevision, taskDomainRevision, taskHistoryRevision, taskHistoryStreakSummaryRevision },
         revisionSources: {
-          history: { taskHistoryRevision, taskHistoryStreakSummaryRevision },
+          history: { quotaCurrentPeriodHistoryRevision, taskHistoryRevision, taskHistoryStreakSummaryRevision },
           list: {},
           settings: { statusSettingsRevision },
           task: { activeStatusRevision, taskDomainRevision },
@@ -4050,6 +4082,8 @@ export function TaskApp() {
         diagnosticDetails: diagnostic,
         focusedTaskIds,
         taskHistoryByTaskId,
+        quotaCurrentPeriodHistoryByTaskId,
+        isQuotaCurrentPeriodHistoryReady,
         taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
         taskDisplayStatusByTaskId,
         tasks: tasksForActiveStatusRead,
@@ -4199,7 +4233,7 @@ export function TaskApp() {
     [taskUiState.visibleColumnsByView.table],
   );
   const taskDerivationRevision = createTaskDerivationRevisionKey({
-    historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision),
+    historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision, quotaCurrentPeriodHistoryRevision),
     listRevision: workspaceFactsRevision,
     settingsRevision: derivationSettingsRevision,
     taskRevision: taskDomainRevision,
@@ -4228,7 +4262,7 @@ export function TaskApp() {
           tasksForActiveStatusRead,
         },
         revisionSources: {
-          history: { taskHistoryByTaskId },
+          history: { quotaCurrentPeriodHistoryByTaskId, taskHistoryByTaskId },
           list: { availableTaskLists, bucketContext, taskListEvaluationContext },
           settings: {
             focusedTaskIds,
@@ -4252,6 +4286,8 @@ export function TaskApp() {
       milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
       milestoneTaskIds: milestoneData.milestoneTaskIds,
       taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
       taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
       taskContentFolders,
       todayDateKey: todayKey,
@@ -4339,6 +4375,8 @@ export function TaskApp() {
         listMemberships: taskListMembershipsByTaskId[task.id] ?? [],
         subtasks: taskSubtasksByTaskId[task.id] ?? [],
         taskHistory: taskHistoryByTaskId[task.id] ?? [],
+        quotaCurrentPeriodHistory: quotaCurrentPeriodHistoryByTaskId[task.id] ?? [],
+        isQuotaCurrentPeriodHistoryReady,
         taskHistoryStreakSummary: effectiveTaskHistoryStreakSummaries[task.id],
         attentionReason: taskAttentionReasonByTaskId[task.id],
         finishedTodayByTaskId,
@@ -4353,6 +4391,8 @@ export function TaskApp() {
       sharedEditorRowModelCache,
       sharedTaskEditorOverlayTaskId,
       taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
       effectiveTaskHistoryStreakSummaries,
       finishedTodayByTaskId,
       taskDisplayStatusByTaskId,
@@ -4553,6 +4593,8 @@ export function TaskApp() {
     subtasksByTaskId: taskSubtasksByTaskId,
     taskDisplayStatusByTaskId,
     taskHistoryByTaskId,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
     finishedTodayByTaskId,
     todayDateKey: todayKey,
@@ -4561,6 +4603,8 @@ export function TaskApp() {
     focusedTaskIdSet,
     manualMembershipsByTaskId,
     taskHistoryByTaskId,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
     effectiveTaskHistoryStreakSummaries,
     finishedTodayByTaskId,
     taskLinkedNotesByTaskId,
@@ -4804,9 +4848,10 @@ export function TaskApp() {
   const selectedListTasks = tasks.filter((task) => selectedListTaskIds.includes(task.id));
   const {
     claimPendingRewardBank,
-    loadPendingRewardQueue,
+    loadPendingRewardBankSession,
     pendingRewardDiceCount,
     queueTaskRewards,
+    resetPendingRewardBank,
   } = useTaskRewardController({
     client,
     currentUserId: session?.user?.id ?? null,
@@ -4815,13 +4860,24 @@ export function TaskApp() {
     setEconomy,
   });
   const openPendingRewardBank = useCallback(async () => {
-    const pendingRewardQueue = await loadPendingRewardQueue();
-    if (!pendingRewardQueue || pendingRewardQueue.length === 0) {
+    const bankSession = await loadPendingRewardBankSession();
+    if (!bankSession || bankSession.pendingRewards.length === 0 || bankSession.pendingDice <= 0) {
       return;
     }
 
-    setActiveRewardBankSession([...pendingRewardQueue]);
-  }, [loadPendingRewardQueue]);
+    setActiveRewardBankSession(bankSession);
+  }, [loadPendingRewardBankSession]);
+  const handleResetPendingRewardBank = useCallback(async (snapshot: PendingRewardBankSnapshot) => {
+    const result = await resetPendingRewardBank(snapshot);
+    if (result.conflict) {
+      if (result.refreshedSession && result.refreshedSession.pendingRewards.length > 0 && result.refreshedSession.pendingDice > 0) {
+        setActiveRewardBankSession(result.refreshedSession);
+      } else {
+        setActiveRewardBankSession(null);
+      }
+    }
+    return result.didReset;
+  }, [resetPendingRewardBank]);
   const hudNotificationBaseItems = useMemo<HudNotificationItem[]>(() => {
     const currentItems: HudNotificationItem[] = [];
     if (pendingRewardDiceCount > 0) {
@@ -4978,6 +5034,7 @@ export function TaskApp() {
       currentDayKey: todayKey,
       loadTaskHistoryForTasks,
       onHistoryMutation: reconcileTaskHistoryMutation,
+      reconcileTaskEntity,
       onTasksCompleted: queueTaskRewards,
       setMessage,
       setTaskHistory,
@@ -5047,23 +5104,24 @@ export function TaskApp() {
       updateTaskRowWithLegacyEnergyFallback: runGuardedTaskRowUpdate,
     },
   });
-  const addTaskToContentFolder = useCallback(async (folderId: string, rawTitle: string, taskTypeSelectionValue = "task") => {
-    const title = rawTitle.trim();
+  const addTaskToContentFolder = useCallback(async (folderId: string, draft: TaskCreationDraft): Promise<TaskCreationSubmission> => {
+    const title = draft.title.trim();
     if (!title) {
-      setMessage({ tone: "warn", text: "Task title can't be empty." });
-      return false;
+      return { error: "Task title can't be empty.", taskId: null };
     }
-    const selection = resolveTaskTypeSelection(taskTypeSelectionValue, customBehaviorRulesets);
+    const selection = resolveTaskTypeSelection(draft.taskTypeSelection, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
-      return false;
+      return { error: "That Task Type is no longer available.", taskId: null };
     }
     const createdTask = await addTask({
       ...buildNewTaskDraft(title),
+      ...draft.metadata,
+      ...buildTaskPriorityUpdate(draft.metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
-    if (!createdTask) return false;
+    if (!createdTask) return { error: "Task could not be created.", taskId: null };
 
     const didMove = await taskContentFolderActions.moveTaskToFolder(createdTask, folderId);
     if (!didMove) {
@@ -5071,9 +5129,9 @@ export function TaskApp() {
         tone: "warn",
         text: `"${createdTask.title}" was created, but it could not be added to the Folder.`,
       });
-      return false;
+      return { error: "The Task was created, but it could not be added to the Folder.", taskId: createdTask.id };
     }
-    return true;
+    return createdTask;
   }, [addTask, customBehaviorRulesets, setMessage, taskContentFolderActions.moveTaskToFolder]);
   async function updateTaskSubtaskStatusWithPolicy(subtaskId: string, status: TaskStatus) {
     const subtask = tasks.find((task) => task.id === subtaskId) ?? null;
@@ -5392,7 +5450,7 @@ export function TaskApp() {
 
   const openCalendarDateTaskEditor = useCallback((dueOn: string) => (
     createTaskAndOpenSharedEditor(
-      { ...buildNewTaskDraft("New Task"), due_on: dueOn },
+      buildNewTaskDraft("New Task", { dueOn }),
       { routeToCurrentBucket: true },
     )
   ), [createTaskAndOpenSharedEditor]);
@@ -5426,13 +5484,13 @@ export function TaskApp() {
     }
 
     return addTask({
-      ...buildNewTaskDraft(title),
+      ...buildNewTaskDraft(title, { dueOn: todayKey }),
       ...metadata,
       ...buildTaskPriorityUpdate(metadata.priority_level),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
     });
-  }, [addTask, customBehaviorRulesets, setMessage]);
+  }, [addTask, customBehaviorRulesets, setMessage, todayKey]);
 
   const taskTypeOptions = useMemo(
     () => buildTaskTypeSelectionOptions(customBehaviorRulesets),
@@ -5483,9 +5541,9 @@ export function TaskApp() {
   }, [saveTaskEditor, taskLinkedNotesByTaskId, taskListMembershipsByTaskId, taskSubtasksByTaskId, toggleTaskManualListMembership]);
 
   const openHealthReminderTemplate = useCallback((templateKey: HealthReminderTemplateKey) => {
-    const template = buildHealthReminderTemplate(templateKey, todayISO());
+    const template = buildHealthReminderTemplate(templateKey, todayKey);
     return createTaskAndOpenSharedEditor({
-      ...buildNewTaskDraft(template.title),
+      ...buildNewTaskDraft(template.title, { dueOn: todayKey }),
       estimated_minutes: template.estimatedMinutes,
       notes: template.notes,
       repeat_day_of_month: template.repeatDayOfMonth,
@@ -5494,7 +5552,7 @@ export function TaskApp() {
       repeat_interval: template.repeatInterval,
       tags: template.tags,
     });
-  }, [createTaskAndOpenSharedEditor]);
+  }, [createTaskAndOpenSharedEditor, todayKey]);
 
   const openScratchLinkedTaskTemplate = useCallback((title: string) => (
     createTaskAndOpenSharedEditor(buildNewTaskDraft(title))
@@ -5524,7 +5582,7 @@ export function TaskApp() {
     saveFocusSelection,
     setMessage,
     updateTask: async (taskId, updates) => {
-      await updateTask(taskId, updates);
+      return updateTask(taskId, updates);
     },
   });
   useEffect(() => {
@@ -6030,7 +6088,7 @@ export function TaskApp() {
 
   const delayTaskToDate = useCallback(async (taskId: string, nextDueOn: string | null) => {
     const task = tasks.find((entry) => entry.id === taskId);
-    if (!task || !canTaskDelay({ dueOn: task.due_on, status: task.status }) || isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
+    if (!task || !canTaskDelay({ dueOn: task.due_on, repeatFrequency: task.repeat_frequency, status: task.status }) || isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
       action: "delay",
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
       behaviorProfiles: taskTypeBehaviorProfiles,
@@ -6477,10 +6535,18 @@ export function TaskApp() {
   }
 
   function openTaskHistoryForTask(taskId: string) {
+    const loadGeneration = ++taskHistoryModalLoadGenerationRef.current;
     setTaskHistoryModalTaskId(taskId);
+    setTaskHistoryModalLoadingTaskId(taskId);
     const range = getTaskHistoryInitialDetailRange(todayKey);
-    void loadTaskHistoryDetailWindow(taskId, { range, source: "open" });
-    void loadTaskCalendarOverridesForTask(taskId, range);
+    void Promise.allSettled([
+      loadTaskHistoryDetailWindow(taskId, { range, source: "open" }),
+      loadTaskCalendarOverridesForTask(taskId, range),
+    ]).then(() => {
+      if (taskHistoryModalLoadGenerationRef.current === loadGeneration) {
+        setTaskHistoryModalLoadingTaskId(null);
+      }
+    });
   }
 
   function openBatchDeleteModal() {
@@ -7268,7 +7334,9 @@ export function TaskApp() {
   }
 
   function closeTaskHistoryModal() {
+    taskHistoryModalLoadGenerationRef.current += 1;
     setTaskHistoryModalTaskId(null);
+    setTaskHistoryModalLoadingTaskId(null);
   }
 
   const batchDeleteFlow = isBatchDeleteModalOpen ? {
@@ -7466,6 +7534,12 @@ export function TaskApp() {
 
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onSelectTask: openTaskHistoryForTask,
+    onRefreshTaskAuthority: async () => {
+      if (!taskHistoryModalTaskId) return false;
+      await reconcileTaskEntity(taskHistoryModalTaskId);
+      return true;
+    },
     onRenameTaskTitle: (taskId: string, nextTitle: string): Promise<boolean> => updateTask(taskId, { title: nextTitle }),
     onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) return false;
@@ -7563,11 +7637,14 @@ export function TaskApp() {
       await refreshTaskHistoryDetailAfterMutation(taskHistoryModalTaskId);
     },
     task: taskHistoryModalTask,
+    taskCandidates: tasks,
+    taskDisplayStatusByTaskId,
     taskHistory: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.history ?? [],
     calendarOverrides: taskCalendarOverridesByTaskId[taskHistoryModalTaskId] ?? [],
     taskTitle: taskHistoryModalTask.title,
     taskHistoryLoadError: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.error ?? null,
     taskHistoryLoadStatus: taskHistoryDetailByTaskId[taskHistoryModalTaskId]?.status ?? "loading",
+    taskHistoryModalIsLoading: taskHistoryModalLoadingTaskId === taskHistoryModalTaskId,
     onRetryTaskHistoryLoad: () => loadTaskHistoryDetailWindow(taskHistoryModalTaskId, {
       force: true,
       source: "open",
@@ -7769,8 +7846,11 @@ export function TaskApp() {
       }
       void updateTaskStatus(task, status);
     },
+    onTranscribeAudio: onTranscribeScratchAudio,
     onUpdate: scratchNotes.updateNote,
     tasks,
+    userId: currentUserId,
+    voiceMemos,
   };
 
   const taskOperationsHeaderProps = {
@@ -7857,6 +7937,9 @@ export function TaskApp() {
         repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
         repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
         repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+        repeatEndOn: cadence.repeatEndOn ?? null,
+        repeatQuotaCount: cadence.repeatQuotaCount ?? null,
+        repeatQuotaBalanceEnabled: cadence.repeatQuotaBalanceEnabled === true,
       }
       : repeat === "custom"
         ? {
@@ -7867,15 +7950,20 @@ export function TaskApp() {
           repeatMonthlyMode: "day_of_month",
           repeatMonthlyOrdinal: null,
           repeatMonthlyWeekday: null,
+          repeatEndOn: null,
         }
-        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+        : normalizePresetRepeatSelection(repeat, { repeatEndOn: tasks.find((task) => task.id === taskId)?.repeat_end_on ?? null }, { dueOn });
     return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
+
+  const handleClearTaskQuotaBalance = (taskId: string) => updateTask(taskId, {}, {
+    canonicalIntent: { type: "clear_quota_balance" },
+  });
 
   const applyTaskRepeatEditorValue = (
     taskId: string,
     repeat: TaskRepeatFrequency,
-    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday">>,
+    cadence?: Partial<Pick<TaskRepeatEditorValue, "repeatDayOfMonth" | "repeatDaysOfWeek" | "repeatInterval" | "repeatMonthlyMode" | "repeatMonthlyOrdinal" | "repeatMonthlyWeekday" | "repeatEndOn" | "repeatQuotaCount" | "repeatQuotaBalanceEnabled">>,
   ) => {
     const dueOn = tasks.find((task) => task.id === taskId)?.due_on;
     const value: TaskRepeatEditorValue = cadence
@@ -7887,6 +7975,9 @@ export function TaskApp() {
         repeatMonthlyMode: cadence.repeatMonthlyMode ?? "day_of_month",
         repeatMonthlyOrdinal: cadence.repeatMonthlyOrdinal ?? null,
         repeatMonthlyWeekday: cadence.repeatMonthlyWeekday ?? null,
+        repeatEndOn: cadence.repeatEndOn ?? null,
+        repeatQuotaCount: cadence.repeatQuotaCount ?? null,
+        repeatQuotaBalanceEnabled: cadence.repeatQuotaBalanceEnabled === true,
       }
       : repeat === "custom"
         ? {
@@ -7897,8 +7988,9 @@ export function TaskApp() {
           repeatMonthlyMode: "day_of_month",
           repeatMonthlyOrdinal: null,
           repeatMonthlyWeekday: null,
+          repeatEndOn: null,
         }
-        : normalizePresetRepeatSelection(repeat, {}, { dueOn });
+        : normalizePresetRepeatSelection(repeat, { repeatEndOn: tasks.find((task) => task.id === taskId)?.repeat_end_on ?? null }, { dueOn });
     return updateTask(taskId, taskRepeatEditorValueToUpdate(value));
   };
 
@@ -7938,7 +8030,7 @@ export function TaskApp() {
         completeFlow={null}
         focusPlannerFlow={focusPlannerFlow}
         momentumFlow={momentumFlow}
-        taskHistoryFlow={taskHistoryFlow}
+        taskHistoryFlow={null}
       />
       {milestoneSetupTask ? (
         <MilestoneSetupModal
@@ -7997,7 +8089,7 @@ export function TaskApp() {
         completeFlow={completeFlow}
         focusPlannerFlow={null}
         momentumFlow={null}
-        taskHistoryFlow={null}
+        taskHistoryFlow={taskHistoryFlow}
       />
       {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
         <TaskManagementTableV2
@@ -8005,6 +8097,8 @@ export function TaskApp() {
           allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
           allRows={sharedTaskEditorRows}
           allTagOptions={allTaskTags}
+          userId={currentUserId}
+          todayDateKey={todayKey}
           taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
           attentionReasonByTaskId={taskAttentionReasonByTaskId}
           childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
@@ -8084,6 +8178,7 @@ export function TaskApp() {
           onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
           onTaskPriorityChange={applyTaskPriorityChange}
           onTaskRepeatChange={handleSharedTaskRepeatChange}
+          onTaskQuotaBalanceClear={handleClearTaskQuotaBalance}
           onTaskStatusChange={(taskId, status) => {
             const task = tasks.find((entry) => entry.id === taskId);
             if (task) void updateTaskStatus(task, status);
@@ -8162,7 +8257,7 @@ export function TaskApp() {
                 embeddedInModal
                 message={message}
                 onImport={async (lines, options) => {
-                  const result = await importTasks(lines, options);
+                  const result = await importTasks(lines, { ...options, todayDateKey: todayKey });
                   if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
                     setIsImportWidgetMenuOpen(false);
                   }
@@ -8177,7 +8272,9 @@ export function TaskApp() {
           isDark={theme === "dark"}
           onClaim={claimPendingRewardBank}
           onClose={() => setActiveRewardBankSession(null)}
-          pendingRewards={activeRewardBankSession}
+          onReset={handleResetPendingRewardBank}
+          pendingBankSnapshot={activeRewardBankSession}
+          pendingRewards={activeRewardBankSession.pendingRewards}
         />
       ) : null}
       <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
@@ -8287,6 +8384,7 @@ export function TaskApp() {
             listMembershipsByTaskId={taskListMembershipsByTaskId}
             manualMembershipsByTaskId={manualMembershipsByTaskId}
             onCreateTaskWithType={createHomeTodoTaskWithType}
+            onSetTaskPriority={(taskId, priority) => setTaskPriority(taskId, priority)}
             onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
             onOpenTask={openTaskEditorFromId}
@@ -8312,9 +8410,24 @@ export function TaskApp() {
             behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
             calendarNowMs={logicalDayNow}
             calendarTimeZone={userTimeZone}
+            taskContentFolders={taskContentFolders}
             tasks={tasks}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
+            onTranscribeScratchAudio={onTranscribeScratchAudio}
+            voiceMemos={voiceMemos}
+            addWaterEntries={addHealthWaterEntries}
+            addWeightEntries={addHealthWeightEntries}
+            addMealEntries={addHealthMealEntries}
+            focusCategories={focusCategories}
+            focusHistory={focusHistory}
+            handleManualFocusEntries={handleManualFocusEntries}
+            healthLoading={isHealthLoading}
+            healthFoods={healthFavorites}
+            healthProfile={healthProfile}
+            onBatchIntakeHealthActivationChange={setBatchIntakeHealthActive}
+            onBatchIntakeFocusActivationChange={setBatchIntakeFocusActive}
+            syncTaskHistoryEntries={syncTaskHistoryEntries}
           />
         ) : activePage === "Achievements" ? (
           <AchievementsPage
@@ -8467,6 +8580,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  userId: currentUserId,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
@@ -8581,6 +8695,7 @@ export function TaskApp() {
                   onSetRepeat: (taskId, repeat, cadence) => {
                     return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
+                  onClearQuotaBalance: handleClearTaskQuotaBalance,
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {
@@ -8650,6 +8765,7 @@ export function TaskApp() {
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
+                  userId: currentUserId,
                   allTasks: tasksForActiveStatusRead,
                   childTaskPreviewByParentTaskId,
                   hierarchyScopeKey: canonicalEntityProjection.hierarchyScopeKey,
@@ -8755,6 +8871,7 @@ export function TaskApp() {
                   onSetRepeat: (taskId, repeat, cadence) => {
                     return applyTaskRepeatEditorValue(taskId, repeat, cadence);
                   },
+                  onClearQuotaBalance: handleClearTaskQuotaBalance,
                   onSetStatus: (taskId, status, expectedTask, scrollAnchorTaskIds, options) => {
                     const task = expectedTask ?? tasks.find((entry) => entry.id === taskId);
                     if (!task) {
@@ -9003,6 +9120,7 @@ export function TaskApp() {
             openNoteId={notePageOpenNoteId}
             scratchPaper={scratchPaperData}
             tasks={tasks}
+            voiceMemos={voiceMemos}
           />
         ) : activePage === "Settings" ? (
           <TaskSettingsPage
@@ -9512,7 +9630,7 @@ function TopHeader({
       onClick={onOpenAccount}
       type="button"
     >
-      <ProfileAvatarImage avatarSrc={profile.avatarSrc} />
+      <ProfileAvatarImage avatarSrc={profile.avatarSrc} displayName={profile.displayName} />
     </button>
   );
 
@@ -9880,7 +9998,7 @@ function CommandCenterHeader({
   const isWorkspaceRefreshing = refreshStatus !== "idle";
   const accountButton = (
     <button className="relative mr-[3px] rounded-full bg-[var(--hud-surface)] transition-transform hover:scale-[1.02]" onClick={onOpenAccount} type="button">
-      <ProfileAvatarImage avatarSrc={profile.avatarSrc} />
+      <ProfileAvatarImage avatarSrc={profile.avatarSrc} displayName={profile.displayName} />
     </button>
   );
 
@@ -10311,21 +10429,6 @@ function CommandCenterHeader({
   );
 }
 
-function ProfileAvatarImage({ avatarSrc }: { avatarSrc: string }) {
-  return (
-    <Image
-      alt="Profile avatar"
-      className="h-11 w-11 rounded-full bg-[var(--hud-surface)] object-cover ring-[3px] ring-white/70 shadow-[0_8px_22px_rgba(81,61,168,0.12)]"
-      height={44}
-      key={avatarSrc}
-      priority
-      src={avatarSrc}
-      unoptimized={avatarSrc.startsWith("data:")}
-      width={44}
-    />
-  );
-}
-
 function BrandMark({
   compact = false,
   profile,
@@ -10422,13 +10525,11 @@ function AccountModal({
 
           <div className="mt-2 flex flex-wrap items-center justify-between gap-3">
             <div className="flex items-center gap-3">
-              <Image
-                alt="Profile preview"
-                className="h-12 w-12 rounded-full object-cover"
-                height={48}
-                src={draft.avatarSrc}
-                unoptimized={draft.avatarSrc.startsWith("data:")}
-                width={48}
+              <ProfileAvatarImage
+                avatarSrc={draft.avatarSrc}
+                className="h-12 w-12"
+                displayName={draft.displayName}
+                priority={false}
               />
               <div>
                 <p className={`text-sm font-semibold text-[#202844] dark:text-white`}>{draft.displayName}</p>

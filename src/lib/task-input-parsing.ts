@@ -25,6 +25,7 @@ export type ImportedTaskSubtask = {
   line: number;
   priority: TaskPriority;
   priorityLevel: TaskPriorityLevel;
+  repeatEndOn: string | null;
   repeatFrequency: TaskRepeatFrequency;
   status: TaskStatus;
   tags: string[];
@@ -41,6 +42,7 @@ export type ImportedTaskDraft = {
   isUrgent: boolean;
   line: number;
   priorityLevel: TaskPriorityLevel;
+  repeatEndOn: string | null;
   repeatFrequency: TaskRepeatFrequency;
   status: TaskStatus;
   subtasks: ImportedTaskSubtask[];
@@ -81,7 +83,7 @@ export function parseImportedTaskLines(
   lines: string[],
   options?: { todayDateKey?: string },
 ) {
-  const todayDateKey = options?.todayDateKey ?? formatDateKey(new Date());
+  const todayDateKey = options?.todayDateKey ?? null;
   const tasks: ImportedTaskDraft[] = [];
   const warnings: ImportedTaskWarning[] = [];
   let currentTask: ImportedTaskDraft | null = null;
@@ -169,6 +171,7 @@ function parseParentTaskLine(
     line,
     priority: "normal" as TaskPriority,
     priorityLevel: 0 as TaskPriorityLevel,
+    repeatEndOn: null,
     repeatFrequency: "none" as TaskRepeatFrequency,
     status: "pending" as TaskStatus,
     subtasks: [] as ImportedTaskSubtask[],
@@ -182,6 +185,8 @@ function parseParentTaskLine(
       warnings.push({ line, message: handled.warning });
     }
   }
+
+  if (!task.dueOn) task.dueTime = null;
 
   if (!task.title) {
     return null;
@@ -213,6 +218,7 @@ function parseStepLine(
     line,
     priority: "normal",
     priorityLevel: 0,
+    repeatEndOn: null,
     repeatFrequency: "none",
     status: "pending",
     tags: parsed.tags,
@@ -225,6 +231,8 @@ function parseStepLine(
       warnings.push({ line, message: handled.warning });
     }
   }
+
+  if (!subtask.dueOn) subtask.dueTime = null;
 
   if (!subtask.title) {
     return null;
@@ -296,7 +304,7 @@ function applyParentMetadataToken(
   task: ImportedTaskDraft,
   field: string,
   rawValue: string,
-  todayDateKey: string,
+  todayDateKey: string | null,
 ) {
   const value = rawValue.trim();
 
@@ -324,6 +332,15 @@ function applyParentMetadataToken(
       return { warning: `Could not parse repeat value "${rawValue}".` };
     }
     task.repeatFrequency = parsed;
+    return {};
+  }
+
+  if (field === "repeat_end" || field === "repeat_end_on") {
+    const parsed = parseRepeatEndDateValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse recurrence End Date "${rawValue}".` };
+    }
+    task.repeatEndOn = parsed;
     return {};
   }
 
@@ -393,7 +410,7 @@ function applyStepMetadataToken(
   subtask: ImportedTaskSubtask,
   field: string,
   rawValue: string,
-  todayDateKey: string,
+  todayDateKey: string | null,
 ) {
   const value = rawValue.trim();
 
@@ -421,6 +438,15 @@ function applyStepMetadataToken(
       return { warning: `Could not parse step repeat value "${rawValue}".` };
     }
     subtask.repeatFrequency = parsed;
+    return {};
+  }
+
+  if (field === "repeat_end" || field === "repeat_end_on") {
+    const parsed = parseRepeatEndDateValue(value);
+    if (!parsed) {
+      return { warning: `Could not parse recurrence End Date "${rawValue}".` };
+    }
+    subtask.repeatEndOn = parsed;
     return {};
   }
 
@@ -486,13 +512,13 @@ function applyStepMetadataToken(
   return { warning: `Unknown step metadata field "${field}" was skipped.` };
 }
 
-function parseDueDateValue(value: string, todayDateKey: string) {
+function parseDueDateValue(value: string, todayDateKey: string | null) {
   const normalized = normalizeOptionValue(value);
   if (normalized === "today") {
     return todayDateKey;
   }
   if (normalized === "tomorrow") {
-    return shiftDateKey(todayDateKey, 1);
+    return todayDateKey ? shiftDateKey(todayDateKey, 1) : null;
   }
 
   const isoMatch = value.match(/^(\d{4})-(\d{1,2})-(\d{1,2})$/);
@@ -630,4 +656,11 @@ function parseDurationMinutesValue(value: string) {
   const minutes = Number(match[2] ?? "0");
   const total = hours * 60 + minutes;
   return total > 0 ? total : null;
+}
+
+function parseRepeatEndDateValue(value: string) {
+  const normalized = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return null;
+  const parsed = new Date(`${normalized}T12:00:00Z`);
+  return Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized ? null : normalized;
 }

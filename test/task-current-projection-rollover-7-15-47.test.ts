@@ -111,6 +111,29 @@ test("ordinary startup state changes do not cancel the owner/day refresh", async
   assert.equal(refresh.stoppedReason, "candidate_count_zero");
 });
 
+test("logical-day projection repair waits for rollover cleanup and resumes afterward", async () => {
+  let rolloverActive = true;
+  const fake = createClient([{ candidateCount: 9, writtenCount: 9, failedCount: 0, remainingCount: 0 }]);
+
+  const blocked = await runCurrentProjectionLogicalDayRefresh({
+    client: fake.client,
+    isRolloverActive: () => rolloverActive,
+    maxBatches: CURRENT_PROJECTION_LOGICAL_DAY_REFRESH_MAX_BATCHES,
+  });
+  assert.equal(fake.getCalls(), 0);
+  assert.equal(blocked.stoppedReason, "rollover_active");
+
+  rolloverActive = false;
+  const resumed = await runCurrentProjectionLogicalDayRefresh({
+    client: fake.client,
+    isRolloverActive: () => rolloverActive,
+    maxBatches: CURRENT_PROJECTION_LOGICAL_DAY_REFRESH_MAX_BATCHES,
+  });
+  assert.equal(fake.getCalls(), 1);
+  assert.equal(resumed.stoppedReason, "partial_batch");
+  assert.equal(isCurrentProjectionLogicalDayRefreshComplete(resumed), true);
+});
+
 async function runFenceCancellation(kind: "owner" | "logical-day" | "unmount" | "generation") {
   let ownerId = "owner-1";
   let logicalDay = TODAY;
@@ -184,6 +207,12 @@ test("the owner effect restarts only for the actual client/owner boundary", () =
   assert.doesNotMatch(workspaceSource, /\}, \[currentUser\?\.id, behaviorSelectionStateRef, supabase, suppressCategoryReload\]\);/);
   assert.match(workspaceSource, /behaviorSelectionStateRef\.current/);
   assert.match(workspaceSource, /suppressCategoryReload\.current/);
+});
+
+test("normal logical-day refresh wires the explicit rollover ownership guard", () => {
+  assert.match(workspaceSource, /isRolloverActive: \(\) => isRolloverActiveRef\.current\(\)/);
+  assert.match(workspaceSource, /todayKeyRef\.current === logicalDate[\s\S]*!isRolloverActiveRef\.current\(\)/);
+  assert.match(taskAppSource, /isRolloverActive: \(\) => taskRolloverCoordinator\.isBusy\(\)/);
 });
 
 test("terminal diagnostics include the refresh result and every cancellation fence", () => {

@@ -96,6 +96,7 @@ const HIGH_RISK_TASK_UPDATE_FIELDS: TaskUpdateField[] = [
   "repeat_monthly_mode",
   "repeat_monthly_ordinal",
   "repeat_monthly_weekday",
+  "repeat_end_on",
   "scheduled_on",
   "status",
 ];
@@ -120,7 +121,7 @@ function canonicalScheduleBoundaryFromResponse(value: unknown, task: CanonicalTa
     || value.boundary_sequence !== 1
     || value.boundary_type !== "initial"
     || !["unscheduled", "one_time", "rolling", "fixed"].includes(String(value.schedule_model))
-    || !["none", "daily", "weekly", "monthly", "custom", "daily_until_complete"].includes(String(value.repeat_frequency))
+    || !["none", "daily", "weekly", "monthly", "custom", "daily_until_complete", "per_week", "per_month"].includes(String(value.repeat_frequency))
     || !Number.isInteger(value.repeat_interval)
     || !Array.isArray(value.repeat_days_of_week)
     || typeof value.effective_from_logical_date !== "string"
@@ -738,7 +739,7 @@ async function runTaskUpdateAttempt(
   };
 }
 
-async function fetchLatestTaskRow(client: SupabaseClient, taskId: string) {
+export async function fetchLatestTaskRow(client: SupabaseClient, taskId: string) {
   return client
     .from("adhdice_clean_tasks")
     .select("*")

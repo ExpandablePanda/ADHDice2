@@ -8,6 +8,7 @@ import {
   buildTaskListFolderCounts,
   buildTaskListFolderTree,
   canMoveFolderInto,
+  filterTaskListDirectoryEntries,
   resolveCurrentTaskListFolder,
 } from "@/lib/task-list-folders";
 import type { TaskListDefinition } from "@/lib/task-lists";
@@ -107,6 +108,17 @@ test("folder and list paths, breadcrumbs, and case-insensitive directory search 
     buildAllTaskListDirectory(tree, lists, "smart").map((entry) => [entry.kind, entry.id]),
     [["list", "list:smart"]],
   );
+});
+
+test("shared directory filtering matches labels and full paths without changing entry order", () => {
+  const entries = [
+    { id: "folder-health", kind: "folder" as const, label: "Health", path: "Life / Health" },
+    { folderId: "folder-health", id: "list-vitals", kind: "list" as const, label: "Vitals", path: "Life / Health / Metrics" },
+  ];
+
+  assert.deepEqual(filterTaskListDirectoryEntries(entries, "health").map((entry) => entry.id), ["folder-health", "list-vitals"]);
+  assert.deepEqual(filterTaskListDirectoryEntries(entries, "METRICS").map((entry) => entry.id), ["list-vitals"]);
+  assert.deepEqual(filterTaskListDirectoryEntries(entries, "").map((entry) => entry.id), ["folder-health", "list-vitals"]);
 });
 
 test("orphaned and cyclic folders and their lists fail safely with diagnostics", () => {

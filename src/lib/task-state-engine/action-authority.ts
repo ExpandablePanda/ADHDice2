@@ -170,6 +170,7 @@ const OCCURRENCE_SENSITIVE_TASK_UPDATE_FIELDS = [
   "repeat_monthly_mode",
   "repeat_monthly_ordinal",
   "repeat_monthly_weekday",
+  "repeat_end_on",
   "completed_at",
   "active_status_logical_date",
   "active_occurrence_due_on",
@@ -185,6 +186,7 @@ const TASK_SCHEDULE_FIELDS = [
   "repeat_monthly_mode",
   "repeat_monthly_ordinal",
   "repeat_monthly_weekday",
+  "repeat_end_on",
 ] as const;
 
 function areTaskUpdateValuesEqual(left: unknown, right: unknown) {

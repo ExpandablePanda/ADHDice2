@@ -16,7 +16,7 @@ import { StyleLabIconPreviewSlot } from "@/components/style-lab/style-lab-icon-s
 
 import type { Task } from "@/lib/database.types";
 import type { TaskRailListOption } from "@/lib/task-app-derived";
-import { getTaskListContainerKey } from "@/lib/task-list-folders";
+import { filterTaskListDirectoryEntries, getTaskListContainerKey } from "@/lib/task-list-folders";
 import type { AllTaskListDirectoryEntry } from "@/lib/task-list-folders";
 import type { TaskTypeSelectionOption } from "@/lib/task-type";
 import { TaskTypeIdentity } from "./task-type-identity";
@@ -310,16 +310,24 @@ function getTaskRailInteractionCorridor(
 
 export function ReorderableTaskChipRail({
   activeFolderId,
+  allSearchQuery = "",
+  isAllSearchActive = false,
   canMoveStructureInto,
   currentFolderId,
   lists,
   onMoveStructure,
+  onAllSearchChange,
+  onEnterAllSearch,
+  onExitAllSearch,
   onOpenFolder,
   onSelectBucket,
+  reorderableEnabled = true,
   dragSession,
   selectedBucket,
 }: {
   activeFolderId?: string | null;
+  allSearchQuery?: string;
+  isAllSearchActive?: boolean;
   canMoveStructureInto?: (sourceEntityId: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => boolean;
   currentFolderId?: string | null;
   lists: StructuredRailListOption[];
@@ -330,8 +338,12 @@ export function ReorderableTaskChipRail({
     targetIndex: number,
     generation: TaskListRailMutationGeneration,
   ) => Promise<boolean>;
+  onAllSearchChange?: (query: string) => void;
+  onEnterAllSearch?: () => void;
+  onExitAllSearch?: () => void;
   onOpenFolder?: (folderId: string) => void;
   onSelectBucket: (bucket: string) => void;
+  reorderableEnabled?: boolean;
   dragSession?: TaskRailDragSession;
   selectedBucket: string;
 }) {
@@ -946,7 +958,17 @@ export function ReorderableTaskChipRail({
       ref={railElementRef}
     >
       {renderedLists.map((list) => {
-        const reorderable = isRailListReorderable(list) && Boolean(onMoveStructure);
+        if (isAllSearchActive && list.structureKind === "list" && list.id === "all") {
+          return (
+            <TaskListRailInlineSearch
+              key={list.id}
+              onChange={onAllSearchChange ?? (() => undefined)}
+              onExit={onExitAllSearch ?? (() => undefined)}
+              query={allSearchQuery}
+            />
+          );
+        }
+        const reorderable = reorderableEnabled && isRailListReorderable(list) && Boolean(onMoveStructure);
         const listRailContainerKey = list.containerKey ?? railContainerKey;
         const folderSelected = list.structureKind === "folder" && list.id === activeFolderId;
         const selected = folderSelected || (list.structureKind !== "folder" && list.id === selectedBucket);
@@ -974,6 +996,13 @@ export function ReorderableTaskChipRail({
               event.preventDefault();
               suppressClickRef.current = false;
               return;
+            }
+            if (list.structureKind === "list" && list.id === "all" && selectedBucket === "all" && onEnterAllSearch) {
+              onEnterAllSearch();
+              return;
+            }
+            if (isAllSearchActive) {
+              onExitAllSearch?.();
             }
             startTransition(() => {
               if (list.structureKind === "folder") {
@@ -1295,16 +1324,23 @@ function TaskViewsMenu({
 }
 
 export function TaskListRailHierarchy({
+  allSearchQuery,
+  isAllSearchActive = false,
   canMoveStructureInto,
   currentFolderBreadcrumbs,
   currentFolderId,
   lists,
   onMoveStructure,
+  onAllSearchChange,
+  onEnterAllSearch,
+  onExitAllSearch,
   onNavigateFolder,
   onSelectBucket,
   openFolderRails,
   selectedBucket,
 }: {
+  allSearchQuery?: string;
+  isAllSearchActive?: boolean;
   canMoveStructureInto?: (sourceEntityId: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => boolean;
   currentFolderBreadcrumbs: Array<{ id: string; name: string }>;
   currentFolderId: string | null;
@@ -1316,6 +1352,9 @@ export function TaskListRailHierarchy({
     targetIndex: number,
     generation: TaskListRailMutationGeneration,
   ) => Promise<boolean>;
+  onAllSearchChange?: (query: string) => void;
+  onEnterAllSearch?: () => void;
+  onExitAllSearch?: () => void;
   onNavigateFolder?: (folderId: string | null) => void;
   onSelectBucket: (bucket: string) => void;
   openFolderRails: OpenFolderRail[];
@@ -1332,17 +1371,23 @@ export function TaskListRailHierarchy({
       <div data-primary-list-rail>
         <ReorderableTaskChipRail
           activeFolderId={currentFolderBreadcrumbs[0]?.id ?? null}
+          allSearchQuery={allSearchQuery}
+          isAllSearchActive={isAllSearchActive}
           canMoveStructureInto={canMoveStructureInto}
           currentFolderId={null}
           lists={lists}
           onMoveStructure={onMoveStructure}
+          onAllSearchChange={onAllSearchChange}
+          onEnterAllSearch={onEnterAllSearch}
+          onExitAllSearch={onExitAllSearch}
           onOpenFolder={(folderId) => toggleFolder(folderId, null)}
           onSelectBucket={onSelectBucket}
+          reorderableEnabled={!isAllSearchActive}
           dragSession={dragSessionRef.current}
           selectedBucket={selectedBucket}
         />
       </div>
-      {openFolderRails.map((rail, index) => (
+      {!isAllSearchActive ? openFolderRails.map((rail, index) => (
         <div data-folder-content-rail={rail.folderId} key={rail.folderId}>
           <ReorderableTaskChipRail
             activeFolderId={currentFolderBreadcrumbs[index + 1]?.id ?? null}
@@ -1356,8 +1401,76 @@ export function TaskListRailHierarchy({
             selectedBucket={selectedBucket}
           />
         </div>
-      ))}
+      )) : null}
     </div>
+  );
+}
+
+function TaskListDirectoryResult({
+  entry,
+  onSelect,
+}: {
+  entry: AllTaskListDirectoryEntry;
+  onSelect: (entry: AllTaskListDirectoryEntry) => void;
+}) {
+  return (
+    <AdhdChip
+      className="w-full justify-start text-left"
+      onClick={() => onSelect(entry)}
+      toneClassName={SHARED_CHIP_MUTED_CLASS}
+    >
+      <span className="flex min-w-0 items-center gap-2">
+        {entry.kind === "folder" ? <Folder className="h-3.5 w-3.5 shrink-0" /> : null}
+        <span className="min-w-0">
+          <span className="block truncate">{entry.label}</span>
+          <span className="block truncate text-[10px] font-medium opacity-60">{entry.kind} · {entry.path}</span>
+        </span>
+      </span>
+    </AdhdChip>
+  );
+}
+
+function TaskListRailInlineSearch({
+  onChange,
+  onExit,
+  query,
+}: {
+  onChange: (query: string) => void;
+  onExit: () => void;
+  query: string;
+}) {
+  const clearSearch = () => onExit();
+
+  return (
+    <label className="flex h-7 min-w-[12rem] max-w-[24rem] flex-1 items-center gap-2 rounded-full border border-[#c9bcff] bg-[#fbfaff] px-2.5 shadow-[0_0_0_1px_rgba(111,87,246,0.08)] dark:border-[#7f67ff] dark:bg-white/[0.04]" data-list-rail-search>
+      <Search aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-[#6f57f6] dark:text-[#c9bbff]" />
+      <input
+        aria-label="Search lists and folders"
+        autoFocus
+        className="min-w-0 flex-1 bg-transparent text-[13px] font-medium leading-none text-[#27304c] outline-none placeholder:text-[#97a0b9] dark:text-white dark:placeholder:text-white/35"
+        onChange={(event) => onChange(event.target.value)}
+        onBlur={() => {
+          if (!query.trim()) onExit();
+        }}
+        onKeyDown={(event) => {
+          if (event.key !== "Escape") return;
+          event.preventDefault();
+          clearSearch();
+        }}
+        placeholder="Search lists and folders…"
+        value={query}
+      />
+      {query.trim().length > 0 ? (
+        <button
+          aria-label="Clear lists and folders search"
+          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[#8d86ab] transition hover:bg-[#efe9ff] hover:text-[#6f57f6] dark:text-white/45 dark:hover:bg-white/10 dark:hover:text-[#cabfff]"
+          onClick={clearSearch}
+          type="button"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      ) : null}
+    </label>
   );
 }
 
@@ -1482,10 +1595,18 @@ export function TaskOperationsHeader({
   const [isAllListsOpen, setIsAllListsOpen] = useState(false);
   const [isNewMenuOpen, setIsNewMenuOpen] = useState(false);
   const [allListsSearch, setAllListsSearch] = useState("");
-  const matchingDirectoryEntries = allListDirectoryEntries.filter((entry) => {
-    const query = allListsSearch.trim().toLocaleLowerCase();
-    return !query || `${entry.label} ${entry.path}`.toLocaleLowerCase().includes(query);
-  });
+  const [railSearch, setRailSearch] = useState("");
+  const [isRailSearchActive, setIsRailSearchActive] = useState(false);
+  const matchingDirectoryEntries = filterTaskListDirectoryEntries(allListDirectoryEntries, allListsSearch);
+  const matchingRailDirectoryEntries = filterTaskListDirectoryEntries(allListDirectoryEntries, railSearch);
+  useEffect(() => {
+    if (view === "table" && isRailHidden && (isRailSearchActive || railSearch)) {
+      // Hide/show should reopen the rail with an empty ephemeral query.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRailSearch("");
+      setIsRailSearchActive(false);
+    }
+  }, [isRailHidden, isRailSearchActive, railSearch, view]);
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
   const clearLongPress = () => {
@@ -1517,6 +1638,16 @@ export function TaskOperationsHeader({
     event.preventDefault();
     event.stopPropagation();
     onOpenFocusPlanner();
+  };
+
+  const exitRailSearch = () => {
+    setRailSearch("");
+    setIsRailSearchActive(false);
+  };
+
+  const handleRailDirectorySelection = (entry: AllTaskListDirectoryEntry) => {
+    onSelectDirectoryEntry?.(entry);
+    exitRailSearch();
   };
 
   return (
@@ -1723,24 +1854,15 @@ export function TaskOperationsHeader({
                     </label>
                     <div className="adhdice-scrollbar mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto">
                       {matchingDirectoryEntries.map((entry) => (
-                        <AdhdChip
-                          className="w-full justify-start text-left"
+                        <TaskListDirectoryResult
                           key={`${entry.kind}:${entry.id}`}
-                          onClick={() => {
-                            onSelectDirectoryEntry?.(entry);
+                          entry={entry}
+                          onSelect={(selectedEntry) => {
+                            onSelectDirectoryEntry?.(selectedEntry);
                             setIsAllListsOpen(false);
                             setAllListsSearch("");
                           }}
-                          toneClassName={SHARED_CHIP_MUTED_CLASS}
-                        >
-                          <span className="flex min-w-0 items-center gap-2">
-                            {entry.kind === "folder" ? <Folder className="h-3.5 w-3.5 shrink-0" /> : null}
-                            <span className="min-w-0">
-                              <span className="block truncate">{entry.label}</span>
-                              <span className="block truncate text-[10px] font-medium opacity-60">{entry.kind} · {entry.path}</span>
-                            </span>
-                          </span>
-                        </AdhdChip>
+                        />
                       ))}
                     </div>
                   </AdhdDropdownPanel>
@@ -1750,17 +1872,37 @@ export function TaskOperationsHeader({
           </div>
           <div className="flex flex-col gap-1" data-task-rail-filter-stack>
             {view === "table" && isRailHidden ? null : (
-              <TaskListRailHierarchy
-                canMoveStructureInto={canMoveStructureInto}
-                currentFolderBreadcrumbs={currentFolderBreadcrumbs}
-                currentFolderId={currentFolderId}
-                lists={lists}
-                onMoveStructure={onMoveStructure}
-                onNavigateFolder={onNavigateFolder}
-                onSelectBucket={onSelectBucket}
-                openFolderRails={openFolderRails}
-                selectedBucket={selectedBucket}
-              />
+              <>
+                <TaskListRailHierarchy
+                  allSearchQuery={railSearch}
+                  canMoveStructureInto={canMoveStructureInto}
+                  currentFolderBreadcrumbs={currentFolderBreadcrumbs}
+                  currentFolderId={currentFolderId}
+                  isAllSearchActive={isRailSearchActive}
+                  lists={lists}
+                  onAllSearchChange={setRailSearch}
+                  onEnterAllSearch={() => setIsRailSearchActive(true)}
+                  onExitAllSearch={exitRailSearch}
+                  onMoveStructure={onMoveStructure}
+                  onNavigateFolder={onNavigateFolder}
+                  onSelectBucket={onSelectBucket}
+                  openFolderRails={openFolderRails}
+                  selectedBucket={selectedBucket}
+                />
+                {isRailSearchActive && railSearch.trim() ? (
+                  <div className="adhdice-scrollbar flex max-h-48 flex-col gap-1 overflow-y-auto" data-list-rail-search-results>
+                    {matchingRailDirectoryEntries.length > 0 ? matchingRailDirectoryEntries.map((entry) => (
+                      <TaskListDirectoryResult
+                        key={`${entry.kind}:${entry.id}`}
+                        entry={entry}
+                        onSelect={handleRailDirectorySelection}
+                      />
+                    )) : (
+                      <p className="px-2 py-2 text-[12px] text-[#8d87a7] dark:text-white/45">No lists or folders found.</p>
+                    )}
+                  </div>
+                ) : null}
+              </>
             )}
             {filterRowsNode}
           </div>

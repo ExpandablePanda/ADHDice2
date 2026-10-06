@@ -111,7 +111,7 @@ export function TaskEditFlows({
           </div>
         </ModalShell>
       ) : null}
-      {taskHistoryFlow ? <TaskHistoryModal {...taskHistoryFlow} /> : null}
+      {taskHistoryFlow ? <TaskHistoryModal key={taskHistoryFlow.task.id} {...taskHistoryFlow} /> : null}
       {momentumFlow ? <MomentumTaskModal {...momentumFlow} /> : null}
     </>
   );

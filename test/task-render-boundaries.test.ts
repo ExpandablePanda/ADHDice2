@@ -7,6 +7,7 @@ const workspaceSource = readFileSync(new URL("../src/components/task-app/tasks-p
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const shellSource = readFileSync(new URL("../src/components/task-app/tasks-page.tsx", import.meta.url), "utf8");
+const taskEditFlowsSource = readFileSync(new URL("../src/components/task-app/task-edit-flows.tsx", import.meta.url), "utf8");
 
 test("Table interaction state stays in the direct windowed hierarchy render", () => {
   assert.doesNotMatch(tableSource, /TaskTableRow|uiRevision|areTaskRowPropsEqual|render=\{\(\) => \(/);
@@ -65,7 +66,7 @@ test("Stable row caches and bounded windowing remain the performance controls", 
   assert.match(tableSource, /remainingRenderedTaskCount/);
 });
 
-test("Complete confirmation is app-global while Tasks retains only its other flows", () => {
+test("Complete and Task History flows are app-global while Tasks retains only its other flows", () => {
   const completeFlowStart = appSource.indexOf("const completeFlow");
   const taskWorkspaceFlowStart = appSource.indexOf("const taskWorkspaceFlowLayer");
   const returnStart = appSource.indexOf("\n  return (\n    <main");
@@ -87,9 +88,11 @@ test("Complete confirmation is app-global while Tasks retains only its other flo
   assert.match(completeFlow, /Complete Milestone and award trophy\?/);
   assert.match(completeFlow, /onClose: \(\) => setPendingCompleteAction\(null\)/);
   assert.match(completeFlow, /onConfirm: \(\) => \{ void confirmPendingTaskComplete\(\); \}/);
-  assert.match(appGlobalRender, /<TaskEditFlows[\s\S]*batchDeleteFlow=\{null\}[\s\S]*batchEditFlow=\{null\}[\s\S]*completeFlow=\{completeFlow\}[\s\S]*focusPlannerFlow=\{null\}[\s\S]*momentumFlow=\{null\}[\s\S]*taskHistoryFlow=\{null\}/);
+  assert.match(appGlobalRender, /<TaskEditFlows[\s\S]*batchDeleteFlow=\{null\}[\s\S]*batchEditFlow=\{null\}[\s\S]*completeFlow=\{completeFlow\}[\s\S]*focusPlannerFlow=\{null\}[\s\S]*momentumFlow=\{null\}[\s\S]*taskHistoryFlow=\{taskHistoryFlow\}/);
   assert.match(taskWorkspaceFlowLayer, /completeFlow=\{null\}/);
+  assert.match(taskWorkspaceFlowLayer, /taskHistoryFlow=\{null\}/);
   assert.doesNotMatch(taskWorkspaceFlowLayer, /pendingCompleteAction|confirmPendingTaskComplete|Complete Milestone and award trophy/);
+  assert.equal((taskEditFlowsSource.match(/<TaskHistoryModal\b/g) ?? []).length, 1);
   assert.match(homeBranch, /onSetStatus=\{\(task, status\) => \{ void updateTaskStatus\(task, status\); \}\}/);
   assert.doesNotMatch(homeBranch, /setActivePage\(\"Tasks\"\)/);
 

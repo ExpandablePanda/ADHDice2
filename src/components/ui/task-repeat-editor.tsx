@@ -6,6 +6,7 @@ import {
   createTaskRepeatEditorDraft,
   getTaskRepeatCategory,
   normalizePresetRepeatSelection,
+  normalizeTaskRepeatQuotaCount,
   REPEAT_MONTHLY_MODE_OPTIONS,
   REPEAT_MONTHLY_ORDINAL_OPTIONS,
   REPEAT_WEEKDAY_FULL_LABELS,
@@ -28,6 +29,8 @@ const REPEAT_PRESETS: ReadonlyArray<{ label: string; value: TaskRepeatSelection 
   { label: "Daily Until Complete", value: "daily_until_complete" },
   { label: "Weekly", value: "weekly" },
   { label: "Monthly", value: "monthly" },
+  { label: "X Per Week", value: "per_week" },
+  { label: "X Per Month", value: "per_month" },
   { label: "Custom", value: "custom" },
 ];
 const REPEAT_UNITS: ReadonlyArray<{ label: string; value: TaskRepeatEditorUnit }> = [
@@ -45,6 +48,9 @@ function valueSignature(value: TaskRepeatEditorValue) {
     value.repeatMonthlyMode,
     value.repeatMonthlyOrdinal,
     value.repeatMonthlyWeekday,
+    value.repeatQuotaCount,
+    value.repeatQuotaBalanceEnabled,
+    value.repeatEndOn,
   ]);
 }
 
@@ -63,7 +69,9 @@ export function TaskRepeatEditor({
   embedded = false,
   inactiveToneClassName,
   onChange,
+  onClearBalance,
   onPresetApplied,
+  quotaBalance = null,
   value,
 }: {
   activeToneClassName: string;
@@ -72,12 +80,15 @@ export function TaskRepeatEditor({
   embedded?: boolean;
   inactiveToneClassName: string;
   onChange: (value: TaskRepeatEditorValue) => void;
+  onClearBalance?: () => void;
   onPresetApplied?: (selection: TaskRepeatSelection, value: TaskRepeatEditorValue) => void;
+  quotaBalance?: number | null;
   value: TaskRepeatEditorValue;
 }) {
   const [localEditorMode, setLocalEditorMode] = useState<TaskRepeatCategory>(() => editorCategory(value));
   const [localDraft, setLocalDraft] = useState<TaskRepeatEditorDraft>(() => createTaskRepeatEditorDraft(value));
   const [localIntervalInput, setLocalIntervalInput] = useState(() => String(Math.max(1, value.repeatInterval)));
+  const [localQuotaCountInput, setLocalQuotaCountInput] = useState(() => String(value.repeatQuotaCount ?? ""));
   const [localDayOfMonthInput, setLocalDayOfMonthInput] = useState(() => value.repeatDayOfMonth ? String(value.repeatDayOfMonth) : "");
   const [localSessionSignature, setLocalSessionSignature] = useState(() => valueSignature(value));
   const currentValueSignature = valueSignature(value);
@@ -86,6 +97,7 @@ export function TaskRepeatEditor({
   const draft = hasLocalSession ? localDraft : createTaskRepeatEditorDraft(value);
   const editorMode = hasLocalSession ? localEditorMode : editorCategory(value);
   const intervalInput = hasLocalSession ? localIntervalInput : String(draft.repeatInterval);
+  const quotaCountInput = hasLocalSession ? localQuotaCountInput : String(draft.repeatQuotaCount ?? "");
   const dayOfMonthInput = hasLocalSession ? localDayOfMonthInput : (draft.repeatDayOfMonth ? String(draft.repeatDayOfMonth) : "");
 
   const emit = (nextValue: TaskRepeatEditorValue, nextMode: TaskRepeatCategory, nextDraft?: TaskRepeatEditorDraft) => {
@@ -93,6 +105,7 @@ export function TaskRepeatEditor({
     setLocalDraft(normalizedDraft);
     setLocalEditorMode(nextMode);
     setLocalIntervalInput(String(normalizedDraft.repeatInterval));
+    setLocalQuotaCountInput(String(normalizedDraft.repeatQuotaCount ?? ""));
     setLocalDayOfMonthInput(normalizedDraft.repeatDayOfMonth ? String(normalizedDraft.repeatDayOfMonth) : "");
     setLocalSessionSignature(valueSignature(nextValue));
     onChange(nextValue);
@@ -121,6 +134,17 @@ export function TaskRepeatEditor({
       commitCustomDraft(nextDraft);
       return;
     }
+    if (selection === "per_week" || selection === "per_month") {
+      const nextValue = normalizePresetRepeatSelection(selection, draft, { dueOn });
+      const nextDraft = createTaskRepeatEditorDraft(nextValue);
+      setLocalDraft(nextDraft);
+      setLocalEditorMode(selection);
+      setLocalIntervalInput(String(nextDraft.repeatInterval));
+      setLocalQuotaCountInput(String(nextValue.repeatQuotaCount ?? ""));
+      setLocalDayOfMonthInput("");
+      setLocalSessionSignature(currentValueSignature);
+      return;
+    }
     const nextValue = normalizePresetRepeatSelection(selection, draft, { dueOn });
     emit(nextValue, selection);
     onPresetApplied?.(selection, nextValue);
@@ -136,6 +160,26 @@ export function TaskRepeatEditor({
       ...draft,
       repeatDayOfMonth: Number.isFinite(parsed) && parsed >= 1 && parsed <= 31 ? parsed : draft.repeatDayOfMonth,
     });
+  };
+  const commitQuotaDraft = (nextDraft: TaskRepeatEditorDraft) => {
+    const parsed = Number.parseInt(quotaCountInput, 10);
+    const repeatQuotaCount = normalizeTaskRepeatQuotaCount(nextDraft.repeatFrequency as "per_week" | "per_month", parsed);
+    if (repeatQuotaCount === null) return;
+    const nextValue = normalizePresetRepeatSelection(nextDraft.repeatFrequency as "per_week" | "per_month", {
+      ...nextDraft,
+      repeatQuotaCount,
+    }, { dueOn });
+    emit(nextValue, nextValue.repeatFrequency);
+  };
+  const toggleQuotaBalance = () => {
+    if (activeCategory !== "per_week" && activeCategory !== "per_month") return;
+    commitQuotaDraft({
+      ...draft,
+      repeatQuotaBalanceEnabled: draft.repeatQuotaBalanceEnabled !== true,
+    });
+  };
+  const commitEndOn = (rawValue: string) => {
+    emit({ ...draft, repeatEndOn: rawValue || null }, activeCategory);
   };
   const toggleWeekday = (weekday: number) => {
     const nextDays = draft.repeatDaysOfWeek.includes(weekday)
@@ -255,6 +299,45 @@ export function TaskRepeatEditor({
     </div>
   );
 
+  const renderQuotaControls = () => {
+    const limit = activeCategory === "per_week" ? 7 : 31;
+    const balanceEnabled = draft.repeatQuotaBalanceEnabled === true;
+    return (
+      <div className="grid gap-2" data-repeat-editor-quota="true">
+        <div className="flex flex-nowrap items-center gap-1.5">
+          <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Times</span>
+          <input
+            className={TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
+            inputMode="numeric"
+            max={limit}
+            min={1}
+            onBlur={() => commitQuotaDraft(draft)}
+            onChange={(event) => {
+              setLocalSessionSignature(currentValueSignature);
+              setLocalQuotaCountInput(event.target.value.replace(/[^\d]/g, "").slice(0, 2));
+            }}
+            type="text"
+            value={quotaCountInput}
+          />
+          <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>{activeCategory === "per_week" ? "per week" : "per month"}</span>
+        </div>
+        <label className="flex items-center gap-2 text-xs text-[#5d557b] dark:text-white/65">
+          <input checked={balanceEnabled} onChange={toggleQuotaBalance} type="checkbox" />
+          Carry balance forward
+        </label>
+        <span className="text-[11px] text-[#5d557b]/80 dark:text-white/50">
+          Extra completions create credit; unmet quota carries forward as debt.
+        </span>
+        {balanceEnabled && quotaBalance ? (
+          <div className="flex items-center gap-2 text-xs text-[#5d557b] dark:text-white/65">
+            <span>Balance: {quotaBalance}</span>
+            {onClearBalance ? <button className="underline underline-offset-2" onClick={onClearBalance} type="button">Clear balance</button> : null}
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   return (
     <div className={className ?? "space-y-2"} data-repeat-editor="true">
       <div className="flex flex-wrap gap-2">
@@ -277,6 +360,19 @@ export function TaskRepeatEditor({
 
       {activeCategory === "weekly" ? renderWeekdayChips() : null}
       {activeCategory === "monthly" ? renderMonthlyControls(false) : null}
+      {activeCategory === "per_week" || activeCategory === "per_month" ? renderQuotaControls() : null}
+      {activeCategory !== "none" && draft.repeatFrequency !== "none" ? (
+        <label className="flex flex-nowrap items-center gap-2" data-repeat-editor-end-date="true">
+          <span className={TASK_TABLE_COMPACT_CADENCE_LABEL_CLASS}>Ends</span>
+          <input
+            aria-label="End date"
+            className={TASK_TABLE_COMPACT_CADENCE_INPUT_CLASS}
+            onChange={(event) => commitEndOn(event.target.value)}
+            type="date"
+            value={draft.repeatEndOn ?? ""}
+          />
+        </label>
+      ) : null}
       {activeCategory === "custom" ? (
         <div className={embedded ? "grid gap-2" : "grid gap-2 rounded-[1rem] border border-[#ece7f5] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.04]"} data-repeat-editor-custom="true">
           <p className="text-[11px] font-medium uppercase tracking-[0.2em] text-[#9b92be] dark:text-white/35">Custom</p>

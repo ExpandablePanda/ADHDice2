@@ -33,13 +33,14 @@ export type MonthlyOrdinal = "first" | "second" | "third" | "fourth" | "last";
 
 export type TaskRecurrence =
   | { kind: "none" }
-  | { kind: "rolling"; intervalDays: number; untilComplete?: boolean }
+  | { kind: "rolling"; intervalDays: number; untilComplete?: boolean; endOn?: string | null }
   | {
       kind: "weekly";
       intervalWeeks?: number;
       weekdays: number[];
       untilComplete?: boolean;
       anchorDate?: string | null;
+      endOn?: string | null;
     }
   | {
       kind: "monthly";
@@ -50,7 +51,39 @@ export type TaskRecurrence =
       weekday?: number | null;
       untilComplete?: boolean;
       anchorDate?: string | null;
+      endOn?: string | null;
+    }
+  | {
+      kind: "quota";
+      period: "week" | "month";
+      count: number;
+      balanceEnabled: boolean;
+      activationDate?: string | null;
+      scheduleBoundaryId?: string | null;
+      incomingBalance?: number | null;
+      incomingBalancePeriodKey?: string | null;
+      endOn?: string | null;
     };
+
+export type TaskQuotaPeriodFact = {
+  id?: string;
+  entityId?: string;
+  scheduleBoundaryId?: string | null;
+  periodKind: "week" | "month";
+  periodKey: string;
+  periodStart: string;
+  periodEnd: string;
+  baseQuota: number;
+  incomingBalance: number;
+  successfulDays: number;
+  nextBalance: number;
+  balanceEnabled: boolean;
+  eventKind: "period_close" | "clear_balance";
+  commandId?: string | null;
+  idempotenceIdentity?: string;
+  createdAt?: string;
+  revision?: number;
+};
 
 export type TaskStateSnapshot = {
   id: string;
@@ -66,6 +99,8 @@ export type TaskStateSnapshot = {
   /** Optional persisted comparison inputs. Undefined means the source model cannot expose them. */
   recurrenceCursor?: string | null;
   satisfiedOccurrenceIdentity?: string | null;
+  quotaIncomingBalance?: number | null;
+  quotaIncomingBalancePeriodKey?: string | null;
   recurrence: TaskRecurrence;
   behaviorPolicy?: TaskBehaviorPolicy;
 };
@@ -209,6 +244,8 @@ export type TaskStateEngineInput = {
   currentBehaviorPolicyEffectiveFromLogicalDate?: string;
   task: TaskStateSnapshot;
   history: TaskStateHistoryRow[];
+  /** Canonical quota ledger evidence; the Task-row balance is only a projection. */
+  quotaPeriodFacts?: TaskQuotaPeriodFact[];
   now: string | Date;
   timezone: string;
   logicalDayRollover: string;
@@ -236,6 +273,8 @@ export type ProposedTaskStatePatch = Partial<{
   activeOccurrenceDueOn: string | null;
   recurrenceCursor: string | null;
   satisfiedOccurrenceIdentity: string | null;
+  repeatQuotaBalance: number | null;
+  repeatQuotaBalancePeriod: string | null;
   completedAt: string | null;
 }>;
 

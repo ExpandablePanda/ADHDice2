@@ -74,9 +74,11 @@ import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session"
 import {
   createDefaultMealDraft,
   hasMeaningfulMealDraft,
+  mealFoodSelectionFromLibraryItem,
   prepareMealDraftForSelectedSlot,
   resetMealDraftForNextItem,
   type MealDraft,
+  type MealFoodSelection,
 } from "@/lib/health-meal-draft";
 import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
@@ -181,6 +183,8 @@ import {
   formatHealthFoodDisplayName,
   formatHealthFoodQuantityUnit,
   getHealthFoodIdentityKey,
+  getLatestHealthFoodConsumedServing,
+  getValidHealthFoodConsumedServing,
   getRecipeNutritionPerServing,
   getSavedMealNutrition,
   sortHealthFoodsForMealPicker,
@@ -483,28 +487,6 @@ type MealEditDraft = {
   measurement: string;
   servingLabel: string;
   time: string;
-};
-
-type MealFoodSelection = {
-  sourceFoodId: string | null;
-  foodName: string;
-  brandName: string;
-  foodCategory: string | null;
-  calories: number;
-  protein: number | null;
-  carbs: number | null;
-  fat: number | null;
-  nutritionDetails: HealthNutritionDetails | null;
-  attribution: string | null;
-  barcode: string | null;
-  provider: string | null;
-  providerItemId: string | null;
-  servingLabel: string | null;
-  servingQuantity: number;
-  servingUnit: string;
-  servingMeasureValue: number | null;
-  servingMeasureUnit: HealthServingMeasureUnit | null;
-  consumedUnit?: string;
 };
 
 function createQuickFoodId() {
@@ -2910,6 +2892,7 @@ export function HealthPage({
       servingMeasureValue: selection.servingMeasureValue,
       servingMeasureUnit: selection.servingMeasureUnit,
       nutritionDetails: selection.nutritionDetails,
+      foodLibraryItem: item,
     });
   }
 
@@ -2917,25 +2900,28 @@ export function HealthPage({
     if (activeMealEntrySlot === null) {
       return;
     }
+    const snapshot = item.food_snapshot;
     applyLookupResult({
-      attribution: item.attribution,
-      barcode: item.barcode,
-      brandName: item.brand_name,
-      foodCategory: item.food_snapshot?.food_category,
-      calories: item.calories,
-      carbs: item.carbs_g,
-      fat: item.fat_g,
-      foodName: item.food_name,
-      protein: item.protein_g,
-      provider: item.provider,
-      providerItemId: item.provider_item_id ?? item.id,
-      servingLabel: item.serving_label,
-      sourceFoodId: item.source_food_id ?? item.food_snapshot?.source_food_id,
-      servingQuantity: item.food_snapshot?.serving_quantity,
-      servingUnit: item.food_snapshot?.serving_unit,
-      servingMeasureValue: item.food_snapshot?.serving_measure_value,
-      servingMeasureUnit: item.food_snapshot?.serving_measure_unit,
-      nutritionDetails: item.food_snapshot?.nutrition_details ?? null,
+      attribution: snapshot?.attribution ?? item.attribution,
+      barcode: snapshot?.barcode ?? item.barcode,
+      brandName: snapshot?.brand_name ?? item.brand_name,
+      foodCategory: snapshot?.food_category ?? null,
+      calories: snapshot?.calories ?? item.calories,
+      carbs: snapshot?.carbs_g ?? item.carbs_g,
+      fat: snapshot?.fat_g ?? item.fat_g,
+      foodName: snapshot?.food_name || item.food_name,
+      protein: snapshot?.protein_g ?? item.protein_g,
+      provider: snapshot?.provider ?? item.provider,
+      providerItemId: snapshot?.provider_item_id ?? item.provider_item_id ?? item.id,
+      servingLabel: snapshot?.serving_label ?? item.serving_label,
+      sourceFoodId: item.source_food_id ?? snapshot?.source_food_id,
+      servingQuantity: snapshot?.serving_quantity,
+      servingUnit: snapshot?.serving_unit,
+      servingMeasureValue: snapshot?.serving_measure_value,
+      servingMeasureUnit: snapshot?.serving_measure_unit,
+      nutritionDetails: snapshot?.nutrition_details ?? null,
+      consumedQuantity: item.consumed_quantity,
+      consumedUnit: item.consumed_unit,
     });
   }
 
@@ -3033,11 +3019,23 @@ export function HealthPage({
     servingMeasureValue?: number | null;
     servingMeasureUnit?: HealthServingMeasureUnit | null;
     nutritionDetails?: HealthNutritionDetails | null;
+    consumedQuantity?: number | null;
+    consumedUnit?: string | null;
+    foodLibraryItem?: HealthFoodLibraryItem;
   }) {
     setIsQuickEntryOpen(false);
     setSaveQuickEntryToLibrary(false);
     const servingQuantity = positiveFiniteNumber(result.servingQuantity) ?? 1;
     const servingUnit = result.servingUnit?.trim() || "serving";
+    const rememberedServing = result.foodLibraryItem && !(mealEditorMode === "plan" && editingMealPlanId !== null)
+      ? getLatestHealthFoodConsumedServing(result.foodLibraryItem, mealEntries)
+      : null;
+    const explicitConsumedServing = getValidHealthFoodConsumedServing(
+      { serving_measure_unit: result.servingMeasureUnit ?? null, serving_unit: servingUnit },
+      result.consumedQuantity,
+      result.consumedUnit,
+    );
+    const initialConsumedServing = rememberedServing ?? explicitConsumedServing;
     setCustomFoodSearchQuery(result.brandName ? `${result.brandName} · ${result.foodName}` : result.foodName);
     setMealDraft((current) => ({
       ...current,
@@ -3058,8 +3056,8 @@ export function HealthPage({
       servingMeasureValue: positiveFiniteNumber(result.servingMeasureValue),
       servingMeasureUnit: result.servingMeasureUnit ?? null,
       nutritionDetails: result.nutritionDetails ?? null,
-      quantity: "1",
-      measurement: "serving",
+      quantity: initialConsumedServing ? String(initialConsumedServing.quantity) : "1",
+      measurement: initialConsumedServing?.unit ?? "serving",
       servingLabel: result.servingLabel ?? "",
     }));
   }
@@ -3086,6 +3084,7 @@ export function HealthPage({
         servingMeasureValue: item.serving_measure_value,
         servingMeasureUnit: item.serving_measure_unit,
         nutritionDetails: item.nutrition_details ?? null,
+        foodLibraryItem: item,
       });
       return;
     }
@@ -3347,7 +3346,37 @@ export function HealthPage({
             <div className="adhdice-scrollbar max-h-24 overflow-y-auto pr-1">
               <div className="flex flex-wrap gap-2">
                 {matchingCustomFoods.map((item) => (
-                  <button className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`} key={item.id} onClick={() => { setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name); applyLookupResult({ attribution: item.attribution, barcode: item.barcode, brandName: item.brand_name, foodCategory: item.food_category ?? item.category, calories: item.calories, carbs: item.carbs_g, fat: item.fat_g, foodName: item.food_name, nutritionDetails: item.nutrition_details ?? null, protein: item.protein_g, provider: item.provider, providerItemId: item.provider_item_id ?? item.id, servingLabel: item.serving_label, sourceFoodId: item.id, servingQuantity: item.serving_quantity, servingUnit: item.serving_unit, servingMeasureValue: item.serving_measure_value, servingMeasureUnit: item.serving_measure_unit }); }} type="button">{formatBrandedFoodName(item)} · {item.calories} kcal</button>
+                  <button
+                    className={`ui-pill-button-light inline-flex min-w-0 max-w-full whitespace-normal text-left ${mealDraft.providerItemId === (item.provider_item_id ?? item.id) ? "border-[#b9abff] bg-[#eee9ff] text-[#5f4bd7] dark:border-[#7561d8] dark:bg-[#2a2148] dark:text-[#d8d0ff]" : ""}`}
+                    key={item.id}
+                    onClick={() => {
+                      setCustomFoodSearchQuery(item.brand_name ? `${item.brand_name} · ${item.food_name}` : item.food_name);
+                      applyLookupResult({
+                        attribution: item.attribution,
+                        barcode: item.barcode,
+                        brandName: item.brand_name,
+                        foodCategory: item.food_category ?? item.category,
+                        calories: item.calories,
+                        carbs: item.carbs_g,
+                        fat: item.fat_g,
+                        foodName: item.food_name,
+                        nutritionDetails: item.nutrition_details ?? null,
+                        protein: item.protein_g,
+                        provider: item.provider,
+                        providerItemId: item.provider_item_id ?? item.id,
+                        servingLabel: item.serving_label,
+                        sourceFoodId: item.id,
+                        servingQuantity: item.serving_quantity,
+                        servingUnit: item.serving_unit,
+                        servingMeasureValue: item.serving_measure_value,
+                        servingMeasureUnit: item.serving_measure_unit,
+                        foodLibraryItem: item,
+                      });
+                    }}
+                    type="button"
+                  >
+                    {formatBrandedFoodName(item)} · {item.calories} kcal
+                  </button>
                 ))}
               </div>
             </div>
@@ -5352,29 +5381,6 @@ function mealFoodSelectionFromDraft(draft: MealDraft): MealFoodSelection | null 
     servingQuantity,
     servingUnit: draft.servingUnit.trim(),
     sourceFoodId: draft.sourceFoodId,
-  };
-}
-
-function mealFoodSelectionFromLibraryItem(item: HealthFoodLibraryItem): MealFoodSelection {
-  return {
-    attribution: item.attribution,
-    barcode: item.barcode,
-    brandName: item.brand_name ?? "",
-    calories: item.calories,
-    carbs: item.carbs_g,
-    fat: item.fat_g,
-    foodCategory: item.food_category ?? item.category,
-    foodName: item.food_name,
-    provider: item.provider,
-    providerItemId: item.provider_item_id ?? item.id,
-    protein: item.protein_g,
-    nutritionDetails: item.nutrition_details ?? null,
-    servingLabel: item.serving_label,
-    servingMeasureUnit: validServingMeasureUnit(item.serving_measure_unit),
-    servingMeasureValue: positiveFiniteNumber(item.serving_measure_value),
-    servingQuantity: positiveFiniteNumber(item.serving_quantity) ?? 1,
-    servingUnit: item.serving_unit?.trim() || "serving",
-    sourceFoodId: item.id,
   };
 }
 

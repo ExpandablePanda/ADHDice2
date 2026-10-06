@@ -91,6 +91,17 @@ export function isCanonicalInactiveTask(task: CanonicalProjectedTaskState) {
 
 export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary): TaskRecurrence {
   if (boundary.schedule_model === "unscheduled" || boundary.schedule_model === "one_time") return { kind: "none" };
+  if (boundary.repeat_frequency === "per_week" || boundary.repeat_frequency === "per_month") {
+    return {
+      kind: "quota",
+      period: boundary.repeat_frequency === "per_week" ? "week" : "month",
+      count: boundary.repeat_quota_count ?? (boundary.repeat_frequency === "per_week" ? 1 : 1),
+      balanceEnabled: boundary.repeat_quota_balance_enabled === true,
+      activationDate: boundary.effective_from_logical_date,
+      scheduleBoundaryId: boundary.id,
+      endOn: boundary.repeat_end_on,
+    };
+  }
   const fixedUntilComplete = boundary.repeat_frequency === "daily_until_complete" && isFixedUntilCompleteRepeatTask({
     repeat_frequency: boundary.repeat_frequency,
     repeat_days_of_week: boundary.repeat_days_of_week,
@@ -104,6 +115,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       weekdays: boundary.repeat_days_of_week,
       ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.schedule_model === "fixed" && (boundary.repeat_frequency === "monthly" || fixedUntilComplete)) {
@@ -116,6 +128,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       weekday: boundary.repeat_monthly_weekday,
       ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.schedule_model === "rolling") {
@@ -123,6 +136,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       kind: "rolling",
       intervalDays: boundary.repeat_interval,
       ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.repeat_frequency === "weekly") {
@@ -131,6 +145,7 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       intervalWeeks: boundary.repeat_interval,
       weekdays: boundary.repeat_days_of_week,
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   if (boundary.repeat_frequency === "monthly") {
@@ -142,17 +157,31 @@ export function recurrenceFromBoundary(boundary: CanonicalTaskScheduleBoundary):
       ordinal: boundary.repeat_monthly_ordinal,
       weekday: boundary.repeat_monthly_weekday,
       anchorDate: boundary.anchor_date,
+      endOn: boundary.repeat_end_on,
     };
   }
   return {
     kind: "rolling",
     intervalDays: boundary.repeat_interval,
     ...(boundary.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+    endOn: boundary.repeat_end_on,
   };
 }
 
 function recurrenceFromTask(task: Task): TaskRecurrence {
   if (task.repeat_frequency === "none") return { kind: "none" };
+  if (task.repeat_frequency === "per_week" || task.repeat_frequency === "per_month") {
+    return {
+      kind: "quota",
+      period: task.repeat_frequency === "per_week" ? "week" : "month",
+      count: task.repeat_quota_count ?? 1,
+      balanceEnabled: task.repeat_quota_balance_enabled === true,
+      activationDate: task.due_on,
+      incomingBalance: task.repeat_quota_balance ?? 0,
+      incomingBalancePeriodKey: task.repeat_quota_balance_period,
+      endOn: task.repeat_end_on,
+    };
+  }
   const fixedUntilComplete = isFixedUntilCompleteRepeatTask(task);
   if (task.repeat_frequency === "weekly" || (task.repeat_frequency === "daily_until_complete" && fixedUntilComplete && task.repeat_days_of_week.length > 0)) {
     return {
@@ -161,6 +190,7 @@ function recurrenceFromTask(task: Task): TaskRecurrence {
       weekdays: task.repeat_days_of_week,
       ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
+      endOn: task.repeat_end_on,
     };
   }
   if (task.repeat_frequency === "monthly" || (task.repeat_frequency === "daily_until_complete" && fixedUntilComplete)) {
@@ -173,12 +203,14 @@ function recurrenceFromTask(task: Task): TaskRecurrence {
       weekday: task.repeat_monthly_weekday,
       ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
       anchorDate: task.due_on,
+      endOn: task.repeat_end_on,
     };
   }
   return {
     kind: "rolling",
     intervalDays: task.repeat_interval,
     ...(task.repeat_frequency === "daily_until_complete" ? { untilComplete: true } : {}),
+    endOn: task.repeat_end_on,
   };
 }
 
@@ -211,7 +243,7 @@ function buildTaskStateEngineInput(
   task: CanonicalProjectedTaskState,
   history: readonly TaskHistory[],
   context: DirectTaskStateContext,
-  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd" | "quotaPeriodFacts"> = {},
   mode: "canonical" | "compatibility",
 ): TaskStateEngineInput {
   const boundary = task.canonical_schedule_boundary ?? null;
@@ -243,7 +275,16 @@ function buildTaskStateEngineInput(
                 : ["pending", "in_progress", "missed", "upcoming", "not_due", "delayed", "done", "did_my_best"].includes(task.status)
                   ? task.status as TaskStateEngineInput["task"]["activeStatus"]
                   : "pending";
-  const recurrence = boundary ? recurrenceFromBoundary(boundary) : recurrenceFromTask(task);
+  const recurrenceFromAuthority = boundary ? recurrenceFromBoundary(boundary) : recurrenceFromTask(task);
+  const recurrence = recurrenceFromAuthority.kind === "quota"
+    ? {
+        ...recurrenceFromAuthority,
+        ...(mode === "compatibility" ? {
+          incomingBalance: task.repeat_quota_balance ?? 0,
+          incomingBalancePeriodKey: task.repeat_quota_balance_period ?? null,
+        } : {}),
+      }
+    : recurrenceFromAuthority;
   const dueOn = boundary
     ? boundary.schedule_model === "unscheduled"
       ? null
@@ -292,6 +333,12 @@ function buildTaskStateEngineInput(
         ? task.active_occurrence_due_on
         : task.active_occurrence_due_on,
       recurrence,
+      ...(recurrence.kind === "quota" && mode === "compatibility"
+        ? {
+          quotaIncomingBalance: task.repeat_quota_balance ?? 0,
+          quotaIncomingBalancePeriodKey: task.repeat_quota_balance_period ?? null,
+        }
+        : {}),
     },
     history: historyRows(task.id, history),
     now: context.now,
@@ -306,7 +353,7 @@ export function buildDirectTaskStateEngineInput(
   task: CanonicalProjectedTaskState,
   history: readonly TaskHistory[],
   context: DirectTaskStateContext,
-  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd" | "quotaPeriodFacts"> = {},
 ): TaskStateEngineInput {
   return buildTaskStateEngineInput(task, history, context, options, "canonical");
 }
@@ -319,7 +366,7 @@ export function buildCompatibilityTaskStateEngineInput(
   task: CanonicalProjectedTaskState,
   history: readonly TaskHistory[],
   context: DirectTaskStateContext,
-  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd"> = {},
+  options: Pick<TaskStateEngineInput, "calendarOverrides" | "workflow" | "action" | "calendarStart" | "calendarEnd" | "quotaPeriodFacts"> = {},
 ): TaskStateEngineInput {
   return buildTaskStateEngineInput(task, history, context, options, "compatibility");
 }

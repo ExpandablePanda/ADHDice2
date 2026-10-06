@@ -30,7 +30,7 @@ const navItems = [
   { label: "Focus", short: "F" },
 ];
 
-const toolbarTabs = ["All Tasks", "Today", "Upcoming", "Projects"];
+const toolbarTabs = ["All Tasks", "Today", "Later", "Projects"];
 
 const focusAreas = [
   { name: "Admin", count: 16, progress: 68, tone: "blue" },
@@ -835,7 +835,7 @@ function CalendarView({
 
 function DeadlinesCard({ tasks }: { tasks: Task[] }) {
   return (
-    <Card title="Upcoming" action="View all">
+    <Card title="Deadlines" action="View all">
       <div className="space-y-2">
         {tasks.length === 0 ? (
           <p className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">

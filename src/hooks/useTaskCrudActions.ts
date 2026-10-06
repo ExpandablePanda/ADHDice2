@@ -40,6 +40,7 @@ export type TaskImportProgress = {
 
 export type TaskImportOptions = {
   onProgress?: (progress: TaskImportProgress) => void;
+  todayDateKey?: string;
 };
 
 type DeleteTasksOptions = {
@@ -91,7 +92,7 @@ export function useTaskCrudActions({
       return { errorCount: 0, importedCount: 0, warningCount: 0 } satisfies ImportTasksResult;
     }
 
-    const parsed = parseImportedTaskLines(lines);
+    const parsed = parseImportedTaskLines(lines, { todayDateKey: options?.todayDateKey });
     if (parsed.tasks.length === 0) {
       const warningText = formatWarningBlock(parsed.warnings);
       setMessage({
@@ -134,6 +135,7 @@ export function useTaskCrudActions({
         is_urgent: parsedTask.isUrgent,
         priority: parsedTask.priority,
         priority_level: parsedTask.priorityLevel,
+        repeat_end_on: parsedTask.repeatEndOn,
         repeat_frequency: parsedTask.repeatFrequency,
         sort_order: Date.now() + index,
         status: parsedTask.status,
@@ -496,6 +498,7 @@ async function insertImportedChildTaskTree({
       parent_task_id: parentTaskId,
       priority: child.priority,
       priority_level: child.priorityLevel,
+      repeat_end_on: child.repeatEndOn,
       repeat_frequency: child.repeatFrequency,
       sort_order: index,
       status: child.status,

@@ -30,6 +30,9 @@ export function projectTaskWithCanonicalScheduleBoundary(task: Task, boundary: C
     repeat_monthly_mode: boundary.repeat_monthly_mode,
     repeat_monthly_ordinal: boundary.repeat_monthly_ordinal,
     repeat_monthly_weekday: boundary.repeat_monthly_weekday,
+    repeat_end_on: boundary.repeat_end_on,
+    repeat_quota_count: boundary.repeat_quota_count,
+    repeat_quota_balance_enabled: boundary.repeat_quota_balance_enabled === true,
   };
 }
 
@@ -42,11 +45,13 @@ export function mergeTaskWithCanonicalScheduleProjection(
   taskRow: Task,
 ): CanonicalProjectedTask {
   const projection = projectedTask as Partial<CanonicalProjectedTask>;
-  if (projection.canonical_schedule_boundary) {
-    const scheduleSeed = projection.due_on === undefined
+  const incomingProjection = taskRow as Partial<CanonicalProjectedTask>;
+  const boundary = incomingProjection.canonical_schedule_boundary ?? projection.canonical_schedule_boundary;
+  if (boundary) {
+    const scheduleSeed = incomingProjection.canonical_schedule_boundary || projection.due_on === undefined
       ? taskRow
       : { ...taskRow, due_on: projection.due_on };
-    return projectTaskWithCanonicalScheduleBoundary(scheduleSeed, projection.canonical_schedule_boundary);
+    return projectTaskWithCanonicalScheduleBoundary(scheduleSeed, boundary);
   }
   return {
     ...taskRow,
