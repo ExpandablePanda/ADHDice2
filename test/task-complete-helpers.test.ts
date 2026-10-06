@@ -100,7 +100,7 @@ test("History Calendar multi-select intersects policy-aware manual actions", () 
   }), ["done"]);
 });
 
-test("History Calendar Clear eligibility requires every selected date to have a clearable persisted outcome", () => {
+test("History Calendar Blank eligibility accepts a clearable outcome or removable Calendar override", () => {
   const task = { status: "pending" } as const;
   const clearableStatuses = ["done", "did_my_best", "missed"] as const;
   for (const status of clearableStatuses) {
@@ -111,15 +111,28 @@ test("History Calendar Clear eligibility requires every selected date to have a 
       todayDateKey: "2026-08-10",
     }), true);
   }
+  assert.equal(isTaskHistoryEntryClearable({
+    calendarOverride: { id: "override-1", logicalDate: "2026-08-10" },
+    entry: null,
+    entryDate: "2026-08-10",
+    task,
+    todayDateKey: "2026-08-10",
+  }), true);
+  assert.equal(isTaskHistoryEntryClearable({
+    entry: null,
+    entryDate: "2026-08-10",
+    task,
+    todayDateKey: "2026-08-10",
+  }), false);
   for (const status of ["complete", "delayed"] as const) {
     assert.equal(isTaskHistoryEntryClearable({
+      calendarOverride: { id: "override-1", logicalDate: "2026-08-10" },
       entry: { status },
       entryDate: "2026-08-10",
       task,
       todayDateKey: "2026-08-10",
     }), false);
   }
-  assert.equal(isTaskHistoryEntryClearable({ entry: null, entryDate: "2026-08-10", task, todayDateKey: "2026-08-10" }), false);
   assert.equal(isTaskHistoryEntryClearable({ entry: { status: "done" }, entryDate: "2026-08-11", task, todayDateKey: "2026-08-10" }), false);
   for (const status of ["complete", "archived", "trashed"] as const) {
     assert.equal(isTaskHistoryEntryClearable({

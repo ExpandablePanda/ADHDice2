@@ -663,6 +663,7 @@ export function TaskHistoryModal({
     dueDates,
     calendarOverrides,
   );
+  const calendarOverridesByDate = new Map((calendarOverrides ?? []).map((override) => [override.logicalDate, override]));
   const selectedEntry = historyByDate.get(selectedDate) ?? null;
   const selectedDateSet = new Set(selectedDates);
   const selectedEntries = selectedDates.map((dateKey) => historyByDate.get(dateKey) ?? null);
@@ -716,6 +717,7 @@ export function TaskHistoryModal({
     && calendarActionStatuses.includes("delayed");
   const canClearSelectedDate = selectedDates.length > 0
     && selectedDates.every((dateKey) => isTaskHistoryEntryClearable({
+      calendarOverride: calendarOverridesByDate.get(dateKey),
       entry: historyByDate.get(dateKey),
       entryDate: dateKey,
       task,
@@ -903,7 +905,7 @@ export function TaskHistoryModal({
             : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
         >
           {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
-          <span>{status === "clear" ? "Clear" : formatTaskStatusLabel(status)}</span>
+          <span>{status === "clear" ? "Blank" : formatTaskStatusLabel(status)}</span>
         </TaskTableChipButton>
       ))}
       {calendarOverrideActions.map((overrideState) => (

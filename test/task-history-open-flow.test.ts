@@ -6,6 +6,7 @@ const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+const historyActionsSource = readFileSync(new URL("../src/hooks/useTaskHistoryActions.ts", import.meta.url), "utf8");
 const taskHistoryModalSource = modalSource.slice(
   modalSource.indexOf("export function TaskHistoryModal"),
   modalSource.indexOf("\nexport function BottomDockAdapter"),
@@ -91,6 +92,16 @@ test("Task History outcome edits use one set_outcome replacement without pre-cle
   assert.match(flow, /syncLiveTask: true/);
   assert.doesNotMatch(flow, /for \(const entryDate of entryDates\)/);
   assert.doesNotMatch(flow, /currentTask/);
+});
+
+test("Blank for an override stays on the canonical clear_outcome path and refreshes the read", () => {
+  const flowStart = appSource.indexOf('    onSetStatuses: async');
+  const flowEnd = appSource.indexOf('    onSetDelayedStatus:', flowStart);
+  const flow = appSource.slice(flowStart, flowEnd);
+  assert.match(flow, /syncTaskHistoryEntries\(\s*taskHistoryModalTaskId,\s*"pending",\s*entryDates,/);
+  assert.match(flow, /refreshTaskHistoryDetailAfterMutation\(taskHistoryModalTaskId\)/);
+  assert.match(historyActionsSource, /if \(status === "pending"\) \{\s*canonicalIntent = \{ type: "clear_outcome", logical_date: entryDate,/);
+  assert.doesNotMatch(historyActionsSource, /outcome: "blank"/);
 });
 
 test("Task History Complete uses the selected date through the canonical History action path", () => {
