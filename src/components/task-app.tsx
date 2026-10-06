@@ -165,6 +165,9 @@ import { useOnTimePlan } from "@/hooks/useOnTimePlan";
 import { useHomeRecordTargets } from "@/hooks/useHomeRecordTargets";
 import { useMilestoneData } from "@/hooks/useMilestoneData";
 import { getHomeMilestoneNavigationState } from "@/lib/milestones";
+import { parseFocusDeepLink, shouldApplyPendingFocusDeepLink } from "@/lib/focus-deep-link";
+import { buildFocusWidgetSnapshot, focusWidgetSnapshotSignature } from "@/lib/focus-widget";
+import { syncFocusWidgetSnapshot } from "@/lib/focus-widget-native";
 import { taskNeedsContentFolderMove } from "@/lib/task-content-folders";
 import { buildAchievementSummaryPresentation } from "@/lib/achievement-progress";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
@@ -1193,6 +1196,8 @@ export function TaskApp() {
   const [mobileZoom, setMobileZoom] = useState<(typeof MOBILE_ZOOM_LEVELS)[number]>(1);
   const [isHudAppearanceReady, setIsHudAppearanceReady] = useState(false);
   const [hasCompletedInitialAppBoot, setHasCompletedInitialAppBoot] = useState(false);
+  const [hasPendingFocusDeepLink, setHasPendingFocusDeepLink] = useState(false);
+  const lastFocusWidgetSnapshotSignatureRef = useRef<string | null>(null);
   const countdownAlarmAudioContextRef = useRef<AudioContext | null>(null);
   const countdownAlarmGainRef = useRef<GainNode | null>(null);
   const countdownAlarmOscillatorRef = useRef<OscillatorNode | null>(null);
@@ -5755,6 +5760,67 @@ export function TaskApp() {
   const isInitialTaskStateProjectionReady = isCurrentTaskProjectionReadReady && isBehaviorAuthorityReady;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
+
+  useEffect(() => {
+    if (!isNativeIosPlatform) {
+      return;
+    }
+
+    let cancelled = false;
+    let listener: { remove: () => Promise<void> } | null = null;
+    const rememberFocusDeepLink = (url: unknown) => {
+      if (!cancelled && parseFocusDeepLink(url) === "Focus") {
+        setHasPendingFocusDeepLink(true);
+      }
+    };
+
+    void App.getLaunchUrl()
+      .then((launchUrl) => rememberFocusDeepLink(launchUrl?.url))
+      .catch(() => undefined);
+    void App.addListener("appUrlOpen", ({ url }) => rememberFocusDeepLink(url))
+      .then((nextListener) => {
+        if (cancelled) {
+          void nextListener.remove();
+          return;
+        }
+        listener = nextListener;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      cancelled = true;
+      if (listener) {
+        void listener.remove();
+      }
+    };
+  }, [isNativeIosPlatform]);
+
+  useEffect(() => {
+    if (!shouldApplyPendingFocusDeepLink({
+      hasPendingRequest: hasPendingFocusDeepLink,
+      isAuthenticated: Boolean(session?.user),
+      isNativeIos: isNativeIosPlatform,
+      isRestoringUiState: shouldDeferPageRender,
+      isAuthenticatedAppBootReady,
+    })) {
+      return;
+    }
+    setHasPendingFocusDeepLink(false);
+    setActivePage("Focus");
+  }, [hasPendingFocusDeepLink, isAuthenticatedAppBootReady, isNativeIosPlatform, session?.user, setActivePage, shouldDeferPageRender]);
+
+  useEffect(() => {
+    if (!isNativeIosPlatform) {
+      return;
+    }
+    const snapshot = buildFocusWidgetSnapshot(activeSessions, focusCategories);
+    const signature = focusWidgetSnapshotSignature(snapshot);
+    if (lastFocusWidgetSnapshotSignatureRef.current === signature) {
+      return;
+    }
+    lastFocusWidgetSnapshotSignatureRef.current = signature;
+    void syncFocusWidgetSnapshot(snapshot);
+  }, [activeSessions, focusCategories, isNativeIosPlatform]);
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;

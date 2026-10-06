@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.96`.
+- Current working app version: `7.16.97`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-06 7.16.97 Focus Lock Screen Foundation + Circular Widget
+
+The Xcode-created `ADHDiceWidgetsExtension` target produces the
+`ADHDiceWidgets` widget product with bundle identifier
+`com.andrewschaffer.adhdice.ADHDiceWidgets`. The main app and extension share
+the App Group `group.com.andrewschaffer.adhdice`.
+
+The existing ADHDice Focus runtime remains authoritative. Native-only React
+synchronization resolves one primary active session: running before paused,
+newest `updatedAt` first within that state, then a stable `sessionId` / category
+ID tie-break. It publishes only the compact Codable Focus snapshot needed by
+WidgetKit through App Group `UserDefaults`; WidgetKit never mutates Focus.
+
+The `adhdice://focus` route is parsed once through Capacitor App
+`getLaunchUrl()` and `appUrlOpen`, then applied through the existing
+`setActivePage("Focus")` after authenticated UI restoration is ready. The
+circular Lock Screen widget shows an idle Focus symbol, a native count-up or
+countdown timer, or a frozen paused value, and always opens that route.
+
+Dynamic Island, ActivityKit, and interactive widget controls are deferred to
+the next ticket.
 
 ## 2026-10-05 7.16.96 iOS Microphone Privacy Permission
 

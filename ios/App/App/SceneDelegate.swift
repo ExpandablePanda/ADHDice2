@@ -26,5 +26,6 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
 final class ADHDiceBridgeViewController: CAPBridgeViewController {
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(ADHDiceHealthKitPlugin())
+        bridge?.registerPluginInstance(ADHDiceFocusWidgetPlugin())
     }
 }
