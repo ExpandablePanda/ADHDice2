@@ -82,6 +82,21 @@ test("browser intent accepts only command input and derives identity from the au
   assert.equal(normalized.acceptedPayloadDigest, descriptor.acceptedPayloadDigest);
 });
 
+test("manual Blank uses the canonical blank_due Calendar override intent", () => {
+  const intent = {
+    type: "calendar_override",
+    task_id: "task-1",
+    replay_identity: "calendar-blank-1",
+    logical_date: "2026-08-10",
+    override_state: "blank_due",
+  } as const;
+
+  assert.deepEqual(validateTaskStateCommandIntent(intent), intent);
+  const command = buildTrustedTaskStateCommand({ intent, userId: "owner-1", readModel, logicalDay, now: "2026-08-10T12:00:00.000Z" });
+  assert.equal(command.type, "calendar_override");
+  assert.equal(command.calendarOverride?.override_state, "blank_due");
+});
+
 test("explicit Unscheduled marker survives Edge validation and canonical command normalization", () => {
   const intent = {
     type: "set_due_date",

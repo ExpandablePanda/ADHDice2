@@ -8,6 +8,7 @@ const delayMigration = readFileSync(new URL("../supabase/patch_task_state_comman
 const rolloverMigration = readFileSync(new URL("../supabase/patch_task_state_command_rollover_7_9_20.sql", import.meta.url), "utf8");
 const autoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_auto_missed_history_copy_7_9_31.sql", import.meta.url), "utf8");
 const scheduleAutoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_schedule_auto_missed_7_11_73.sql", import.meta.url), "utf8");
+const blankDueMigration = readFileSync(new URL("../supabase/patch_task_calendar_override_blank_due_7_16_99.sql", import.meta.url), "utf8");
 
 const legacyAutomaticHistoryGuard = /if\s+v_command_type\s*<>\s*'reconcile_rollover'\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
 const scheduleAwareAutomaticHistoryGuard = /if\s+v_command_type\s+not\s+in\s*\(\s*'reconcile_rollover'\s*,\s*'set_due_date'\s*,\s*'set_repeat'\s*\)\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted schedule replay or rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
@@ -97,6 +98,12 @@ test("Calendar override commands replace the active row without deleting audit h
   assert.match(overrideBranch, /revision = existing_override\.revision \+ 1/);
   assert.doesNotMatch(overrideBranch, /delete\s+from\s+public\.adhdice_task_calendar_overrides/i);
   assert.match(schema, /create unique index if not exists adhdice_task_calendar_overrides_active_key[\s\S]*where is_active/i);
+});
+
+test("7.16.99 adds blank_due without executing a schema change in source tests", () => {
+  assert.match(blankDueMigration, /drop constraint if exists adhdice_task_calendar_overrides_override_state_check/i);
+  assert.match(blankDueMigration, /override_state in \('unscheduled', 'not_due', 'due_open', 'blank_due'\)/i);
+  assert.doesNotMatch(blankDueMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
 });
 
 test("clear_outcome retires the same-date Calendar override before removing the canonical outcome", () => {

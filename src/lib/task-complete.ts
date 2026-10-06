@@ -39,7 +39,8 @@ const HISTORY_OVERRIDE_ACTION_STATUSES = [
   "complete",
 ] as const;
 
-const HISTORY_CALENDAR_OVERRIDE_ACTIONS = ["not_due", "due_open"] as const;
+const HISTORY_CALENDAR_OVERRIDE_ACTIONS = ["blank_due", "not_due", "due_open"] as const;
+export type TaskHistoryCalendarOverrideAction = typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number];
 
 export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency) {
   if (repeatFrequency === "per_week" || repeatFrequency === "per_month") {
@@ -174,29 +175,34 @@ export function getTaskHistoryCalendarVisibleActionStatuses({
 }
 
 export function getTaskHistoryCalendarOverrideActions({
+  entryStatuses = [],
   isMultiSelect,
   selectedDate,
   selectedDates,
   task,
   todayDateKey,
 }: {
+  entryStatuses?: readonly (Pick<TaskHistory, "status"> | null | undefined)[];
   isMultiSelect: boolean;
   selectedDate: string;
   selectedDates?: readonly string[];
   task: Pick<Task, "status">;
   todayDateKey: string;
-}): Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]> {
+}): TaskHistoryCalendarOverrideAction[] {
   if (task.status === "complete" || task.status === "archived" || task.status === "trashed") {
-    return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
+    return [] as TaskHistoryCalendarOverrideAction[];
+  }
+  if (entryStatuses.some((entry) => entry?.status === "complete" || entry?.status === "delayed")) {
+    return [] as TaskHistoryCalendarOverrideAction[];
   }
   if (isMultiSelect) {
     const editableDates = (selectedDates ?? [selectedDate]).filter((dateKey) => dateKey <= todayDateKey);
     return editableDates.length > 0 ? ["not_due"] : [];
   }
   if (selectedDate > todayDateKey) {
-    return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
+    return [] as TaskHistoryCalendarOverrideAction[];
   }
-  if (selectedDate < todayDateKey) return ["not_due"];
+  if (selectedDate < todayDateKey) return ["blank_due", "not_due"];
   return [...HISTORY_CALENDAR_OVERRIDE_ACTIONS];
 }
 

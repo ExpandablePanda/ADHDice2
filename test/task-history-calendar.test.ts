@@ -87,9 +87,10 @@ test("Task calendar keeps Task history projections and mutation ownership separa
   assert.doesNotMatch(modal, /onMarkDoneToday|onRemoveCompletionOnLogicalDay/);
 });
 
-test("Task History offers Blank for canonical Calendar overrides and keeps the internal clear action", () => {
+test("Task History separates Blank override from Automatic reset", () => {
   assert.match(modal, /const calendarOverridesByDate = new Map/);
   assert.match(modal, /calendarOverride: calendarOverridesByDate\.get\(dateKey\)/);
-  assert.match(modal, /status === "clear" \? "Blank" : formatTaskStatusLabel\(status\)/);
+  assert.match(modal, /status === "clear" \? "Automatic" : formatTaskStatusLabel\(status\)/);
+  assert.match(modal, /overrideState === "blank_due" \? "Blank"/);
   assert.doesNotMatch(modal, /status === "clear" \? "Clear"/);
 });

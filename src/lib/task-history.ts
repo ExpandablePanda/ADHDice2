@@ -110,7 +110,7 @@ export type TaskHistoryRowProjection = {
   isCalculated: boolean;
   isDueOpportunity: boolean;
   logicalDate: string;
-  status: FinalizedTaskHistoryStatus | "not_due" | "blank";
+  status: FinalizedTaskHistoryStatus | "not_due" | "due" | "blank";
 };
 
 /** Merge explicit History, active manual Calendar overrides, and finalized Effective Timeline days. */
@@ -137,14 +137,19 @@ export function buildTaskHistoryRowProjections(
   }
 
   for (const override of calendarOverrides) {
-    if (override.overrideState !== "not_due" || rowsByDate.has(override.logicalDate)) continue;
+    if (rowsByDate.has(override.logicalDate)) continue;
+    const status = override.overrideState === "not_due"
+      ? "not_due"
+      : override.overrideState === "blank_due"
+        ? "blank"
+        : "due";
     rowsByDate.set(override.logicalDate, {
       calendarOverride: override,
       entry: null,
       isCalculated: false,
-      isDueOpportunity: false,
+      isDueOpportunity: status !== "not_due",
       logicalDate: override.logicalDate,
-      status: "not_due",
+      status,
     });
   }
 

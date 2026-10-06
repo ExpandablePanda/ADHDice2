@@ -296,6 +296,7 @@ function calendarOverrideDay(
   logicalDate: string,
   override: TaskCalendarOverride,
   currentLogicalDate: string,
+  behaviorPolicy: TaskBehaviorPolicy,
 ): TaskEffectiveTimelineDay {
   if (override.overrideState === "unscheduled") {
     return {
@@ -307,6 +308,21 @@ function calendarOverrideDay(
   if (override.overrideState === "not_due") {
     return {
       ...calculatedDay(taskId, logicalDate, "not_due", "none"),
+      sourceKind: "calendar_override",
+      calendarOverrideId: override.id,
+    };
+  }
+  if (override.overrideState === "blank_due") {
+    return {
+      ...calculatedDay(
+        taskId,
+        logicalDate,
+        "unhandled_blank",
+        logicalDate < currentLogicalDate ? "overdue" : "due",
+        logicalDate,
+        behaviorPolicy,
+        true,
+      ),
       sourceKind: "calendar_override",
       calendarOverrideId: override.id,
     };
@@ -458,6 +474,7 @@ export function buildTaskEffectiveTimeline(
 
   const applyCalendarOverrideToCursor = (date: string, override: TaskCalendarOverride) => {
     if (completed) return;
+    if (override.overrideState === "blank_due") return;
     if (override.overrideState === "due_open") {
       // An override cannot skip an already-active earlier obligation. When the
       // date is the next causal opportunity, it becomes the active occurrence
@@ -597,6 +614,13 @@ export function buildTaskEffectiveTimeline(
         && fixedRecurrence
         && (delayedFinalFixedOccurrence || isScheduledOccurrence(fixedRecurrence, activeDueOn, date)),
       );
+      const unresolvedFixedDueOn = behaviorPolicy.unresolvedOccurrence === "blank"
+        && isFixedRecurrence
+        && activeDueOn
+        && activeDueOn < input.logicalDate
+        ? activeDueOn
+        : null;
+      if (unresolvedFixedDueOn) unresolvedDueOn ??= unresolvedFixedDueOn;
       if (completed) {
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
       } else if (recurrenceEndedBeforeDate) {
@@ -621,7 +645,7 @@ export function buildTaskEffectiveTimeline(
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
       } else if (date < activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
-      } else if (isFixedRecurrence && !isFixedScheduledDate) {
+      } else if (isFixedRecurrence && !isFixedScheduledDate && !unresolvedFixedDueOn) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (date < input.logicalDate) {
         // Policy is prospective: explicit History remains a fact, while
@@ -631,9 +655,11 @@ export function buildTaskEffectiveTimeline(
         // distinct without inventing a historical fact.
         calculated = behaviorPolicy.unresolvedOccurrence === "missed"
           ? calculatedDay(input.task.id, date, "not_due", "none")
-          : calculatedDay(input.task.id, date, "unhandled_blank", "overdue", date, behaviorPolicy, true);
+          : calculatedDay(input.task.id, date, "unhandled_blank", "overdue", unresolvedDueOn ?? date, behaviorPolicy, true);
       } else if (date === input.logicalDate) {
-        if (activeDueOn < input.logicalDate) {
+        if (unresolvedFixedDueOn) {
+          calculated = calculatedDay(input.task.id, date, "unhandled_blank", "overdue", unresolvedFixedDueOn, behaviorPolicy, true);
+        } else if (activeDueOn < input.logicalDate) {
           if (isFixedRecurrence) {
             calculated = calculatedDay(input.task.id, date, "open", "due", date);
           } else {
@@ -682,7 +708,7 @@ export function buildTaskEffectiveTimeline(
         calculated = calculatedDay(input.task.id, date, "missed", "overdue", occurrenceDueOn, behaviorPolicy, true);
       }
       const baseDay = override
-        ? calendarOverrideDay(input.task.id, date, override, input.logicalDate)
+        ? calendarOverrideDay(input.task.id, date, override, input.logicalDate, behaviorPolicy)
         : calculated;
       day = workflowApplies
         ? workflowDay(date, baseDay, workflow)

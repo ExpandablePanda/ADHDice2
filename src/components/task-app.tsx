@@ -7407,50 +7407,63 @@ export function TaskApp() {
     return { history: refreshedHistory.history, task: committedTask };
   }
 
-  async function setTaskHistoryNotDue(taskId: string, logicalDate: string): Promise<boolean> {
+  async function setTaskHistoryCalendarOverride(
+    taskId: string,
+    logicalDate: string,
+    overrideState: "not_due" | "blank_due",
+    label: "Not Due" | "Blank",
+  ): Promise<boolean> {
     const historySnapshot = taskHistoryByTaskId[taskId] ?? taskHistoryDetailByTaskId[taskId]?.history ?? [];
     const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
     let currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
       ?? tasks.find((candidate) => candidate.id === taskId)
       ?? null;
     if (existingEntry && replaceableTaskHistoryOutcomes.has(existingEntry.status)) {
-      const clearedHistory = await clearTaskHistoryCalendarDate(taskId, logicalDate, "Not Due", { clearReplaceableOutcome: true });
+      const clearedHistory = await clearTaskHistoryCalendarDate(taskId, logicalDate, label, { clearReplaceableOutcome: true });
       if (!clearedHistory) return false;
       currentTask = clearedHistory.task ?? currentTask;
     }
 
     if (!currentTask) {
-      setMessage({ tone: "warn", text: "Task wasn't updated: Could not replace the existing History status with Not Due." });
+      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${label}.` });
       return false;
     }
     const committed = await updateTask(taskId, {}, {
       canonicalIntent: {
         type: "calendar_override",
         logical_date: logicalDate,
-        override_state: "not_due",
+        override_state: overrideState,
       },
       expectedTask: currentTask,
       replayIdentity: createTaskStateReplayIdentity(),
     });
     if (!committed) {
-      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due did not finish correctly." });
+      setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${label} did not finish correctly.` });
       return false;
     }
 
     const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
     const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
     if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
-      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });
+      setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${label} could not be reconciled.` });
       return false;
     }
     await reconcileTaskHistoryMutation(taskId, refreshedHistory.history);
     const conflictingEntry = refreshedHistory.history.find((entry) => entry.entry_date === logicalDate && replaceableTaskHistoryOutcomes.has(entry.status));
-    const activeNotDue = refreshedOverrides.some((override) => override.logicalDate === logicalDate && override.overrideState === "not_due");
-    if (conflictingEntry || !activeNotDue) {
-      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });
+    const activeOverride = refreshedOverrides.some((override) => override.logicalDate === logicalDate && override.overrideState === overrideState);
+    if (conflictingEntry || !activeOverride) {
+      setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${label} could not be reconciled.` });
       return false;
     }
     return true;
+  }
+
+  async function setTaskHistoryNotDue(taskId: string, logicalDate: string): Promise<boolean> {
+    return setTaskHistoryCalendarOverride(taskId, logicalDate, "not_due", "Not Due");
+  }
+
+  async function setTaskHistoryBlankDue(taskId: string, logicalDate: string): Promise<boolean> {
+    return setTaskHistoryCalendarOverride(taskId, logicalDate, "blank_due", "Blank");
   }
 
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
@@ -7462,10 +7475,13 @@ export function TaskApp() {
       return true;
     },
     onRenameTaskTitle: (taskId: string, nextTitle: string): Promise<boolean> => updateTask(taskId, { title: nextTitle }),
-    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open"): Promise<boolean> => {
+    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "blank_due" | "due_open"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) return false;
       if (overrideState === "not_due") {
         return setTaskHistoryNotDue(taskHistoryModalTaskId, logicalDate);
+      }
+      if (overrideState === "blank_due") {
+        return setTaskHistoryBlankDue(taskHistoryModalTaskId, logicalDate);
       }
       const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskHistoryModalTaskId) ?? taskHistoryModalTask;
       const committed = await updateTask(taskHistoryModalTaskId, {}, {

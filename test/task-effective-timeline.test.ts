@@ -8,6 +8,7 @@ import {
   type TaskHistoryOutcome,
   type TaskStateHistoryRow,
   type TaskStateSnapshot,
+  type TaskTimelineReplayRequest,
   type TaskWorkflowState,
   type TaskBehaviorPolicyRevision,
   STANDARD_TASK_BEHAVIOR_POLICY,
@@ -53,6 +54,7 @@ function timeline(
     workflow?: TaskWorkflowState;
     behaviorPolicy?: TaskBehaviorPolicy;
     behaviorPolicyRevisions?: TaskBehaviorPolicyRevision[];
+    replay?: TaskTimelineReplayRequest;
   } = {},
 ) {
   return buildTaskEffectiveTimeline({
@@ -64,6 +66,7 @@ function timeline(
     calendarOverrides: overrides.calendarOverrides,
     behaviorPolicy: overrides.behaviorPolicy,
     behaviorPolicyRevisions: overrides.behaviorPolicyRevisions,
+    replay: overrides.replay,
     workflow: overrides.workflow,
   });
 }
@@ -1262,6 +1265,110 @@ test("fixed Weekdays preserve Missed continuity across non-occurrence dates", ()
     logicalDate: "2026-08-10", calendarStart: "2026-08-03", calendarEnd: "2026-08-10",
   });
   assert.equal(nextMissed.currentMissedStreak, 6);
+});
+
+test("blank-policy fixed recurrence preserves an unresolved Monday across following weekdays", () => {
+  const recurrence: TaskStateSnapshot["recurrence"] = {
+    kind: "weekly", intervalWeeks: 1, weekdays: [1], anchorDate: "2026-09-28",
+  };
+  const blankPolicy = {
+    ...STANDARD_TASK_BEHAVIOR_POLICY,
+    id: "timeline-weekly-blank",
+    unresolvedOccurrence: "blank" as const,
+    missedStreakOnUnhandled: "ignore" as const,
+  };
+  const result = timeline({
+    task: { dueOn: "2026-09-28", activeOccurrenceDueOn: "2026-09-28", recurrence },
+    behaviorPolicy: blankPolicy,
+    logicalDate: "2026-10-02",
+    calendarStart: "2026-09-28",
+    calendarEnd: "2026-10-05",
+  });
+
+  for (const date of ["2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]) {
+    assert.equal(result.days[date]?.state, "unhandled_blank", date);
+    assert.equal(result.days[date]?.obligation, "overdue", date);
+    assert.equal(result.days[date]?.occurrenceDueOn, "2026-09-28", date);
+    assert.equal(result.days[date]?.sourceKind, "calculated", date);
+  }
+  assert.equal(result.days["2026-10-05"]?.state, "scheduled");
+  assert.equal(result.days["2026-10-05"]?.obligation, "due");
+  assert.equal(result.days["2026-10-05"]?.occurrenceDueOn, "2026-10-05");
+  assert.equal(result.unresolvedDueOn, "2026-09-28");
+  assert.deepEqual(result.automaticHistoryRows, undefined);
+});
+
+test("standard fixed recurrence still materializes only scheduled automatic Missed facts", () => {
+  const recurrence: TaskStateSnapshot["recurrence"] = {
+    kind: "weekly", intervalWeeks: 1, weekdays: [1], anchorDate: "2026-09-28",
+  };
+  const result = timeline({
+    task: { dueOn: "2026-09-28", activeOccurrenceDueOn: "2026-09-28", recurrence },
+    logicalDate: "2026-10-02",
+    calendarStart: "2026-09-28",
+    calendarEnd: "2026-10-05",
+    replay: {
+      changedLogicalDate: "2026-09-28",
+      kind: "due_date",
+      manualDueOn: "2026-09-28",
+      materializeAutomaticMissed: true,
+    },
+  });
+
+  assert.deepEqual(result.automaticHistoryRows?.map((row) => row.logicalDate), ["2026-09-28"]);
+  assert.equal(result.days["2026-09-28"]?.state, "missed");
+  for (const date of ["2026-09-29", "2026-09-30", "2026-10-01", "2026-10-02"]) {
+    assert.equal(result.days[date]?.state, "not_due", date);
+  }
+  assert.equal(result.days["2026-10-05"]?.state, "scheduled");
+});
+
+test("manual Blank is authoritative without becoming an unscheduled override", () => {
+  const overridden = timeline({
+    task: { dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10", recurrence: { kind: "rolling", intervalDays: 1 } },
+    logicalDate: "2026-08-11",
+    calendarStart: "2026-08-10",
+    calendarEnd: "2026-08-11",
+    calendarOverrides: [calendarOverride("2026-08-11", "blank_due")],
+  });
+
+  assert.equal(overridden.days["2026-08-11"]?.state, "unhandled_blank");
+  assert.equal(overridden.days["2026-08-11"]?.sourceKind, "calendar_override");
+  assert.equal(overridden.days["2026-08-11"]?.calendarOverrideId, "calendar-override-2026-08-11-blank_due");
+  assert.equal(overridden.days["2026-08-11"]?.obligation, "due");
+  assert.equal(overridden.days["2026-08-11"]?.occurrenceDueOn, "2026-08-11");
+  assert.equal(overridden.days["2026-08-11"]?.state, "unhandled_blank");
+  assert.equal(overridden.automaticHistoryRows, undefined);
+
+  const notDueOverride = timeline({
+    task: {
+      dueOn: "2026-08-10",
+      activeOccurrenceDueOn: "2026-08-10",
+      recurrence: { kind: "weekly", intervalWeeks: 1, weekdays: [1], anchorDate: "2026-08-10" },
+    },
+    logicalDate: "2026-08-11",
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-11",
+    calendarOverrides: [calendarOverride("2026-08-11", "blank_due")],
+  });
+  assert.equal(notDueOverride.days["2026-08-11"]?.state, "unhandled_blank");
+  assert.equal(notDueOverride.days["2026-08-11"]?.sourceKind, "calendar_override");
+  assert.equal(notDueOverride.days["2026-08-11"]?.obligation, "due");
+
+  const dueOverride = timeline({
+    task: {
+      dueOn: "2026-08-10",
+      activeOccurrenceDueOn: "2026-08-10",
+      recurrence: { kind: "weekly", intervalWeeks: 1, weekdays: [1], anchorDate: "2026-08-10" },
+    },
+    logicalDate: "2026-08-11",
+    calendarStart: "2026-08-11",
+    calendarEnd: "2026-08-11",
+    calendarOverrides: [calendarOverride("2026-08-11", "due_open")],
+  });
+  assert.equal(dueOverride.days["2026-08-11"]?.state, "open");
+  assert.equal(dueOverride.days["2026-08-11"]?.sourceKind, "calendar_override");
+  assert.equal(dueOverride.days["2026-08-11"]?.obligation, "due");
 });
 
 test("manual and calculated Not Due gaps are skipped by both Missed streak measures", () => {

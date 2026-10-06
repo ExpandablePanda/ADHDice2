@@ -41,7 +41,7 @@ import type { AppPage } from "@/lib/task-ui-state";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import type { ImportTasksResult, TaskImportOptions, TaskImportProgress } from "@/hooks/useTaskCrudActions";
-import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses, isTaskHistoryEntryClearable } from "@/lib/task-complete";
+import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses, isTaskHistoryEntryClearable, type TaskHistoryCalendarOverrideAction } from "@/lib/task-complete";
 import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
@@ -121,6 +121,13 @@ function formatTaskHistoryEditedLine(entry: Pick<DbTaskHistory, "created_at" | "
 
 function formatTaskCalendarOverrideChangedLine(override: TaskCalendarOverride) {
   return override.createdAt ? `Changed ${formatHistoryDateTime(override.createdAt)}` : null;
+}
+
+function formatTaskCalendarOverrideLabel(override: TaskCalendarOverride) {
+  if (override.overrideState === "blank_due") return "Blank";
+  if (override.overrideState === "due_open") return "Due";
+  if (override.overrideState === "not_due") return "Not Due";
+  return "Unscheduled";
 }
 
 function statusTone(status: TaskStatus) {
@@ -416,7 +423,7 @@ export function TaskHistoryModal({
   onLoadOlderTaskHistory?: () => Promise<boolean> | void;
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<boolean | void>;
   onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
-  onSetCalendarOverride?: (logicalDate: string, overrideState: "not_due" | "due_open") => Promise<boolean | void>;
+  onSetCalendarOverride?: (logicalDate: string, overrideState: TaskHistoryCalendarOverrideAction) => Promise<boolean | void>;
   task: Task;
   taskCandidates?: readonly Task[];
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
@@ -706,7 +713,7 @@ export function TaskHistoryModal({
     })
     : [];
   const calendarOverrideActions = calendarRead && onSetCalendarOverride
-    ? getTaskHistoryCalendarOverrideActions({ isMultiSelect, selectedDate, selectedDates, task, todayDateKey: today })
+    ? getTaskHistoryCalendarOverrideActions({ entryStatuses: selectedEntries, isMultiSelect, selectedDate, selectedDates, task, todayDateKey: today })
     : [];
   const canDelaySelectedDate = !isMultiSelect
     && !selectedIsFuture
@@ -845,7 +852,7 @@ export function TaskHistoryModal({
     }
   }
 
-  async function handleSetCalendarOverride(overrideState: "not_due" | "due_open") {
+  async function handleSetCalendarOverride(overrideState: TaskHistoryCalendarOverrideAction) {
     if (isSavingRef.current || !onSetCalendarOverride) return;
     const targetDates = isMultiSelect
       ? selectedDates.filter((dateKey) => dateKey <= today)
@@ -905,7 +912,7 @@ export function TaskHistoryModal({
             : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
         >
           {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
-          <span>{status === "clear" ? "Blank" : formatTaskStatusLabel(status)}</span>
+          <span>{status === "clear" ? "Automatic" : formatTaskStatusLabel(status)}</span>
         </TaskTableChipButton>
       ))}
       {calendarOverrideActions.map((overrideState) => (
@@ -914,8 +921,8 @@ export function TaskHistoryModal({
           disabled={isSaving}
           key={overrideState}
           onClick={() => { void handleSetCalendarOverride(overrideState); }}
-          toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
-        >{overrideState === "not_due" ? "Not Due" : "Due"}</TaskTableChipButton>
+          toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : overrideState === "blank_due" ? "border-[#c8c2d8] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
+        >{overrideState === "not_due" ? "Not Due" : overrideState === "blank_due" ? "Blank" : "Due"}</TaskTableChipButton>
       ))}
     </div>
   );
@@ -928,7 +935,7 @@ export function TaskHistoryModal({
       historyEntries={historyRows.map((row) => ({
         detail: <>
           <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{row.calendarOverride ? "Manual schedule override" : row.isDueOpportunity ? "Due opportunity" : "Manual history entry"}</p>
-          {row.calendarOverride ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">Changed to Not Due</p> : null}
+          {row.calendarOverride ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">Changed to {formatTaskCalendarOverrideLabel(row.calendarOverride)}</p> : null}
           {row.calendarOverride && formatTaskCalendarOverrideChangedLine(row.calendarOverride) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskCalendarOverrideChangedLine(row.calendarOverride)}</p> : null}
           {row.entry && formatTaskHistoryLoggedLine(row.entry) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskHistoryLoggedLine(row.entry)}</p> : null}
           {row.entry && formatTaskHistoryEditedLine(row.entry) ? <p className="mt-1 text-xs text-[#827a97] dark:text-white/55">{formatTaskHistoryEditedLine(row.entry)}</p> : null}

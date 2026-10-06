@@ -1990,6 +1990,31 @@ test("trusted Calendar override planner evaluates the proposed override before c
   assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
+test("trusted Calendar override planner preserves manual blank_due authority without History", () => {
+  const planningState = state({ due_on: "2026-08-10" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: {
+      ...planningState.engineInput!.task,
+      dueOn: "2026-08-10",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+    },
+  };
+  const planned = trustedCommand({
+    type: "calendar_override",
+    task_id: "task-1",
+    replay_identity: "calendar:2026-08-10:blank-due",
+    logical_date: "2026-08-10",
+    override_state: "blank_due",
+  }, planningState.task, boundary("one_time"));
+
+  const plan = planTaskStateCommand(planningState, planned);
+
+  assert.equal(plan.normalizedResult.calendarOverride?.override_state, "blank_due");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
+  assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
+});
+
 test("trusted planner accepts the Appanda 8/8-8/12 replacement range without occurrences", () => {
   const appandaLogicalDay = { ...logicalDay, logicalDate: "2026-08-13", identity: "user-1:2026-08-13:America/New_York:06:00:3" };
   const planningState = state({ due_on: "2026-08-08", repeat_frequency: "daily", repeat_interval: 1 });
