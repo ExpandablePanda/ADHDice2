@@ -34,6 +34,38 @@ const requiredCalendarAuthorityAssertions = [
 const legacyAutomaticHistoryGuard = /if\s+v_command_type\s*<>\s*'reconcile_rollover'\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
 const scheduleAwareAutomaticHistoryGuard = /if\s+v_command_type\s+not\s+in\s*\(\s*'reconcile_rollover'\s*,\s*'set_due_date'\s*,\s*'set_repeat'\s*\)\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted schedule replay or rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
 
+const calendarAuthorityReplacementPattern = /definition := replace\(\n    definition,\n    \$needle\$([\s\S]*?)\$needle\$,\n    \$replacement\$([\s\S]*?)\$replacement\$\n  \);/g;
+
+type SqlReplacement = { needle: string; replacement: string };
+
+function extractCalendarAuthorityReplacements(migration: string): SqlReplacement[] {
+  return Array.from(migration.matchAll(calendarAuthorityReplacementPattern), ([, needle, replacement]) => ({
+    needle,
+    replacement,
+  }));
+}
+
+function applyCalendarAuthorityReplacements(definition: string, migration: string): string {
+  const replacements = extractCalendarAuthorityReplacements(migration);
+  assert.equal(replacements.length, 9, "7.16.106 must contain all nine expected definition replacements");
+
+  return replacements.reduce((currentDefinition, replacement, index) => {
+    const occurrences = currentDefinition.split(replacement.needle).length - 1;
+    assert.equal(
+      occurrences,
+      1,
+      `7.16.106 replacement ${index + 1} must match its current-live-RPC anchor exactly once`,
+    );
+    return currentDefinition.replace(replacement.needle, replacement.replacement);
+  }, definition);
+}
+
+function replaceExactlyOnce(source: string, needle: string, replacement: string, label: string): string {
+  const occurrences = source.split(needle).length - 1;
+  assert.equal(occurrences, 1, `${label} must occur exactly once in the current-live-RPC fixture`);
+  return source.replace(needle, replacement);
+}
+
 function transformAutomaticHistoryGuard(definition: string): string {
   const matcher = new RegExp(legacyAutomaticHistoryGuard.source, legacyAutomaticHistoryGuard.flags);
   const matches = Array.from(definition.matchAll(matcher));
@@ -216,8 +248,81 @@ test("7.16.109 keeps migration dollar-quote delimiters balanced", () => {
   );
   assert.match(
     atomicHistoryDeleteBlock,
-    /end if;\$replacement\$\n  \);/,
-    "atomic History deletion replacement must close $replacement$ before its final );",
+    /end if;\n\n  if v_automatic_history_delete_ids <> '\[\]'::jsonb then\n    update public\.adhdice_task_occurrences occurrence\$replacement\$\n  \);/,
+    "atomic History deletion replacement must preserve the original automatic delete prefix before closing $replacement$",
+  );
+});
+
+test("7.16.110 preserves the original automatic History delete block during the full transform", () => {
+  const automaticHistoryUpdateAnchor =
+    "  if v_automatic_history_delete_ids <> '[]'::jsonb then\n"
+    + "    update public.adhdice_task_occurrences occurrence\n"
+    + "       set resolution_state = 'unresolved',";
+  assert.ok(sql.includes(automaticHistoryUpdateAnchor), "current live RPC must retain the automatic History update anchor");
+
+  const liveAchievementEvaluator = `    v_achievement_evaluation := public.adhdice_evaluate_achievements(
+      p_user_id,
+      v_achievement_operation_id,
+      'immediate'
+    );`;
+  const liveAchievementEvaluatorWithDeletes = `    v_achievement_evaluation := public.adhdice_evaluate_achievements_incremental_for_history_facts(
+      p_user_id,
+      array(
+        select value::uuid
+        from jsonb_array_elements_text(
+          (case when v_history_id is null then '[]'::jsonb else jsonb_build_array(v_history_id) end)
+          || coalesce(v_automatic_history_ids, '[]'::jsonb)
+          || coalesce(v_automatic_history_delete_ids, '[]'::jsonb)
+        ) value
+      ),
+      v_achievement_operation_id,
+      'immediate'
+    );`;
+  const liveHistoryResult = "    'history_fact_ids', v_automatic_history_ids,\n";
+  const liveHistoryResultWithDeletes = "    'history_fact_ids', v_automatic_history_ids,\n"
+    + "    'history_fact_delete_ids', v_automatic_history_delete_ids,\n";
+  // The checked-in RPC source predates these two installed-live hardening anchors;
+  // hydrate them before applying the complete 7.16.106 replacement sequence.
+  const currentLiveRpcFixture = replaceExactlyOnce(
+    replaceExactlyOnce(sql, liveAchievementEvaluator, liveAchievementEvaluatorWithDeletes, "live Achievement evaluator"),
+    liveHistoryResult,
+    liveHistoryResultWithDeletes,
+    "live History result reference",
+  );
+
+  const transformed = applyCalendarAuthorityReplacements(currentLiveRpcFixture, calendarAuthorityMigration);
+  const calendarHistoryBlockStart = transformed.indexOf(
+    "  if v_history_fact_delete_ids <> '[]'::jsonb then\n",
+  );
+  const automaticHistoryBlockStart = transformed.indexOf(automaticHistoryUpdateAnchor);
+  assert.ok(calendarHistoryBlockStart >= 0, "transformed RPC must contain the Calendar History retirement block");
+  assert.ok(
+    automaticHistoryBlockStart > calendarHistoryBlockStart,
+    "transformed RPC must place the original automatic History block after Calendar retirement",
+  );
+
+  const sequentialBlocks = transformed.slice(calendarHistoryBlockStart, automaticHistoryBlockStart);
+  assert.match(sequentialBlocks, /delete from public\.adhdice_task_history_facts fact/);
+  assert.match(
+    transformed,
+    /end if;\n\n  if v_automatic_history_delete_ids <> '\[\]'::jsonb then/,
+  );
+  assert.match(
+    transformed,
+    /if v_automatic_history_delete_ids <> '\[\]'::jsonb then\n    update public\.adhdice_task_occurrences occurrence\n       set resolution_state = 'unresolved',/,
+  );
+  assert.doesNotMatch(transformed, /end if;\n\s+set resolution_state = 'unresolved',/);
+
+  const originalAutomaticHistoryBlockStart = currentLiveRpcFixture.indexOf(automaticHistoryUpdateAnchor);
+  const originalAutomaticHistoryBlockEnd = currentLiveRpcFixture.indexOf(
+    "\n  if v_command_type = 'clear_outcome' then",
+    originalAutomaticHistoryBlockStart,
+  );
+  assert.ok(originalAutomaticHistoryBlockStart >= 0);
+  assert.ok(originalAutomaticHistoryBlockEnd > originalAutomaticHistoryBlockStart);
+  assert.ok(
+    transformed.includes(currentLiveRpcFixture.slice(originalAutomaticHistoryBlockStart, originalAutomaticHistoryBlockEnd)),
+    "transformed RPC must preserve the complete original automatic History block",
   );
 });
 

@@ -146,7 +146,10 @@ begin
        and fact.id in (
          select value::uuid from jsonb_array_elements_text(v_history_fact_delete_ids)
        );
-  end if;$replacement$
+  end if;
+
+  if v_automatic_history_delete_ids <> '[]'::jsonb then
+    update public.adhdice_task_occurrences occurrence$replacement$
   );
   definition := replace(
     definition,
