@@ -185,6 +185,42 @@ test("7.16.107 fails closed for every required 7.16.106 transform before executi
   assert.ok(executeIndex > assertionStart + raiseOffset);
 });
 
+test("7.16.109 keeps migration dollar-quote delimiters balanced", () => {
+  for (const delimiter of ["$needle$", "$replacement$", "$assert$", "$rpc$"]) {
+    const occurrences = calendarAuthorityMigration.split(delimiter).length - 1;
+    assert.equal(occurrences % 2, 0, `${delimiter} must occur an even number of times`);
+  }
+
+  const atomicHistoryDeleteStart = calendarAuthorityMigration.indexOf(
+    "  definition := replace(\n    definition,\n    $needle$  if v_automatic_history_delete_ids <> '[]'::jsonb then",
+  );
+  const achievementReplacementStart = calendarAuthorityMigration.indexOf(
+    "  definition := replace(\n    definition,\n    $needle$          || coalesce(v_automatic_history_delete_ids",
+    atomicHistoryDeleteStart,
+  );
+
+  assert.ok(atomicHistoryDeleteStart >= 0, "atomic History deletion replace block must exist");
+  assert.ok(
+    achievementReplacementStart > atomicHistoryDeleteStart,
+    "atomic History deletion replace block must precede the Achievement replacement",
+  );
+
+  const atomicHistoryDeleteBlock = calendarAuthorityMigration.slice(
+    atomicHistoryDeleteStart,
+    achievementReplacementStart,
+  );
+  assert.equal(
+    (atomicHistoryDeleteBlock.match(/\$replacement\$/g) ?? []).length,
+    2,
+    "atomic History deletion replacement must close its $replacement$ quote",
+  );
+  assert.match(
+    atomicHistoryDeleteBlock,
+    /end if;\$replacement\$\n  \);/,
+    "atomic History deletion replacement must close $replacement$ before its final );",
+  );
+});
+
 test("clear_outcome retires the same-date Calendar override before removing the canonical outcome", () => {
   const clearStart = sql.lastIndexOf("if v_command_type = 'clear_outcome' then");
   const clearEnd = sql.indexOf("elsif v_history <> '{}'::jsonb then", clearStart);

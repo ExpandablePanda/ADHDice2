@@ -146,7 +146,7 @@ begin
        and fact.id in (
          select value::uuid from jsonb_array_elements_text(v_history_fact_delete_ids)
        );
-  end if;
+  end if;$replacement$
   );
   definition := replace(
     definition,
