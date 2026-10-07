@@ -332,6 +332,9 @@ function materializeDelayOccurrence(
   const logicalDate = intent.logical_date ?? base.logicalDay.logicalDate;
   const existingOccurrence = readModel.occurrences.find((candidate) => candidate.scheduled_due_on === logicalDate && candidate.resolution_state !== "superseded");
   if (existingOccurrence) return existingOccurrence;
+  if (readModel.occurrences.some((candidate) => candidate.scheduled_due_on === logicalDate && candidate.resolution_state === "superseded")) {
+    throw new Error(`The canonical occurrence for ${logicalDate} has been superseded and cannot be delayed.`);
+  }
 
   const boundary = scheduleBoundaryForLogicalDate(readModel, logicalDate);
   if (boundary.schedule_model === "unscheduled") throw new Error("Delay requires a scheduled canonical occurrence.");

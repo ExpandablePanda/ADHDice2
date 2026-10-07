@@ -190,25 +190,37 @@ test("server Delay reuses an existing non-superseded occurrence for the logical 
   assert.equal(command.override?.occurrence_id, existing.id);
 });
 
-test("server Delay does not reuse a superseded occurrence", () => {
-  const superseded = storedOccurrence({ id: "superseded-occurrence", resolution_state: "superseded" });
-  const command = delayCommand(delayReadModel([superseded]), "delay-superseded");
+test("server Delay reuses an existing resolved occurrence unless it is superseded", () => {
+  const existing = storedOccurrence({
+    id: "resolved-occurrence",
+    resolution_state: "resolved",
+    resolved_logical_date: "2026-08-10",
+    resolved_outcome: "done",
+    resolved_history_id: "history-1",
+  });
+  const command = delayCommand(delayReadModel([existing]), "delay-resolved");
 
   assert.equal(command.type, "delay");
-  assert.notEqual(command.occurrence?.id, superseded.id);
-  assert.equal(command.occurrence?.scheduled_due_on, "2026-08-10");
-  assert.equal(command.occurrence?.source_boundary_id, "delay-boundary");
+  assert.equal(command.occurrence?.id, existing.id);
+  assert.equal(command.override?.occurrence_id, existing.id);
 });
 
-test("server Delay materializes a proven replacement when superseded is the only stored occurrence", () => {
-  const superseded = storedOccurrence({ id: "superseded-only", resolution_state: "superseded" });
-  const command = delayCommand(delayReadModel([superseded]), "delay-materialize");
+test("server Delay fails closed when the only stored occurrence is superseded", () => {
+  const superseded = storedOccurrence({ id: "superseded-occurrence", resolution_state: "superseded" });
+
+  assert.throws(
+    () => delayCommand(delayReadModel([superseded]), "delay-superseded"),
+    /The canonical occurrence for 2026-08-10 has been superseded and cannot be delayed\./,
+  );
+});
+
+test("server Delay materializes a proven occurrence when no stored row exists", () => {
+  const command = delayCommand(delayReadModel([]), "delay-materialize");
 
   assert.equal(command.type, "delay");
   assert.equal(command.occurrence?.origin_kind, "proven");
   assert.equal(command.occurrence?.resolution_state, "unresolved");
   assert.equal(command.override?.scheduled_due_on, "2026-08-10");
-  assert.notEqual(command.occurrence?.id, superseded.id);
 });
 
 test("server Delay fails closed when no canonical schedule boundary proves the requested date", () => {

@@ -214,6 +214,48 @@ test("historical Delay still prefers an existing canonical occurrence identity",
   assert.equal(command.override?.occurrence_id, "occurrence-existing");
 });
 
+test("historical Delay fails closed before materialization when the stored occurrence is superseded", () => {
+  const superseded = {
+    id: "occurrence-superseded",
+    user_id: "owner-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    occurrence_key: "task:task-1:occurrence:2026-10-05",
+    scheduled_due_on: "2026-10-05",
+    source_boundary_id: "boundary-existing",
+    recurrence_source_fingerprint: "boundary-existing",
+    origin_kind: "proven",
+    origin_confidence: "proven",
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: "owner-1",
+    source: "task_state_command",
+    materialization_reason: "schedule_projection",
+    resolution_state: "superseded",
+    resolved_logical_date: "2026-10-05",
+    resolved_outcome: "done",
+    resolved_history_id: "history-superseded",
+    command_id: null,
+    revision: 2,
+    created_at: "2026-10-05T12:00:00.000Z",
+    updated_at: "2026-10-05T12:00:00.000Z",
+  };
+
+  assert.throws(() => buildTrustedTaskStateCommand({
+    intent: {
+      type: "delay_occurrence",
+      task_id: "task-1",
+      replay_identity: "delay:task-1:superseded:2026-10-08",
+      logical_date: "2026-10-05",
+      effective_due_on: "2026-10-08",
+    },
+    userId: "owner-1",
+    readModel: { ...canonicalReadModel, occurrences: [superseded] } as unknown as CanonicalTaskStateReadModel,
+    logicalDay: { logicalDate: "2026-10-07", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-10-07T12:00:00.000Z",
+  }), /The canonical occurrence for 2026-10-05 has been superseded and cannot be delayed\./);
+});
+
 test("trusted Calendar In Progress is limited to the current canonical logical day", () => {
   const logicalDay = { logicalDate: "2026-10-07", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 };
   for (const logicalDate of ["2026-10-06", "2026-10-08"]) {

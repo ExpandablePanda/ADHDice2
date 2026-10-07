@@ -100,6 +100,13 @@ test("canonical Delay materializes occurrence before validating History ownershi
   assert.ok(occurrenceInsert < historyOwnershipCheck);
 });
 
+test("canonical occurrence schema enforces one row per Task/date and derives the unique occurrence key from that date", () => {
+  assert.match(schema, /constraint adhdice_task_occurrences_entity_date_key\s+unique \(user_id, entity_id, scheduled_due_on\)/i);
+  assert.match(schema, /constraint adhdice_task_occurrences_key_key\s+unique \(user_id, occurrence_key\)/i);
+  assert.match(schema, /constraint adhdice_task_occurrences_key_shape_check check \([\s\S]*occurrence_key = 'task:' \|\| entity_id::text \|\| ':occurrence:' \|\| scheduled_due_on::text/i);
+  assert.match(schema, /resolution_state in \('unresolved', 'resolved', 'superseded'\)/i);
+});
+
 test("Calendar override commands replace the active row without deleting audit history", () => {
   const overrideBranchStart = sql.indexOf("if v_calendar_override <> '{}'::jsonb then");
   const entitlementStart = sql.indexOf("-- The entitlement is canonical", overrideBranchStart);
