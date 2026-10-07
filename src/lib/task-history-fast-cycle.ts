@@ -95,6 +95,7 @@ type SetTimer = (callback: () => void, delayMs: number) => TimerHandle;
 type ClearTimer = (timer: TimerHandle) => void;
 
 export type TaskHistoryFastCycleController = {
+  activate: () => void;
   cancel: () => void;
   dispose: () => void;
   flush: () => Promise<boolean>;
@@ -173,6 +174,13 @@ export function createTaskHistoryFastCycleController({
   }
 
   return {
+    activate() {
+      if (!disposed) return;
+      clearTimer();
+      generation += 1;
+      pending = null;
+      disposed = false;
+    },
     cancel() {
       clearTimer();
       generation += 1;

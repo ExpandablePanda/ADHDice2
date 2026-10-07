@@ -535,6 +535,8 @@ export function TaskHistoryModal({
   }, [fastCycleController, task.id]);
 
   useEffect(() => {
+    fastCycleController.activate();
+
     return () => {
       fastCycleController.dispose();
     };
@@ -1113,8 +1115,13 @@ export function TaskHistoryModal({
           disabled={isSaving}
           key={overrideState}
           onClick={() => { void runAfterPendingCycle(() => handleSetCalendarOverride(overrideState)); }}
-          toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : overrideState === "blank_due" ? "border-[#c8c2d8] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70" : overrideState === "in_progress" ? "border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#31518f] dark:bg-[#182645] dark:text-[#a9c2ff]" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
-        >{overrideState === "not_due" ? "Not Due" : overrideState === "blank_due" ? "Blank" : overrideState === "in_progress" ? "In Progress" : "Due"}</TaskTableChipButton>
+          toneClassName={overrideState === "in_progress"
+            ? `${calendarOverridesByDate.get(selectedDate)?.overrideState === "in_progress" ? TASK_STATUS_INVERTED_CHIP_STYLES.in_progress : `${TASK_STATUS_CHIP_STYLES.in_progress} opacity-78 hover:opacity-100`} disabled:opacity-50`
+            : `${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : overrideState === "blank_due" ? "border-[#c8c2d8] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
+        >
+          {overrideState === "in_progress" ? renderTaskStatusCircle("in_progress", "sm", { inverted: calendarOverridesByDate.get(selectedDate)?.overrideState === "in_progress" }) : null}
+          <span>{overrideState === "not_due" ? "Not Due" : overrideState === "blank_due" ? "Blank" : overrideState === "in_progress" ? "In Progress" : "Due"}</span>
+        </TaskTableChipButton>
       ))}
     </div>
   );

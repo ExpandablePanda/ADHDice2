@@ -100,8 +100,112 @@ test("controller debounces repeated clicks and writes only the final idle select
   assert.equal(pendingStates.at(-1), null);
 });
 
+test("controller survives Strict Mode setup-cleanup-setup replay and commits after reactivation", async () => {
+  const timer = fakeTimerHarness();
+  const calls: TaskHistoryFastCyclePending[] = [];
+  const pendingStates: Array<TaskHistoryFastCyclePending | null> = [];
+  const controller = createTaskHistoryFastCycleController({
+    commit: async (next) => {
+      calls.push(next);
+      return true;
+    },
+    onPendingChange: (next) => pendingStates.push(next),
+    setTimer: timer.setTimer,
+    clearTimer: timer.clearTimer,
+  });
+
+  controller.activate();
+  controller.dispose();
+  controller.activate();
+  controller.schedule(pending("in_progress"));
+  assert.equal(timer.getDelay(), TASK_HISTORY_FAST_CYCLE_DELAY_MS);
+  timer.getCallback()?.();
+
+  assert.equal(await controller.flush(), true);
+  assert.deepEqual(calls.map((call) => call.action), ["in_progress"]);
+  assert.equal(pendingStates.at(-1), null);
+});
+
+test("disposed controller rejects scheduling, reactivation does not restore stale pending work, and stale timers stay fenced", async () => {
+  const timer = fakeTimerHarness();
+  const calls: TaskHistoryFastCyclePending[] = [];
+  const pendingStates: Array<TaskHistoryFastCyclePending | null> = [];
+  const controller = createTaskHistoryFastCycleController({
+    commit: async (next) => {
+      calls.push(next);
+      return true;
+    },
+    onPendingChange: (next) => pendingStates.push(next),
+    setTimer: timer.setTimer,
+    clearTimer: timer.clearTimer,
+  });
+
+  controller.dispose();
+  controller.schedule(pending("done"));
+  assert.deepEqual(pendingStates, []);
+
+  controller.activate();
+  controller.schedule(pending("done"));
+  const staleTimer = timer.getCallback();
+  controller.dispose();
+  controller.activate();
+  controller.schedule(pending("did_my_best"));
+  assert.equal(pendingStates.at(-1)?.action, "did_my_best");
+  staleTimer?.();
+  timer.getCallback()?.();
+
+  assert.equal(await controller.flush(), true);
+  assert.deepEqual(calls.map((call) => call.action), ["did_my_best"]);
+  assert.equal(pendingStates.at(-1), null);
+});
+
+test("generation fencing keeps a stale pre-cancel timer from clearing the newer pending action", async () => {
+  const timer = fakeTimerHarness();
+  const calls: TaskHistoryFastCyclePending[] = [];
+  const pendingStates: Array<TaskHistoryFastCyclePending | null> = [];
+  const controller = createTaskHistoryFastCycleController({
+    commit: async (next) => {
+      calls.push(next);
+      return true;
+    },
+    onPendingChange: (next) => pendingStates.push(next),
+    setTimer: timer.setTimer,
+    clearTimer: timer.clearTimer,
+  });
+
+  controller.schedule(pending("done"));
+  const staleTimer = timer.getCallback();
+  controller.cancel();
+  controller.schedule(pending("missed"));
+  staleTimer?.();
+  timer.getCallback()?.();
+
+  assert.equal(await controller.flush(), true);
+  assert.deepEqual(calls.map((call) => call.action), ["missed"]);
+  assert.equal(pendingStates.at(-1), null);
+});
+
+test("failed commits clear the misleading pending preview", async () => {
+  const timer = fakeTimerHarness();
+  const pendingStates: Array<TaskHistoryFastCyclePending | null> = [];
+  const controller = createTaskHistoryFastCycleController({
+    commit: async () => false,
+    onPendingChange: (next) => pendingStates.push(next),
+    setTimer: timer.setTimer,
+    clearTimer: timer.clearTimer,
+  });
+
+  controller.schedule(pending("done"));
+  timer.getCallback()?.();
+
+  assert.equal(await controller.flush(), false);
+  assert.equal(pendingStates.at(-1), null);
+});
+
 test("first click selects only, multi-select and future dates remain outside cycling", () => {
   assert.match(adapterSource, /if \(dateKey !== selectedDate\) \{[\s\S]*?await fastCycleController\.flush\(\);[\s\S]*?setSelectedDate\(dateKey\);[\s\S]*?return;/);
+  assert.match(adapterSource, /if \(dateKey <= today\) cycleSelectedDate\(dateKey\);/);
+  assert.match(adapterSource, /fastCycleController\.schedule\(\{ action: nextAction, dateKey, taskId: task\.id \}\);/);
   assert.match(adapterSource, /if \(isMultiSelect \|\| isSavingRef\.current \|\| dateKey > today\) return/);
   assert.match(adapterSource, /if \(!isMultiSelect\) await fastCycleController\.flush\(\)/);
   assert.match(adapterSource, /onRequestComplete\?: \(logicalDate: string\)/);
