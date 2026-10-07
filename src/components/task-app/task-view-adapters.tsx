@@ -769,19 +769,62 @@ export function TaskHistoryModal({
       }));
   }
   const canClearSelectedDate = canClearDates(selectedDates);
-  const fastCycleActions = !isMultiSelect && !selectedIsFuture
-    ? getTaskHistoryFastCycleActions({
-      calendarActionStatuses,
-      calendarOverrideActions,
-      canClear: canClearSelectedDate,
-    })
-    : [];
-  const currentFastCycleAction = getTaskHistoryFastCycleCurrentAction({
-    calendarOverrideState: calendarOverridesByDate.get(selectedDate)?.overrideState,
-    entryStatus: selectedEntry?.status,
-    sourceKind: selectedTimelineDay?.sourceKind,
-    state: selectedCalendarState,
-  });
+
+  function getFastCycleContext(dateKey: string) {
+    const entry = historyByDate.get(dateKey) ?? null;
+    const timelineDay = calendarRead?.timeline?.days[dateKey] ?? null;
+    const calendarState = calendarRead?.states[dateKey] ?? null;
+    const targetEngineActionStatuses = calendarReadInput && calendarRead
+      ? resolveTaskHistoryCalendarActionStatuses({
+        behaviorPolicyRevisions,
+        behaviorProfiles,
+        namedCustomRulesetBehaviorPolicyRevisions,
+        behaviorSelectionsByTaskId,
+        policyLoading: behaviorPolicyLoading,
+        history: normalizedTaskHistory,
+        historicalOverride: true,
+        logicalDate: dateKey,
+        logicalDates: [dateKey],
+        logicalDayRollover: calendarReadInput.logicalDayRollover,
+        now: calendarReadInput.now,
+        task,
+        timezone: calendarReadInput.timezone,
+      })
+      : null;
+    const targetCalendarActionStatuses = calendarRead
+      ? getTaskHistoryCalendarVisibleActionStatuses({
+        engineStatuses: targetEngineActionStatuses,
+        historicalOverride: true,
+        isMultiSelect: false,
+        task,
+      })
+      : [];
+    const targetCalendarOverrideActions = calendarRead && onSetCalendarOverride
+      ? getTaskHistoryCalendarOverrideActions({
+        entryStatuses: [entry],
+        isMultiSelect: false,
+        selectedDate: dateKey,
+        selectedDates: [dateKey],
+        task,
+        todayDateKey: today,
+      })
+      : [];
+    const targetCanClear = canClearDates([dateKey]);
+    return {
+      actions: dateKey > today ? [] : getTaskHistoryFastCycleActions({
+        calendarActionStatuses: targetCalendarActionStatuses,
+        calendarOverrideActions: targetCalendarOverrideActions,
+        canClear: targetCanClear,
+      }),
+      currentAction: getTaskHistoryFastCycleCurrentAction({
+        calendarOverrideState: calendarOverridesByDate.get(dateKey)?.overrideState,
+        entryStatus: entry?.status,
+        sourceKind: timelineDay?.sourceKind,
+        state: calendarState,
+      }),
+    };
+  }
+
   const pendingCycleForSelectedDate = pendingCycle?.taskId === task.id && pendingCycle.dateKey === selectedDate
     ? pendingCycle
     : null;
@@ -915,12 +958,12 @@ export function TaskHistoryModal({
 
   async function commitFastCycle(pendingEdit: TaskHistoryFastCyclePending) {
     if (pendingEdit.taskId !== task.id
-      || pendingEdit.dateKey !== selectedDate
       || isMultiSelect
-      || pendingEdit.dateKey > today
-      || !fastCycleActions.includes(pendingEdit.action)) {
+      || pendingEdit.dateKey > today) {
       return false;
     }
+    const targetContext = getFastCycleContext(pendingEdit.dateKey);
+    if (!targetContext.actions.includes(pendingEdit.action)) return false;
     if (pendingEdit.action === "automatic") return handleSetStatus("clear", [pendingEdit.dateKey]);
     if (pendingEdit.action === "blank") return handleSetCalendarOverride("blank_due", pendingEdit.dateKey);
     if (pendingEdit.action === "not_due") return handleSetCalendarOverride("not_due", pendingEdit.dateKey);
@@ -934,8 +977,10 @@ export function TaskHistoryModal({
 
   function cycleSelectedDate(dateKey: string) {
     if (isMultiSelect || isSavingRef.current || dateKey > today) return;
-    const currentAction = pendingCycleForSelectedDate?.action ?? currentFastCycleAction;
-    const nextAction = getNextTaskHistoryFastCycleAction(fastCycleActions, currentAction);
+    const targetContext = getFastCycleContext(dateKey);
+    const pendingForDate = pendingCycle?.taskId === task.id && pendingCycle.dateKey === dateKey ? pendingCycle : null;
+    const currentAction = pendingForDate?.action ?? targetContext.currentAction;
+    const nextAction = getNextTaskHistoryFastCycleAction(targetContext.actions, currentAction);
     if (!nextAction) return;
     fastCycleController.schedule({ action: nextAction, dateKey, taskId: task.id });
   }
@@ -943,16 +988,15 @@ export function TaskHistoryModal({
   async function selectDate(dateKey: string) {
     setShowDelayEditor(false);
     if (!isMultiSelect) {
-      if (dateKey === selectedDate) {
-        cycleSelectedDate(dateKey);
-        return;
+      if (isSavingRef.current) return;
+      if (dateKey !== selectedDate) {
+        await fastCycleController.flush();
+        if (isSavingRef.current) return;
+        setSelectedDate(dateKey);
+        setSelectedDates([dateKey]);
+        setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
       }
-      if (isSavingRef.current) return;
-      await fastCycleController.flush();
-      if (isSavingRef.current) return;
-      setSelectedDate(dateKey);
-      setSelectedDates([dateKey]);
-      setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
+      if (dateKey <= today) cycleSelectedDate(dateKey);
       return;
     }
 
