@@ -172,8 +172,8 @@ test("Task History production wiring selects first, cycles only on the selected 
   assert.match(adapterSource, /calendarRead\?\.timeline\?\.days\[dateKey\]/);
   assert.match(adapterSource, /canClearDates\(\[dateKey\]\)/);
   assert.match(adapterSource, /logicalDate: dateKey/);
-  assert.match(adapterSource, /if \(dateKey !== selectedDate\) \{[\s\S]*?await fastCycleController\.flush\(\);[\s\S]*?setSelectedDate\(dateKey\)/);
-  assert.match(adapterSource, /if \(dateKey <= today\) cycleSelectedDate\(dateKey\);/);
+  assert.match(adapterSource, /if \(dateKey !== selectedDate\) \{[\s\S]*?await fastCycleController\.flush\(\);[\s\S]*?setSelectedDate\(dateKey\);[\s\S]*?return;\s*\}/);
+  assert.match(adapterSource, /\}\s*if \(dateKey <= today\) cycleSelectedDate\(dateKey\);/);
   assert.match(adapterSource, /fastCycleController\.schedule\(\{ action: nextAction, dateKey, taskId: task\.id \}\)/);
   assert.match(adapterSource, /pendingCycleForSelectedDate \? `Pending: \$\{getTaskHistoryFastCycleActionLabel/);
   assert.match(adapterSource, /handleSetStatus\("clear", \[pendingEdit\.dateKey\]\)/);
@@ -188,7 +188,7 @@ test("Task History production wiring selects first, cycles only on the selected 
   assert.match(adapterSource, /fastCycleController\.dispose\(\)/);
 });
 
-test("one-click interaction model selects the target, previews immediately, and flushes the prior date before cycling the new date", async () => {
+test("two-step interaction model selects first, flushes prior date, then cycles only after the second click", async () => {
   const timer = fakeTimerHarness();
   const calls: TaskHistoryFastCyclePending[] = [];
   const pendingStates: Array<TaskHistoryFastCyclePending | null> = [];
@@ -211,6 +211,7 @@ test("one-click interaction model selects the target, previews immediately, and 
     if (dateKey !== selectedDate) {
       await controller.flush();
       selectedDate = dateKey;
+      return;
     }
     const context = contexts[dateKey];
     const existing = pendingStates.at(-1)?.dateKey === dateKey ? pendingStates.at(-1) : null;
@@ -221,11 +222,16 @@ test("one-click interaction model selects the target, previews immediately, and 
 
   await clickDate("2026-10-05");
   assert.equal(selectedDate, "2026-10-05");
+  assert.equal(pendingStates.length, 0);
+  assert.deepEqual(calls, []);
+  await clickDate("2026-10-05");
   assert.equal(pendingStates.at(-1)?.action, "blank");
   await clickDate("2026-10-05");
   assert.equal(pendingStates.at(-1)?.action, "done");
   await clickDate("2026-10-06");
   assert.deepEqual(calls.map((call) => call.action), ["done"]);
   assert.equal(selectedDate, "2026-10-06");
+  assert.equal(pendingStates.at(-1), null);
+  await clickDate("2026-10-06");
   assert.equal(pendingStates.at(-1)?.action, "due");
 });

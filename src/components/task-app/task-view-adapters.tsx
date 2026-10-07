@@ -995,6 +995,7 @@ export function TaskHistoryModal({
         setSelectedDate(dateKey);
         setSelectedDates([dateKey]);
         setDisplayedMonth(getTaskCalendarMonth(new Date(`${dateKey}T12:00:00`)));
+        return;
       }
       if (dateKey <= today) cycleSelectedDate(dateKey);
       return;
