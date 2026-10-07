@@ -823,6 +823,7 @@ export function TaskHistoryModal({
         calendarActionStatuses: targetCalendarActionStatuses,
         calendarOverrideActions: targetCalendarOverrideActions,
         canClear: targetCanClear,
+        includeInProgress: dateKey === today,
       });
     const currentAction = getTaskHistoryFastCycleCurrentAction({
         calendarOverrideState: targetCalendarOverrideState,

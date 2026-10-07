@@ -202,7 +202,7 @@ export function getTaskHistoryCalendarOverrideActions({
   if (selectedDate > todayDateKey) {
     return [] as TaskHistoryCalendarOverrideAction[];
   }
-  if (selectedDate < todayDateKey) return ["in_progress", "blank_due", "not_due"];
+  if (selectedDate < todayDateKey) return ["blank_due", "not_due"];
   return [...HISTORY_CALENDAR_OVERRIDE_ACTIONS];
 }
 

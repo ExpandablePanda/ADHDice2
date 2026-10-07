@@ -144,13 +144,13 @@ test("History Calendar Blank eligibility accepts a clearable outcome or removabl
   }
 });
 
-test("History Calendar exposes In Progress, Blank, and Not Due for past dates but Due only for today", () => {
+test("History Calendar exposes In Progress only today and keeps schedule overrides scoped", () => {
   assert.deepEqual(getTaskHistoryCalendarOverrideActions({
     isMultiSelect: false,
     selectedDate: "2026-08-09",
     task: { status: "pending" },
     todayDateKey: "2026-08-10",
-  }), ["in_progress", "blank_due", "not_due"]);
+  }), ["blank_due", "not_due"]);
   assert.deepEqual(getTaskHistoryCalendarOverrideActions({
     isMultiSelect: false,
     selectedDate: "2026-08-10",

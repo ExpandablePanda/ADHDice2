@@ -2,8 +2,8 @@ import type { CanonicalTaskStateReadModel } from "../../../src/lib/task-state-ca
 import type { CanonicalEntityKind, CanonicalJsonObject, CanonicalLogicalDayContext, CanonicalTaskCalendarOverride, CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../../../src/lib/task-state-canonical/types.ts";
 import type { CanonicalTaskStateCommand } from "../../../src/lib/task-state-canonical/command-service.ts";
 import { deterministicUuid, sha256Digest } from "../../../src/lib/task-state-canonical/digest.ts";
-import { resolveCanonicalWorkflowOccurrence } from "../../../src/lib/task-state-canonical/engine-input.ts";
-import { occurrenceIdentity } from "../../../src/lib/task-state-engine/recurrence.ts";
+import { recurrenceFromBoundary, resolveCanonicalWorkflowOccurrence } from "../../../src/lib/task-state-canonical/engine-input.ts";
+import { occurrenceIdentity, scheduledOccurrences } from "../../../src/lib/task-state-engine/recurrence.ts";
 import { TASK_ROLLOVER_SWEEP_BATCH_SIZE } from "../../../src/lib/task-rollover-batch.ts";
 
 const DATE_KEY = /^\d{4}-\d{2}-\d{2}$/;
@@ -301,6 +301,20 @@ function currentBoundary(readModel: CanonicalTaskStateReadModel): CanonicalTaskS
   return boundary;
 }
 
+function scheduleBoundaryForLogicalDate(
+  readModel: CanonicalTaskStateReadModel,
+  logicalDate: string,
+): CanonicalTaskScheduleBoundary {
+  const boundary = [...readModel.scheduleBoundaries]
+    .filter((candidate) => {
+      const effectiveFrom = candidate.effective_from_logical_date ?? candidate.one_time_due_on ?? candidate.anchor_date;
+      return Boolean(effectiveFrom && effectiveFrom <= logicalDate);
+    })
+    .sort((left, right) => right.boundary_sequence - left.boundary_sequence)[0];
+  if (!boundary) throw new Error(`No canonical schedule boundary proves an occurrence for ${logicalDate}.`);
+  return boundary;
+}
+
 function nullableScheduleField<T>(
   schedule: ScheduleChangeIntent,
   previousValue: T,
@@ -309,14 +323,30 @@ function nullableScheduleField<T>(
   return Object.hasOwn(schedule, field) ? schedule[field] as T : previousValue;
 }
 
-function materializeDelayOccurrence(readModel: CanonicalTaskStateReadModel, base: ReturnType<typeof commandBase>, now: string): CanonicalTaskOccurrence {
-  const boundary = currentBoundary(readModel);
+function materializeDelayOccurrence(
+  intent: Extract<TaskStateCommandIntent, { type: "delay_occurrence" }>,
+  readModel: CanonicalTaskStateReadModel,
+  base: ReturnType<typeof commandBase>,
+  now: string,
+): CanonicalTaskOccurrence {
+  const logicalDate = intent.logical_date ?? base.logicalDay.logicalDate;
+  const existingOccurrence = readModel.occurrences.find((candidate) => candidate.scheduled_due_on === logicalDate);
+  if (existingOccurrence) return existingOccurrence;
+
+  const boundary = scheduleBoundaryForLogicalDate(readModel, logicalDate);
   if (boundary.schedule_model === "unscheduled") throw new Error("Delay requires a scheduled canonical occurrence.");
   if (boundary.repeat_frequency === "per_week" || boundary.repeat_frequency === "per_month") throw new Error("Delay is unavailable for quota recurrence.");
-  const scheduledDueOn = boundary.schedule_model === "one_time"
+  const recurrence = recurrenceFromBoundary(boundary);
+  const scheduleSeed = boundary.schedule_model === "one_time"
     ? boundary.one_time_due_on
-    : readModel.task.active_occurrence_due_on ?? readModel.task.due_on;
-  if (!scheduledDueOn) throw new Error("Delay requires a scheduled canonical occurrence.");
+    : boundary.anchor_date;
+  if (!scheduleSeed) throw new Error(`No canonical schedule anchor proves an occurrence for ${logicalDate}.`);
+  const scheduledDueOn = boundary.schedule_model === "one_time"
+    ? logicalDate === scheduleSeed ? scheduleSeed : null
+    : scheduledOccurrences(recurrence, scheduleSeed, logicalDate, logicalDate, { includeBeforeDueOn: true }).includes(logicalDate)
+      ? logicalDate
+      : null;
+  if (!scheduledDueOn) throw new Error(`No canonical schedule occurrence can be proven for ${logicalDate}; Delay was not written.`);
   const occurrenceKey = occurrenceIdentity(base.taskId, scheduledDueOn);
   return {
     id: deterministicUuid(`${base.commandId}:occurrence:${occurrenceKey}`),
@@ -448,6 +478,12 @@ function serverScheduleBoundary(
 }
 
 function serverCalendarOverride(intent: Extract<TaskStateCommandIntent, { type: "calendar_override" }>, base: ReturnType<typeof commandBase>, logicalDay: CanonicalLogicalDayContext, now: string): CanonicalTaskCalendarOverride {
+  if (intent.logical_date > logicalDay.logicalDate) {
+    throw new Error("Calendar overrides are unavailable for future logical dates.");
+  }
+  if (intent.override_state === "in_progress" && intent.logical_date !== logicalDay.logicalDate) {
+    throw new Error("In Progress is available only for the current logical day.");
+  }
   return {
     id: deterministicUuid(`${base.commandId}:calendar`),
     user_id: base.userId,
@@ -511,7 +547,7 @@ export function buildTrustedTaskStateCommand(input: {
   const { intent, userId, readModel, logicalDay, now } = input;
   const base = commandBase(intent, userId, readModel, logicalDay);
   const occurrence = intent.type === "delay_occurrence" && !intent.occurrence_key
-    ? materializeDelayOccurrence(readModel, base, now)
+    ? materializeDelayOccurrence(intent, readModel, base, now)
     : occurrenceFor(readModel, "occurrence_key" in intent ? intent.occurrence_key : undefined);
   const rolloverOccurrence = intent.type === "reconcile_rollover"
     ? resolveCanonicalWorkflowOccurrence(readModel)

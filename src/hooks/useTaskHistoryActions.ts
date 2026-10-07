@@ -17,7 +17,6 @@ import {
   type TaskStateRuntimeLocalTask,
 } from "@/lib/task-state-runtime-executor";
 import type { HistoryOutcomeBatchEntryInput } from "@/lib/task-history-outcome-batch-client";
-import { resolveCanonicalTaskOccurrence } from "@/lib/task-state-canonical/occurrence-resolution";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 
 const calendarReplayAttemptStores = new WeakMap<object, Map<string, string>>();
@@ -296,16 +295,6 @@ export function useTaskHistoryActions({
       if (status === "pending") {
         canonicalIntent = { type: "clear_outcome", logical_date: entryDate, ...trustedOccurrenceFields };
       } else if (status === "delayed") {
-        const occurrenceResolution = await resolveCanonicalTaskOccurrence(client, currentUserId, taskId, {
-          logicalDate: entryDate,
-          occurrenceId: existingEntry?.canonical_occurrence_id ?? null,
-          occurrenceKey: existingEntry?.occurrence_key,
-          scheduledDueOn: existingEntry?.occurrence_due_on,
-        });
-        if (!occurrenceResolution.occurrence) {
-          setMessage({ tone: "warn", text: occurrenceResolution.error ?? "Historical Delay requires a valid canonical occurrence." });
-          return false;
-        }
         const effectiveDueOn = options?.historicalOverrideDelayUntilDate ?? null;
         if (!effectiveDueOn) {
           setMessage({ tone: "warn", text: "Historical Delay requires a future effective date." });
@@ -314,7 +303,7 @@ export function useTaskHistoryActions({
         canonicalIntent = {
           type: "delay_occurrence",
           logical_date: entryDate,
-          occurrence_key: occurrenceResolution.occurrence.occurrence_key,
+          ...(trustedOccurrenceFields.occurrence_key ? { occurrence_key: trustedOccurrenceFields.occurrence_key } : {}),
           effective_due_on: effectiveDueOn,
         };
       } else {

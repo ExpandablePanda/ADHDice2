@@ -2015,6 +2015,115 @@ test("trusted Calendar override planner preserves manual blank_due authority wit
   assert.deepEqual(plan.normalizedResult.automaticHistoryDeleteIds, []);
 });
 
+test("Calendar manual authority retires only replaceable same-date History in the canonical plan", () => {
+  const cases = [
+    ["done", "in_progress"],
+    ["done", "blank_due"],
+    ["did_my_best", "not_due"],
+    ["missed", "due_open"],
+  ] as const;
+
+  for (const [outcome, overrideState] of cases) {
+    const planningState = state({ due_on: "2026-08-10", status: outcome === "missed" ? "missed" : "pending" });
+    const existing = outcome === "done"
+      ? doneHistory("2026-08-10")
+      : outcome === "did_my_best"
+        ? { ...doneHistory("2026-08-10"), outcome: "did_my_best" as const, id: "dmb-2026-08-10" }
+        : missedHistory("2026-08-10");
+    planningState.engineInput = {
+      ...planningState.engineInput!,
+      task: { ...planningState.engineInput!.task, dueOn: "2026-08-10", recurrence: { kind: "rolling", intervalDays: 1 } },
+      history: [existing],
+    };
+    const command = trustedCommand({
+      type: "calendar_override",
+      task_id: "task-1",
+      replay_identity: `calendar-authority:${outcome}:${overrideState}`,
+      logical_date: "2026-08-10",
+      override_state: overrideState,
+    }, planningState.task, boundary("rolling"));
+    const plan = planTaskStateCommand(planningState, command);
+    const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+
+    assert.equal(plan.normalizedResult.calendarOverride?.override_state, overrideState);
+    assert.deepEqual(plan.normalizedResult.calendarOverrideHistoryDeleteIds, [existing.id]);
+    assert.deepEqual(payload.history_fact_delete_ids, [existing.id]);
+    assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  }
+});
+
+test("Done to In Progress leaves the Task projection unchanged while the reconstructed Effective Timeline is manual", () => {
+  const planningState = state({ due_on: "2026-08-10", status: "pending" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-10", recurrence: { kind: "rolling", intervalDays: 1 } },
+    history: [doneHistory("2026-08-10")],
+  };
+  const plan = planTaskStateCommand(planningState, trustedCommand({
+    type: "calendar_override",
+    task_id: "task-1",
+    replay_identity: "calendar-authority:done-to-in-progress",
+    logical_date: "2026-08-10",
+    override_state: "in_progress",
+  }, planningState.task, boundary("rolling")));
+  const timeline = buildTaskEffectiveTimeline({
+    task: planningState.engineInput.task,
+    history: [],
+    calendarOverrides: [{ id: "override-1", logicalDate: "2026-08-10", overrideState: "in_progress" }],
+    logicalDate: "2026-08-10",
+    calendarStart: "2026-08-10",
+    calendarEnd: "2026-08-10",
+  });
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
+  assert.equal(timeline.days["2026-08-10"]?.state, "in_progress");
+  assert.equal(timeline.days["2026-08-10"]?.sourceKind, "calendar_override");
+  assert.deepEqual(plan.normalizedResult.calendarOverrideHistoryDeleteIds, ["done-2026-08-10"]);
+});
+
+test("Complete and Delayed History remain protected from Calendar overrides", () => {
+  for (const outcome of ["complete", "delayed"] as const) {
+    const planningState = state({ due_on: "2026-08-10" });
+    planningState.engineInput = {
+      ...planningState.engineInput!,
+      task: { ...planningState.engineInput!.task, dueOn: "2026-08-10", recurrence: { kind: "rolling", intervalDays: 1 } },
+      history: [{ ...doneHistory("2026-08-10"), id: `${outcome}-2026-08-10`, outcome }],
+    };
+    assert.throws(
+      () => planTaskStateCommand(planningState, trustedCommand({
+        type: "calendar_override",
+        task_id: "task-1",
+        replay_identity: `calendar-authority:protected:${outcome}`,
+        logical_date: "2026-08-10",
+        override_state: "not_due",
+      }, planningState.task, boundary("rolling"))),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "CALENDAR_OVERRIDE_PROTECTED_HISTORY",
+    );
+  }
+});
+
+test("Automatic clears the manual Calendar authority and restores calculated planning", () => {
+  const planningState = state({ due_on: "2026-08-10" });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    task: { ...planningState.engineInput!.task, dueOn: "2026-08-10", recurrence: { kind: "rolling", intervalDays: 1 } },
+    history: [],
+    calendarOverrides: [{ id: "override-1", logicalDate: "2026-08-10", overrideState: "not_due" }],
+  };
+  const plan = planTaskStateCommand(planningState, trustedCommand({
+    type: "clear_outcome",
+    task_id: "task-1",
+    replay_identity: "calendar-authority:automatic",
+    logical_date: "2026-08-10",
+  }, planningState.task, boundary("rolling")));
+
+  assert.equal(plan.normalizedResult.calendarOverride, null);
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "pending");
+  assert.deepEqual(plan.normalizedResult.calendarOverrideHistoryDeleteIds, []);
+});
+
 test("trusted planner accepts the Appanda 8/8-8/12 replacement range without occurrences", () => {
   const appandaLogicalDay = { ...logicalDay, logicalDate: "2026-08-13", identity: "user-1:2026-08-13:America/New_York:06:00:3" };
   const planningState = state({ due_on: "2026-08-08", repeat_frequency: "daily", repeat_interval: 1 });

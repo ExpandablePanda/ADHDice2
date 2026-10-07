@@ -247,6 +247,8 @@ export type CanonicalNormalizedCommandResult = {
   historyFact: CanonicalHistoryFactPlan | null;
   automaticHistoryFacts: CanonicalHistoryFactPlan[];
   automaticHistoryDeleteIds: string[];
+  /** Server-planned same-date replaceable History retired by a Calendar override. */
+  calendarOverrideHistoryDeleteIds?: string[];
   occurrence: CanonicalTaskOccurrence | null;
   scheduleBoundary: CanonicalTaskScheduleBoundary | null;
   occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null;
@@ -291,6 +293,7 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
   return normalizedResult.historyFact === null
     && (normalizedResult.automaticHistoryFacts ?? []).length === 0
     && (normalizedResult.automaticHistoryDeleteIds ?? []).length === 0
+    && (normalizedResult.calendarOverrideHistoryDeleteIds ?? []).length === 0
     && normalizedResult.occurrence === null
     && normalizedResult.scheduleBoundary === null
     && normalizedResult.occurrenceEffectiveOverride === null
@@ -363,6 +366,9 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
   }
   if ((normalizedResult.automaticHistoryDeleteIds ?? []).length > 0) {
     payload.automatic_history_delete_ids = normalizedResult.automaticHistoryDeleteIds;
+  }
+  if ((normalizedResult.calendarOverrideHistoryDeleteIds ?? []).length > 0) {
+    payload.history_fact_delete_ids = normalizedResult.calendarOverrideHistoryDeleteIds;
   }
   if (normalizedResult.occurrence) payload.occurrence = normalizedResult.occurrence;
   if (normalizedResult.scheduleBoundary) payload.schedule_boundary = normalizedResult.scheduleBoundary;
@@ -525,6 +531,12 @@ function engineInputForCalendarOverride(
     .filter((candidate) => candidate.logicalDate !== override.logical_date);
   return {
     ...engineInput,
+    history: override.override_state !== "unscheduled"
+      ? engineInput.history.filter((row) => !(
+        row.logicalDate === override.logical_date
+        && (row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "missed")
+      ))
+      : engineInput.history,
     calendarOverrides: override.is_active
       ? [...remaining, taskCalendarOverrideFromCanonical(override)]
       : remaining,
@@ -722,6 +734,7 @@ function initialResult(
     historyFact: null,
     automaticHistoryFacts: [],
     automaticHistoryDeleteIds: [],
+    calendarOverrideHistoryDeleteIds: [],
     occurrence: null,
     scheduleBoundary: null,
     occurrenceEffectiveOverride: null,
@@ -796,6 +809,28 @@ export function planTaskStateCommand(
       "ENGINE_SNAPSHOT_REQUIRED",
       `${input.type} planning requires the canonical engine snapshot; a client projection cannot substitute for it.`,
     );
+  }
+  if (input.type === "calendar_override" && state.engineInput) {
+    const logicalDate = input.calendarOverride.logical_date;
+    if (logicalDate > input.logicalDay.logicalDate) {
+      throw new CanonicalCommandPlanningError(
+        "TASK_ACTION_NOT_AVAILABLE",
+        "Calendar overrides are unavailable for future logical dates.",
+      );
+    }
+    const sameDateHistory = state.engineInput.history.find((row) => row.logicalDate === logicalDate) ?? null;
+    if (sameDateHistory?.outcome === "complete" || sameDateHistory?.outcome === "delayed") {
+      throw new CanonicalCommandPlanningError(
+        "CALENDAR_OVERRIDE_PROTECTED_HISTORY",
+        `The ${sameDateHistory.outcome === "complete" ? "Complete" : "Delayed"} History fact is terminal for ${logicalDate}.`,
+      );
+    }
+    if (input.calendarOverride.override_state === "in_progress" && logicalDate !== input.logicalDay.logicalDate) {
+      throw new CanonicalCommandPlanningError(
+        "TASK_ACTION_NOT_AVAILABLE",
+        "In Progress is available only for the current logical day.",
+      );
+    }
   }
   const manualAction = taskManualActionForCanonicalCommand(input);
   if (manualAction && state.engineInput) {
@@ -882,6 +917,7 @@ export function planTaskStateCommand(
               ...(state.engineInput!.task.activeStatus === "missed" ? { activeStatus: "pending" as const } : {}),
             },
             history: state.engineInput!.history.filter((row) => row.logicalDate !== input.logicalDate),
+            calendarOverrides: (state.engineInput!.calendarOverrides ?? []).filter((override) => override.logicalDate !== input.logicalDate),
             action: undefined,
           }
       : input.type === "schedule_change"
@@ -906,6 +942,7 @@ export function planTaskStateCommand(
   let historyFact: CanonicalHistoryFactPlan | null = null;
   let automaticHistoryFacts: CanonicalHistoryFactPlan[] = [];
   let automaticHistoryDeleteIds: string[] = [];
+  let calendarOverrideHistoryDeleteIds: string[] = [];
   let occurrence: CanonicalTaskOccurrence | null = null;
   let scheduleBoundary: CanonicalTaskScheduleBoundary | null = null;
   let occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null = null;
@@ -1063,6 +1100,19 @@ export function planTaskStateCommand(
     case "calendar_override": {
       projection = requireProjection(engineResult, task);
       calendarOverride = input.calendarOverride;
+      // Calendar In Progress is a date-scoped override, not a Task workflow or
+      // compatibility-status mutation. Keep the Task projection unchanged;
+      // the canonical Calendar override owns the visible date state.
+      if (input.calendarOverride.override_state === "in_progress") {
+        projection.status = task.status;
+      }
+      calendarOverrideHistoryDeleteIds = input.calendarOverride.override_state !== "unscheduled"
+        ? state.engineInput?.history
+          .filter((row) => row.logicalDate === input.calendarOverride.logical_date)
+          .filter((row) => row.outcome === "done" || row.outcome === "did_my_best" || row.outcome === "missed")
+          .map((row) => row.id)
+        ?? []
+        : [];
       break;
     }
     case "clear_outcome": {
@@ -1146,6 +1196,7 @@ export function planTaskStateCommand(
   normalizedResult.historyFact = historyFact;
   normalizedResult.automaticHistoryFacts = automaticHistoryFacts;
   normalizedResult.automaticHistoryDeleteIds = automaticHistoryDeleteIds;
+  normalizedResult.calendarOverrideHistoryDeleteIds = calendarOverrideHistoryDeleteIds;
   normalizedResult.occurrence = occurrence;
   normalizedResult.scheduleBoundary = scheduleBoundary;
   normalizedResult.occurrenceEffectiveOverride = occurrenceEffectiveOverride;

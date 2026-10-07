@@ -10,6 +10,7 @@ const autoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_a
 const scheduleAutoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_schedule_auto_missed_7_11_73.sql", import.meta.url), "utf8");
 const blankDueMigration = readFileSync(new URL("../supabase/patch_task_calendar_override_blank_due_7_16_99.sql", import.meta.url), "utf8");
 const inProgressMigration = readFileSync(new URL("../supabase/patch_task_calendar_override_in_progress_7_16_103.sql", import.meta.url), "utf8");
+const calendarAuthorityMigration = readFileSync(new URL("../supabase/patch_task_calendar_manual_authority_and_historical_delay_7_16_106.sql", import.meta.url), "utf8");
 
 const legacyAutomaticHistoryGuard = /if\s+v_command_type\s*<>\s*'reconcile_rollover'\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
 const scheduleAwareAutomaticHistoryGuard = /if\s+v_command_type\s+not\s+in\s*\(\s*'reconcile_rollover'\s*,\s*'set_due_date'\s*,\s*'set_repeat'\s*\)\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted schedule replay or rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
@@ -111,6 +112,19 @@ test("7.16.103 adds the source-only in_progress Calendar override state", () => 
   assert.match(inProgressMigration, /drop constraint if exists adhdice_task_calendar_overrides_override_state_check/i);
   assert.match(inProgressMigration, /override_state in \('unscheduled', 'not_due', 'due_open', 'blank_due', 'in_progress'\)/i);
   assert.doesNotMatch(inProgressMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
+});
+
+test("7.16.106 authors an atomic server-planned History retirement contract without executing it", () => {
+  assert.match(calendarAuthorityMigration, /v_history_fact_delete_ids jsonb/i);
+  assert.match(calendarAuthorityMigration, /'history_fact_delete_ids'/i);
+  assert.match(calendarAuthorityMigration, /v_command_type <> 'calendar_override'/i);
+  assert.match(calendarAuthorityMigration, /outcome not in \('done', 'did_my_best', 'missed'\)/i);
+  assert.match(calendarAuthorityMigration, /outcome in \('complete', 'delayed'\)/i);
+  assert.match(calendarAuthorityMigration, /delete from public\.adhdice_task_history_facts/i);
+  assert.match(calendarAuthorityMigration, /history_fact_delete_ids.*v_automatic_history_delete_ids/i);
+  assert.doesNotMatch(calendarAuthorityMigration, /delete from public\.adhdice_task_reward_entitlements/i);
+  assert.doesNotMatch(calendarAuthorityMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
+  assert.match(calendarAuthorityMigration, /Source-only migration\. Do not execute or deploy/i);
 });
 
 test("clear_outcome retires the same-date Calendar override before removing the canonical outcome", () => {

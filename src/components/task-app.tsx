@@ -7364,92 +7364,15 @@ export function TaskApp() {
     }
     return refreshedWindow;
   }
-  type HistoryCalendarClearResult = {
-    history: DbTaskHistory[];
-    task: TaskStateRuntimeLocalTask | null;
-  };
-  async function clearTaskHistoryCalendarDate(
-    taskId: string,
-    logicalDate: string,
-    replacementLabel: string,
-    options?: { clearReplaceableOutcome?: boolean; currentTask?: TaskStateRuntimeLocalTask | null },
-  ): Promise<HistoryCalendarClearResult | null> {
-    const detailHistorySnapshot = taskHistoryDetailByTaskId[taskId]?.history ?? [];
-    const historySnapshot = taskHistoryByTaskId[taskId] ?? detailHistorySnapshot;
-    const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
-    const activeOverride = (taskCalendarOverridesByTaskId[taskId] ?? []).some((override) => override.logicalDate === logicalDate);
-    const hasReplaceableOutcome = Boolean(
-      options?.clearReplaceableOutcome
-      && existingEntry
-      && replaceableTaskHistoryOutcomes.has(existingEntry.status),
-    );
-    const currentTask = (options?.currentTask
-      ?? canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
-      ?? tasks.find((candidate) => candidate.id === taskId)
-      ?? null) as TaskStateRuntimeLocalTask | null;
-    if (!activeOverride && !hasReplaceableOutcome) {
-      return { history: historySnapshot, task: currentTask };
-    }
-
-    if (!currentTask) {
-      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${replacementLabel}.` });
-      return null;
-    }
-    if (!await ensureCompleteTaskHistoryForMutation(taskId)) return null;
-    let committedTask: TaskStateRuntimeLocalTask | null = null;
-    const cleared = await updateTask(taskId, {}, {
-      canonicalIntent: {
-        type: "clear_outcome",
-        logical_date: logicalDate,
-        ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
-        ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
-      },
-      expectedTask: currentTask,
-      onCanonicalTaskCommitted: (nextTask) => {
-        committedTask = nextTask;
-      },
-      replayIdentity: createTaskStateReplayIdentity(),
-    });
-    if (!cleared) {
-      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${replacementLabel}.` });
-      return null;
-    }
-    if (!committedTask) {
-      setMessage({ tone: "warn", text: `Task was saved, but the canonical Task revision could not be carried into the replacement with ${replacementLabel}.` });
-      return null;
-    }
-
-    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
-    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
-    if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
-      setMessage({ tone: "warn", text: `Task was saved, but History could not be reconciled while replacing the existing status with ${replacementLabel}.` });
-      return null;
-    }
-    await reconcileTaskHistoryMutation(taskId, refreshedHistory.history, committedTask);
-    await refreshTaskHistoryDetailAfterMutation(taskId);
-    if (refreshedOverrides.some((override) => override.logicalDate === logicalDate)) {
-      setMessage({ tone: "warn", text: `Task was saved, but the existing Calendar status could not be cleared while replacing it with ${replacementLabel}.` });
-      return null;
-    }
-    return { history: refreshedHistory.history, task: committedTask };
-  }
-
   async function setTaskHistoryCalendarOverride(
     taskId: string,
     logicalDate: string,
     overrideState: "not_due" | "blank_due" | "due_open" | "in_progress",
     label: "Not Due" | "Blank" | "Due" | "In Progress",
   ): Promise<boolean> {
-    const historySnapshot = taskHistoryByTaskId[taskId] ?? taskHistoryDetailByTaskId[taskId]?.history ?? [];
-    const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
-    let currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
+    const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
       ?? tasks.find((candidate) => candidate.id === taskId)
       ?? null;
-    if (existingEntry && replaceableTaskHistoryOutcomes.has(existingEntry.status)) {
-      const clearedHistory = await clearTaskHistoryCalendarDate(taskId, logicalDate, label, { clearReplaceableOutcome: true });
-      if (!clearedHistory) return false;
-      currentTask = clearedHistory.task ?? currentTask;
-    }
 
     if (!currentTask) {
       setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${label}.` });

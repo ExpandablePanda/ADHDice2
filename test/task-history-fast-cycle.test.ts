@@ -60,6 +60,12 @@ test("fast-cycle order is exact, excludes Automatic, and waits 5 seconds", () =>
   assert.equal(TASK_HISTORY_FAST_CYCLE_DELAY_MS, 5_000);
   assert.equal(getTaskHistoryFastCycleActionLabel("in_progress"), "In Progress");
   assert.equal(getTaskHistoryFastCycleActionLabel("complete"), "Complete");
+  assert.deepEqual(getTaskHistoryFastCycleActions({
+    canClear: true,
+    calendarActionStatuses: ["done"],
+    calendarOverrideActions: ["blank_due"],
+    includeInProgress: false,
+  }), ["done", "did_my_best", "delayed", "missed", "complete", "blank", "not_due", "due"]);
 });
 
 test("calculated states use an internal null position and visible states advance in locked order", () => {

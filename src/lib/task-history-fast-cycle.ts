@@ -27,16 +27,18 @@ export function getTaskHistoryFastCycleActions({
   canClear,
   calendarActionStatuses,
   calendarOverrideActions,
+  includeInProgress = true,
 }: {
   canClear: boolean;
   calendarActionStatuses: readonly string[];
   calendarOverrideActions: readonly string[];
+  includeInProgress?: boolean;
 }) {
   // Automatic remains an explicit selected-day action, but never a cycle
   // position. An eligible Calendar edit always uses the same locked order;
   // canonical action authority still validates the final mutation.
   if (!canClear && calendarActionStatuses.length === 0 && calendarOverrideActions.length === 0) return [];
-  return [...TASK_HISTORY_FAST_CYCLE_ORDER];
+  return TASK_HISTORY_FAST_CYCLE_ORDER.filter((action) => includeInProgress || action !== "in_progress");
 }
 
 export function getTaskHistoryFastCycleCurrentAction({

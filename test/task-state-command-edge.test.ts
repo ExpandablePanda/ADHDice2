@@ -79,6 +79,176 @@ test("trusted Delay materializes the current canonical occurrence for the RPC wi
   assert.equal(command.override?.occurrence_id, command.occurrence?.id);
 });
 
+test("historical Delay lets the trusted server prove and materialize a missing Daily Until Complete occurrence", () => {
+  const initialBoundary = {
+    ...canonicalReadModel.scheduleBoundaries[0],
+    id: "boundary-daily-until-complete",
+    effective_from_logical_date: "2026-10-01",
+    schedule_model: "rolling",
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    anchor_date: "2026-10-01",
+    boundary_sequence: 3,
+  };
+  const laterBoundary = {
+    ...initialBoundary,
+    id: "boundary-after-target",
+    effective_from_logical_date: "2026-10-06",
+    schedule_model: "one_time",
+    repeat_frequency: "none",
+    one_time_due_on: "2026-10-06",
+    anchor_date: null,
+    boundary_sequence: 4,
+  };
+  const command = buildTrustedTaskStateCommand({
+    intent: {
+      type: "delay_occurrence",
+      task_id: "task-1",
+      replay_identity: "delay:task-1:2026-10-05:2026-10-08",
+      logical_date: "2026-10-05",
+      effective_due_on: "2026-10-08",
+    },
+    userId: "owner-1",
+    readModel: {
+      ...canonicalReadModel,
+      scheduleBoundaries: [initialBoundary, laterBoundary],
+      occurrences: [],
+    } as unknown as CanonicalTaskStateReadModel,
+    logicalDay: { logicalDate: "2026-10-07", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-10-07T12:00:00.000Z",
+  });
+
+  assert.equal(command.type, "delay");
+  assert.equal(command.occurrence?.scheduled_due_on, "2026-10-05");
+  assert.equal(command.occurrence?.source_boundary_id, "boundary-daily-until-complete");
+  assert.equal(command.override?.scheduled_due_on, "2026-10-05");
+  assert.equal(command.override?.effective_due_on, "2026-10-08");
+});
+
+test("historical Delay rejects an unproven date and quota recurrence without manufacturing an occurrence", () => {
+  const unprovenBoundary = {
+    ...canonicalReadModel.scheduleBoundaries[0],
+    id: "boundary-every-other-day",
+    effective_from_logical_date: "2026-10-01",
+    schedule_model: "rolling",
+    repeat_frequency: "daily",
+    repeat_interval: 2,
+    anchor_date: "2026-10-01",
+  };
+  assert.throws(() => buildTrustedTaskStateCommand({
+    intent: {
+      type: "delay_occurrence",
+      task_id: "task-1",
+      replay_identity: "delay:task-1:2026-10-04:2026-10-08",
+      logical_date: "2026-10-04",
+      effective_due_on: "2026-10-08",
+    },
+    userId: "owner-1",
+    readModel: { ...canonicalReadModel, scheduleBoundaries: [unprovenBoundary], occurrences: [] } as unknown as CanonicalTaskStateReadModel,
+    logicalDay: { logicalDate: "2026-10-07", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-10-07T12:00:00.000Z",
+  }), /No canonical schedule occurrence can be proven/);
+
+  const quotaBoundary = {
+    ...unprovenBoundary,
+    id: "boundary-quota",
+    repeat_frequency: "per_week",
+    repeat_quota_count: 3,
+  };
+  assert.throws(() => buildTrustedTaskStateCommand({
+    intent: {
+      type: "delay_occurrence",
+      task_id: "task-1",
+      replay_identity: "delay:task-1:2026-10-05:2026-10-08:quota",
+      logical_date: "2026-10-05",
+      effective_due_on: "2026-10-08",
+    },
+    userId: "owner-1",
+    readModel: { ...canonicalReadModel, scheduleBoundaries: [quotaBoundary], occurrences: [] } as unknown as CanonicalTaskStateReadModel,
+    logicalDay: { logicalDate: "2026-10-07", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-10-07T12:00:00.000Z",
+  }), /Delay is unavailable for quota recurrence/);
+});
+
+test("historical Delay still prefers an existing canonical occurrence identity", () => {
+  const existing = {
+    id: "occurrence-existing",
+    user_id: "owner-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    occurrence_key: "task:task-1:occurrence:2026-10-05",
+    scheduled_due_on: "2026-10-05",
+    source_boundary_id: "boundary-existing",
+    recurrence_source_fingerprint: "boundary-existing",
+    origin_kind: "proven",
+    origin_confidence: "proven",
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: "owner-1",
+    source: "task_state_command",
+    materialization_reason: "schedule_projection",
+    resolution_state: "unresolved",
+    resolved_logical_date: null,
+    resolved_outcome: null,
+    resolved_history_id: null,
+    command_id: null,
+    revision: 1,
+    created_at: "2026-10-05T12:00:00.000Z",
+    updated_at: "2026-10-05T12:00:00.000Z",
+  };
+  const command = buildTrustedTaskStateCommand({
+    intent: {
+      type: "delay_occurrence",
+      task_id: "task-1",
+      replay_identity: "delay:task-1:existing:2026-10-08",
+      logical_date: "2026-10-05",
+      occurrence_key: existing.occurrence_key,
+      effective_due_on: "2026-10-08",
+    },
+    userId: "owner-1",
+    readModel: { ...canonicalReadModel, occurrences: [existing] } as unknown as CanonicalTaskStateReadModel,
+    logicalDay: { logicalDate: "2026-10-07", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 },
+    now: "2026-10-07T12:00:00.000Z",
+  });
+  assert.equal(command.occurrence?.id, "occurrence-existing");
+  assert.equal(command.override?.occurrence_id, "occurrence-existing");
+});
+
+test("trusted Calendar In Progress is limited to the current canonical logical day", () => {
+  const logicalDay = { logicalDate: "2026-10-07", timezone: "America/New_York", dayStartTime: "06:00", settingsRevision: 3 };
+  for (const logicalDate of ["2026-10-06", "2026-10-08"]) {
+    assert.throws(() => buildTrustedTaskStateCommand({
+      intent: {
+        type: "calendar_override",
+        task_id: "task-1",
+        replay_identity: `calendar:in-progress:${logicalDate}`,
+        logical_date: logicalDate,
+        override_state: "in_progress",
+      },
+      userId: "owner-1",
+      readModel: canonicalReadModel,
+      logicalDay,
+      now: "2026-10-07T12:00:00.000Z",
+    }), /In Progress is available only for the current logical day|future logical dates/);
+  }
+
+  const today = buildTrustedTaskStateCommand({
+    intent: {
+      type: "calendar_override",
+      task_id: "task-1",
+      replay_identity: "calendar:in-progress:today",
+      logical_date: "2026-10-07",
+      override_state: "in_progress",
+    },
+    userId: "owner-1",
+    readModel: canonicalReadModel,
+    logicalDay,
+    now: "2026-10-07T12:00:00.000Z",
+  });
+  assert.equal(today.type, "calendar_override");
+  assert.equal(today.calendarOverride.override_state, "in_progress");
+});
+
 test("historical outcome commands do not infer phantom occurrences from a scheduled date", () => {
   const intent: TaskStateCommandIntent = {
     type: "set_outcome",
