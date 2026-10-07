@@ -12,6 +12,25 @@ const blankDueMigration = readFileSync(new URL("../supabase/patch_task_calendar_
 const inProgressMigration = readFileSync(new URL("../supabase/patch_task_calendar_override_in_progress_7_16_103.sql", import.meta.url), "utf8");
 const calendarAuthorityMigration = readFileSync(new URL("../supabase/patch_task_calendar_manual_authority_and_historical_delay_7_16_106.sql", import.meta.url), "utf8");
 
+const liveAchievementEvaluationFixture = `
+          || coalesce(v_automatic_history_delete_ids, '[]'::jsonb)
+        ) value`;
+
+const requiredCalendarAuthorityAssertions = [
+  "v_history_fact_delete_ids jsonb;",
+  "v_history_fact_delete_ids := coalesce(v_payload->'history_fact_delete_ids', '[]'::jsonb);",
+  "or jsonb_typeof(v_history_fact_delete_ids) <> 'array'",
+  "'automatic_history_delete_ids', 'history_fact_delete_ids', 'occurrence'",
+  "if v_command_type <> 'calendar_override' and v_history_fact_delete_ids <> '[]'::jsonb then",
+  "Calendar override History retirement is not a server-planned same-date replaceable fact.",
+  "Complete and Delayed History facts cannot be replaced by a Calendar override.",
+  "update public.adhdice_task_occurrences occurrence\n       set resolution_state = 'unresolved',",
+  "update public.adhdice_task_occurrence_effective_overrides override_row\n       set history_id = null,",
+  "delete from public.adhdice_task_history_facts fact",
+  "|| coalesce(v_history_fact_delete_ids, '[]'::jsonb)",
+  "'history_fact_delete_ids', v_automatic_history_delete_ids || v_history_fact_delete_ids",
+];
+
 const legacyAutomaticHistoryGuard = /if\s+v_command_type\s*<>\s*'reconcile_rollover'\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
 const scheduleAwareAutomaticHistoryGuard = /if\s+v_command_type\s+not\s+in\s*\(\s*'reconcile_rollover'\s*,\s*'set_due_date'\s*,\s*'set_repeat'\s*\)\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted schedule replay or rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
 
@@ -125,6 +144,38 @@ test("7.16.106 authors an atomic server-planned History retirement contract with
   assert.doesNotMatch(calendarAuthorityMigration, /delete from public\.adhdice_task_reward_entitlements/i);
   assert.doesNotMatch(calendarAuthorityMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
   assert.match(calendarAuthorityMigration, /Source-only migration\. Do not execute or deploy/i);
+});
+
+test("7.16.107 targets the current live Achievement evaluation shape and reports Calendar deletes", () => {
+  const liveAnchor = "          || coalesce(v_automatic_history_delete_ids, '[]'::jsonb)\n        ) value";
+  const patched = liveAchievementEvaluationFixture.replace(
+    liveAnchor,
+    "          || coalesce(v_automatic_history_delete_ids, '[]'::jsonb)\n"
+      + "          || coalesce(v_history_fact_delete_ids, '[]'::jsonb)\n"
+      + "        ) value",
+  );
+
+  assert.notEqual(patched, liveAchievementEvaluationFixture);
+  assert.match(patched, /coalesce\(v_history_fact_delete_ids, '\[\]'::jsonb\)/i);
+  assert.match(calendarAuthorityMigration, /\$needle\$[\s\S]*coalesce\(v_automatic_history_delete_ids, '\[\]'::jsonb\)[\s\S]*\) value\$needle\$/i);
+  assert.match(calendarAuthorityMigration, /\$replacement\$[\s\S]*coalesce\(v_history_fact_delete_ids, '\[\]'::jsonb\)[\s\S]*\) value\$replacement\$/i);
+  assert.match(calendarAuthorityMigration, /\|\| coalesce\(v_history_fact_delete_ids, '\[\]'::jsonb\)[\s\S]*\) value/);
+});
+
+test("7.16.107 fails closed for every required 7.16.106 transform before executing the RPC", () => {
+  const assertionStart = calendarAuthorityMigration.indexOf("if position($assert$");
+  const executeIndex = calendarAuthorityMigration.indexOf("  execute definition;", assertionStart);
+  assert.ok(assertionStart >= 0);
+  assert.ok(executeIndex > assertionStart);
+
+  const assertionBlock = calendarAuthorityMigration.slice(assertionStart, executeIndex);
+  for (const requiredAssertion of requiredCalendarAuthorityAssertions) {
+    assert.ok(assertionBlock.includes(requiredAssertion), `missing fail-closed assertion for ${requiredAssertion}`);
+  }
+  assert.match(assertionBlock, /raise exception 'Could not patch the canonical Task State command RPC/);
+  const raiseOffset = assertionBlock.indexOf("raise exception");
+  assert.ok(raiseOffset >= 0);
+  assert.ok(executeIndex > assertionStart + raiseOffset);
 });
 
 test("clear_outcome retires the same-date Calendar override before removing the canonical outcome", () => {

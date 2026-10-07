@@ -3,7 +3,7 @@ import test from "node:test";
 import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, validateTaskStateCommandIntent, type ScheduleChangeIntent } from "../supabase/functions/task-state-command/domain.ts";
 import { normalizeTaskStateCommand, planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
-import type { CanonicalLogicalDayContext, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import type { CanonicalLogicalDayContext, CanonicalTaskOccurrence, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 
 const readModel = {
   task: {
@@ -60,6 +60,105 @@ function rebuiltLogicalDay(settingsRevision: number, logicalDate: string): Canon
   };
 }
 
+function delayBoundary(overrides: Partial<CanonicalTaskScheduleBoundary> = {}): CanonicalTaskScheduleBoundary {
+  return {
+    id: "delay-boundary",
+    user_id: "owner-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    effective_from_logical_date: "2026-08-10",
+    boundary_sequence: 1,
+    boundary_type: "initial",
+    schedule_model: "fixed",
+    repeat_frequency: "daily",
+    repeat_interval: 1,
+    repeat_days_of_week: [],
+    repeat_day_of_month: null,
+    repeat_monthly_mode: "day_of_month",
+    repeat_monthly_ordinal: null,
+    repeat_monthly_weekday: null,
+    repeat_end_on: null,
+    one_time_due_on: null,
+    due_time: null,
+    anchor_date: "2026-08-10",
+    anchor_kind: "user_selected",
+    anchor_confidence: "proven",
+    historical_scope_known: true,
+    prospective_only: false,
+    prior_boundary_id: null,
+    affected_occurrence_id: null,
+    logical_day_settings_revision: 3,
+    timezone: "America/New_York",
+    day_start_time: "06:00",
+    actor_kind: "user",
+    actor_id: "owner-1",
+    source: "task_state_command",
+    command_id: null,
+    idempotence_identity: "boundary:delay",
+    schema_contract_version: "task-state-schema-v1",
+    source_task_revision: 3,
+    revision: 1,
+    created_at: "2026-08-10T12:00:00.000Z",
+    updated_at: "2026-08-10T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function storedOccurrence(overrides: Partial<CanonicalTaskOccurrence> = {}): CanonicalTaskOccurrence {
+  return {
+    id: "stored-occurrence",
+    user_id: "owner-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    occurrence_key: "task:task-1:occurrence:2026-08-10",
+    scheduled_due_on: "2026-08-10",
+    source_boundary_id: "delay-boundary",
+    recurrence_source_fingerprint: "delay-boundary",
+    origin_kind: "proven",
+    origin_confidence: "proven",
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: "owner-1",
+    source: "task-state-command",
+    materialization_reason: "required_command_state",
+    resolution_state: "unresolved",
+    resolved_logical_date: null,
+    resolved_outcome: null,
+    resolved_history_id: null,
+    command_id: null,
+    revision: 1,
+    created_at: "2026-08-10T12:00:00.000Z",
+    updated_at: "2026-08-10T12:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function delayReadModel(occurrences: CanonicalTaskOccurrence[], boundary = delayBoundary()): CanonicalTaskStateReadModel {
+  return {
+    ...readModel,
+    task: { ...readModel.task, due_on: "2026-08-10", repeat_frequency: "daily" },
+    scheduleBoundaries: [boundary],
+    occurrences,
+  } as unknown as CanonicalTaskStateReadModel;
+}
+
+function delayCommand(readModelForDelay: CanonicalTaskStateReadModel, replayIdentity: string, logicalDate = "2026-08-10") {
+  return buildTrustedTaskStateCommand({
+    intent: {
+      type: "delay_occurrence",
+      task_id: "task-1",
+      replay_identity: replayIdentity,
+      expected_revision: 3,
+      logical_date: logicalDate,
+      effective_due_on: "2026-08-11",
+    },
+    userId: "owner-1",
+    readModel: readModelForDelay,
+    logicalDay,
+    now: "2026-08-10T12:00:00.000Z",
+  });
+}
+
 test("browser intent accepts only command input and derives identity from the authenticated owner", () => {
   const intent = {
     type: "set_outcome",
@@ -80,6 +179,50 @@ test("browser intent accepts only command input and derives identity from the au
   assert.equal(command.commandId, descriptor.commandId);
   assert.equal(command.idempotenceIdentity, descriptor.idempotenceIdentity);
   assert.equal(normalized.acceptedPayloadDigest, descriptor.acceptedPayloadDigest);
+});
+
+test("server Delay reuses an existing non-superseded occurrence for the logical date", () => {
+  const existing = storedOccurrence();
+  const command = delayCommand(delayReadModel([existing]), "delay-existing");
+
+  assert.equal(command.type, "delay");
+  assert.equal(command.occurrence?.id, existing.id);
+  assert.equal(command.override?.occurrence_id, existing.id);
+});
+
+test("server Delay does not reuse a superseded occurrence", () => {
+  const superseded = storedOccurrence({ id: "superseded-occurrence", resolution_state: "superseded" });
+  const command = delayCommand(delayReadModel([superseded]), "delay-superseded");
+
+  assert.equal(command.type, "delay");
+  assert.notEqual(command.occurrence?.id, superseded.id);
+  assert.equal(command.occurrence?.scheduled_due_on, "2026-08-10");
+  assert.equal(command.occurrence?.source_boundary_id, "delay-boundary");
+});
+
+test("server Delay materializes a proven replacement when superseded is the only stored occurrence", () => {
+  const superseded = storedOccurrence({ id: "superseded-only", resolution_state: "superseded" });
+  const command = delayCommand(delayReadModel([superseded]), "delay-materialize");
+
+  assert.equal(command.type, "delay");
+  assert.equal(command.occurrence?.origin_kind, "proven");
+  assert.equal(command.occurrence?.resolution_state, "unresolved");
+  assert.equal(command.override?.scheduled_due_on, "2026-08-10");
+  assert.notEqual(command.occurrence?.id, superseded.id);
+});
+
+test("server Delay fails closed when no canonical schedule boundary proves the requested date", () => {
+  const oneTimeBoundary = delayBoundary({
+    schedule_model: "one_time",
+    repeat_frequency: "none",
+    one_time_due_on: "2026-08-10",
+    anchor_date: null,
+  });
+
+  assert.throws(
+    () => delayCommand(delayReadModel([], oneTimeBoundary), "delay-unproven", "2026-08-11"),
+    /No canonical schedule occurrence can be proven/,
+  );
 });
 
 test("manual Blank uses the canonical blank_due Calendar override intent", () => {

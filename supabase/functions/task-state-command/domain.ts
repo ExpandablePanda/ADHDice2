@@ -330,7 +330,7 @@ function materializeDelayOccurrence(
   now: string,
 ): CanonicalTaskOccurrence {
   const logicalDate = intent.logical_date ?? base.logicalDay.logicalDate;
-  const existingOccurrence = readModel.occurrences.find((candidate) => candidate.scheduled_due_on === logicalDate);
+  const existingOccurrence = readModel.occurrences.find((candidate) => candidate.scheduled_due_on === logicalDate && candidate.resolution_state !== "superseded");
   if (existingOccurrence) return existingOccurrence;
 
   const boundary = scheduleBoundaryForLogicalDate(readModel, logicalDate);
