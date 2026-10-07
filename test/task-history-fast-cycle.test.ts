@@ -114,6 +114,7 @@ test("Delayed opens the existing picker and Complete opens shared confirmation w
   assert.match(adapterSource, /onCancel=\{\(\) => setShowDelayEditor\(false\)\}/);
   assert.match(taskAppSource, /onRequestComplete: \(logicalDate: string\) => requestTaskComplete\(taskHistoryModalTask, \{ logicalDate \}\)/);
   assert.match(adapterSource, /if \(pendingEdit\.action === "in_progress"\) return handleSetCalendarOverride\("in_progress", pendingEdit\.dateKey\);/);
+  assert.match(taskAppSource, /if \(overrideState === "in_progress"\) \{[\s\S]*?return setTaskHistoryInProgress\(taskHistoryModalTaskId, logicalDate\);/);
   assert.match(adapterSource, /if \(pendingEdit\.action === "complete"\)/);
 });
 

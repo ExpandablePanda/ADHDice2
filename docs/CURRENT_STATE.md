@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.103`.
+- Current working app version: `7.16.104`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,15 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-06 7.16.104 Calendar In Progress QA Correction
+
+The explicit Calendar History action chooser now exposes `In Progress` for
+editable single historical and current dates. Historical dates retain Blank
+and Not Due without adding Due; today retains the existing Due behavior.
+Multi-select remains unchanged. Explicit In Progress routes through the
+canonical dated `calendar_override` state `in_progress`, with no History row
+or workflow `start_in_progress` mutation.
 
 ## 2026-10-06 7.16.103 Calendar History Fast-Cycle Semantics
 

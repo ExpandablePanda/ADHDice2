@@ -144,19 +144,19 @@ test("History Calendar Blank eligibility accepts a clearable outcome or removabl
   }
 });
 
-test("History Calendar exposes Blank and Not Due for past dates but Due only for today", () => {
+test("History Calendar exposes In Progress, Blank, and Not Due for past dates but Due only for today", () => {
   assert.deepEqual(getTaskHistoryCalendarOverrideActions({
     isMultiSelect: false,
     selectedDate: "2026-08-09",
     task: { status: "pending" },
     todayDateKey: "2026-08-10",
-  }), ["blank_due", "not_due"]);
+  }), ["in_progress", "blank_due", "not_due"]);
   assert.deepEqual(getTaskHistoryCalendarOverrideActions({
     isMultiSelect: false,
     selectedDate: "2026-08-10",
     task: { status: "pending" },
     todayDateKey: "2026-08-10",
-  }), ["blank_due", "not_due", "due_open"]);
+  }), ["in_progress", "blank_due", "not_due", "due_open"]);
   assert.deepEqual(getTaskHistoryCalendarOverrideActions({
     isMultiSelect: true,
     selectedDate: "2026-08-10",
@@ -171,6 +171,14 @@ test("History Calendar exposes Blank and Not Due for past dates but Due only for
     task: { status: "pending" },
     todayDateKey: "2026-08-10",
   }), []);
+  for (const status of ["complete", "archived", "trashed"] as const) {
+    assert.deepEqual(getTaskHistoryCalendarOverrideActions({
+      isMultiSelect: false,
+      selectedDate: "2026-08-10",
+      task: { status },
+      todayDateKey: "2026-08-10",
+    }), []);
+  }
   for (const status of ["complete", "delayed"] as const) {
     assert.deepEqual(getTaskHistoryCalendarOverrideActions({
       entryStatuses: [{ status }],

@@ -816,13 +816,10 @@ export function TaskHistoryModal({
         todayDateKey: today,
       })
       : [];
-    const cycleCalendarOverrideActions = targetCalendarOverrideState === "in_progress"
-      ? [...targetCalendarOverrideActions, "in_progress"]
-      : targetCalendarOverrideActions;
     const targetCanClear = canClearDates([dateKey]);
     const actions = dateKey > today ? [] : getTaskHistoryFastCycleActions({
         calendarActionStatuses: targetCalendarActionStatuses,
-        calendarOverrideActions: cycleCalendarOverrideActions,
+        calendarOverrideActions: targetCalendarOverrideActions,
         canClear: targetCanClear,
       });
     const currentAction = getTaskHistoryFastCycleCurrentAction({
