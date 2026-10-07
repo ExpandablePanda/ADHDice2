@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.95`.
+- Current working app version: `7.16.103`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-06 7.16.103 Calendar History Fast-Cycle Semantics
+
+Calendar History fast cycling now previews the exact manual order In Progress,
+Done, Did My Best, Delayed, Missed, Complete, Blank, Not Due, and Due, with a
+5-second idle confirmation window. Automatic remains an explicit selected-day
+reset action and is not a cycle position. Intermediate previews are local only;
+simple final states use their existing canonical History or Calendar override
+commands.
+
+In Progress is represented by the dated canonical Calendar override state
+`in_progress`, never by a History outcome or by mutating derived `Task.status`.
+It remains unhandled, recurrence-neutral, reward-free, and streak-neutral;
+historical dates remain overdue while the current logical date remains due and
+projects as In Progress. Delayed opens the existing TaskDelayPicker after the
+idle window, and Complete opens the shared completion confirmation before its
+canonical selected-date completion path.
+
+The source-only migration is
+`supabase/patch_task_calendar_override_in_progress_7_16_103.sql`. It has not
+been applied, and the `task-state-command` Edge Function validation update has
+not been deployed. Browser QA and live deployment remain separate follow-up
+steps.
 
 ## 2026-10-05 7.16.93 Voice Memo V1 + Memo Library
 

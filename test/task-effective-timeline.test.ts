@@ -10,6 +10,7 @@ import {
   type TaskStateSnapshot,
   type TaskTimelineReplayRequest,
   type TaskWorkflowState,
+  type TaskBehaviorPolicy,
   type TaskBehaviorPolicyRevision,
   STANDARD_TASK_BEHAVIOR_POLICY,
 } from "../src/lib/task-state-engine/index.ts";
@@ -729,6 +730,44 @@ test("Calendar override states preserve due/open rollover semantics", () => {
   assert.equal(currentOverride.days["2026-08-10"]?.obligation, "due");
   assert.equal(historicalOverride.days["2026-08-09"]?.state, "missed");
   assert.equal(historicalOverride.days["2026-08-09"]?.obligation, "overdue");
+});
+
+test("In Progress Calendar override is an unhandled, streak-neutral historical projection", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-08", activeOccurrenceDueOn: "2026-08-08" },
+    logicalDate: "2026-08-10",
+    calendarStart: "2026-08-08",
+    calendarEnd: "2026-08-10",
+    calendarOverrides: [calendarOverride("2026-08-08", "in_progress")],
+  });
+  const day = result.days["2026-08-08"];
+  assert.equal(day?.state, "in_progress");
+  assert.equal(day?.sourceKind, "calendar_override");
+  assert.equal(day?.handled, false);
+  assert.equal(day?.outcome, null);
+  assert.equal(day?.obligation, "overdue");
+  assert.equal(day?.occurrenceDueOn, "2026-08-08");
+  assert.equal(result.activeStatus === "in_progress", false);
+  assert.equal(computeTaskEffectiveTimelineStreaks(result.days, "2026-08-10").currentMissedStreak, 0);
+});
+
+test("current-day In Progress Calendar override projects In Progress without consuming recurrence or awarding success", () => {
+  const result = timeline({
+    task: { dueOn: "2026-08-10", activeOccurrenceDueOn: "2026-08-10" },
+    logicalDate: "2026-08-10",
+    calendarStart: "2026-08-10",
+    calendarEnd: "2026-08-11",
+    calendarOverrides: [calendarOverride("2026-08-10", "in_progress")],
+  });
+  const day = result.days["2026-08-10"];
+  assert.equal(day?.state, "in_progress");
+  assert.equal(day?.sourceKind, "calendar_override");
+  assert.equal(day?.obligation, "due");
+  assert.equal(result.activeStatus, "in_progress");
+  assert.equal(result.nextDueOn, "2026-08-10");
+  assert.equal(result.days["2026-08-11"]?.state, "scheduled");
+  assert.equal(computeTaskEffectiveTimelineStreaks(result.days, "2026-08-10").currentCompletedStreak, 0);
+  assert.equal(day?.outcome, null);
 });
 
 

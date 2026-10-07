@@ -306,7 +306,7 @@ export type CanonicalTaskHistoryFact = {
   updated_at: string;
 };
 
-export type CanonicalCalendarOverrideState = "unscheduled" | "not_due" | "due_open" | "blank_due";
+export type CanonicalCalendarOverrideState = "unscheduled" | "not_due" | "due_open" | "blank_due" | "in_progress";
 export type CanonicalTaskCalendarOverride = {
   id: string;
   user_id: string;

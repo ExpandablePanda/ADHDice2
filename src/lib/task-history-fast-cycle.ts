@@ -1,14 +1,16 @@
 import type { TaskHistory } from "@/lib/database.types";
 import type { TaskCalendarOverrideState, TaskEffectiveTimelineSourceKind } from "@/lib/task-state-engine/types";
 
-export const TASK_HISTORY_FAST_CYCLE_DELAY_MS = 2_000;
+export const TASK_HISTORY_FAST_CYCLE_DELAY_MS = 5_000;
 
 export const TASK_HISTORY_FAST_CYCLE_ORDER = [
-  "automatic",
-  "blank",
+  "in_progress",
   "done",
   "did_my_best",
+  "delayed",
   "missed",
+  "complete",
+  "blank",
   "not_due",
   "due",
 ] as const;
@@ -30,15 +32,11 @@ export function getTaskHistoryFastCycleActions({
   calendarActionStatuses: readonly string[];
   calendarOverrideActions: readonly string[];
 }) {
-  const actions: TaskHistoryFastCycleAction[] = [];
-  if (canClear) actions.push("automatic");
-  if (calendarOverrideActions.includes("blank_due")) actions.push("blank");
-  if (calendarActionStatuses.includes("done")) actions.push("done");
-  if (calendarActionStatuses.includes("did_my_best")) actions.push("did_my_best");
-  if (calendarActionStatuses.includes("missed")) actions.push("missed");
-  if (calendarOverrideActions.includes("not_due")) actions.push("not_due");
-  if (calendarOverrideActions.includes("due_open")) actions.push("due");
-  return actions;
+  // Automatic remains an explicit selected-day action, but never a cycle
+  // position. An eligible Calendar edit always uses the same locked order;
+  // canonical action authority still validates the final mutation.
+  if (!canClear && calendarActionStatuses.length === 0 && calendarOverrideActions.length === 0) return [];
+  return [...TASK_HISTORY_FAST_CYCLE_ORDER];
 }
 
 export function getTaskHistoryFastCycleCurrentAction({
@@ -51,40 +49,43 @@ export function getTaskHistoryFastCycleCurrentAction({
   entryStatus?: TaskHistory["status"] | null;
   state?: string | null;
   sourceKind?: TaskEffectiveTimelineSourceKind | null;
-}): TaskHistoryFastCycleAction {
-  if (entryStatus === "done" || entryStatus === "did_my_best" || entryStatus === "missed") {
-    return entryStatus;
-  }
+}): TaskHistoryFastCycleAction | null {
+  if (calendarOverrideState === "in_progress") return "in_progress";
   if (calendarOverrideState === "blank_due") return "blank";
   if (calendarOverrideState === "not_due") return "not_due";
   if (calendarOverrideState === "due_open") return "due";
 
-  // A calculated Not Due/Blank/Due is engine output, not a manual choice that
-  // can be cleared. Keep the source distinction explicit for this boundary.
-  if (sourceKind === "calculated" || sourceKind === "workflow" || sourceKind === "history_fact") {
-    return "automatic";
+  if (entryStatus === "done" || entryStatus === "did_my_best" || entryStatus === "delayed" || entryStatus === "missed" || entryStatus === "complete") {
+    return entryStatus;
   }
-  return state === "done" || state === "did_my_best" || state === "missed"
-    ? state
-    : "automatic";
+
+  // Calculated/workflow states have no manual cycle position. Returning null
+  // makes the first click preview In Progress without exposing Automatic.
+  if (sourceKind === "calculated" || sourceKind === "workflow" || sourceKind === "history_fact") return null;
+  if (state && (TASK_HISTORY_FAST_CYCLE_ORDER as readonly string[]).includes(state)) {
+    return state as TaskHistoryFastCycleAction;
+  }
+  return null;
 }
 
 export function getNextTaskHistoryFastCycleAction(
   actions: readonly TaskHistoryFastCycleAction[],
-  currentAction: TaskHistoryFastCycleAction,
+  currentAction: TaskHistoryFastCycleAction | null,
 ) {
   if (actions.length === 0) return null;
-  const currentIndex = actions.indexOf(currentAction);
+  const currentIndex = currentAction === null ? -1 : actions.indexOf(currentAction);
   return actions[(currentIndex + 1 + actions.length) % actions.length] ?? null;
 }
 
 export function getTaskHistoryFastCycleActionLabel(action: TaskHistoryFastCycleAction) {
-  if (action === "automatic") return "Automatic";
+  if (action === "in_progress") return "In Progress";
   if (action === "blank") return "Blank";
   if (action === "did_my_best") return "Did My Best";
   if (action === "not_due") return "Not Due";
   if (action === "due") return "Due";
-  return action === "missed" ? "Missed" : "Done";
+  if (action === "delayed") return "Delayed";
+  if (action === "missed") return "Missed";
+  return action === "complete" ? "Complete" : "Done";
 }
 
 type PendingChange = (pending: TaskHistoryFastCyclePending | null) => void;

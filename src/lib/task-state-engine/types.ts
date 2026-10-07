@@ -124,7 +124,7 @@ export type TaskStateHistoryRow = {
   rewardClaimed?: boolean;
 };
 
-export type TaskCalendarOverrideState = "unscheduled" | "not_due" | "due_open" | "blank_due";
+export type TaskCalendarOverrideState = "unscheduled" | "not_due" | "due_open" | "blank_due" | "in_progress";
 
 export type TaskCalendarOverride = {
   id: string;

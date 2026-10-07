@@ -40,7 +40,7 @@ const HISTORY_OVERRIDE_ACTION_STATUSES = [
 ] as const;
 
 const HISTORY_CALENDAR_OVERRIDE_ACTIONS = ["blank_due", "not_due", "due_open"] as const;
-export type TaskHistoryCalendarOverrideAction = typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number];
+export type TaskHistoryCalendarOverrideAction = typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number] | "in_progress";
 
 export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency) {
   if (repeatFrequency === "per_week" || repeatFrequency === "per_month") {

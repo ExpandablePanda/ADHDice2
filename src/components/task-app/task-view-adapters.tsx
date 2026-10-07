@@ -136,6 +136,7 @@ function formatTaskCalendarOverrideLabel(override: TaskCalendarOverride) {
   if (override.overrideState === "blank_due") return "Blank";
   if (override.overrideState === "due_open") return "Due";
   if (override.overrideState === "not_due") return "Not Due";
+  if (override.overrideState === "in_progress") return "In Progress";
   return "Unscheduled";
 }
 
@@ -390,6 +391,7 @@ export function filterTaskHistorySearchTasks({
 
 export function TaskHistoryModal({
   onClose,
+  onRequestComplete,
   onSelectTask,
   onRefreshTaskAuthority,
   onRenameTaskTitle,
@@ -425,6 +427,7 @@ export function TaskHistoryModal({
   historyWindowStartDate,
 }: {
   onClose: () => void;
+  onRequestComplete?: (logicalDate: string) => boolean | void;
   onSelectTask?: (taskId: string) => void;
   onRefreshTaskAuthority?: () => Promise<boolean> | boolean | void;
   onRenameTaskTitle: (taskId: string, nextTitle: string) => Promise<boolean | void> | boolean | void;
@@ -531,7 +534,11 @@ export function TaskHistoryModal({
     fastCycleController.cancel();
   }, [fastCycleController, task.id]);
 
-  useEffect(() => () => fastCycleController.dispose(), [fastCycleController]);
+  useEffect(() => {
+    return () => {
+      fastCycleController.dispose();
+    };
+  }, [fastCycleController, task.id]);
 
   async function selectTask(taskId: string) {
     if (!onSelectTask) return;
@@ -756,8 +763,7 @@ export function TaskHistoryModal({
     && Boolean(onSetDelayedStatus)
     && task.status !== "complete"
     && task.status !== "archived"
-    && task.status !== "trashed"
-    && calendarActionStatuses.includes("delayed");
+    && task.status !== "trashed";
   function canClearDates(dateKeys: readonly string[]) {
     return dateKeys.length > 0
       && dateKeys.every((dateKey) => isTaskHistoryEntryClearable({
@@ -799,6 +805,7 @@ export function TaskHistoryModal({
         task,
       })
       : [];
+    const targetCalendarOverrideState = calendarOverridesByDate.get(dateKey)?.overrideState ?? null;
     const targetCalendarOverrideActions = calendarRead && onSetCalendarOverride
       ? getTaskHistoryCalendarOverrideActions({
         entryStatuses: [entry],
@@ -809,19 +816,24 @@ export function TaskHistoryModal({
         todayDateKey: today,
       })
       : [];
+    const cycleCalendarOverrideActions = targetCalendarOverrideState === "in_progress"
+      ? [...targetCalendarOverrideActions, "in_progress"]
+      : targetCalendarOverrideActions;
     const targetCanClear = canClearDates([dateKey]);
-    return {
-      actions: dateKey > today ? [] : getTaskHistoryFastCycleActions({
+    const actions = dateKey > today ? [] : getTaskHistoryFastCycleActions({
         calendarActionStatuses: targetCalendarActionStatuses,
-        calendarOverrideActions: targetCalendarOverrideActions,
+        calendarOverrideActions: cycleCalendarOverrideActions,
         canClear: targetCanClear,
-      }),
-      currentAction: getTaskHistoryFastCycleCurrentAction({
-        calendarOverrideState: calendarOverridesByDate.get(dateKey)?.overrideState,
+      });
+    const currentAction = getTaskHistoryFastCycleCurrentAction({
+        calendarOverrideState: targetCalendarOverrideState,
         entryStatus: entry?.status,
         sourceKind: timelineDay?.sourceKind,
         state: calendarState,
-      }),
+      });
+    return {
+      actions,
+      currentAction,
     };
   }
 
@@ -846,11 +858,13 @@ export function TaskHistoryModal({
   }
 
   function fastCycleActionTone(action: TaskHistoryFastCycleAction) {
-    if (action === "automatic") return "border-[#d7d2e5] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70";
+    if (action === "in_progress") return "border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#31518f] dark:bg-[#182645] dark:text-[#a9c2ff]";
     if (action === "blank") return "border-transparent bg-transparent text-[#6b6681] dark:border-transparent dark:bg-transparent dark:text-white/60";
     if (action === "done") return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
     if (action === "did_my_best") return "border-[#f2d36f] bg-[#fff7d6] text-[#b28700] dark:border-[#6c5521] dark:bg-[#3a2b05] dark:text-[#f3d38a]";
+    if (action === "delayed") return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
     if (action === "missed") return "border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]";
+    if (action === "complete") return "border-[#5d9b76] bg-[#eef8f1] text-[#256947] dark:border-[#39664c] dark:bg-[#193524] dark:text-[#9bdfb7]";
     if (action === "not_due") return "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]";
     return "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]";
   }
@@ -867,6 +881,7 @@ export function TaskHistoryModal({
       if (virtualState === "delayed") {
         return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
       }
+      if (virtualState === "in_progress") return fastCycleActionTone("in_progress");
       if (virtualState === "due") {
         return "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]";
       }
@@ -878,6 +893,7 @@ export function TaskHistoryModal({
     if (entry.status === "delayed") {
       return "border-[#d8c0ff] bg-[#f6efff] text-[#7d54d1] dark:border-[#4d377f] dark:bg-[#27193f] dark:text-[#d5c2ff]";
     }
+    if (entry.status === "complete") return fastCycleActionTone("complete");
     if (entry.status === "missed") return "border-[#f7bbc3] bg-[#fff1f3] text-[#d64b5f] dark:border-[#6c3140] dark:bg-[#43212c] dark:text-[#ffb0bd]";
     if (entry.status === "did_my_best") return "border-[#f2d36f] bg-[#fff7d6] text-[#b28700] dark:border-[#6c5521] dark:bg-[#3a2b05] dark:text-[#f3d38a]";
     return "border-[#bddbd0] bg-[#edf9f4] text-[#2f8a66] dark:border-[#2d5847] dark:bg-[#163429] dark:text-[#87ddb7]";
@@ -964,7 +980,18 @@ export function TaskHistoryModal({
     }
     const targetContext = getFastCycleContext(pendingEdit.dateKey);
     if (!targetContext.actions.includes(pendingEdit.action)) return false;
-    if (pendingEdit.action === "automatic") return handleSetStatus("clear", [pendingEdit.dateKey]);
+    if (pendingEdit.action === "in_progress") return handleSetCalendarOverride("in_progress", pendingEdit.dateKey);
+    if (pendingEdit.action === "delayed") {
+      if (!canDelaySelectedDate || !onSetDelayedStatus) return false;
+      setSelectedDate(pendingEdit.dateKey);
+      setSelectedDates([pendingEdit.dateKey]);
+      setShowDelayEditor(true);
+      return true;
+    }
+    if (pendingEdit.action === "complete") {
+      if (!onRequestComplete) return false;
+      return onRequestComplete(pendingEdit.dateKey) !== false;
+    }
     if (pendingEdit.action === "blank") return handleSetCalendarOverride("blank_due", pendingEdit.dateKey);
     if (pendingEdit.action === "not_due") return handleSetCalendarOverride("not_due", pendingEdit.dateKey);
     if (pendingEdit.action === "due") return handleSetCalendarOverride("due_open", pendingEdit.dateKey);
@@ -1089,8 +1116,8 @@ export function TaskHistoryModal({
           disabled={isSaving}
           key={overrideState}
           onClick={() => { void runAfterPendingCycle(() => handleSetCalendarOverride(overrideState)); }}
-          toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : overrideState === "blank_due" ? "border-[#c8c2d8] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
-        >{overrideState === "not_due" ? "Not Due" : overrideState === "blank_due" ? "Blank" : "Due"}</TaskTableChipButton>
+          toneClassName={`${overrideState === "not_due" ? "border-[#a9daf7] bg-[#eef8ff] text-[#3388c9] dark:border-[#315f7c] dark:bg-[#173044] dark:text-[#8ed0f6]" : overrideState === "blank_due" ? "border-[#c8c2d8] bg-[#f7f5fb] text-[#6b6681] dark:border-white/20 dark:bg-white/[0.06] dark:text-white/70" : overrideState === "in_progress" ? "border-[#a9c2ff] bg-[#eef3ff] text-[#4473df] dark:border-[#31518f] dark:bg-[#182645] dark:text-[#a9c2ff]" : "border-[#f6be96] bg-[#fff4eb] text-[#d96b1c] dark:border-[#7a4527] dark:bg-[#3a2418] dark:text-[#ffb47c]"} disabled:opacity-50`}
+        >{overrideState === "not_due" ? "Not Due" : overrideState === "blank_due" ? "Blank" : overrideState === "in_progress" ? "In Progress" : "Due"}</TaskTableChipButton>
       ))}
     </div>
   );

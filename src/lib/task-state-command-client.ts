@@ -29,7 +29,7 @@ export type TaskStateCommandIntent =
   | { type: "delay_occurrence"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; occurrence_key?: string; effective_due_on: string }
   | { type: "set_due_date"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: TaskStateScheduleChangeIntent; manual_action?: "unscheduled_status" }
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: TaskStateScheduleChangeIntent }
-  | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open" | "blank_due"; reason?: string | null }
+  | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open" | "blank_due" | "in_progress"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
   | { type: "clear_quota_balance"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string }
   | { type: "archive_task" | "clear_in_progress"; task_id: string; replay_identity: string; expected_revision?: number }

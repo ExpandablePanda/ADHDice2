@@ -231,7 +231,7 @@ function calculatedDay(
   unhandled = false,
 ): TaskEffectiveTimelineDay {
   const hasOccurrence = Boolean(occurrenceDueOn)
-    && (state === "missed" || state === "unhandled_blank" || state === "open" || state === "scheduled");
+    && (state === "missed" || state === "unhandled_blank" || state === "open" || state === "scheduled" || state === "in_progress");
   return {
     logicalDate,
     state,
@@ -322,6 +322,20 @@ function calendarOverrideDay(
         logicalDate,
         behaviorPolicy,
         true,
+      ),
+      sourceKind: "calendar_override",
+      calendarOverrideId: override.id,
+    };
+  }
+  if (override.overrideState === "in_progress") {
+    return {
+      ...calculatedDay(
+        taskId,
+        logicalDate,
+        "in_progress",
+        logicalDate < currentLogicalDate ? "overdue" : "due",
+        logicalDate,
+        behaviorPolicy,
       ),
       sourceKind: "calendar_override",
       calendarOverrideId: override.id,
@@ -474,7 +488,7 @@ export function buildTaskEffectiveTimeline(
 
   const applyCalendarOverrideToCursor = (date: string, override: TaskCalendarOverride) => {
     if (completed) return;
-    if (override.overrideState === "blank_due") return;
+    if (override.overrideState === "blank_due" || override.overrideState === "in_progress") return;
     if (override.overrideState === "due_open") {
       // An override cannot skip an already-active earlier obligation. When the
       // date is the next causal opportunity, it becomes the active occurrence
@@ -583,7 +597,8 @@ export function buildTaskEffectiveTimeline(
     const override = overrideByDate.get(date);
     const workflowApplies = workflow.state === "in_progress"
       && workflow.logicalDate === input.logicalDate
-      && date === input.logicalDate;
+      && date === input.logicalDate
+      && override?.overrideState !== "in_progress";
     if (!row && override) {
       applyCalendarOverrideToCursor(date, override);
     }

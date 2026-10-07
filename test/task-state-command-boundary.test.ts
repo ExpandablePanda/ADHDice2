@@ -97,6 +97,22 @@ test("manual Blank uses the canonical blank_due Calendar override intent", () =>
   assert.equal(command.calendarOverride?.override_state, "blank_due");
 });
 
+test("dated In Progress uses the canonical Calendar override intent and is not a History outcome", () => {
+  const intent = {
+    type: "calendar_override",
+    task_id: "task-1",
+    replay_identity: "calendar-in-progress-1",
+    logical_date: "2026-08-10",
+    override_state: "in_progress",
+  } as const;
+
+  assert.deepEqual(validateTaskStateCommandIntent(intent), intent);
+  const command = buildTrustedTaskStateCommand({ intent, userId: "owner-1", readModel, logicalDay, now: "2026-08-10T12:00:00.000Z" });
+  assert.equal(command.type, "calendar_override");
+  assert.equal(command.calendarOverride?.override_state, "in_progress");
+  assert.equal("historyFact" in command, false);
+});
+
 test("explicit Unscheduled marker survives Edge validation and canonical command normalization", () => {
   const intent = {
     type: "set_due_date",

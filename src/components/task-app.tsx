@@ -455,6 +455,7 @@ type Message = {
 };
 
 type PendingCompleteAction = {
+  logicalDate?: string;
   onTimeOrigin?: OnTimeLinkedItemOrigin;
   taskId: string;
 };
@@ -6562,9 +6563,11 @@ export function TaskApp() {
   function requestTaskComplete(
     task: Task,
     options?: {
+      logicalDate?: string;
       onTimeOrigin?: OnTimeLinkedItemOrigin;
     },
   ) {
+    if (options?.logicalDate && options.logicalDate > todayKey) return false;
     if (isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
       action: "complete",
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
@@ -6585,6 +6588,7 @@ export function TaskApp() {
     }
 
     setPendingCompleteAction({
+      logicalDate: options?.logicalDate,
       onTimeOrigin: options?.onTimeOrigin,
       taskId: task.id,
     });
@@ -6621,6 +6625,29 @@ export function TaskApp() {
     }
 
     if (!milestoneData.milestoneByTaskId.has(task.id)) {
+      if (completeAction.logicalDate) {
+        const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+        if (!historyLoad || historyLoad.status !== "ready") {
+          return fail(historyLoad?.error ?? "Could not load task history. The task was not completed.");
+        }
+        const historySaved = await syncTaskHistoryEntries(
+          task.id,
+          "complete",
+          [completeAction.logicalDate],
+          {
+            historicalOverride: true,
+            historySnapshot: historyLoad.history,
+            syncLiveTask: true,
+          },
+        );
+        if (!historySaved) return false;
+        routeTask(task.id, null);
+        if (focusedTaskIds.includes(task.id)) void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
+        setPendingCompleteAction(null);
+        clearOnTimeExecution(completeAction.onTimeOrigin);
+        setMessage({ tone: "good", text: task.parent_task_id ? `"${task.title}" marked Complete and kept with its parent.` : `"${task.title}" marked Complete and moved to Archive.` });
+        return true;
+      }
       const canonicalCommitted = await updateTask(task.id, { status: "complete" }, { expectedTask: task });
       if (!canonicalCommitted) return false;
 
@@ -7410,8 +7437,8 @@ export function TaskApp() {
   async function setTaskHistoryCalendarOverride(
     taskId: string,
     logicalDate: string,
-    overrideState: "not_due" | "blank_due",
-    label: "Not Due" | "Blank",
+    overrideState: "not_due" | "blank_due" | "due_open" | "in_progress",
+    label: "Not Due" | "Blank" | "Due" | "In Progress",
   ): Promise<boolean> {
     const historySnapshot = taskHistoryByTaskId[taskId] ?? taskHistoryDetailByTaskId[taskId]?.history ?? [];
     const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
@@ -7466,8 +7493,13 @@ export function TaskApp() {
     return setTaskHistoryCalendarOverride(taskId, logicalDate, "blank_due", "Blank");
   }
 
+  async function setTaskHistoryInProgress(taskId: string, logicalDate: string): Promise<boolean> {
+    return setTaskHistoryCalendarOverride(taskId, logicalDate, "in_progress", "In Progress");
+  }
+
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
+    onRequestComplete: (logicalDate: string) => requestTaskComplete(taskHistoryModalTask, { logicalDate }),
     onSelectTask: openTaskHistoryForTask,
     onRefreshTaskAuthority: async () => {
       if (!taskHistoryModalTaskId) return false;
@@ -7475,13 +7507,16 @@ export function TaskApp() {
       return true;
     },
     onRenameTaskTitle: (taskId: string, nextTitle: string): Promise<boolean> => updateTask(taskId, { title: nextTitle }),
-    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "blank_due" | "due_open"): Promise<boolean> => {
+    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "blank_due" | "due_open" | "in_progress"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) return false;
       if (overrideState === "not_due") {
         return setTaskHistoryNotDue(taskHistoryModalTaskId, logicalDate);
       }
       if (overrideState === "blank_due") {
         return setTaskHistoryBlankDue(taskHistoryModalTaskId, logicalDate);
+      }
+      if (overrideState === "in_progress") {
+        return setTaskHistoryInProgress(taskHistoryModalTaskId, logicalDate);
       }
       const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskHistoryModalTaskId) ?? taskHistoryModalTask;
       const committed = await updateTask(taskHistoryModalTaskId, {}, {
