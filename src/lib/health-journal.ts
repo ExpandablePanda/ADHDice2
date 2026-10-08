@@ -81,6 +81,7 @@ export function normalizeHealthJournalSignalOccurrence(
     note: typeof occurrence.note === "string" ? occurrence.note : null,
     occurred_at: typeof occurrence.occurred_at === "string" ? occurrence.occurred_at : "",
     score: Number.isInteger(occurrence.score) && occurrence.score >= 1 && occurrence.score <= 10 ? occurrence.score : 1,
+    time_is_estimated: occurrence.time_is_estimated === true,
   };
 }
 
@@ -243,7 +244,9 @@ export function findHealthJournalReflectionTagMatches(
         && (!nextCharacter || !/[A-Za-z0-9_]/.test(nextCharacter));
     });
     if (!reference) continue;
-    const end = index + reference.name.length + 1;
+    const baseEnd = index + reference.name.length + 1;
+    const scoredSuffix = reflection.slice(baseEnd).match(/^ \(([1-9]|10)\/([1-9]|10)\)/);
+    const end = scoredSuffix ? baseEnd + scoredSuffix[0].length : baseEnd;
     matches.push({ end, key: reference.key, start: index, text: reflection.slice(index, end) });
     index = end - 1;
   }

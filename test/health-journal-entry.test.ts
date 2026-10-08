@@ -160,6 +160,21 @@ test("Journal History tag matching resolves known display names without changing
   assert.equal(reflection.includes("#Unknown"), true);
 });
 
+test("Journal History treats scored hashtags as one link and keeps legacy bare tags", () => {
+  const reflection = "Pain at #Back Pain (7/10), then #Back Pain and #Back Pain (3/4).";
+  const matches = findHealthJournalReflectionTagMatches(reflection, [
+    { key: "symptom:back-pain", kind: "symptom", name: "Back Pain" },
+  ]);
+
+  assert.deepEqual(matches.map((match) => [match.text, match.start, match.end]), [
+    ["#Back Pain (7/10)", 8, 25],
+    ["#Back Pain", 32, 42],
+    ["#Back Pain (3/4)", 47, 63],
+  ]);
+  assert.equal(reflection.slice(25, 32), ", then ");
+  assert.equal(reflection.slice(42, 47), " and ");
+});
+
 test("Daily Log draft helpers keep one row while preserving 0 and Not logged semantics", () => {
   const duplicate = [
     { id: "value-1", score: 0, signal_id: "reflux" },

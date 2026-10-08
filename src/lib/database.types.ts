@@ -1678,6 +1678,10 @@ export type HealthJournalStructuredAnswers = {
   remember_tomorrow?: string;
   event_description?: string;
   event_time?: string;
+  event_end_date?: string | null;
+  event_end_time?: string | null;
+  event_start_time_estimated?: boolean;
+  event_end_time_estimated?: boolean;
   event_record?: string;
   anything_else?: string;
   custom_answers?: HealthJournalCustomAnswer[];
@@ -1851,6 +1855,7 @@ export type HealthJournalSignalOccurrence = {
   entry_date: string;
   occurred_at: string;
   score: number;
+  time_is_estimated: boolean;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -1864,13 +1869,14 @@ export type HealthJournalSignalOccurrenceInsert = {
   entry_date: string;
   occurred_at: string;
   score: number;
+  time_is_estimated?: boolean;
   note?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
 export type HealthJournalSignalOccurrenceUpdate = Partial<
-  Pick<HealthJournalSignalOccurrence, "journal_entry_id" | "signal_id" | "entry_date" | "occurred_at" | "score" | "note">
+  Pick<HealthJournalSignalOccurrence, "journal_entry_id" | "signal_id" | "entry_date" | "occurred_at" | "score" | "time_is_estimated" | "note">
 >;
 
 export type HealthSymptom = {
@@ -1903,6 +1909,7 @@ export type HealthSymptomEntry = {
   entry_date: string;
   logged_at: string;
   severity: number;
+  time_is_estimated: boolean;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -1916,13 +1923,14 @@ export type HealthSymptomEntryInsert = {
   entry_date: string;
   logged_at?: string;
   severity: number;
+  time_is_estimated?: boolean;
   note?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
 export type HealthSymptomEntryUpdate = Partial<
-  Pick<HealthSymptomEntry, "symptom_id" | "journal_entry_id" | "entry_date" | "logged_at" | "severity" | "note">
+  Pick<HealthSymptomEntry, "symptom_id" | "journal_entry_id" | "entry_date" | "logged_at" | "severity" | "time_is_estimated" | "note">
 >;
 
 export type HealthFoodLibraryItem = {

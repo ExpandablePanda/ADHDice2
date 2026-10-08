@@ -188,14 +188,14 @@ async function loadHealthHydrationReads(client: HealthRemoteClient, userId: stri
     loadRows((from, to) => client.from("adhdice_health_checkins").select("id,user_id,entry_date,entry_time,mood_score,energy_score,stress_score,clarity_score,symptom_tags,reflection,entry_type,structured_answers,created_at,updated_at").eq("user_id", userId).order("entry_date", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_journal_signals").select("id,user_id,kind,symptom_id,name,color,low_label,high_label,scale_labels,in_template,template_sort_order,archived_at,created_at,updated_at").eq("user_id", userId).order("in_template", { ascending: false }).order("template_sort_order", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_journal_signal_values").select("id,user_id,journal_entry_id,signal_id,score,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
-    loadRows((from, to) => client.from("adhdice_health_journal_signal_occurrences").select("id,user_id,journal_entry_id,signal_id,entry_date,occurred_at,score,note,created_at,updated_at").eq("user_id", userId).order("occurred_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_journal_signal_occurrences").select("id,user_id,journal_entry_id,signal_id,entry_date,occurred_at,score,time_is_estimated,note,created_at,updated_at").eq("user_id", userId).order("occurred_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_meal_entries").select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_meal_plan_entries").select("id,user_id,planned_date,meal_slot,planned_time,planned_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,confirmed_at,confirmed_meal_entry_id,created_at,updated_at").eq("user_id", userId).order("planned_date", { ascending: true }).order("planned_time", { ascending: true }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_food_library").select("id,user_id,food_name,brand_name,category,food_category,serving_label,serving_size,serving_quantity,serving_unit,serving_measure_value,serving_measure_unit,serving_weight_amount,serving_weight_unit,calories,protein_g,carbs_g,fat_g,nutrition_details,barcode,provider,provider_item_id,attribution,is_favorite,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_recipes").select("id,user_id,name,notes,servings,ingredients,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_saved_meals").select("id,user_id,name,default_meal_slot,items,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_symptoms").select("id,user_id,name,color,archived_at,created_at,updated_at").eq("user_id", userId).order("archived_at", { ascending: true, nullsFirst: true }).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to)),
-    loadRows((from, to) => client.from("adhdice_health_symptom_entries").select("id,user_id,symptom_id,journal_entry_id,entry_date,logged_at,severity,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_symptom_entries").select("id,user_id,symptom_id,journal_entry_id,entry_date,logged_at,severity,time_is_estimated,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_water_entries").select("id,user_id,entry_date,logged_at,amount,unit,amount_ml,confirmed_at,created_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_weight_entries").select("id,user_id,entry_date,logged_at,weight_kg,source,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_metric_entries").select("id,user_id,metric_type,metric_date,metric_value,source,source_fingerprint,created_at,updated_at").eq("user_id", userId).order("metric_date", { ascending: false }).order("id", { ascending: true }).range(from, to)),
@@ -296,7 +296,7 @@ function normalizeHealthCheckIn(checkIn: HealthCheckIn): HealthCheckIn {
 }
 
 function normalizeHealthSymptomEntry(entry: HealthSymptomEntry): HealthSymptomEntry | null {
-  return entry.journal_entry_id ? entry : null;
+  return entry.journal_entry_id ? { ...entry, time_is_estimated: entry.time_is_estimated === true } : null;
 }
 
 function normalizeHealthSymptomEntries(entries: readonly HealthSymptomEntry[]) {
@@ -940,7 +940,7 @@ export function useHealth(
         const hasMissingSymptomPersistence = symptomPersistenceErrors.some((error) => error && isMissingHealthSymptomPersistence(error.message));
         setMessage({
           text: hasMissingSymptomPersistence
-            ? "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied. Existing Health data remains connected."
+            ? "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied. Existing Health data remains connected."
             : symptomPersistenceErrors[0]?.message ?? "Symptom tracking could not connect and is using local storage.",
           tone: hasMissingSymptomPersistence ? "neutral" : "warn",
         });
@@ -958,7 +958,7 @@ export function useHealth(
       if (journalSignalOccurrencePersistenceError) {
         setMessage({
           text: isMissingHealthPersistence(journalSignalOccurrencePersistenceError.message)
-            ? "Feeling Occurrences are using local storage until the 7.12.41 Health Journal migration is applied."
+            ? "Feeling Occurrences are using local storage until the 7.12.41 and 7.16.112 Health Journal migrations are applied."
             : journalSignalOccurrencePersistenceError.message,
           tone: isMissingHealthPersistence(journalSignalOccurrencePersistenceError.message) ? "neutral" : "warn",
         });
@@ -1031,6 +1031,7 @@ export function useHealth(
                 note: entry.note,
                 severity: entry.severity,
                 symptom_id: entry.symptom_id,
+                time_is_estimated: entry.time_is_estimated,
                 updated_at: entry.updated_at,
                 user_id: userId,
               })),
@@ -1668,6 +1669,7 @@ export function useHealth(
         note: occurrence.note ?? null,
         severity: occurrence.severity,
         symptom_id: occurrence.symptom_id,
+        time_is_estimated: occurrence.time_is_estimated === true,
         updated_at: now,
         user_id: userId,
       } satisfies HealthSymptomEntry;
@@ -1689,6 +1691,7 @@ export function useHealth(
         occurred_at: occurrence.occurred_at,
         score: occurrence.score,
         signal_id: occurrence.signal_id,
+        time_is_estimated: occurrence.time_is_estimated === true,
         updated_at: now,
         user_id: userId,
       } satisfies HealthJournalSignalOccurrence;
@@ -2218,7 +2221,7 @@ export function useHealth(
           symptomDefinitionsRemoteEnabledRef.current = false;
           setMessage({
             tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
+            text: "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied.",
           });
         } else {
           setMessage({ tone: "warn", text: error.message });
@@ -2293,7 +2296,7 @@ export function useHealth(
           symptomDefinitionsRemoteEnabledRef.current = false;
           setMessage({
             tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
+            text: "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied.",
           });
         } else {
           setMessage({ tone: "warn", text: error.message });
@@ -2372,6 +2375,7 @@ export function useHealth(
       note: normalizeHealthSymptomNote(input.note),
       severity: input.severity,
       symptom_id: input.symptom_id,
+      time_is_estimated: input.time_is_estimated === true,
       updated_at: now,
       user_id: userId,
     };

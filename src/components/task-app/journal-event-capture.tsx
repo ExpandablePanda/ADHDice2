@@ -30,6 +30,7 @@ export type JournalEventOccurrenceDraft = {
   score: number;
   signalId: string;
   time: string;
+  timeIsEstimated: boolean;
 };
 
 type JournalTagOption = {
@@ -50,8 +51,14 @@ type JournalTagOverlay = {
   error: string | null;
   score: number | null;
   signal: HealthJournalSignal;
+  tagEnd: number | null;
+  tagStart: number | null;
+  tagText: string | null;
   time: string;
+  timeIsEstimated: boolean;
 } | null;
+
+type JournalTagOverlayState = Exclude<JournalTagOverlay, null>;
 
 export function buildJournalEventSymptomSignal(symptom: HealthSymptom): HealthJournalSignal {
   return {
@@ -97,13 +104,32 @@ function QuestionSection({ children, title }: { children: ReactNode; title: stri
   return <section className="grid gap-3 rounded-[1.1rem] border border-[#edf0fb] bg-white/45 p-4 dark:border-white/10 dark:bg-white/[0.02]"><h3 className="text-sm font-semibold text-[#26324f] dark:text-white">{title}</h3>{children}</section>;
 }
 
+export function JournalEstimatedToggle({
+  checked,
+  label,
+  onChange,
+}: {
+  checked: boolean;
+  label: string;
+  onChange: (checked: boolean) => void;
+}) {
+  return <label className="inline-flex items-center gap-1.5 text-xs font-semibold text-[#7d88a3] dark:text-white/55"><input aria-label={`${label} estimated`} checked={checked} className="h-3.5 w-3.5 accent-[#6f57f6]" onChange={(event) => onChange(event.target.checked)} type="checkbox" /><span>Estimated</span></label>;
+}
+
 export function JournalEventCapture({
   date,
   description,
   eventDateTime = false,
+  endDate,
+  endTime,
+  endTimeEstimated = false,
   occurrences,
   onChangeDate,
   onChangeDescription,
+  onChangeEndDate,
+  onChangeEndTime,
+  onChangeEndTimeEstimated,
+  onChangeStartTimeEstimated,
   onChangeTime,
   onCreateSignal,
   onRemoveOccurrence,
@@ -112,13 +138,21 @@ export function JournalEventCapture({
   signals,
   symptoms,
   time,
+  timeEstimated = false,
 }: {
   date: string;
   description: string;
   eventDateTime?: boolean;
+  endDate: string;
+  endTime: string;
+  endTimeEstimated?: boolean;
   occurrences: readonly JournalEventOccurrenceDraft[];
   onChangeDate?: (value: string) => void;
   onChangeDescription: (value: string) => void;
+  onChangeEndDate?: (value: string) => void;
+  onChangeEndTime?: (value: string) => void;
+  onChangeEndTimeEstimated?: (value: boolean) => void;
+  onChangeStartTimeEstimated?: (value: boolean) => void;
   onChangeTime?: (value: string) => void;
   onCreateSignal?: (input: Omit<HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   onRemoveOccurrence: (draftKey: string) => void;
@@ -127,6 +161,7 @@ export function JournalEventCapture({
   signals: readonly HealthJournalSignal[];
   symptoms: readonly HealthSymptom[];
   time: string;
+  timeEstimated?: boolean;
 }) {
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const tagCaretRef = useRef<number | null>(null);
@@ -194,17 +229,18 @@ export function JournalEventCapture({
     if (!signal) return;
     const replacement = `#${option.name} `;
     const nextCaret = tagQuery.start + replacement.length;
-    onChangeDescription(replaceHealthJournalReflectionTag(description, tagQuery.start, tagQuery.end, replacement));
+    const currentDescription = descriptionRef.current?.value ?? description;
+    onChangeDescription(replaceHealthJournalReflectionTag(currentDescription, tagQuery.start, tagQuery.end, replacement));
     tagCaretRef.current = nextCaret;
     setTagQuery(null);
     setTagHighlightIndex(0);
-    setTagOverlay({ draftKey: null, error: null, score: null, signal, time: time || getCurrentHealthDateTimeInputs().time });
+    setTagOverlay({ draftKey: null, error: null, score: null, signal, tagEnd: nextCaret, tagStart: tagQuery.start, tagText: replacement, time: time || getCurrentHealthDateTimeInputs().time, timeIsEstimated: false });
   }
 
   function beginOccurrenceEdit(draft: JournalEventOccurrenceDraft) {
     const signal = getJournalEventSignalForDraft(draft.signalId, signals, symptoms);
     if (!signal) return;
-    setTagOverlay({ draftKey: draft.draftKey, error: null, score: draft.score, signal, time: draft.time });
+    setTagOverlay({ draftKey: draft.draftKey, error: null, score: draft.score, signal, tagEnd: null, tagStart: null, tagText: null, time: draft.time, timeIsEstimated: draft.timeIsEstimated });
   }
 
   function saveTagOccurrence() {
@@ -217,6 +253,18 @@ export function JournalEventCapture({
       return;
     }
     const existing = tagOverlay.draftKey ? occurrences.find((draft) => draft.draftKey === tagOverlay.draftKey) : undefined;
+    const scoreLabel = `(${tagOverlay.score}/${denominator})`;
+    if (tagOverlay.draftKey === null && tagOverlay.tagStart !== null && tagOverlay.tagEnd !== null && tagOverlay.tagText) {
+      const currentDescription = descriptionRef.current?.value ?? description;
+      if (currentDescription.slice(tagOverlay.tagStart, tagOverlay.tagEnd) !== tagOverlay.tagText) {
+        setTagOverlay((current) => current ? { ...current, error: "The selected tag changed. Cancel it and choose the Feeling again." } : current);
+        return;
+      }
+      const signalName = getHealthJournalSignalDisplayName(overlaySignal, symptoms);
+      const scoredTag = `#${signalName} ${scoreLabel} `;
+      onChangeDescription(replaceHealthJournalReflectionTag(currentDescription, tagOverlay.tagStart, tagOverlay.tagEnd, scoredTag));
+      tagCaretRef.current = tagOverlay.tagStart + scoredTag.length;
+    }
     const nextDraft: JournalEventOccurrenceDraft = {
       draftKey: tagOverlay.draftKey ?? createDraftId("journal-event-occurrence"),
       ...(existing?.id ? { id: existing.id } : {}),
@@ -225,6 +273,7 @@ export function JournalEventCapture({
       score: tagOverlay.score,
       signalId: overlaySignal.id,
       time: normalizedTime,
+      timeIsEstimated: tagOverlay.timeIsEstimated,
     };
     if (existing) onUpdateOccurrence(nextDraft);
     else onSaveOccurrence(nextDraft);
@@ -235,6 +284,25 @@ export function JournalEventCapture({
       textarea.focus({ preventScroll: true });
       if (tagCaretRef.current !== null) textarea.setSelectionRange(tagCaretRef.current, tagCaretRef.current);
     });
+  }
+
+  function cancelTagOverlay() {
+    if (tagOverlay?.draftKey === null && tagOverlay.tagStart !== null && tagOverlay.tagEnd !== null && tagOverlay.tagText) {
+      const currentDescription = descriptionRef.current?.value ?? description;
+      if (currentDescription.slice(tagOverlay.tagStart, tagOverlay.tagEnd) === tagOverlay.tagText) {
+        onChangeDescription(replaceHealthJournalReflectionTag(currentDescription, tagOverlay.tagStart, tagOverlay.tagEnd, ""));
+        tagCaretRef.current = tagOverlay.tagStart;
+      }
+    }
+    setTagOverlay(null);
+    if (tagCaretRef.current !== null) {
+      requestAnimationFrame(() => {
+        const textarea = descriptionRef.current;
+        if (!textarea) return;
+        textarea.focus({ preventScroll: true });
+        textarea.setSelectionRange(tagCaretRef.current ?? textarea.value.length, tagCaretRef.current ?? textarea.value.length);
+      });
+    }
   }
 
   function handleKeyDown(event: KeyboardEvent<HTMLTextAreaElement>) {
@@ -288,7 +356,7 @@ export function JournalEventCapture({
           {tagOverlay ? <JournalEventOccurrenceOverlay
             anchorRef={descriptionRef}
             onChange={(updates) => setTagOverlay((current) => current ? { ...current, ...updates } : current)}
-            onClose={() => setTagOverlay(null)}
+            onClose={cancelTagOverlay}
             onSave={saveTagOccurrence}
             overlay={tagOverlay}
             signal={overlaySignal ?? tagOverlay.signal}
@@ -298,8 +366,8 @@ export function JournalEventCapture({
       </label>
       <p className={QUESTION_HINT_CLASS}>Type # while writing to tag a symptom or feeling. Choosing one logs a timestamped occurrence owned by this Event.</p>
     </QuestionSection>
-    {eventDateTime ? <QuestionSection title="When did it happen?"><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>Event date</span><input aria-label="Event date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChangeDate?.(event.target.value)} type="date" value={date} /></label><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>When did it happen?</span><HealthStandardTimeInput ariaLabel="When did it happen?" compact onChange={(value) => onChangeTime?.(value)} value={time} /></label></div></QuestionSection> : null}
-    {occurrences.length > 0 ? <QuestionSection title="Tagged Feeling occurrences"><div className="grid gap-2">{occurrences.map((occurrence) => { const signal = getJournalEventSignalForDraft(occurrence.signalId, signals, symptoms); const name = signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Archived Feeling"; const occurredAt = buildHealthMealLoggedAt(date, occurrence.time) ?? occurrence.occurredAt; return <div className="flex flex-wrap items-center gap-2 rounded-[0.8rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={occurrence.draftKey}><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalOccurrenceReference({ name, occurredAt, score: occurrence.score, signal })}</span><span className="text-xs text-[#7d88a3] dark:text-white/50">{signal?.scale_labels[occurrence.score] ?? ""}</span><AdhdIconButton aria-label={`Edit ${name} occurrence`} onClick={() => beginOccurrenceEdit(occurrence)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Remove ${name} occurrence`} onClick={() => onRemoveOccurrence(occurrence.draftKey)} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></div>; })}</div></QuestionSection> : null}
+    {eventDateTime ? <QuestionSection title="When did it happen?"><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>Event date</span><input aria-label="Event date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChangeDate?.(event.target.value)} type="date" value={date} /></label><div className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>When did it happen?</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel="When did it happen?" compact onChange={(value) => onChangeTime?.(value)} value={time} /><JournalEstimatedToggle checked={timeEstimated} label="Event start time" onChange={(value) => onChangeStartTimeEstimated?.(value)} /></div></div><label className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>Event end date (optional)</span><input aria-label="Event end date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChangeEndDate?.(event.target.value)} type="date" value={endDate} /></label><div className="grid gap-2"><span className={QUESTION_LABEL_CLASS}>When did it end? (optional)</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel="When did it end?" compact onChange={(value) => onChangeEndTime?.(value)} value={endTime} /><JournalEstimatedToggle checked={endTimeEstimated} label="Event end time" onChange={(value) => onChangeEndTimeEstimated?.(value)} /></div></div></div></QuestionSection> : null}
+    {occurrences.length > 0 ? <QuestionSection title="Tagged Feeling occurrences"><div className="grid gap-2">{occurrences.map((occurrence) => { const signal = getJournalEventSignalForDraft(occurrence.signalId, signals, symptoms); const name = signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Archived Feeling"; const occurredAt = buildHealthMealLoggedAt(date, occurrence.time) ?? occurrence.occurredAt; return <div className="flex flex-wrap items-center gap-2 rounded-[0.8rem] border border-[#edf0fb] px-3 py-2 dark:border-white/10" key={occurrence.draftKey}><span className="min-w-0 flex-1 text-sm font-semibold text-[#26324f] dark:text-white">{formatHealthJournalOccurrenceReference({ name, occurredAt, score: occurrence.score, signal, timeIsEstimated: occurrence.timeIsEstimated })}</span><span className="text-xs text-[#7d88a3] dark:text-white/50">{signal?.scale_labels[occurrence.score] ?? ""}</span><AdhdIconButton aria-label={`Edit ${name} occurrence`} onClick={() => beginOccurrenceEdit(occurrence)} size="sm" tone="ghost" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Remove ${name} occurrence`} onClick={() => onRemoveOccurrence(occurrence.draftKey)} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton></div>; })}</div></QuestionSection> : null}
   </div>;
 }
 
@@ -313,10 +381,10 @@ function JournalEventOccurrenceOverlay({
   symptoms,
 }: {
   anchorRef: RefObject<HTMLTextAreaElement | null>;
-  onChange: (updates: Partial<Pick<JournalTagOverlay, "error" | "score" | "time">>) => void;
+  onChange: (updates: Partial<Pick<JournalTagOverlayState, "error" | "score" | "time" | "timeIsEstimated">>) => void;
   onClose: () => void;
   onSave: () => void;
-  overlay: Exclude<JournalTagOverlay, null>;
+  overlay: JournalTagOverlayState;
   signal: HealthJournalSignal;
   symptoms: readonly HealthSymptom[];
 }) {
@@ -329,7 +397,7 @@ function JournalEventOccurrenceOverlay({
   }, []);
 
   useEffect(() => {
-    function handleKeyDown(event: KeyboardEvent) {
+    function handleKeyDown(event: globalThis.KeyboardEvent) {
       if (event.key === "Escape") {
         event.preventDefault();
         onClose();
@@ -371,7 +439,7 @@ function JournalEventOccurrenceOverlay({
       <div className="grid gap-2">
         <p className={`${QUESTION_HINT_CLASS} text-center font-semibold uppercase tracking-[0.16em]`}>Log {displayName}</p>
         <div className="grid gap-1.5"><p className={`${QUESTION_HINT_CLASS} text-center font-semibold uppercase tracking-[0.16em]`}>{signal.kind === "symptom" ? "Severity" : "Intensity"} · 1–{denominator}</p><div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">{Array.from({ length: denominator }, (_, index) => index + 1).map((score) => <button aria-label={`${displayName} ${score}, ${signal.scale_labels[score] ?? ""}`} aria-pressed={overlay.score === score} className={`flex min-h-8 w-full min-w-0 items-start justify-start gap-2 rounded-[0.7rem] border px-2 py-1.5 text-left ${overlay.score === score ? "border-[#5d49c7] bg-[#6f57f6] text-white dark:border-[#cabfff] dark:bg-[#cabfff] dark:text-[#1a1431]" : "border-[#6f57f6] bg-white text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onChange({ error: null, score })} type="button"><span className="shrink-0 text-xs font-semibold">{score}</span><span className="min-w-0 flex-1 text-[11px] font-medium leading-tight break-words whitespace-normal">{signal.scale_labels[score] ?? ""}</span></button>)}</div></div>
-        <label className="grid gap-1.5"><span className={QUESTION_HINT_CLASS}>Occurrence time</span><HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" compact onChange={(value) => onChange({ error: null, time: value })} value={overlay.time} /></label>
+        <div className="grid gap-1.5"><span className={QUESTION_HINT_CLASS}>Occurrence time</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" compact onChange={(value) => onChange({ error: null, time: value })} value={overlay.time} /><JournalEstimatedToggle checked={overlay.timeIsEstimated} label="Feeling occurrence time" onChange={(value) => onChange({ error: null, timeIsEstimated: value })} /></div></div>
         {overlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{overlay.error}</p> : null}
         <div className="flex justify-end gap-1.5"><AdhdChip onClick={onClose} type="button">Skip</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">{overlay.draftKey ? "Update occurrence" : "Add occurrence"}</AdhdChip></div>
       </div>
@@ -382,8 +450,8 @@ function JournalEventOccurrenceOverlay({
 
 export function hydrateJournalEventOccurrences(
   entry: { id: string } | null,
-  symptomEntries: ReadonlyArray<{ id: string; journal_entry_id: string; symptom_id: string; logged_at: string; severity: number; note: string | null }>,
-  journalSignalOccurrences: ReadonlyArray<{ id: string; journal_entry_id: string; signal_id: string; occurred_at: string; score: number; note: string | null }>,
+  symptomEntries: ReadonlyArray<{ id: string; journal_entry_id: string; symptom_id: string; logged_at: string; severity: number; note: string | null; time_is_estimated?: boolean }>,
+  journalSignalOccurrences: ReadonlyArray<{ id: string; journal_entry_id: string; signal_id: string; occurred_at: string; score: number; note: string | null; time_is_estimated?: boolean }>,
   journalSignals: readonly HealthJournalSignal[],
 ) {
   if (!entry) return [];
@@ -396,6 +464,7 @@ export function hydrateJournalEventOccurrences(
       score: occurrence.severity,
       signalId: journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === occurrence.symptom_id)?.id ?? `canonical-symptom:${occurrence.symptom_id}`,
       time: timeInputFromTimestamp(occurrence.logged_at),
+      timeIsEstimated: occurrence.time_is_estimated === true,
     })),
     ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
       draftKey: occurrence.id,
@@ -405,8 +474,9 @@ export function hydrateJournalEventOccurrences(
       score: occurrence.score,
       signalId: occurrence.signal_id,
       time: timeInputFromTimestamp(occurrence.occurred_at),
+      timeIsEstimated: occurrence.time_is_estimated === true,
     })),
-  ];
+  ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.draftKey.localeCompare(right.draftKey));
 }
 
 export function getJournalEventSignalForDraft(signalId: string, journalSignals: readonly HealthJournalSignal[], symptoms: readonly HealthSymptom[]) {

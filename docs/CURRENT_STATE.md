@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.104`.
+- Current working app version: `7.16.112`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,17 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-07 7.16.112 Journal Event timing and scored Feeling hashtags
+
+Journal Events now preserve unlimited independent Feeling occurrences, optional
+explicit end date/time boundaries, and approximate-time flags for Event start,
+Event end, and each occurrence. Scored inline tags use the complete
+`#Feeling (score/denominator)` text while legacy bare tags remain readable and
+interactive. The authored additive migration is
+`supabase/add_health_journal_time_estimates_7_16_112.sql`; it has not been
+applied. Remote occurrence persistence and browser QA remain pending until the
+migration is applied and Andrew completes manual Journal QA.
 
 ## 2026-10-06 7.16.104 Calendar In Progress QA Correction
 

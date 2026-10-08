@@ -161,7 +161,7 @@ import {
   type HealthJournalDraftValue,
   updateHealthJournalDraftValue,
 } from "@/lib/health-journal";
-import { formatHealthJournalOccurrenceReference, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
+import { formatHealthJournalEventInterval, formatHealthJournalOccurrenceReference, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
@@ -781,12 +781,12 @@ function JournalHistoryTagPopover({
     ? symptomEntries
       .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId)
       .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at))
-      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity }))
+      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity, timeIsEstimated: occurrence.time_is_estimated }))
     : option.signal
       ? journalSignalOccurrences
         .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id)
         .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at))
-        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score }))
+        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score, timeIsEstimated: occurrence.time_is_estimated }))
       : [];
   const overallValue = option.signal
     ? entryValues.find((value) => value.signal_id === option.signal?.id) ?? null
@@ -830,7 +830,7 @@ function JournalHistoryTagPopover({
             {occurrenceRows.length > 0 ? occurrenceRows.map((occurrence) => (
                 <div className="grid gap-0.5" key={occurrence.id}>
                   <div className="flex items-baseline justify-between gap-3">
-                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal })}</span>
+                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal, timeIsEstimated: occurrence.timeIsEstimated })}</span>
                     <span className="text-right font-semibold text-[#26324f] dark:text-white">{scaleLabels[occurrence.score] ?? ""}</span>
                   </div>
                   {occurrence.note?.trim() ? <p className="text-[#4f5872] dark:text-white/75">{occurrence.note}</p> : null}
@@ -3786,6 +3786,7 @@ export function HealthPage({
                             score: occurrence.severity,
                             occurredAt: occurrence.logged_at,
                             signal,
+                            timeIsEstimated: occurrence.time_is_estimated,
                           };
                         }),
                         ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
@@ -3811,10 +3812,14 @@ export function HealthPage({
                             score: occurrence.score,
                             occurredAt: occurrence.occurred_at,
                             signal,
+                            timeIsEstimated: occurrence.time_is_estimated,
                           };
                         }),
                       ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
                       const isLoggedMetadataOpen = expandedJournalHistoryEntryIds.has(entry.id);
+                      const eventInterval = entry.entry_type === "event"
+                        ? formatHealthJournalEventInterval({ endDate: entryAnswers.event_end_date, endTime: entryAnswers.event_end_time, endTimeEstimated: entryAnswers.event_end_time_estimated, startDate: entry.entry_date, startTime: entry.entry_time, startTimeEstimated: entryAnswers.event_start_time_estimated })
+                        : null;
                       return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="grid gap-1">
@@ -3833,8 +3838,9 @@ export function HealthPage({
                                 >
                                   <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isLoggedMetadataOpen ? "rotate-180" : ""}`} />
                                 </button>
+                                </div>
                               </div>
-                            </div>
+                              {eventInterval ? <p className="text-xs text-[#7d88a3] dark:text-white/45"><span className="font-semibold">Event interval:</span> {eventInterval}</p> : null}
                             {isLoggedMetadataOpen ? <div id={`journal-history-logged-${entry.id}`}>
                               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Logged</p>
                               <p className="text-xs text-[#7d88a3] dark:text-white/45">{formatJournalLoggedAt(entry.created_at)}</p>
@@ -3844,7 +3850,7 @@ export function HealthPage({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                         {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
-                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal })).join(" · ")}</p> : null}
+                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal, timeIsEstimated: occurrence.timeIsEstimated })).join(" · ")}</p> : null}
                         {historyReflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} reflection={historyReflection} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
                         <JournalEntrySummary checkIns={checkIns} entry={entry} journalSignalOccurrences={journalSignalOccurrences} journalSignals={journalSignals} symptomEntries={symptomEntries} symptoms={symptoms} />
                         {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}

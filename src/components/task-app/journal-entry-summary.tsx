@@ -11,6 +11,7 @@ import type {
 } from "@/lib/database.types";
 import {
   formatHealthJournalOccurrenceReference,
+  formatHealthJournalEventInterval,
   formatHealthJournalSleepLink,
   getHealthJournalEntryTypeLabel,
   normalizeHealthJournalStructuredAnswers,
@@ -49,14 +50,14 @@ export function JournalEntrySummary({
       const signal = journalSignals.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === occurrence.symptom_id);
       return {
         key: `symptom:${occurrence.id}`,
-        text: formatHealthJournalOccurrenceReference({ name: symptom?.name ?? "Archived symptom", occurredAt: occurrence.logged_at, score: occurrence.severity, signal }),
+        text: formatHealthJournalOccurrenceReference({ name: symptom?.name ?? "Archived symptom", occurredAt: occurrence.logged_at, score: occurrence.severity, signal, timeIsEstimated: occurrence.time_is_estimated }),
       };
     }),
     ...ownedFeelingOccurrences.map((occurrence) => {
       const signal = journalSignals.find((candidate) => candidate.id === occurrence.signal_id);
       return {
         key: `feeling:${occurrence.id}`,
-        text: formatHealthJournalOccurrenceReference({ name: signal?.name ?? "Archived feeling", occurredAt: occurrence.occurred_at, score: occurrence.score, signal }),
+        text: formatHealthJournalOccurrenceReference({ name: signal?.name ?? "Archived feeling", occurredAt: occurrence.occurred_at, score: occurrence.score, signal, timeIsEstimated: occurrence.time_is_estimated }),
       };
     }),
   ];
@@ -68,10 +69,10 @@ export function JournalEntrySummary({
     if (symptomOccurrence) {
       const symptom = symptoms.find((candidate) => candidate.id === symptomOccurrence.symptom_id);
       const signal = journalSignals.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === symptomOccurrence.symptom_id);
-      occurrenceLines.push({ key, text: formatHealthJournalOccurrenceReference({ name: symptom?.name ?? "Archived symptom", occurredAt: symptomOccurrence.logged_at, score: symptomOccurrence.severity, signal }) });
+      occurrenceLines.push({ key, text: formatHealthJournalOccurrenceReference({ name: symptom?.name ?? "Archived symptom", occurredAt: symptomOccurrence.logged_at, score: symptomOccurrence.severity, signal, timeIsEstimated: symptomOccurrence.time_is_estimated }) });
     } else if (feelingOccurrence) {
       const signal = journalSignals.find((candidate) => candidate.id === feelingOccurrence.signal_id);
-      occurrenceLines.push({ key, text: formatHealthJournalOccurrenceReference({ name: signal?.name ?? "Archived feeling", occurredAt: feelingOccurrence.occurred_at, score: feelingOccurrence.score, signal }) });
+      occurrenceLines.push({ key, text: formatHealthJournalOccurrenceReference({ name: signal?.name ?? "Archived feeling", occurredAt: feelingOccurrence.occurred_at, score: feelingOccurrence.score, signal, timeIsEstimated: feelingOccurrence.time_is_estimated }) });
     }
   }
 
@@ -104,7 +105,8 @@ export function JournalEntrySummary({
     {answers.sleep_link ? <SummaryLine label="Sleep">{formatHealthJournalSleepLink(answers.sleep_link)}</SummaryLine> : null}
     {answers.sleep_quality_score ? <SummaryLine label="Sleep quality">{answers.sleep_quality_score}/10{answers.sleep_quality_note ? ` · ${answers.sleep_quality_note}` : ""}</SummaryLine> : null}
     {answers.breakfast_state ? <SummaryLine label="Breakfast">{answers.breakfast_state === "already_ate" ? `${answers.breakfast_meals?.map((meal) => `${meal.food_name} (${formatHealthNutritionNumber(meal.calories)} kcal)`).join(", ") || "Already ate"}` : answers.breakfast_state === "planning_to_eat" ? `Planning to eat${answers.planned_breakfast ? ` · ${answers.planned_breakfast}` : ""}` : answers.breakfast_state === "skipping" ? "Skipping / not having breakfast" : "Not sure yet"}</SummaryLine> : null}
-    {answers.linked_event_ids?.length ? <SummaryLine label="Linked Event">{linkedEvents.length > 0 ? linkedEvents.map((event) => { const eventAnswers = normalizeHealthJournalStructuredAnswers(event.structured_answers); return `${eventAnswers.event_description || "Event"} · ${event.entry_date} ${event.entry_time}`; }).join(" · ") : "Linked Event details are retained."}</SummaryLine> : null}
+    {answers.linked_event_ids?.length ? <SummaryLine label="Linked Event">{linkedEvents.length > 0 ? linkedEvents.map((event) => { const eventAnswers = normalizeHealthJournalStructuredAnswers(event.structured_answers); const interval = formatHealthJournalEventInterval({ endDate: eventAnswers.event_end_date, endTime: eventAnswers.event_end_time, endTimeEstimated: eventAnswers.event_end_time_estimated, startDate: event.entry_date, startTime: event.entry_time, startTimeEstimated: eventAnswers.event_start_time_estimated }); return `${eventAnswers.event_description || "Event"}${interval ? ` · ${interval}` : ""}`; }).join(" · ") : "Linked Event details are retained."}</SummaryLine> : null}
+    {entry.entry_type === "event" ? <SummaryLine label="Event interval">{formatHealthJournalEventInterval({ endDate: answers.event_end_date, endTime: answers.event_end_time, endTimeEstimated: answers.event_end_time_estimated, startDate: entry.entry_date, startTime: entry.entry_time, startTimeEstimated: answers.event_start_time_estimated }) ?? "Time unavailable"}</SummaryLine> : null}
     {answers.energy_now || answers.energy_overall ? <SummaryLine label="Energy">{answers.energy_now ?? answers.energy_overall}/10{answers.energy_note ? ` · ${answers.energy_note}` : ""}</SummaryLine> : null}
     {answers.focus_now || answers.focus_overall ? <SummaryLine label="Focus">{answers.focus_now ?? answers.focus_overall}/10{answers.focus_note ? ` · ${answers.focus_note}` : ""}</SummaryLine> : null}
     {occurrenceLines.length > 0 ? <SummaryLine label="Feeling occurrences"><span className="inline-flex flex-wrap gap-x-2 gap-y-1">{occurrenceLines.map((line) => <span key={line.key}>{line.text}</span>)}</span></SummaryLine> : linkedOccurrenceKeys.size > 0 ? <SummaryLine label="Feeling occurrences">Linked occurrence details are retained.</SummaryLine> : null}

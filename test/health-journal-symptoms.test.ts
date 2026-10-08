@@ -69,6 +69,7 @@ function symptomEntry(
   loggedAt: string,
   severity: number,
   symptomId = "symptom-1",
+  timeIsEstimated = false,
 ) {
   return {
     created_at: loggedAt,
@@ -79,6 +80,7 @@ function symptomEntry(
     note: null,
     severity,
     symptom_id: symptomId,
+    time_is_estimated: timeIsEstimated,
     updated_at: loggedAt,
     user_id: "user-1",
   };
@@ -101,6 +103,7 @@ function journalSignalOccurrence(
     occurred_at: occurredAt,
     score,
     signal_id: signalId,
+    time_is_estimated: false,
     updated_at: occurredAt,
     user_id: "user-1",
   };
@@ -166,7 +169,7 @@ test("Journal scales use 1 through 10 and normalize symptom input", () => {
 
 test("same symptom entries coexist and remain individually grouped by day and time", () => {
   const groups = groupHealthSymptomEntriesByDate([
-    symptomEntry("morning", "2026-08-29", "2026-08-29T09:00:00.000Z", 3),
+    symptomEntry("morning", "2026-08-29", "2026-08-29T09:00:00.000Z", 3, "symptom-1", true),
     symptomEntry("afternoon", "2026-08-29", "2026-08-29T13:30:00.000Z", 6),
     symptomEntry("prior-day", "2026-08-28", "2026-08-28T19:30:00.000Z", 4),
   ]);
@@ -177,6 +180,8 @@ test("same symptom entries coexist and remain individually grouped by day and ti
     ["morning", 3],
   ]);
   assert.equal(groups[0]?.entries.length, 2);
+  assert.equal(groups[0]?.entries.find((entry) => entry.id === "morning")?.time_is_estimated, true);
+  assert.equal(groups[0]?.entries.find((entry) => entry.id === "afternoon")?.time_is_estimated, false);
 });
 
 test("symptom trends order timestamped entries and preserve multiple same-day points", () => {
