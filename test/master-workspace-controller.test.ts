@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  activateMasterTabWithTaskWorkspace,
+  canPersistLegacyTaskWorkspace,
+  closeMasterTabWithTaskWorkspace,
   isMasterWorkspaceFeatureEnabled,
+  isTasksMasterTabTransitionBlocked,
   persistMasterWorkspaceForReadyUser,
   restoreMasterWorkspaceForUser,
 } from "../src/lib/master-workspace-controller.ts";
@@ -10,7 +14,7 @@ import {
   duplicateFocusedPageIntoRightPanel,
   getMasterWorkspaceStorageKey,
 } from "../src/lib/master-workspace-state.ts";
-import { DEFAULT_TASK_WORKSPACE_TABS_STATE } from "../src/lib/task-ui-state.ts";
+import { DEFAULT_TASK_WORKSPACE_TABS_STATE, type TaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -19,6 +23,29 @@ function memoryStorage() {
     getItem: (key: string) => values.get(key) ?? null,
     setItem: (key: string, value: string) => { values.set(key, value); },
     removeItem: (key: string) => { values.delete(key); },
+  };
+}
+
+function taskWorkspace(search: string, options: {
+  bucket?: string;
+  quickFilters?: Array<"active" | "done" | "urgent" | "today" | "focused">;
+  view?: "table" | "list" | "cards" | "matrix" | "calendar";
+} = {}): TaskWorkspaceTabsState {
+  const firstTab = DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0];
+  return {
+    activeTabId: "nested-one",
+    uiStateVersion: DEFAULT_TASK_WORKSPACE_TABS_STATE.uiStateVersion,
+    tabs: [{
+      ...firstTab,
+      id: "nested-one",
+      taskUiState: {
+        ...firstTab.taskUiState,
+        search,
+        selectedBucket: options.bucket ?? "today",
+        quickFilters: options.quickFilters ?? [],
+        view: options.view ?? "table",
+      },
+    }],
   };
 }
 
@@ -35,6 +62,88 @@ test("first hydration preserves the legacy page and Tasks workspace without writ
   assert.equal(restored.state.panels[0].tabs[0].destination.page, "Tasks");
   assert.equal(restored.state.panels[0].tabs[0].presentation.tasksWorkspace?.activeTabId, "legacy-tab");
   assert.equal(storage.values.has(getMasterWorkspaceStorageKey("user-a")), false);
+});
+
+test("Tasks master tab activation saves the current snapshot and restores each tab independently", () => {
+  const storage = memoryStorage();
+  const firstTasksState = taskWorkspace("first", { bucket: "priority_3_4", view: "list" });
+  const restored = restoreMasterWorkspaceForUser(storage, "tasks-user", "Tasks", firstTasksState);
+  const panelId = restored.state.panels[0].id;
+  const withSecondTab = createMasterTab(restored.state, panelId, {
+    id: "tasks-master-b",
+    destination: { kind: "page", page: "Tasks" },
+    presentation: { tasksWorkspace: taskWorkspace("second", { bucket: "attention", view: "calendar" }) },
+  }, false);
+  const changedFirstState = taskWorkspace("first search changed", { bucket: "priority_5", quickFilters: ["urgent"], view: "matrix" });
+
+  const toSecond = activateMasterTabWithTaskWorkspace(withSecondTab, panelId, "tasks-master-b", changedFirstState);
+  assert.equal(toSecond.state.panels[0].activeTabId, "tasks-master-b");
+  assert.equal(toSecond.state.panels[0].tabs[0].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "first search changed");
+  assert.deepEqual(toSecond.state.panels[0].tabs[0].presentation.tasksWorkspace?.tabs[0].taskUiState.quickFilters, ["urgent"]);
+  assert.equal(toSecond.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "second");
+  assert.equal(toSecond.taskWorkspaceTabsState?.tabs[0].taskUiState.selectedBucket, "attention");
+  assert.equal(toSecond.taskWorkspaceTabsState?.tabs[0].taskUiState.view, "calendar");
+
+  const changedSecondState = taskWorkspace("second changed", { bucket: "all", view: "cards" });
+  const backToFirst = activateMasterTabWithTaskWorkspace(toSecond.state, panelId, "master-tab-1", changedSecondState);
+  assert.equal(backToFirst.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "first search changed");
+  assert.equal(backToFirst.taskWorkspaceTabsState?.tabs[0].taskUiState.selectedBucket, "priority_5");
+  assert.equal(backToFirst.taskWorkspaceTabsState?.tabs[0].taskUiState.view, "matrix");
+  assert.deepEqual(backToFirst.taskWorkspaceTabsState?.tabs[0].taskUiState.quickFilters, ["urgent"]);
+  assert.equal(backToFirst.state.panels[0].tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "second changed");
+});
+
+test("closing an active Tasks master tab restores the remaining active tab", () => {
+  const first = taskWorkspace("remaining", { bucket: "today", view: "table" });
+  const initialized = restoreMasterWorkspaceForUser(memoryStorage(), "close-user", "Tasks", first).state;
+  const panelId = initialized.panels[0].id;
+  const withSecond = createMasterTab(initialized, panelId, {
+    id: "tasks-master-b",
+    destination: { kind: "page", page: "Tasks" },
+    presentation: { tasksWorkspace: taskWorkspace("closing", { bucket: "attention", view: "list" }) },
+  });
+  const transition = closeMasterTabWithTaskWorkspace(withSecond, panelId, "tasks-master-b", taskWorkspace("latest closing", { view: "calendar" }));
+
+  assert.equal(transition.state.panels[0].activeTabId, "master-tab-1");
+  assert.equal(transition.state.panels[0].tabs.length, 1);
+  assert.equal(transition.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "remaining");
+});
+
+test("refresh preserves nested Tasks snapshots for both master tabs", () => {
+  const storage = memoryStorage();
+  const initialized = restoreMasterWorkspaceForUser(storage, "refresh-user", "Tasks", taskWorkspace("first", { view: "list" })).state;
+  const panelId = initialized.panels[0].id;
+  const withSecond = createMasterTab(initialized, panelId, {
+    id: "tasks-master-b",
+    destination: { kind: "page", page: "Tasks" },
+    presentation: { tasksWorkspace: taskWorkspace("second", { bucket: "attention", view: "calendar" }) },
+  }, false);
+  const updated = activateMasterTabWithTaskWorkspace(withSecond, panelId, "tasks-master-b", taskWorkspace("saved first", { view: "matrix" })).state;
+  assert.equal(persistMasterWorkspaceForReadyUser(storage, "refresh-user", "refresh-user", true, updated), true);
+
+  const afterRefresh = restoreMasterWorkspaceForUser(storage, "refresh-user", "Home", DEFAULT_TASK_WORKSPACE_TABS_STATE).state;
+  assert.equal(afterRefresh.panels[0].tabs[0].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "saved first");
+  assert.equal(afterRefresh.panels[0].tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "second");
+  assert.equal(afterRefresh.panels[0].tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.selectedBucket, "attention");
+});
+
+test("legacy Tasks storage is untouched in Master Tabs mode and writes remain user fenced otherwise", () => {
+  const storage = memoryStorage();
+  const legacyKey = "adhdice-task-ui:user-a";
+  const legacyValue = JSON.stringify({ activeTabId: "legacy", tabs: [{ id: "legacy" }] });
+  storage.values.set(legacyKey, legacyValue);
+
+  if (canPersistLegacyTaskWorkspace(true, "user-a", "user-a")) storage.setItem(legacyKey, "master snapshot");
+  assert.equal(storage.values.get(legacyKey), legacyValue);
+  assert.equal(canPersistLegacyTaskWorkspace(false, "user-a", "user-a"), true);
+  assert.equal(canPersistLegacyTaskWorkspace(false, "user-b", "user-a"), false);
+  assert.equal(canPersistLegacyTaskWorkspace(true, "user-a", null), false);
+});
+
+test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
+  assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
+  assert.equal(isTasksMasterTabTransitionBlocked("Tasks", false), false);
+  assert.equal(isTasksMasterTabTransitionBlocked("Home", true), false);
 });
 
 test("ready-user persistence is fenced by readiness and restored user, then survives refresh", () => {

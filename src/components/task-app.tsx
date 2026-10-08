@@ -1207,6 +1207,7 @@ export function TaskApp() {
     isTaskFiltersOpen,
     renameTaskWorkspaceTab,
     reorderTaskWorkspaceTab,
+    replaceTaskWorkspaceTabsState,
     setActivePage,
     setActiveTaskWorkspaceTab,
     setFocusedTaskIdsByDate,
@@ -1677,6 +1678,10 @@ export function TaskApp() {
   const taskHistoryModalLoadGenerationRef = useRef(0);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
+  const [isTasksSearchDraftOpen, setIsTasksSearchDraftOpen] = useState(false);
+  const [isTasksWorkspaceRenameDraftOpen, setIsTasksWorkspaceRenameDraftOpen] = useState(false);
+  const [isTasksListDraftOpen, setIsTasksListDraftOpen] = useState(false);
+  const [isTasksTableDraftOpen, setIsTasksTableDraftOpen] = useState(false);
   const [taskEditorNavigationTaskIds, setTaskEditorNavigationTaskIds] = useState<string[] | null>(null);
   const [milestoneSetupTaskId, setMilestoneSetupTaskId] = useState<string | null>(null);
   const [milestoneCorrectionId, setMilestoneCorrectionId] = useState<string | null>(null);
@@ -5680,7 +5685,9 @@ export function TaskApp() {
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
   const masterWorkspace = useMasterWorkspaceController({
     activePage,
+    hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen,
     isReady: isAuthenticatedAppBootReady,
+    replaceTaskWorkspaceTabsState,
     setActivePage,
     taskWorkspaceTabsState,
     userId: session?.user?.id,
@@ -7849,6 +7856,7 @@ export function TaskApp() {
     onSearchSubmit: handleTaskOperationsSearchSubmit,
     onExpandAllColumns: () => setExpandAllColumnsToken((current) => current + 1),
     onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
+    onSearchDraftEditingChange: setIsTasksSearchDraftOpen,
     onSearchChange: handleTaskOperationsSearchChange,
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
     onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
@@ -8424,6 +8432,7 @@ export function TaskApp() {
             {taskWorkspaceFlowLayer}
             <TasksWorkspace
               activeTabId={taskWorkspaceTabsState.activeTabId}
+              activeMasterTabId={masterWorkspace.activeTab.id}
             onAddTab={() => createTaskWorkspaceTab({
               isRailHidden: false,
               taskUiState: {
@@ -8453,6 +8462,7 @@ export function TaskApp() {
               />
             )}
             onCloseTab={closeTaskWorkspaceTab}
+            onDraftEditingChange={setIsTasksWorkspaceRenameDraftOpen}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
                 behaviorProfiles={taskTypeBehaviorProfiles}
@@ -8535,7 +8545,8 @@ export function TaskApp() {
                 />
               ) : (
                 <TasksTableAdapter
-                tableProps={{
+                  onDraftEditingChange={setIsTasksTableDraftOpen}
+                  tableProps={{
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
@@ -8716,7 +8727,8 @@ export function TaskApp() {
                 currentListLabel={selectedBucketLabel}
                 filterRowsNode={taskFilterRowsNode}
                 listSortPreference={activeListSortPreference}
-                onToggleFocusToday={toggleFocusTodayForTask}
+                onDraftEditingChange={setIsTasksListDraftOpen}
+              onToggleFocusToday={toggleFocusTodayForTask}
                 panelProps={listPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
                 tableProps={{

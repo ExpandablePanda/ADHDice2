@@ -1,13 +1,75 @@
 import {
+  activateMasterTab,
+  closeMasterTab,
   getMasterWorkspaceStorageKey,
   initializeMasterWorkspaceState,
   loadMasterWorkspaceState,
   normalizeMasterWorkspaceState,
   saveMasterWorkspaceState,
+  updateMasterTabTasksWorkspace,
   type MasterWorkspaceState,
   type MasterWorkspaceStorage,
 } from "@/lib/master-workspace-state";
 import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
+
+export type MasterWorkspaceTaskTransition = {
+  state: MasterWorkspaceState;
+  taskWorkspaceTabsState?: TaskWorkspaceTabsState;
+};
+
+function getActiveTaskWorkspaceTabsState(state: MasterWorkspaceState, panelId: string): TaskWorkspaceTabsState | undefined {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === panel.activeTabId);
+  return tab?.destination.page === "Tasks" ? tab.presentation.tasksWorkspace : undefined;
+}
+
+export function activateMasterTabWithTaskWorkspace(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  liveTaskWorkspaceTabsState: TaskWorkspaceTabsState,
+): MasterWorkspaceTaskTransition {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const activeTab = panel?.tabs.find((candidate) => candidate.id === panel.activeTabId);
+  const withCurrentSnapshot = activeTab?.destination.page === "Tasks"
+    ? updateMasterTabTasksWorkspace(state, panelId, activeTab.id, liveTaskWorkspaceTabsState)
+    : state;
+  const next = activateMasterTab(withCurrentSnapshot, panelId, tabId);
+  return {
+    state: next,
+    taskWorkspaceTabsState: getActiveTaskWorkspaceTabsState(next, panelId),
+  };
+}
+
+export function closeMasterTabWithTaskWorkspace(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  liveTaskWorkspaceTabsState: TaskWorkspaceTabsState,
+): MasterWorkspaceTaskTransition {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const activeTab = panel?.tabs.find((candidate) => candidate.id === panel.activeTabId);
+  const withCurrentSnapshot = activeTab?.destination.page === "Tasks"
+    ? updateMasterTabTasksWorkspace(state, panelId, activeTab.id, liveTaskWorkspaceTabsState)
+    : state;
+  const next = closeMasterTab(withCurrentSnapshot, panelId, tabId);
+  return {
+    state: next,
+    taskWorkspaceTabsState: getActiveTaskWorkspaceTabsState(next, panelId),
+  };
+}
+
+export function canPersistLegacyTaskWorkspace(
+  isMasterWorkspaceEnabled: boolean,
+  userId: string | null | undefined,
+  restoredUserId: string | null,
+): boolean {
+  return !isMasterWorkspaceEnabled && Boolean(userId) && userId === restoredUserId;
+}
+
+export function isTasksMasterTabTransitionBlocked(activePage: AppPage, hasUnsafeTasksDraft: boolean): boolean {
+  return activePage === "Tasks" && hasUnsafeTasksDraft;
+}
 
 export function isMasterWorkspaceFeatureEnabled(
   nodeEnvironment: string | undefined,

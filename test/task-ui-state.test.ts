@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
-import { DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizeTaskWorkspaceTabsState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs, VALID_TASK_VIEWS } from "../src/lib/task-ui-state.ts";
+import { closeTaskWorkspaceTabState, createTaskWorkspaceTabState, DEFAULT_TASK_UI_STATE, DEFAULT_TASK_WORKSPACE_TABS_STATE, DEFAULT_TASK_WORKSPACE_TAB_ID, isReportTaskWorkspaceTab, migrateLegacyTaskUiState, normalizeTaskWorkspaceTabsState, renameTaskWorkspaceTabState, reorderTaskWorkspaceTabToIndex, reorderTaskWorkspaceTabs, VALID_TASK_VIEWS } from "../src/lib/task-ui-state.ts";
 
 test("calendar is a valid task view with independent include-steps defaults", () => {
   assert.deepEqual(VALID_TASK_VIEWS, ["table", "list", "cards", "matrix", "calendar"]);
@@ -303,4 +303,28 @@ test("task workspace tab reorder preserves active tab id", () => {
   const draggedToEnd = reorderTaskWorkspaceTabToIndex(state, "workspace-1", 2);
   assert.deepEqual(draggedToEnd.tabs.map((tab) => tab.id), ["workspace-2", "workspace-3", "workspace-1"]);
   assert.equal(draggedToEnd.activeTabId, "workspace-2");
+});
+
+test("nested task tab create, rename, reorder, and close operations stay within their workspace snapshot", () => {
+  const firstWorkspace = normalizeTaskWorkspaceTabsState({
+    ...DEFAULT_TASK_WORKSPACE_TABS_STATE,
+    tabs: [
+      { ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0], id: "workspace-a-1", label: "A1" },
+    ],
+    activeTabId: "workspace-a-1",
+  });
+  const secondWorkspace = normalizeTaskWorkspaceTabsState(firstWorkspace);
+  const created = createTaskWorkspaceTabState(firstWorkspace, {
+    ...firstWorkspace.tabs[0],
+    id: "workspace-a-2",
+    label: "Tab 2",
+  });
+  const renamed = renameTaskWorkspaceTabState(created, "workspace-a-2", "Research");
+  const reordered = reorderTaskWorkspaceTabToIndex(renamed, "workspace-a-2", 0);
+  const closed = closeTaskWorkspaceTabState(reordered, "workspace-a-1");
+
+  assert.deepEqual(closed.tabs.map((tab) => [tab.id, tab.label]), [["workspace-a-2", "Research"]]);
+  assert.equal(closed.activeTabId, "workspace-a-2");
+  assert.deepEqual(secondWorkspace.tabs.map((tab) => [tab.id, tab.label]), [["workspace-a-1", "A1"]]);
+  assert.equal(secondWorkspace.activeTabId, "workspace-a-1");
 });

@@ -1432,6 +1432,7 @@ type TaskManagementTableV2Props = {
   enableInspector?: boolean;
   overlayNode?: ReactNode;
   onInspectorClose?: () => void;
+  onUnsafeDraftChange?: (isEditing: boolean) => void;
   shellClassName?: string;
   showHeader?: boolean;
   onClearSelection?: () => void;
@@ -2945,6 +2946,7 @@ export function TaskManagementTableV2({
   hasMoreRows = false,
   persistedLayoutPreferences,
   onPersistedLayoutPreferencesChange,
+  onUnsafeDraftChange,
 }: TaskManagementTableV2Props) {
   const layoutPersistenceEnabled = !overlayOnly;
   const shouldReduceMotion = useReducedMotion();
@@ -2967,6 +2969,11 @@ export function TaskManagementTableV2({
   const titleDraftsRef = useRef<Record<string, string>>({});
   const pendingEditorChildTitleRenameRef = useRef<{ taskId: string; title: string } | null>(null);
   const [subtaskTitleDrafts, setSubtaskTitleDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    onUnsafeDraftChange?.(Boolean(selectedTaskId || editingTaskTitleId || editingSubtaskId || metadataTargetTaskId));
+  }, [editingSubtaskId, editingTaskTitleId, metadataTargetTaskId, onUnsafeDraftChange, selectedTaskId]);
+  useEffect(() => () => onUnsafeDraftChange?.(false), [onUnsafeDraftChange]);
 
   function getPolicyFilteredStatuses(input: {
     dueOn: string | null;

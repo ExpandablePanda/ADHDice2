@@ -11,10 +11,12 @@ import {
   duplicateFocusedPageIntoRightPanel,
   getMasterWorkspaceStorageKey,
   initializeMasterWorkspaceState,
+  masterTabTasksWorkspaceMatchesLiveState,
   loadMasterWorkspaceState,
   normalizeMasterWorkspaceState,
   replaceFocusedMasterTabDestination,
   saveMasterWorkspaceState,
+  updateMasterTabTasksWorkspace,
   type MasterWorkspaceStorage,
 } from "../src/lib/master-workspace-state.ts";
 import { DEFAULT_TASK_WORKSPACE_TABS_STATE, type TaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
@@ -64,6 +66,50 @@ test("first-use Tasks migration preserves normalized nested tabs and settings as
   assert.notEqual(nested, existing);
   assert.notEqual(nested?.tabs[0].taskUiState.quickFilters, existing.tabs[0].taskUiState.quickFilters);
   assert.notEqual(nested?.tabs[0].taskUiState.energyFilters, existing.tabs[0].taskUiState.energyFilters);
+});
+
+test("each Tasks master tab gets its own normalized workspace snapshot", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const panelId = initial.panels[0].id;
+  const firstSnapshot = initial.panels[0].tabs[0].presentation.tasksWorkspace;
+  const withSecond = createMasterTab(initial, panelId, {
+    id: "tasks-tab-2",
+    destination: { kind: "page", page: "Tasks" },
+    presentation: { tasksWorkspace: firstSnapshot },
+  }, false);
+  const initialSecondSnapshot = withSecond.panels[0].tabs.find((tab) => tab.id === "tasks-tab-2")?.presentation.tasksWorkspace;
+  assert.deepEqual(initialSecondSnapshot, firstSnapshot);
+  assert.notEqual(initialSecondSnapshot, firstSnapshot);
+  assert.notEqual(initialSecondSnapshot?.tabs[0].taskUiState.quickFilters, firstSnapshot?.tabs[0].taskUiState.quickFilters);
+  const changedFirstState = {
+    ...tasksState(),
+    tabs: tasksState().tabs.map((tab) => ({
+      ...tab,
+      taskUiState: { ...tab.taskUiState, search: "first master tab", quickFilters: ["today" as const] },
+    })),
+  };
+  const updated = updateMasterTabTasksWorkspace(withSecond, panelId, "master-tab-1", changedFirstState);
+  const first = updated.panels[0].tabs.find((tab) => tab.id === "master-tab-1")?.presentation.tasksWorkspace;
+  const second = updated.panels[0].tabs.find((tab) => tab.id === "tasks-tab-2")?.presentation.tasksWorkspace;
+
+  assert.equal(first?.tabs[0].taskUiState.search, "first master tab");
+  assert.equal(second?.tabs[0].taskUiState.search, "");
+  assert.equal(second?.tabs[0].taskUiState.view, "list");
+  assert.notEqual(first?.tabs[0].taskUiState.quickFilters, second?.tabs[0].taskUiState.quickFilters);
+  assert.equal(updateMasterTabTasksWorkspace(updated, panelId, "master-tab-1", changedFirstState), updated);
+  assert.equal(masterTabTasksWorkspaceMatchesLiveState(updated, panelId, "master-tab-1", changedFirstState), true);
+  assert.equal(masterTabTasksWorkspaceMatchesLiveState(updated, panelId, "master-tab-1", tasksState()), false);
+});
+
+test("Tasks destinations without saved snapshots normalize to a default nested workspace", () => {
+  const created = createMasterTab(createDefaultMasterWorkspaceState(), "master-panel-1", {
+    id: "tasks-without-snapshot",
+    destination: { kind: "page", page: "Tasks" },
+    presentation: {},
+  });
+  const snapshot = created.panels[0].tabs.find((tab) => tab.id === "tasks-without-snapshot")?.presentation.tasksWorkspace;
+  assert.equal(snapshot?.activeTabId, DEFAULT_TASK_WORKSPACE_TABS_STATE.activeTabId);
+  assert.deepEqual(snapshot?.tabs.map((tab) => tab.id), [DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0].id]);
 });
 
 test("malformed nested Tasks filters retain saved master tabs and valid settings", () => {

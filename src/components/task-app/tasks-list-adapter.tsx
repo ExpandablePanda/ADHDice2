@@ -439,6 +439,7 @@ const ROW_MODEL_WINDOW_BATCH = ROW_MODEL_WINDOW_SIZE;
 
 type TasksTableAdapterProps = {
   filterRowsNode: ReactNode;
+  onDraftEditingChange?: (isEditing: boolean) => void;
   tableProps: TasksTableSourceProps;
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
 };
@@ -517,6 +518,7 @@ const TASK_TABLE_COLUMN_MAP: Record<AgentPlanColumnId, TaskManagementTableColumn
 
 export function TasksTableAdapter({
   filterRowsNode,
+  onDraftEditingChange,
   tableProps,
   panelProps,
 }: TasksTableAdapterProps) {
@@ -646,6 +648,7 @@ export function TasksTableAdapter({
       agentPlanNode={
         <TaskManagementTableV2
           allowInlineInspector
+          onUnsafeDraftChange={onDraftEditingChange}
           todayDateKey={tableProps.rowContext.todayDateKey}
           getAllRows={() => (tableProps.allTasks ?? tableProps.tasks)
             .filter(isTaskVisibleInPrimaryViews)
@@ -843,6 +846,7 @@ type TasksListAdapterProps = {
   currentListLabel: string;
   filterRowsNode: ReactNode;
   listSortPreference?: ListSortPreference;
+  onDraftEditingChange?: (isEditing: boolean) => void;
   onToggleFocusToday?: (taskId: string) => void;
   panelProps: Omit<ComponentProps<typeof TasksListViewPanel>, "agentPlanNode" | "filterRowsNode">;
   selectedBucket: string;
@@ -1053,6 +1057,7 @@ function StepsCardPreview({
   getVisibleTaskIds,
   onCreateChildTask,
   onClearRowContextMenu,
+  onUnsafeDraftChange,
   onDeleteStep,
   onOpenHistory,
   onOpenStep,
@@ -1105,6 +1110,7 @@ function StepsCardPreview({
   listMembershipsByTaskId: Record<string, Array<{ id: string; isManual: boolean }>>;
   parentTaskId: string;
   onCreateChildTask?: (parentTaskId: string, title: string, taskTypeSelectionValue?: string, metadata?: TaskCreationMetadata) => Promise<{ error: string | null; taskId: string | null }>;
+  onUnsafeDraftChange?: (parentTaskId: string, isEditing: boolean) => void;
   getVisibleTaskIds: () => string[];
   onClearRowContextMenu?: () => void;
   onDeleteStep?: (taskId: string) => void;
@@ -1162,6 +1168,10 @@ function StepsCardPreview({
   const stepTitleDraftsRef = useRef<Record<string, string>>({});
   const [stepTitleDrafts, setStepTitleDrafts] = useState<Record<string, string>>({});
   const [substepDraftParentId, setSubstepDraftParentId] = useState<string | null>(null);
+  useEffect(() => {
+    onUnsafeDraftChange?.(parentTaskId, Boolean(editingStepTitleId || substepDraftParentId));
+  }, [editingStepTitleId, onUnsafeDraftChange, parentTaskId, substepDraftParentId]);
+  useEffect(() => () => onUnsafeDraftChange?.(parentTaskId, false), [onUnsafeDraftChange, parentTaskId]);
   const taskTypeOptions = useMemo(() => buildTaskTypeSelectionOptions(customBehaviorRulesets), [customBehaviorRulesets]);
   const selectedTaskIdSet = useMemo(() => new Set(selectedTaskIds), [selectedTaskIds]);
   const childTaskRowLongPressHandlers = useTaskRowLongPress({
@@ -2539,6 +2549,7 @@ function TasksSimpleList({
   currentListLabel,
   filterRowsNode,
   listSortPreference = DEFAULT_LIST_SORT_PREFERENCE,
+  onDraftEditingChange,
   onToggleFocusToday,
   panelProps,
   selectedBucket,
@@ -2563,12 +2574,35 @@ function TasksSimpleList({
   const [showAllSearchStepsByTaskId, setShowAllSearchStepsByTaskId] = useState<Record<string, boolean>>({});
   const [parentStepDraftTaskId, setParentStepDraftTaskId] = useState<string | null>(null);
   const [taskTitleDrafts, setTaskTitleDrafts] = useState<Record<string, string>>({});
+  const [nestedDraftTaskIds, setNestedDraftTaskIds] = useState<Set<string>>(() => new Set());
+  const [isTaskTableEditorOpen, setIsTaskTableEditorOpen] = useState(false);
   const listShellRef = useRef<HTMLDivElement | null>(null);
   const loadMoreListRowsRef = useRef<HTMLDivElement | null>(null);
   const pendingMeasuredStatusScrollAnchorRef = useRef<MeasuredStatusScrollAnchor | null>(null);
   const lastBuildTaskTableRowCountRef = useRef(snapshotBuildTaskTableRowDebugCount());
   const getShowAllSearchStepsKey = (taskId: string) => `${tableProps.hierarchyScopeKey ?? ""}:${taskId}`;
   const presentationTasks = tableProps.tasks;
+  const updateNestedDraftTaskId = useCallback((taskId: string, isEditing: boolean) => {
+    setNestedDraftTaskIds((current) => {
+      if (current.has(taskId) === isEditing) return current;
+      const next = new Set(current);
+      if (isEditing) next.add(taskId);
+      else next.delete(taskId);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    onDraftEditingChange?.(Boolean(
+      editingTaskTitleId
+      || activeQuickPanel
+      || activeTaskContentFolderEdit
+      || parentStepDraftTaskId
+      || isTaskTableEditorOpen
+      || nestedDraftTaskIds.size > 0,
+    ));
+  }, [activeQuickPanel, activeTaskContentFolderEdit, editingTaskTitleId, isTaskTableEditorOpen, nestedDraftTaskIds.size, onDraftEditingChange, parentStepDraftTaskId]);
+  useEffect(() => () => onDraftEditingChange?.(false), [onDraftEditingChange]);
   const tasks = useMemo(
     () => sortListParentTasks(presentationTasks, listSortPreference, {
       taskDisplayStatusByTaskId: tableProps.rowContext.taskDisplayStatusByTaskId,
@@ -3187,8 +3221,9 @@ function TasksSimpleList({
       agentPlanNode={(
         <div className="relative space-y-3" ref={listShellRef}>
           {tableProps.requestedOpenTaskId ? (
-            <TaskManagementTableV2
-              allowInlineInspector
+        <TaskManagementTableV2
+          allowInlineInspector
+          onUnsafeDraftChange={setIsTaskTableEditorOpen}
               todayDateKey={tableProps.rowContext.todayDateKey}
               allListOptions={tableProps.allListOptions}
               allNoteOptions={tableProps.allNoteOptions?.map((note) => ({ id: note.id, title: note.title })) ?? []}
@@ -4016,6 +4051,7 @@ function TasksSimpleList({
                 listDefinitions={rowContext.listDefinitions}
                 listMembershipsByTaskId={rowContext.listMembershipsByTaskId}
                 onCreateChildTask={tableProps.onCreateChildTask}
+                onUnsafeDraftChange={updateNestedDraftTaskId}
                 onClearRowContextMenu={() => setRowContextMenu(null)}
                 onDeleteStep={tableProps.onOpenDeleteTask}
                 onOpenHistory={tableProps.onOpenTaskHistory}

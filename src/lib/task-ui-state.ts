@@ -361,6 +361,41 @@ export function normalizeTaskWorkspaceTabsState(value: unknown): TaskWorkspaceTa
   };
 }
 
+export function createTaskWorkspaceTabState(
+  state: TaskWorkspaceTabsState,
+  tab: TaskWorkspaceTab,
+): TaskWorkspaceTabsState {
+  return {
+    ...state,
+    activeTabId: tab.id,
+    tabs: [...state.tabs, tab],
+  };
+}
+
+export function closeTaskWorkspaceTabState(state: TaskWorkspaceTabsState, tabId: string): TaskWorkspaceTabsState {
+  const targetTab = state.tabs.find((tab) => tab.id === tabId);
+  if (state.tabs.length <= 1 || !targetTab) return state;
+
+  const tabs = state.tabs.filter((tab) => tab.id !== tabId);
+  const activeTabId = state.activeTabId === tabId
+    ? tabs[Math.max(0, state.tabs.findIndex((tab) => tab.id === tabId) - 1)]?.id ?? tabs[0].id
+    : state.activeTabId;
+  return { ...state, activeTabId, tabs };
+}
+
+export function renameTaskWorkspaceTabState(
+  state: TaskWorkspaceTabsState,
+  tabId: string,
+  label: string,
+): TaskWorkspaceTabsState {
+  const trimmedLabel = label.trim();
+  if (!trimmedLabel) return state;
+  return {
+    ...state,
+    tabs: state.tabs.map((tab) => tab.id === tabId ? { ...tab, label: trimmedLabel } : tab),
+  };
+}
+
 export function reorderTaskWorkspaceTabs(
   state: TaskWorkspaceTabsState,
   tabId: string,

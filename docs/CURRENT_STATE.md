@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.124`.
+- Current working app version: `7.16.125`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -63,6 +63,29 @@ still renders only the focused panel through the existing TaskApp route
 boundary; hidden panel state survives local persistence and subsequent refreshes.
 Malformed stored-state recovery, authenticated readiness fencing, user
 isolation, and the development feature gate remain unchanged.
+
+## 2026-10-08 7.16.125 Master Tabs T3 Independent Tasks Workspace State
+
+Each Tasks master tab now owns a normalized, cloned `TasksWorkspaceTabsState`.
+The existing `useTaskUiState` remains the single live Tasks UI authority; master
+tab activation and eligible close save the current snapshot and restore the
+destination snapshot in the same transition. New Tasks master tabs copy the
+current presentation state, and changes sync back only to the active Tasks
+master tab. Shared Task records, projections, mutation callbacks, History,
+rewards, timers, and global table-layout/HUD/page-shell authorities are
+unchanged. The legacy `TASK_UI_STORAGE_KEY` remains the first-use migration
+source and is not overwritten while Master Tabs is enabled; legacy persistence
+continues when the feature is disabled. Master-tab transitions are blocked while
+the shared editor, debounced search draft, table/list edit surfaces, or nested
+tab rename draft is open.
+
+Focused verification for 7.16.125: Master Workspace state, controller, and
+Tasks UI-state tests passed (42/42); focused ESLint for the state/controller
+modules and orchestrator passed. The broader changed-files ESLint run reports
+existing `react-hooks/set-state-in-effect` findings in surrounding TaskApp/UI
+code; disabling that existing rule produced no other findings on the changed
+paths. `git diff --check` passed. Browser QA, production build, full typecheck,
+and broad test suites were not run.
 
 ## 2026-10-08 7.16.117 Home Routine Unsectioned Sections
 

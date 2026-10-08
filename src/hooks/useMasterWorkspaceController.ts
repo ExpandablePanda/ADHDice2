@@ -2,23 +2,29 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from "react";
 import {
-  activateMasterTab,
-  closeMasterTab,
-  createMasterTab,
-  createDefaultMasterWorkspaceState,
-  replaceFocusedMasterTabDestination,
-  type MasterWorkspaceState,
-} from "@/lib/master-workspace-state";
-import {
+  activateMasterTabWithTaskWorkspace,
+  closeMasterTabWithTaskWorkspace,
   isMasterWorkspaceFeatureEnabled,
+  isTasksMasterTabTransitionBlocked,
   persistMasterWorkspaceForReadyUser,
   restoreMasterWorkspaceForUser,
 } from "@/lib/master-workspace-controller";
+import {
+  closeMasterTab,
+  createMasterTab,
+  createDefaultMasterWorkspaceState,
+  masterTabTasksWorkspaceMatchesLiveState,
+  replaceFocusedMasterTabDestination,
+  updateMasterTabTasksWorkspace,
+  type MasterWorkspaceState,
+} from "@/lib/master-workspace-state";
 import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
 
 type UseMasterWorkspaceControllerOptions = {
   activePage: AppPage;
+  hasUnsafeTasksDraft: boolean;
   isReady: boolean;
+  replaceTaskWorkspaceTabsState: (state: TaskWorkspaceTabsState) => void;
   setActivePage: (page: AppPage) => void;
   taskWorkspaceTabsState: TaskWorkspaceTabsState;
   userId: string | null | undefined;
@@ -30,7 +36,9 @@ function createTabId() {
 
 export function useMasterWorkspaceController({
   activePage,
+  hasUnsafeTasksDraft,
   isReady,
+  replaceTaskWorkspaceTabsState,
   setActivePage,
   taskWorkspaceTabsState,
   userId,
@@ -59,13 +67,31 @@ export function useMasterWorkspaceController({
     setRestoredUserId(userId);
     const panel = restored.state.panels.find((candidate) => candidate.id === restored.state.focusedPanelId) ?? restored.state.panels[0];
     const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId) ?? panel.tabs[0];
+    if (tab.destination.page === "Tasks" && tab.presentation.tasksWorkspace) {
+      replaceTaskWorkspaceTabsState(tab.presentation.tasksWorkspace);
+    }
     setActivePage(tab.destination.page);
-  }, [activePage, isEnabled, isReady, restoredUserId, setActivePage, taskWorkspaceTabsState, userId]);
+  }, [activePage, isEnabled, isReady, replaceTaskWorkspaceTabsState, restoredUserId, setActivePage, taskWorkspaceTabsState, userId]);
 
   useEffect(() => {
     if (!isEnabled || !isReady || !userId || restoredUserId !== userId || typeof window === "undefined") return;
+    if (
+      activeTab.destination.page === "Tasks"
+      && !masterTabTasksWorkspaceMatchesLiveState(workspace, currentPanel.id, activeTab.id, taskWorkspaceTabsState)
+    ) return;
     persistMasterWorkspaceForReadyUser(window.localStorage, userId, restoredUserId, isReady, workspace);
-  }, [isEnabled, isReady, restoredUserId, userId, workspace]);
+  }, [activeTab.destination.page, activeTab.id, currentPanel.id, isEnabled, isReady, restoredUserId, taskWorkspaceTabsState, userId, workspace]);
+
+  useLayoutEffect(() => {
+    if (!isEnabled || !isReady || !userId || restoredUserId !== userId || activeTab.destination.page !== "Tasks") return;
+    // Save the live Tasks UI snapshot before the controller's passive persistence effect runs.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setWorkspace((current) => {
+      const panel = current.panels.find((candidate) => candidate.id === currentPanel.id);
+      if (panel?.activeTabId !== activeTab.id) return current;
+      return updateMasterTabTasksWorkspace(current, currentPanel.id, activeTab.id, taskWorkspaceTabsState);
+    });
+  }, [activeTab.destination.page, activeTab.id, currentPanel.id, isEnabled, isReady, restoredUserId, taskWorkspaceTabsState, userId]);
 
   useLayoutEffect(() => {
     if (!isEnabled || !isReady || !userId || restoredUserId !== userId || activeTab.destination.page === activePage) return;
@@ -75,15 +101,15 @@ export function useMasterWorkspaceController({
   }, [activePage, activeTab.destination.page, isEnabled, isReady, restoredUserId, userId]);
 
   const activateTab = useCallback((tabId: string) => {
-    if (!canNavigate) return;
+    if (!canNavigate || isTasksMasterTabTransitionBlocked(activePage, hasUnsafeTasksDraft)) return;
     const targetTab = currentPanel.tabs.find((tab) => tab.id === tabId);
     if (!targetTab || targetTab.destination.page !== activePage) return;
-    const next = activateMasterTab(workspace, currentPanel.id, tabId);
-    if (next === workspace) return;
-    setWorkspace(next);
-    const nextTab = next.panels.find((panel) => panel.id === currentPanel.id)?.tabs.find((tab) => tab.id === tabId);
-    if (nextTab) setActivePage(nextTab.destination.page);
-  }, [activePage, canNavigate, currentPanel.id, currentPanel.tabs, setActivePage, workspace]);
+    const transition = activateMasterTabWithTaskWorkspace(workspace, currentPanel.id, tabId, taskWorkspaceTabsState);
+    if (transition.state === workspace) return;
+    setWorkspace(transition.state);
+    if (transition.taskWorkspaceTabsState) replaceTaskWorkspaceTabsState(transition.taskWorkspaceTabsState);
+    setActivePage(targetTab.destination.page);
+  }, [activePage, canNavigate, currentPanel.id, currentPanel.tabs, hasUnsafeTasksDraft, replaceTaskWorkspaceTabsState, setActivePage, taskWorkspaceTabsState, workspace]);
 
   const openPageTab = useCallback((page: AppPage) => {
     if (!canNavigate) return;
@@ -92,33 +118,36 @@ export function useMasterWorkspaceController({
       id,
       destination: { kind: "page", page },
       presentation: page === "Tasks" ? { tasksWorkspace: taskWorkspaceTabsState } : {},
-    }, page === activePage);
+    }, page === activePage && !(page === "Tasks" && hasUnsafeTasksDraft));
     setWorkspace(next);
-    if (page === activePage) setActivePage(page);
-  }, [activePage, canNavigate, currentPanel.id, setActivePage, taskWorkspaceTabsState, workspace]);
+    if (page === activePage && !(page === "Tasks" && hasUnsafeTasksDraft)) setActivePage(page);
+  }, [activePage, canNavigate, currentPanel.id, hasUnsafeTasksDraft, setActivePage, taskWorkspaceTabsState, workspace]);
 
   const canCloseTab = useCallback((tabId: string) => {
-    if (!canNavigate) return false;
+    if (!canNavigate || isTasksMasterTabTransitionBlocked(activePage, hasUnsafeTasksDraft)) return false;
     const next = closeMasterTab(workspace, currentPanel.id, tabId);
     if (next === workspace) return false;
     const nextPanel = next.panels.find((panel) => panel.id === currentPanel.id) ?? next.panels[0];
     const nextTab = nextPanel.tabs.find((tab) => tab.id === nextPanel.activeTabId) ?? nextPanel.tabs[0];
     return nextTab.destination.page === activePage;
-  }, [activePage, canNavigate, currentPanel.id, workspace]);
+  }, [activePage, canNavigate, currentPanel.id, hasUnsafeTasksDraft, workspace]);
 
   const closeTab = useCallback((tabId: string) => {
     if (!canCloseTab(tabId)) return;
-    const next = closeMasterTab(workspace, currentPanel.id, tabId);
-    if (next === workspace) return;
-    setWorkspace(next);
-    const nextPanel = next.panels.find((panel) => panel.id === currentPanel.id) ?? next.panels[0];
+    const transition = closeMasterTabWithTaskWorkspace(workspace, currentPanel.id, tabId, taskWorkspaceTabsState);
+    if (transition.state === workspace) return;
+    setWorkspace(transition.state);
+    if (transition.taskWorkspaceTabsState) replaceTaskWorkspaceTabsState(transition.taskWorkspaceTabsState);
+    const nextPanel = transition.state.panels.find((panel) => panel.id === currentPanel.id) ?? transition.state.panels[0];
     const nextTab = nextPanel.tabs.find((tab) => tab.id === nextPanel.activeTabId) ?? nextPanel.tabs[0];
     setActivePage(nextTab.destination.page);
-  }, [canCloseTab, currentPanel.id, setActivePage, workspace]);
+  }, [canCloseTab, currentPanel.id, replaceTaskWorkspaceTabsState, setActivePage, taskWorkspaceTabsState, workspace]);
 
   const canActivateTab = useCallback((tabId: string) => (
-    canNavigate && currentPanel.tabs.some((tab) => tab.id === tabId && tab.destination.page === activePage)
-  ), [activePage, canNavigate, currentPanel.tabs]);
+    canNavigate
+    && currentPanel.tabs.some((tab) => tab.id === tabId && tab.destination.page === activePage)
+    && (!isTasksMasterTabTransitionBlocked(activePage, hasUnsafeTasksDraft) || tabId === activeTab.id)
+  ), [activePage, activeTab.id, canNavigate, currentPanel.tabs, hasUnsafeTasksDraft]);
 
   return useMemo(() => ({
     activateTab,

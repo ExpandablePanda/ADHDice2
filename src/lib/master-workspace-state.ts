@@ -2,6 +2,7 @@ import { HEALTH_TABS, type HealthTab } from "@/lib/health-utils";
 import { getRegisteredPageShellPages } from "@/lib/page-shell-layout";
 import type { NavigatorSearchAction } from "@/lib/navigator-search";
 import {
+  DEFAULT_TASK_WORKSPACE_TABS_STATE,
   isAppPage,
   normalizeTaskWorkspaceTabsState,
   type AppPage,
@@ -152,11 +153,48 @@ function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
 }
 
 function normalizePresentation(value: unknown, destination: MasterTabDestination): MasterTabPresentationState {
-  if (!value || typeof value !== "object") return {};
-  const candidate = value as Record<string, unknown>;
-  return destination.page === "Tasks" && candidate.tasksWorkspace !== undefined
-    ? { tasksWorkspace: cloneTaskWorkspaceState(candidate.tasksWorkspace) }
-    : {};
+  if (destination.page !== "Tasks") return {};
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    tasksWorkspace: cloneTaskWorkspaceState(candidate.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE),
+  };
+}
+
+export function updateMasterTabTasksWorkspace(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  taskWorkspaceTabsState: TaskWorkspaceTabsState,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab || tab.destination.page !== "Tasks") return state;
+
+  const tasksWorkspace = cloneTaskWorkspaceState(taskWorkspaceTabsState);
+  if (JSON.stringify(tab.presentation.tasksWorkspace) === JSON.stringify(tasksWorkspace)) return state;
+
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, tasksWorkspace },
+      }),
+    }),
+  };
+}
+
+export function masterTabTasksWorkspaceMatchesLiveState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  taskWorkspaceTabsState: TaskWorkspaceTabsState,
+): boolean {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab || tab.destination.page !== "Tasks") return false;
+  return JSON.stringify(tab.presentation.tasksWorkspace) === JSON.stringify(cloneTaskWorkspaceState(taskWorkspaceTabsState));
 }
 
 function makeHomeTab(id = "master-tab-1"): MasterWorkspaceTab {
@@ -277,7 +315,13 @@ export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, 
     panels: state.panels.map((panel) => panel.id !== state.focusedPanelId ? panel : {
       ...panel,
       tabs: panel.tabs.map((tab) => tab.id === panel.activeTabId
-        ? { ...tab, destination: destinationCopy, presentation: {} }
+        ? {
+          ...tab,
+          destination: destinationCopy,
+          presentation: destinationCopy.page === "Tasks"
+            ? normalizePresentation(tab.presentation, destinationCopy)
+            : {},
+        }
         : tab),
     }),
   };
