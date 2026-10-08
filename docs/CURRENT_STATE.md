@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.121`.
+- Current working app version: `7.16.122`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -30,6 +30,17 @@ passed. A targeted TypeScript check reported existing errors in imported
 components and task-state modules, with no diagnostic in the new workspace
 module. Browser QA, production build, full typecheck, and broad test suites were
 not run.
+
+## 2026-10-08 7.16.122 Master Tabs T1 Normalization Guard
+
+Master Workspace now repairs malformed nested Tasks `quickFilters` and
+`energyFilters` to empty arrays while cloning normalized Tasks workspace state.
+Other valid nested tab settings and master tabs survive malformed stored filter
+values, and copied filter arrays remain independent.
+
+Focused verification for 7.16.122: `test/master-workspace-state.test.ts` passed
+(12/12); targeted ESLint and `git diff --check` passed. Browser QA, production
+build, full typecheck, and broad test suites were not run.
 
 ## 2026-10-08 7.16.117 Home Routine Unsectioned Sections
 

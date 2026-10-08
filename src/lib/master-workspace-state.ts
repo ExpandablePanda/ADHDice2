@@ -134,7 +134,7 @@ function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
         listSortBySurface: Object.fromEntries(
           Object.entries(tab.taskUiState.listSortBySurface).map(([surface, preference]) => [surface, { ...preference }]),
         ),
-        quickFilters: [...tab.taskUiState.quickFilters],
+        quickFilters: Array.isArray(tab.taskUiState.quickFilters) ? [...tab.taskUiState.quickFilters] : [],
         statusFilters: [...tab.taskUiState.statusFilters],
         tableColumnFilters: {
           priority: [...tab.taskUiState.tableColumnFilters.priority],
@@ -142,7 +142,7 @@ function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
           taskType: [...(tab.taskUiState.tableColumnFilters.taskType ?? [])],
           text: { ...tab.taskUiState.tableColumnFilters.text },
         },
-        energyFilters: [...tab.taskUiState.energyFilters],
+        energyFilters: Array.isArray(tab.taskUiState.energyFilters) ? [...tab.taskUiState.energyFilters] : [],
         visibleColumnsByView: Object.fromEntries(
           Object.entries(tab.taskUiState.visibleColumnsByView).map(([view, columns]) => [view, [...columns]]),
         ) as TaskWorkspaceTabsState["tabs"][number]["taskUiState"]["visibleColumnsByView"],

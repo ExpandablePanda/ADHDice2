@@ -63,6 +63,76 @@ test("first-use Tasks migration preserves normalized nested tabs and settings as
   assert.equal(nested?.tabs[0].taskUiState.view, "list");
   assert.notEqual(nested, existing);
   assert.notEqual(nested?.tabs[0].taskUiState.quickFilters, existing.tabs[0].taskUiState.quickFilters);
+  assert.notEqual(nested?.tabs[0].taskUiState.energyFilters, existing.tabs[0].taskUiState.energyFilters);
+});
+
+test("malformed nested Tasks filters retain saved master tabs and valid settings", () => {
+  const storage = memoryStorage();
+  const key = getMasterWorkspaceStorageKey("malformed-tasks");
+  const defaultState = createDefaultMasterWorkspaceState();
+  const malformedWorkspace = {
+    ...defaultState,
+    panels: [{
+      ...defaultState.panels[0],
+      id: "main-panel",
+      tabs: [
+        { id: "home-tab", destination: { kind: "page", page: "Home" }, presentation: {} },
+        {
+          id: "tasks-tab",
+          destination: { kind: "page", page: "Tasks" },
+          presentation: {
+            tasksWorkspace: {
+              activeTabId: "nested-tab",
+              tabs: [{
+                ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0],
+                id: "nested-tab",
+                label: "Saved Tasks",
+                taskUiState: {
+                  ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0].taskUiState,
+                  selectedBucket: "priority_3_4",
+                  view: "list",
+                  quickFilters: { malformed: true },
+                  energyFilters: undefined,
+                },
+              }, {
+                ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0],
+                id: "nested-tab-2",
+                label: "Second Tasks",
+                taskUiState: {
+                  ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0].taskUiState,
+                  quickFilters: undefined,
+                  energyFilters: "high",
+                },
+              }],
+              uiStateVersion: DEFAULT_TASK_WORKSPACE_TABS_STATE.uiStateVersion,
+            },
+          },
+        },
+      ],
+      activeTabId: "tasks-tab",
+    }],
+    focusedPanelId: "main-panel",
+    visiblePanelId: "main-panel",
+  };
+  storage.values.set(key, JSON.stringify(malformedWorkspace));
+
+  const loaded = loadMasterWorkspaceState(storage, "malformed-tasks");
+  const panel = loaded.panels[0];
+  const tasksTab = panel.tabs.find((tab) => tab.id === "tasks-tab");
+  const nested = tasksTab?.presentation.tasksWorkspace;
+
+  assert.equal(panel.id, "main-panel");
+  assert.equal(panel.tabs.length, 2);
+  assert.equal(panel.activeTabId, "tasks-tab");
+  assert.equal(tasksTab?.destination.page, "Tasks");
+  assert.equal(nested?.activeTabId, "nested-tab");
+  assert.equal(nested?.tabs.length, 2);
+  assert.equal(nested?.tabs[0].label, "Saved Tasks");
+  assert.equal(nested?.tabs[0].taskUiState.selectedBucket, "priority_3_4");
+  assert.equal(nested?.tabs[0].taskUiState.view, "list");
+  assert.deepEqual(nested?.tabs.map((tab) => tab.taskUiState.quickFilters), [[], []]);
+  assert.deepEqual(nested?.tabs.map((tab) => tab.taskUiState.energyFilters), [[], []]);
+  assert.equal(storage.values.has(key), true);
 });
 
 test("normalizes valid storage and deterministically repairs invalid IDs and destinations", () => {
