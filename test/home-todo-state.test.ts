@@ -1452,7 +1452,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(sharedIconButton, /sm: "h-8 w-8"/);
   assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /text-\[#d65775\]/);
-  assert.doesNotMatch(source, /variant="rowToolbar"/);
+  assert.match(source, /aria-label=\{`Delete \$\{section\.label\}`\}[\s\S]*?className="h-6 w-6"[\s\S]*?iconClassName="h-3 w-3"[\s\S]*?tone="danger"[\s\S]*?variant="rowToolbar"/);
   assert.match(source, /-mx-\[15px\] w-auto px-3 pb-32 pt-6 sm:mx-auto sm:px-4/);
   assert.doesNotMatch(source, /Search your Tasks and arrange the order you want to work through\./);
   assert.match(source, /<div className="relative mt-2" ref=\{searchRef\}>/);

@@ -1181,11 +1181,12 @@ export function HomePage({
                   <AdhdIconButton
                     aria-label={`Delete ${section.label}`}
                     className="h-6 w-6"
-                    iconClassName="h-3.5 w-3.5"
+                    iconClassName="h-3 w-3"
                     onClick={() => setRoutineSectionDeleteConfirmation({ id: section.id, label: section.label })}
                     size="sm"
                     title={`Delete ${section.label}`}
                     tone="danger"
+                    variant="rowToolbar"
                   >
                     <Trash2 aria-hidden="true" />
                   </AdhdIconButton>
