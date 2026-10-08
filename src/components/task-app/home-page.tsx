@@ -1170,18 +1170,19 @@ export function HomePage({
                   <div className="flex items-center gap-0">
                     <AdhdIconButton
                       aria-label={`Rename ${section.label}`}
-                      className="h-6 w-6"
+                      className="!h-6 !w-5"
                       iconClassName="h-3.5 w-3.5"
                       onClick={() => beginRoutineSectionRename(section)}
                       size="sm"
                       title={`Rename ${section.label}`}
-                      tone="ghost"
+                      tone="default"
+                      variant="rowToolbar"
                     >
                       <Pencil aria-hidden="true" />
                     </AdhdIconButton>
                     <AdhdIconButton
                       aria-label={`Delete ${section.label}`}
-                      className="h-6 w-6"
+                      className="!h-6 !w-5"
                       iconClassName="h-3 w-3"
                       onClick={() => setRoutineSectionDeleteConfirmation({ id: section.id, label: section.label })}
                       size="sm"
