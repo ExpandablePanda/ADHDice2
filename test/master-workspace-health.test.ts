@@ -43,10 +43,12 @@ test("Food and Journal editor owners report draft safety before Health tab activ
   assert.match(healthPageSource, /reportSectionDraftSafety\("Journal", "health-page-journal", hasUnsafeJournalLocalDraft\)/);
   assert.match(healthLibrarySource, /const hasUnsafeDraft = Boolean\([\s\S]*?foodImportText[\s\S]*?recipeDraft[\s\S]*?mealDraft/);
   assert.match(healthLibrarySource, /onDraftSafetyChange\(hasUnsafeDraft\)/);
+  assert.match(journalFormSource, /const isDraftUnsafe = !areHealthJournalDraftsEqual\(currentDraft, draftBaseline\)/);
   assert.match(journalFormSource, /const hasUnsafeDraft = isSaving \|\| isDraftUnsafe \|\| isEventCaptureDraftUnsafe/);
   assert.match(journalFormSource, /onDraftSafetyChange\(hasUnsafeDraft\)/);
   assert.match(journalFormSource, /onDraftSafetyChange=\{setIsEventCaptureDraftUnsafe\}/);
-  assert.match(journalEventCaptureSource, /onDraftSafetyChange\(Boolean\(tagOverlay\)\)/);
+  assert.match(journalEventCaptureSource, /onDraftSafetyChange\(Boolean\(tagOverlay\) \|\| isCreatingSignal\)/);
+  assert.match(journalFormSource, /Discard Draft/);
   assert.match(controllerHookSource, /isHealthMasterTabTransitionBlocked\(/);
   assert.match(controllerHookSource, /targetTab\.destination\.page !== activeMasterPage/);
   assert.match(controllerHookSource, /isTabTransitionBlocked\(targetTab\)/);
@@ -141,13 +143,16 @@ test("Notes and Scratch Paper pending edits are reported without one editor clea
   assert.match(taskAppSource, /onDraftSafetyChange=\{setHasUnsafeNotesDraft\}/);
   assert.match(notesPageSource, /unsafeDraftSourcesRef = useRef\(new Set<string>\(\)\)/);
   assert.match(notesPageSource, /reportDraftSafety\("quick-capture", true\)/);
+  assert.match(notesPageSource, /const reportNoteEditorDraftSafety = useCallback\(\(isUnsafe: boolean\) => \{\s*reportDraftSafety\("note-editor", isUnsafe\);\s*\}, \[reportDraftSafety\]\)/);
+  assert.match(notesPageSource, /onDraftSafetyChange=\{reportNoteEditorDraftSafety\}/);
   assert.match(notesPageSource, /if \(error \|\| !data\)[\s\S]*?return false/);
   assert.match(notesPageSource, /onDraftSafetyChange=\{reportDraftSafety\}/);
   assert.match(noteEditorSource, /disabled=\{isSaving\}/);
-  assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\("scratch-current", true\)/);
-  assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\(`scratch-card:\$\{note\.id\}`, true\)/);
+  assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\("scratch-current", isSaving \|\| isDirty\)/);
+  assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\(`scratch-card:\$\{note\.id\}`, isDraftUnsafe\)/);
   assert.match(scratchPaperSource, /unsafeCardIds\.has\(note\.id\)/);
-  assert.match(scratchPaperSource, /if \(saved\) \{[\s\S]*?setIsDirty\(false\)[\s\S]*?onDraftSafetyChange\?\.\(`scratch-card:/);
+  assert.match(scratchPaperSource, /if \(saved\) \{[\s\S]*?setDraftBaseline\(cardDraft\);\s*setIsEditing\(false\)/);
+  assert.match(scratchPaperSource, /function discardDraft\(\)[\s\S]*?setLinkedTaskIds\(\[\.\.\.draftBaseline\.linkedTaskIds\]\)/);
 });
 
 test("uncovered Health editors report section safety and preserve parallel child guards", () => {

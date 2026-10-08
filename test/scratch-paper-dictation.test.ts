@@ -305,7 +305,7 @@ test("New Note, Resolve, Trash, and unmount cleanup use cancellation rather than
   assert.match(scratchSource, /cancelDictation\(\);/);
   assert.match(scratchSource, /loadNote\(null\)/);
   assert.match(scratchSource, /changeCurrentStatus\(status: ScratchNoteStatus\)[\s\S]{0,100}cancelDictation\(\);/);
-  assert.match(scratchSource, /dictation\.cancel\(\); void onUpdate/);
+  assert.match(scratchSource, /dictation\.cancel\(\);\s*try \{\s*const saved = await onUpdate\(note\.id/);
   assert.match(dictationHookSource, /if \(!enabled\) controller\.cancel\(\)/);
   assert.match(dictationHookSource, /useEffect\(\(\) => \(\) => controller\.cancel\(\), \[controller\]\)/);
 });

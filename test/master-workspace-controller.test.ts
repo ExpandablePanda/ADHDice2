@@ -202,13 +202,17 @@ test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
   assert.equal(isTasksMasterTabTransitionBlocked("Home", true), false);
 });
 
-test("cross-page navigation is safe when pristine and reports the owning draft guard", () => {
+test("cross-page navigation allows clean or discarded drafts and reports dirty owners", () => {
   assert.equal(getMasterWorkspaceTransitionBlockReason("Tasks", "Today", false, {}, false), null);
   assert.equal(getMasterWorkspaceTransitionBlockReason("Health", "Fitness", false, {}, false), null);
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Health", "Journal", false, { Journal: false }, false), null);
   assert.equal(getMasterWorkspaceTransitionBlockReason("Notes", "Today", false, {}, false), null);
+  assert.match(getMasterWorkspaceTransitionBlockReason("Notes", "Today", false, {}, true) ?? "", /Notes or Scratch Paper/);
+  // Explicit discard releases the source guard, allowing the same navigation.
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Notes", "Today", false, {}, false), null);
+  assert.match(getMasterWorkspaceTransitionBlockReason("Health", "Journal", false, { Journal: true }, false) ?? "", /unfinished Health Journal edit/);
   assert.match(getMasterWorkspaceTransitionBlockReason("Tasks", "Today", true, {}, false) ?? "", /Tasks editor/);
   assert.match(getMasterWorkspaceTransitionBlockReason("Health", "Water", false, { Water: true }, false) ?? "", /Health Water edit/);
-  assert.match(getMasterWorkspaceTransitionBlockReason("Notes", "Today", false, {}, true) ?? "", /Notes or Scratch Paper/);
   assert.equal(getMasterWorkspaceTransitionBlockReason("Home", "Today", true, {}, true), null);
 });
 

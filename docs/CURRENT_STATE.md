@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.129`.
+- Current working app version: `7.16.130`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -167,6 +167,32 @@ checks passed (189/189); targeted ESLint with the existing
 `git diff --check` passed. The older `health-fitness` source-contract tests
 still fail against pre-task 7.16.128 source/version assumptions, including a
 7.13.1 version expectation. Browser QA, production build, and full typecheck
+were not run.
+
+## 2026-10-08 7.16.130 T5a Draft Guard Release Corrections
+
+Journal form safety now compares current entry type, date, time, answers,
+Event state, and Feeling occurrences with the hydrated or reset baseline.
+Saved occurrences do not create a false guard; reverting values releases it.
+Journal discard restores the entry baseline and resets the Event/Feeling
+editor without a database mutation. Pending or failed saves retain protection.
+
+Quick Capture releases its guard when cleared or reduced to whitespace, and
+Notes editors compare title, body, tags, and links with their saved note.
+Scratch Paper editors compare title, body, and linked Task IDs with their
+current note, including each independently edited card. Explicit discard
+restores the persisted baseline; failed saves retain the editor and guard.
+
+No Tasks production path changed. The clarified inline rename auto-save and
+fullscreen editor coverage do not confirm a Tasks draft-guard defect; Tasks
+draft-guard browser QA remains inconclusive.
+
+Focused verification for 7.16.130: Journal check-in/entry/symptoms, Notes draft
+safety, Scratch Paper draft/task-link/dictation, Master Workspace
+controller/state, and Master Workspace Health tests passed (135/135). Targeted
+ESLint with the existing `react-hooks/set-state-in-effect` rule disabled and
+`git diff --check` passed. The unrelated Fitness source-contract baseline was
+not rerun. Browser QA, production build, full typecheck, and broad test suites
 were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and

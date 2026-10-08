@@ -8,6 +8,7 @@ import type {
   HealthMetricEntry,
 } from "../src/lib/database.types.ts";
 import {
+  areHealthJournalDraftsEqual,
   buildHealthJournalCustomAnswer,
   buildHealthJournalSleepLink,
   findRelevantHealthSleepContext,
@@ -32,6 +33,51 @@ const healthPageSource = readFileSync(new URL("../src/components/task-app/health
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_health_journal_checkin_types_7_13_43.sql", import.meta.url), "utf8");
+
+test("Journal draft comparison releases reverted fields and distinguishes saved from new Feeling occurrences", () => {
+  const emptyDraft = {
+    answers: { custom_answers: [], schema_version: 1 },
+    entryDate: "2026-10-08",
+    entryTime: "09:30",
+    entryType: "start_of_day",
+    eventCaptureEnabled: false,
+    eventDraft: { date: "2026-10-08", description: "", id: null, notes: "", occurrences: [], time: "09:30" },
+  };
+  assert.equal(areHealthJournalDraftsEqual(emptyDraft, emptyDraft), true);
+  assert.equal(areHealthJournalDraftsEqual(emptyDraft, { ...emptyDraft, answers: { ...emptyDraft.answers, morning_thoughts: "typed" } }), false);
+  assert.equal(areHealthJournalDraftsEqual(emptyDraft, { ...emptyDraft, answers: { ...emptyDraft.answers, morning_thoughts: "" } }), true);
+  assert.equal(areHealthJournalDraftsEqual(emptyDraft, { ...emptyDraft, entryType: "event" }), false);
+
+  const savedOccurrence = {
+    draftKey: "occurrence-1",
+    id: "occurrence-1",
+    note: "",
+    occurredAt: "2026-10-08T13:30:00.000Z",
+    score: 4,
+    signalId: "feeling-1",
+    time: "09:30",
+  };
+  const existingDraft = {
+    ...emptyDraft,
+    answers: { custom_answers: [], schema_version: 1, evening_reflection: "Persisted" },
+    entryType: "end_of_day",
+    eventCaptureEnabled: true,
+    eventDraft: { ...emptyDraft.eventDraft, description: "Saved event", id: "event-1", occurrences: [savedOccurrence] },
+  };
+  assert.equal(areHealthJournalDraftsEqual(existingDraft, existingDraft), true);
+  assert.equal(areHealthJournalDraftsEqual(existingDraft, { ...existingDraft, answers: { ...existingDraft.answers, evening_reflection: "Changed" } }), false);
+  assert.equal(areHealthJournalDraftsEqual(existingDraft, { ...existingDraft, answers: { ...existingDraft.answers, evening_reflection: "Persisted" } }), true);
+  assert.equal(areHealthJournalDraftsEqual(existingDraft, {
+    ...existingDraft,
+    eventDraft: { ...existingDraft.eventDraft, occurrences: [...existingDraft.eventDraft.occurrences, { ...savedOccurrence, draftKey: "new-occurrence", id: undefined }] },
+  }), false);
+
+  assert.match(formSource, /const isDraftUnsafe = !areHealthJournalDraftsEqual\(currentDraft, draftBaseline\)/);
+  assert.match(formSource, /onClick=\{discardDraft\} type="button"\>Discard Draft/);
+  assert.match(formSource, /setEntryType\(draftBaseline\.entryType\)[\s\S]*?setEventDraft\(draftBaseline\.eventDraft\)[\s\S]*?setEventCaptureResetKey/);
+  assert.match(formSource, /The Journal entry could not be saved\. Your draft is still here\./);
+  assert.match(eventCaptureSource, /onDraftSafetyChange\(Boolean\(tagOverlay\) \|\| isCreatingSignal\)/);
+});
 
 function signal(overrides: Partial<HealthJournalSignal> = {}): HealthJournalSignal {
   return {
@@ -181,7 +227,7 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(eventCaptureSource, /scale_labels\[score\]/);
   assert.match(eventCaptureSource, /HealthStandardTimeInput/);
   assert.match(formSource, /journal_entry_id/);
-  assert.match(formSource, /saveJournalEntry\({\n        allowInsertWithId: true,\n        checkIn: \{\n          id: nextEventId/);
+  assert.match(formSource, /saveJournalEntry\(\{\s*allowInsertWithId: true,\s*checkIn: \{\s*id: nextEventId/);
   assert.match(formSource, /eventDateTime=\{entryType !== "event"\}/);
   assert.match(formSource, /sm:grid-cols-\[auto_auto_auto\]/);
   assert.match(formSource, /The Event was saved, but the check-in could not be saved/);

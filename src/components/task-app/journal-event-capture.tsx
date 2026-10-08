@@ -132,14 +132,23 @@ export function JournalEventCapture({
 }) {
   const descriptionRef = useRef<HTMLTextAreaElement | null>(null);
   const tagCaretRef = useRef<number | null>(null);
+  const mountedRef = useRef(true);
   const [tagQuery, setTagQuery] = useState<JournalTagQuery | null>(null);
   const [tagHighlightIndex, setTagHighlightIndex] = useState(0);
   const [tagOverlay, setTagOverlay] = useState<JournalTagOverlay>(null);
+  const [isCreatingSignal, setIsCreatingSignal] = useState(false);
 
   useEffect(() => {
-    onDraftSafetyChange(Boolean(tagOverlay));
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    onDraftSafetyChange(Boolean(tagOverlay) || isCreatingSignal);
     return () => onDraftSafetyChange(false);
-  }, [onDraftSafetyChange, tagOverlay]);
+  }, [isCreatingSignal, onDraftSafetyChange, tagOverlay]);
 
   const occurrenceSignalById = useMemo(() => new Map(signals.map((signal) => [signal.id, signal] as const)), [signals]);
   const tagOptions = useMemo<JournalTagOption[]>(() => [
@@ -187,8 +196,11 @@ export function JournalEventCapture({
 
   async function selectTag(option: JournalTagOption) {
     if (!tagQuery) return;
-    const signal = option.kind === "symptom" && option.symptomId && option.signal.id.startsWith("canonical-symptom:") && onCreateSignal
-      ? await onCreateSignal({
+    let signal = option.signal;
+    if (option.kind === "symptom" && option.symptomId && option.signal.id.startsWith("canonical-symptom:") && onCreateSignal) {
+      setIsCreatingSignal(true);
+      try {
+        signal = await onCreateSignal({
         high_label: getDefaultHealthJournalScaleLabels("symptom")[10],
         in_template: false,
         kind: "symptom",
@@ -196,9 +208,14 @@ export function JournalEventCapture({
         name: null,
         scale_labels: getDefaultHealthJournalScaleLabels("symptom"),
         symptom_id: option.symptomId,
-      })
-      : option.signal;
-    if (!signal) return;
+        });
+      } catch {
+        return;
+      } finally {
+        if (mountedRef.current) setIsCreatingSignal(false);
+      }
+    }
+    if (!mountedRef.current || !signal) return;
     const replacement = `#${option.name} `;
     const nextCaret = tagQuery.start + replacement.length;
     onChangeDescription(replaceHealthJournalReflectionTag(description, tagQuery.start, tagQuery.end, replacement));

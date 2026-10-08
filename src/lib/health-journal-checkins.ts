@@ -162,6 +162,35 @@ export function buildEmptyHealthJournalStructuredAnswers(): HealthJournalStructu
   return { custom_answers: [], schema_version: 1 };
 }
 
+function normalizeJournalDraftValue(value: unknown): unknown {
+  if (typeof value === "string") return value.trim() ? value : "";
+  if (Array.isArray(value)) {
+    return value
+      .map(normalizeJournalDraftValue)
+      .filter((item) => item !== null && item !== undefined && item !== "" && (!Array.isArray(item) || item.length > 0) && (typeof item !== "object" || Array.isArray(item) || Object.keys(item).length > 0));
+  }
+  if (!value || typeof value !== "object") return value;
+  const record = value as Record<string, unknown>;
+  if ("question_id" in record && "value" in record) {
+    const answerValue = normalizeJournalDraftValue(record.value);
+    if (answerValue === null || answerValue === undefined || answerValue === "" || (Array.isArray(answerValue) && answerValue.length === 0)) return undefined;
+  }
+  return Object.fromEntries(
+    Object.entries(record)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .flatMap(([key, item]) => {
+        const normalized = normalizeJournalDraftValue(item);
+        if (normalized === null || normalized === undefined || normalized === "" || (Array.isArray(normalized) && normalized.length === 0)) return [];
+        if (typeof normalized === "object" && !Array.isArray(normalized) && Object.keys(normalized).length === 0) return [];
+        return [[key, normalized] as const];
+      }),
+  );
+}
+
+export function areHealthJournalDraftsEqual(left: unknown, right: unknown) {
+  return JSON.stringify(normalizeJournalDraftValue(left)) === JSON.stringify(normalizeJournalDraftValue(right));
+}
+
 export function getHealthJournalScaleDenominator(signal: Pick<HealthJournalSignal, "scale_labels"> | null | undefined) {
   const denominator = (signal?.scale_labels?.length ?? 0) - 1;
   return Number.isInteger(denominator) && denominator > 0 ? denominator : 10;

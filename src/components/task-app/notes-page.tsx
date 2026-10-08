@@ -51,6 +51,9 @@ export function NotesPageComponent({
     else unsafeDraftSourcesRef.current.delete(source);
     onDraftSafetyChange(unsafeDraftSourcesRef.current.size > 0);
   }, [onDraftSafetyChange]);
+  const reportNoteEditorDraftSafety = useCallback((isUnsafe: boolean) => {
+    reportDraftSafety("note-editor", isUnsafe);
+  }, [reportDraftSafety]);
   const handleScratchNoteRevealHandled = useCallback(() => setRequestedScratchNoteId(null), []);
 
   useEffect(() => {
@@ -75,7 +78,6 @@ export function NotesPageComponent({
     setEditing(targetNote);
     setIsNew(false);
     setSaveError(null);
-    reportDraftSafety("note-editor", true);
     onOpenNoteHandled?.();
   }, [notes, onOpenNoteHandled, openNoteId, reportDraftSafety]);
 
@@ -202,7 +204,6 @@ export function NotesPageComponent({
 
   function openNew() {
     if (isSavingNote) return;
-    reportDraftSafety("note-editor", true);
     setSaveError(null);
     setEditing({
       id: "",
@@ -223,6 +224,7 @@ export function NotesPageComponent({
         isNew={isNew}
         isSaving={isSavingNote}
         note={editing}
+        onDraftSafetyChange={reportNoteEditorDraftSafety}
         onClose={() => {
           if (isSavingNote) return;
           reportDraftSafety("note-editor", false);
@@ -283,17 +285,31 @@ export function NotesPageComponent({
           placeholder="Quick capture — press Enter to save…"
           value={quickCapture}
         />
-        {quickCapture ? (
-          <button
-            disabled={isSavingQuickCapture}
-            className="ui-pill-button-strong-light"
-            onClick={() => {
-              void handleQuickCapture();
-            }}
-            type="button"
-          >
-            {isSavingQuickCapture ? "Saving…" : "Save"}
-          </button>
+        {quickCapture.length > 0 ? (
+          <div className="flex shrink-0 gap-2">
+            <button
+              disabled={isSavingQuickCapture}
+              className="ui-pill-button-light"
+              onClick={() => {
+                setQuickCapture("");
+                setSaveError(null);
+                reportDraftSafety("quick-capture", false);
+              }}
+              type="button"
+            >
+              Discard
+            </button>
+            <button
+              disabled={isSavingQuickCapture || !quickCapture.trim()}
+              className="ui-pill-button-strong-light"
+              onClick={() => {
+                void handleQuickCapture();
+              }}
+              type="button"
+            >
+              {isSavingQuickCapture ? "Saving…" : "Save"}
+            </button>
+          </div>
         ) : null}
       </div>
       {saveError && !editing ? <p aria-live="polite" className="mb-3 text-sm font-semibold text-[#c64c62] dark:text-[#ffb1c0]" role="alert">{saveError}</p> : null}
@@ -334,7 +350,6 @@ export function NotesPageComponent({
               className="mb-3 w-full break-inside-avoid rounded-2xl px-4 py-3 text-left transition hover:opacity-80 bg-[#f7f5ff] dark:bg-white/5"
               onClick={() => {
                 if (isSavingNote) return;
-                reportDraftSafety("note-editor", true);
                 setSaveError(null);
                 setEditing(note);
                 setIsNew(false);

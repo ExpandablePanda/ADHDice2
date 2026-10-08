@@ -1,12 +1,14 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { Note, Task } from "@/lib/database.types";
+import { areNoteDraftsEqual } from "@/lib/note-draft-safety";
 
 type NoteEditorProps = {
   isNew: boolean;
   note: Note;
   onClose: () => void;
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   onDelete: (id: string) => Promise<boolean>;
   onSave: (note: Note) => Promise<boolean>;
   isSaving: boolean;
@@ -18,6 +20,7 @@ export function NoteEditorComponent({
   isNew,
   note,
   onClose,
+  onDraftSafetyChange,
   onDelete,
   onSave,
   isSaving,
@@ -25,6 +28,14 @@ export function NoteEditorComponent({
 }: NoteEditorProps) {
   const [draft, setDraft] = useState<Note>(note);
   const [tagInput, setTagInput] = useState("");
+  const isDraftUnsafe = isSaving
+    || Boolean(tagInput.trim())
+    || !areNoteDraftsEqual(draft, note);
+
+  useEffect(() => {
+    onDraftSafetyChange(isDraftUnsafe);
+    return () => onDraftSafetyChange(false);
+  }, [isDraftUnsafe, onDraftSafetyChange]);
 
   function addTag() {
     const t = tagInput.trim().toLowerCase();
@@ -36,7 +47,7 @@ export function NoteEditorComponent({
     <section className="px-4 pb-32">
       <div className="flex items-center gap-3 pt-4 pb-4">
         <button disabled={isSaving} onClick={onClose} type="button" className="ui-pill-button-light">
-          ← Back
+          {isDraftUnsafe && !isSaving ? "Discard Draft" : "← Back"}
         </button>
         <div className="flex-1" />
         {!isNew ? (
