@@ -234,6 +234,7 @@ export function useActiveFitnessWorkout({
     error,
     finishWorkout,
     isFinishing,
+    isHydrated: hydratedUserId === userId,
     moveExercise,
     pauseDurationSet,
     pauseWorkout,

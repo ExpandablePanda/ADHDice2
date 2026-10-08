@@ -179,7 +179,7 @@ test("Health A to Health B to Health A restores independent sections and survive
   assert.equal(otherUser.state.panels[0].tabs[0].presentation.healthSection, "Today");
 });
 
-test("Health master transitions allow safe sections and block unsafe drafts or untracked editors", () => {
+test("Health master transitions allow safe sections and block reported unsafe drafts", () => {
   assert.equal(isHealthMasterTabTransitionBlocked("Food", "Journal", false), false);
   assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Food", false), false);
   assert.equal(isHealthMasterTabTransitionBlocked("Food", "Journal", true), true);
@@ -187,8 +187,12 @@ test("Health master transitions allow safe sections and block unsafe drafts or u
   assert.equal(isHealthMasterTabTransitionBlocked("Water", "Food", false), false);
   assert.equal(isHealthMasterTabTransitionBlocked("Water", "Journal", false), false);
   assert.equal(isHealthMasterTabTransitionBlocked("Water", "Journal", true), true);
-  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Food", false), true);
-  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Journal", false), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Water", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Journal", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Food", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Today", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Water", true), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Journal", true), true);
   assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Journal", true), false);
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
 });

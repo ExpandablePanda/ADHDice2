@@ -78,7 +78,6 @@ export function isHealthMasterTabTransitionBlocked(
   hasUnsafeHealthDraft: boolean,
 ): boolean {
   if (currentSection === targetSection) return false;
-  if (currentSection === "Fitness") return true;
   return hasUnsafeHealthDraft;
 }
 

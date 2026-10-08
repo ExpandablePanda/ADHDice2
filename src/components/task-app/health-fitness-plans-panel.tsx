@@ -1,7 +1,7 @@
 "use client";
 
 import { Archive, ArrowDown, ArrowUp, Check, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
@@ -43,6 +43,7 @@ type HealthFitnessPlansPanelProps = {
   workoutPlanItemLinks: HealthWorkoutPlanItemLink[];
   workouts: HealthWorkout[];
   onLogPlannedItem: (item: HealthFitnessPlanItem) => void;
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
 };
 
 type PlanEditorState = {
@@ -107,15 +108,28 @@ export function HealthFitnessPlansPanel({
   workoutPlanItemLinks,
   workouts,
   onLogPlannedItem,
+  onDraftSafetyChange,
 }: HealthFitnessPlansPanelProps) {
   const [editor, setEditor] = useState<PlanEditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const isDraftUnsafe = Boolean(editor || isSaving);
   const today = todayHealthDate();
   const planViews = useMemo(
     () => buildActiveHealthFitnessPlanWeekViews(plans, planItems, workoutPlanItemLinks, workouts, today),
     [planItems, plans, today, workoutPlanItemLinks, workouts],
   );
+
+  function handlePanelOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isDraftUnsafe) return;
+    setIsPanelOpen(nextOpen);
+  }
+
+  useEffect(() => {
+    onDraftSafetyChange(isDraftUnsafe);
+    return () => onDraftSafetyChange(false);
+  }, [isDraftUnsafe, onDraftSafetyChange]);
 
   function openCreatePlan() {
     setEditor(createPlanEditor(null, [], createPlanTypes[0] ?? "Other"));
@@ -174,64 +188,69 @@ export function HealthFitnessPlansPanel({
     }
 
     setIsSaving(true);
-    let plan: HealthFitnessPlan | null = null;
-    if (editor.id) {
-      if (!(await updatePlan(editor.id, { name, starts_on: editor.startsOn }))) {
-        setIsSaving(false);
+    try {
+      let plan: HealthFitnessPlan | null = null;
+      if (editor.id) {
+        if (!(await updatePlan(editor.id, { name, starts_on: editor.startsOn }))) {
+          setEditorError("Fitness Plan could not be saved.");
+          return;
+        }
+        plan = plans.find((candidate) => candidate.id === editor.id) ?? null;
+      } else {
+        plan = await createPlan({ name, starts_on: editor.startsOn });
+      }
+      if (!plan) {
         setEditorError("Fitness Plan could not be saved.");
         return;
       }
-      plan = plans.find((candidate) => candidate.id === editor.id) ?? null;
-    } else {
-      plan = await createPlan({ name, starts_on: editor.startsOn });
-    }
-    if (!plan) {
-      setIsSaving(false);
-      setEditorError("Fitness Plan could not be saved.");
-      return;
-    }
 
-    let saved = true;
-    for (const [index, item] of editor.items.entries()) {
-      const input = toPlanItemInput(item, plan.id, index);
-      let itemSaved = false;
-      if (item.id) {
-        itemSaved = await updatePlanItem(item.id, toPlanItemUpdate(input));
-      } else {
-        const created = await createPlanItem(input);
-        itemSaved = Boolean(created);
-        if (created) {
-          setEditor((current) => current ? {
-            ...current,
-            items: reconcileHealthFitnessPlanItemDraft(current.items, index, created.id),
-          } : current);
+      let saved = true;
+      for (const [index, item] of editor.items.entries()) {
+        const input = toPlanItemInput(item, plan.id, index);
+        let itemSaved = false;
+        if (item.id) {
+          itemSaved = await updatePlanItem(item.id, toPlanItemUpdate(input));
+        } else {
+          const created = await createPlanItem(input);
+          itemSaved = Boolean(created);
+          if (created) {
+            setEditor((current) => current ? {
+              ...current,
+              items: reconcileHealthFitnessPlanItemDraft(current.items, index, created.id),
+            } : current);
+          }
         }
-      }
-      if (!itemSaved) {
-        saved = false;
-        break;
-      }
-    }
-    if (saved) {
-      for (const itemId of editor.archivedItemIds) {
-        if (!(await archivePlanItem(itemId))) {
+        if (!itemSaved) {
           saved = false;
           break;
         }
       }
-    }
-    setIsSaving(false);
-    if (!saved) {
+      if (saved) {
+        for (const itemId of editor.archivedItemIds) {
+          if (!(await archivePlanItem(itemId))) {
+            saved = false;
+            break;
+          }
+        }
+      }
+      if (!saved) {
+        setEditorError("The plan was partly saved. Review the items and try again.");
+        return;
+      }
+      setEditor(null);
+      setEditorError(null);
+    } catch {
       setEditorError("The plan was partly saved. Review the items and try again.");
-      return;
+    } finally {
+      setIsSaving(false);
     }
-    setEditor(null);
-    setEditorError(null);
   }
 
   return (
     <HealthCollapsiblePanel
       header={<Check aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
+      onOpenChange={handlePanelOpenChange}
+      open={isPanelOpen || isDraftUnsafe}
       shellSurface
       subtitle="Intent stays separate from the workout ledger"
       title="Active Fitness Plans"
@@ -239,7 +258,7 @@ export function HealthFitnessPlansPanel({
       <div className="grid gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="max-w-2xl text-sm text-[#73809c] dark:text-white/55">Maintain multiple plans at the same time. A workout can satisfy more than one planned item through explicit links.</p>
-          <AdhdChip icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={openCreatePlan} tone="purple" type="button">Add Plan</AdhdChip>
+          <AdhdChip disabled={isSaving} icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={openCreatePlan} tone="purple" type="button">Add Plan</AdhdChip>
         </div>
         {error ? <p className="rounded-[1rem] border border-[#ffd8df] bg-[#fff2f4] px-3 py-2 text-xs text-[#bd4057] dark:border-[#5b2430] dark:bg-[#31141b] dark:text-[#ffb3bf]" role="alert">{error}</p> : null}
         {isLoading ? <p className="text-sm text-[#7d7598] dark:text-white/50">Loading Fitness Plans…</p> : null}
@@ -252,8 +271,8 @@ export function HealthFitnessPlansPanel({
                 <p className="mt-1 text-xs text-[#74809b] dark:text-white/50">Starts {formatHealthDateLabel(plan.starts_on)} · current Monday–Sunday week</p>
               </div>
               <div className="flex items-center gap-1">
-                <AdhdIconButton aria-label={`Edit Fitness Plan ${plan.name}`} onClick={() => openEditPlan(plan)} size="sm" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
-                <AdhdIconButton aria-label={`Archive Fitness Plan ${plan.name}`} onClick={() => { void archivePlan(plan.id); }} size="sm" tone="danger" variant="rowToolbar"><Archive aria-hidden="true" /></AdhdIconButton>
+                <AdhdIconButton aria-label={`Edit Fitness Plan ${plan.name}`} disabled={isSaving} onClick={() => openEditPlan(plan)} size="sm" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
+                <AdhdIconButton aria-label={`Archive Fitness Plan ${plan.name}`} disabled={isSaving} onClick={() => { void archivePlan(plan.id); }} size="sm" tone="danger" variant="rowToolbar"><Archive aria-hidden="true" /></AdhdIconButton>
               </div>
             </div>
             <div className="grid gap-2">

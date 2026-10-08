@@ -6,6 +6,12 @@ const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", imp
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const healthLibrarySource = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
 const waterPanelSource = readFileSync(new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url), "utf8");
+const fitnessTabSource = readFileSync(new URL("../src/components/task-app/health-fitness-tab.tsx", import.meta.url), "utf8");
+const fitnessGoalsSource = readFileSync(new URL("../src/components/task-app/health-fitness-goals-panel.tsx", import.meta.url), "utf8");
+const fitnessPlansSource = readFileSync(new URL("../src/components/task-app/health-fitness-plans-panel.tsx", import.meta.url), "utf8");
+const fitnessExerciseLibrarySource = readFileSync(new URL("../src/components/task-app/health-fitness-exercise-library.tsx", import.meta.url), "utf8");
+const activeFitnessWorkoutHookSource = readFileSync(new URL("../src/hooks/useActiveFitnessWorkout.ts", import.meta.url), "utf8");
+const activeFitnessWorkoutPanelSource = readFileSync(new URL("../src/components/task-app/health-active-workout.tsx", import.meta.url), "utf8");
 const journalFormSource = readFileSync(new URL("../src/components/task-app/journal-check-in-form.tsx", import.meta.url), "utf8");
 const journalEventCaptureSource = readFileSync(new URL("../src/components/task-app/journal-event-capture.tsx", import.meta.url), "utf8");
 const tabBarSource = readFileSync(new URL("../src/components/task-app/master-workspace-tab-bar.tsx", import.meta.url), "utf8");
@@ -51,6 +57,46 @@ test("Water reports through the existing Health draft-safety seam", () => {
   assert.match(taskAppSource, /healthDraftSafetyBySection,/);
   assert.match(taskAppSource, /onDraftSafetyChange=\{updateHealthDraftSafety\}/);
   assert.match(controllerHookSource, /Boolean\(healthDraftSafetyBySection\[currentHealthSection\]\)/);
+});
+
+test("Fitness reports section exit safety from every editor and active workout", () => {
+  assert.match(healthPageSource, /onDraftSafetyChange\("Fitness", isUnsafe\)/);
+  assert.match(healthPageSource, /<HealthFitnessTab[\s\S]*?onDraftSafetyChange=\{reportFitnessDraftSafety\}/);
+  assert.match(fitnessTabSource, /isFormOpen[\s\S]*?hasUnsafeSettingsDraft[\s\S]*?hasUnsafeGoalsDraft[\s\S]*?hasUnsafePlansDraft[\s\S]*?hasUnsafeExerciseLibraryDraft[\s\S]*?!activeWorkout\.isHydrated[\s\S]*?activeWorkout\.runtime/);
+  assert.match(fitnessTabSource, /onDraftSafetyChange\(isFitnessDraftUnsafe\)[\s\S]*?return \(\) => onDraftSafetyChange\(false\)/);
+  assert.match(fitnessTabSource, /isSavingWorkout[\s\S]*?setIsSavingWorkout\(true\)[\s\S]*?setIsSavingWorkout\(false\)/);
+  assert.match(fitnessTabSource, /fieldset className="contents" disabled=\{isSavingWorkout\}/);
+  assert.match(fitnessTabSource, /saveWorkoutImportAlias[\s\S]*?setIsSavingWorkoutAlias\(true\)[\s\S]*?finally[\s\S]*?setIsSavingWorkoutAlias\(false\)/);
+  assert.match(fitnessTabSource, /<HealthFitnessGoalsPanel[\s\S]*?onDraftSafetyChange=\{reportGoalsDraftSafety\}/);
+  assert.match(fitnessTabSource, /<HealthFitnessPlansPanel[\s\S]*?onDraftSafetyChange=\{reportPlansDraftSafety\}/);
+  assert.match(fitnessTabSource, /<HealthFitnessExerciseLibrary[\s\S]*?onDraftSafetyChange=\{reportExerciseLibraryDraftSafety\}/);
+  assert.match(fitnessGoalsSource, /Boolean\(editor \|\| isSaving \|\| unsafeLevelEditorGoalIds\.size > 0\)/);
+  assert.match(fitnessGoalsSource, /setUnsafeLevelEditorGoalIds\(\(current\) => \{/);
+  assert.match(fitnessGoalsSource, /reportLevelDraftSafety\(isLevelDraftUnsafe\)[\s\S]*?return \(\) => reportLevelDraftSafety\(false\)/);
+  assert.match(fitnessPlansSource, /Boolean\(editor \|\| isSaving\)/);
+  assert.match(fitnessPlansSource, /onDraftSafetyChange\(isDraftUnsafe\)[\s\S]*?return \(\) => onDraftSafetyChange\(false\)/);
+  assert.match(fitnessExerciseLibrarySource, /Boolean\(nameDraft \|\| editingId \|\| isSaving\)/);
+  assert.match(fitnessExerciseLibrarySource, /onDraftSafetyChange\(isDraftUnsafe\)[\s\S]*?return \(\) => onDraftSafetyChange\(false\)/);
+  assert.match(fitnessTabSource, /aria-hidden=\{!isSettingsOpen\}[\s\S]*?style=\{\{ display: isSettingsOpen \? "grid" : "none" \}\}/);
+  assert.match(fitnessGoalsSource, /open=\{isPanelOpen \|\| isDraftUnsafe\}/);
+  assert.match(fitnessPlansSource, /open=\{isPanelOpen \|\| isDraftUnsafe\}/);
+  assert.match(activeFitnessWorkoutHookSource, /readActiveFitnessWorkout\(window\.localStorage, userId\)/);
+  assert.match(activeFitnessWorkoutHookSource, /writeActiveFitnessWorkout\(window\.localStorage, userId, runtime\)/);
+  assert.match(activeFitnessWorkoutHookSource, /isHydrated: hydratedUserId === userId/);
+  assert.match(activeFitnessWorkoutPanelSource, />Discard Workout</);
+  assert.match(activeFitnessWorkoutPanelSource, />\{controller\.isFinishing \? "Saving…" : controller\.runtime\?\.canonicalWorkoutId \? "Retry Finish Workout" : "Finish Workout"\}</);
+  assert.match(activeFitnessWorkoutPanelSource, /fieldset className="contents" disabled=\{controller\.isFinishing\}/);
+});
+
+test("Fitness save success or explicit Cancel clears a draft while failures keep its editor", () => {
+  assert.match(fitnessTabSource, /if \(!bundleSave\.ok\) \{[\s\S]*?return;[\s\S]*?resetForm\(\);/);
+  assert.match(fitnessTabSource, /if \(await saveWorkoutTitleOptions\(result\.value\)\) \{[\s\S]*?setSavedTitleDraft\(""\)/);
+  assert.match(fitnessTabSource, /onClick=\{resetForm\} type="button">Cancel/);
+  assert.match(fitnessGoalsSource, /if \(!saved\) \{[\s\S]*?return;[\s\S]*?setEditor\(null\)/);
+  assert.match(fitnessGoalsSource, /if \(!saved\) \{[\s\S]*?return;[\s\S]*?setLevelEditor\(null\)/);
+  assert.match(fitnessGoalsSource, /function closeEditor\(\) \{[\s\S]*?if \(isSaving\) return;[\s\S]*?setEditor\(null\)/);
+  assert.match(fitnessPlansSource, /if \(!saved\) \{[\s\S]*?return;[\s\S]*?setEditor\(null\)/);
+  assert.match(fitnessPlansSource, /onClick=\{\(\) => setEditor\(null\)\} type="button">Cancel<\/AdhdChip>/);
 });
 
 test("Navigator deep destinations update the focused tab and restore shell or Settings requests", () => {

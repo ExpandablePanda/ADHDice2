@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.127`.
+- Current working app version: `7.16.128`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -119,6 +119,29 @@ Focused verification for 7.16.127: Master Workspace controller/Health and Water
 tests passed (38/38); targeted ESLint with the existing
 `react-hooks/set-state-in-effect` rule disabled and `git diff --check` passed.
 Browser QA, production build, full typecheck, and broad test suites were not run.
+
+## 2026-10-08 7.16.128 Fitness Exit Draft Safety
+
+Fitness section exits now use the existing Health draft-safety controller.
+Pristine Fitness can navigate to Water, Food, Journal, Today, or another Health
+section. Open Workout forms, Fitness Settings text/rename/alias drafts, Exercise
+Library drafts, Goal and Level editors, Plan editors, and their in-flight saves
+retain the guard until a successful save or explicit Cancel. Goal-Level reports
+are aggregated by Goal ID, so one safe editor cannot clear another editor's
+unsafe state. Goals and Plans panels stay open while their local editors are
+unsafe, and hiding Fitness Settings preserves its Exercise Library subtree.
+
+Active Workout exit remains gated until Finish or Discard. The gate also waits
+for the user-scoped local runtime to hydrate; the existing localStorage read and
+write path remains the runtime authority. Food, Journal, Water, independent
+Health master-tab sections, Navigator guards, and legacy gate-off routing keep
+their existing paths.
+
+Focused verification for 7.16.128: Master Workspace controller, Health and
+section-state contracts, Water history editing, Journal entry, Food history,
+and Active Workout tests passed (111/111); targeted ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled passed. Browser QA, production
+build, full typecheck, and broad tests were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

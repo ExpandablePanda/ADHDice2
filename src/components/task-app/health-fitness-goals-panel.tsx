@@ -1,7 +1,7 @@
 "use client";
 
 import { ArrowRight, Check, Pencil, Target, Trash2, Trophy, X } from "lucide-react";
-import { useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
@@ -86,6 +86,7 @@ type HealthFitnessGoalsPanelProps = {
   goals: HealthFitnessGoal[];
   isLoading: boolean;
   levels: HealthFitnessGoalLevel[];
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   restoreGoal: (goalId: string) => Promise<boolean>;
   updateGoal: (goalId: string, input: HealthFitnessGoalUpdate) => Promise<boolean>;
   updateLevel: (levelId: string, input: HealthFitnessGoalLevelUpdate) => Promise<boolean>;
@@ -131,6 +132,7 @@ export function HealthFitnessGoalsPanel({
   goals,
   isLoading,
   levels,
+  onDraftSafetyChange,
   restoreGoal,
   updateGoal,
   updateLevel,
@@ -141,6 +143,8 @@ export function HealthFitnessGoalsPanel({
   const [editor, setEditor] = useState<GoalEditorState | null>(null);
   const [editorError, setEditorError] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPanelOpen, setIsPanelOpen] = useState(true);
+  const [unsafeLevelEditorGoalIds, setUnsafeLevelEditorGoalIds] = useState<Set<string>>(() => new Set());
   const [showArchived, setShowArchived] = useState(false);
   const observations = useMemo(
     () => deriveHealthFitnessPerformanceObservations(workouts, workoutExercises, workoutSets),
@@ -148,6 +152,26 @@ export function HealthFitnessGoalsPanel({
   );
   const activeGoals = goals.filter((goal) => goal.archived_at === null);
   const archivedGoals = goals.filter((goal) => goal.archived_at !== null);
+  const reportLevelDraftSafety = useCallback((goalId: string, isUnsafe: boolean) => {
+    setUnsafeLevelEditorGoalIds((current) => {
+      if (current.has(goalId) === isUnsafe) return current;
+      const next = new Set(current);
+      if (isUnsafe) next.add(goalId);
+      else next.delete(goalId);
+      return next;
+    });
+  }, []);
+  const isDraftUnsafe = Boolean(editor || isSaving || unsafeLevelEditorGoalIds.size > 0);
+
+  function handlePanelOpenChange(nextOpen: boolean) {
+    if (!nextOpen && isDraftUnsafe) return;
+    setIsPanelOpen(nextOpen);
+  }
+
+  useEffect(() => {
+    onDraftSafetyChange(isDraftUnsafe);
+    return () => onDraftSafetyChange(false);
+  }, [isDraftUnsafe, onDraftSafetyChange]);
 
   function openCreateGoal() {
     setEditor(createGoalEditor(exerciseLibrary));
@@ -175,8 +199,14 @@ export function HealthFitnessGoalsPanel({
       target: Number(editor.target),
       title: editor.title,
     };
-    const saved = editor.id ? await updateGoal(editor.id, input) : await createGoal(input);
-    setIsSaving(false);
+    let saved = false;
+    try {
+      saved = editor.id ? await updateGoal(editor.id, input) : Boolean(await createGoal(input));
+    } catch {
+      saved = false;
+    } finally {
+      setIsSaving(false);
+    }
     if (!saved) {
       setEditorError("Fitness Goal could not be saved. Review the fields and try again.");
       return;
@@ -212,14 +242,17 @@ export function HealthFitnessGoalsPanel({
   return (
     <HealthCollapsiblePanel
       header={<Target aria-hidden="true" className="mt-0.5 h-6 w-6 text-[#6f57f6] dark:text-[#cabfff]" />}
+      onOpenChange={handlePanelOpenChange}
+      open={isPanelOpen || isDraftUnsafe}
       shellSurface
       subtitle="Derived from your canonical workout observations"
       title="Fitness Goals"
     >
+      <fieldset className="contents" disabled={isSaving}>
       <div className="grid gap-4">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="max-w-2xl text-sm text-[#73809c] dark:text-white/55">Goals and Levels save definitions only. Current PR and reached state update from the workout ledger.</p>
-          <AdhdChip onClick={openCreateGoal} tone="purple" type="button">+ Goal</AdhdChip>
+          <AdhdChip disabled={isSaving} onClick={openCreateGoal} tone="purple" type="button">+ Goal</AdhdChip>
         </div>
         {error ? <p className="rounded-[1rem] border border-[#ffd8df] bg-[#fff2f4] px-3 py-2 text-xs text-[#bd4057] dark:border-[#5b2430] dark:bg-[#31141b] dark:text-[#ffb3bf]" role="alert">{error}</p> : null}
         {isLoading ? <p className="text-sm text-[#7d7598] dark:text-white/50">Loading Fitness Goals…</p> : null}
@@ -239,6 +272,7 @@ export function HealthFitnessGoalsPanel({
             key={goal.id}
             levels={levels}
             observations={observations}
+            onLevelDraftSafetyChange={reportLevelDraftSafety}
             onArchive={() => { void archiveGoal(goal.id); }}
             onEdit={() => openEditGoal(goal)}
             updateLevel={updateLevel}
@@ -247,6 +281,7 @@ export function HealthFitnessGoalsPanel({
         ))}
         {editor ? (
           <form aria-label={editor.id ? "Edit Fitness Goal" : "Create Fitness Goal"} className="grid gap-4 rounded-[1.25rem] border border-[#ddd2ff] bg-[#fbfaff] p-4 dark:border-[#42306f] dark:bg-white/[0.04]" onSubmit={(event) => { void handleSaveGoal(event); }}>
+            <fieldset className="contents" disabled={isSaving}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h3 className="text-base font-bold text-[#26324f] dark:text-white">{editor.id ? "Edit Fitness Goal" : "Create Fitness Goal"}</h3>
@@ -262,6 +297,7 @@ export function HealthFitnessGoalsPanel({
             </div>
             {editorError ? <p className="text-sm text-[#d65775] dark:text-[#ffb0c1]" role="alert">{editorError}</p> : null}
             <div className="flex flex-wrap gap-2"><AdhdChip disabled={isSaving} tone="purple" type="submit">{isSaving ? "Saving…" : "Save Goal"}</AdhdChip><AdhdChip disabled={isSaving} onClick={closeEditor} type="button">Cancel</AdhdChip></div>
+            </fieldset>
           </form>
         ) : null}
         {archivedGoals.length > 0 ? (
@@ -280,6 +316,7 @@ export function HealthFitnessGoalsPanel({
                 key={goal.id}
                 levels={levels}
                 observations={observations}
+                onLevelDraftSafetyChange={reportLevelDraftSafety}
                 onEdit={() => openEditGoal(goal)}
                 onRestore={() => { void restoreGoal(goal.id); }}
                 updateLevel={updateLevel}
@@ -288,6 +325,7 @@ export function HealthFitnessGoalsPanel({
           </section>
         ) : null}
       </div>
+      </fieldset>
     </HealthCollapsiblePanel>
   );
 }
@@ -313,6 +351,7 @@ function HealthFitnessGoalCard({
   goal,
   levels,
   observations,
+  onLevelDraftSafetyChange,
   onArchive,
   onEdit,
   onRestore,
@@ -325,6 +364,7 @@ function HealthFitnessGoalCard({
   goal: HealthFitnessGoal;
   levels: HealthFitnessGoalLevel[];
   observations: ReturnType<typeof deriveHealthFitnessPerformanceObservations>;
+  onLevelDraftSafetyChange: (goalId: string, isUnsafe: boolean) => void;
   onArchive?: () => void;
   onEdit: () => void;
   onRestore?: () => void;
@@ -333,11 +373,20 @@ function HealthFitnessGoalCard({
   const [levelEditor, setLevelEditor] = useState<{ id: string | null; label: string; target: string } | null>(null);
   const [levelError, setLevelError] = useState<string | null>(null);
   const [isSavingLevel, setIsSavingLevel] = useState(false);
+  const reportLevelDraftSafety = useCallback((isUnsafe: boolean) => {
+    onLevelDraftSafetyChange(goal.id, isUnsafe);
+  }, [goal.id, onLevelDraftSafetyChange]);
+  const isLevelDraftUnsafe = Boolean(levelEditor || isSavingLevel);
   const presentation = buildHealthFitnessGoalPresentation(goal, levels, observations);
   const goalLevels = presentation.levelStatuses
     .sort((left, right) => left.level.sort_order - right.level.sort_order || left.level.created_at.localeCompare(right.level.created_at));
   const nextLevelIndex = goalLevels.findIndex((item) => !item.reached);
   const exerciseName = exercise?.name ?? "Exercise unavailable";
+
+  useEffect(() => {
+    reportLevelDraftSafety(isLevelDraftUnsafe);
+    return () => reportLevelDraftSafety(false);
+  }, [isLevelDraftUnsafe, reportLevelDraftSafety]);
 
   function openNewLevel() {
     setLevelEditor({ id: null, label: "", target: "" });
@@ -353,10 +402,16 @@ function HealthFitnessGoalCard({
     event.preventDefault();
     if (!levelEditor) return;
     setIsSavingLevel(true);
-    const saved = levelEditor.id
-      ? await updateLevel(levelEditor.id, { label: levelEditor.label, target: Number(levelEditor.target) })
-      : await createLevel({ goal_id: goal.id, label: levelEditor.label, sort_order: Math.max(-1, ...goalLevels.map((item) => item.level.sort_order)) + 1, target: Number(levelEditor.target) });
-    setIsSavingLevel(false);
+    let saved = false;
+    try {
+      saved = levelEditor.id
+        ? await updateLevel(levelEditor.id, { label: levelEditor.label, target: Number(levelEditor.target) })
+        : Boolean(await createLevel({ goal_id: goal.id, label: levelEditor.label, sort_order: Math.max(-1, ...goalLevels.map((item) => item.level.sort_order)) + 1, target: Number(levelEditor.target) }));
+    } catch {
+      saved = false;
+    } finally {
+      setIsSavingLevel(false);
+    }
     if (!saved) {
       setLevelError("Level could not be saved. Review the fields and try again.");
       return;
@@ -396,13 +451,13 @@ function HealthFitnessGoalCard({
         <p className="text-xs text-[#7d7598] dark:text-white/50">{presentation.currentRecord ? `${formatHealthFitnessGoalValue(goal.metric, presentation.status.progressValue)} / ${formatHealthFitnessGoalValue(goal.metric, goal.target)}` : `No PR yet · Target ${formatHealthFitnessGoalValue(goal.metric, goal.target)}`}</p>
       </div>
       <div className="grid gap-2 border-t border-[#eeeaf8] pt-3 dark:border-white/10">
-        <div className="flex flex-wrap items-center justify-between gap-2"><div><h4 className="text-xs font-bold uppercase tracking-[0.14em] text-[#6f57f6] dark:text-[#cabfff]">Levels</h4><p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Progress is derived from the same current PR.</p></div><AdhdChip onClick={openNewLevel} tone="purple" type="button">+ Level</AdhdChip></div>
+        <div className="flex flex-wrap items-center justify-between gap-2"><div><h4 className="text-xs font-bold uppercase tracking-[0.14em] text-[#6f57f6] dark:text-[#cabfff]">Levels</h4><p className="mt-1 text-xs text-[#7d7598] dark:text-white/50">Progress is derived from the same current PR.</p></div><AdhdChip disabled={isSavingLevel} onClick={openNewLevel} tone="purple" type="button">+ Level</AdhdChip></div>
         {goalLevels.length === 0 ? <p className="text-xs text-[#8d87a7] dark:text-white/40">Add levels to mark intermediate targets.</p> : goalLevels.map((item, index) => {
           const isNext = index === nextLevelIndex;
           return <div className={`flex flex-wrap items-center gap-2 rounded-[0.9rem] border px-3 py-2 ${item.reached ? "border-[#d8ecd9] bg-[#eef9f0] dark:border-[#284a32] dark:bg-[#13281a]" : isNext ? "border-[#ddd2ff] bg-[#f7f3ff] dark:border-[#42306f] dark:bg-[#22193f]" : "border-[#eeeaf8] bg-white/70 dark:border-white/10 dark:bg-white/[0.02]"}`} key={item.level.id}>
             <span className={`inline-flex h-6 w-6 items-center justify-center rounded-full ${item.reached ? "bg-[#d8ecd9] text-[#368155] dark:bg-[#284a32] dark:text-[#a7d7b8]" : isNext ? "bg-[#e9e1ff] text-[#6f57f6] dark:bg-[#3a2c62] dark:text-[#cabfff]" : "bg-[#f1eff7] text-[#9a93b4] dark:bg-white/8 dark:text-white/45"}`}>{item.reached ? <Check aria-hidden="true" className="h-3.5 w-3.5" /> : isNext ? <ArrowRight aria-hidden="true" className="h-3.5 w-3.5" /> : <span className="text-[10px]">·</span>}</span>
             <span className={`min-w-0 flex-1 text-sm font-semibold ${item.reached ? "text-[#368155] dark:text-[#a7d7b8]" : isNext ? "text-[#5f4bd7] dark:text-[#d8d0ff]" : "text-[#7d7598] dark:text-white/50"}`}>{item.level.label} — {formatHealthFitnessGoalValue(goal.metric, item.level.target)}<span className="ml-1 text-xs font-normal opacity-75">({presentation.currentRecord ? `${formatHealthFitnessGoalValue(goal.metric, item.progressValue)} progress` : "No PR yet"})</span></span>
-            <div className="flex items-center gap-1"><AdhdIconButton aria-label={`Edit Level ${item.level.label}`} onClick={() => openEditLevel(item.level)} size="sm" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Delete Level ${item.level.label}`} onClick={() => { void deleteLevel(item.level.id); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton></div>
+            <div className="flex items-center gap-1"><AdhdIconButton aria-label={`Edit Level ${item.level.label}`} disabled={isSavingLevel} onClick={() => openEditLevel(item.level)} size="sm" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton><AdhdIconButton aria-label={`Delete Level ${item.level.label}`} disabled={isSavingLevel} onClick={() => { void deleteLevel(item.level.id); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton></div>
           </div>;
         })}
         {levelEditor ? <form aria-label={levelEditor.id ? `Edit Level for ${goal.title}` : `Add Level to ${goal.title}`} className="grid gap-3 rounded-[1rem] border border-[#ddd2ff] bg-[#fbfaff] p-3 dark:border-[#42306f] dark:bg-white/[0.03]" onSubmit={(event) => { void handleSaveLevel(event); }}><div className="grid gap-3 sm:grid-cols-2"><label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Level label</span><input aria-label="Fitness Level label" className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSavingLevel} onChange={(event) => setLevelEditor((current) => current ? { ...current, label: event.target.value } : current)} type="text" value={levelEditor.label} /></label><label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Level target</span><input aria-label="Fitness Level target" className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSavingLevel} min="1" step="1" onChange={(event) => setLevelEditor((current) => current ? { ...current, target: event.target.value } : current)} type="number" value={levelEditor.target} /></label></div>{levelError ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{levelError}</p> : null}<div className="flex flex-wrap gap-2"><AdhdChip disabled={isSavingLevel} tone="purple" type="submit">{isSavingLevel ? "Saving…" : "Save Level"}</AdhdChip><AdhdChip disabled={isSavingLevel} onClick={() => setLevelEditor(null)} type="button">Cancel</AdhdChip></div></form> : null}

@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, CalendarDays, Check, ChevronLeft, ChevronRight, Flame, Pencil, Plus, Settings2, Timer, Trash2, X } from "lucide-react";
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
@@ -79,6 +79,7 @@ import { PageShell, ReorderablePageShells } from "@/components/ui-system/reorder
 import type { PageShellLayoutState } from "@/hooks/usePageShellLayout";
 
 type HealthFitnessTabProps = {
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   addWorkout: (input: Omit<HealthWorkoutInsert, "user_id">) => Promise<HealthWorkout | null>;
   archiveExercise: (exerciseId: string) => Promise<boolean>;
   archivePlan: (planId: string) => Promise<boolean>;
@@ -125,6 +126,7 @@ type HealthFitnessTabProps = {
 };
 
 export function HealthFitnessTab({
+  onDraftSafetyChange,
   addWorkout,
   archiveExercise,
   archiveGoal,
@@ -175,6 +177,7 @@ export function HealthFitnessTab({
   const [editingWorkoutId, setEditingWorkoutId] = useState<string | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [isFormOpen, setIsFormOpen] = useState(false);
+  const [isSavingWorkout, setIsSavingWorkout] = useState(false);
   const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(true);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [selectedFitnessDate, setSelectedFitnessDate] = useState(today);
@@ -190,7 +193,11 @@ export function HealthFitnessTab({
   const [editingSavedTitle, setEditingSavedTitle] = useState<string | null>(null);
   const [editingSavedTitleDraft, setEditingSavedTitleDraft] = useState("");
   const [isSavingTitleOptions, setIsSavingTitleOptions] = useState(false);
+  const [isSavingWorkoutAlias, setIsSavingWorkoutAlias] = useState(false);
   const [workoutAliasDrafts, setWorkoutAliasDrafts] = useState<Record<string, string>>({});
+  const [hasUnsafeGoalsDraft, setHasUnsafeGoalsDraft] = useState(false);
+  const [hasUnsafePlansDraft, setHasUnsafePlansDraft] = useState(false);
+  const [hasUnsafeExerciseLibraryDraft, setHasUnsafeExerciseLibraryDraft] = useState(false);
   const workoutFormRef = useRef<HTMLFormElement | null>(null);
   const settingsMenuRef = useRef<HTMLDivElement | null>(null);
   const pendingRevealRef = useRef(false);
@@ -222,6 +229,16 @@ export function HealthFitnessTab({
     () => [...new Set(workouts.filter((workout) => workout.source !== "manual").map(getHealthWorkoutImportAliasKey).filter(Boolean))].sort((left, right) => left.localeCompare(right)),
     [workouts],
   );
+  const isSavingFitnessSettings = isSavingTitleOptions || isSavingWorkoutAlias;
+  const hasUnsafeSettingsDraft = Boolean(
+    workoutTypeDraft
+    || editingWorkoutType
+    || savedTitleDraft
+    || editingSavedTitle
+    || importedWorkoutNames.some((sourceName) => (
+      (workoutAliasDrafts[sourceName] ?? "") !== (profile.workout_import_aliases?.[sourceName] ?? "")
+    )),
+  );
 
   useEffect(() => {
     let cancelled = false;
@@ -243,10 +260,17 @@ export function HealthFitnessTab({
     } else {
       delete nextAliases[sourceName];
     }
-    const saved = await saveProfile({ workout_import_aliases: nextAliases });
-    if (saved) {
-      setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: alias }));
+    setIsSavingWorkoutAlias(true);
+    let saved = false;
+    try {
+      saved = await saveProfile({ workout_import_aliases: nextAliases });
+    } catch {
+      saved = false;
+    } finally {
+      setIsSavingWorkoutAlias(false);
     }
+    if (saved) setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: alias }));
+    return saved;
   }
   const activeWorkout = useActiveFitnessWorkout({
     addWorkout,
@@ -256,6 +280,26 @@ export function HealthFitnessTab({
     userId: profile.user_id,
     workoutTypes,
   });
+  const reportGoalsDraftSafety = useCallback((isUnsafe: boolean) => setHasUnsafeGoalsDraft(isUnsafe), []);
+  const reportPlansDraftSafety = useCallback((isUnsafe: boolean) => setHasUnsafePlansDraft(isUnsafe), []);
+  const reportExerciseLibraryDraftSafety = useCallback((isUnsafe: boolean) => setHasUnsafeExerciseLibraryDraft(isUnsafe), []);
+  const isFitnessDraftUnsafe = Boolean(
+    isFormOpen
+    || isSavingWorkout
+    || hasUnsafeSettingsDraft
+    || isSavingFitnessSettings
+    || hasUnsafeGoalsDraft
+    || hasUnsafePlansDraft
+    || hasUnsafeExerciseLibraryDraft
+    || !activeWorkout.isHydrated
+    || activeWorkout.runtime
+    || activeWorkout.isFinishing,
+  );
+
+  useEffect(() => {
+    onDraftSafetyChange(isFitnessDraftUnsafe);
+    return () => onDraftSafetyChange(false);
+  }, [isFitnessDraftUnsafe, onDraftSafetyChange]);
 
   function moveWeek(direction: -1 | 1) {
     const nextAnchorDate = shiftHealthDate(weekAnchorDate, direction * 7);
@@ -312,6 +356,7 @@ export function HealthFitnessTab({
   }, [isSettingsOpen]);
 
   function resetForm() {
+    if (isSavingWorkout) return;
     setDraft(createDefaultHealthWorkoutDraft());
     setStructuredDraft({ exercises: [] });
     setEditingWorkoutId(null);
@@ -319,6 +364,20 @@ export function HealthFitnessTab({
     setSelectedPlanItemIds([]);
     setIsFormOpen(false);
     pendingRevealRef.current = false;
+  }
+
+  async function saveWorkoutTitleOptions(nextOptions: string[]) {
+    setIsSavingTitleOptions(true);
+    let saved = false;
+    try {
+      saved = await saveProfile({ workout_title_options: nextOptions });
+    } catch {
+      saved = false;
+    } finally {
+      setIsSavingTitleOptions(false);
+    }
+    setSavedTitleError(saved ? null : "Saved workout titles could not be saved.");
+    return saved;
   }
 
   function queueFormReveal() {
@@ -336,6 +395,7 @@ export function HealthFitnessTab({
   }
 
   function openWorkoutForm(plannedItem?: HealthFitnessPlanItem) {
+    if (isSavingWorkout) return;
     setDraft(createDefaultHealthWorkoutDraft(workoutTypes, plannedItem, selectedFitnessDate));
     setStructuredDraft({ exercises: [] });
     setEditingWorkoutId(null);
@@ -346,6 +406,7 @@ export function HealthFitnessTab({
   }
 
   function openEditForm(workout: HealthWorkout) {
+    if (isSavingWorkout) return;
     const startedAt = workout.started_at ? new Date(workout.started_at) : null;
     setDraft({
       activeCalories: workout.active_calories === null ? "" : String(workout.active_calories),
@@ -392,21 +453,21 @@ export function HealthFitnessTab({
       return;
     }
 
-    setIsSavingTitleOptions(true);
-    const saved = await saveProfile({ workout_title_options: result.value });
-    setIsSavingTitleOptions(false);
-    if (saved) {
+    if (await saveWorkoutTitleOptions(result.value)) {
       setSavedTitleDraft("");
-      setSavedTitleError(null);
-    } else {
-      setSavedTitleError("Saved workout titles could not be saved.");
     }
   }
 
   async function saveWorkoutTypeOptions(nextOptions: string[], errorMessage: string) {
     setIsSavingTitleOptions(true);
-    const saved = await saveProfile({ workout_type_options: nextOptions });
-    setIsSavingTitleOptions(false);
+    let saved = false;
+    try {
+      saved = await saveProfile({ workout_type_options: nextOptions });
+    } catch {
+      saved = false;
+    } finally {
+      setIsSavingTitleOptions(false);
+    }
     if (!saved) {
       setWorkoutTypeError(errorMessage);
     } else {
@@ -454,33 +515,19 @@ export function HealthFitnessTab({
       setSavedTitleError(result.error);
       return;
     }
-    setIsSavingTitleOptions(true);
-    const saved = await saveProfile({ workout_title_options: result.value });
-    setIsSavingTitleOptions(false);
-    if (saved) {
+    if (await saveWorkoutTitleOptions(result.value)) {
       setEditingSavedTitle(null);
       setEditingSavedTitleDraft("");
-      setSavedTitleError(null);
-    } else {
-      setSavedTitleError("Saved workout titles could not be saved.");
     }
   }
 
   async function handleRemoveSavedTitle(title: string) {
-    setIsSavingTitleOptions(true);
-    const saved = await saveProfile({
-      workout_title_options: removeHealthWorkoutTitleOption(savedWorkoutTitles, title),
-    });
-    setIsSavingTitleOptions(false);
-    if (!saved) {
-      setSavedTitleError("Saved workout titles could not be saved.");
-    } else {
-      setSavedTitleError(null);
-    }
+    await saveWorkoutTitleOptions(removeHealthWorkoutTitleOption(savedWorkoutTitles, title));
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (isSavingWorkout) return;
     const result = buildHealthWorkoutFormPayload(draft, today);
     if (!result.value || result.error) {
       setFormError(result.error ?? "Enter the workout details.");
@@ -490,28 +537,37 @@ export function HealthFitnessTab({
     const hasExistingOrSelectedLinks = editingWorkoutId
       ? workoutPlanItemLinks.some((link) => link.workout_id === editingWorkoutId) || selectedPlanItemIds.length > 0
       : selectedPlanItemIds.length > 0;
-    const bundleSave = await saveHealthWorkoutBundle({
-      addWorkout,
-      canonicalWorkoutId: editingWorkoutId,
-      draft: structuredDraft,
-      hasExistingPlanLinks: hasExistingOrSelectedLinks,
-      planItemIds: selectedPlanItemIds,
-      saveWorkoutPlanItemLinks,
-      saveWorkoutSessionDetails,
-      shouldSavePlanLinks: hasExistingOrSelectedLinks,
-      shouldSaveStructuredDetails: editingWorkoutId !== null || structuredDraft.exercises.length > 0,
-      updateWorkout,
-      workout: {
-        active_calories: result.value.active_calories ?? null,
-        duration_seconds: result.value.duration_seconds,
-        ended_at: result.value.ended_at ?? null,
-        notes: result.value.notes ?? "",
-        started_at: result.value.started_at ?? null,
-        title: result.value.title,
-        workout_date: result.value.workout_date,
-        workout_type: result.value.workout_type,
-      },
-    });
+    setIsSavingWorkout(true);
+    let bundleSave: Awaited<ReturnType<typeof saveHealthWorkoutBundle>>;
+    try {
+      bundleSave = await saveHealthWorkoutBundle({
+        addWorkout,
+        canonicalWorkoutId: editingWorkoutId,
+        draft: structuredDraft,
+        hasExistingPlanLinks: hasExistingOrSelectedLinks,
+        planItemIds: selectedPlanItemIds,
+        saveWorkoutPlanItemLinks,
+        saveWorkoutSessionDetails,
+        shouldSavePlanLinks: hasExistingOrSelectedLinks,
+        shouldSaveStructuredDetails: editingWorkoutId !== null || structuredDraft.exercises.length > 0,
+        updateWorkout,
+        workout: {
+          active_calories: result.value.active_calories ?? null,
+          duration_seconds: result.value.duration_seconds,
+          ended_at: result.value.ended_at ?? null,
+          notes: result.value.notes ?? "",
+          started_at: result.value.started_at ?? null,
+          title: result.value.title,
+          workout_date: result.value.workout_date,
+          workout_type: result.value.workout_type,
+        },
+      });
+    } catch {
+      setFormError("Workout could not be saved. Try again.");
+      setIsSavingWorkout(false);
+      return;
+    }
+    setIsSavingWorkout(false);
     setStructuredDraft(bundleSave.draft);
     if (!bundleSave.ok) {
       if (!editingWorkoutId && bundleSave.canonicalWorkoutId) setEditingWorkoutId(bundleSave.canonicalWorkoutId);
@@ -547,13 +603,14 @@ export function HealthFitnessTab({
           <AdhdChip icon={<Timer aria-hidden="true" className="h-3.5 w-3.5" />} onClick={() => { activeWorkout.startWorkout(); }} tone="purple" type="button">
             Start Workout
           </AdhdChip>
-          <AdhdChip icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={isFormOpen ? resetForm : openCreateForm} tone="purple" type="button">
+          <AdhdChip disabled={isSavingWorkout} icon={<Plus aria-hidden="true" className="h-3.5 w-3.5" />} onClick={isFormOpen ? resetForm : openCreateForm} tone="purple" type="button">
             {isFormOpen ? "Cancel" : "Log Workout"}
           </AdhdChip>
-          {isSettingsOpen ? (
-            <div
+          <div
+              aria-hidden={!isSettingsOpen}
               aria-label="Fitness Settings"
               className="adhdice-scrollbar absolute right-0 top-[calc(100%+0.55rem)] z-40 grid max-h-[min(70vh,34rem)] w-[min(36rem,calc(100vw-2rem))] gap-4 overflow-y-auto rounded-[1.25rem] border border-[#ede6ff] bg-white/95 p-4 text-left shadow-[0_20px_60px_rgba(111,87,246,0.16)] backdrop-blur dark:border-white/10 dark:bg-[#1b1530]/95"
+              style={{ display: isSettingsOpen ? "grid" : "none" }}
             >
               <div>
                 <h2 className="text-sm font-bold text-[#26324f] dark:text-white">Fitness Settings</h2>
@@ -571,7 +628,7 @@ export function HealthFitnessTab({
                   <input
                     aria-label="Add workout type"
                     className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`}
-                    disabled={isSavingTitleOptions}
+                    disabled={isSavingFitnessSettings}
                     maxLength={HEALTH_WORKOUT_OPTION_MAX_LENGTH}
                     onChange={(event) => {
                       setWorkoutTypeDraft(event.target.value);
@@ -581,11 +638,11 @@ export function HealthFitnessTab({
                     type="text"
                     value={workoutTypeDraft}
                   />
-                  <AdhdChip disabled={isSavingTitleOptions} tone="purple" type="submit">Add</AdhdChip>
+                  <AdhdChip disabled={isSavingFitnessSettings} tone="purple" type="submit">Add</AdhdChip>
                 </form>
                 {workoutTypeError ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{workoutTypeError}</p> : null}
                 <HealthFitnessReorderList
-                  disabled={isSavingTitleOptions}
+                  disabled={isSavingFitnessSettings}
                   getItemId={(type) => type}
                   getItemLabel={(type) => type}
                   label="workout type"
@@ -596,7 +653,7 @@ export function HealthFitnessTab({
                       <input
                         aria-label={`Rename workout type ${type}`}
                         className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`}
-                        disabled={isSavingTitleOptions}
+                        disabled={isSavingFitnessSettings}
                         maxLength={HEALTH_WORKOUT_OPTION_MAX_LENGTH}
                         onChange={(event) => {
                           setEditingWorkoutTypeDraft(event.target.value);
@@ -605,15 +662,15 @@ export function HealthFitnessTab({
                         type="text"
                         value={editingWorkoutTypeDraft}
                       />
-                      <AdhdIconButton aria-label="Save workout type rename" disabled={isSavingTitleOptions} size="sm" tone="purple" variant="rowToolbar" type="submit"><Check aria-hidden="true" /></AdhdIconButton>
-                      <AdhdIconButton aria-label="Cancel workout type rename" disabled={isSavingTitleOptions} onClick={() => setEditingWorkoutType(null)} size="sm" tone="default" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
+                      <AdhdIconButton aria-label="Save workout type rename" disabled={isSavingFitnessSettings} size="sm" tone="purple" variant="rowToolbar" type="submit"><Check aria-hidden="true" /></AdhdIconButton>
+                      <AdhdIconButton aria-label="Cancel workout type rename" disabled={isSavingFitnessSettings} onClick={() => { setEditingWorkoutType(null); setEditingWorkoutTypeDraft(""); }} size="sm" tone="default" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
                     </form>
                   ) : (
                     <div className="flex min-w-0 flex-1 items-center justify-between gap-2 rounded-[0.9rem] border border-[#eeeaf8] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.03]">
                       <p className="min-w-0 truncate text-sm font-semibold text-[#4a5470] dark:text-white/75">{type}</p>
                       <div className="flex items-center gap-1">
-                        <AdhdIconButton aria-label={`Rename workout type ${type}`} disabled={isSavingTitleOptions} onClick={() => { setEditingWorkoutType(type); setEditingWorkoutTypeDraft(type); }} size="sm" tone="default" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
-                        <AdhdIconButton aria-label={`Remove workout type ${type}`} disabled={isSavingTitleOptions || workoutTypes.length <= 1} onClick={() => { void handleRemoveWorkoutType(type); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
+                        <AdhdIconButton aria-label={`Rename workout type ${type}`} disabled={isSavingFitnessSettings} onClick={() => { setEditingWorkoutType(type); setEditingWorkoutTypeDraft(type); }} size="sm" tone="default" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
+                        <AdhdIconButton aria-label={`Remove workout type ${type}`} disabled={isSavingFitnessSettings || workoutTypes.length <= 1} onClick={() => { void handleRemoveWorkoutType(type); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
                       </div>
                     </div>
                   )}
@@ -629,7 +686,7 @@ export function HealthFitnessTab({
                   <input
                     aria-label="Saved workout title"
                     className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`}
-                    disabled={isSavingTitleOptions}
+                    disabled={isSavingFitnessSettings}
                     maxLength={HEALTH_WORKOUT_TITLE_MAX_LENGTH}
                     onChange={(event) => {
                       setSavedTitleDraft(event.target.value);
@@ -639,23 +696,23 @@ export function HealthFitnessTab({
                     type="text"
                     value={savedTitleDraft}
                   />
-                  <AdhdChip disabled={isSavingTitleOptions} tone="purple" type="submit">Add</AdhdChip>
+                  <AdhdChip disabled={isSavingFitnessSettings} tone="purple" type="submit">Add</AdhdChip>
                 </form>
                 {savedTitleError ? <p className="text-xs text-[#d65775] dark:text-[#ffb0c1]" role="alert">{savedTitleError}</p> : null}
                 {savedWorkoutTitles.length > 0 ? (
                   <HealthFitnessReorderList
-                    disabled={isSavingTitleOptions}
+                    disabled={isSavingFitnessSettings}
                     getItemId={(title) => title}
                     getItemLabel={(title) => title}
                     label="saved workout title"
-                    onSave={(nextOptions) => saveProfile({ workout_title_options: nextOptions })}
+                    onSave={saveWorkoutTitleOptions}
                     items={savedWorkoutTitles}
                     renderItem={(title) => editingSavedTitle === title ? (
                       <form className="flex min-w-0 flex-1 flex-wrap items-center gap-2" onSubmit={(event) => { event.preventDefault(); void handleRenameSavedTitle(title); }}>
                         <input
                           aria-label={`Rename saved workout title ${title}`}
                           className={`${HEALTH_COMPACT_INPUT_CLASS} min-w-[12rem] flex-1`}
-                          disabled={isSavingTitleOptions}
+                          disabled={isSavingFitnessSettings}
                           maxLength={HEALTH_WORKOUT_TITLE_MAX_LENGTH}
                           onChange={(event) => {
                             setEditingSavedTitleDraft(event.target.value);
@@ -664,15 +721,15 @@ export function HealthFitnessTab({
                           type="text"
                           value={editingSavedTitleDraft}
                         />
-                        <AdhdIconButton aria-label="Save saved workout title rename" disabled={isSavingTitleOptions} size="sm" tone="purple" variant="rowToolbar" type="submit"><Check aria-hidden="true" /></AdhdIconButton>
-                        <AdhdIconButton aria-label="Cancel saved workout title rename" disabled={isSavingTitleOptions} onClick={() => setEditingSavedTitle(null)} size="sm" tone="default" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
+                        <AdhdIconButton aria-label="Save saved workout title rename" disabled={isSavingFitnessSettings} size="sm" tone="purple" variant="rowToolbar" type="submit"><Check aria-hidden="true" /></AdhdIconButton>
+                        <AdhdIconButton aria-label="Cancel saved workout title rename" disabled={isSavingFitnessSettings} onClick={() => { setEditingSavedTitle(null); setEditingSavedTitleDraft(""); }} size="sm" tone="default" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
                       </form>
                     ) : (
                       <div className="flex min-w-0 flex-1 items-center justify-between gap-2">
                         <AdhdChip className="pointer-events-none min-w-0 truncate" tone="purple" type="button">{title}</AdhdChip>
                         <div className="flex items-center gap-1">
-                          <AdhdIconButton aria-label={`Rename saved workout title ${title}`} disabled={isSavingTitleOptions} onClick={() => { setEditingSavedTitle(title); setEditingSavedTitleDraft(title); }} size="sm" tone="default" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
-                          <AdhdIconButton aria-label={`Remove saved workout title ${title}`} disabled={isSavingTitleOptions} onClick={() => { void handleRemoveSavedTitle(title); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
+                          <AdhdIconButton aria-label={`Rename saved workout title ${title}`} disabled={isSavingFitnessSettings} onClick={() => { setEditingSavedTitle(title); setEditingSavedTitleDraft(title); }} size="sm" tone="default" variant="rowToolbar"><Pencil aria-hidden="true" /></AdhdIconButton>
+                          <AdhdIconButton aria-label={`Remove saved workout title ${title}`} disabled={isSavingFitnessSettings} onClick={() => { void handleRemoveSavedTitle(title); }} size="sm" tone="danger" variant="rowToolbar"><Trash2 aria-hidden="true" /></AdhdIconButton>
                         </div>
                       </div>
                     )}
@@ -698,15 +755,15 @@ export function HealthFitnessTab({
                         <input
                           aria-label="Imported workout display alias"
                           className={HEALTH_COMPACT_INPUT_CLASS}
-                          disabled={isSavingTitleOptions}
+                          disabled={isSavingFitnessSettings}
                           onChange={(event) => setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: event.target.value }))}
                           placeholder={sourceName}
                           type="text"
                           value={workoutAliasDrafts[sourceName] ?? ""}
                         />
                       </label>
-                      <AdhdChip aria-label="Save imported workout alias" disabled={isSavingTitleOptions} onClick={() => { void saveWorkoutImportAlias(sourceName); }} tone="purple" type="button">Save</AdhdChip>
-                      <AdhdChip aria-label="Clear imported workout alias" disabled={isSavingTitleOptions || !(workoutAliasDrafts[sourceName] ?? "").trim()} onClick={() => { setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: "" })); void saveWorkoutImportAlias(sourceName, ""); }} type="button">Clear</AdhdChip>
+                      <AdhdChip aria-label="Save imported workout alias" disabled={isSavingFitnessSettings} onClick={() => { void saveWorkoutImportAlias(sourceName); }} tone="purple" type="button">Save</AdhdChip>
+                      <AdhdChip aria-label="Clear imported workout alias" disabled={isSavingFitnessSettings || !(workoutAliasDrafts[sourceName] ?? "").trim()} onClick={() => { setWorkoutAliasDrafts((current) => ({ ...current, [sourceName]: "" })); void saveWorkoutImportAlias(sourceName, ""); }} type="button">Clear</AdhdChip>
                     </div>
                   </div>
                 ))}
@@ -719,10 +776,10 @@ export function HealthFitnessTab({
                 exerciseLibrary={exerciseLibrary}
                 isLoading={fitnessSessionLoading}
                 reorderExercises={reorderExercises}
+                onDraftSafetyChange={reportExerciseLibraryDraftSafety}
                 updateExercise={updateExercise}
               />
-            </div>
-          ) : null}
+          </div>
         </div>
       </div>
 
@@ -828,6 +885,7 @@ export function HealthFitnessTab({
         goals={fitnessGoals}
         isLoading={fitnessGoalsLoading}
         levels={fitnessGoalLevels}
+        onDraftSafetyChange={reportGoalsDraftSafety}
         restoreGoal={restoreGoal}
         updateGoal={updateGoal}
         updateLevel={updateLevel}
@@ -847,6 +905,7 @@ export function HealthFitnessTab({
         error={fitnessPlanError}
         isLoading={fitnessPlansLoading}
         onLogPlannedItem={openPlannedItemForm}
+        onDraftSafetyChange={reportPlansDraftSafety}
         planItems={planItems}
         plans={plans}
         updatePlan={updatePlan}
@@ -871,6 +930,7 @@ export function HealthFitnessTab({
               <h3 className="text-base font-bold text-[#26324f] dark:text-white">{editingWorkoutId ? "Edit Workout" : "Log Workout"}</h3>
               <span className="text-xs text-[#7d7598] dark:text-white/50">Manual workouts do not change daily movement metrics.</span>
             </div>
+            <fieldset className="contents" disabled={isSavingWorkout}>
             <div className="grid gap-3 sm:grid-cols-2">
               <FitnessField label="Workout type">
                 <HealthDropdown ariaLabel="Workout type" onChange={(value) => setDraft((current) => ({ ...current, workoutType: value }))} options={workoutTypeOptions} value={draft.workoutType} />
@@ -910,9 +970,10 @@ export function HealthFitnessTab({
             />
             {formError ? <p className="text-sm text-[#d65775] dark:text-[#ffb0c1]" role="alert">{formError}</p> : null}
             <div className="flex flex-wrap gap-2">
-              <AdhdChip tone="purple" type="submit">{editingWorkoutId ? "Save Changes" : "Save Workout"}</AdhdChip>
+              <AdhdChip disabled={isSavingWorkout} tone="purple" type="submit">{isSavingWorkout ? "Saving…" : editingWorkoutId ? "Save Changes" : "Save Workout"}</AdhdChip>
               <AdhdChip onClick={resetForm} type="button">Cancel</AdhdChip>
             </div>
+            </fieldset>
           </form>
         ) : null}
 

@@ -82,14 +82,15 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
         <div className="flex flex-wrap items-center gap-2">
           <span className="font-mono text-xl font-bold tabular-nums text-[#31256d] dark:text-[#e2dcff]">{formatActiveFitnessWorkoutClock(elapsedSeconds)}</span>
           {runtime.state === "running" && !isRetryState ? (
-            <AdhdChip icon={<Pause aria-hidden="true" className="h-3.5 w-3.5" />} onClick={controller.pauseWorkout} type="button">Pause</AdhdChip>
+            <AdhdChip disabled={controller.isFinishing} icon={<Pause aria-hidden="true" className="h-3.5 w-3.5" />} onClick={controller.pauseWorkout} type="button">Pause</AdhdChip>
           ) : canResume ? (
-            <AdhdChip icon={<Play aria-hidden="true" className="h-3.5 w-3.5" />} onClick={controller.resumeWorkout} tone="purple" type="button">Resume</AdhdChip>
+            <AdhdChip disabled={controller.isFinishing} icon={<Play aria-hidden="true" className="h-3.5 w-3.5" />} onClick={controller.resumeWorkout} tone="purple" type="button">Resume</AdhdChip>
           ) : null}
         </div>
       </div>
 
       <PageShellBody className="grid gap-4 pt-4">
+      <fieldset className="contents" disabled={controller.isFinishing}>
       {isRetryState ? <p className="text-xs text-[#8d5670] dark:text-[#ffb0c1]">Workout timing is locked because the workout log was already created. Retry Finish Workout to complete saving.</p> : null}
 
       <div className="grid gap-3 sm:grid-cols-2">
@@ -149,6 +150,7 @@ export function HealthActiveWorkout({ controller, exerciseLibrary, planItems, pl
         <AdhdChip disabled={controller.isFinishing} onClick={discard} type="button">Discard Workout</AdhdChip>
         <AdhdChip disabled={controller.isFinishing} onClick={() => { void controller.finishWorkout(); }} tone="purple" type="button">{controller.isFinishing ? "Saving…" : controller.runtime?.canonicalWorkoutId ? "Retry Finish Workout" : "Finish Workout"}</AdhdChip>
       </div>
+      </fieldset>
       </PageShellBody>
     </section>
   );
