@@ -1933,6 +1933,54 @@ export type HealthSymptomEntryUpdate = Partial<
   Pick<HealthSymptomEntry, "symptom_id" | "journal_entry_id" | "entry_date" | "logged_at" | "severity" | "time_is_estimated" | "note">
 >;
 
+export type HealthJournalTriggerEffect = "associated" | "worsened" | "improved";
+
+export type HealthJournalTrigger = {
+  id: string;
+  user_id: string;
+  name: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalTriggerInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalTriggerUpdate = Partial<Pick<HealthJournalTrigger, "name" | "archived_at">>;
+
+export type HealthJournalTriggerLink = {
+  id: string;
+  user_id: string;
+  trigger_id: string;
+  symptom_occurrence_id: string | null;
+  journal_signal_occurrence_id: string | null;
+  effect: HealthJournalTriggerEffect;
+  previous_score: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalTriggerLinkInsert = {
+  id?: string;
+  user_id: string;
+  trigger_id: string;
+  symptom_occurrence_id?: string | null;
+  journal_signal_occurrence_id?: string | null;
+  effect: HealthJournalTriggerEffect;
+  previous_score?: number | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalTriggerLinkUpdate = Partial<Pick<HealthJournalTriggerLink, "effect" | "previous_score">>;
+
 export type HealthFoodLibraryItem = {
   id: string;
   user_id: string;
@@ -3253,6 +3301,18 @@ export type Database = {
         Row: HealthSymptomEntry;
         Insert: HealthSymptomEntryInsert;
         Update: HealthSymptomEntryUpdate;
+        Relationships: [];
+      };
+      adhdice_health_journal_triggers: {
+        Row: HealthJournalTrigger;
+        Insert: HealthJournalTriggerInsert;
+        Update: HealthJournalTriggerUpdate;
+        Relationships: [];
+      };
+      adhdice_health_journal_trigger_links: {
+        Row: HealthJournalTriggerLink;
+        Insert: HealthJournalTriggerLinkInsert;
+        Update: HealthJournalTriggerLinkUpdate;
         Relationships: [];
       };
       adhdice_health_food_library: {

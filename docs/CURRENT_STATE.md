@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.115`.
+- Current working app version: `7.16.116`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.116 Journal Trigger persistence foundation
+
+The authored migration `supabase/add_health_journal_triggers_7_16_116.sql`
+adds user-owned Trigger definitions and many-to-many links to persisted
+symptom or Emotion/Other Feeling occurrences. Names are whitespace-normalized
+and unique per user without regard to case. Link constraints enforce one
+occurrence reference, same-user ownership, allowed effects, optional prior
+scores, and per-occurrence duplicate prevention. Occurrence deletion cascades
+only to its links; Trigger archive is a timestamp update and preserves history.
+Read-only post-application checks are in
+`supabase/verify_health_journal_triggers_7_16_116.sql`. Migration status:
+authored only, not applied remotely. No historical data is backfilled.
+
+Types, pure validation helpers, and narrow explicit-remote persistence APIs
+are in `src/lib/health-journal-triggers.ts`. The Journal save mutation and UI
+are not integrated. For the next stage, create links only after an occurrence
+has a valid persisted ID; preserve links while editing unless explicitly
+changed; treat omitted Trigger data from legacy callers as no instruction to
+delete links; and delete links only for the removed occurrence. Any partial
+remote failure must be surfaced. These separate requests are not atomic; decide
+whether an RPC/transaction boundary is required before Journal UI integration.
 
 ## 2026-10-08 7.16.115 Home Journal navigation chips
 
