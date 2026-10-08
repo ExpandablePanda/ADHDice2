@@ -13,6 +13,7 @@ import {
   createHomeScratchpadItem,
   createHomeScratchpadItems,
   createHomeTodoTask,
+  deleteHomeRoutineSection,
   formatHomeRoutineDueLabel,
   formatHomeTodoDateLabel,
   getHomeTasksByCanonicalMembership,
@@ -20,6 +21,7 @@ import {
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
   hasMeaningfulHomeTodoState,
+  HOME_ROUTINE_UNSECTIONED_ID,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
   moveHomeScratchpadTextToItems,
@@ -830,6 +832,86 @@ test("Home Routine section moves append to the destination and no-op in the curr
   });
 });
 
+test("Home Routine section deletion preserves Home state and moves only its groups to persistent Unsectioned", () => {
+  const base = normalizeHomeTodoState({
+    schemaVersion: 8,
+    taskIds: ["todo"],
+    taskDayOffsets: { todo: 2 },
+    routineTaskIds: ["a", "b", "c", "d"],
+    routineSections: [
+      { id: "first", name: "First" },
+      { id: "middle", name: "Middle" },
+      { id: "last", name: "Last" },
+    ],
+    routineSectionIdByTaskId: { a: "first", b: "middle", c: "middle", d: "last" },
+    urgentTaskIds: ["urgent"],
+    scratchpadText: "keep this",
+    scratchpadItems: [{ id: "note", text: "keep this too" }],
+  });
+
+  const deleted = deleteHomeRoutineSection(base.routineSections, base.routineSectionIdByTaskId, base.routineTaskIds, "middle");
+  assert.ok(deleted);
+  const next = normalizeHomeTodoState({ ...base, ...deleted });
+  assert.deepEqual(next.routineSections, [{ id: "first", name: "First" }, { id: "last", name: "Last" }]);
+  assert.deepEqual(next.routineTaskIds, ["a", "b", "c", "d"]);
+  assert.deepEqual(next.routineSectionIdByTaskId, { a: "first", b: HOME_ROUTINE_UNSECTIONED_ID, c: HOME_ROUTINE_UNSECTIONED_ID, d: "last" });
+  assert.deepEqual(next.taskIds, base.taskIds);
+  assert.deepEqual(next.taskDayOffsets, base.taskDayOffsets);
+  assert.deepEqual(next.urgentTaskIds, base.urgentTaskIds);
+  assert.equal(next.scratchpadText, base.scratchpadText);
+  assert.deepEqual(next.scratchpadItems, base.scratchpadItems);
+  assert.deepEqual(buildHomeRoutineSections(next.routineTaskIds, next.routineSections, next.routineSectionIdByTaskId).map((section) => [section.id, section.groupIds]), [
+    ["first", ["a"]], ["last", ["d"]], [HOME_ROUTINE_UNSECTIONED_ID, ["b", "c"]],
+  ]);
+  assert.equal(deleteHomeRoutineSection(next.routineSections, next.routineSectionIdByTaskId, next.routineTaskIds, "middle"), null);
+});
+
+test("Home Routine deletion handles empty, first, last, and only sections without renumbering", () => {
+  const emptySections = [{ id: "empty", name: "Empty" }, { id: "kept", name: "Kept" }];
+  const emptyDelete = deleteHomeRoutineSection(emptySections, { routine: "kept" }, ["routine"], "empty");
+  assert.deepEqual(emptyDelete, { routineSections: [{ id: "kept", name: "Kept" }], routineSectionIdByTaskId: { routine: "kept" } });
+
+  const firstDelete = deleteHomeRoutineSection(emptySections, { routine: "kept" }, ["routine"], "kept");
+  assert.deepEqual(firstDelete?.routineSections, [{ id: "empty", name: "Empty" }]);
+  assert.deepEqual(firstDelete?.routineSectionIdByTaskId, { routine: HOME_ROUTINE_UNSECTIONED_ID });
+
+  const onlyDelete = deleteHomeRoutineSection([{ id: "only", name: "Only" }], { a: "only", b: "only" }, ["a", "b"], "only");
+  const persisted = normalizeHomeTodoState({ schemaVersion: 8, routineTaskIds: ["a", "b"], ...onlyDelete });
+  assert.deepEqual(persisted.routineSections, []);
+  assert.deepEqual(persisted.routineSectionIdByTaskId, { a: HOME_ROUTINE_UNSECTIONED_ID, b: HOME_ROUTINE_UNSECTIONED_ID });
+  assert.deepEqual(buildHomeRoutineSections(persisted.routineTaskIds, persisted.routineSections, persisted.routineSectionIdByTaskId).map((section) => section.groupIds), [["a", "b"]]);
+  const withNewSection = normalizeHomeTodoState({
+    ...persisted,
+    routineSections: [...persisted.routineSections, { id: "new-id", name: "New Section" }],
+  });
+  assert.deepEqual(withNewSection.routineSectionIdByTaskId, persisted.routineSectionIdByTaskId);
+  assert.equal(buildHomeRoutineSections(withNewSection.routineTaskIds, withNewSection.routineSections, withNewSection.routineSectionIdByTaskId).at(-1)?.label, "Unsectioned");
+});
+
+test("Home Routine Unsectioned assignments survive moves, sorting, normalization, and remote-state reconstruction", () => {
+  const state = normalizeHomeTodoState({
+    schemaVersion: 8,
+    routineTaskIds: ["named", "unsectioned-a", "other", "unsectioned-b"],
+    routineSections: [{ id: "named-section", name: "Named" }, { id: "other-section", name: "Other" }],
+    routineSectionIdByTaskId: {
+      named: "named-section", "unsectioned-a": HOME_ROUTINE_UNSECTIONED_ID,
+      other: "other-section", "unsectioned-b": HOME_ROUTINE_UNSECTIONED_ID,
+    },
+  });
+  const restored = normalizeHomeTodoState(JSON.parse(JSON.stringify(state)));
+  assert.deepEqual(restored, state);
+
+  const movedToNamed = moveHomeRoutineTaskIdToSection(restored.routineTaskIds, restored.routineSectionIdByTaskId, "unsectioned-a", "named-section");
+  const movedBack = moveHomeRoutineTaskIdToSection(movedToNamed.routineTaskIds, movedToNamed.routineSectionIdByTaskId, "unsectioned-a", HOME_ROUTINE_UNSECTIONED_ID);
+  assert.deepEqual(movedBack.routineSectionIdByTaskId, restored.routineSectionIdByTaskId);
+  assert.deepEqual(movedBack.routineTaskIds, ["named", "other", "unsectioned-b", "unsectioned-a"]);
+  const unsectioned = buildHomeRoutineSections(movedBack.routineTaskIds, restored.routineSections, movedBack.routineSectionIdByTaskId).at(-1)!;
+  assert.deepEqual(unsectioned.groupIds, ["unsectioned-b", "unsectioned-a"]);
+  const reordered = mergeHomeTodoVisibleTaskIds(movedBack.routineTaskIds, unsectioned.groupIds, ["unsectioned-a", "unsectioned-b"]);
+  assert.deepEqual(reordered, ["named", "other", "unsectioned-a", "unsectioned-b"]);
+  assert.deepEqual(new Set(reordered), new Set(["named", "other", "unsectioned-a", "unsectioned-b"]));
+});
+
 test("Home Routine section moves survive V6 normalization", () => {
   const state = normalizeHomeTodoState({
     schemaVersion: 6,
@@ -1272,6 +1354,13 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /createRoutineSection/);
   assert.match(source, /New section/);
   assert.match(source, /updateRoutineSectionName/);
+  assert.match(source, /Delete \$\{section\.label\}/);
+  assert.match(source, /routineSectionDeleteConfirmation/);
+  assert.match(source, /Delete Section/);
+  assert.match(source, /event\.key !== "Escape"/);
+  assert.match(source, /groupCount > 0/);
+  assert.match(source, /HOME_ROUTINE_UNSECTIONED_ID/);
+  assert.match(source, /section\.groupIds/);
   assert.match(source, /updateRoutineTaskSection/);
   assert.match(source, /Move to section/);
   assert.doesNotMatch(source, /updateRoutinesPerSection|state\.routinesPerSection|state\.routineSectionNames/);
@@ -1300,6 +1389,9 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(hookSource, /routineSectionIdByTaskId/);
   assert.match(hookSource, /createRoutineSection/);
   assert.match(hookSource, /updateRoutineTaskSection/);
+  assert.match(hookSource, /const deleteRoutineSection = useCallback/);
+  assert.match(hookSource, /deleteHomeRoutineSection\(/);
+  assert.match(hookSource, /commitState\(\{ \.\.\.current, \.\.\.nextRoutineState \}\)/);
   assert.match(hookSource, /hasMeaningfulHomeTodoState\(cached\)/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
@@ -1424,6 +1516,23 @@ test("Home Routine section updates use canonical Routine ordering", () => {
   assert.match(updateSource, /moveHomeRoutineTaskIdToSection\(\s*current\.routineTaskIds,\s*currentRoutineState\.routineSectionIdByTaskId,/);
   assert.doesNotMatch(updateSource, /currentRoutineState\.routineTaskIds/);
   assert.match(updateSource, /nextRoutineState\.routineTaskIds\) === JSON\.stringify\(current\.routineTaskIds\)/);
+});
+
+test("Home Routine deletion and movement stay within Home assignment persistence", () => {
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  const deleteStart = hookSource.indexOf("const deleteRoutineSection");
+  const deleteEnd = hookSource.indexOf("const updateRoutineSectionName", deleteStart);
+  const deleteSource = hookSource.slice(deleteStart, deleteEnd);
+  assert.match(deleteSource, /stateRef\.current/);
+  assert.match(deleteSource, /deleteHomeRoutineSection\(/);
+  assert.match(deleteSource, /commitState\(\{ \.\.\.current, \.\.\.nextRoutineState \}\)/);
+  assert.doesNotMatch(deleteSource, /updateTask|parent_task_id|history|archive|trash/i);
+
+  const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  assert.match(homeSource, /routineSections\.filter\(\(section\) => section\.id !== HOME_ROUTINE_UNSECTIONED_ID\)/);
+  assert.match(homeSource, /\{ id: HOME_ROUTINE_UNSECTIONED_ID, label: "Unsectioned" \}/);
+  assert.match(homeSource, /group\.tasks\.map\(\(\{ depth, isAnchor, task \}\)/);
+  assert.match(homeSource, /setRoutineSectionDeleteConfirmation\(null\)/);
 });
 
 test("useHomeTodoState exposes V8 Urgent and Scratchpad mutations through shared persistence", () => {
@@ -1575,7 +1684,8 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   assert.match(destinationSource, /const disabled = isCurrentDestination \|\| destination\.isFull/);
   assert.match(destinationSource, /setRowActionMenu\(null\)/);
   assert.match(destinationSource, /Back to task actions/);
-  assert.match(routineDestinationSource, /routineSections\.map/);
+  assert.match(routineDestinationSource, /routineSectionDestinations\.map/);
+  assert.match(source, /label: "Unsectioned"/);
   assert.match(routineDestinationSource, /updateRoutineTaskSection\(task\.id, section\.id\)/);
   assert.match(routineDestinationSource, /disabled=\{isCurrentSection\}/);
   assert.match(routineDestinationSource, /Move \$\{task\.title \|\| "Untitled task"\} to section/);

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.116`.
+- Current working app version: `7.16.117`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.117 Home Routine Unsectioned Sections
+
+Home Routine named sections can be deleted with confirmation. Deletion removes
+only the section definition and assigns its Routine group anchors to the stable
+`__home-routine-unsectioned__` ID in `routineSectionIdByTaskId`; all Routine IDs
+and their global order remain intact. The virtual Unsectioned group renders
+after named sections, supports the existing Routine sorting and section-move
+controls, and persists through the existing Home local cache, Supabase row, and
+Realtime state reconstruction. Legacy missing or stale assignments keep their
+existing named-section fallback behavior.
+
+Focused verification for 7.16.117: `test/home-todo-state.test.ts` and targeted
+ESLint passed; `git diff --check` passed. Browser QA, production build, full
+typecheck, and broad test suites were not run.
 
 ## 2026-10-06 7.16.104 Calendar In Progress QA Correction
 

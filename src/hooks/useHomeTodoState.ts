@@ -5,8 +5,10 @@ import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import {
   createHomeRoutineSectionId,
+  deleteHomeRoutineSection,
   EMPTY_HOME_TODO_STATE,
   getHomeRoutineSectionDefaultName,
+  HOME_ROUTINE_UNSECTIONED_ID,
   hasMeaningfulHomeTodoState,
   moveHomeScratchpadTextToItems,
   normalizeHomeTodoTasksPerDay,
@@ -334,6 +336,20 @@ export function useHomeTodoState(userId: string | null) {
     scheduleWrite();
   }, [persistCache, scheduleWrite, userId]);
 
+  const deleteRoutineSection = useCallback((sectionId: string) => {
+    if (!userId) return false;
+    const current = stateRef.current;
+    const nextRoutineState = deleteHomeRoutineSection(
+      current.routineSections,
+      current.routineSectionIdByTaskId,
+      current.routineTaskIds,
+      sectionId,
+    );
+    if (!nextRoutineState) return false;
+    commitState({ ...current, ...nextRoutineState });
+    return true;
+  }, [commitState, userId]);
+
   const updateRoutineSectionName = useCallback((sectionId: string, name: string) => {
     if (!userId) return;
     const current = stateRef.current;
@@ -361,7 +377,7 @@ export function useHomeTodoState(userId: string | null) {
   const updateRoutineTaskSection = useCallback((taskId: string, sectionId: string) => {
     if (!userId) return;
     const current = stateRef.current;
-    if (!current.routineSections.some((section) => section.id === sectionId)) return;
+    if (sectionId !== HOME_ROUTINE_UNSECTIONED_ID && !current.routineSections.some((section) => section.id === sectionId)) return;
     const currentRoutineState = reconcileHomeRoutineSectionAssignments(
       current.routineSections,
       current.routineSectionIdByTaskId,
@@ -472,6 +488,7 @@ export function useHomeTodoState(userId: string | null) {
 
   return {
     createRoutineSection,
+    deleteRoutineSection,
     deleteScratchpadItem,
     moveTodoTaskToUrgent,
     moveUrgentTaskToTodo,

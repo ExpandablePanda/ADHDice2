@@ -54,6 +54,7 @@ import {
   buildHomeTodoDaySections,
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
+  HOME_ROUTINE_UNSECTIONED_ID,
   createHomeTodoTask,
   reconcileHomeRoutineSectionAssignments,
   formatHomeRoutineDueLabel,
@@ -449,6 +450,7 @@ export function HomePage({
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
   const {
     createRoutineSection,
+    deleteRoutineSection,
     deleteScratchpadItem,
     moveTodoTaskToUrgent,
     moveUrgentTaskToTodo,
@@ -485,6 +487,7 @@ export function HomePage({
   const [rowActionMenu, setRowActionMenu] = useState<HomeRowActionMenuState | null>(null);
   const [isFastActionMode, setIsFastActionMode] = useState(false);
   const [editingRoutineSectionId, setEditingRoutineSectionId] = useState<string | null>(null);
+  const [routineSectionDeleteConfirmation, setRoutineSectionDeleteConfirmation] = useState<{ id: string; label: string } | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
   const [routineChildDropTarget, setRoutineChildDropTarget] = useState<HomeRoutineChildDropTarget | null>(null);
@@ -629,6 +632,17 @@ export function HomePage({
   useEffect(() => {
     if (!scratchpadDraftDirtyRef.current) setScratchpadDraft(state.scratchpadText);
   }, [state.scratchpadText]);
+
+  useEffect(() => {
+    if (!routineSectionDeleteConfirmation) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setRoutineSectionDeleteConfirmation(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [routineSectionDeleteConfirmation]);
 
   const handleScratchpadDictationBody = useCallback((nextBody: string) => {
     scratchpadDraftDirtyRef.current = true;
@@ -1125,6 +1139,7 @@ export function HomePage({
 
   function renderRoutineSectionHeader(section: typeof routineSections[number]) {
     const isEditing = editingRoutineSectionId === section.id;
+    const isUnsectioned = section.id === HOME_ROUTINE_UNSECTIONED_ID;
     return (
       <div className={`mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 dark:border-white/10 ${section.sectionIndex === 0 ? "mt-3 border-t-0" : ""}`} key={`home-routine-section-${section.id}`}>
         <div>
@@ -1151,17 +1166,30 @@ export function HomePage({
             ) : (
               <>
                 <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
-                <AdhdIconButton
-                  aria-label={`Rename ${section.label}`}
-                  className="h-6 w-6"
-                  iconClassName="h-3.5 w-3.5"
-                  onClick={() => beginRoutineSectionRename(section)}
-                  size="sm"
-                  title={`Rename ${section.label}`}
-                  tone="ghost"
-                >
-                  <Pencil aria-hidden="true" />
-                </AdhdIconButton>
+                {!isUnsectioned ? <>
+                  <AdhdIconButton
+                    aria-label={`Rename ${section.label}`}
+                    className="h-6 w-6"
+                    iconClassName="h-3.5 w-3.5"
+                    onClick={() => beginRoutineSectionRename(section)}
+                    size="sm"
+                    title={`Rename ${section.label}`}
+                    tone="ghost"
+                  >
+                    <Pencil aria-hidden="true" />
+                  </AdhdIconButton>
+                  <AdhdIconButton
+                    aria-label={`Delete ${section.label}`}
+                    className="h-6 w-6"
+                    iconClassName="h-3.5 w-3.5"
+                    onClick={() => setRoutineSectionDeleteConfirmation({ id: section.id, label: section.label })}
+                    size="sm"
+                    title={`Delete ${section.label}`}
+                    tone="danger"
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </AdhdIconButton>
+                </> : null}
               </>
             )}
           </div>
@@ -1276,6 +1304,10 @@ export function HomePage({
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
     const currentRoutineSectionId = isRoutine ? effectiveRoutineSectionState.routineSectionIdByTaskId[task.id] : null;
+    const routineSectionDestinations = [
+      ...routineSections.filter((section) => section.id !== HOME_ROUTINE_UNSECTIONED_ID),
+      { id: HOME_ROUTINE_UNSECTIONED_ID, label: "Unsectioned" },
+    ];
     const durableTaskIndex = isUrgent ? state.urgentTaskIds.indexOf(task.id) : state.taskIds.indexOf(task.id);
     const renderedDayOffset = isUrgent ? null : daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
@@ -1550,7 +1582,7 @@ export function HomePage({
               >
                 {rowActionMenuView === "move-routine-section" ? (
                   <div className="grid gap-1">
-                    {routineSections.map((section) => {
+                    {routineSectionDestinations.map((section) => {
                       const isCurrentSection = currentRoutineSectionId === section.id;
                       return (
                         <button
@@ -2297,6 +2329,46 @@ export function HomePage({
       </PageShellSurface>
       </PageShell>
       </ReorderablePageShells>
+      {routineSectionDeleteConfirmation ? (() => {
+        const groupCount = state.routineTaskIds.filter((taskId) => (
+          state.routineSectionIdByTaskId[taskId] === routineSectionDeleteConfirmation.id
+        )).length;
+        return (
+          <div className="fixed inset-0 z-[100] grid place-items-center bg-[#17142a]/45 p-4" role="presentation">
+            <div
+              aria-labelledby="home-routine-delete-section-title"
+              aria-modal="true"
+              className="w-full max-w-md rounded-2xl border border-[#e4def2] bg-white p-5 shadow-2xl dark:border-white/15 dark:bg-[#201a35]"
+              role="dialog"
+            >
+              <h2 className="text-base font-bold text-[#332d4d] dark:text-white" id="home-routine-delete-section-title">
+                Delete &quot;{routineSectionDeleteConfirmation.label}&quot;?
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-[#716b8c] dark:text-white/65">
+                {groupCount > 0
+                  ? `${groupCount} Routine ${groupCount === 1 ? "group" : "groups"} will move to Unsectioned.`
+                  : "Only the empty section will be removed."}
+              </p>
+              <p className="mt-2 text-sm leading-6 text-[#716b8c] dark:text-white/65">
+                Your Tasks, Steps, Substeps, and their saved data will not be deleted.
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <AdhdChip onClick={() => setRoutineSectionDeleteConfirmation(null)} type="button">Cancel</AdhdChip>
+                <AdhdChip
+                  onClick={() => {
+                    deleteRoutineSection(routineSectionDeleteConfirmation.id);
+                    setRoutineSectionDeleteConfirmation(null);
+                  }}
+                  tone="danger"
+                  type="button"
+                >
+                  Delete Section
+                </AdhdChip>
+              </div>
+            </div>
+          </div>
+        );
+      })() : null}
     </section>
   );
 }

@@ -190,6 +190,7 @@ export function normalizeHomeTodoRoutineSectionNames(value: unknown): Record<str
 }
 
 const DEFAULT_HOME_ROUTINE_SECTION_ID = "routine-section-default";
+export const HOME_ROUTINE_UNSECTIONED_ID = "__home-routine-unsectioned__";
 
 function normalizeHomeRoutineSectionName(value: unknown, fallback: string) {
   const name = typeof value === "string" ? value.trim() : "";
@@ -225,7 +226,7 @@ function normalizeHomeRoutineSectionDefinitions(value: unknown): HomeRoutineSect
     const candidate = entry as { id?: unknown; name?: unknown };
     if (typeof candidate.id !== "string" || !candidate.id.trim()) continue;
     const id = candidate.id.trim();
-    if (seen.has(id)) continue;
+    if (seen.has(id) || id === HOME_ROUTINE_UNSECTIONED_ID) continue;
     seen.add(id);
     sections.push({
       id,
@@ -264,11 +265,13 @@ function ensureRoutineSectionsForTaskIds(
   routineSectionIdByTaskId: Record<string, string>,
   fallbackToLastSection: boolean,
 ) {
-  const sections = routineSections.length || !routineTaskIds.length
+  const hasExplicitUnsectionedAssignments = routineTaskIds.some((taskId) => routineSectionIdByTaskId[taskId] === HOME_ROUTINE_UNSECTIONED_ID);
+  const sections = routineSections.length || !routineTaskIds.length || hasExplicitUnsectionedAssignments && routineSections.length === 0
     ? routineSections
     : [{ id: DEFAULT_HOME_ROUTINE_SECTION_ID, name: "Section 1" }];
-  const validSectionIds = new Set(sections.map((section) => section.id));
-  const fallbackSectionId = (fallbackToLastSection ? sections[sections.length - 1] : sections[0])?.id;
+  const validSectionIds = new Set([...sections.map((section) => section.id), HOME_ROUTINE_UNSECTIONED_ID]);
+  const fallbackSectionId = (fallbackToLastSection ? sections[sections.length - 1] : sections[0])?.id
+    ?? (hasExplicitUnsectionedAssignments ? HOME_ROUTINE_UNSECTIONED_ID : undefined);
   const assignments: Record<string, string> = {};
   for (const taskId of routineTaskIds) {
     const assignedSectionId = routineSectionIdByTaskId[taskId];
@@ -293,6 +296,23 @@ export function reconcileHomeRoutineSectionAssignments(
     { ...routineSectionIdByTaskId },
     true,
   );
+}
+
+export function deleteHomeRoutineSection(
+  routineSections: readonly HomeRoutineSectionDefinition[],
+  routineSectionIdByTaskId: Readonly<Record<string, string>>,
+  routineTaskIds: readonly string[],
+  sectionId: string,
+) {
+  if (!routineSections.some((section) => section.id === sectionId)) return null;
+  const nextAssignments = { ...routineSectionIdByTaskId };
+  for (const taskId of routineTaskIds) {
+    if (nextAssignments[taskId] === sectionId) nextAssignments[taskId] = HOME_ROUTINE_UNSECTIONED_ID;
+  }
+  return {
+    routineSections: routineSections.filter((section) => section.id !== sectionId),
+    routineSectionIdByTaskId: nextAssignments,
+  };
 }
 
 export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
@@ -405,20 +425,32 @@ export function buildHomeRoutineSections<T>(
     { ...routineSectionIdByTaskId },
     false,
   ).routineSections;
+  const normalizedAssignments = ensureRoutineSectionsForTaskIds(
+    routineTaskIds.map((taskId) => String(taskId)),
+    normalizedSections,
+    { ...routineSectionIdByTaskId },
+    false,
+  ).routineSectionIdByTaskId;
   const groupIdsBySectionId = new Map(normalizedSections.map((section) => [section.id, [] as T[]]));
+  groupIdsBySectionId.set(HOME_ROUTINE_UNSECTIONED_ID, []);
   const fallbackSectionId = normalizedSections[0]?.id;
   for (const taskId of routineTaskIds) {
-    const sectionId = routineSectionIdByTaskId[String(taskId)] ?? fallbackSectionId;
+    const sectionId = normalizedAssignments[String(taskId)] ?? fallbackSectionId;
     const groupIds = sectionId ? groupIdsBySectionId.get(sectionId) ?? groupIdsBySectionId.get(fallbackSectionId ?? "") : undefined;
     groupIds?.push(taskId);
   }
   let startIndex = 0;
-  return normalizedSections.map((section, sectionIndex) => {
+  const views = normalizedSections.map((section, sectionIndex) => {
     const groupIds = groupIdsBySectionId.get(section.id) ?? [];
     const view = { id: section.id, groupIds, label: section.name, sectionIndex, startIndex };
     startIndex += groupIds.length;
     return view;
   });
+  const unsectionedGroupIds = groupIdsBySectionId.get(HOME_ROUTINE_UNSECTIONED_ID) ?? [];
+  if (unsectionedGroupIds.length) {
+    views.push({ id: HOME_ROUTINE_UNSECTIONED_ID, groupIds: unsectionedGroupIds, label: "Unsectioned", sectionIndex: views.length, startIndex });
+  }
+  return views;
 }
 
 export function formatHomeRoutineDueLabel(task: Pick<Task, "due_on" | "due_time">) {
