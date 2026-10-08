@@ -112,6 +112,8 @@ import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusReque
 import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { MasterWorkspaceTabBar } from "@/components/task-app/master-workspace-tab-bar";
+import { useMasterWorkspaceController } from "@/hooks/useMasterWorkspaceController";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
@@ -5676,6 +5678,13 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isInitialTaskStateProjectionReady = isCurrentTaskProjectionReadReady && isBehaviorAuthorityReady;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
+  const masterWorkspace = useMasterWorkspaceController({
+    activePage,
+    isReady: isAuthenticatedAppBootReady,
+    setActivePage,
+    taskWorkspaceTabsState,
+    userId: session?.user?.id,
+  });
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
@@ -8303,6 +8312,18 @@ export function TaskApp() {
           </div>
         </div>
       </div>
+      {masterWorkspace.isEnabled ? (
+        <MasterWorkspaceTabBar
+          activeTabId={masterWorkspace.activeTab.id}
+          canActivateTab={masterWorkspace.canActivateTab}
+          canCloseTab={masterWorkspace.canCloseTab}
+          canNavigate={masterWorkspace.canNavigate}
+          onActivate={masterWorkspace.activateTab}
+          onClose={masterWorkspace.closeTab}
+          onOpenPage={masterWorkspace.openPageTab}
+          tabs={masterWorkspace.currentPanel.tabs}
+        />
+      ) : null}
       <div className="mx-auto w-full" style={shellZoomStyle}>
         <section className="w-full pb-28">
 

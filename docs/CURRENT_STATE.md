@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-05
+Last reviewed: 2026-10-08
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.122`.
+- Current working app version: `7.16.123`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -41,6 +41,19 @@ values, and copied filter arrays remain independent.
 Focused verification for 7.16.122: `test/master-workspace-state.test.ts` passed
 (12/12); targeted ESLint and `git diff --check` passed. Browser QA, production
 build, full typecheck, and broad test suites were not run.
+
+## 2026-10-08 7.16.123 Master Tabs T2 Single-Panel Shell
+
+Integrated the T1 user-scoped Master Workspace state with the authenticated
+TaskApp route boundary. The single-panel tab bar is available only in
+development when `NEXT_PUBLIC_ADHDICE_MASTER_TABS=true`; it restores after the
+authenticated workspace is ready, initializes from the legacy active page and
+Tasks workspace tabs on first use, and persists only after restoration. The
+existing Tasks nested-tab UI remains authoritative. Cross-page activation is
+paused until draft protection is available; page tabs can be created inactive,
+same-page tabs can be activated, and closing is limited to changes that keep the
+current page mounted. Split Right, independent page presentation, and draft
+protection remain deferred. Browser QA and production build were not run.
 
 ## 2026-10-08 7.16.117 Home Routine Unsectioned Sections
 
