@@ -5,6 +5,8 @@ import test from "node:test";
 const migration = readFileSync(new URL("../supabase/patch_task_rewarded_missed_history_recalculation_7_16_115.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/add_task_state_canonical_schema.sql", import.meta.url), "utf8");
 const recalculateHistoryMigration = readFileSync(new URL("../supabase/patch_task_calendar_recalculate_history_7_16_111.sql", import.meta.url), "utf8");
+const calendarAuthorityMigration = readFileSync(new URL("../supabase/patch_task_calendar_manual_authority_and_historical_delay_7_16_106.sql", import.meta.url), "utf8");
+const commandRpc = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
 const entitlementPermanenceMigration = readFileSync(new URL("../supabase/patch_task_reward_entitlement_permanence_7_10_5.sql", import.meta.url), "utf8");
 
 const rewardGuard = `    if exists (
@@ -23,6 +25,61 @@ function transformExactlyOnce(definition: string, guard = rewardGuard): string {
   const count = definition.split(guard).length - 1;
   if (count !== 1) throw new Error(`Expected exactly one current reward guard, found ${count}`);
   return definition.replace(guard, "");
+}
+
+function replaceExactlyOnce(source: string, needle: string, replacement: string, label: string): string {
+  const count = source.split(needle).length - 1;
+  assert.equal(count, 1, `${label} must occur exactly once in the production RPC fixture`);
+  return source.replace(needle, replacement);
+}
+
+function migrationReplacements(source: string): Array<{ needle: string; replacement: string }> {
+  return Array.from(source.matchAll(/definition := replace\(\n    definition,\n    \$needle\$([\s\S]*?)\$needle\$,\n    \$replacement\$([\s\S]*?)\$replacement\$\n  \);/g), ([, needle, replacement]) => ({ needle, replacement }));
+}
+
+function applyMigrationReplacements(definition: string, source: string): string {
+  const replacements = migrationReplacements(source);
+  assert.ok(replacements.length > 0, "expected definition transformations in the installed RPC migrations");
+  return replacements.reduce((current, replacement, index) => replaceExactlyOnce(
+    current,
+    replacement.needle,
+    replacement.replacement,
+    `installed RPC transform ${index + 1}`,
+  ), definition);
+}
+
+function buildRepresentativeProductionRpc(): string {
+  const liveAchievementEvaluator = `    v_achievement_evaluation := public.adhdice_evaluate_achievements(
+      p_user_id,
+      v_achievement_operation_id,
+      'immediate'
+    );`;
+  const liveAchievementEvaluatorWithDeletes = `    v_achievement_evaluation := public.adhdice_evaluate_achievements_incremental_for_history_facts(
+      p_user_id,
+      array(
+        select value::uuid
+        from jsonb_array_elements_text(
+          (case when v_history_id is null then '[]'::jsonb else jsonb_build_array(v_history_id) end)
+          || coalesce(v_automatic_history_ids, '[]'::jsonb)
+          || coalesce(v_automatic_history_delete_ids, '[]'::jsonb)
+        ) value
+      ),
+      v_achievement_operation_id,
+      'immediate'
+    );`;
+  const liveHistoryResult = "    'history_fact_ids', v_automatic_history_ids,\n";
+  const liveHistoryResultWithDeletes = "    'history_fact_ids', v_automatic_history_ids,\n"
+    + "    'history_fact_delete_ids', v_automatic_history_delete_ids,\n";
+  const currentFixture = replaceExactlyOnce(
+    replaceExactlyOnce(commandRpc, liveAchievementEvaluator, liveAchievementEvaluatorWithDeletes, "live Achievement evaluator"),
+    liveHistoryResult,
+    liveHistoryResultWithDeletes,
+    "live History result reference",
+  );
+  return applyMigrationReplacements(
+    applyMigrationReplacements(currentFixture, calendarAuthorityMigration),
+    recalculateHistoryMigration,
+  );
 }
 
 test("7.16.115 removes only the unconditional reward-entitlement retirement guard", () => {
@@ -49,12 +106,33 @@ ${rewardGuard}    if exists (automatic missed evidence check) then
   assert.throws(() => transformExactlyOnce(`${currentRpc}\n${rewardGuard}`), /found 2/);
 });
 
+test("7.16.115 preflight assertions match the production-shaped installed RPC", () => {
+  const productionRpc = buildRepresentativeProductionRpc();
+  const assertions = Array.from(
+    migration.matchAll(/position\(\$assert\$([\s\S]*?)\$assert\$ in definition\) = 0/g),
+    ([, assertion]) => assertion,
+  );
+  assert.equal(assertions.length, 11, "all 7.16.115 RPC safety assertions must be checked");
+
+  for (const assertion of assertions) {
+    assert.ok(productionRpc.includes(assertion), `live production RPC is missing expected assertion anchor: ${assertion}`);
+  }
+
+  assert.match(productionRpc, /left join public\.adhdice_task_history_facts fact\s+on fact\.user_id = p_user_id\s+and fact\.entity_id = v_entity_id\s+and fact\.id = requested\.id::uuid/i);
+  assert.match(productionRpc, /fact\.logical_date < v_recalculate_from_logical_date/);
+  assert.match(productionRpc, /fact\.outcome <> 'missed'/);
+  assert.match(productionRpc, /set resolution_state = 'superseded',[\s\S]*resolved_history_id = null/);
+  assert.match(productionRpc, /Historical recalculation Missed facts require past, owned, current schedule evidence\./);
+  assert.match(productionRpc, /adhdice_evaluate_achievements_incremental_for_history_facts/);
+});
+
 test("recalculation retains the existing Missed-only ownership and replay-range protections", () => {
   assert.match(
     recalculateHistoryMigration,
     /fact\.user_id = p_user_id[\s\S]*fact\.entity_id = v_entity_id[\s\S]*fact\.id = requested\.id::uuid[\s\S]*fact\.logical_date < v_recalculate_from_logical_date[\s\S]*fact\.outcome <> 'missed'/,
   );
   assert.match(migration, /Historical recalculation may retire only owned Missed History facts from its replay date\./);
+  assert.match(migration, /position\(\$assert\$on fact\.user_id = p_user_id\$assert\$ in definition\) = 0/);
   assert.match(migration, /Historical recalculation Missed facts require past, owned, current schedule evidence\./);
   assert.match(migration, /position\(\$assert\$set resolution_state = 'superseded',\$assert\$ in definition\) = 0/);
   assert.match(migration, /position\(\$assert\$resolved_history_id = null,\$assert\$ in definition\) = 0/);

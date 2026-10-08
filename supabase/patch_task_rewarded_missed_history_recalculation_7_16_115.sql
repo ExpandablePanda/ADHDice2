@@ -51,7 +51,7 @@ begin
   definition := replace(definition, reward_guard, '');
 
   if position($assert$Historical recalculation may retire only owned Missed History facts from its replay date.$assert$ in definition) = 0
-     or position($assert$and fact.user_id = p_user_id$assert$ in definition) = 0
+     or position($assert$on fact.user_id = p_user_id$assert$ in definition) = 0
      or position($assert$and fact.entity_id = v_entity_id$assert$ in definition) = 0
      or position($assert$or fact.logical_date < v_recalculate_from_logical_date$assert$ in definition) = 0
      or position($assert$or fact.outcome <> 'missed'$assert$ in definition) = 0
