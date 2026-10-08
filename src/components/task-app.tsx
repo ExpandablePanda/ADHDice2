@@ -1175,6 +1175,8 @@ export function TaskApp() {
   const [message, setMessage] = useState<Message | null>(null);
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
   const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
+  const [journalEntryNavigationRequest, setJournalEntryNavigationRequest] = useState<{ entryType: "start_of_day" | "end_of_day"; id: number } | null>(null);
+  const journalEntryNavigationRequestIdRef = useRef(0);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<PendingRewardBankOpenSession | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
@@ -8326,6 +8328,11 @@ export function TaskApp() {
             onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
             onOpenTask={openTaskEditorFromId}
+            onOpenJournal={(entryType) => {
+              setJournalEntryNavigationRequest({ entryType, id: ++journalEntryNavigationRequestIdRef.current });
+              setActivePage("Health");
+              persistHealthTabPreference("Journal");
+            }}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
             dailyProgress={homeDailyProgress}
@@ -8926,6 +8933,8 @@ export function TaskApp() {
           />
         ) : activePage === "Health" ? (
           <TaskHealthPage
+            journalEntryRequest={journalEntryNavigationRequest}
+            onConsumeJournalEntryRequest={(requestId) => setJournalEntryNavigationRequest((current) => current?.id === requestId ? null : current)}
             awards={healthAwards}
             archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}

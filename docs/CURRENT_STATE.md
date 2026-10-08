@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.113`.
+- Current working app version: `7.16.114`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -24,6 +24,14 @@ saved score only when exactly one matching occurrence makes that display safe.
 Standalone Event History no longer repeats its interval, occurrences, or
 description in the lower structured summary; additional Event notes and other
 unique structured answers remain available. Browser QA remains pending.
+
+## 2026-10-08 7.16.114 Home Journal shortcuts
+
+Home's Finished Today panel now includes direct Start of Day and End of Day
+Journal shortcuts that remain available while completion History is loading or
+unavailable. A one-shot navigation request opens the active Journal editor as a
+new entry with the requested questionnaire selected. Existing Journal History
+and Task completion totals remain unchanged. Browser QA remains pending.
 
 ## 2026-10-07 7.16.112 Journal Event timing and scored Feeling hashtags
 

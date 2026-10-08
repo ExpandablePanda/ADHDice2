@@ -60,6 +60,8 @@ const QUESTION_LABEL_CLASS = "text-sm font-semibold text-[#26324f] dark:text-whi
 const QUESTION_HINT_CLASS = "text-xs text-[#7d88a3] dark:text-white/50";
 
 type JournalCheckInFormProps = {
+  journalEntryRequest: { entryType: "start_of_day" | "end_of_day"; id: number } | null;
+  onConsumeJournalEntryRequest: (requestId: number) => void;
   checkIns: readonly HealthCheckIn[];
   customQuestions: readonly HealthJournalCustomQuestion[];
   focusCategories: Parameters<typeof findRelevantHealthSleepContext>[0]["focusCategories"];
@@ -114,6 +116,8 @@ function getCustomQuestionDefinition(
 }
 
 export function JournalCheckInForm({
+  journalEntryRequest,
+  onConsumeJournalEntryRequest,
   checkIns,
   customQuestions,
   focusCategories,
@@ -154,6 +158,7 @@ export function JournalCheckInForm({
   const [isSaving, setIsSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const hydratedSelectedEntryKeyRef = useRef<string | undefined>(undefined);
+  const consumedJournalEntryRequestIdRef = useRef<number | null>(null);
 
   useEffect(() => {
     const nextSelectedEntryId = selectedJournalEntry?.id ?? null;
@@ -208,6 +213,13 @@ export function JournalCheckInForm({
     });
     setFormError(null);
   }, [checkIns, journalSignalOccurrences, journalSignals, selectedJournalEntry, symptomEntries, symptoms]);
+
+  useEffect(() => {
+    if (!journalEntryRequest || selectedJournalEntry || consumedJournalEntryRequestIdRef.current === journalEntryRequest.id) return;
+    consumedJournalEntryRequestIdRef.current = journalEntryRequest.id;
+    setEntryType(journalEntryRequest.entryType);
+    onConsumeJournalEntryRequest(journalEntryRequest.id);
+  }, [journalEntryRequest, onConsumeJournalEntryRequest, selectedJournalEntry]);
 
   const normalizedQuestions = useMemo(() => normalizeHealthJournalCustomQuestions(customQuestions), [customQuestions]);
   const visibleCustomQuestions = useMemo(

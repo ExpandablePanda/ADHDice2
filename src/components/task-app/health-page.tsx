@@ -228,6 +228,8 @@ import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
 
 type HealthPageProps = {
+  journalEntryRequest: { entryType: "start_of_day" | "end_of_day"; id: number } | null;
+  onConsumeJournalEntryRequest: (requestId: number) => void;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
   journalSignals: HealthJournalSignal[];
@@ -1174,6 +1176,8 @@ function JournalSymptomLibrarySection({
 }
 
 export function HealthPage({
+  journalEntryRequest,
+  onConsumeJournalEntryRequest,
   checkIns,
   journalSignals,
   journalSignalValues,
@@ -1987,6 +1991,7 @@ export function HealthPage({
   }
 
   const activeProfile = profile;
+  const visibleJournalWorkspaceMode = journalEntryRequest ? "entry" : journalWorkspaceMode;
   const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
   const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
   const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
@@ -3511,7 +3516,7 @@ export function HealthPage({
                       aria-controls="journal-history-layout-menu"
                       aria-expanded={isJournalHistoryMenuOpen}
                       aria-haspopup="menu"
-                      aria-label={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      aria-label={visibleJournalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
                       onClick={handleJournalHistoryClick}
                       onKeyDown={handleJournalHistoryKeyDown}
                       onPointerCancel={handleJournalHistoryPointerCancel}
@@ -3519,11 +3524,11 @@ export function HealthPage({
                       onPointerLeave={handleJournalHistoryPointerUp}
                       onPointerUp={handleJournalHistoryPointerUp}
                       size="sm"
-                      title={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      title={visibleJournalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
                       tone="ghost"
                       variant="rowToolbar"
                     >
-                      {journalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+                      {visibleJournalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
                     </AdhdIconButton>
                     {isJournalHistoryMenuOpen ? (
                       <AdhdDropdownPanel
@@ -3546,7 +3551,7 @@ export function HealthPage({
                       </AdhdDropdownPanel>
                     ) : null}
                   </div>
-                  {journalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
+                  {visibleJournalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
                 </div>
               )}
               id={getHealthTabPanelId("Journal")}
@@ -3556,8 +3561,8 @@ export function HealthPage({
               title="Journal"
               role="tabpanel"
             >
-            <div className={(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
-            {journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+            <div className={(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
+            {visibleJournalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <JournalCheckInForm
                 checkIns={checkIns}
                 customQuestions={activeProfile.journal_questions ?? []}
@@ -3567,18 +3572,24 @@ export function HealthPage({
                 journalSignalOccurrences={journalSignalOccurrences}
                 journalSignalValues={journalSignalValues}
                 journalSignals={journalSignals}
+                journalEntryRequest={journalEntryRequest}
                 mealEntries={mealEntries}
                 metricEntries={metricEntries}
                 onAfterSave={startNewJournalEntry}
+                onConsumeJournalEntryRequest={(requestId) => {
+                  setJournalWorkspaceMode("entry");
+                  startNewJournalEntry();
+                  onConsumeJournalEntryRequest(requestId);
+                }}
                 onOpenFood={() => persistHealthTabPreference("Food")}
                 onOpenSleep={() => persistHealthTabPreference("Sleep")}
                 saveJournalEntry={saveJournalEntry}
-                selectedJournalEntry={selectedJournalEntry}
+                selectedJournalEntry={journalEntryRequest ? null : selectedJournalEntry}
                 symptomEntries={symptomEntries}
                 symptoms={symptoms}
               />
             </div> : null}
-            {false && journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+            {false && visibleJournalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <div className="grid min-w-0 gap-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-wrap gap-3">
@@ -3638,7 +3649,7 @@ export function HealthPage({
                       {journalFeelingChoices.every((choice) => journalDraftValues.some((value) => choice.signal?.id === value.signal_id)) ? <span className="text-xs text-[#7d7598] dark:text-white/50">All active Feelings are already in this entry.</span> : null}
                     </div>
                   ) : null}
-                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
+                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Mood} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalMood} /></div>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Energy} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalEnergy} /></div>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Stress} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalStress} /></div>
@@ -3764,7 +3775,7 @@ export function HealthPage({
               </div>
             </div> : null}
 
-            {journalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? `${journalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
+            {visibleJournalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? `${visibleJournalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
               <div className="space-y-4">
                 <SectionMiniTitle title="Journal History" />
                 {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => {
