@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, Apple, BookOpen, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, History, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from "react";
 
 import type {
   HealthAchievementAward,
@@ -78,7 +78,6 @@ import {
   type MealDraft,
   type MealFoodSelection,
 } from "@/lib/health-meal-draft";
-import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   calculateHealthDailyCalorieBudget,
   calculateHealthProjectedCalories,
@@ -227,6 +226,9 @@ import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
 
 type HealthPageProps = {
+  activeTab: HealthTab;
+  onSelectTab: (tab: HealthTab) => void;
+  onDraftSafetyChange: (section: HealthTab, isUnsafe: boolean) => void;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
   journalSignals: HealthJournalSignal[];
@@ -1161,6 +1163,9 @@ function JournalSymptomLibrarySection({
 }
 
 export function HealthPage({
+  activeTab,
+  onSelectTab,
+  onDraftSafetyChange,
   checkIns,
   journalSignals,
   journalSignalValues,
@@ -1262,7 +1267,8 @@ export function HealthPage({
   workoutExercises,
   workoutSets,
 }: HealthPageProps) {
-  const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
+  const reportFoodDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Food", isUnsafe), [onDraftSafetyChange]);
+  const reportJournalDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Journal", isUnsafe), [onDraftSafetyChange]);
   const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
   const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -3404,7 +3410,7 @@ export function HealthPage({
             }`}
             id={`health-tab-${tab.toLowerCase()}`}
             key={tab}
-            onClick={() => persistHealthTabPreference(tab)}
+            onClick={() => onSelectTab(tab)}
             role="tab"
             type="button"
           >
@@ -3423,7 +3429,7 @@ export function HealthPage({
             journalSignalOccurrences={journalSignalOccurrences}
             mealEntries={mealEntries}
             metricEntries={metricEntries}
-            onNavigate={persistHealthTabPreference}
+            onNavigate={onSelectTab}
             profile={activeProfile}
             symptoms={symptoms}
             symptomEntries={symptomEntries}
@@ -3557,8 +3563,9 @@ export function HealthPage({
                 mealEntries={mealEntries}
                 metricEntries={metricEntries}
                 onAfterSave={startNewJournalEntry}
-                onOpenFood={() => persistHealthTabPreference("Food")}
-                onOpenSleep={() => persistHealthTabPreference("Sleep")}
+                onDraftSafetyChange={reportJournalDraftSafety}
+                onOpenFood={() => onSelectTab("Food")}
+                onOpenSleep={() => onSelectTab("Sleep")}
                 saveJournalEntry={saveJournalEntry}
                 selectedJournalEntry={selectedJournalEntry}
                 symptomEntries={symptomEntries}
@@ -4398,6 +4405,7 @@ export function HealthPage({
             savedMeals={savedMeals}
             saveSavedMeal={saveSavedMeal}
             updatePreviousFoodLogs={updatePreviousFoodLogs}
+            onDraftSafetyChange={reportFoodDraftSafety}
             shellSurface
           />
           </PageShell>

@@ -73,7 +73,7 @@ export function MasterWorkspaceTabBar({
                 disabled={!canActivateTab(tab.id)}
                 onClick={() => onActivate(tab.id)}
                 selected={tab.id === activeTabId}
-                title={canActivateTab(tab.id) ? `Open ${getMasterTabLabel(tab)}` : "Cross-page tab switching is paused until draft protection is available."}
+                title={canActivateTab(tab.id) ? `Open ${getMasterTabLabel(tab)}` : "This switch is paused to protect the current page or an unfinished draft."}
                 type="button"
               >
                 {getMasterTabLabel(tab)}
@@ -83,7 +83,7 @@ export function MasterWorkspaceTabBar({
                 disabled={!canCloseTab(tab.id)}
                 onClick={() => onClose(tab.id)}
                 size="sm"
-                title={canCloseTab(tab.id) ? `Close ${getMasterTabLabel(tab)} tab` : "This tab cannot be closed while it would change the rendered page."}
+                title={canCloseTab(tab.id) ? `Close ${getMasterTabLabel(tab)} tab` : "This tab cannot be closed while it would change the rendered page or discard an unfinished draft."}
                 variant="rowToolbar"
               >
                 <X aria-hidden="true" />
@@ -122,7 +122,7 @@ export function MasterWorkspaceTabBar({
           ) : null}
         </div>
       </div>
-      {tabs.some((tab) => !canActivateTab(tab.id) || !canCloseTab(tab.id)) ? <p className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">Cross-page tab switching is paused until draft protection is available. New page tabs stay inactive until that page is already open through existing navigation.</p> : null}
+      {tabs.some((tab) => !canActivateTab(tab.id) || !canCloseTab(tab.id)) ? <p className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">Some tab switches stay paused while they could change the rendered page or discard an unfinished editor. New page tabs stay inactive until that page is already open through existing navigation.</p> : null}
     </nav>
   );
 }

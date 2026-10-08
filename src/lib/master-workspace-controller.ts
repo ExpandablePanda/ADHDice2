@@ -11,6 +11,7 @@ import {
   type MasterWorkspaceStorage,
 } from "@/lib/master-workspace-state";
 import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
+import type { HealthTab } from "@/lib/health-utils";
 
 export type MasterWorkspaceTaskTransition = {
   state: MasterWorkspaceState;
@@ -71,6 +72,16 @@ export function isTasksMasterTabTransitionBlocked(activePage: AppPage, hasUnsafe
   return activePage === "Tasks" && hasUnsafeTasksDraft;
 }
 
+export function isHealthMasterTabTransitionBlocked(
+  currentSection: HealthTab,
+  targetSection: HealthTab,
+  hasUnsafeHealthDraft: boolean,
+): boolean {
+  if (currentSection === targetSection) return false;
+  if (currentSection === "Fitness" || currentSection === "Water") return true;
+  return hasUnsafeHealthDraft;
+}
+
 export function isMasterWorkspaceFeatureEnabled(
   nodeEnvironment: string | undefined,
   featureFlag: string | undefined,
@@ -83,9 +94,10 @@ export function restoreMasterWorkspaceForUser(
   userId: string,
   previousActivePage: AppPage,
   taskWorkspaceTabsState: TaskWorkspaceTabsState,
+  initialHealthSection: HealthTab = "Today",
 ): { state: MasterWorkspaceState; restored: boolean } {
   if (!userId.trim()) {
-    return { state: initializeMasterWorkspaceState(previousActivePage, taskWorkspaceTabsState), restored: false };
+    return { state: initializeMasterWorkspaceState(previousActivePage, taskWorkspaceTabsState, initialHealthSection), restored: false };
   }
 
   try {
@@ -101,7 +113,7 @@ export function restoreMasterWorkspaceForUser(
     // Storage can be unavailable in restricted browser contexts; initialize in memory.
   }
 
-  return { state: initializeMasterWorkspaceState(previousActivePage, taskWorkspaceTabsState), restored: false };
+  return { state: initializeMasterWorkspaceState(previousActivePage, taskWorkspaceTabsState, initialHealthSection), restored: false };
 }
 
 export function persistMasterWorkspaceForReadyUser(

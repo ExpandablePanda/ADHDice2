@@ -1,7 +1,7 @@
 "use client";
 
 import { Camera, Copy, FileUp, Pencil, Plus, RotateCcw, Search, Trash2 } from "lucide-react";
-import { useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { ModalShell } from "@/components/modal-shell";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -148,6 +148,7 @@ const EMPTY_MEAL_DRAFT: MealDraft = {
 };
 
 type HealthLibraryPanelProps = {
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   favorites: HealthFoodLibraryItem[];
   recipes: HealthRecipe[];
   savedMeals: HealthSavedMeal[];
@@ -174,6 +175,7 @@ type HealthLibraryPanelProps = {
 };
 
 export function HealthLibraryPanel({
+  onDraftSafetyChange,
   favorites,
   recipes,
   savedMeals,
@@ -248,6 +250,22 @@ export function HealthLibraryPanel({
   const editingFood = foodDraft.id ? favorites.find((food) => food.id === foodDraft.id) ?? null : null;
   const editingFoodLogCount = editingFood ? countHealthFoodMealEntries(mealEntries, editingFood.id) : 0;
   const editingFoodHasUnsavedChanges = editingFood ? hasFoodDraftChanges(editingFood, foodDraft) : false;
+  const hasUnsafeDraft = Boolean(
+    (foodDraft.id ? !editingFood || editingFoodHasUnsavedChanges : JSON.stringify(foodDraft) !== JSON.stringify(EMPTY_FOOD_DRAFT))
+    || (recipeDraft.id || JSON.stringify(recipeDraft) !== JSON.stringify(EMPTY_RECIPE_DRAFT))
+    || (mealDraft.id || JSON.stringify(mealDraft) !== JSON.stringify(EMPTY_MEAL_DRAFT))
+    || foodImportText.trim()
+    || foodImportRows.length > 0
+    || isBarcodeScannerOpen
+    || isSavingFoodImport
+    || isSavingFood
+    || foodSaveConfirmation
+  );
+
+  useEffect(() => {
+    onDraftSafetyChange(hasUnsafeDraft);
+    return () => onDraftSafetyChange(false);
+  }, [hasUnsafeDraft, onDraftSafetyChange]);
 
   function resetFoodDraft() {
     barcodeLookupGenerationRef.current += 1;

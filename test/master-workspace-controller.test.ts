@@ -5,6 +5,7 @@ import {
   canPersistLegacyTaskWorkspace,
   closeMasterTabWithTaskWorkspace,
   isMasterWorkspaceFeatureEnabled,
+  isHealthMasterTabTransitionBlocked,
   isTasksMasterTabTransitionBlocked,
   persistMasterWorkspaceForReadyUser,
   restoreMasterWorkspaceForUser,
@@ -144,6 +145,49 @@ test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", false), false);
   assert.equal(isTasksMasterTabTransitionBlocked("Home", true), false);
+});
+
+test("Health A to Health B to Health A restores independent sections and survives refresh", () => {
+  const storage = memoryStorage();
+  const initialized = restoreMasterWorkspaceForUser(
+    storage,
+    "health-user",
+    "Health",
+    DEFAULT_TASK_WORKSPACE_TABS_STATE,
+    "Food",
+  ).state;
+  const panelId = initialized.panels[0].id;
+  const withHealthB = createMasterTab(initialized, panelId, {
+    id: "health-master-b",
+    destination: { kind: "health-tab", page: "Health", tab: "Journal" },
+    presentation: { healthSection: "Journal" },
+  }, false);
+
+  const toHealthB = activateMasterTabWithTaskWorkspace(withHealthB, panelId, "health-master-b", DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  assert.equal(toHealthB.state.panels[0].tabs[1].presentation.healthSection, "Journal");
+  const backToHealthA = activateMasterTabWithTaskWorkspace(toHealthB.state, panelId, "master-tab-1", DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  assert.equal(backToHealthA.state.panels[0].tabs[0].presentation.healthSection, "Food");
+  assert.equal(backToHealthA.state.panels[0].tabs[1].presentation.healthSection, "Journal");
+
+  assert.equal(persistMasterWorkspaceForReadyUser(storage, "health-user", "health-user", true, toHealthB.state), true);
+  const refreshed = restoreMasterWorkspaceForUser(storage, "health-user", "Home", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Today");
+  assert.equal(refreshed.state.panels[0].activeTabId, "health-master-b");
+  assert.equal(refreshed.state.panels[0].tabs[0].presentation.healthSection, "Food");
+  assert.equal(refreshed.state.panels[0].tabs[1].presentation.healthSection, "Journal");
+  const otherUser = restoreMasterWorkspaceForUser(storage, "other-health-user", "Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Today");
+  assert.equal(otherUser.restored, false);
+  assert.equal(otherUser.state.panels[0].tabs[0].presentation.healthSection, "Today");
+});
+
+test("Health master transitions allow safe sections and block unsafe drafts or untracked editors", () => {
+  assert.equal(isHealthMasterTabTransitionBlocked("Food", "Journal", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Food", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Food", "Journal", true), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Food", true), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Food", false), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Water", "Food", false), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Journal", true), false);
+  assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
 });
 
 test("ready-user persistence is fenced by readiness and restored user, then survives refresh", () => {

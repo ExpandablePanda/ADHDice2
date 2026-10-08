@@ -106,6 +106,7 @@ export function JournalEventCapture({
   onChangeDescription,
   onChangeTime,
   onCreateSignal,
+  onDraftSafetyChange,
   onRemoveOccurrence,
   onSaveOccurrence,
   onUpdateOccurrence,
@@ -120,6 +121,7 @@ export function JournalEventCapture({
   onChangeDate?: (value: string) => void;
   onChangeDescription: (value: string) => void;
   onChangeTime?: (value: string) => void;
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   onCreateSignal?: (input: Omit<HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   onRemoveOccurrence: (draftKey: string) => void;
   onSaveOccurrence: (draft: JournalEventOccurrenceDraft) => void;
@@ -133,6 +135,11 @@ export function JournalEventCapture({
   const [tagQuery, setTagQuery] = useState<JournalTagQuery | null>(null);
   const [tagHighlightIndex, setTagHighlightIndex] = useState(0);
   const [tagOverlay, setTagOverlay] = useState<JournalTagOverlay>(null);
+
+  useEffect(() => {
+    onDraftSafetyChange(Boolean(tagOverlay));
+    return () => onDraftSafetyChange(false);
+  }, [onDraftSafetyChange, tagOverlay]);
 
   const occurrenceSignalById = useMemo(() => new Map(signals.map((signal) => [signal.id, signal] as const)), [signals]);
   const tagOptions = useMemo<JournalTagOption[]>(() => [

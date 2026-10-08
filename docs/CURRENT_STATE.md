@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.125`.
+- Current working app version: `7.16.126`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -78,6 +78,33 @@ source and is not overwritten while Master Tabs is enabled; legacy persistence
 continues when the feature is disabled. Master-tab transitions are blocked while
 the shared editor, debounced search draft, table/list edit surfaces, or nested
 tab rename draft is open.
+
+## 2026-10-08 7.16.126 Master Tabs T4 Health Sections and Deep Destinations
+
+Each Health master tab owns its selected Health section. Experimental mode
+reads that selection from the focused Master Workspace tab, while the legacy
+global Health preference remains active with the feature gate disabled. Health
+sections and Navigator destinations update the focused tab destination so its
+label follows the current section or registered page shell. Registered shells,
+Tasks surfaces/views, and Settings sections retain their existing routing and
+restore through user-scoped local workspace state.
+
+HealthPage remains the single rendered Health page and the existing Health data
+hooks remain singular. Food and Journal editors report local draft state to
+block Health master-tab transitions that would unmount those editors, including
+an open Journal Feeling occurrence overlay. Navigator Health-section targets
+use the same transition guard. Section changes away from Fitness and Water
+remain paused because their current editor state is held by child components
+that unmount; they need T5 draft protection. Cross-page Master Tab activation
+and split rendering remain gated. Deep route changes retain dormant Health and
+Tasks presentation snapshots on the focused tab.
+
+Focused verification for 7.16.126: Master Workspace, Navigator, Health Journal,
+and Tasks UI state tests passed (76/76). Targeted ESLint for affected source and
+tests passed with the existing `react-hooks/set-state-in-effect` rule disabled;
+the HealthPage findings under that rule also reproduce from `HEAD`. Version
+surfaces and `git diff --check` passed. Browser QA, production build, full
+typecheck, and broad test suites were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

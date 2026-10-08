@@ -242,7 +242,8 @@ test("7.13.51 Journal QA correction reduces Event Feeling scale-description typo
   assert.match(eventChoiceSource, />No<\/AdhdChip>/);
   assert.doesNotMatch(eventChoiceSource, /type="checkbox"/);
   assert.match(formSource, /setEventCaptureEnabled\(false\)/);
-  assert.match(formSource, /setEventCaptureEnabled\(nextEntryType !== "event" && Boolean\(linkedEventId\)\)/);
+  assert.match(formSource, /const nextEventCaptureEnabled = nextEntryType !== "event" && Boolean\(linkedEventId\)/);
+  assert.match(formSource, /setEventCaptureEnabled\(nextEventCaptureEnabled\)/);
   assert.match(formSource, /linked_event_ids: entryType === "event" \? answers\.linked_event_ids : eventCaptureEnabled && eventDraft\.id \? \[eventDraft\.id\] : \[\]/);
   assert.match(formSource, /event_record: eventDraft\.notes/);
   assert.match(summarySource, /label: "Event notes"/);

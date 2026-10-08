@@ -54,6 +54,74 @@ test("initializes one Home panel and migrates the previous page", () => {
   assert.equal(initial.panels.length, 1);
   assert.equal(initial.panels[0].tabs[0].destination.kind, "page");
   assert.equal(initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE).panels[0].tabs[0].destination.page, "Health");
+  assert.equal(initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food").panels[0].tabs[0].presentation.healthSection, "Food");
+});
+
+test("Health master tabs own independent section snapshots and focused selection updates its destination", () => {
+  const initialized = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food");
+  const panelId = initialized.panels[0].id;
+  const withSecond = createMasterTab(initialized, panelId, {
+    id: "health-tab-b",
+    destination: { kind: "health-tab", page: "Health", tab: "Journal" },
+    presentation: { healthSection: "Journal" },
+  }, false);
+
+  const activeSecond = activateMasterTab(withSecond, panelId, "health-tab-b");
+  const selectedSecond = replaceFocusedMasterTabDestination(activeSecond, { kind: "health-tab", page: "Health", tab: "Journal" });
+  const activeFirst = activateMasterTab(selectedSecond, panelId, "master-tab-1");
+
+  assert.equal(selectedSecond.panels[0].tabs.find((tab) => tab.id === "master-tab-1")?.presentation.healthSection, "Food");
+  assert.equal(selectedSecond.panels[0].tabs.find((tab) => tab.id === "health-tab-b")?.presentation.healthSection, "Journal");
+  assert.equal(activeFirst.panels[0].tabs.find((tab) => tab.id === "master-tab-1")?.presentation.healthSection, "Food");
+  const focusedJournal = replaceFocusedMasterTabDestination(activeFirst, { kind: "health-tab", page: "Health", tab: "Journal" });
+  assert.equal(focusedJournal.panels[0].tabs[0].presentation.healthSection, "Journal");
+  assert.deepEqual(focusedJournal.panels[0].tabs[0].destination, { kind: "health-tab", page: "Health", tab: "Journal" });
+  assert.equal(focusedJournal.panels[0].tabs[1].presentation.healthSection, "Journal");
+});
+
+test("deep destination normalization derives Health sections from NavigatorSearchAction", () => {
+  const base = createDefaultMasterWorkspaceState();
+  const normalized = normalizeMasterWorkspaceState({
+    ...base,
+    panels: [{
+      ...base.panels[0],
+      tabs: [
+        { id: "health-journal", destination: { kind: "health-tab", page: "Health", tab: "Journal" }, presentation: { healthSection: "Food" } },
+        { id: "food-shell", destination: { kind: "page-shell", page: "Health", pageKey: "health:food", shellId: "food-library", healthTab: "Food" }, presentation: { healthSection: "Journal" } },
+        { id: "tasks-surface", destination: { kind: "tasks-surface", page: "Tasks", surface: "brainstorm" }, presentation: {} },
+        { id: "tasks-view", destination: { kind: "tasks-view", page: "Tasks", surface: "tasks", view: "calendar" }, presentation: {} },
+        { id: "settings-section", destination: { kind: "settings-section", page: "Settings", section: "day-reset" }, presentation: {} },
+      ],
+      activeTabId: "health-journal",
+    }],
+  });
+
+  assert.equal(normalized.panels[0].tabs[0].presentation.healthSection, "Journal");
+  assert.equal(normalized.panels[0].tabs[1].presentation.healthSection, "Food");
+  assert.equal(normalized.panels[0].tabs[2].destination.kind, "tasks-surface");
+  assert.equal(normalized.panels[0].tabs[3].destination.kind, "tasks-view");
+  assert.equal(normalized.panels[0].tabs[4].destination.kind, "settings-section");
+});
+
+test("deep cross-page navigation keeps the existing Tasks tab snapshot isolated", () => {
+  const customTasks = tasksState();
+  const initial = initializeMasterWorkspaceState("Tasks", customTasks);
+  const taskView = replaceFocusedMasterTabDestination(initial, {
+    kind: "tasks-view",
+    page: "Tasks",
+    surface: "tasks",
+    view: "calendar",
+  });
+  const health = replaceFocusedMasterTabDestination(taskView, { kind: "health-tab", page: "Health", tab: "Food" });
+  const returnedToTasks = replaceFocusedMasterTabDestination(health, {
+    kind: "tasks-surface",
+    page: "Tasks",
+    surface: "brainstorm",
+  });
+
+  assert.deepEqual(health.panels[0].tabs[0].presentation.tasksWorkspace, customTasks);
+  assert.equal(health.panels[0].tabs[0].presentation.healthSection, "Food");
+  assert.deepEqual(returnedToTasks.panels[0].tabs[0].presentation.tasksWorkspace, customTasks);
 });
 
 test("first-use Tasks migration preserves normalized nested tabs and settings as an independent copy", () => {
@@ -275,6 +343,20 @@ test("split duplication copies destination and settings, then closing split disc
   assert.equal(closed.panels.length, 1);
   assert.equal(closed.panels[0].id, "master-panel-1");
   assert.equal(closed.focusedPanelId, "master-panel-1");
+});
+
+test("Health section snapshots survive both saved workspace panels", () => {
+  const storage = memoryStorage();
+  const initial = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food");
+  const split = duplicateFocusedPageIntoRightPanel(initial, { panelId: "health-right", tabId: "health-right-tab" });
+  const rightJournal = replaceFocusedMasterTabDestination(split, { kind: "health-tab", page: "Health", tab: "Journal" });
+
+  assert.equal(saveMasterWorkspaceState(storage, "health-split-user", rightJournal), true);
+  const restored = loadMasterWorkspaceState(storage, "health-split-user");
+  assert.equal(restored.panels.length, 2);
+  assert.equal(restored.panels[0].tabs[0].presentation.healthSection, "Food");
+  assert.equal(restored.panels[1].tabs[0].presentation.healthSection, "Journal");
+  assert.equal(restored.focusedPanelId, "health-right");
 });
 
 test("panel focus and split ratio transitions honor panel and ratio bounds", () => {

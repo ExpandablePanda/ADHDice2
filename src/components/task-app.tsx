@@ -185,7 +185,7 @@ import { transcribeScratchAudio } from "@/lib/scratch-paper-transcription";
 import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
-import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
+import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind, type HealthTab } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
@@ -1229,6 +1229,13 @@ export function TaskApp() {
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const [batchIntakeHealthActive, setBatchIntakeHealthActive] = useState(false);
   const [batchIntakeFocusActive, setBatchIntakeFocusActive] = useState(false);
+  const [healthDraftSafetyBySection, setHealthDraftSafetyBySection] = useState<Partial<Record<HealthTab, boolean>>>({});
+  const masterWorkspaceControllerRef = useRef<ReturnType<typeof useMasterWorkspaceController> | null>(null);
+  const updateHealthDraftSafety = useCallback((section: HealthTab, isUnsafe: boolean) => {
+    setHealthDraftSafetyBySection((current) => current[section] === isUnsafe
+      ? current
+      : { ...current, [section]: isUnsafe });
+  }, []);
   const focusDomainMutationBarrierRef = useRef<WorkspaceDomainMutationBarrier>(() => {});
   const invalidateFocusDomainGeneration = useCallback(() => {
     focusDomainMutationBarrierRef.current();
@@ -1320,57 +1327,7 @@ export function TaskApp() {
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health" || batchIntakeHealthActive);
-  const activeHealthTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
-  const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness";
-  const {
-    archiveGoal: archiveFitnessGoal,
-    createGoal: createFitnessGoal,
-    createLevel: createFitnessGoalLevel,
-    deleteLevel: deleteFitnessGoalLevel,
-    error: fitnessGoalsError,
-    goals: fitnessGoals,
-    isLoading: fitnessGoalsLoading,
-    levels: fitnessGoalLevels,
-    restoreGoal: restoreFitnessGoal,
-    updateGoal: updateFitnessGoal,
-    updateLevel: updateFitnessGoalLevel,
-  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
-  const {
-    archivePlan: archiveFitnessPlan,
-    archivePlanItem: archiveFitnessPlanItem,
-    createPlan: createFitnessPlan,
-    createPlanItem: createFitnessPlanItem,
-    error: fitnessPlanError,
-    isLoading: fitnessPlansLoading,
-    planItems: fitnessPlanItems,
-    plans: fitnessPlans,
-    saveWorkoutPlanItemLinks,
-    updatePlan: updateFitnessPlan,
-    updatePlanItem: updateFitnessPlanItem,
-    workoutPlanItemLinks,
-  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
-  const {
-    archiveExercise,
-    createExercise,
-    error: fitnessSessionError,
-    exerciseLibrary,
-    getWorkoutSessionDetails,
-    isLoaded: fitnessSessionLoaded,
-    isLoading: fitnessSessionLoading,
-    removeLocalWorkoutSessionDetails,
-    reorderExercises,
-    saveWorkoutSessionDetails,
-    updateExercise,
-    workoutExercises,
-    workoutSets,
-  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
-  async function deleteHealthWorkoutWithStructuredDetails(workoutId: string) {
-    const deleted = await deleteHealthWorkout(workoutId);
-    if (deleted) {
-      removeLocalWorkoutSessionDetails(workoutId);
-    }
-    return deleted;
-  }
+  const legacyHealthTabPreference = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const currentUserId = session?.user?.id ?? null;
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
@@ -5313,6 +5270,8 @@ export function TaskApp() {
   const handleNavigatorSearchTarget = useCallback((target: NavigatorSearchTarget) => {
     const action: NavigatorSearchAction = target.action;
     clearPageShellNavigationHighlight();
+    const masterWorkspaceController = masterWorkspaceControllerRef.current;
+    if (masterWorkspaceController?.featureEnabled && !masterWorkspaceController.updateFocusedDestination(action)) return;
     if (action.kind !== "page-shell") setRequestedPageShell(null);
     if (action.kind === "page") {
       setRequestedSettingsSection(null);
@@ -5332,12 +5291,12 @@ export function TaskApp() {
     } else if (action.kind === "health-tab") {
       setRequestedSettingsSection(null);
       setActivePage("Health");
-      persistHealthTabPreference(action.tab);
+      if (!masterWorkspaceControllerRef.current?.featureEnabled) persistHealthTabPreference(action.tab);
     } else if (action.kind === "page-shell") {
       setRequestedSettingsSection(null);
       setRequestedPageShell(action);
       setActivePage(action.page);
-      if (action.healthTab) persistHealthTabPreference(action.healthTab);
+      if (action.healthTab && !masterWorkspaceControllerRef.current?.featureEnabled) persistHealthTabPreference(action.healthTab);
     } else {
       setActivePage("Settings");
       setRequestedSettingsSection(action.section);
@@ -5685,18 +5644,84 @@ export function TaskApp() {
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
   const masterWorkspace = useMasterWorkspaceController({
     activePage,
+    healthDraftSafetyBySection,
     hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen,
+    initialHealthSection: legacyHealthTabPreference,
     isReady: isAuthenticatedAppBootReady,
     replaceTaskWorkspaceTabsState,
     setActivePage,
     taskWorkspaceTabsState,
     userId: session?.user?.id,
   });
+  masterWorkspaceControllerRef.current = masterWorkspace;
+  const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
+    ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
+    : legacyHealthTabPreference;
+  const isMasterTabsFeatureEnabled = masterWorkspace.featureEnabled;
+  const selectMasterHealthSection = masterWorkspace.selectHealthSection;
+  const handleHealthTabSelection = useCallback((tab: HealthTab) => {
+    if (isMasterTabsFeatureEnabled) selectMasterHealthSection(tab);
+    else persistHealthTabPreference(tab);
+  }, [isMasterTabsFeatureEnabled, selectMasterHealthSection]);
+  const {
+    archiveGoal: archiveFitnessGoal,
+    createGoal: createFitnessGoal,
+    createLevel: createFitnessGoalLevel,
+    deleteLevel: deleteFitnessGoalLevel,
+    error: fitnessGoalsError,
+    goals: fitnessGoals,
+    isLoading: fitnessGoalsLoading,
+    levels: fitnessGoalLevels,
+    restoreGoal: restoreFitnessGoal,
+    updateGoal: updateFitnessGoal,
+    updateLevel: updateFitnessGoalLevel,
+  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, activePage === "Health" && activeHealthTab === "Fitness");
+  const {
+    archivePlan: archiveFitnessPlan,
+    archivePlanItem: archiveFitnessPlanItem,
+    createPlan: createFitnessPlan,
+    createPlanItem: createFitnessPlanItem,
+    error: fitnessPlanError,
+    isLoading: fitnessPlansLoading,
+    planItems: fitnessPlanItems,
+    plans: fitnessPlans,
+    saveWorkoutPlanItemLinks,
+    updatePlan: updateFitnessPlan,
+    updatePlanItem: updateFitnessPlanItem,
+    workoutPlanItemLinks,
+  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, activePage === "Health" && activeHealthTab === "Fitness");
+  const {
+    archiveExercise,
+    createExercise,
+    error: fitnessSessionError,
+    exerciseLibrary,
+    getWorkoutSessionDetails,
+    isLoaded: fitnessSessionLoaded,
+    isLoading: fitnessSessionLoading,
+    removeLocalWorkoutSessionDetails,
+    reorderExercises,
+    saveWorkoutSessionDetails,
+    updateExercise,
+    workoutExercises,
+    workoutSets,
+  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, activePage === "Health" && activeHealthTab === "Fitness");
+  async function deleteHealthWorkoutWithStructuredDetails(workoutId: string) {
+    const deleted = await deleteHealthWorkout(workoutId);
+    if (deleted) removeLocalWorkoutSessionDetails(workoutId);
+    return deleted;
+  }
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
   const isSharedTaskEditorOpen = Boolean(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow);
+
+  useEffect(() => {
+    if (!masterWorkspace.isEnabled) return;
+    const destination = masterWorkspace.activeTab.destination;
+    setRequestedPageShell(destination.kind === "page-shell" ? destination : null);
+    setRequestedSettingsSection(destination.kind === "settings-section" ? destination.section : null);
+  }, [masterWorkspace.activeTab.destination, masterWorkspace.activeTab.id, masterWorkspace.isEnabled]);
 
   useEffect(() => {
     if (!session?.user || !isAuthenticatedAppBootReady || !isSharedTaskEditorOpen) {
@@ -8959,6 +8984,9 @@ export function TaskApp() {
           />
         ) : activePage === "Health" ? (
           <TaskHealthPage
+            activeTab={activeHealthTab}
+            onSelectTab={handleHealthTabSelection}
+            onDraftSafetyChange={updateHealthDraftSafety}
             awards={healthAwards}
             archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}

@@ -19,6 +19,7 @@ export const MASTER_WORKSPACE_SPLIT_RATIO_MAX = 0.75;
 export type MasterPanelSide = "left" | "right";
 export type MasterTabDestination = NavigatorSearchAction;
 export type MasterTabPresentationState = {
+  healthSection?: HealthTab;
   tasksWorkspace?: TaskWorkspaceTabsState;
 };
 
@@ -153,11 +154,22 @@ function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
 }
 
 function normalizePresentation(value: unknown, destination: MasterTabDestination): MasterTabPresentationState {
-  if (destination.page !== "Tasks") return {};
   const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
-  return {
-    tasksWorkspace: cloneTaskWorkspaceState(candidate.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE),
-  };
+  const presentation: MasterTabPresentationState = {};
+  if (isHealthTab(candidate.healthSection)) presentation.healthSection = candidate.healthSection;
+  if (candidate.tasksWorkspace !== undefined) {
+    presentation.tasksWorkspace = cloneTaskWorkspaceState(candidate.tasksWorkspace);
+  }
+  if (destination.page === "Health") {
+    const destinationHealthSection = destination.kind === "health-tab"
+      ? destination.tab
+      : destination.kind === "page-shell" ? destination.healthTab : undefined;
+    presentation.healthSection = destinationHealthSection ?? presentation.healthSection ?? "Today";
+  }
+  if (destination.page === "Tasks") {
+    presentation.tasksWorkspace = cloneTaskWorkspaceState(presentation.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  }
+  return presentation;
 }
 
 export function updateMasterTabTasksWorkspace(
@@ -278,6 +290,7 @@ export function normalizeMasterWorkspaceState(value: unknown): MasterWorkspaceSt
 export function initializeMasterWorkspaceState(
   previousActivePage: AppPage,
   existingTaskWorkspaceTabsState: TaskWorkspaceTabsState,
+  initialHealthSection: HealthTab = "Today",
 ): MasterWorkspaceState {
   const state = createDefaultMasterWorkspaceState();
   const firstPanel = state.panels[0];
@@ -291,7 +304,9 @@ export function initializeMasterWorkspaceState(
       tabs: [{
         ...firstPanel.tabs[0],
         destination: { kind: "page", page: previousActivePage },
-        presentation: tasksWorkspace ? { tasksWorkspace } : {},
+        presentation: tasksWorkspace
+          ? { tasksWorkspace }
+          : previousActivePage === "Health" ? { healthSection: initialHealthSection } : {},
       }],
     }],
   };
@@ -310,6 +325,14 @@ export function activateMasterTab(state: MasterWorkspaceState, panelId: string, 
 
 export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, destination: MasterTabDestination): MasterWorkspaceState {
   const destinationCopy = normalizeDestination(destination);
+  const focusedPanel = state.panels.find((panel) => panel.id === state.focusedPanelId);
+  const focusedTab = focusedPanel?.tabs.find((tab) => tab.id === focusedPanel.activeTabId);
+  if (!focusedPanel || !focusedTab) return state;
+  const presentation = normalizePresentation(focusedTab.presentation, destinationCopy);
+  if (
+    JSON.stringify(focusedTab.destination) === JSON.stringify(destinationCopy)
+    && JSON.stringify(focusedTab.presentation) === JSON.stringify(presentation)
+  ) return state;
   return {
     ...state,
     panels: state.panels.map((panel) => panel.id !== state.focusedPanelId ? panel : {
@@ -318,9 +341,7 @@ export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, 
         ? {
           ...tab,
           destination: destinationCopy,
-          presentation: destinationCopy.page === "Tasks"
-            ? normalizePresentation(tab.presentation, destinationCopy)
-            : {},
+          presentation,
         }
         : tab),
     }),

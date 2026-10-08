@@ -68,6 +68,7 @@ type JournalCheckInFormProps = {
   mealEntries: readonly HealthMealEntry[];
   metricEntries: readonly HealthMetricEntry[];
   onAfterSave: () => void;
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   onOpenFood: () => void;
   onOpenSleep: () => void;
   saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthCheckIn | null>;
@@ -122,6 +123,7 @@ export function JournalCheckInForm({
   mealEntries,
   metricEntries,
   onAfterSave,
+  onDraftSafetyChange,
   onOpenFood,
   onOpenSleep,
   saveJournalEntry,
@@ -145,6 +147,8 @@ export function JournalCheckInForm({
   }>({ date: initialInputs.date, description: "", id: null, notes: "", occurrences: [], time: initialInputs.time });
   const [searchBreakfast, setSearchBreakfast] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const [isDraftUnsafe, setIsDraftUnsafe] = useState(false);
+  const [isEventCaptureDraftUnsafe, setIsEventCaptureDraftUnsafe] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const hydratedSelectedEntryKeyRef = useRef<string | undefined>(undefined);
 
@@ -181,22 +185,31 @@ export function JournalCheckInForm({
     hydratedSelectedEntryKeyRef.current = hydrationKey;
     const eventAnswers = normalizeHealthJournalStructuredAnswers(eventEntry?.structured_answers);
     const hasEventAnswers = Boolean(eventAnswers.event_description?.trim() || eventAnswers.event_record?.trim());
-    // This effect rehydrates the local editor when the selected history entry changes.
-    setEntryType(nextEntryType);
-    setEntryDate(nextInputs.date);
-    setEntryTime(nextInputs.time);
-    setAnswers(nextAnswers);
-    setEventCaptureEnabled(nextEntryType !== "event" && Boolean(linkedEventId));
-    setEventDraft({
+    const nextEventDraft = {
       date: eventEntry?.entry_date ?? nextInputs.date,
       description: eventAnswers.event_description ?? (!hasEventAnswers && eventEntry?.reflection ? eventEntry.reflection : ""),
       id: eventEntry?.id ?? linkedEventId,
       notes: eventAnswers.event_record ?? "",
       occurrences: hydrateJournalEventOccurrences(eventEntry, symptomEntries, journalSignalOccurrences, journalSignals),
       time: eventEntry?.entry_time ?? nextInputs.time,
-    });
+    };
+    const nextEventCaptureEnabled = nextEntryType !== "event" && Boolean(linkedEventId);
+    // This effect rehydrates the local editor when the selected history entry changes.
+    setEntryType(nextEntryType);
+    setEntryDate(nextInputs.date);
+    setEntryTime(nextInputs.time);
+    setAnswers(nextAnswers);
+    setEventCaptureEnabled(nextEventCaptureEnabled);
+    setEventDraft(nextEventDraft);
+    setIsDraftUnsafe(false);
     setFormError(null);
   }, [checkIns, journalSignalOccurrences, journalSignals, selectedJournalEntry, symptomEntries, symptoms]);
+
+  const hasUnsafeDraft = isSaving || isDraftUnsafe || isEventCaptureDraftUnsafe;
+  useEffect(() => {
+    onDraftSafetyChange(hasUnsafeDraft);
+    return () => onDraftSafetyChange(false);
+  }, [hasUnsafeDraft, onDraftSafetyChange]);
 
   const normalizedQuestions = useMemo(() => normalizeHealthJournalCustomQuestions(customQuestions), [customQuestions]);
   const visibleCustomQuestions = useMemo(
@@ -223,10 +236,12 @@ export function JournalCheckInForm({
   const selectedBreakfastIds = answers.breakfast_meal_ids ?? [];
 
   function updateAnswer<Key extends keyof HealthJournalStructuredAnswers>(key: Key, value: HealthJournalStructuredAnswers[Key]) {
+    setIsDraftUnsafe(true);
     setAnswers((current) => ({ ...current, [key]: value }));
   }
 
   function updateCustomAnswer(question: HealthJournalCustomQuestion, value: HealthJournalCustomAnswerValue) {
+    setIsDraftUnsafe(true);
     setAnswers((current) => {
       const nextAnswer = buildHealthJournalCustomAnswer(question, value);
       const currentAnswers = current.custom_answers ?? [];
@@ -235,6 +250,11 @@ export function JournalCheckInForm({
         : [...currentAnswers, nextAnswer];
       return { ...current, custom_answers: nextAnswers };
     });
+  }
+
+  function updateEventDraft(update: (current: typeof eventDraft) => typeof eventDraft) {
+    setIsDraftUnsafe(true);
+    setEventDraft(update);
   }
 
   function toggleBreakfast(entry: HealthMealEntry) {
@@ -248,12 +268,15 @@ export function JournalCheckInForm({
 
   function resetFormForNewEntry() {
     const current = getCurrentHealthDateTimeInputs();
+    const nextAnswers: HealthJournalStructuredAnswers = { custom_answers: [], schema_version: 1 };
+    const nextEventDraft = { date: current.date, description: "", id: null, notes: "", occurrences: [], time: current.time };
     setEntryType("start_of_day");
     setEntryDate(current.date);
     setEntryTime(current.time);
-    setAnswers({ custom_answers: [], schema_version: 1 });
+    setAnswers(nextAnswers);
     setEventCaptureEnabled(false);
-    setEventDraft({ date: current.date, description: "", id: null, notes: "", occurrences: [], time: current.time });
+    setEventDraft(nextEventDraft);
+    setIsDraftUnsafe(false);
     setSearchBreakfast("");
     setFormError(null);
   }
@@ -391,13 +414,14 @@ export function JournalCheckInForm({
     description={eventDraft.description}
     eventDateTime={entryType !== "event"}
     occurrences={eventDraft.occurrences}
-    onChangeDate={entryType !== "event" ? (date) => setEventDraft((current) => ({ ...current, date })) : undefined}
-    onChangeDescription={(description) => setEventDraft((current) => ({ ...current, description }))}
-    onChangeTime={entryType !== "event" ? (time) => setEventDraft((current) => ({ ...current, time })) : undefined}
+    onChangeDate={entryType !== "event" ? (date) => updateEventDraft((current) => ({ ...current, date })) : undefined}
+    onChangeDescription={(description) => updateEventDraft((current) => ({ ...current, description }))}
+    onChangeTime={entryType !== "event" ? (time) => updateEventDraft((current) => ({ ...current, time })) : undefined}
     onCreateSignal={createJournalSignal}
-    onRemoveOccurrence={(draftKey) => setEventDraft((current) => ({ ...current, occurrences: current.occurrences.filter((occurrence) => occurrence.draftKey !== draftKey) }))}
-    onSaveOccurrence={(occurrence) => setEventDraft((current) => ({ ...current, occurrences: [...current.occurrences, occurrence] }))}
-    onUpdateOccurrence={(occurrence) => setEventDraft((current) => ({ ...current, occurrences: current.occurrences.map((candidate) => candidate.draftKey === occurrence.draftKey ? occurrence : candidate) }))}
+    onDraftSafetyChange={setIsEventCaptureDraftUnsafe}
+    onRemoveOccurrence={(draftKey) => updateEventDraft((current) => ({ ...current, occurrences: current.occurrences.filter((occurrence) => occurrence.draftKey !== draftKey) }))}
+    onSaveOccurrence={(occurrence) => updateEventDraft((current) => ({ ...current, occurrences: [...current.occurrences, occurrence] }))}
+    onUpdateOccurrence={(occurrence) => updateEventDraft((current) => ({ ...current, occurrences: current.occurrences.map((candidate) => candidate.draftKey === occurrence.draftKey ? occurrence : candidate) }))}
     signals={journalSignals}
     symptoms={symptoms}
     time={entryType === "event" ? entryTime : eventDraft.time}
@@ -406,15 +430,15 @@ export function JournalCheckInForm({
     <div className="grid min-w-0 gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div className="grid min-w-0 gap-3 sm:grid-cols-[auto_auto_auto] sm:items-end">
-          <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">Entry type</span><select aria-label="Journal entry type" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => { const nextType = event.target.value as HealthJournalEntryType; setEntryType(nextType); setEventDraft((current) => ({ ...current, date: entryDate, time: entryTime })); }} value={entryType}>{HEALTH_JOURNAL_ENTRY_TYPES.map((type) => <option key={type} value={type}>{getHealthJournalEntryTypeLabel(type)}</option>)}</select></label>
-          <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topDateLabel}</span><input aria-label={topDateLabel} className={HEALTH_COMPACT_INPUT_CLASS} max={getCurrentHealthDateTimeInputs().date} onChange={(event) => { setEntryDate(event.target.value); if (entryType === "event") setEventDraft((current) => ({ ...current, date: event.target.value })); }} type="date" value={entryDate} /></label>
-          <div className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topTimeLabel}</span><HealthStandardTimeInput ariaLabel={topTimeLabel} compact onChange={(time) => { setEntryTime(time); if (entryType === "event") setEventDraft((current) => ({ ...current, time })); }} value={entryTime} /></div>
+          <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">Entry type</span><select aria-label="Journal entry type" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => { const nextType = event.target.value as HealthJournalEntryType; setIsDraftUnsafe(true); setEntryType(nextType); setEventDraft((current) => ({ ...current, date: entryDate, time: entryTime })); }} value={entryType}>{HEALTH_JOURNAL_ENTRY_TYPES.map((type) => <option key={type} value={type}>{getHealthJournalEntryTypeLabel(type)}</option>)}</select></label>
+          <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topDateLabel}</span><input aria-label={topDateLabel} className={HEALTH_COMPACT_INPUT_CLASS} max={getCurrentHealthDateTimeInputs().date} onChange={(event) => { setIsDraftUnsafe(true); setEntryDate(event.target.value); if (entryType === "event") setEventDraft((current) => ({ ...current, date: event.target.value })); }} type="date" value={entryDate} /></label>
+          <div className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topTimeLabel}</span><HealthStandardTimeInput ariaLabel={topTimeLabel} compact onChange={(time) => { setIsDraftUnsafe(true); setEntryTime(time); if (entryType === "event") setEventDraft((current) => ({ ...current, time })); }} value={entryTime} /></div>
         </div>
         <div className="flex flex-wrap items-center gap-2"><span className={QUESTION_HINT_CLASS}>{selectedJournalEntry ? "Existing entry" : "New entry · not saved yet"}</span><AdhdChip onClick={resetFormForNewEntry} type="button">+ New entry</AdhdChip></div>
       </div>
 
-      {entryType === "start_of_day" ? <StartOfDayQuestions answers={answers} breakfastEntries={filteredBreakfastEntries} breakfastSearch={searchBreakfast} eventCapture={eventCapture} eventCaptureEnabled={eventCaptureEnabled} linkedBreakfastIds={selectedBreakfastIds} linkedSleep={linkedSleep} onOpenFood={onOpenFood} onOpenSleep={onOpenSleep} onSearchBreakfast={setSearchBreakfast} onToggleBreakfast={toggleBreakfast} onToggleEventCapture={(enabled) => { setEventCaptureEnabled(enabled); if (enabled) setEventDraft((current) => ({ ...current, date: current.id ? current.date : entryDate, time: current.id ? current.time : entryTime })); }} onUpdateAnswer={updateAnswer} sleepContext={sleepContext} /> : null}
-      {entryType === "end_of_day" ? <EndOfDayQuestions answers={answers} eventCapture={eventCapture} eventCaptureEnabled={eventCaptureEnabled} onToggleEventCapture={(enabled) => { setEventCaptureEnabled(enabled); if (enabled) setEventDraft((current) => ({ ...current, date: current.id ? current.date : entryDate, time: current.id ? current.time : entryTime })); }} onUpdateAnswer={updateAnswer} /> : null}
+      {entryType === "start_of_day" ? <StartOfDayQuestions answers={answers} breakfastEntries={filteredBreakfastEntries} breakfastSearch={searchBreakfast} eventCapture={eventCapture} eventCaptureEnabled={eventCaptureEnabled} linkedBreakfastIds={selectedBreakfastIds} linkedSleep={linkedSleep} onOpenFood={onOpenFood} onOpenSleep={onOpenSleep} onSearchBreakfast={(value) => { setIsDraftUnsafe(true); setSearchBreakfast(value); }} onToggleBreakfast={toggleBreakfast} onToggleEventCapture={(enabled) => { setIsDraftUnsafe(true); setEventCaptureEnabled(enabled); if (enabled) setEventDraft((current) => ({ ...current, date: current.id ? current.date : entryDate, time: current.id ? current.time : entryTime })); }} onUpdateAnswer={updateAnswer} sleepContext={sleepContext} /> : null}
+      {entryType === "end_of_day" ? <EndOfDayQuestions answers={answers} eventCapture={eventCapture} eventCaptureEnabled={eventCaptureEnabled} onToggleEventCapture={(enabled) => { setIsDraftUnsafe(true); setEventCaptureEnabled(enabled); if (enabled) setEventDraft((current) => ({ ...current, date: current.id ? current.date : entryDate, time: current.id ? current.time : entryTime })); }} onUpdateAnswer={updateAnswer} /> : null}
       {entryType === "event" ? <EventQuestions eventCapture={eventCapture} /> : null}
 
       {entryType !== "event" ? <CustomQuestionsSection questions={questionsToRender} answers={savedCustomAnswers} onChange={updateCustomAnswer} /> : null}
