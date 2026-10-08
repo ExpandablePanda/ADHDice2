@@ -658,6 +658,13 @@ export function buildTaskEffectiveTimeline(
         }
       } else if (!activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "no_entry", "none");
+      } else if (behaviorPolicy.unresolvedOccurrence === "missed"
+        && date < input.logicalDate
+        && unresolvedDueOn && date > unresolvedDueOn) {
+        // Once an explicit or calculated Missed opens an overdue occurrence,
+        // keep its Calendar state continuous through intervening dates. This
+        // is a projection of the same occurrence, not another History fact.
+        calculated = calculatedDay(input.task.id, date, "missed", "overdue", unresolvedDueOn, behaviorPolicy, true);
       } else if (date < activeDueOn) {
         calculated = calculatedDay(input.task.id, date, "not_due", "none");
       } else if (isFixedRecurrence && !isFixedScheduledDate && !unresolvedFixedDueOn) {

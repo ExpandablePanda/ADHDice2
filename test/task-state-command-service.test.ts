@@ -2418,6 +2418,38 @@ test("recalculate_history plans only post-boundary stale Missed deletion and Cal
   assert.equal("reward_program_version" in payload, false);
 });
 
+test("recalculate_history does not persist a calculated Missed continuation day", () => {
+  const planningState = state({ status: "missed", due_on: "2026-10-02", repeat_frequency: "daily", repeat_interval: 4 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-09-29T12:00:00.000Z",
+    calendarStart: "2026-09-22",
+    calendarEnd: "2026-09-29",
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "missed",
+      dueOn: "2026-09-22",
+      recurrence: { kind: "rolling", intervalDays: 4 },
+    },
+    history: [
+      doneHistory("2026-09-22"),
+      missedHistory("2026-09-26"),
+      doneHistory("2026-09-28", "2026-09-26"),
+    ],
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    type: "recalculate_history",
+    commandId: "00000000-0000-4000-8000-000000000119",
+    fromLogicalDate: "2026-09-22",
+    scheduleBoundaryId: "boundary-current",
+    logicalDay: { ...logicalDay, logicalDate: "2026-09-29", identity: "user-1:2026-09-29:America/New_York:06:00:3" },
+  }));
+
+  assert.deepEqual(plan.normalizedResult.automaticHistoryFacts, []);
+  assert.deepEqual(plan.normalizedResult.recalculateHistoryDeleteIds, []);
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-10-02");
+});
+
 test("recalculate_history rejects quota recurrence before producing a mutation plan", () => {
   for (const repeatFrequency of ["per_week", "per_month"] as const) {
     const planningState = state({ repeat_frequency: repeatFrequency });

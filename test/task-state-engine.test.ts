@@ -92,6 +92,125 @@ test("recompute replays the current rolling cadence, preserves Done, and materia
   assert.deepEqual(refreshedResult.timeline.automaticHistoryRows?.map((row) => row.logicalDate), ["2026-09-07"]);
 });
 
+test("unresolved Missed stays continuous across calculated rolling and fixed recurrence gaps", () => {
+  const scenarios = [
+    {
+      label: "Every 4 Days",
+      dueOn: "2026-09-22",
+      missedOn: "2026-09-26",
+      successOn: "2026-09-28",
+      recurrence: { kind: "rolling", intervalDays: 4 } as const,
+      dates: ["2026-09-27"],
+      notDueDates: ["2026-09-23", "2026-09-24", "2026-09-25"],
+    },
+    {
+      label: "Every 5 Days",
+      dueOn: "2026-09-02",
+      missedOn: "2026-09-07",
+      successOn: "2026-09-10",
+      recurrence: { kind: "rolling", intervalDays: 5 } as const,
+      dates: ["2026-09-08", "2026-09-09"],
+      notDueDates: ["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"],
+    },
+    {
+      label: "fixed weekly gap",
+      dueOn: "2026-08-31",
+      missedOn: "2026-09-07",
+      successOn: "2026-09-14",
+      recurrence: { kind: "weekly", weekdays: [1], anchorDate: "2026-08-31" } as const,
+      dates: ["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12", "2026-09-13"],
+      notDueDates: ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const rows = [
+      history(scenario.dueOn, "done", {
+        occurrenceDueOn: scenario.dueOn,
+        occurrenceIdentity: `task-state:task-1:${scenario.dueOn}`,
+      }),
+      history(scenario.missedOn, "missed", {
+        occurrenceDueOn: scenario.missedOn,
+        occurrenceIdentity: `task-state:task-1:${scenario.missedOn}`,
+      }),
+      history(scenario.successOn, "done", {
+        occurrenceDueOn: scenario.missedOn,
+        occurrenceIdentity: `task-state:task-1:${scenario.missedOn}`,
+      }),
+    ];
+    const base = {
+      now: `${scenario.successOn}T14:00:00.000Z`,
+      calendarStart: scenario.dueOn,
+      calendarEnd: scenario.successOn,
+      task: task({ dueOn: scenario.dueOn, recurrence: scenario.recurrence }),
+      history: rows,
+    };
+    const recalculated = evaluateTaskState(input({
+      ...base,
+      action: { type: "recompute", fromLogicalDate: scenario.dueOn },
+    }));
+    const refreshed = evaluateTaskState(input(base));
+
+    for (const date of scenario.notDueDates) {
+      assert.equal(recalculated.calendar[date], "not_due", `${scenario.label}:${date} before Missed`);
+    }
+    for (const date of scenario.dates) {
+      const day = recalculated.timeline.days[date];
+      assert.equal(recalculated.calendar[date], "missed", `${scenario.label}:${date}`);
+      assert.equal(day?.sourceKind, "calculated", `${scenario.label}:${date}`);
+      assert.equal(day?.historyRowId, null, `${scenario.label}:${date}`);
+      assert.equal(day?.occurrenceDueOn, scenario.missedOn, `${scenario.label}:${date}`);
+      assert.equal(day?.occurrenceIdentity, `task:task-1:occurrence:${scenario.missedOn}`, `${scenario.label}:${date}`);
+      assert.equal(recalculated.proposedHistoryChanges.some((change) => (
+        change.type === "insert" && change.row.logicalDate === date
+      )), false, `${scenario.label}:${date} must remain calculated`);
+      assert.equal(refreshed.timeline.days[date]?.state, "missed", `${scenario.label}:refresh:${date}`);
+      assert.equal(refreshed.timeline.days[date]?.occurrenceDueOn, scenario.missedOn);
+    }
+    assert.equal(recalculated.calendar[scenario.successOn], "done", scenario.label);
+    assert.equal(refreshed.calendar[scenario.successOn], "done", `${scenario.label}:refresh`);
+    assert.equal(recalculated.timeline.currentMissedStreak, 0, scenario.label);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(refreshed.timeline.days).map(([date, day]) => [date, day.state])),
+      Object.fromEntries(Object.entries(recalculated.timeline.days).map(([date, day]) => [date, day.state])),
+      `${scenario.label}:repeat calculation`,
+    );
+    assert.equal(
+      (recalculated.timeline.automaticHistoryRows ?? []).some((row) => scenario.dates.includes(row.logicalDate)),
+      false,
+      `${scenario.label}: no Missed History is materialized solely for a non-due continuation day`,
+    );
+  }
+});
+
+test("Did My Best and Complete end an unresolved Missed span", () => {
+  for (const outcome of ["did_my_best", "complete"] as const) {
+    const result = evaluateTaskState(input({
+      now: "2026-09-06T14:00:00.000Z",
+      calendarStart: "2026-09-01",
+      calendarEnd: "2026-09-06",
+      task: task({ dueOn: "2026-09-01", recurrence: { kind: "rolling", intervalDays: 4 } }),
+      history: [
+        history("2026-09-01", "missed", {
+          occurrenceDueOn: "2026-09-01",
+          occurrenceIdentity: "task-state:task-1:2026-09-01",
+        }),
+        history("2026-09-05", outcome, {
+          occurrenceDueOn: "2026-09-01",
+          occurrenceIdentity: "task-state:task-1:2026-09-01",
+          ...(outcome === "complete" ? { eventType: "completed_permanently" } : {}),
+        }),
+      ],
+    }));
+
+    for (const date of ["2026-09-02", "2026-09-03", "2026-09-04"]) {
+      assert.equal(result.timeline.days[date]?.state, "missed", `${outcome}:${date}`);
+    }
+    assert.equal(result.timeline.days["2026-09-05"]?.state, outcome);
+    assert.notEqual(result.timeline.days["2026-09-06"]?.state, "missed");
+  }
+});
+
 test("recompute derives Active Status from the replayed current state in both directions", () => {
   const replayedFuture = evaluateTaskState(input({
     now: "2026-09-05T14:00:00.000Z",
