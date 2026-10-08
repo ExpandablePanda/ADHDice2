@@ -350,7 +350,8 @@ test("7.12.35 source contract covers scale-label migration, unified Symptoms, co
   assert.match(scaleLabelsMigrationSource, /set low_label = scale_labels\[1\],[\s\S]*high_label = scale_labels\[11\]/);
   assert.match(schemaSource, /scale_labels text\[\] not null/);
   assert.match(schemaSource, /check \(cardinality\(scale_labels\) = 11\)/);
-  assert.match(healthHookSource, /scale_labels: signal\.scale_labels/);
+  assert.match(healthHookSource, /recordJournalPendingMutation\(\{ entity: "signal", operation: "upsert", intent: "create", row: nextRow \}\)/);
+  assert.match(healthHookSource, /row = \{ \.\.\.mutation\.row, user_id: userId \}/);
   assert.match(healthHookSource, /scale_labels: nextRow\.scale_labels/);
   assert.match(healthPageSource, /expandedJournalScaleKey/);
   assert.match(healthPageSource, /Type # while writing to tag a symptom or feeling/);
@@ -449,7 +450,7 @@ test("7.12.41 source contract covers unified tag occurrence overlays and shared 
   assert.match(schemaSource, /color text,[\s\S]*scale_labels text\[\] not null/);
   assert.match(schemaSource, /adhdice_health_journal_signals_color_check/);
   assert.match(schemaSource, /kind in \('emotion', 'other'\) and color is not null and color ~/);
-  assert.match(healthHookSource, /color: signal\.color/);
+  assert.match(healthHookSource, /recordJournalPendingMutation\(\{ entity: "signal", operation: "upsert", intent: "create", row: nextRow \}\)/);
   assert.match(healthHookSource, /color: nextRow\.color/);
   assert.match(healthHookSource, /color: kind === "symptom" \? null : input\.color/);
   assert.match(healthHookSource, /update\([\s\S]*color: nextRow\.color/);
@@ -573,8 +574,8 @@ test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS
   assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.update\(remoteCheckInFields\)[\s\S]*\.eq\("id", requestedEntryId\)/);
   assert.doesNotMatch(healthHookSource, /onConflict: "user_id,entry_date"/);
   assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_values"\)[\s\S]*\.upsert\(scoredValues/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*\.upsert\(occurrenceRows/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_occurrences"\)[\s\S]*\.upsert\(journalSignalOccurrenceRows/);
+  assert.match(healthHookSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: occurrenceRows,[\s\S]*?table: "adhdice_health_symptom_entries"/);
+  assert.match(healthHookSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: journalSignalOccurrenceRows,[\s\S]*?table: "adhdice_health_journal_signal_occurrences"/);
   assert.match(healthHookSource, /journal_entry_id: nextRow\.id/);
   assert.match(healthHookSource, /checkIns\.filter\(\(entry\) => entry\.id !== nextRow\.id\)/);
   assert.match(healthHookSource, /journalSignalOccurrences.*storageKey\(userId, "journal-signal-occurrences"\)/s);
@@ -629,8 +630,8 @@ test("7.12.42 hardens Journal occurrence reruns and native kind integrity", () =
   assert.ok(guardIndex < saveJournalSource.indexOf('.from("adhdice_health_checkins")'));
   assert.match(saveJournalSource, /hasInvalidNativeOccurrenceSignal[\s\S]*?Choose an Emotion or Other Feeling for each occurrence\./);
   assert.ok(guardIndex < saveJournalSource.indexOf("const journalSignalOccurrenceRows"));
-  assert.match(saveJournalSource, /\.from\("adhdice_health_journal_signal_occurrences"\)[\s\S]*?\.upsert\(journalSignalOccurrenceRows/);
-  assert.match(saveJournalSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*?\.upsert\(occurrenceRows/);
+  assert.match(saveJournalSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: journalSignalOccurrenceRows,[\s\S]*?table: "adhdice_health_journal_signal_occurrences"/);
+  assert.match(saveJournalSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: occurrenceRows,[\s\S]*?table: "adhdice_health_symptom_entries"/);
 });
 
 test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, and one Feeling section", () => {

@@ -746,7 +746,7 @@ test("symptom definition colors are persisted with a safe default and never adde
   assert.match(colorMigrationSource, /alter column color set not null/i);
   assert.match(colorMigrationSource, /add constraint adhdice_health_symptoms_color_hex_check/i);
   assert.doesNotMatch(colorMigrationSource, /adhdice_health_symptom_entries[\s\S]*color/i);
-  assert.match(healthHookSource, /color: symptom\.color/);
+  assert.match(healthHookSource, /recordJournalPendingMutation\(\{ entity: "symptom", operation: "upsert", intent: "create", row: nextRow \}\)/);
   assert.match(healthHookSource, /color: normalizeHealthSymptomColor\(input\.color\)/);
   assert.match(healthHookSource, /insert\(\{ \.\.\.input, archived_at: null, color: localRow\.color/);
 });
@@ -788,16 +788,14 @@ test("Journal owns Feeling Occurrences and symptom persistence rejects orphan ow
   assert.match(healthHookSource, /Feeling occurrences must belong to a Journal Entry/);
   assert.match(healthHookSource, /normalizeHealthSymptomEntries/);
   assert.match(healthHookSource, /\.eq\("id", entryId\)\n\s+\.eq\("user_id", userId\)/);
-  const recoverySectionStart = healthHookSource.indexOf("let remoteSymptoms =");
+  const recoverySectionStart = healthHookSource.indexOf("const latestLocalSymptoms =");
   const recoverySectionEnd = healthHookSource.indexOf("const remoteWorkouts =", recoverySectionStart);
   const recoverySection = healthHookSource.slice(recoverySectionStart, recoverySectionEnd);
-  const definitionUpsert = recoverySection.indexOf('.from("adhdice_health_symptoms")');
-  const entryUpsert = recoverySection.indexOf('.from("adhdice_health_symptom_entries")');
-  assert.ok(definitionUpsert >= 0 && entryUpsert > definitionUpsert);
-  assert.match(recoverySection, /symptomRecovery\.unreconciledLocalSymptoms/);
-  assert.match(recoverySection, /symptomRecovery\.unreconciledLocalEntries/);
-  assert.match(healthHookSource, /symptoms: symptomsResult\.error \? currentLocalSymptoms : symptomRecovery\.mergedSymptoms/);
-  assert.match(healthHookSource, /symptomEntries: symptomEntriesResult\.error \? currentLocalSymptomEntries : normalizeHealthSymptomEntries\(symptomRecovery\.mergedEntries\)/);
+  assert.match(recoverySection, /Object\.entries\(pendingMutationsAtHydrationStart\)/);
+  assert.match(recoverySection, /client\.from\(tableByEntity\[mutation\.entity\]\)/);
+  assert.doesNotMatch(recoverySection, /unreconciledLocalSymptoms|unreconciledLocalEntries|symptomRecovery/);
+  assert.match(healthHookSource, /symptomsResult\.error[\s\S]*?replayHealthJournalPendingMutations\("symptom", remoteSymptoms, pendingMutationsForProjection, userId\)/);
+  assert.match(healthHookSource, /symptomEntriesResult\.error[\s\S]*?replayHealthJournalPendingMutations\("symptom_entry", remoteSymptomEntries, pendingMutationsForProjection, userId\)/);
   const baseHealthErrorsStart = healthHookSource.indexOf("const errors = [");
   const baseHealthErrorsEnd = healthHookSource.indexOf("].filter(Boolean);", baseHealthErrorsStart);
   assert.doesNotMatch(healthHookSource.slice(baseHealthErrorsStart, baseHealthErrorsEnd), /symptom/i);
@@ -860,12 +858,10 @@ test("Symptom Library supports definition-only creation and shared color editing
 });
 
 test("Health hydration checks lifecycle before and after each recovery mutation phase", () => {
-  const recoveryStart = healthHookSource.indexOf("let remoteSymptoms =");
+  const recoveryStart = healthHookSource.indexOf("const pendingMutationsAtHydrationStart =");
   const recoveryEnd = healthHookSource.indexOf("const remoteSnapshot =", recoveryStart);
   const recoverySection = healthHookSource.slice(recoveryStart, recoveryEnd);
   const phaseWrites = [
-    '.from("adhdice_health_symptoms")',
-    '.from("adhdice_health_symptom_entries")',
     '.from("adhdice_health_workouts")',
     '.from("adhdice_health_meal_plan_entries")',
   ];
@@ -876,10 +872,8 @@ test("Health hydration checks lifecycle before and after each recovery mutation 
     assert.ok(recoverySection.lastIndexOf("if (!isActive", writeIndex) >= 0, `expected lifecycle guard before ${phaseWrite}`);
   }
 
-  const currentLifecycleGuard = /if \(!isActive(?: \|\| !isCurrentOperation\(hydrationOperation\))?\) \{\s*return;\s*\}/;
-  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_symptoms"\\)[\\s\\S]*?\\.select\\("\\*"\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_symptom_entries"\\)[\\s\\S]*?\\.select\\("\\*"\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_workouts"\\)[\\s\\S]*?\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`await client[\\s\\S]*?adhdice_health_meal_plan_entries[\\s\\S]*?\\.eq\\("user_id", userId\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`for \\(const \\[planId, mutation\\] of Object\\.entries\\(pendingMealPlanMutations\\)\\) \\{\\s*${currentLifecycleGuard.source}`));
+  assert.match(recoverySection, /for \(const \[key, mutation\] of pendingMutations\)/);
+  assert.match(recoverySection, /client\.from\(tableByEntity\[mutation\.entity\]\)/);
+  assert.match(recoverySection, /result = await query\.select\("id"\);[\s\S]*?if \(!isActive \|\| !isCurrentOperation\(hydrationOperation\)\) return;/);
+  assert.match(recoverySection, /for \(const \[planId, mutation\] of Object\.entries\(pendingMealPlanMutations\)\) \{\s*if \(!isActive/);
 });

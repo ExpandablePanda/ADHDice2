@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.120`.
+- Current working app version: `7.16.121`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.121 Journal deletion integrity hotfix
+
+Journal hydration now trusts remote rows for cached records and never recovers
+unmarked local snapshots. Explicit pending writes distinguish new creates from
+edits: creates retry as inserts, while edits update only remotely existing rows.
+Missing rows from the legacy cache are held in a local-only quarantine and are
+not projected into the Journal or uploaded. Pending deletes suppress
+stale child Feeling values and occurrences. User-requested remote deletes and
+child removals confirm the affected ID before showing success.
+
+Focused Journal data-integrity, occurrence-persistence, Check-In, Symptoms, and
+Trigger tests passed. Targeted lint/typecheck still report pre-existing
+diagnostics in the Health hook and other Health code. Browser behavior and live
+remote synchronization remain unverified; no remote records or schema changed.
 
 ## 2026-10-08 7.16.120 Journal occurrence ownership and editor identity hotfix
 
