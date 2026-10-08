@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.117`.
+- Current working app version: `7.16.121`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,23 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.121 Master Tabs T1 Workspace State Foundation
+
+Added a pure, versioned two-panel Master Workspace state model with typed
+Navigator destinations, immutable tab and panel transitions, safe normalization,
+user-scoped localStorage helpers, and first-use initialization from the prior
+active page. Tasks master tabs carry independent normalized copies of the
+existing nested Tasks workspace tabs and settings. Workspace persistence owns
+layout only; runtime integration and visible master tabs remain deferred to
+later stages.
+
+Focused verification for 7.16.121: `test/master-workspace-state.test.ts` and
+`test/task-ui-state.test.ts` passed; targeted ESLint and `git diff --check`
+passed. A targeted TypeScript check reported existing errors in imported
+components and task-state modules, with no diagnostic in the new workspace
+module. Browser QA, production build, full typecheck, and broad test suites were
+not run.
 
 ## 2026-10-08 7.16.117 Home Routine Unsectioned Sections
 
