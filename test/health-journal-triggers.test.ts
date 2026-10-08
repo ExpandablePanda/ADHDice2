@@ -10,7 +10,9 @@ import {
   isHealthJournalTriggerEffect,
   normalizeHealthJournalTriggerName,
   normalizeHealthJournalTriggerPreviousScore,
+  replaceHealthJournalTriggerAssociations,
   updateHealthJournalTriggerLink,
+  validateHealthJournalTriggerAssociationDrafts,
   validateHealthJournalTriggerOccurrenceReference,
   validateHealthJournalTriggerName,
 } from "../src/lib/health-journal-triggers.ts";
@@ -18,6 +20,10 @@ import {
 const migration = readFileSync(new URL("../supabase/add_health_journal_triggers_7_16_116.sql", import.meta.url), "utf8");
 const persistence = readFileSync(new URL("../src/lib/health-journal-triggers.ts", import.meta.url), "utf8");
 const journalHook = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
+const eventCapture = readFileSync(new URL("../src/components/task-app/journal-event-capture.tsx", import.meta.url), "utf8");
+const journalForm = readFileSync(new URL("../src/components/task-app/journal-check-in-form.tsx", import.meta.url), "utf8");
+const healthPage = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
+const replacementMigration = readFileSync(new URL("../supabase/replace_health_journal_trigger_associations_7_16_118.sql", import.meta.url), "utf8");
 
 function makeTriggerLinkUpdateClient(response: { data: unknown; error: { message: string } | null }) {
   const updates: unknown[] = [];
@@ -87,7 +93,8 @@ test("archiving preserves historical links and legacy Journal omission does not 
   assert.match(migration, /foreign key \(user_id, trigger_id\)[\s\S]*?on delete cascade/);
   assert.match(persistence, /export async function removeHealthJournalTriggerLink[\s\S]*?\.eq\("id", linkId\)[\s\S]*?\.eq\("user_id", userId\)/);
   assert.match(journalHook, /async function saveJournalEntry/);
-  assert.doesNotMatch(journalHook, /health_journal_trigger_links/);
+  assert.match(journalHook, /const triggerReplacements = input\.triggerAssociationReplacements \?\? \[\]/);
+  assert.match(journalHook, /if \(triggerReplacements\.length > 0\)/);
   assert.match(persistence, /\.insert\(\{ \.\.\.input, previous_score: previousScore\.score, user_id: userId \}\)/);
 });
 
@@ -155,9 +162,122 @@ test("association update propagates Supabase mutation failures and filters by ow
   assert.deepEqual(queryCalls, [["id", "link-1"], ["user_id", "u1"]]);
 });
 
-test("Trigger persistence uses only occurrence identities and does not claim transaction atomicity", () => {
+test("Trigger persistence uses only occurrence identities and delegates replacement to the targeted transaction", () => {
   assert.match(persistence, /symptom_occurrence_id/);
   assert.match(persistence, /journal_signal_occurrence_id/);
-  assert.doesNotMatch(persistence, /journal_entry_id|hashtag|reflection/);
+  assert.doesNotMatch(persistence, /hashtag|reflection/);
+  assert.match(persistence, /\.rpc\("adhdice_replace_health_journal_trigger_associations"/);
   assert.match(migration, /create table if not exists public\.adhdice_health_journal_trigger_links/);
+});
+
+test("one occurrence can have multiple Triggers and the same Trigger can belong to separate occurrences", () => {
+  const oneOnPain = [
+    { trigger_id: "shower", effect: "worsened", previous_score: 3 },
+    { trigger_id: "stretching", effect: "improved", previous_score: 8 },
+  ];
+  const painAgain = [{ trigger_id: "shower", effect: "worsened", previous_score: 7 }];
+  assert.equal(validateHealthJournalTriggerAssociationDrafts(oneOnPain).valid, true);
+  assert.equal(validateHealthJournalTriggerAssociationDrafts(painAgain).valid, true);
+  assert.equal(hasDuplicateHealthJournalTriggerAssociations([
+    { trigger_id: "shower", symptom_occurrence_id: "pain-830", journal_signal_occurrence_id: null },
+    { trigger_id: "shower", symptom_occurrence_id: "pain-915", journal_signal_occurrence_id: null },
+  ]), false);
+  assert.equal(hasDuplicateHealthJournalTriggerAssociations([
+    { trigger_id: "shower", symptom_occurrence_id: "pain-830", journal_signal_occurrence_id: null },
+    { trigger_id: "shower", symptom_occurrence_id: "pain-830", journal_signal_occurrence_id: null },
+  ]), true);
+  assert.match(eventCapture, /triggerAssociations: HealthJournalTriggerAssociationDraft\[\]/);
+  assert.match(eventCapture, /triggerAssociationsEdited: boolean/);
+});
+
+test("positive and negative Feelings share the same explicit effect and score model", () => {
+  for (const effect of ["associated", "worsened", "improved"] as const) {
+    assert.equal(validateHealthJournalTriggerAssociationDrafts([{ trigger_id: "music", effect, previous_score: effect === "associated" ? null : 0 }]).valid, true);
+  }
+  assert.equal(validateHealthJournalTriggerAssociationDrafts([{ trigger_id: "music", effect: "associated", previous_score: 10 }]).valid, false);
+  assert.equal(validateHealthJournalTriggerAssociationDrafts([{ trigger_id: "music", effect: "improved", previous_score: 10 }]).valid, true);
+  assert.equal(validateHealthJournalTriggerAssociationDrafts([{ trigger_id: "music", effect: "unknown", previous_score: null }]).valid, false);
+  assert.equal(validateHealthJournalTriggerAssociationDrafts([{ trigger_id: "music", effect: "worsened", previous_score: 11 }]).valid, false);
+  assert.match(eventCapture, /Associated/);
+  assert.match(eventCapture, /Worsened/);
+  assert.match(eventCapture, /Improved/);
+});
+
+test("atomic RPC success returns refreshed links and rejection remains visible", async () => {
+  const calls: Array<[string, unknown]> = [];
+  const replacement = {
+    occurrence_kind: "journal_signal" as const,
+    occurrence_id: "occurrence-1",
+    associations: [{ trigger_id: "trigger-1", effect: "associated" as const, previous_score: null }],
+    expected_associations: [],
+  };
+  const successClient = { rpc(name: string, args: unknown) { calls.push([name, args]); return Promise.resolve({ data: { saved: true, target_count: 1, links: [] }, error: null }); } } as never;
+  const result = await replaceHealthJournalTriggerAssociations("user-1", "entry-1", [replacement], successClient);
+  assert.equal(calls[0]?.[0], "adhdice_replace_health_journal_trigger_associations");
+  assert.deepEqual((result as { saved: boolean }).saved, true);
+  const removalCalls: unknown[] = [];
+  const removalClient = { rpc(_name: string, args: unknown) { removalCalls.push(args); return Promise.resolve({ data: { saved: true, target_count: 1, links: [] }, error: null }); } } as never;
+  await replaceHealthJournalTriggerAssociations("user-1", "entry-1", [{ ...replacement, associations: [], expected_associations: replacement.associations }], removalClient);
+  assert.deepEqual((removalCalls[0] as { p_replacements: Array<{ associations: unknown[] }> }).p_replacements[0]?.associations, []);
+  await assert.rejects(replaceHealthJournalTriggerAssociations("user-1", "entry-1", [], removalClient), /at least one targeted occurrence/);
+  assert.deepEqual(validateHealthJournalTriggerAssociationDrafts([
+    { trigger_id: "trigger-1", effect: "associated", previous_score: null },
+    { trigger_id: "trigger-1", effect: "improved", previous_score: 0 },
+  ]).valid, false);
+  const failingClient = { rpc() { return Promise.resolve({ data: null, error: { message: "RPC is not installed" } }); } } as never;
+  await assert.rejects(replaceHealthJournalTriggerAssociations("user-1", "entry-1", [replacement], failingClient), /RPC is not installed/);
+  assert.match(journalHook, /Trigger associations were not saved/);
+  assert.match(journalHook, /No local-only Trigger save was made/);
+});
+
+test("event save retains stable UUIDs and only replaces explicitly edited occurrence links", () => {
+  assert.match(journalForm, /createPersistedJournalUuid\(\)/);
+  assert.match(journalForm, /occurrencesWithIds/);
+  assert.match(journalForm, /triggerAssociationReplacements: eventOccurrenceInputs\.triggerAssociationReplacements/);
+  assert.match(journalForm, /if \(draft\.triggerAssociationsEdited && draft\.id\)/);
+  assert.match(journalForm, /expected_associations: draft\.expectedTriggerAssociations/);
+  assert.match(journalForm, /eventSaveResult\.triggerAssociationError/);
+  assert.match(journalForm, /triggerEditorDirtyEntryIdRef/);
+  assert.match(journalForm, /const id = draft\.id \?\? createPersistedJournalUuid\(\)/);
+  assert.match(journalHook, /requestedEntryId && existingRow[\s\S]*?\.update\(remoteCheckInFields\)[\s\S]*?: await client[\s\S]*?\.insert\(/);
+  assert.match(journalHook, /replaceHealthJournalTriggerAssociations\(userId, nextRow\.id, triggerReplacements, client\)/);
+  assert.match(journalHook, /replacementResult\.links/);
+  assert.match(journalHook, /isCurrentOperation\(operation\)/);
+  assert.ok(journalHook.indexOf("for (const occurrence of input.journalSignalOccurrences)") < journalHook.indexOf("const remoteCheckInFields"), "local occurrence validation must precede the Event write");
+  assert.match(journalHook, /could not be confirmed for Trigger associations/);
+});
+
+test("legacy check-ins omit replacement and Start or End of Day linked Events keep their separate save", () => {
+  const eventSave = journalForm.slice(journalForm.indexOf("const eventSaveResult = await saveJournalEntry"), journalForm.indexOf("const nextReflection"));
+  const checkInSave = journalForm.slice(journalForm.indexOf("const saved = await saveJournalEntry"));
+  assert.match(eventSave, /triggerAssociationReplacements:/);
+  assert.doesNotMatch(checkInSave, /triggerAssociationReplacements/);
+  assert.match(checkInSave, /journalSignalOccurrences: legacyFeelingOccurrences/);
+  assert.match(journalForm, /nextAnswers\.linked_event_ids = \[nextEventId\]/);
+  assert.match(journalHook, /if \(triggerReplacements\.length > 0\)/);
+});
+
+test("occurrence hydration and History map associations by persisted occurrence ID", () => {
+  assert.match(eventCapture, /triggerLinks\s*\.filter\(\(link\) => kind === "symptom" \? link\.symptom_occurrence_id === occurrenceId : link\.journal_signal_occurrence_id === occurrenceId\)/);
+  assert.match(healthPage, /link\.symptom_occurrence_id === occurrence\.id \|\| link\.journal_signal_occurrence_id === occurrence\.id/);
+  assert.match(healthPage, /trigger\?\.name \?\? "Archived Trigger"/);
+  assert.match(healthPage, /link\.previous_score \?\? "Unknown"/);
+  assert.match(replacementMigration, /delete from public\.adhdice_health_journal_trigger_links as link/);
+  assert.match(replacementMigration, /where link\.user_id = v_user_id[\s\S]*?link\.symptom_occurrence_id = v_occurrence_id/);
+  assert.match(replacementMigration, /where link\.user_id = v_user_id[\s\S]*?link\.journal_signal_occurrence_id = v_occurrence_id/);
+});
+
+test("production overlay preserves scored hashtags and exposes archived historical Triggers", () => {
+  assert.match(eventCapture, /const scoredTag = `#\$\{signalName\} \$\{scoreLabel\} `/);
+  assert.match(eventCapture, /trigger\.archived_at === null/);
+  assert.match(eventCapture, /trigger\?\.archived_at \? <span/);
+  assert.match(eventCapture, /Escape/);
+  assert.match(eventCapture, /pointerdown/);
+  assert.match(replacementMigration, /security invoker/);
+  assert.match(replacementMigration, /for update/);
+  assert.match(replacementMigration, /40001/);
+  assert.match(replacementMigration, /entry\.id = p_journal_entry_id[\s\S]*?entry\.user_id = v_user_id[\s\S]*?for update/);
+  assert.match(replacementMigration, /grant execute on function public\.adhdice_replace_health_journal_trigger_associations\(uuid, jsonb\) to authenticated/);
+  assert.match(replacementMigration, /from public, anon, authenticated/);
+  assert.match(replacementMigration, /Archived Triggers cannot be added to new occurrences/);
 });

@@ -1258,6 +1258,12 @@ export function TaskApp() {
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
+    journalTriggers: healthJournalTriggers,
+    journalTriggerLinks: healthJournalTriggerLinks,
+    journalTriggerDataError: healthJournalTriggerDataError,
+    isLoadingJournalTriggers: isLoadingHealthJournalTriggers,
+    loadJournalTriggerData: loadHealthJournalTriggerData,
+    createJournalTrigger: createHealthJournalTrigger,
     journalSignals: healthJournalSignals,
     journalSignalValues: healthJournalSignalValues,
     journalSignalOccurrences: healthJournalSignalOccurrences,
@@ -8943,6 +8949,12 @@ export function TaskApp() {
             journalSignals={healthJournalSignals}
             journalSignalValues={healthJournalSignalValues}
             journalSignalOccurrences={healthJournalSignalOccurrences}
+            journalTriggers={healthJournalTriggers}
+            journalTriggerLinks={healthJournalTriggerLinks}
+            journalTriggerDataError={healthJournalTriggerDataError}
+            isLoadingJournalTriggers={isLoadingHealthJournalTriggers}
+            loadJournalTriggerData={loadHealthJournalTriggerData}
+            createJournalTrigger={createHealthJournalTrigger}
             saveJournalEntry={saveJournalEntry}
             saveJournalQuestions={saveJournalQuestions}
             createJournalSignal={createJournalSignal}

@@ -28,6 +28,8 @@ import type {
   HealthJournalSignalKind,
   HealthJournalSignalOccurrence,
   HealthJournalSignalOccurrenceInsert,
+  HealthJournalTrigger,
+  HealthJournalTriggerLink,
   HealthJournalSignalValue,
   HealthMealEntry,
   HealthMealEntryInsert,
@@ -66,7 +68,7 @@ import {
   type AppleHealthImportParseProgress,
   type AppleHealthImportPreview,
 } from "@/lib/health-apple-import";
-import type { HealthImportSaveProgress, HealthJournalEntrySaveInput } from "@/hooks/useHealth";
+import type { HealthImportSaveProgress, HealthJournalEntrySaveInput, HealthJournalEntrySaveResult } from "@/hooks/useHealth";
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
 import {
@@ -235,6 +237,12 @@ type HealthPageProps = {
   journalSignals: HealthJournalSignal[];
   journalSignalValues: HealthJournalSignalValue[];
   journalSignalOccurrences: HealthJournalSignalOccurrence[];
+  journalTriggers: HealthJournalTrigger[];
+  journalTriggerLinks: HealthJournalTriggerLink[];
+  journalTriggerDataError: string | null;
+  isLoadingJournalTriggers: boolean;
+  loadJournalTriggerData: () => Promise<boolean>;
+  createJournalTrigger: (name: string) => Promise<HealthJournalTrigger | null>;
   symptoms: HealthSymptom[];
   symptomEntries: HealthSymptomEntry[];
   createSymptom: (input: Omit<HealthSymptomInsert, "user_id">) => Promise<HealthSymptom | null>;
@@ -276,7 +284,7 @@ type HealthPageProps = {
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
   recipes: HealthRecipe[];
-  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthCheckIn | null>;
+  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthJournalEntrySaveResult | null>;
   saveJournalQuestions: (questions: readonly HealthJournalCustomQuestion[]) => Promise<boolean>;
   createJournalSignal: (input: Omit<import("@/lib/database.types").HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   updateJournalSignal: (signalId: string, input: import("@/lib/database.types").HealthJournalSignalUpdate) => Promise<boolean>;
@@ -1182,6 +1190,12 @@ export function HealthPage({
   journalSignals,
   journalSignalValues,
   journalSignalOccurrences,
+  journalTriggers,
+  journalTriggerLinks,
+  journalTriggerDataError,
+  isLoadingJournalTriggers,
+  loadJournalTriggerData,
+  createJournalTrigger,
   symptoms,
   symptomEntries,
   createSymptom,
@@ -3572,6 +3586,12 @@ export function HealthPage({
                 journalSignalOccurrences={journalSignalOccurrences}
                 journalSignalValues={journalSignalValues}
                 journalSignals={journalSignals}
+                journalTriggers={journalTriggers}
+                journalTriggerLinks={journalTriggerLinks}
+                journalTriggerDataError={journalTriggerDataError}
+                isLoadingJournalTriggers={isLoadingJournalTriggers}
+                loadJournalTriggerData={loadJournalTriggerData}
+                createJournalTrigger={createJournalTrigger}
                 journalEntryRequest={journalEntryRequest}
                 mealEntries={mealEntries}
                 metricEntries={metricEntries}
@@ -3874,7 +3894,15 @@ export function HealthPage({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                         {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
-                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal, timeIsEstimated: occurrence.timeIsEstimated })).join(" · ")}</p> : null}
+                        {entryOccurrences.length > 0 ? <div className="mt-1 grid gap-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span>{entryOccurrences.map((occurrence) => {
+                          const occurrenceLinks = journalTriggerLinks.filter((link) => link.symptom_occurrence_id === occurrence.id || link.journal_signal_occurrence_id === occurrence.id);
+                          return <div className="min-w-0" key={occurrence.id}><p>{formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal, timeIsEstimated: occurrence.timeIsEstimated })}</p>{occurrenceLinks.map((link) => {
+                            const trigger = journalTriggers.find((candidate) => candidate.id === link.trigger_id);
+                            const effectLabel = link.effect === "associated" ? "Associated" : link.effect === "worsened" ? "Worsened" : "Improved";
+                            const scoreChange = link.effect === "associated" ? "" : ` · ${link.previous_score ?? "Unknown"} → ${occurrence.score}`;
+                            return <p className="pl-3 text-[#7d88a3] dark:text-white/45" key={link.id}>{trigger?.name ?? "Archived Trigger"} · {effectLabel}{scoreChange}</p>;
+                          })}</div>;
+                        })}</div> : null}
                         {historyReflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} reflection={historyReflection} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
                         <JournalEntrySummary checkIns={checkIns} entry={entry} journalSignalOccurrences={journalSignalOccurrences} journalSignals={journalSignals} symptomEntries={symptomEntries} symptoms={symptoms} />
                         {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}

@@ -22,6 +22,17 @@ export type HealthJournalTriggerLinkReplacement = {
   effect: HealthJournalTriggerEffect;
   previous_score: number | null;
 };
+export type HealthJournalTriggerAssociationDraft = {
+  trigger_id: string;
+  effect: HealthJournalTriggerEffect;
+  previous_score: number | null;
+};
+export type HealthJournalTriggerOccurrenceReplacement = {
+  occurrence_kind: "symptom" | "journal_signal";
+  occurrence_id: string;
+  associations: HealthJournalTriggerAssociationDraft[];
+  expected_associations: HealthJournalTriggerAssociationDraft[];
+};
 
 type TriggerClient = SupabaseClient<Database> | null;
 type TriggerClientArgument = TriggerClient | undefined;
@@ -82,6 +93,59 @@ export function hasDuplicateHealthJournalTriggerAssociations(
     seen.add(identity);
   }
   return false;
+}
+
+export function validateHealthJournalTriggerAssociationDrafts(value: unknown): { valid: true; associations: HealthJournalTriggerAssociationDraft[] } | { valid: false; error: string } {
+  if (!Array.isArray(value)) return { valid: false, error: "Journal Trigger associations must be a list." };
+  const seen = new Set<string>();
+  const associations: HealthJournalTriggerAssociationDraft[] = [];
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") return { valid: false, error: "Journal Trigger association is invalid." };
+    const association = candidate as Record<string, unknown>;
+    if (typeof association.trigger_id !== "string" || association.trigger_id.trim().length === 0) {
+      return { valid: false, error: "Choose a Trigger for each association." };
+    }
+    if (seen.has(association.trigger_id)) return { valid: false, error: "A Trigger can only be associated once with an occurrence." };
+    seen.add(association.trigger_id);
+    if (!isHealthJournalTriggerEffect(association.effect)) return { valid: false, error: "Journal Trigger association effect is invalid." };
+    const previousScore = normalizeHealthJournalTriggerPreviousScore(association.previous_score);
+    if (!previousScore.valid) return previousScore;
+    if (association.effect === "associated" && previousScore.score !== null) {
+      return { valid: false, error: "Associated Trigger links cannot include a previous score." };
+    }
+    associations.push({ effect: association.effect, previous_score: previousScore.score, trigger_id: association.trigger_id });
+  }
+  return { valid: true, associations };
+}
+
+export async function replaceHealthJournalTriggerAssociations(
+  userId: string,
+  journalEntryId: string,
+  replacements: readonly HealthJournalTriggerOccurrenceReplacement[],
+  client?: TriggerClientArgument,
+) {
+  if (!journalEntryId || !Array.isArray(replacements) || replacements.length === 0) {
+    throw new Error("Journal Trigger replacement needs a Journal Entry and at least one targeted occurrence.");
+  }
+  const occurrenceKeys = new Set<string>();
+  for (const replacement of replacements) {
+    if ((replacement.occurrence_kind !== "symptom" && replacement.occurrence_kind !== "journal_signal")
+      || typeof replacement.occurrence_id !== "string" || replacement.occurrence_id.trim().length === 0) {
+      throw new Error("Journal Trigger replacement occurrence is invalid.");
+    }
+    const key = `${replacement.occurrence_kind}:${replacement.occurrence_id}`;
+    if (occurrenceKeys.has(key)) throw new Error("Journal Trigger replacement contains a duplicate occurrence.");
+    occurrenceKeys.add(key);
+    const validation = validateHealthJournalTriggerAssociationDrafts(replacement.associations);
+    if (!validation.valid) throw new Error(validation.error);
+  }
+  const { data, error } = await requireTriggerClient(await resolveTriggerClient(client))
+    .rpc("adhdice_replace_health_journal_trigger_associations", {
+      p_journal_entry_id: journalEntryId,
+      p_replacements: replacements,
+    });
+  if (error) throwPersistenceError("save Journal Trigger associations", error);
+  return data;
 }
 
 async function resolveTriggerClient(client: TriggerClientArgument) {

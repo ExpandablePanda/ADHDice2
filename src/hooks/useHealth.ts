@@ -20,6 +20,8 @@ import type {
   HealthJournalSignalOccurrenceInsert,
   HealthJournalSignalUpdate,
   HealthJournalSignalValue,
+  HealthJournalTrigger,
+  HealthJournalTriggerLink,
   HealthMealEntry,
   HealthMealEntryInsert,
   HealthMealEntryUpdate,
@@ -81,6 +83,15 @@ import {
   type HealthJournalDraftValue,
 } from "@/lib/health-journal";
 import { getHealthJournalScaleDenominator, normalizeHealthJournalCustomQuestions, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
+import {
+  createHealthJournalTrigger,
+  getHealthJournalTriggerNameIdentity,
+  listHealthJournalTriggers,
+  readHealthJournalTriggerLinks,
+  replaceHealthJournalTriggerAssociations,
+  validateHealthJournalTriggerAssociationDrafts,
+  type HealthJournalTriggerOccurrenceReplacement,
+} from "@/lib/health-journal-triggers";
 import {
   getHealthFoodIdentityKey,
   normalizeHealthWaterEntry,
@@ -145,6 +156,12 @@ export type HealthJournalEntrySaveInput = {
   signalValues: HealthJournalDraftValue[];
   symptomOccurrences: Omit<HealthSymptomEntryInsert, "user_id" | "journal_entry_id">[];
   journalSignalOccurrences: Omit<HealthJournalSignalOccurrenceInsert, "user_id" | "journal_entry_id">[];
+  triggerAssociationReplacements?: HealthJournalTriggerOccurrenceReplacement[];
+};
+
+export type HealthJournalEntrySaveResult = {
+  entry: HealthCheckIn;
+  triggerAssociationError?: string;
 };
 
 type HealthStateSnapshot = {
@@ -436,6 +453,11 @@ export function useHealth(
   const [journalSignals, setJournalSignals] = useState<HealthJournalSignal[]>([]);
   const [journalSignalValues, setJournalSignalValues] = useState<HealthJournalSignalValue[]>([]);
   const [journalSignalOccurrences, setJournalSignalOccurrences] = useState<HealthJournalSignalOccurrence[]>([]);
+  const [journalTriggers, setJournalTriggers] = useState<HealthJournalTrigger[]>([]);
+  const [journalTriggerLinks, setJournalTriggerLinks] = useState<HealthJournalTriggerLink[]>([]);
+  const [journalTriggerDataError, setJournalTriggerDataError] = useState<string | null>(null);
+  const [isLoadingJournalTriggers, setIsLoadingJournalTriggers] = useState(false);
+  const journalTriggerOwnerRef = useRef<string | null>(null);
   const [mealEntries, setMealEntries] = useState<HealthMealEntry[]>([]);
   const [mealPlanEntries, setMealPlanEntries] = useState<HealthMealPlanEntry[]>([]);
   const [favorites, setFavorites] = useState<HealthFoodLibraryItem[]>([]);
@@ -779,6 +801,11 @@ export function useHealth(
       setJournalSignals([]);
       setJournalSignalValues([]);
       setJournalSignalOccurrences([]);
+      setJournalTriggers([]);
+      setJournalTriggerLinks([]);
+      setJournalTriggerDataError(null);
+      setIsLoadingJournalTriggers(false);
+      journalTriggerOwnerRef.current = null;
       setMealEntries([]);
       setMealPlanEntries([]);
       setFavorites([]);
@@ -805,6 +832,14 @@ export function useHealth(
     }
 
     if (!active) return;
+
+    if (journalTriggerOwnerRef.current !== userId) {
+      journalTriggerOwnerRef.current = userId;
+      setJournalTriggers([]);
+      setJournalTriggerLinks([]);
+      setJournalTriggerDataError(null);
+      setIsLoadingJournalTriggers(false);
+    }
 
     healthOperationGenerationRef.current += 1;
     const hydrationOperation = captureOperation();
@@ -1479,12 +1514,122 @@ export function useHealth(
     return true;
   }
 
-  async function saveJournalEntry(input: HealthJournalEntrySaveInput) {
+  async function loadJournalTriggerData() {
+    if (!userId || !client) {
+      setJournalTriggerDataError("Journal Triggers require an available remote connection. No remote Trigger data was loaded.");
+      return false;
+    }
+    const operation = captureOperation();
+    if (!operation) return false;
+    setIsLoadingJournalTriggers(true);
+    setJournalTriggerDataError(null);
+    try {
+      const [nextTriggers, nextLinks] = await Promise.all([
+        listHealthJournalTriggers(userId, client),
+        readHealthJournalTriggerLinks(userId, client),
+      ]);
+      if (!isCurrentOperation(operation)) return false;
+      setJournalTriggers(nextTriggers);
+      setJournalTriggerLinks(nextLinks);
+      journalTriggerOwnerRef.current = userId;
+      return true;
+    } catch (error) {
+      if (!isCurrentOperation(operation)) return false;
+      const message = error instanceof Error ? error.message : "Could not load Journal Triggers.";
+      setJournalTriggerDataError(message);
+      return false;
+    } finally {
+      if (isCurrentOperation(operation)) setIsLoadingJournalTriggers(false);
+    }
+  }
+
+  async function createJournalTrigger(value: string) {
+    if (!userId || !client) {
+      setJournalTriggerDataError("Journal Triggers require an available remote connection. No local-only Trigger was created.");
+      return null;
+    }
+    const identity = getHealthJournalTriggerNameIdentity(value);
+    if (!identity) {
+      setJournalTriggerDataError("Trigger name cannot be empty.");
+      return null;
+    }
+    const existing = journalTriggers.find((trigger) => getHealthJournalTriggerNameIdentity(trigger.name) === identity);
+    if (existing) {
+      if (existing.archived_at !== null) {
+        setJournalTriggerDataError("That Trigger name is archived. Restore it in the Trigger Library before using it again.");
+        return null;
+      }
+      setJournalTriggerDataError(null);
+      return existing;
+    }
+    const operation = captureOperation();
+    if (!operation) return null;
+    try {
+      const created = await createHealthJournalTrigger(userId, value, client);
+      if (!isCurrentOperation(operation)) return null;
+      setJournalTriggers((current) => current.some((trigger) => trigger.id === created.id) ? current : [...current, created].sort((left, right) => left.name.localeCompare(right.name)));
+      setJournalTriggerDataError(null);
+      return created;
+    } catch (error) {
+      if (!isCurrentOperation(operation)) return null;
+      // A concurrent normalized-name insert may have won the unique constraint.
+      try {
+        const latest = await listHealthJournalTriggers(userId, client);
+        if (!isCurrentOperation(operation)) return null;
+        setJournalTriggers(latest);
+        const matching = latest.find((trigger) => getHealthJournalTriggerNameIdentity(trigger.name) === identity && trigger.archived_at === null);
+        if (matching) {
+          setJournalTriggerDataError(null);
+          return matching;
+        }
+      } catch {
+        // Keep the original remote create failure visible below.
+      }
+      const message = error instanceof Error ? error.message : "Could not create Journal Trigger.";
+      setJournalTriggerDataError(message);
+      return null;
+    }
+  }
+
+  async function saveJournalEntry(input: HealthJournalEntrySaveInput): Promise<HealthJournalEntrySaveResult | null> {
     if (!userId || !profile) {
       return null;
     }
     const operation = captureOperation();
     if (!operation) return null;
+    const triggerReplacements = input.triggerAssociationReplacements ?? [];
+    if (triggerReplacements.length > 0) {
+      if (!client || storageMode !== "remote" || !journalRemoteEnabledRef.current) {
+        setMessage({ tone: "warn", text: "Journal Triggers need remote Journal persistence. No local-only Trigger save was made." });
+        return null;
+      }
+      if (triggerReplacements.some((replacement) => replacement.occurrence_kind === "symptom"
+        ? !symptomEntriesRemoteEnabledRef.current
+        : !journalSignalOccurrencesRemoteEnabledRef.current)) {
+        setMessage({ tone: "warn", text: "Journal Trigger associations need remotely saved Feeling occurrences. No Trigger replacement was made." });
+        return null;
+      }
+      const targets = new Set<string>();
+      for (const replacement of triggerReplacements) {
+        const occurrenceRows = replacement.occurrence_kind === "symptom" ? input.symptomOccurrences : input.journalSignalOccurrences;
+        if (!replacement.occurrence_id || !occurrenceRows.some((occurrence) => occurrence.id === replacement.occurrence_id)) {
+          setMessage({ tone: "warn", text: "A Trigger association must target an occurrence included in this Journal save." });
+          return null;
+        }
+        const key = `${replacement.occurrence_kind}:${replacement.occurrence_id}`;
+        if (targets.has(key)) {
+          setMessage({ tone: "warn", text: "A Journal occurrence can only be replaced once per save." });
+          return null;
+        }
+        targets.add(key);
+        const associations = validateHealthJournalTriggerAssociationDrafts(replacement.associations);
+        const expected = validateHealthJournalTriggerAssociationDrafts(replacement.expected_associations);
+        if (!associations.valid || !expected.valid) {
+          setMessage({ tone: "warn", text: !associations.valid ? associations.error : !expected.valid ? expected.error : "Journal Trigger association is invalid." });
+          return null;
+        }
+      }
+    }
 
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
@@ -1544,47 +1689,6 @@ export function useHealth(
     };
 
     let nextRow = localRow;
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const remoteCheckInFields = {
-        clarity_score: input.checkIn.clarity_score !== undefined ? input.checkIn.clarity_score : existingRow?.clarity_score ?? null,
-        energy_score: input.checkIn.energy_score !== undefined ? input.checkIn.energy_score : existingRow?.energy_score ?? null,
-        entry_date: input.checkIn.entry_date,
-        entry_time: entryTime,
-        entry_type: localRow.entry_type,
-        mood_score: input.checkIn.mood_score !== undefined ? input.checkIn.mood_score : existingRow?.mood_score ?? null,
-        reflection: input.checkIn.reflection !== undefined ? input.checkIn.reflection : existingRow?.reflection ?? "",
-        stress_score: input.checkIn.stress_score !== undefined ? input.checkIn.stress_score : existingRow?.stress_score ?? null,
-        symptom_tags: input.checkIn.symptom_tags !== undefined ? input.checkIn.symptom_tags : existingRow?.symptom_tags ?? [],
-        structured_answers: localRow.structured_answers,
-      };
-      const result = requestedEntryId && existingRow
-        ? await client
-          .from("adhdice_health_checkins")
-          .update(remoteCheckInFields)
-          .eq("id", requestedEntryId)
-          .eq("user_id", userId)
-          .select("*")
-          .single()
-        : await client
-          .from("adhdice_health_checkins")
-          .insert({ ...(requestedEntryId ? { id: requestedEntryId } : {}), ...remoteCheckInFields, user_id: userId })
-          .select("*")
-          .single();
-      const { data, error } = result;
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) {
-          journalRemoteEnabledRef.current = false;
-          setMessage({ tone: "neutral", text: "Journal is using local storage until the 7.13.43 Journal migration is applied." });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return null;
-        }
-      } else {
-        nextRow = data ? normalizeHealthCheckIn(data) : localRow;
-      }
-    }
-
     const currentValues = currentSnapshot.journalSignalValues.filter((value) => value.journal_entry_id === nextRow.id);
     if (input.signalValues.some((draft) => !currentSnapshot.journalSignals.some((signal) => signal.id === draft.signal_id))) {
       setMessage({ tone: "warn", text: "Choose valid template Feelings before saving the Journal Entry." });
@@ -1634,6 +1738,36 @@ export function useHealth(
       if (!Number.isInteger(occurrence.score) || occurrence.score < 1 || occurrence.score > occurrenceDenominator || !occurrence.occurred_at || !Number.isFinite(Date.parse(occurrence.occurred_at))) {
         setMessage({ tone: "warn", text: `Feeling occurrences need a score from 1 to ${occurrenceDenominator} and a valid time.` });
         return null;
+      }
+    }
+    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
+      const remoteCheckInFields = {
+        clarity_score: input.checkIn.clarity_score !== undefined ? input.checkIn.clarity_score : existingRow?.clarity_score ?? null,
+        energy_score: input.checkIn.energy_score !== undefined ? input.checkIn.energy_score : existingRow?.energy_score ?? null,
+        entry_date: input.checkIn.entry_date,
+        entry_time: entryTime,
+        entry_type: localRow.entry_type,
+        mood_score: input.checkIn.mood_score !== undefined ? input.checkIn.mood_score : existingRow?.mood_score ?? null,
+        reflection: input.checkIn.reflection !== undefined ? input.checkIn.reflection : existingRow?.reflection ?? "",
+        stress_score: input.checkIn.stress_score !== undefined ? input.checkIn.stress_score : existingRow?.stress_score ?? null,
+        symptom_tags: input.checkIn.symptom_tags !== undefined ? input.checkIn.symptom_tags : existingRow?.symptom_tags ?? [],
+        structured_answers: localRow.structured_answers,
+      };
+      const result = requestedEntryId && existingRow
+        ? await client.from("adhdice_health_checkins").update(remoteCheckInFields).eq("id", requestedEntryId).eq("user_id", userId).select("*").single()
+        : await client.from("adhdice_health_checkins").insert({ ...(requestedEntryId ? { id: requestedEntryId } : {}), ...remoteCheckInFields, user_id: userId }).select("*").single();
+      const { data, error } = result;
+      if (!isCurrentOperation(operation)) return null;
+      if (error) {
+        if (isMissingHealthPersistence(error.message)) {
+          journalRemoteEnabledRef.current = false;
+          setMessage({ tone: "neutral", text: "Journal is using local storage until the 7.13.43 Journal migration is applied." });
+        } else {
+          setMessage({ tone: "warn", text: error.message });
+          return null;
+        }
+      } else {
+        nextRow = data ? normalizeHealthCheckIn(data) : localRow;
       }
     }
     const scoredValues = input.signalValues
@@ -1774,6 +1908,50 @@ export function useHealth(
       }
     }
 
+    let triggerAssociationSaveError: string | null = null;
+    if (triggerReplacements.length > 0 && !childWriteError) {
+      const symptomTargetIds = triggerReplacements.filter((replacement) => replacement.occurrence_kind === "symptom").map((replacement) => replacement.occurrence_id);
+      const signalTargetIds = triggerReplacements.filter((replacement) => replacement.occurrence_kind === "journal_signal").map((replacement) => replacement.occurrence_id);
+      let occurrenceWritesContainTargets = false;
+      if (client && symptomTargetIds.length > 0) {
+        const { data, error } = await client.from("adhdice_health_symptom_entries").select("id")
+          .eq("user_id", userId).eq("journal_entry_id", nextRow.id).in("id", symptomTargetIds);
+        if (!isCurrentOperation(operation)) return null;
+        occurrenceWritesContainTargets = !error && (data?.length ?? 0) === symptomTargetIds.length;
+        if (error) triggerAssociationSaveError = `Could not confirm saved Symptom occurrences: ${error.message}`;
+      } else {
+        occurrenceWritesContainTargets = true;
+      }
+      if (client && signalTargetIds.length > 0) {
+        const { data, error } = await client.from("adhdice_health_journal_signal_occurrences").select("id")
+          .eq("user_id", userId).eq("journal_entry_id", nextRow.id).in("id", signalTargetIds);
+        if (!isCurrentOperation(operation)) return null;
+        occurrenceWritesContainTargets = occurrenceWritesContainTargets && !error && (data?.length ?? 0) === signalTargetIds.length;
+        if (error) triggerAssociationSaveError = `Could not confirm saved Feeling occurrences: ${error.message}`;
+      }
+      if (!occurrenceWritesContainTargets) {
+        triggerAssociationSaveError ??= "The Event was saved, but remote Feeling occurrence IDs could not be confirmed for Trigger associations.";
+      } else if (!client || storageMode !== "remote") {
+        triggerAssociationSaveError = "The Event was saved, but Journal Triggers were not saved remotely. Reconnect and retry.";
+      } else {
+        try {
+          const replacementResult = await replaceHealthJournalTriggerAssociations(userId, nextRow.id, triggerReplacements, client);
+          if (!isCurrentOperation(operation)) return null;
+          if (!replacementResult || !Array.isArray(replacementResult.links)) {
+            throw new Error("Journal Trigger replacement returned no refreshed association data.");
+          }
+          const replacedOccurrenceKeys = new Set(triggerReplacements.map((replacement) => `${replacement.occurrence_kind}:${replacement.occurrence_id}`));
+          setJournalTriggerLinks((current) => [
+            ...current.filter((link) => !replacedOccurrenceKeys.has(link.symptom_occurrence_id ? `symptom:${link.symptom_occurrence_id}` : `journal_signal:${link.journal_signal_occurrence_id}`)),
+            ...replacementResult.links,
+          ]);
+        } catch (error) {
+          if (!isCurrentOperation(operation)) return null;
+          triggerAssociationSaveError = error instanceof Error ? error.message : "Could not save Journal Trigger associations.";
+        }
+      }
+    }
+
     const nextJournalSignalValues = [
       ...currentSnapshot.journalSignalValues.filter((value) => value.journal_entry_id !== nextRow.id),
       ...scoredValues,
@@ -1815,12 +1993,18 @@ export function useHealth(
     }
     await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
     if (!isCurrentOperation(operation)) return null;
+    if (triggerAssociationSaveError) {
+      const partialMessage = `The Journal Event and Feeling occurrences were saved, but Trigger associations were not saved. Keep this draft and retry: ${triggerAssociationSaveError}`;
+      setMessage({ tone: "warn", text: partialMessage });
+      return { entry: nextRow, triggerAssociationError: partialMessage };
+    }
     setHealthSuccessMessage({ tone: "good", text: existingRow ? "Journal Entry updated." : "Journal Entry saved." });
-    return nextRow;
+    return { entry: nextRow };
   }
 
   async function saveCheckIn(input: Omit<HealthCheckInInsert, "user_id">) {
-    return saveJournalEntry({ checkIn: input, journalSignalOccurrences: [], signalValues: [], symptomOccurrences: [] });
+    const result = await saveJournalEntry({ checkIn: input, journalSignalOccurrences: [], signalValues: [], symptomOccurrences: [] });
+    return result?.entry ?? null;
   }
 
   async function createJournalSignal(input: Omit<HealthJournalSignalInsert, "user_id">) {
@@ -4493,6 +4677,12 @@ export function useHealth(
   return {
     awards,
     checkIns,
+    journalTriggers,
+    journalTriggerLinks,
+    journalTriggerDataError,
+    isLoadingJournalTriggers,
+    loadJournalTriggerData,
+    createJournalTrigger,
     journalSignals,
     journalSignalValues,
     journalSignalOccurrences,

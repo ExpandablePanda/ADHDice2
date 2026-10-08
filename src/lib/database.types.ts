@@ -3591,6 +3591,10 @@ export type Database = {
         Args: Record<string, never>;
         Returns: RecordsSourceState;
       };
+      adhdice_replace_health_journal_trigger_associations: {
+        Args: { p_journal_entry_id: string; p_replacements: unknown };
+        Returns: { saved: boolean; target_count: number; links: HealthJournalTriggerLink[] };
+      };
       adhdice_activate_achievement_profile: {
         Args: {
           p_operation_id: string;

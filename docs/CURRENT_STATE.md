@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-05
+Last reviewed: 2026-10-08
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.117`.
+- Current working app version: `7.16.118`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -21,6 +21,32 @@ both `effect` and `previous_score`; clearing a previous score requires explicit
 `null`. Missing or invalid replacement fields are rejected before the remote
 mutation. This API-specific contract leaves the database Update type unchanged.
 
+## 2026-10-08 7.16.118 Journal Trigger occurrence integration
+
+The live Journal Event occurrence editor can search or create remote Triggers,
+associate multiple Triggers with one persisted Feeling occurrence, edit each
+effect and optional previous score, and remove links. Associations are mapped
+by occurrence UUID and are replaced only when that occurrence's Trigger data
+was explicitly edited. Legacy callers that omit Trigger replacements preserve
+existing links.
+
+The Event save retains stable UUIDs for Event and occurrence retries. It saves
+the Event and occurrences first, then calls the narrowly scoped
+`adhdice_replace_health_journal_trigger_associations` transaction. That RPC is
+authored in `supabase/replace_health_journal_trigger_associations_7_16_118.sql`
+and is **not applied**. It checks owned occurrence/entry/Trigger rows, validates
+the expected association baseline to reject stale concurrent edits, preserves
+link IDs when possible, and returns refreshed links. If Trigger replacement
+fails after the Event and occurrences save, the form keeps its draft and IDs
+for retry and reports the partial save. Trigger library reads are lazy to the
+Journal form; missing remote support is visible and does not block ordinary
+Journal entries that do not use Triggers. History maps links by occurrence ID
+and displays archived Trigger names for existing links.
+
+Focused source-contract coverage was added for the production occurrence UI,
+Journal save wiring, Trigger RPC contract, and History mapping. Browser QA and
+live RPC verification remain unrun.
+
 ## 2026-10-08 7.16.116 Journal Trigger persistence foundation
 
 The authored migration `supabase/add_health_journal_triggers_7_16_116.sql`
@@ -31,17 +57,16 @@ occurrence reference, same-user ownership, allowed effects, optional prior
 scores, and per-occurrence duplicate prevention. Occurrence deletion cascades
 only to its links; Trigger archive is a timestamp update and preserves history.
 Read-only post-application checks are in
-`supabase/verify_health_journal_triggers_7_16_116.sql`. Migration status:
-authored only, not applied remotely. No historical data is backfilled.
+`supabase/verify_health_journal_triggers_7_16_116.sql`. The migration has been
+applied to Supabase and backend QA passed per the 7.16.118 ticket baseline. No
+historical data is backfilled.
 
 Types, pure validation helpers, and narrow explicit-remote persistence APIs
-are in `src/lib/health-journal-triggers.ts`. The Journal save mutation and UI
-are not integrated. For the next stage, create links only after an occurrence
-has a valid persisted ID; preserve links while editing unless explicitly
-changed; treat omitted Trigger data from legacy callers as no instruction to
-delete links; and delete links only for the removed occurrence. Any partial
-remote failure must be surfaced. These separate requests are not atomic; decide
-whether an RPC/transaction boundary is required before Journal UI integration.
+are in `src/lib/health-journal-triggers.ts`; the Journal Event occurrence UI
+and save flow are integrated in 7.16.118. Trigger link replacement is atomic
+through the source-only RPC migration documented above. Existing Journal Event
+and occurrence writes still precede that RPC, so a later Trigger failure is a
+visible partial save with a retained draft and stable IDs for retry.
 
 ## 2026-10-08 7.16.115 Home Journal navigation chips
 

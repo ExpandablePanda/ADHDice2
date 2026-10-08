@@ -5,6 +5,8 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { createPortal } from "react-dom";
 
 import type { HealthJournalSignal, HealthJournalSignalInsert, HealthSymptom } from "@/lib/database.types";
+import type { HealthJournalTrigger, HealthJournalTriggerLink } from "@/lib/database.types";
+import { getHealthJournalTriggerNameIdentity, type HealthJournalTriggerAssociationDraft } from "@/lib/health-journal-triggers";
 import {
   getDefaultHealthJournalScaleLabels,
   getHealthJournalSignalDisplayName,
@@ -31,6 +33,9 @@ export type JournalEventOccurrenceDraft = {
   signalId: string;
   time: string;
   timeIsEstimated: boolean;
+  triggerAssociations: HealthJournalTriggerAssociationDraft[];
+  expectedTriggerAssociations: HealthJournalTriggerAssociationDraft[];
+  triggerAssociationsEdited: boolean;
 };
 
 type JournalTagOption = {
@@ -56,6 +61,8 @@ type JournalTagOverlay = {
   tagText: string | null;
   time: string;
   timeIsEstimated: boolean;
+  triggerAssociations: HealthJournalTriggerAssociationDraft[];
+  triggerAssociationsEdited: boolean;
 } | null;
 
 type JournalTagOverlayState = Exclude<JournalTagOverlay, null>;
@@ -137,6 +144,11 @@ export function JournalEventCapture({
   onUpdateOccurrence,
   signals,
   symptoms,
+  journalTriggers = [],
+  triggerLibraryError = null,
+  isLoadingTriggers = false,
+  onCreateTrigger,
+  onRetryTriggerLoad,
   time,
   timeEstimated = false,
 }: {
@@ -160,6 +172,11 @@ export function JournalEventCapture({
   onUpdateOccurrence: (draft: JournalEventOccurrenceDraft) => void;
   signals: readonly HealthJournalSignal[];
   symptoms: readonly HealthSymptom[];
+  journalTriggers?: readonly HealthJournalTrigger[];
+  triggerLibraryError?: string | null;
+  isLoadingTriggers?: boolean;
+  onCreateTrigger?: (name: string) => Promise<HealthJournalTrigger | null>;
+  onRetryTriggerLoad?: () => void;
   time: string;
   timeEstimated?: boolean;
 }) {
@@ -242,13 +259,13 @@ export function JournalEventCapture({
     tagCaretRef.current = nextCaret;
     setTagQuery(null);
     setTagHighlightIndex(0);
-    setTagOverlay({ draftKey: null, error: null, score: null, signal, tagEnd: nextCaret, tagStart: tagQuery.start, tagText: replacement, time: time || getCurrentHealthDateTimeInputs().time, timeIsEstimated: false });
+    setTagOverlay({ draftKey: null, error: null, score: null, signal, tagEnd: nextCaret, tagStart: tagQuery.start, tagText: replacement, time: time || getCurrentHealthDateTimeInputs().time, timeIsEstimated: false, triggerAssociations: [], triggerAssociationsEdited: false });
   }
 
   function beginOccurrenceEdit(draft: JournalEventOccurrenceDraft) {
     const signal = getJournalEventSignalForDraft(draft.signalId, signals, symptoms);
     if (!signal) return;
-    setTagOverlay({ draftKey: draft.draftKey, error: null, score: draft.score, signal, tagEnd: null, tagStart: null, tagText: null, time: draft.time, timeIsEstimated: draft.timeIsEstimated });
+    setTagOverlay({ draftKey: draft.draftKey, error: null, score: draft.score, signal, tagEnd: null, tagStart: null, tagText: null, time: draft.time, timeIsEstimated: draft.timeIsEstimated, triggerAssociations: draft.triggerAssociations, triggerAssociationsEdited: draft.triggerAssociationsEdited });
   }
 
   function saveTagOccurrence() {
@@ -282,6 +299,9 @@ export function JournalEventCapture({
       signalId: overlaySignal.id,
       time: normalizedTime,
       timeIsEstimated: tagOverlay.timeIsEstimated,
+      triggerAssociations: tagOverlay.triggerAssociations,
+      expectedTriggerAssociations: existing?.expectedTriggerAssociations ?? [],
+      triggerAssociationsEdited: tagOverlay.triggerAssociationsEdited,
     };
     if (existing) onUpdateOccurrence(nextDraft);
     else onSaveOccurrence(nextDraft);
@@ -369,6 +389,13 @@ export function JournalEventCapture({
             overlay={tagOverlay}
             signal={overlaySignal ?? tagOverlay.signal}
             symptoms={symptoms}
+            journalTriggers={journalTriggers}
+            triggerAssociations={tagOverlay.triggerAssociations}
+            onChangeTriggerAssociations={(associations) => setTagOverlay((current) => current ? { ...current, triggerAssociations: associations, triggerAssociationsEdited: true } : current)}
+            triggerLibraryError={triggerLibraryError}
+            isLoadingTriggers={isLoadingTriggers}
+            onCreateTrigger={onCreateTrigger}
+            onRetryTriggerLoad={onRetryTriggerLoad}
           /> : null}
         </div>
       </label>
@@ -387,6 +414,13 @@ function JournalEventOccurrenceOverlay({
   overlay,
   signal,
   symptoms,
+  journalTriggers,
+  triggerAssociations,
+  onChangeTriggerAssociations,
+  triggerLibraryError,
+  isLoadingTriggers,
+  onCreateTrigger,
+  onRetryTriggerLoad,
 }: {
   anchorRef: RefObject<HTMLTextAreaElement | null>;
   onChange: (updates: Partial<Pick<JournalTagOverlayState, "error" | "score" | "time" | "timeIsEstimated">>) => void;
@@ -395,6 +429,13 @@ function JournalEventOccurrenceOverlay({
   overlay: JournalTagOverlayState;
   signal: HealthJournalSignal;
   symptoms: readonly HealthSymptom[];
+  journalTriggers: readonly HealthJournalTrigger[];
+  triggerAssociations: readonly HealthJournalTriggerAssociationDraft[];
+  onChangeTriggerAssociations: (associations: HealthJournalTriggerAssociationDraft[]) => void;
+  triggerLibraryError: string | null;
+  isLoadingTriggers: boolean;
+  onCreateTrigger?: (name: string) => Promise<HealthJournalTrigger | null>;
+  onRetryTriggerLoad?: () => void;
 }) {
   const panelRef = useRef<HTMLDivElement | null>(null);
   const denominator = getHealthJournalScaleDenominator(signal);
@@ -448,6 +489,7 @@ function JournalEventOccurrenceOverlay({
         <p className={`${QUESTION_HINT_CLASS} text-center font-semibold uppercase tracking-[0.16em]`}>Log {displayName}</p>
         <div className="grid gap-1.5"><p className={`${QUESTION_HINT_CLASS} text-center font-semibold uppercase tracking-[0.16em]`}>{signal.kind === "symptom" ? "Severity" : "Intensity"} · 1–{denominator}</p><div className="grid grid-cols-2 gap-1.5 sm:grid-cols-3">{Array.from({ length: denominator }, (_, index) => index + 1).map((score) => <button aria-label={`${displayName} ${score}, ${signal.scale_labels[score] ?? ""}`} aria-pressed={overlay.score === score} className={`flex min-h-8 w-full min-w-0 items-start justify-start gap-2 rounded-[0.7rem] border px-2 py-1.5 text-left ${overlay.score === score ? "border-[#5d49c7] bg-[#6f57f6] text-white dark:border-[#cabfff] dark:bg-[#cabfff] dark:text-[#1a1431]" : "border-[#6f57f6] bg-white text-[#615b9c] dark:bg-white/8 dark:text-white/65"}`} key={score} onClick={() => onChange({ error: null, score })} type="button"><span className="shrink-0 text-xs font-semibold">{score}</span><span className="min-w-0 flex-1 text-[11px] font-medium leading-tight break-words whitespace-normal">{signal.scale_labels[score] ?? ""}</span></button>)}</div></div>
         <div className="grid gap-1.5"><span className={QUESTION_HINT_CLASS}>Occurrence time</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel="Event Feeling occurrence time" compact onChange={(value) => onChange({ error: null, time: value })} value={overlay.time} /><JournalEstimatedToggle checked={overlay.timeIsEstimated} label="Feeling occurrence time" onChange={(value) => onChange({ error: null, timeIsEstimated: value })} /></div></div>
+        <JournalTriggerAssociations associations={triggerAssociations} error={triggerLibraryError} isLoading={isLoadingTriggers} onChange={onChangeTriggerAssociations} onCreateTrigger={onCreateTrigger} onRetry={onRetryTriggerLoad} triggers={journalTriggers} />
         {overlay.error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{overlay.error}</p> : null}
         <div className="flex justify-end gap-1.5"><AdhdChip onClick={onClose} type="button">Skip</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">{overlay.draftKey ? "Update occurrence" : "Add occurrence"}</AdhdChip></div>
       </div>
@@ -456,13 +498,133 @@ function JournalEventOccurrenceOverlay({
   );
 }
 
+function JournalTriggerAssociations({
+  associations,
+  error,
+  isLoading,
+  onChange,
+  onCreateTrigger,
+  onRetry,
+  triggers,
+}: {
+  associations: readonly HealthJournalTriggerAssociationDraft[];
+  error: string | null;
+  isLoading: boolean;
+  onChange: (associations: HealthJournalTriggerAssociationDraft[]) => void;
+  onCreateTrigger?: (name: string) => Promise<HealthJournalTrigger | null>;
+  onRetry?: () => void;
+  triggers: readonly HealthJournalTrigger[];
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const searchRef = useRef<HTMLInputElement | null>(null);
+  const [query, setQuery] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const [isCreating, setIsCreating] = useState(false);
+  const [pickerError, setPickerError] = useState<string | null>(null);
+  const [highlightIndex, setHighlightIndex] = useState(0);
+  const activeTriggers = useMemo(() => {
+    const normalizedQuery = getHealthJournalTriggerNameIdentity(query);
+    return triggers.filter((trigger) => trigger.archived_at === null
+      && !associations.some((association) => association.trigger_id === trigger.id)
+      && (!normalizedQuery || getHealthJournalTriggerNameIdentity(trigger.name).includes(normalizedQuery)));
+  }, [associations, query, triggers]);
+  const exactActiveTrigger = triggers.find((trigger) => trigger.archived_at === null
+    && getHealthJournalTriggerNameIdentity(trigger.name) === getHealthJournalTriggerNameIdentity(query));
+  const createName = query.trim().replace(/\s+/g, " ");
+
+  useEffect(() => {
+    if (!isOpen) return;
+    searchRef.current?.focus();
+    function onPointerDown(event: PointerEvent) {
+      if (!rootRef.current?.contains(event.target as Node)) setIsOpen(false);
+    }
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [isOpen]);
+
+  function addTrigger(trigger: HealthJournalTrigger) {
+    if (associations.some((association) => association.trigger_id === trigger.id)) return;
+    onChange([...associations, { effect: "associated", previous_score: null, trigger_id: trigger.id }]);
+    setQuery("");
+    setIsOpen(false);
+    setPickerError(null);
+    requestAnimationFrame(() => rootRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
+  }
+
+  async function createTrigger() {
+    if (!createName || !onCreateTrigger || isCreating) return;
+    setIsCreating(true);
+    setPickerError(null);
+    try {
+      const trigger = await onCreateTrigger(createName);
+      if (trigger) addTrigger(trigger);
+      else setPickerError("Trigger was not created remotely. Review the Trigger Library message and retry.");
+    } catch (caught) {
+      setPickerError(caught instanceof Error ? caught.message : "Could not create Trigger.");
+    } finally {
+      setIsCreating(false);
+    }
+  }
+
+  function handleSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setIsOpen(false);
+      requestAnimationFrame(() => rootRef.current?.querySelector<HTMLButtonElement>("button")?.focus());
+      return;
+    }
+    if (event.key === "ArrowDown" && activeTriggers.length > 0) {
+      event.preventDefault();
+      setHighlightIndex((index) => (index + 1) % activeTriggers.length);
+    } else if (event.key === "ArrowUp" && activeTriggers.length > 0) {
+      event.preventDefault();
+      setHighlightIndex((index) => (index - 1 + activeTriggers.length) % activeTriggers.length);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      if (activeTriggers.length > 0) addTrigger(activeTriggers[highlightIndex] ?? activeTriggers[0]!);
+      else if (createName && !exactActiveTrigger) void createTrigger();
+    }
+  }
+
+  return <section aria-label="Triggers" className="grid gap-2 rounded-[0.8rem] border border-[#edf0fb] p-3 dark:border-white/10">
+    <div className="flex flex-wrap items-center justify-between gap-2"><span className={QUESTION_LABEL_CLASS}>Triggers</span><span className={QUESTION_HINT_CLASS}>Optional · tied to this Feeling occurrence</span></div>
+    {associations.map((association) => {
+      const trigger = triggers.find((candidate) => candidate.id === association.trigger_id);
+      const name = trigger?.name ?? "Archived Trigger";
+      return <div className="grid gap-2 rounded-[0.75rem] bg-[#f8f6ff] p-2 dark:bg-white/[0.04] sm:grid-cols-[minmax(0,1fr)_minmax(8rem,auto)_minmax(8rem,auto)_auto] sm:items-end" key={association.trigger_id}>
+        <div className="min-w-0 text-sm font-semibold text-[#26324f] dark:text-white">{name}{trigger?.archived_at ? <span className="ml-1 text-[10px] font-medium text-[#7d88a3]">Archived</span> : null}</div>
+        <label className="grid gap-1"><span className={QUESTION_HINT_CLASS}>Effect</span><select aria-label={`${name} effect`} className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChange(associations.map((candidate) => candidate.trigger_id === association.trigger_id ? { ...candidate, effect: event.target.value as HealthJournalTriggerAssociationDraft["effect"], previous_score: event.target.value === "associated" ? null : candidate.previous_score } : candidate))} value={association.effect}><option value="associated">Associated</option><option value="worsened">Worsened</option><option value="improved">Improved</option></select></label>
+        {association.effect !== "associated" ? <label className="grid gap-1"><span className={QUESTION_HINT_CLASS}>Previous score (optional)</span><select aria-label={`${name} previous score`} className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => onChange(associations.map((candidate) => candidate.trigger_id === association.trigger_id ? { ...candidate, previous_score: event.target.value === "" ? null : Number(event.target.value) } : candidate))} value={association.previous_score ?? ""}><option value="">Unknown / None</option>{Array.from({ length: 11 }, (_, score) => <option key={score} value={score}>{score}</option>)}</select></label> : <span className={`${QUESTION_HINT_CLASS} hidden sm:block`}>No previous score</span>}
+        <AdhdIconButton aria-label={`Remove ${name} Trigger`} onClick={() => onChange(associations.filter((candidate) => candidate.trigger_id !== association.trigger_id))} size="sm" tone="danger" variant="rowToolbar"><X aria-hidden="true" /></AdhdIconButton>
+      </div>;
+    })}
+    <div className="relative" ref={rootRef}>
+      <div className="flex flex-wrap gap-2"><AdhdChip aria-expanded={isOpen} onClick={() => { setPickerError(null); setIsOpen((open) => !open); }} type="button">+ Add Trigger</AdhdChip>{isLoading ? <span className={`${QUESTION_HINT_CLASS} self-center`}>Loading Trigger Library…</span> : null}</div>
+      {isOpen ? <div className="absolute inset-x-0 top-full z-40 mt-1 grid max-h-56 gap-1 overflow-y-auto rounded-[0.9rem] border border-[#e4deef] bg-white p-2 shadow-[var(--shadow-card)] dark:border-white/10 dark:bg-[#211c34]">
+        <input aria-label="Search Triggers" aria-controls="journal-trigger-picker-options" aria-activedescendant={activeTriggers.length ? `journal-trigger-option-${highlightIndex}` : undefined} className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => { setQuery(event.target.value); setHighlightIndex(0); setPickerError(null); }} onKeyDown={handleSearchKeyDown} placeholder="Search or create a Trigger" ref={searchRef} value={query} />
+        <div className="grid gap-1" id="journal-trigger-picker-options" role="listbox">
+          {activeTriggers.map((trigger, index) => <button aria-selected={index === highlightIndex} className={`min-h-9 rounded-[0.65rem] px-3 text-left text-sm font-semibold ${index === highlightIndex ? "bg-[#efe9ff] text-[#5d49c7] dark:bg-[#3a2b61] dark:text-[#e0d9ff]" : "text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"}`} id={`journal-trigger-option-${index}`} key={trigger.id} onClick={() => addTrigger(trigger)} onMouseDown={(event) => event.preventDefault()} role="option" type="button">{trigger.name}</button>)}
+          {activeTriggers.length === 0 && !createName ? <p className={`${QUESTION_HINT_CLASS} px-2 py-1`}>Search saved Triggers or enter a name to create one.</p> : null}
+        </div>
+        {createName && !exactActiveTrigger && onCreateTrigger ? <AdhdChip disabled={isCreating} onClick={() => { void createTrigger(); }} selected type="button">{isCreating ? "Creating remotely…" : `Create “${createName}”`}</AdhdChip> : null}
+        {pickerError || error ? <div><p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{pickerError ?? error}</p>{error && onRetry ? <AdhdChip className="mt-1" disabled={isLoading} onClick={onRetry} type="button">Retry Trigger Library</AdhdChip> : null}</div> : null}
+      </div> : null}
+    </div>
+  </section>;
+}
+
 export function hydrateJournalEventOccurrences(
   entry: { id: string } | null,
   symptomEntries: ReadonlyArray<{ id: string; journal_entry_id: string; symptom_id: string; logged_at: string; severity: number; note: string | null; time_is_estimated?: boolean }>,
   journalSignalOccurrences: ReadonlyArray<{ id: string; journal_entry_id: string; signal_id: string; occurred_at: string; score: number; note: string | null; time_is_estimated?: boolean }>,
   journalSignals: readonly HealthJournalSignal[],
+  triggerLinks: readonly HealthJournalTriggerLink[] = [],
 ) {
   if (!entry) return [];
+  const associationsFor = (kind: "symptom" | "journal_signal", occurrenceId: string) => triggerLinks
+    .filter((link) => kind === "symptom" ? link.symptom_occurrence_id === occurrenceId : link.journal_signal_occurrence_id === occurrenceId)
+    .map((link) => ({ effect: link.effect, previous_score: link.previous_score, trigger_id: link.trigger_id }));
   return [
     ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
       draftKey: occurrence.id,
@@ -473,6 +635,9 @@ export function hydrateJournalEventOccurrences(
       signalId: journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === occurrence.symptom_id)?.id ?? `canonical-symptom:${occurrence.symptom_id}`,
       time: timeInputFromTimestamp(occurrence.logged_at),
       timeIsEstimated: occurrence.time_is_estimated === true,
+      triggerAssociations: associationsFor("symptom", occurrence.id),
+      expectedTriggerAssociations: associationsFor("symptom", occurrence.id),
+      triggerAssociationsEdited: false,
     })),
     ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => ({
       draftKey: occurrence.id,
@@ -483,6 +648,9 @@ export function hydrateJournalEventOccurrences(
       signalId: occurrence.signal_id,
       time: timeInputFromTimestamp(occurrence.occurred_at),
       timeIsEstimated: occurrence.time_is_estimated === true,
+      triggerAssociations: associationsFor("journal_signal", occurrence.id),
+      expectedTriggerAssociations: associationsFor("journal_signal", occurrence.id),
+      triggerAssociationsEdited: false,
     })),
   ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt) || left.draftKey.localeCompare(right.draftKey));
 }
