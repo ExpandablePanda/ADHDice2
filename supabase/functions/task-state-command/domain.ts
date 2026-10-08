@@ -577,7 +577,14 @@ export function buildTrustedTaskStateCommand(input: {
     case "clear_outcome":
       return { ...base, type: "clear_outcome", logicalDate: intent.logical_date, occurrenceId: occurrence?.id ?? null, occurrenceKey: intent.occurrence_key ?? occurrence?.occurrence_key ?? null, scheduledDueOn: intent.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null, occurrence: occurrence ?? undefined };
     case "recalculate_history":
-      return { ...base, type: "recalculate_history", fromLogicalDate: intent.from_logical_date };
+      return {
+        ...base,
+        type: "recalculate_history",
+        fromLogicalDate: intent.from_logical_date,
+        // The browser supplies only the replay date. The current owned
+        // boundary is resolved from the trusted canonical read model.
+        scheduleBoundaryId: currentBoundary(readModel).id,
+      };
     case "clear_quota_balance":
       if ((readModel.task.repeat_frequency !== "per_week" && readModel.task.repeat_frequency !== "per_month")
         || readModel.task.repeat_quota_balance_enabled !== true) {

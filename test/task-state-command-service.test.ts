@@ -11,7 +11,7 @@ import {
 import { sha256Hex } from "../src/lib/task-state-canonical/digest.ts";
 import { buildCanonicalTaskStateEngineInput } from "../src/lib/task-state-canonical/engine-input.ts";
 import type { CanonicalTaskRow, CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
-import type { CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
+import type { CanonicalTaskHistoryFact, CanonicalTaskOccurrence, CanonicalTaskOccurrenceEffectiveOverride, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 import type { TaskQuotaPeriodFact, TaskStateHistoryRow } from "../src/lib/task-state-engine/types.ts";
 import { buildTaskEffectiveTimeline } from "../src/lib/task-state-engine/effective-timeline.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
@@ -208,6 +208,40 @@ function boundary(scheduleModel: CanonicalTaskScheduleBoundary["schedule_model"]
     revision: 1,
     created_at: "2026-08-10T12:00:00.000Z",
     updated_at: "2026-08-10T12:00:00.000Z",
+  };
+}
+
+function canonicalHistoryFact(
+  logicalDate: string,
+  outcome: CanonicalTaskHistoryFact["outcome"],
+  scheduleBoundaryId: string,
+): CanonicalTaskHistoryFact {
+  return {
+    id: `history-fact-${logicalDate}-${outcome}`,
+    user_id: "user-1",
+    entity_id: "task-1",
+    entity_kind: "parent",
+    logical_date: logicalDate,
+    outcome,
+    event_kind: "explicit_outcome",
+    occurrence_id: null,
+    scheduled_due_on: logicalDate,
+    effective_due_on: null,
+    schedule_boundary_id: scheduleBoundaryId,
+    recurrence_source_fingerprint: scheduleBoundaryId,
+    provenance_kind: "user",
+    actor_kind: "user",
+    actor_id: "user-1",
+    source: "task_state_command",
+    logical_day_settings_revision: 3,
+    timezone: "America/New_York",
+    day_start_time: "06:00",
+    command_id: null,
+    idempotence_identity: `history-fact:${logicalDate}:${outcome}`,
+    source_legacy_history_id: null,
+    revision: 1,
+    created_at: `${logicalDate}T12:00:00.000Z`,
+    updated_at: `${logicalDate}T12:00:00.000Z`,
   };
 }
 
@@ -2360,6 +2394,7 @@ test("recalculate_history plans only post-boundary stale Missed deletion and Cal
     type: "recalculate_history",
     commandId: "00000000-0000-4000-8000-000000000111",
     fromLogicalDate: "2026-09-01",
+    scheduleBoundaryId: "boundary-current",
     logicalDay: { ...logicalDay, logicalDate: "2026-09-10", identity: "user-1:2026-09-10:America/New_York:06:00:3" },
   }));
   const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
@@ -2405,6 +2440,7 @@ test("recalculate_history rejects quota recurrence before producing a mutation p
         type: "recalculate_history",
         commandId: `00000000-0000-4000-8000-00000000011${repeatFrequency === "per_week" ? "2" : "3"}`,
         fromLogicalDate: "2026-08-01",
+        scheduleBoundaryId: "boundary-current",
       })),
       (error: unknown) => error instanceof Error
         && "code" in error
@@ -2426,8 +2462,7 @@ test("recalculate_history materializes a newly required Missed fact through the 
       activeStatus: "missed",
       dueOn: "2026-09-02",
       recurrence: { kind: "rolling", intervalDays: 5 },
-      canonical_schedule_boundary: { id: "boundary-current" },
-    } as typeof planningState.engineInput.task & { canonical_schedule_boundary: { id: string } },
+    },
     history: [
       doneHistory("2026-09-02"),
       ...["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"].map((logicalDate) => missedHistory(logicalDate)),
@@ -2437,6 +2472,7 @@ test("recalculate_history materializes a newly required Missed fact through the 
     type: "recalculate_history",
     commandId: "00000000-0000-4000-8000-000000000114",
     fromLogicalDate: "2026-09-01",
+    scheduleBoundaryId: "boundary-current",
     logicalDay: { ...logicalDay, logicalDate: "2026-09-10", identity: "user-1:2026-09-10:America/New_York:06:00:3" },
   }));
 
@@ -2448,4 +2484,72 @@ test("recalculate_history materializes a newly required Missed fact through the 
   ]);
   assert.deepEqual(plan.normalizedResult.automaticHistoryFacts.map((fact) => [fact.logical_date, fact.schedule_boundary_id]), [["2026-09-07", "boundary-current"]]);
   assert.deepEqual(plan.normalizedResult.recalculateCalendarOverrideIds, []);
+});
+
+test("runtime-shaped recalculation carries the current read-model boundary without decorating the engine snapshot", () => {
+  const currentBoundary = {
+    ...boundary("rolling"),
+    id: "boundary-runtime-current",
+    effective_from_logical_date: "2026-09-01",
+    boundary_sequence: 7,
+    repeat_interval: 5,
+    anchor_date: "2026-09-02",
+  };
+  const runtimeTask = task({
+    status: "missed",
+    due_on: "2026-09-07",
+    repeat_frequency: "daily",
+    repeat_interval: 5,
+  });
+  const readModel = {
+    ...trustedReadModel(runtimeTask, currentBoundary),
+    historyFacts: [
+      canonicalHistoryFact("2026-09-02", "done", currentBoundary.id),
+      ...["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"]
+        .map((logicalDate) => canonicalHistoryFact(logicalDate, "missed", currentBoundary.id)),
+    ],
+  } as unknown as CanonicalTaskStateReadModel;
+  const context = {
+    now: "2026-09-10T14:00:00.000Z",
+    timezone: "America/New_York",
+    logicalDayRollover: "06:00",
+  };
+  const engineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+
+  assert.equal("canonical_schedule_boundary" in engineInput.task, false);
+
+  const intent = {
+    type: "recalculate_history" as const,
+    task_id: "task-1",
+    replay_identity: "recalculate-history-runtime-shaped",
+    expected_revision: runtimeTask.canonical_revision ?? undefined,
+    from_logical_date: "2026-09-01",
+  };
+  const command = buildTrustedTaskStateCommand({
+    intent,
+    userId: "user-1",
+    readModel,
+    logicalDay: {
+      identity: "user-1:2026-09-10:America/New_York:06:00:3",
+      logicalDate: "2026-09-10",
+      timezone: "America/New_York",
+      dayStartTime: "06:00",
+      settingsRevision: 3,
+    },
+    now: context.now,
+  });
+  assert.equal(command.scheduleBoundaryId, currentBoundary.id);
+
+  const plan = planTaskStateCommand({ task: readModel.task, engineInput }, command);
+  const serialized = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+  const automaticFacts = serialized.automatic_history_facts as Array<Record<string, unknown>>;
+
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-09-07");
+  assert.equal(plan.normalizedResult.compatibilityProjection.status, "missed");
+  assert.deepEqual(plan.normalizedResult.automaticHistoryFacts.map((fact) => [fact.logical_date, fact.schedule_boundary_id]), [
+    ["2026-09-07", currentBoundary.id],
+  ]);
+  assert.deepEqual(automaticFacts.map((fact) => [fact.logical_date, fact.schedule_boundary_id]), [
+    ["2026-09-07", currentBoundary.id],
+  ]);
 });

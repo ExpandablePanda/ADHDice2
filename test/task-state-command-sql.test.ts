@@ -140,6 +140,21 @@ test("canonical occurrence schema enforces one row per Task/date and derives the
   assert.match(schema, /resolution_state in \('unresolved', 'resolved', 'superseded'\)/i);
 });
 
+test("superseded occurrences may release their History foreign key while preserving resolution facts", () => {
+  assert.match(
+    schema,
+    /constraint adhdice_task_occurrences_history_fkey[\s\S]*foreign key \(user_id, resolved_history_id\)[\s\S]*on delete restrict/i,
+  );
+  assert.match(
+    schema,
+    /constraint adhdice_task_occurrences_resolution_check[\s\S]*resolution_state in \('resolved', 'superseded'\)[\s\S]*resolved_logical_date is not null[\s\S]*resolved_outcome is not null/i,
+  );
+  assert.match(
+    recalculateHistoryMigration,
+    /set resolution_state = 'superseded',\s*resolved_history_id = null,\s*revision = occurrence\.revision \+ 1/i,
+  );
+});
+
 test("Calendar override commands replace the active row without deleting audit history", () => {
   const overrideBranchStart = sql.indexOf("if v_calendar_override <> '{}'::jsonb then");
   const entitlementStart = sql.indexOf("-- The entitlement is canonical", overrideBranchStart);
@@ -379,7 +394,7 @@ test("7.16.111 transforms the current live RPC with a bounded, fail-closed recal
   assert.match(transformed, /Historical recalculation for quota recurrence is not supported yet\./);
   assert.match(transformed, /outcome <> 'missed'/);
   assert.match(transformed, /Historical recalculation may retire only owned Missed History facts/);
-  assert.match(transformed, /set resolution_state = 'superseded'/);
+  assert.match(transformed, /set resolution_state = 'superseded',\s*resolved_history_id = null/);
   assert.match(transformed, /set is_active = false/);
   assert.match(transformed, /'recalculate_history_delete_ids', v_recalculate_history_delete_ids/);
   assert.match(transformed, /coalesce\(v_recalculate_history_delete_ids, '\[\]'::jsonb\)/);
@@ -392,6 +407,11 @@ test("7.16.111 transforms the current live RPC with a bounded, fail-closed recal
   );
   assert.ok(recalculateBlockStart >= 0);
   assert.ok(automaticBlockStart > recalculateBlockStart);
+  const historyDeleteIndex = transformed.indexOf("    delete from public.adhdice_task_history_facts fact", recalculateBlockStart);
+  assert.ok(historyDeleteIndex > recalculateBlockStart);
+  const supersedeBlock = transformed.slice(recalculateBlockStart, historyDeleteIndex);
+  assert.match(supersedeBlock, /set resolution_state = 'superseded',\s*resolved_history_id = null/);
+  assert.doesNotMatch(supersedeBlock, /resolved_logical_date\s*=\s*null|resolved_outcome\s*=\s*null/);
   assert.match(
     transformed.slice(recalculateBlockStart, automaticBlockStart),
     /delete from public\.adhdice_task_history_facts fact/,
@@ -403,6 +423,7 @@ test("7.16.111 transforms the current live RPC with a bounded, fail-closed recal
   assert.match(transformed, /Historical recalculation cannot retire a History fact with a reward entitlement/);
   assert.match(transformed, /Historical recalculation Missed facts require past, owned, current schedule evidence/);
   assert.match(transformed, /Final Achievement evaluation failed/);
+  assert.match(recalculateHistoryMigration, /position\(\$assert\$resolved_history_id = null,\$assert\$ in definition\) = 0/);
   assert.match(recalculateHistoryMigration, /execute definition;/);
 
   for (const delimiter of ["$needle$", "$replacement$", "$assert$", "$rpc$"]) {

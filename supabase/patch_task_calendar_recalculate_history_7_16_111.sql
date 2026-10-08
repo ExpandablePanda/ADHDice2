@@ -36,6 +36,7 @@ begin
     $replacement$  if v_recalculate_history_delete_ids <> '[]'::jsonb then
     update public.adhdice_task_occurrences occurrence
        set resolution_state = 'superseded',
+           resolved_history_id = null,
            revision = occurrence.revision + 1,
            updated_at = now()
      where occurrence.user_id = p_user_id
@@ -291,6 +292,7 @@ begin
      or position($assert$Historical recalculation may retire only owned Missed History facts from its replay date.$assert$ in definition) = 0
      or position($assert$Historical recalculation may retire only active owned Calendar overrides from its replay date.$assert$ in definition) = 0
      or position($assert$set resolution_state = 'superseded',$assert$ in definition) = 0
+     or position($assert$resolved_history_id = null,$assert$ in definition) = 0
      or position($assert$set is_active = false,$assert$ in definition) = 0
      or position($assert$'recalculate_history_delete_ids', v_recalculate_history_delete_ids$assert$ in definition) = 0 then
     raise exception 'Could not patch the canonical Task State command RPC for bounded Calendar History recalculation.';

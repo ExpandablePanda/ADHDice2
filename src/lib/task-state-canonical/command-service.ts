@@ -145,6 +145,8 @@ export type CanonicalRolloverCommand = CanonicalTaskStateCommandBase & {
 export type CanonicalRecalculateHistoryCommand = CanonicalTaskStateCommandBase & {
   type: "recalculate_history";
   fromLogicalDate: string;
+  /** Trusted server-owned boundary used for newly materialized replay facts. */
+  scheduleBoundaryId: string;
 };
 
 export type CanonicalTaskStateCommand =
@@ -1185,12 +1187,9 @@ export function planTaskStateCommand(
       recalculateHistoryDeleteIds = originalMissedRows
         .filter((row) => !replayedMissedDates.has(row.logicalDate))
         .map((row) => row.id);
-      const scheduleBoundaryId = (
-        state.engineInput?.task as TaskStateEngineInput["task"] & { canonical_schedule_boundary?: { id?: string | null } }
-      ).canonical_schedule_boundary?.id ?? null;
       automaticHistoryFacts = replayedAutomaticMissedRows
         .filter((row) => !existingMissedDates.has(row.logicalDate))
-        .map((row) => automaticHistoryFactFor(command, row, scheduleBoundaryId));
+        .map((row) => automaticHistoryFactFor(command, row, input.scheduleBoundaryId));
       recalculateCalendarOverrideIds = (state.engineInput?.calendarOverrides ?? [])
         .filter((override) => override.logicalDate >= fromLogicalDate)
         .map((override) => override.id);

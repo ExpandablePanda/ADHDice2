@@ -899,6 +899,12 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     activeStatus = task.activeStatus;
   } else if (completed) {
     activeStatus = "complete";
+  } else if (recomputeReplay) {
+    // Explicit historical recalculation asks the engine to rebuild its own
+    // current state. The replayed timeline is authoritative for this path;
+    // pre-replay cursor/Active Status flags may describe the stale state that
+    // the recalculation is correcting.
+    activeStatus = replayTimeline.activeStatus;
   } else if (task.activeStatus === "in_progress" && task.activeStatusLogicalDate === today && !currentRecurrenceRow) {
     activeStatus = "in_progress";
   } else if (

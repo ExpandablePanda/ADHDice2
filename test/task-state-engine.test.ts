@@ -84,11 +84,85 @@ test("recompute replays the current rolling cadence, preserves Done, and materia
   }
   assert.equal(result.calendar["2026-09-07"], "missed");
   assert.equal(result.nextDueDate, "2026-09-07");
+  assert.equal(result.activeStatus, "missed");
   assert.deepEqual(result.timeline.automaticHistoryRows?.map((row) => row.logicalDate), ["2026-09-07"]);
   assert.deepEqual(result.proposedHistoryChanges.filter((change) => change.type === "insert").map((change) => change.row.logicalDate), ["2026-09-07"]);
   assert.deepEqual(refreshedResult.calendar, result.calendar, "refresh/read reconstruction remains deterministic");
   assert.equal(refreshedResult.nextDueDate, result.nextDueDate);
   assert.deepEqual(refreshedResult.timeline.automaticHistoryRows?.map((row) => row.logicalDate), ["2026-09-07"]);
+});
+
+test("recompute derives Active Status from the replayed current state in both directions", () => {
+  const replayedFuture = evaluateTaskState(input({
+    now: "2026-09-05T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-08",
+    task: task({
+      dueOn: "2026-09-02",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      activeStatus: "missed",
+    }),
+    history: [history("2026-09-02", "done", {
+      occurrenceDueOn: "2026-09-02",
+      occurrenceIdentity: "task-state:task-1:2026-09-02",
+    })],
+    action: { type: "recompute", fromLogicalDate: "2026-09-02" },
+  }));
+
+  assert.equal(replayedFuture.nextDueDate, "2026-09-07");
+  assert.equal(replayedFuture.activeStatus, "not_due");
+  assert.equal(replayedFuture.timeline.activeStatus, "not_due");
+
+  const replayedOverdue = evaluateTaskState(input({
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: task({
+      dueOn: "2026-09-12",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      activeStatus: "not_due",
+    }),
+    history: [history("2026-09-02", "done", {
+      occurrenceDueOn: "2026-09-02",
+      occurrenceIdentity: "task-state:task-1:2026-09-02",
+    })],
+    action: { type: "recompute", fromLogicalDate: "2026-09-02" },
+  }));
+
+  assert.equal(replayedOverdue.nextDueDate, "2026-09-07");
+  assert.equal(replayedOverdue.activeStatus, "missed");
+  assert.equal(replayedOverdue.timeline.activeStatus, "missed");
+});
+
+test("recompute preserves a live current-day workflow from the replayed timeline", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: task({
+      dueOn: "2026-09-07",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      activeStatus: "missed",
+      activeStatusLogicalDate: "2026-09-10",
+      activeOccurrenceDueOn: "2026-09-10",
+    }),
+    history: [history("2026-09-02", "done", {
+      occurrenceDueOn: "2026-09-02",
+      occurrenceIdentity: "task-state:task-1:2026-09-02",
+    })],
+    workflow: {
+      state: "in_progress",
+      logicalDate: "2026-09-10",
+      occurrenceId: "workflow-occurrence",
+      commandId: "workflow-command",
+      revision: 2,
+    },
+    action: { type: "recompute", fromLogicalDate: "2026-09-02" },
+  }));
+
+  assert.equal(result.activeStatus, "in_progress");
+  assert.equal(result.timeline.activeStatus, "in_progress");
+  assert.equal(result.timeline.days["2026-09-10"]?.state, "in_progress");
 });
 
 test("recompute is range-bounded and preserves every protected factual outcome", () => {

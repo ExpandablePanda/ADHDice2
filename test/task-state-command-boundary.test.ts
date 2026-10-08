@@ -192,19 +192,24 @@ test("recalculate_history accepts only its bounded date and keeps planner-owned 
 
   assert.deepEqual(validateTaskStateCommandIntent(intent), intent);
   assert.equal(validateTaskStateCommandIntent({ ...intent, recalculate_history_delete_ids: ["history-1"] }), null);
+  assert.equal(validateTaskStateCommandIntent({ ...intent, schedule_boundary_id: "attacker-boundary" }), null);
   assert.equal(validateTaskStateCommandIntent({ ...intent, from_logical_date: "2026-08-32" }), null);
 
+  const currentBoundary = delayBoundary({ id: "boundary-server-current", boundary_sequence: 4 });
+  const trustedReadModel = { ...readModel, scheduleBoundaries: [currentBoundary] } as CanonicalTaskStateReadModel;
   const command = buildTrustedTaskStateCommand({
     intent,
     userId: "owner-1",
-    readModel,
+    readModel: trustedReadModel,
     logicalDay,
     now: "2026-08-10T12:00:00.000Z",
   });
   assert.equal(command.type, "recalculate_history");
   assert.equal(command.fromLogicalDate, intent.from_logical_date);
+  assert.equal(command.scheduleBoundaryId, currentBoundary.id);
   const normalized = normalizeTaskStateCommand(command);
   assert.equal(normalized.commandType, "recalculate_history");
+  assert.equal("scheduleBoundaryId" in normalized.payload, false);
   const rpcPayload = serializeCanonicalTaskStateCommandForRpc({
     command: normalized,
     normalizedResult: {
