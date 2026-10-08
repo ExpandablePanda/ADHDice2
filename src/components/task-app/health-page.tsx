@@ -241,6 +241,7 @@ type HealthPageProps = {
   journalTriggerLinks: HealthJournalTriggerLink[];
   journalTriggerDataError: string | null;
   isLoadingJournalTriggers: boolean;
+  hasLoadedJournalTriggerData: boolean;
   loadJournalTriggerData: () => Promise<boolean>;
   createJournalTrigger: (name: string) => Promise<HealthJournalTrigger | null>;
   symptoms: HealthSymptom[];
@@ -1194,6 +1195,7 @@ export function HealthPage({
   journalTriggerLinks,
   journalTriggerDataError,
   isLoadingJournalTriggers,
+  hasLoadedJournalTriggerData,
   loadJournalTriggerData,
   createJournalTrigger,
   symptoms,
@@ -1294,6 +1296,11 @@ export function HealthPage({
   workoutSets,
 }: HealthPageProps) {
   const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
+  const journalTriggerLoaderRef = useRef(loadJournalTriggerData);
+  journalTriggerLoaderRef.current = loadJournalTriggerData;
+  useEffect(() => {
+    if (activeTab === "Journal") void journalTriggerLoaderRef.current();
+  }, [activeTab, profile?.user_id]);
   const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
   const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -3798,6 +3805,9 @@ export function HealthPage({
             {visibleJournalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? `${visibleJournalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
               <div className="space-y-4">
                 <SectionMiniTitle title="Journal History" />
+                {isLoadingJournalTriggers ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Loading Journal Trigger associations…</p> : null}
+                {journalTriggerDataError ? <div className="flex flex-wrap items-center gap-2 rounded-[0.9rem] border border-[#f2cbd4] bg-[#fff7f8] px-3 py-2 dark:border-[#6f3341] dark:bg-[#351d26]"><p className="min-w-0 flex-1 text-xs font-semibold text-[#a33f58] dark:text-[#ffb0c1]" role="alert">Could not load Journal Trigger associations: {journalTriggerDataError}</p><AdhdChip onClick={() => { void loadJournalTriggerData(); }} type="button">Retry</AdhdChip></div> : null}
+                {!hasLoadedJournalTriggerData && !isLoadingJournalTriggers && !journalTriggerDataError ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Journal Trigger associations have not loaded yet.</p> : null}
                 {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => {
                   const isJournalHistoryDateCollapsed = collapsedJournalHistoryDates.has(group.date);
                   return (

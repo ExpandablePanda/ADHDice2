@@ -175,14 +175,7 @@ export function JournalCheckInForm({
   const hydratedSelectedEntryKeyRef = useRef<string | undefined>(undefined);
   const hydratedTargetIdentityRef = useRef<string | null>(null);
   const triggerEditorDirtyEntryIdRef = useRef<string | null>(null);
-  const triggerLoadAttemptedRef = useRef(false);
   const consumedJournalEntryRequestIdRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    if (triggerLoadAttemptedRef.current) return;
-    triggerLoadAttemptedRef.current = true;
-    void loadJournalTriggerData();
-  }, [loadJournalTriggerData]);
 
   useEffect(() => {
     const nextSelectedEntryId = selectedJournalEntry?.id ?? null;

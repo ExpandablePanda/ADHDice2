@@ -457,7 +457,13 @@ export function useHealth(
   const [journalTriggerLinks, setJournalTriggerLinks] = useState<HealthJournalTriggerLink[]>([]);
   const [journalTriggerDataError, setJournalTriggerDataError] = useState<string | null>(null);
   const [isLoadingJournalTriggers, setIsLoadingJournalTriggers] = useState(false);
+  const [hasLoadedJournalTriggerData, setHasLoadedJournalTriggerData] = useState(false);
+  const [journalTriggerDataOwnerId, setJournalTriggerDataOwnerId] = useState<string | null>(null);
+  const [journalTriggerRequestOwnerId, setJournalTriggerRequestOwnerId] = useState<string | null>(null);
   const journalTriggerOwnerRef = useRef<string | null>(null);
+  const journalTriggerLoadedOwnerRef = useRef<string | null>(null);
+  const journalTriggerLoadGenerationRef = useRef(0);
+  const journalTriggerLoadInFlightRef = useRef<{ client: SupabaseClient; promise: Promise<boolean>; userId: string } | null>(null);
   const [mealEntries, setMealEntries] = useState<HealthMealEntry[]>([]);
   const [mealPlanEntries, setMealPlanEntries] = useState<HealthMealPlanEntry[]>([]);
   const [favorites, setFavorites] = useState<HealthFoodLibraryItem[]>([]);
@@ -501,10 +507,12 @@ export function useHealth(
       healthRemoteAuthorityRef.current = null;
     }
     healthOperationGenerationRef.current += 1;
+    journalTriggerLoadGenerationRef.current += 1;
     healthOwnerRef.current = { active, userId };
     healthFoodMutationRevisionRef.current = 0;
     return () => {
       healthOperationGenerationRef.current += 1;
+      journalTriggerLoadGenerationRef.current += 1;
       healthOwnerRef.current = { active: false, userId: null };
     };
   }, [active, client, userId]);
@@ -805,7 +813,12 @@ export function useHealth(
       setJournalTriggerLinks([]);
       setJournalTriggerDataError(null);
       setIsLoadingJournalTriggers(false);
+      setHasLoadedJournalTriggerData(false);
+      setJournalTriggerDataOwnerId(null);
+      setJournalTriggerRequestOwnerId(null);
       journalTriggerOwnerRef.current = null;
+      journalTriggerLoadedOwnerRef.current = null;
+      journalTriggerLoadInFlightRef.current = null;
       setMealEntries([]);
       setMealPlanEntries([]);
       setFavorites([]);
@@ -838,7 +851,10 @@ export function useHealth(
       setJournalTriggers([]);
       setJournalTriggerLinks([]);
       setJournalTriggerDataError(null);
-      setIsLoadingJournalTriggers(false);
+      setHasLoadedJournalTriggerData(false);
+      setJournalTriggerDataOwnerId(null);
+      if (journalTriggerLoadInFlightRef.current?.userId !== userId) setIsLoadingJournalTriggers(false);
+      journalTriggerLoadedOwnerRef.current = null;
     }
 
     healthOperationGenerationRef.current += 1;
@@ -1514,33 +1530,54 @@ export function useHealth(
     return true;
   }
 
-  async function loadJournalTriggerData() {
-    if (!userId || !client) {
+  function loadJournalTriggerData() {
+    if (!userId) return Promise.resolve(false);
+    if (!active || !client) {
+      setJournalTriggerRequestOwnerId(userId);
       setJournalTriggerDataError("Journal Triggers require an available remote connection. No remote Trigger data was loaded.");
-      return false;
+      setIsLoadingJournalTriggers(false);
+      return Promise.resolve(false);
     }
-    const operation = captureOperation();
-    if (!operation) return false;
+    if (journalTriggerLoadedOwnerRef.current === userId) return Promise.resolve(true);
+    const existingLoad = journalTriggerLoadInFlightRef.current;
+    if (existingLoad?.userId === userId && existingLoad.client === client) return existingLoad.promise;
+
+    const loadGeneration = journalTriggerLoadGenerationRef.current;
+    const isCurrentTriggerLoad = () => active
+      && healthOwnerRef.current.active
+      && healthOwnerRef.current.userId === userId
+      && journalTriggerLoadGenerationRef.current === loadGeneration;
     setIsLoadingJournalTriggers(true);
     setJournalTriggerDataError(null);
-    try {
-      const [nextTriggers, nextLinks] = await Promise.all([
-        listHealthJournalTriggers(userId, client),
-        readHealthJournalTriggerLinks(userId, client),
-      ]);
-      if (!isCurrentOperation(operation)) return false;
-      setJournalTriggers(nextTriggers);
-      setJournalTriggerLinks(nextLinks);
-      journalTriggerOwnerRef.current = userId;
-      return true;
-    } catch (error) {
-      if (!isCurrentOperation(operation)) return false;
-      const message = error instanceof Error ? error.message : "Could not load Journal Triggers.";
-      setJournalTriggerDataError(message);
-      return false;
-    } finally {
-      if (isCurrentOperation(operation)) setIsLoadingJournalTriggers(false);
-    }
+    setJournalTriggerRequestOwnerId(userId);
+    const promise = (async () => {
+      try {
+        const [nextTriggers, nextLinks] = await Promise.all([
+          listHealthJournalTriggers(userId, client),
+          readHealthJournalTriggerLinks(userId, client),
+        ]);
+        if (!isCurrentTriggerLoad()) return false;
+        setJournalTriggers(nextTriggers);
+        setJournalTriggerLinks(nextLinks);
+        setHasLoadedJournalTriggerData(true);
+        setJournalTriggerDataOwnerId(userId);
+        journalTriggerLoadedOwnerRef.current = userId;
+        journalTriggerOwnerRef.current = userId;
+        return true;
+      } catch (error) {
+        if (!isCurrentTriggerLoad()) return false;
+        const message = error instanceof Error ? error.message : "Could not load Journal Triggers.";
+        setJournalTriggerDataError(message);
+        return false;
+      } finally {
+        if (isCurrentTriggerLoad()) setIsLoadingJournalTriggers(false);
+      }
+    })();
+    journalTriggerLoadInFlightRef.current = { client, promise, userId };
+    void promise.then(() => {
+      if (journalTriggerLoadInFlightRef.current?.promise === promise) journalTriggerLoadInFlightRef.current = null;
+    });
+    return promise;
   }
 
   async function createJournalTrigger(value: string) {
@@ -4674,13 +4711,17 @@ export function useHealth(
     return true;
   }
 
+  const hasCurrentJournalTriggerData = Boolean(userId && journalTriggerDataOwnerId === userId);
+  const hasCurrentJournalTriggerRequest = Boolean(userId && journalTriggerRequestOwnerId === userId);
+
   return {
     awards,
     checkIns,
-    journalTriggers,
-    journalTriggerLinks,
-    journalTriggerDataError,
-    isLoadingJournalTriggers,
+    journalTriggers: hasCurrentJournalTriggerData ? journalTriggers : [],
+    journalTriggerLinks: hasCurrentJournalTriggerData ? journalTriggerLinks : [],
+    journalTriggerDataError: hasCurrentJournalTriggerRequest ? journalTriggerDataError : null,
+    isLoadingJournalTriggers: hasCurrentJournalTriggerRequest && isLoadingJournalTriggers,
+    hasLoadedJournalTriggerData: hasCurrentJournalTriggerData && hasLoadedJournalTriggerData,
     loadJournalTriggerData,
     createJournalTrigger,
     journalSignals,

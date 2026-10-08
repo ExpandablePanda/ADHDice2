@@ -1262,6 +1262,7 @@ export function TaskApp() {
     journalTriggerLinks: healthJournalTriggerLinks,
     journalTriggerDataError: healthJournalTriggerDataError,
     isLoadingJournalTriggers: isLoadingHealthJournalTriggers,
+    hasLoadedJournalTriggerData: hasLoadedHealthJournalTriggerData,
     loadJournalTriggerData: loadHealthJournalTriggerData,
     createJournalTrigger: createHealthJournalTrigger,
     journalSignals: healthJournalSignals,
@@ -8953,6 +8954,7 @@ export function TaskApp() {
             journalTriggerLinks={healthJournalTriggerLinks}
             journalTriggerDataError={healthJournalTriggerDataError}
             isLoadingJournalTriggers={isLoadingHealthJournalTriggers}
+            hasLoadedJournalTriggerData={hasLoadedHealthJournalTriggerData}
             loadJournalTriggerData={loadHealthJournalTriggerData}
             createJournalTrigger={createHealthJournalTrigger}
             saveJournalEntry={saveJournalEntry}

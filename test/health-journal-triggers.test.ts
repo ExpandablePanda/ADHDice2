@@ -267,6 +267,20 @@ test("occurrence hydration and History map associations by persisted occurrence 
   assert.match(replacementMigration, /where link\.user_id = v_user_id[\s\S]*?link\.journal_signal_occurrence_id = v_occurrence_id/);
 });
 
+test("Journal page loads Trigger data lazily once per owner and exposes History loading and retry", () => {
+  assert.match(healthPage, /if \(activeTab === "Journal"\) void journalTriggerLoaderRef\.current\(\)/);
+  assert.doesNotMatch(journalForm, /triggerLoadAttemptedRef|void loadJournalTriggerData\(\);\s*\n\s*\}, \[loadJournalTriggerData\]/);
+  assert.match(journalHook, /journalTriggerLoadInFlightRef/);
+  assert.match(journalHook, /journalTriggerLoadedOwnerRef\.current === userId/);
+  assert.match(journalHook, /Promise\.all\(\[[\s\S]*?listHealthJournalTriggers\(userId, client\)[\s\S]*?readHealthJournalTriggerLinks\(userId, client\)/);
+  assert.match(journalHook, /journalTriggerLoadGenerationRef\.current === loadGeneration/);
+  assert.match(journalHook, /setHasLoadedJournalTriggerData\(true\)/);
+  assert.match(healthPage, /Loading Journal Trigger associations/);
+  assert.match(healthPage, /Could not load Journal Trigger associations:[\s\S]*?<AdhdChip onClick=\{\(\) => \{ void loadJournalTriggerData\(\); \}\} type="button">Retry/);
+  assert.match(journalForm, /if \(triggerEditorDirtyEntryIdRef\.current === targetIdentity && hydratedTargetIdentityRef\.current === targetIdentity\) return/);
+  assert.match(persistence, /\.order\("archived_at", \{ ascending: true, nullsFirst: true \}\)/);
+});
+
 test("production overlay preserves scored hashtags and exposes archived historical Triggers", () => {
   assert.match(eventCapture, /const scoredTag = `#\$\{signalName\} \$\{scoreLabel\} `/);
   assert.match(eventCapture, /trigger\.archived_at === null/);

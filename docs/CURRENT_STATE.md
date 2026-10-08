@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.118`.
+- Current working app version: `7.16.119`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.119 Journal Trigger History loading
+
+Opening Health → Journal lazily loads remote Trigger definitions and
+associations in every Journal workspace mode. The `useHealth` hook remains the
+data authority, coalesces concurrent loads per user and remote client, and
+retains loaded data while switching modes. History shows loading and recoverable
+error/retry states instead of presenting unloaded associations as absent.
+Owner-generation checks reject stale results, and the active Journal editor
+continues to protect unsaved Trigger edits while loaded associations arrive.
+The read remains lazy to Journal access; no startup hydration or persistence
+contract changed. Focused source-contract tests cover the production wiring;
+browser behavior remains pending manual QA.
 
 ## 2026-10-08 7.16.117 Journal Trigger link replacement API
 
