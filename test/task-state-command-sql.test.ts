@@ -4,6 +4,8 @@ import test from "node:test";
 
 const sql = readFileSync(new URL("../supabase/add_task_state_command_rpc.sql", import.meta.url), "utf8");
 const schema = readFileSync(new URL("../supabase/add_task_state_canonical_schema.sql", import.meta.url), "utf8");
+const canonicalTypes = readFileSync(new URL("../src/lib/task-state-canonical/types.ts", import.meta.url), "utf8");
+const commandTypeMigration = readFileSync(new URL("../supabase/patch_task_command_recalculate_history_check_7_16_113.sql", import.meta.url), "utf8");
 const delayMigration = readFileSync(new URL("../supabase/patch_task_state_command_delay_occurrence_7_7_47.sql", import.meta.url), "utf8");
 const rolloverMigration = readFileSync(new URL("../supabase/patch_task_state_command_rollover_7_9_20.sql", import.meta.url), "utf8");
 const autoMissedMigration = readFileSync(new URL("../supabase/patch_task_state_auto_missed_history_copy_7_9_31.sql", import.meta.url), "utf8");
@@ -34,6 +36,36 @@ const requiredCalendarAuthorityAssertions = [
 
 const legacyAutomaticHistoryGuard = /if\s+v_command_type\s*<>\s*'reconcile_rollover'\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
 const scheduleAwareAutomaticHistoryGuard = /if\s+v_command_type\s+not\s+in\s*\(\s*'reconcile_rollover'\s*,\s*'set_due_date'\s*,\s*'set_repeat'\s*\)\s+and\s+v_automatic_history_facts\s*<>\s*'\[\]'\s*::\s*jsonb\s+then\s+raise\s+exception\s+'Only trusted schedule replay or rollover may create automatic History facts\.'\s+using\s+errcode\s*=\s*'42501'\s*;\s*end\s+if\s*;/gi;
+
+test("canonical command operation SQL schema accepts exactly the canonical command types", () => {
+  const canonicalUnion = canonicalTypes.match(/export type CanonicalCommandType\s*=([\s\S]*?);/)?.[1];
+  const schemaConstraint = schema.match(/command_type\s+text\s+not\s+null\s+check\s*\(\s*command_type\s+in\s*\(([\s\S]*?)\)\s*\)/i)?.[1];
+  const migrationConstraint = commandTypeMigration.match(/add\s+constraint\s+adhdice_task_command_operations_command_type_check\s+check\s*\(\s*command_type\s+in\s*\(([\s\S]*?)\)\s*\)/i)?.[1];
+  const guardedPriorList = commandTypeMigration.match(/expected_command_types\s+constant\s+text\[\]\s*:=\s*array\[([\s\S]*?)\]/i)?.[1];
+  assert.ok(canonicalUnion, "canonical command type union must be present");
+  assert.ok(schemaConstraint, "canonical command operation CHECK constraint must be present");
+  assert.ok(migrationConstraint, "forward migration CHECK constraint must be present");
+  assert.ok(guardedPriorList, "forward migration must declare the expected prior command types");
+
+  const canonicalValues = Array.from(canonicalUnion.matchAll(/"([a-z_]+)"/g), ([, value]) => value).sort();
+  const schemaValues = Array.from(schemaConstraint.matchAll(/'([^']+)'/g), ([, value]) => value).sort();
+  const migrationValues = Array.from(migrationConstraint.matchAll(/'([^']+)'/g), ([, value]) => value).sort();
+  const guardedPriorValues = Array.from(guardedPriorList.matchAll(/'([^']+)'/g), ([, value]) => value).sort();
+  assert.deepEqual(schemaValues, canonicalValues);
+  assert.deepEqual(migrationValues, canonicalValues);
+  assert.deepEqual(guardedPriorValues, canonicalValues.filter((value) => value !== "recalculate_history"));
+  assert.ok(schemaValues.includes("recalculate_history"));
+});
+
+test("7.16.113 replaces only the expected command type CHECK constraint", () => {
+  assert.match(commandTypeMigration, /\bbegin;/i);
+  assert.match(commandTypeMigration, /commit;\s*$/i);
+  assert.match(commandTypeMigration, /constraint_definition\s+!~\*?[\s\S]*raise exception/i);
+  assert.match(commandTypeMigration, /actual_command_types is distinct from[\s\S]*raise exception/i);
+  assert.match(commandTypeMigration, /drop constraint adhdice_task_command_operations_command_type_check/i);
+  assert.match(commandTypeMigration, /add constraint adhdice_task_command_operations_command_type_check check/i);
+  assert.doesNotMatch(commandTypeMigration, /\b(?:insert\s+into|update|delete\s+from)\s+public\.adhdice_task_command_operations\b/i);
+});
 
 const calendarAuthorityReplacementPattern = /definition := replace\(\n    definition,\n    \$needle\$([\s\S]*?)\$needle\$,\n    \$replacement\$([\s\S]*?)\$replacement\$\n  \);/g;
 
