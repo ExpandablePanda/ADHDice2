@@ -97,6 +97,51 @@ export function normalizeHealthJournalDate(value: unknown) {
   return date.getFullYear() === year && date.getMonth() + 1 === month && date.getDate() === day ? value : null;
 }
 
+export function normalizeHealthJournalEventEnd({
+  endDate,
+  endTime,
+  startDate,
+  startTime,
+}: {
+  endDate: string;
+  endTime: string;
+  startDate: string;
+  startTime: string;
+}) {
+  const hasEndDate = endDate.trim().length > 0;
+  const hasEndTime = endTime.trim().length > 0;
+  const normalizedEndDate = normalizeHealthJournalDate(endDate);
+  const normalizedEndTime = normalizeHealthMealTime(endTime);
+  if (hasEndDate && !normalizedEndDate) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event end date." };
+  }
+  if (hasEndTime && !normalizedEndTime) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event end time." };
+  }
+  if (!hasEndTime) {
+    return hasEndDate
+      ? { endDate: null, endTime: null, error: "Choose an Event end time or clear the end date." }
+      : { endDate: null, endTime: null, error: null };
+  }
+  if (!normalizedEndTime) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event end time." };
+  }
+
+  const normalizedStartDate = normalizeHealthJournalDate(startDate);
+  const normalizedStartTime = normalizeHealthMealTime(startTime);
+  const effectiveEndDate = normalizedEndDate ?? normalizedStartDate;
+  if (!effectiveEndDate) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event start date before adding an end time." };
+  }
+  if (normalizedStartDate && effectiveEndDate < normalizedStartDate) {
+    return { endDate: null, endTime: null, error: "Event end date must be the start date or a later date." };
+  }
+  if (normalizedStartDate && normalizedStartTime && effectiveEndDate === normalizedStartDate && normalizedEndTime < normalizedStartTime) {
+    return { endDate: null, endTime: null, error: "Choose a later Event end date for an end time earlier than the start." };
+  }
+  return { endDate: effectiveEndDate, endTime: normalizedEndTime, error: null };
+}
+
 export function normalizeHealthJournalCustomQuestions(value: unknown): HealthJournalCustomQuestion[] {
   if (!Array.isArray(value)) return [];
   const seen = new Set<string>();
@@ -230,6 +275,17 @@ export function formatHealthJournalEventInterval({
   if (!start) return null;
   const end = formatHealthJournalEventBoundary(endDate, endTime, endTimeEstimated);
   return end ? `${start} → ${end}` : start;
+}
+
+export function sortHealthJournalOccurrenceRows<T extends { occurredAt: string; draftKey?: string; id?: string; key?: string }>(rows: readonly T[]) {
+  return [...rows].sort((left, right) => {
+    const leftTimestamp = Date.parse(left.occurredAt);
+    const rightTimestamp = Date.parse(right.occurredAt);
+    const leftTime = Number.isFinite(leftTimestamp) ? leftTimestamp : Number.MAX_SAFE_INTEGER;
+    const rightTime = Number.isFinite(rightTimestamp) ? rightTimestamp : Number.MAX_SAFE_INTEGER;
+    return leftTime - rightTime
+      || (left.id ?? left.draftKey ?? left.key ?? "").localeCompare(right.id ?? right.draftKey ?? right.key ?? "");
+  });
 }
 
 export function formatHealthJournalOccurrenceReference({

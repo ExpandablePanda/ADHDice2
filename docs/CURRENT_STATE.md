@@ -5,14 +5,25 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.112`.
+- Current working app version: `7.16.113`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
-  - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+- visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.113 Journal QA corrections
+
+Journal Event timing controls now share a responsive four-boundary layout, allow
+same-day end-time-only input, and require an explicit later date for overnight
+end times. Feeling occurrence summaries and editor rows use ascending timestamp
+order with stable identity tie-breaking. Legacy bare Feeling hashtags receive a
+saved score only when exactly one matching occurrence makes that display safe.
+Standalone Event History no longer repeats its interval, occurrences, or
+description in the lower structured summary; additional Event notes and other
+unique structured answers remain available. Browser QA remains pending.
 
 ## 2026-10-07 7.16.112 Journal Event timing and scored Feeling hashtags
 

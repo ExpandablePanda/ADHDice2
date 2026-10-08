@@ -157,11 +157,12 @@ import {
   groupHealthJournalEntriesByDate,
   normalizeHealthJournalEntryTime,
   findHealthJournalReflectionTagMatches,
+  formatHealthJournalReflectionTagText,
   replaceHealthJournalReflectionTag,
   type HealthJournalDraftValue,
   updateHealthJournalDraftValue,
 } from "@/lib/health-journal";
-import { formatHealthJournalEventInterval, formatHealthJournalOccurrenceReference, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
+import { formatHealthJournalEventInterval, formatHealthJournalOccurrenceReference, getHealthJournalScaleDenominator, normalizeHealthJournalStructuredAnswers, sortHealthJournalOccurrenceRows } from "@/lib/health-journal-checkins";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
@@ -780,12 +781,12 @@ function JournalHistoryTagPopover({
   const occurrenceRows = option.kind === "symptom" && option.symptomId
     ? symptomEntries
       .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId)
-      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at))
+      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at) || left.id.localeCompare(right.id))
       .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity, timeIsEstimated: occurrence.time_is_estimated }))
     : option.signal
       ? journalSignalOccurrences
         .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id)
-        .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at))
+        .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at) || left.id.localeCompare(right.id))
         .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score, timeIsEstimated: occurrence.time_is_estimated }))
       : [];
   const overallValue = option.signal
@@ -881,6 +882,18 @@ function JournalHistoryReflection({
   matches.forEach((match) => {
     const option = historyTagOptionsByKey.get(match.key);
     if (!option) return;
+    const matchingScores = option.kind === "symptom" && option.symptomId
+      ? symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId).map((occurrence) => occurrence.severity)
+      : option.signal
+        ? journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id).map((occurrence) => occurrence.score)
+        : [];
+    const displayText = formatHealthJournalReflectionTagText({
+      baseText: match.text,
+      denominator: getHealthJournalScaleDenominator(option.signal),
+      matchingOccurrenceCount: matchingScores.length,
+      name: option.name,
+      score: matchingScores.length === 1 ? matchingScores[0] ?? null : null,
+    });
     if (match.start > cursor) nodes.push(reflection.slice(cursor, match.start));
     const isOpen = selectedTag?.entryId === entry.id
       && selectedTag.optionKey === match.key
@@ -890,7 +903,7 @@ function JournalHistoryReflection({
         <button
           aria-expanded={isOpen}
           aria-haspopup="dialog"
-          aria-label={`View ${match.text.slice(1)} details from this Journal Entry`}
+          aria-label={`View ${displayText.slice(1)} details from this Journal Entry`}
           className="rounded px-0.5 font-semibold underline decoration-current/30 underline-offset-2 transition hover:bg-[#f1edff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.08]"
           onClick={() => onToggleTag({ key: match.key, start: match.start })}
           onKeyDown={(event) => {
@@ -902,7 +915,7 @@ function JournalHistoryReflection({
           style={{ color: getJournalTagOptionColor(option, symptoms) }}
           type="button"
         >
-          {match.text}
+          {displayText}
         </button>
         {isOpen ? <JournalHistoryTagPopover entry={entry} entryValues={entryValues} journalSignalOccurrences={journalSignalOccurrences} onClose={() => onToggleTag({ key: match.key, start: match.start })} option={option} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
       </span>,
@@ -3777,7 +3790,7 @@ export function HealthPage({
                       const historyReflection = entry.entry_type === "event"
                         ? entryAnswers.event_description?.trim() || entry.reflection
                         : entry.reflection;
-                      const entryOccurrences = [
+                      const entryOccurrences = sortHealthJournalOccurrenceRows([
                         ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
                           const signal = journalSignals.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === occurrence.symptom_id) ?? null;
                           return {
@@ -3815,7 +3828,7 @@ export function HealthPage({
                             timeIsEstimated: occurrence.time_is_estimated,
                           };
                         }),
-                      ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
+                      ]);
                       const isLoggedMetadataOpen = expandedJournalHistoryEntryIds.has(entry.id);
                       const eventInterval = entry.entry_type === "event"
                         ? formatHealthJournalEventInterval({ endDate: entryAnswers.event_end_date, endTime: entryAnswers.event_end_time, endTimeEstimated: entryAnswers.event_end_time_estimated, startDate: entry.entry_date, startTime: entry.entry_time, startTimeEstimated: entryAnswers.event_start_time_estimated })

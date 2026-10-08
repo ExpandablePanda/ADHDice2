@@ -254,6 +254,33 @@ export function findHealthJournalReflectionTagMatches(
   return matches;
 }
 
+export function formatHealthJournalReflectionTagText({
+  baseText,
+  denominator,
+  matchingOccurrenceCount,
+  name,
+  score,
+}: {
+  baseText: string;
+  denominator: number;
+  matchingOccurrenceCount: number;
+  name: string;
+  score: number | null;
+}) {
+  const bareTag = `#${name}`;
+  if (
+    baseText.toLowerCase() !== bareTag.toLowerCase()
+    || matchingOccurrenceCount !== 1
+    || typeof score !== "number"
+    || !Number.isInteger(score)
+    || score < 1
+    || score > denominator
+  ) {
+    return baseText;
+  }
+  return `${bareTag} (${score}/${denominator})`;
+}
+
 export function ensureHealthJournalDraftValue(
   values: readonly HealthJournalDraftValue[],
   signalId: string,

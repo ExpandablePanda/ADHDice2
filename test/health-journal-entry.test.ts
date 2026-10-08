@@ -22,6 +22,7 @@ import {
   HEALTH_JOURNAL_DEFAULT_SCALE_LABELS,
   HEALTH_JOURNAL_SCORE_OPTIONS,
   findHealthJournalReflectionTagMatches,
+  formatHealthJournalReflectionTagText,
   normalizeHealthJournalScaleLabels,
   normalizeHealthJournalScore,
   normalizeHealthJournalSignal,
@@ -173,6 +174,13 @@ test("Journal History treats scored hashtags as one link and keeps legacy bare t
   ]);
   assert.equal(reflection.slice(25, 32), ", then ");
   assert.equal(reflection.slice(42, 47), " and ");
+});
+
+test("Journal History safely scores one legacy bare hashtag and preserves ambiguous or scored text", () => {
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain", denominator: 10, matchingOccurrenceCount: 1, name: "Back Pain", score: 7 }), "#Back Pain (7/10)");
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain", denominator: 10, matchingOccurrenceCount: 2, name: "Back Pain", score: 7 }), "#Back Pain");
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain (7/10)", denominator: 10, matchingOccurrenceCount: 1, name: "Back Pain", score: 7 }), "#Back Pain (7/10)");
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain", denominator: 4, matchingOccurrenceCount: 1, name: "Back Pain", score: 5 }), "#Back Pain");
 });
 
 test("Daily Log draft helpers keep one row while preserving 0 and Not logged semantics", () => {
@@ -455,7 +463,9 @@ test("7.12.39 source contract covers interactive History tags, exact ownership d
 
   assert.match(healthPageSource, /findHealthJournalReflectionTagMatches/);
   assert.match(healthPageSource, /<JournalHistoryReflection/);
-  assert.match(healthPageSource, /aria-label=\{`View \$\{match\.text\.slice\(1\)\} details from this Journal Entry`\}/);
+  assert.match(healthPageSource, /aria-label=\{`View \$\{displayText\.slice\(1\)\} details from this Journal Entry`\}/);
+  assert.match(healthPageSource, /formatHealthJournalReflectionTagText/);
+  assert.match(healthPageSource, /matchingOccurrenceCount: matchingScores\.length/);
   assert.match(healthPageSource, /type="button"/);
   assert.match(healthPageSource, /role="dialog"/);
   assert.match(healthPageSource, /occurrence\.journal_entry_id === entry\.id && occurrence\.symptom_id === option\.symptomId/);

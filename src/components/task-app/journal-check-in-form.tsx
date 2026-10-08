@@ -29,6 +29,7 @@ import {
   getHealthJournalEntryTypeLabel,
   getHealthJournalScaleDenominator,
   HEALTH_JOURNAL_ENTRY_TYPES,
+  normalizeHealthJournalEventEnd,
   normalizeHealthJournalCustomQuestions,
   normalizeHealthJournalDate,
   normalizeHealthJournalReframes,
@@ -42,7 +43,6 @@ import {
   formatHealthSleepDuration,
   getCurrentHealthDateTimeInputs,
   HEALTH_SCALE_OPTIONS,
-  normalizeHealthMealTime,
 } from "@/lib/health-utils";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
@@ -315,12 +315,13 @@ export function JournalCheckInForm({
       nextEventId = nextEventId ?? createDraftId("journal-event");
       const eventDate = entryType === "event" ? entryDate : eventDraft.date;
       const eventTime = entryType === "event" ? entryTime : eventDraft.time;
-      const endDate = normalizeHealthJournalDate(eventDraft.endDate);
-      const endTime = normalizeHealthMealTime(eventDraft.endTime);
-      if (Boolean(eventDraft.endDate || eventDraft.endTime) && (!endDate || !endTime)) {
-        setFormError("Choose both an end date and end time, or leave the Event end blank.");
+      const eventEnd = normalizeHealthJournalEventEnd({ endDate: eventDraft.endDate, endTime: eventDraft.endTime, startDate: eventDate, startTime: eventTime });
+      if (eventEnd.error) {
+        setFormError(eventEnd.error);
         return;
       }
+      const endDate = eventEnd.endDate;
+      const endTime = eventEnd.endTime;
       const eventOccurrenceInputs = buildOccurrenceInputs(eventDraft.occurrences, eventDate);
       if (!eventOccurrenceInputs) return;
       const eventAnswers = normalizeHealthJournalStructuredAnswers(existingEvent?.structured_answers);
@@ -436,11 +437,11 @@ export function JournalCheckInForm({
   return (
     <div className="grid min-w-0 gap-5">
       <div className="flex flex-wrap items-end justify-between gap-3">
-        <div className="grid min-w-0 gap-3 sm:grid-cols-[auto_auto_auto] sm:items-end">
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(8rem,auto)_repeat(4,minmax(0,1fr))] lg:items-end">
           <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">Entry type</span><select aria-label="Journal entry type" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => { const nextType = event.target.value as HealthJournalEntryType; setEntryType(nextType); setEventDraft((current) => ({ ...current, date: entryDate, time: entryTime })); }} value={entryType}>{HEALTH_JOURNAL_ENTRY_TYPES.map((type) => <option key={type} value={type}>{getHealthJournalEntryTypeLabel(type)}</option>)}</select></label>
           <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topDateLabel}</span><input aria-label={topDateLabel} className={HEALTH_COMPACT_INPUT_CLASS} max={getCurrentHealthDateTimeInputs().date} onChange={(event) => { setEntryDate(event.target.value); if (entryType === "event") setEventDraft((current) => ({ ...current, date: event.target.value })); }} type="date" value={entryDate} /></label>
           <div className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topTimeLabel}</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel={topTimeLabel} compact onChange={(time) => { setEntryTime(time); if (entryType === "event") setEventDraft((current) => ({ ...current, time })); }} value={entryTime} />{entryType === "event" ? <JournalEstimatedToggle checked={eventDraft.startTimeEstimated} label="Event start time" onChange={(value) => setEventDraft((current) => ({ ...current, startTimeEstimated: value }))} /> : null}</div></div>
-          {entryType === "event" ? <div className="grid gap-2 sm:col-span-3"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">When did it end? (optional)</span><div className="flex flex-wrap items-center gap-2"><input aria-label="Event end date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setEventDraft((current) => ({ ...current, endDate: event.target.value }))} type="date" value={eventDraft.endDate} /><HealthStandardTimeInput ariaLabel="When did it end?" compact onChange={(endTime) => setEventDraft((current) => ({ ...current, endTime }))} value={eventDraft.endTime} /><JournalEstimatedToggle checked={eventDraft.endTimeEstimated} label="Event end time" onChange={(value) => setEventDraft((current) => ({ ...current, endTimeEstimated: value }))} /></div></div> : null}
+          {entryType === "event" ? <><label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">Event end date (optional)</span><input aria-label="Event end date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setEventDraft((current) => ({ ...current, endDate: event.target.value }))} type="date" value={eventDraft.endDate} /></label><div className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">When did it end? (optional)</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel="When did it end?" compact onChange={(endTime) => setEventDraft((current) => ({ ...current, endTime }))} value={eventDraft.endTime} /><JournalEstimatedToggle checked={eventDraft.endTimeEstimated} label="Event end time" onChange={(value) => setEventDraft((current) => ({ ...current, endTimeEstimated: value }))} /></div></div></> : null}
         </div>
         <div className="flex flex-wrap items-center gap-2"><span className={QUESTION_HINT_CLASS}>{selectedJournalEntry ? "Existing entry" : "New entry · not saved yet"}</span><AdhdChip onClick={resetFormForNewEntry} type="button">+ New entry</AdhdChip></div>
       </div>
