@@ -1269,6 +1269,7 @@ export function HealthPage({
 }: HealthPageProps) {
   const reportFoodDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Food", isUnsafe), [onDraftSafetyChange]);
   const reportJournalDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Journal", isUnsafe), [onDraftSafetyChange]);
+  const reportWaterDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Water", isUnsafe), [onDraftSafetyChange]);
   const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
   const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -4419,6 +4420,7 @@ export function HealthPage({
           addWaterEntry={addWaterEntry}
           confirmWaterEntry={confirmWaterEntry}
           deleteWaterEntry={deleteWaterEntry}
+          onDraftSafetyChange={reportWaterDraftSafety}
           saveWaterGoal={(waterGoalMl) => saveProfile({ water_goal_ml: waterGoalMl })}
           today={today}
           updateWaterEntry={updateWaterEntry}

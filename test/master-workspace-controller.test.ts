@@ -184,8 +184,11 @@ test("Health master transitions allow safe sections and block unsafe drafts or u
   assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Food", false), false);
   assert.equal(isHealthMasterTabTransitionBlocked("Food", "Journal", true), true);
   assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Food", true), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Water", "Food", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Water", "Journal", false), false);
+  assert.equal(isHealthMasterTabTransitionBlocked("Water", "Journal", true), true);
   assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Food", false), true);
-  assert.equal(isHealthMasterTabTransitionBlocked("Water", "Food", false), true);
+  assert.equal(isHealthMasterTabTransitionBlocked("Fitness", "Journal", false), true);
   assert.equal(isHealthMasterTabTransitionBlocked("Journal", "Journal", true), false);
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
 });

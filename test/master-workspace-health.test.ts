@@ -5,6 +5,7 @@ import test from "node:test";
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const healthLibrarySource = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+const waterPanelSource = readFileSync(new URL("../src/components/task-app/health-water-panel.tsx", import.meta.url), "utf8");
 const journalFormSource = readFileSync(new URL("../src/components/task-app/journal-check-in-form.tsx", import.meta.url), "utf8");
 const journalEventCaptureSource = readFileSync(new URL("../src/components/task-app/journal-event-capture.tsx", import.meta.url), "utf8");
 const tabBarSource = readFileSync(new URL("../src/components/task-app/master-workspace-tab-bar.tsx", import.meta.url), "utf8");
@@ -39,6 +40,17 @@ test("Food and Journal editor owners report draft safety before Health tab activ
   assert.match(journalEventCaptureSource, /onDraftSafetyChange\(Boolean\(tagOverlay\)\)/);
   assert.match(controllerHookSource, /isHealthMasterTabTransitionBlocked\(/);
   assert.match(controllerHookSource, /targetTab\.destination\.page !== activePage/);
+  assert.match(controllerHookSource, /isHealthTransitionBlocked\(targetTab\)/);
+  assert.match(controllerHookSource, /nextTab\.destination\.page === activePage && !isHealthTransitionBlocked\(nextTab\)/);
+});
+
+test("Water reports through the existing Health draft-safety seam", () => {
+  assert.match(healthPageSource, /onDraftSafetyChange\("Water", isUnsafe\)/);
+  assert.match(healthPageSource, /<HealthWaterPanel[\s\S]*?onDraftSafetyChange=\{reportWaterDraftSafety\}/);
+  assert.match(waterPanelSource, /onDraftSafetyChange\(isDraftUnsafe\)/);
+  assert.match(taskAppSource, /healthDraftSafetyBySection,/);
+  assert.match(taskAppSource, /onDraftSafetyChange=\{updateHealthDraftSafety\}/);
+  assert.match(controllerHookSource, /Boolean\(healthDraftSafetyBySection\[currentHealthSection\]\)/);
 });
 
 test("Navigator deep destinations update the focused tab and restore shell or Settings requests", () => {

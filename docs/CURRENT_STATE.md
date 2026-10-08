@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.126`.
+- Current working app version: `7.16.127`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -105,6 +105,20 @@ tests passed with the existing `react-hooks/set-state-in-effect` rule disabled;
 the HealthPage findings under that rule also reproduce from `HEAD`. Version
 surfaces and `git diff --check` passed. Browser QA, production build, full
 typecheck, and broad test suites were not run.
+
+## 2026-10-08 7.16.127 Water Exit Draft Safety
+
+Water master-tab and Health-section exits now follow Water's reported draft
+safety. Custom entry/setup drafts, changed goal values, active existing-entry
+editors, and entry/goal saves in progress block unmounting. Pristine Water and
+the initially visible empty goal editor remain safe. Entry and goal editors
+provide explicit cancel actions that discard local edits; unsuccessful saves
+retain their drafts.
+
+Focused verification for 7.16.127: Master Workspace controller/Health and Water
+tests passed (38/38); targeted ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled and `git diff --check` passed.
+Browser QA, production build, full typecheck, and broad test suites were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

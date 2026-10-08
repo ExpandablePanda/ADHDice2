@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Droplets, Pencil, Plus, Trash2, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
@@ -18,6 +18,7 @@ import {
   waterAmountToMilliliters,
 } from "@/lib/health-library";
 import { formatHealthDateLabel, getCurrentHealthDateTimeInputs } from "@/lib/health-utils";
+import { isHealthWaterDraftUnsafe, isHealthWaterGoalDraftDirty } from "@/lib/health-water-draft-safety";
 import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import { HealthWaterLineChart } from "./health-water-line-chart";
@@ -33,6 +34,7 @@ type HealthWaterPanelProps = {
   }) => Promise<boolean>;
   confirmWaterEntry: (id: string) => Promise<boolean>;
   deleteWaterEntry: (id: string) => Promise<boolean>;
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   saveWaterGoal: (waterGoalMl: number | null) => Promise<boolean>;
   today: string;
   updateWaterEntry: (entryId: string, input: {
@@ -54,6 +56,7 @@ export function HealthWaterPanel({
   addWaterEntry,
   confirmWaterEntry,
   deleteWaterEntry,
+  onDraftSafetyChange,
   saveWaterGoal,
   today,
   updateWaterEntry,
@@ -65,8 +68,15 @@ export function HealthWaterPanel({
   const [unit, setUnit] = useState<HealthWaterUnit>("fl_oz");
   const [entryStatus, setEntryStatus] = useState<"confirmed" | "pending">("confirmed");
   const [entryDateTime, setEntryDateTime] = useState(() => getCurrentHealthDateTimeInputs());
+  const [entryDraftBaseline, setEntryDraftBaseline] = useState(() => ({
+    date: entryDateTime.date,
+    entryStatus,
+    time: entryDateTime.time,
+    unit,
+  }));
   const [isCustomAmountSelected, setIsCustomAmountSelected] = useState(false);
   const [goalAmountOverride, setGoalAmountOverride] = useState<string | null>(null);
+  const [isGoalDraftDirty, setIsGoalDraftDirty] = useState(false);
   const [goalEditorOpenOverride, setGoalEditorOpenOverride] = useState<boolean | null>(null);
   const [goalUnit, setGoalUnit] = useState<HealthWaterUnit>("fl_oz");
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -77,6 +87,10 @@ export function HealthWaterPanel({
     time: "12:00",
     unit: "cup" as HealthWaterUnit,
   });
+  const [isSavingEntry, setIsSavingEntry] = useState(false);
+  const [isSavingGoal, setIsSavingGoal] = useState(false);
+  const [isSavingExistingEntry, setIsSavingExistingEntry] = useState(false);
+  const saveInProgressRef = useRef({ entry: false, goal: false, existingEntry: false });
   const todayEntries = useMemo(
     () => waterEntries.filter((entry) => entry.entry_date === today && isHealthWaterEntryConfirmed(entry)),
     [today, waterEntries],
@@ -97,27 +111,69 @@ export function HealthWaterPanel({
       ? millilitersToWaterAmount(waterAmountToMilliliters(Number.parseFloat(goalAmountOverride), goalUnit), "fl_oz")
       : goalFlOz;
   const isGoalEditorOpen = goalEditorOpenOverride ?? waterGoalMl === null;
+  const hasUnfinishedEntryDraft = isCustomAmountSelected
+    || unit !== entryDraftBaseline.unit
+    || entryStatus !== entryDraftBaseline.entryStatus
+    || entryDateTime.date !== entryDraftBaseline.date
+    || entryDateTime.time !== entryDraftBaseline.time;
+  const hasUnfinishedGoalDraft = isGoalDraftDirty;
+  const isDraftUnsafe = isHealthWaterDraftUnsafe({
+    hasUnfinishedEntryDraft,
+    hasUnfinishedGoalDraft,
+    isEditingExistingEntry: editingId !== null,
+    hasPendingSave: isSavingEntry || isSavingGoal || isSavingExistingEntry,
+  });
 
-  async function addAmount(nextAmount: number, nextUnit: HealthWaterUnit) {
+  useEffect(() => {
+    onDraftSafetyChange(isDraftUnsafe);
+    return () => onDraftSafetyChange(false);
+  }, [isDraftUnsafe, onDraftSafetyChange]);
+
+  async function addAmount(nextAmount: number, nextUnit: HealthWaterUnit, draftAmount = formatQuantity(nextAmount)) {
     if (!Number.isFinite(nextAmount) || nextAmount <= 0) {
       return;
     }
-    const saved = await addWaterEntry({
-      amount: nextAmount,
-      amount_ml: waterAmountToMilliliters(nextAmount, nextUnit),
-      confirmed_at: entryStatus === "pending" ? null : new Date().toISOString(),
-      entry_date: entryDateTime.date,
-      logged_at: buildLoggedAt(entryDateTime.date, entryDateTime.time),
-      unit: nextUnit,
-    });
-    if (saved) {
-      setAmount(nextUnit === "cup" ? "1" : "10");
+    if (saveInProgressRef.current.entry) return;
+    saveInProgressRef.current.entry = true;
+    setIsSavingEntry(true);
+    const nextDateTime = { ...entryDateTime };
+    const nextStatus = entryStatus;
+    try {
+      const saved = await addWaterEntry({
+        amount: nextAmount,
+        amount_ml: waterAmountToMilliliters(nextAmount, nextUnit),
+        confirmed_at: nextStatus === "pending" ? null : new Date().toISOString(),
+        entry_date: nextDateTime.date,
+        logged_at: buildLoggedAt(nextDateTime.date, nextDateTime.time),
+        unit: nextUnit,
+      });
+      if (saved) {
+        setAmount(nextUnit === "cup" ? "1" : "10");
+        setUnit(nextUnit);
+        setIsCustomAmountSelected(false);
+        setEntryDraftBaseline({
+          date: nextDateTime.date,
+          entryStatus: nextStatus,
+          time: nextDateTime.time,
+          unit: nextUnit,
+        });
+      } else {
+        setAmount(draftAmount);
+        setUnit(nextUnit);
+        setIsCustomAmountSelected(true);
+      }
+    } catch {
+      setAmount(draftAmount);
       setUnit(nextUnit);
-      setIsCustomAmountSelected(false);
+      setIsCustomAmountSelected(true);
+    } finally {
+      saveInProgressRef.current.entry = false;
+      setIsSavingEntry(false);
     }
   }
 
   function selectEntryUnit(nextUnit: HealthWaterUnit) {
+    if (isSavingEntry) return;
     setUnit(nextUnit);
     setAmount(nextUnit === "cup" ? "1" : "10");
     setIsCustomAmountSelected(false);
@@ -126,29 +182,51 @@ export function HealthWaterPanel({
   async function saveGoal() {
     const nextAmount = Number.parseFloat(goalAmount);
     if (!Number.isFinite(nextAmount) || nextAmount <= 0) return;
-    const saved = await saveWaterGoal(waterAmountToMilliliters(nextAmount, goalUnit));
-    if (saved) {
-      setGoalAmountOverride(formatQuantity(nextAmount));
-      setGoalEditorOpenOverride(false);
+    if (saveInProgressRef.current.goal) return;
+    saveInProgressRef.current.goal = true;
+    setIsSavingGoal(true);
+    try {
+      const saved = await saveWaterGoal(waterAmountToMilliliters(nextAmount, goalUnit));
+      if (saved) {
+        setGoalAmountOverride(formatQuantity(nextAmount));
+        setGoalEditorOpenOverride(false);
+        setIsGoalDraftDirty(false);
+      }
+    } finally {
+      saveInProgressRef.current.goal = false;
+      setIsSavingGoal(false);
     }
   }
 
   async function clearGoal() {
-    if (await saveWaterGoal(null)) {
-      setGoalAmountOverride("");
-      setGoalEditorOpenOverride(false);
+    if (saveInProgressRef.current.goal) return;
+    saveInProgressRef.current.goal = true;
+    setIsSavingGoal(true);
+    try {
+      if (await saveWaterGoal(null)) {
+        setGoalAmountOverride("");
+        setGoalEditorOpenOverride(false);
+        setIsGoalDraftDirty(false);
+      }
+    } finally {
+      saveInProgressRef.current.goal = false;
+      setIsSavingGoal(false);
     }
   }
 
   function changeGoalUnit(nextUnit: HealthWaterUnit) {
+    if (isSavingGoal) return;
     const currentAmount = Number.parseFloat(goalAmount);
     if (Number.isFinite(currentAmount) && currentAmount > 0) {
-      setGoalAmountOverride(formatQuantity(millilitersToWaterAmount(waterAmountToMilliliters(currentAmount, goalUnit), nextUnit)));
+      const nextAmount = formatQuantity(millilitersToWaterAmount(waterAmountToMilliliters(currentAmount, goalUnit), nextUnit));
+      setGoalAmountOverride(nextAmount);
+      setIsGoalDraftDirty(isHealthWaterGoalDraftDirty(nextAmount, nextUnit, waterGoalMl));
     }
     setGoalUnit(nextUnit);
   }
 
   function startEditing(entry: HealthWaterEntry) {
+    if (isSavingExistingEntry) return;
     setEditingId(entry.id);
     setEditDraft({
       amount: String(entry.amount),
@@ -163,19 +241,43 @@ export function HealthWaterPanel({
     if (!Number.isFinite(nextAmount) || nextAmount <= 0 || !editDraft.date || !editDraft.time) {
       return;
     }
-    const saved = await updateWaterEntry(entryId, {
-      amount: nextAmount,
-      amount_ml: waterAmountToMilliliters(nextAmount, editDraft.unit),
-      entry_date: editDraft.date,
-      logged_at: buildLoggedAt(editDraft.date, editDraft.time),
-      unit: editDraft.unit,
-    });
-    if (saved) {
-      if (editDraft.date !== today) {
-        setExpandedHistoryDates((current) => new Set(current).add(editDraft.date));
+    if (saveInProgressRef.current.existingEntry) return;
+    saveInProgressRef.current.existingEntry = true;
+    setIsSavingExistingEntry(true);
+    try {
+      const saved = await updateWaterEntry(entryId, {
+        amount: nextAmount,
+        amount_ml: waterAmountToMilliliters(nextAmount, editDraft.unit),
+        entry_date: editDraft.date,
+        logged_at: buildLoggedAt(editDraft.date, editDraft.time),
+        unit: editDraft.unit,
+      });
+      if (saved) {
+        if (editDraft.date !== today) {
+          setExpandedHistoryDates((current) => new Set(current).add(editDraft.date));
+        }
+        setEditingId(null);
       }
-      setEditingId(null);
+    } finally {
+      saveInProgressRef.current.existingEntry = false;
+      setIsSavingExistingEntry(false);
     }
+  }
+
+  function cancelEntryDraft() {
+    if (isSavingEntry) return;
+    setAmount(entryDraftBaseline.unit === "cup" ? "1" : "10");
+    setUnit(entryDraftBaseline.unit);
+    setEntryStatus(entryDraftBaseline.entryStatus);
+    setEntryDateTime({ date: entryDraftBaseline.date, time: entryDraftBaseline.time });
+    setIsCustomAmountSelected(false);
+  }
+
+  function cancelGoalDraft() {
+    if (isSavingGoal) return;
+    setGoalAmountOverride(null);
+    setGoalEditorOpenOverride(false);
+    setIsGoalDraftDirty(false);
   }
 
   function toggleHistoryDate(dateKey: string) {
@@ -222,7 +324,7 @@ export function HealthWaterPanel({
                 <p className="mt-1 text-xs text-[#8a82a3] dark:text-white/45">{goalSummaryFlOz !== null ? `${formatQuantity(totals.fluidOunces)} / ${formatQuantity(goalSummaryFlOz)} fl oz` : "No active goal"}</p>
               </div>
               {!isGoalEditorOpen ? (
-                <AdhdIconButton aria-label="Edit daily water goal" onClick={() => setGoalEditorOpenOverride(true)} size="sm" tone="ghost" variant="rowToolbar">
+                <AdhdIconButton aria-label="Edit daily water goal" disabled={isSavingGoal} onClick={() => setGoalEditorOpenOverride(true)} size="sm" tone="ghost" variant="rowToolbar">
                   <Pencil aria-hidden="true" />
                 </AdhdIconButton>
               ) : null}
@@ -231,14 +333,25 @@ export function HealthWaterPanel({
               <div className="mt-2 flex flex-wrap items-end gap-2 sm:flex-nowrap">
                 <label className="grid w-20 max-w-20 shrink-0 gap-1">
                   <span className="sr-only">Daily water goal amount</span>
-                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-20`} inputMode="decimal" onChange={(event) => setGoalAmountOverride(event.target.value)} placeholder="80" value={goalAmount} />
+                  <input
+                    className={`${HEALTH_COMPACT_INPUT_CLASS} w-20`}
+                    disabled={isSavingGoal}
+                    inputMode="decimal"
+                    onChange={(event) => {
+                      setGoalAmountOverride(event.target.value);
+                      setIsGoalDraftDirty(isHealthWaterGoalDraftDirty(event.target.value, goalUnit, waterGoalMl));
+                    }}
+                    placeholder="80"
+                    value={goalAmount}
+                  />
                 </label>
                 <div className="flex shrink-0 gap-1.5">
-                  <AdhdChip onClick={() => changeGoalUnit("cup")} selected={goalUnit === "cup"}>Cups</AdhdChip>
-                  <AdhdChip onClick={() => changeGoalUnit("fl_oz")} selected={goalUnit === "fl_oz"}>Fl oz</AdhdChip>
+                  <AdhdChip disabled={isSavingGoal} onClick={() => changeGoalUnit("cup")} selected={goalUnit === "cup"}>Cups</AdhdChip>
+                  <AdhdChip disabled={isSavingGoal} onClick={() => changeGoalUnit("fl_oz")} selected={goalUnit === "fl_oz"}>Fl oz</AdhdChip>
                 </div>
-                <AdhdChip contentClassName="gap-1" icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void saveGoal(); }} selected>Save</AdhdChip>
-                {waterGoalMl !== null ? <AdhdChip onClick={() => { void clearGoal(); }}>Clear</AdhdChip> : null}
+                <AdhdChip contentClassName="gap-1" disabled={isSavingGoal} icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void saveGoal(); }} selected>Save</AdhdChip>
+                {waterGoalMl !== null ? <AdhdChip disabled={isSavingGoal} onClick={() => { void clearGoal(); }}>Clear</AdhdChip> : null}
+                <AdhdChip disabled={isSavingGoal} icon={<X aria-hidden="true" className="h-3 w-3" />} onClick={cancelGoalDraft}>Cancel</AdhdChip>
               </div>
             ) : null}
           </div>
@@ -246,44 +359,47 @@ export function HealthWaterPanel({
           <div className="mt-5 rounded-[1rem] border border-[#e4def2] bg-[#fcfbff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
             <div className="flex flex-wrap items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
               <span className="font-semibold text-[#4d466d] dark:text-white/80">Entry status</span>
-              <AdhdChip onClick={() => setEntryStatus("confirmed")} selected={entryStatus === "confirmed"}>Confirmed</AdhdChip>
-              <AdhdChip onClick={() => setEntryStatus("pending")} selected={entryStatus === "pending"}>Pending</AdhdChip>
+              <AdhdChip disabled={isSavingEntry} onClick={() => setEntryStatus("confirmed")} selected={entryStatus === "confirmed"}>Confirmed</AdhdChip>
+              <AdhdChip disabled={isSavingEntry} onClick={() => setEntryStatus("pending")} selected={entryStatus === "pending"}>Pending</AdhdChip>
             </div>
             <div className="mt-3 grid gap-3">
               <div className="flex flex-wrap items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
                 <span className="font-semibold text-[#4d466d] dark:text-white/80">Entry mode</span>
-                <AdhdChip onClick={() => selectEntryUnit("fl_oz")} selected={unit === "fl_oz"}>Fl oz</AdhdChip>
-                <AdhdChip onClick={() => selectEntryUnit("cup")} selected={unit === "cup"}>Cups</AdhdChip>
+                <AdhdChip disabled={isSavingEntry} onClick={() => selectEntryUnit("fl_oz")} selected={unit === "fl_oz"}>Fl oz</AdhdChip>
+                <AdhdChip disabled={isSavingEntry} onClick={() => selectEntryUnit("cup")} selected={unit === "cup"}>Cups</AdhdChip>
               </div>
               {!isCustomAmountSelected ? (
                 <div className="flex flex-wrap gap-2">
                   {(unit === "fl_oz" ? WATER_FL_OZ_PRESETS : WATER_CUP_PRESETS).map((preset) => (
-                    <AdhdChip contentClassName="gap-0.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} key={preset} onClick={() => { void addAmount(preset, unit); }} selected>
+                    <AdhdChip contentClassName="gap-0.5" disabled={isSavingEntry} icon={<Plus aria-hidden="true" className="h-3 w-3" />} key={preset} onClick={() => { void addAmount(preset, unit); }} selected>
                       {preset} {unit === "cup" ? (preset === 1 ? "cup" : "cups") : "fl oz"}
                     </AdhdChip>
                   ))}
-                  <AdhdChip onClick={() => setIsCustomAmountSelected(true)}>Custom</AdhdChip>
+                  <AdhdChip disabled={isSavingEntry} onClick={() => setIsCustomAmountSelected(true)}>Custom</AdhdChip>
                 </div>
               ) : (
                 <div className="flex flex-wrap items-end gap-2">
                   <label className="grid w-20 max-w-20 shrink-0 gap-1">
                     <span className="sr-only">Custom water amount</span>
-                    <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-20`} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} value={amount} />
+                    <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-20`} disabled={isSavingEntry} inputMode="decimal" onChange={(event) => setAmount(event.target.value)} value={amount} />
                   </label>
                   <span className="pb-2 text-xs font-semibold text-[#7d7598] dark:text-white/55">{unit === "cup" ? "cups" : "fl oz"}</span>
-                  <AdhdChip onClick={() => { void addAmount(Number.parseFloat(amount), unit); }} selected>Add</AdhdChip>
+                  <AdhdChip disabled={isSavingEntry} onClick={() => { void addAmount(Number.parseFloat(amount), unit, amount); }} selected>Add</AdhdChip>
                 </div>
               )}
               <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-[#ece8f8] pt-3 text-xs dark:border-white/10">
                 <label className="flex min-w-0 items-center gap-1.5 text-[#7d7598] dark:text-white/55">
                   <span className="shrink-0 font-medium">Date</span>
-                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-40 max-w-full`} onChange={(event) => setEntryDateTime((current) => ({ ...current, date: event.target.value }))} type="date" value={entryDateTime.date} />
+                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-40 max-w-full`} disabled={isSavingEntry} onChange={(event) => setEntryDateTime((current) => ({ ...current, date: event.target.value }))} type="date" value={entryDateTime.date} />
                 </label>
                 <label className="flex min-w-0 items-center gap-1.5 text-[#7d7598] dark:text-white/55">
                   <span className="shrink-0 font-medium">Time</span>
-                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-28 max-w-full`} onChange={(event) => setEntryDateTime((current) => ({ ...current, time: event.target.value }))} type="time" value={entryDateTime.time} />
+                  <input className={`${HEALTH_COMPACT_INPUT_CLASS} w-28 max-w-full`} disabled={isSavingEntry} onChange={(event) => setEntryDateTime((current) => ({ ...current, time: event.target.value }))} type="time" value={entryDateTime.time} />
                 </label>
               </div>
+              {hasUnfinishedEntryDraft ? (
+                <AdhdChip disabled={isSavingEntry} icon={<X aria-hidden="true" className="h-3 w-3" />} onClick={cancelEntryDraft}>Cancel entry draft</AdhdChip>
+              ) : null}
             </div>
           </div>
           <HealthWaterLineChart history={waterHistory} waterGoalMl={waterGoalMl} />
@@ -300,6 +416,7 @@ export function HealthWaterPanel({
                   editDraft={editDraft}
                   editingId={editingId}
                   entry={entry}
+                  isSaving={isSavingExistingEntry}
                   key={entry.id}
                   onCancelEdit={() => setEditingId(null)}
                   onChangeDraft={setEditDraft}
@@ -323,6 +440,7 @@ export function HealthWaterPanel({
                   editDraft={editDraft}
                   editingId={editingId}
                   entry={entry}
+                  isSaving={isSavingExistingEntry}
                   key={entry.id}
                   onCancelEdit={() => setEditingId(null)}
                   onChangeDraft={setEditDraft}
@@ -373,6 +491,7 @@ export function HealthWaterPanel({
                           editDraft={editDraft}
                           editingId={editingId}
                           entry={entry}
+                          isSaving={isSavingExistingEntry}
                           key={entry.id}
                           onCancelEdit={() => setEditingId(null)}
                           onChangeDraft={setEditDraft}
@@ -406,6 +525,7 @@ type WaterEntryCardProps = {
   editDraft: WaterEditDraft;
   editingId: string | null;
   entry: HealthWaterEntry;
+  isSaving: boolean;
   onCancelEdit: () => void;
   onChangeDraft: (draft: WaterEditDraft) => void;
   onSaveEdit: (entryId: string) => Promise<void>;
@@ -418,6 +538,7 @@ function WaterEntryCard({
   editDraft,
   editingId,
   entry,
+  isSaving,
   onCancelEdit,
   onChangeDraft,
   onSaveEdit,
@@ -434,6 +555,7 @@ function WaterEntryCard({
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Amount</span>
               <input
                 className={`${HEALTH_COMPACT_INPUT_CLASS} w-20 max-w-full text-[13px]`}
+                disabled={isSaving}
                 inputMode="decimal"
                 onChange={(event) => onChangeDraft({ ...editDraft, amount: event.target.value })}
                 value={editDraft.amount}
@@ -443,6 +565,7 @@ function WaterEntryCard({
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Unit</span>
               <select
                 className={`${HEALTH_COMPACT_INPUT_CLASS} w-28 max-w-full text-[13px]`}
+                disabled={isSaving}
                 onChange={(event) => onChangeDraft({ ...editDraft, unit: event.target.value as HealthWaterUnit })}
                 value={editDraft.unit}
               >
@@ -454,6 +577,7 @@ function WaterEntryCard({
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Date</span>
               <input
                 className={`${HEALTH_COMPACT_INPUT_CLASS} w-40 max-w-full text-[13px]`}
+                disabled={isSaving}
                 onChange={(event) => onChangeDraft({ ...editDraft, date: event.target.value })}
                 type="date"
                 value={editDraft.date}
@@ -463,6 +587,7 @@ function WaterEntryCard({
               <span className="text-xs font-medium text-[#7d7598] dark:text-white/55">Time</span>
               <input
                 className={`${HEALTH_COMPACT_INPUT_CLASS} w-28 max-w-full text-[13px]`}
+                disabled={isSaving}
                 onChange={(event) => onChangeDraft({ ...editDraft, time: event.target.value })}
                 type="time"
                 value={editDraft.time}
@@ -470,8 +595,8 @@ function WaterEntryCard({
             </label>
           </div>
           <div className="flex flex-wrap gap-2">
-            <AdhdChip contentClassName="gap-1" icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void onSaveEdit(entry.id); }} selected>Save</AdhdChip>
-            <AdhdChip contentClassName="gap-1" icon={<X aria-hidden="true" className="h-3 w-3" />} onClick={onCancelEdit}>Cancel</AdhdChip>
+            <AdhdChip contentClassName="gap-1" disabled={isSaving} icon={<Check aria-hidden="true" className="h-3 w-3" />} onClick={() => { void onSaveEdit(entry.id); }} selected>Save</AdhdChip>
+            <AdhdChip contentClassName="gap-1" disabled={isSaving} icon={<X aria-hidden="true" className="h-3 w-3" />} onClick={onCancelEdit}>Cancel</AdhdChip>
           </div>
         </div>
       </AdhdCard>
@@ -502,6 +627,7 @@ function WaterEntryCard({
           <AdhdChip
             className="shrink-0"
             contentClassName="gap-1"
+            disabled={isSaving}
             icon={<Pencil aria-hidden="true" className="h-3 w-3" />}
             onClick={() => onStartEdit(entry)}
           >

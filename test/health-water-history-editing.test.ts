@@ -6,6 +6,7 @@ import { createJiti } from "jiti";
 
 import type { HealthWaterEntry, HealthWaterUnit } from "../src/lib/database.types.ts";
 import { buildHealthWaterHistory, normalizeHealthWaterEntry, waterAmountToMilliliters } from "../src/lib/health-library.ts";
+import { isHealthWaterDraftUnsafe, isHealthWaterGoalDraftDirty } from "../src/lib/health-water-draft-safety.ts";
 import { normalizeHealthProfile } from "../src/lib/health-utils.ts";
 
 const jiti = createJiti(import.meta.url, {
@@ -98,12 +99,70 @@ test("Water entry mode uses fl oz defaults, requested presets, custom mode, and 
   assert.doesNotMatch(waterPanelSource, /addAmount\((?:8|12|16), "fl_oz"\)/);
   assert.match(waterPanelSource, /isCustomAmountSelected/);
   const customAmountSource = waterPanelSource.slice(waterPanelSource.indexOf("Custom water amount"));
-  assert.match(customAmountSource, /className=\{`\$\{HEALTH_COMPACT_INPUT_CLASS\} w-20`\} inputMode="decimal"/);
+  assert.match(customAmountSource, /className=\{`\$\{HEALTH_COMPACT_INPUT_CLASS\} w-20`\} disabled=\{isSavingEntry\} inputMode="decimal"/);
   assert.match(waterPanelSource, /getCurrentHealthDateTimeInputs\(\)/);
-  assert.match(waterPanelSource, /entry_date: entryDateTime\.date/);
-  assert.match(waterPanelSource, /logged_at: buildLoggedAt\(entryDateTime\.date, entryDateTime\.time\)/);
+  assert.match(waterPanelSource, /entry_date: nextDateTime\.date/);
+  assert.match(waterPanelSource, /logged_at: buildLoggedAt\(nextDateTime\.date, nextDateTime\.time\)/);
   assert.match(waterPanelSource, /logged_at: string/);
   assert.match(healthHookSource, /logged_at: input\.logged_at \?\? now/);
+});
+
+test("Water draft safety leaves an untouched screen and initial no-goal editor safe", () => {
+  const idleState = {
+    hasUnfinishedEntryDraft: false,
+    hasUnfinishedGoalDraft: false,
+    isEditingExistingEntry: false,
+    hasPendingSave: false,
+  };
+
+  assert.equal(isHealthWaterGoalDraftDirty("", "fl_oz", null), false);
+  assert.equal(isHealthWaterDraftUnsafe(idleState), false);
+  assert.match(waterPanelSource, /const isGoalEditorOpen = goalEditorOpenOverride \?\? waterGoalMl === null/);
+});
+
+test("Water draft safety blocks custom/setup, goal, existing-entry, and in-flight work", () => {
+  const idleState = {
+    hasUnfinishedEntryDraft: false,
+    hasUnfinishedGoalDraft: false,
+    isEditingExistingEntry: false,
+    hasPendingSave: false,
+  };
+  const savedGoal = waterAmountToMilliliters(80, "fl_oz");
+
+  assert.equal(isHealthWaterDraftUnsafe({ ...idleState, hasUnfinishedEntryDraft: true }), true);
+  assert.equal(isHealthWaterGoalDraftDirty("80.00", "fl_oz", savedGoal), false);
+  assert.equal(isHealthWaterGoalDraftDirty("81", "fl_oz", savedGoal), true);
+  assert.equal(isHealthWaterGoalDraftDirty("", "fl_oz", savedGoal), true);
+  assert.equal(isHealthWaterDraftUnsafe({ ...idleState, hasUnfinishedGoalDraft: true }), true);
+  assert.equal(isHealthWaterDraftUnsafe({ ...idleState, isEditingExistingEntry: true }), true);
+  assert.equal(isHealthWaterDraftUnsafe({ ...idleState, hasPendingSave: true }), true);
+  assert.match(waterPanelSource, /entryDateTime\.date !== entryDraftBaseline\.date/);
+  assert.match(waterPanelSource, /entryStatus !== entryDraftBaseline\.entryStatus/);
+  assert.match(waterPanelSource, /unit !== entryDraftBaseline\.unit/);
+  assert.match(waterPanelSource, /isEditingExistingEntry: editingId !== null/);
+  assert.match(waterPanelSource, /hasPendingSave: isSavingEntry \|\| isSavingGoal \|\| isSavingExistingEntry/);
+});
+
+test("Water save success and explicit cancellation release safety while failed saves retain drafts", () => {
+  const idleState = {
+    hasUnfinishedEntryDraft: false,
+    hasUnfinishedGoalDraft: false,
+    isEditingExistingEntry: false,
+    hasPendingSave: false,
+  };
+  const addSource = waterPanelSource.slice(waterPanelSource.indexOf("async function addAmount"), waterPanelSource.indexOf("function selectEntryUnit"));
+  const goalSource = waterPanelSource.slice(waterPanelSource.indexOf("async function saveGoal"), waterPanelSource.indexOf("function changeGoalUnit"));
+  const editSource = waterPanelSource.slice(waterPanelSource.indexOf("async function saveEditing"), waterPanelSource.indexOf("function cancelEntryDraft"));
+
+  assert.equal(isHealthWaterDraftUnsafe(idleState), false);
+  assert.match(addSource, /if \(saved\) \{[\s\S]*setIsCustomAmountSelected\(false\)[\s\S]*\} else \{[\s\S]*setIsCustomAmountSelected\(true\)/);
+  assert.match(goalSource, /if \(saved\) \{[\s\S]*setGoalEditorOpenOverride\(false\)[\s\S]*setIsGoalDraftDirty\(false\)/);
+  assert.doesNotMatch(goalSource, /else\s*\{[\s\S]*setIsGoalDraftDirty\(false\)/);
+  assert.match(editSource, /if \(saved\) \{[\s\S]*setEditingId\(null\)/);
+  assert.match(waterPanelSource, /function cancelEntryDraft\(\)[\s\S]*setIsCustomAmountSelected\(false\)/);
+  assert.match(waterPanelSource, /function cancelGoalDraft\(\)[\s\S]*setGoalAmountOverride\(null\)[\s\S]*setGoalEditorOpenOverride\(false\)[\s\S]*setIsGoalDraftDirty\(false\)/);
+  assert.match(waterPanelSource, /onCancelEdit=\{\(\) => setEditingId\(null\)\}/);
+  assert.match(waterPanelSource, />Cancel entry draft<\/AdhdChip>/);
 });
 
 test("new Water entry Date and Time use compact inline controls that wrap on mobile", () => {
@@ -248,7 +307,7 @@ test("Water exposes the persisted goal and Pending to Confirm row workflow", () 
   assert.match(migration, /add column confirmed_at timestamptz null/i);
   assert.match(migration, /coalesce\(logged_at, created_at\)/i);
   assert.match(migration, /alter column confirmed_at set default now\(\)/i);
-  assert.match(waterPanelSource, /confirmed_at: entryStatus === "pending" \? null : new Date\(\)\.toISOString\(\)/);
+  assert.match(waterPanelSource, /confirmed_at: nextStatus === "pending" \? null : new Date\(\)\.toISOString\(\)/);
   assert.match(waterPanelSource, /title="Pending water"/);
   assert.match(waterPanelSource, /confirmWaterEntry=\{confirmWaterEntry\}/);
   assert.match(waterPanelSource, /<span[^>]*>Pending<\/span>/);
