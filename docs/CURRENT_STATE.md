@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.114`.
+- Current working app version: `7.16.115`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,14 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.115 Home Journal navigation chips
+
+Start of Day and End of Day Journal shortcuts now follow Scratchpad in the Home
+To-do List navigation row. They use `AdhdChip` as page navigation controls while
+the original six Home views remain tabs. Finished Today no longer contains
+Journal shortcuts; completion totals and History behavior are unchanged.
+Browser QA remains pending.
 
 ## 2026-10-08 7.16.113 Journal QA corrections
 

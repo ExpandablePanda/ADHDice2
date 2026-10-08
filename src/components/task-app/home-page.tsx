@@ -176,7 +176,6 @@ function HomeProgressDashboard({
   homeHistoryError,
   homeHistoryStatus,
   onOpenTask,
-  onOpenJournal,
   onRetryHomeHistory,
   onOpenRecord,
   recordTargetsError,
@@ -189,7 +188,6 @@ function HomeProgressDashboard({
   homeHistoryError: string | null;
   homeHistoryStatus: HomeCurrentDayHistoryLoadStatus;
   onOpenTask: (taskId: string) => void;
-  onOpenJournal: (entryType: "start_of_day" | "end_of_day") => void;
   onRetryHomeHistory: () => void;
   onOpenRecord: (metricKey: HomeRecordMetricKey) => void;
   recordTargetsError: string | null;
@@ -307,10 +305,6 @@ function HomeProgressDashboard({
             ) : null}
           </div>
         )}
-        <div className="mt-3 flex flex-wrap gap-2 border-t border-[#f0ecf8] pt-2.5 dark:border-white/8">
-          <button className="rounded-md border border-[#e6def8] px-2.5 py-1.5 text-xs font-semibold text-[#6f57f6] transition-colors hover:bg-[#faf8fe] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8b78ed] dark:border-white/10 dark:text-[#b8aaff] dark:hover:bg-white/5" onClick={() => onOpenJournal("start_of_day")} type="button">Start of Day Journal</button>
-          <button className="rounded-md border border-[#e6def8] px-2.5 py-1.5 text-xs font-semibold text-[#6f57f6] transition-colors hover:bg-[#faf8fe] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#8b78ed] dark:border-white/10 dark:text-[#b8aaff] dark:hover:bg-white/5" onClick={() => onOpenJournal("end_of_day")} type="button">End of Day Journal</button>
-        </div>
       </AdhdPanel>
 
       <AdhdPanel aria-labelledby="home-records-to-beat" padding="sm">
@@ -1791,7 +1785,6 @@ export function HomePage({
         homeHistoryError={homeHistoryError}
         homeHistoryStatus={homeHistoryStatus}
         onOpenTask={onOpenTask}
-        onOpenJournal={onOpenJournal}
         onRetryHomeHistory={onRetryHomeHistory}
         onOpenRecord={onOpenRecord}
         recordTargetsError={recordTargetsError}
@@ -1813,55 +1806,65 @@ export function HomePage({
                 >
                   {activeHomeTab === "urgent" ? "Urgent" : activeHomeTab === "todo" ? "To-do list" : activeHomeTab === "attention" ? "Attention" : activeHomeTab === "missed" ? "Missed" : activeHomeTab === "routine" ? "Routine" : "Scratchpad"}
                 </h1>
-                <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "urgent"}
-                    onClick={() => selectHomeTab("urgent")}
-                    role="tab"
-                    selected={activeHomeTab === "urgent"}
-                  >
-                    Urgent
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "todo"}
-                    onClick={() => selectHomeTab("todo")}
-                    role="tab"
-                    selected={activeHomeTab === "todo"}
-                  >
-                    To-do
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "attention"}
-                    onClick={() => selectHomeTab("attention")}
-                    role="tab"
-                    selected={activeHomeTab === "attention"}
-                  >
-                    Attention
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "missed"}
-                    onClick={() => selectHomeTab("missed")}
-                    role="tab"
-                    selected={activeHomeTab === "missed"}
-                  >
-                    Missed
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "routine"}
-                    onClick={() => selectHomeTab("routine")}
-                    role="tab"
-                    selected={activeHomeTab === "routine"}
-                  >
-                    Routine
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "scratchpad"}
-                    onClick={() => selectHomeTab("scratchpad")}
-                    role="tab"
-                    selected={activeHomeTab === "scratchpad"}
-                  >
-                    Scratchpad
-                  </AdhdChip>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "urgent"}
+                      onClick={() => selectHomeTab("urgent")}
+                      role="tab"
+                      selected={activeHomeTab === "urgent"}
+                    >
+                      Urgent
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "todo"}
+                      onClick={() => selectHomeTab("todo")}
+                      role="tab"
+                      selected={activeHomeTab === "todo"}
+                    >
+                      To-do
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "attention"}
+                      onClick={() => selectHomeTab("attention")}
+                      role="tab"
+                      selected={activeHomeTab === "attention"}
+                    >
+                      Attention
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "missed"}
+                      onClick={() => selectHomeTab("missed")}
+                      role="tab"
+                      selected={activeHomeTab === "missed"}
+                    >
+                      Missed
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "routine"}
+                      onClick={() => selectHomeTab("routine")}
+                      role="tab"
+                      selected={activeHomeTab === "routine"}
+                    >
+                      Routine
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "scratchpad"}
+                      onClick={() => selectHomeTab("scratchpad")}
+                      role="tab"
+                      selected={activeHomeTab === "scratchpad"}
+                    >
+                      Scratchpad
+                    </AdhdChip>
+                  </div>
+                  <nav aria-label="Journal shortcuts" className="flex flex-wrap gap-1.5">
+                    <AdhdChip aria-label="Open Start of Day Journal" onClick={() => onOpenJournal("start_of_day")} type="button">
+                      Start of Day
+                    </AdhdChip>
+                    <AdhdChip aria-label="Open End of Day Journal" onClick={() => onOpenJournal("end_of_day")} type="button">
+                      End of Day
+                    </AdhdChip>
+                  </nav>
                 </div>
               </div>
             </div>

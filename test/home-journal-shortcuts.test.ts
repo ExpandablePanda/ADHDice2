@@ -7,14 +7,15 @@ const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", imp
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const journalFormSource = readFileSync(new URL("../src/components/task-app/journal-check-in-form.tsx", import.meta.url), "utf8");
 
-test("Finished Today keeps both new-entry Journal shortcuts outside History states", () => {
+test("Home places Journal shortcuts after the six task tabs and outside Finished Today", () => {
   const dashboardSource = homeSource.slice(homeSource.indexOf("function HomeProgressDashboard"), homeSource.indexOf("export function HomePage"));
-  const statusSwitchEnd = dashboardSource.indexOf("<div className=\"mt-3 flex flex-wrap gap-2 border-t");
-  assert.ok(statusSwitchEnd > dashboardSource.indexOf("homeHistoryStatus === \"idle\""));
-  assert.match(dashboardSource, /Start of Day Journal/);
-  assert.match(dashboardSource, /End of Day Journal/);
-  assert.match(dashboardSource, /onOpenJournal\("start_of_day"\)/);
-  assert.match(dashboardSource, /onOpenJournal\("end_of_day"\)/);
+  const homeViewsSource = homeSource.slice(homeSource.indexOf('aria-label="Home task view"'), homeSource.indexOf('aria-label="Home task view"') + 2600);
+  assert.doesNotMatch(dashboardSource, /Start of Day Journal|End of Day Journal|onOpenJournal\("/);
+  assert.match(homeViewsSource, /role="tablist"[\s\S]*Scratchpad[\s\S]*<\/div>\s*<nav aria-label="Journal shortcuts"/);
+  assert.match(homeViewsSource, /aria-label="Open Start of Day Journal" onClick=\{\(\) => onOpenJournal\("start_of_day"\)\}/);
+  assert.match(homeViewsSource, /aria-label="Open End of Day Journal" onClick=\{\(\) => onOpenJournal\("end_of_day"\)\}/);
+  assert.equal((homeViewsSource.match(/role="tab"/g) ?? []).length, 6);
+  assert.doesNotMatch(homeViewsSource.slice(homeViewsSource.indexOf('<nav aria-label="Journal shortcuts"')), /role="tab"|aria-selected|selected=/);
 });
 
 test("Home Journal navigation opens Journal and consumes a one-shot new-entry request", () => {
