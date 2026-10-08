@@ -59,9 +59,19 @@ begin
   );
 
   if tg_op = 'DELETE' then
-    insert into public.adhdice_health_journal_record_tombstones (user_id, entity, record_id)
-    values (v_user_id, v_entity, v_record_id)
-    on conflict (user_id, entity, record_id) do nothing;
+    -- During auth.users deletion, its row is already gone when cascading
+    -- Journal deletes run. FOR KEY SHARE serializes ordinary Journal deletes
+    -- against a concurrent account deletion.
+    perform 1
+      from auth.users as account_user
+     where account_user.id = v_user_id
+       for key share;
+
+    if found then
+      insert into public.adhdice_health_journal_record_tombstones (user_id, entity, record_id)
+      values (v_user_id, v_entity, v_record_id)
+      on conflict (user_id, entity, record_id) do nothing;
+    end if;
     return old;
   end if;
 

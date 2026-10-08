@@ -6,15 +6,22 @@ create temporary table health_journal_tombstone_test_ids on commit drop as
 select
   gen_random_uuid() as user_id,
   gen_random_uuid() as other_user_id,
+  gen_random_uuid() as account_deletion_user_id,
   gen_random_uuid() as parent_id,
   gen_random_uuid() as other_parent_id,
   gen_random_uuid() as other_user_parent_id,
+  gen_random_uuid() as account_deletion_parent_id,
   gen_random_uuid() as fresh_parent_id,
   gen_random_uuid() as signal_id,
   gen_random_uuid() as symptom_id,
+  gen_random_uuid() as account_deletion_signal_id,
+  gen_random_uuid() as account_deletion_symptom_id,
   gen_random_uuid() as signal_value_id,
   gen_random_uuid() as signal_occurrence_id,
-  gen_random_uuid() as symptom_entry_id;
+  gen_random_uuid() as symptom_entry_id,
+  gen_random_uuid() as account_deletion_signal_value_id,
+  gen_random_uuid() as account_deletion_signal_occurrence_id,
+  gen_random_uuid() as account_deletion_symptom_entry_id;
 
 grant select on table pg_temp.health_journal_tombstone_test_ids to authenticated;
 
@@ -23,6 +30,9 @@ select user_id, 'authenticated', 'authenticated', user_id::text || '@journal-tom
   from pg_temp.health_journal_tombstone_test_ids
 union all
 select other_user_id, 'authenticated', 'authenticated', other_user_id::text || '@journal-tombstone.test', '', now(), now()
+  from pg_temp.health_journal_tombstone_test_ids;
+insert into auth.users (id, aud, role, email, encrypted_password, created_at, updated_at)
+select account_deletion_user_id, 'authenticated', 'authenticated', account_deletion_user_id::text || '@journal-tombstone.test', '', now(), now()
   from pg_temp.health_journal_tombstone_test_ids;
 
 insert into public.adhdice_health_checkins (id, user_id, entry_date, entry_time, entry_type)
@@ -34,25 +44,43 @@ select other_parent_id, user_id, date '2026-10-08', time '11:00', 'event'
 union all
 select other_user_parent_id, other_user_id, date '2026-10-08', time '12:00', 'event'
   from pg_temp.health_journal_tombstone_test_ids;
+insert into public.adhdice_health_checkins (id, user_id, entry_date, entry_time, entry_type)
+select account_deletion_parent_id, account_deletion_user_id, date '2026-10-08', time '16:00', 'event'
+  from pg_temp.health_journal_tombstone_test_ids;
 
 insert into public.adhdice_health_journal_signals (id, user_id, kind, name, color, scale_labels)
 select signal_id, user_id, 'emotion', 'Tombstone test', '#7863d2', array['0','1','2','3','4','5','6','7','8','9','10']::text[]
+  from pg_temp.health_journal_tombstone_test_ids;
+insert into public.adhdice_health_journal_signals (id, user_id, kind, name, color, scale_labels)
+select account_deletion_signal_id, account_deletion_user_id, 'emotion', 'Account deletion test', '#7863d2', array['0','1','2','3','4','5','6','7','8','9','10']::text[]
   from pg_temp.health_journal_tombstone_test_ids;
 
 insert into public.adhdice_health_symptoms (id, user_id, name, color)
 select symptom_id, user_id, 'Tombstone symptom', '#7863d2'
   from pg_temp.health_journal_tombstone_test_ids;
+insert into public.adhdice_health_symptoms (id, user_id, name, color)
+select account_deletion_symptom_id, account_deletion_user_id, 'Account deletion symptom', '#7863d2'
+  from pg_temp.health_journal_tombstone_test_ids;
 
 insert into public.adhdice_health_journal_signal_values (id, user_id, journal_entry_id, signal_id, score)
 select signal_value_id, user_id, parent_id, signal_id, 6
+  from pg_temp.health_journal_tombstone_test_ids;
+insert into public.adhdice_health_journal_signal_values (id, user_id, journal_entry_id, signal_id, score)
+select account_deletion_signal_value_id, account_deletion_user_id, account_deletion_parent_id, account_deletion_signal_id, 6
   from pg_temp.health_journal_tombstone_test_ids;
 
 insert into public.adhdice_health_journal_signal_occurrences (id, user_id, journal_entry_id, signal_id, entry_date, occurred_at, score)
 select signal_occurrence_id, user_id, parent_id, signal_id, date '2026-10-08', timestamptz '2026-10-08 10:00:00+00', 6
   from pg_temp.health_journal_tombstone_test_ids;
+insert into public.adhdice_health_journal_signal_occurrences (id, user_id, journal_entry_id, signal_id, entry_date, occurred_at, score)
+select account_deletion_signal_occurrence_id, account_deletion_user_id, account_deletion_parent_id, account_deletion_signal_id, date '2026-10-08', timestamptz '2026-10-08 16:00:00+00', 6
+  from pg_temp.health_journal_tombstone_test_ids;
 
 insert into public.adhdice_health_symptom_entries (id, user_id, symptom_id, journal_entry_id, entry_date, severity)
 select symptom_entry_id, user_id, symptom_id, parent_id, date '2026-10-08', 3
+  from pg_temp.health_journal_tombstone_test_ids;
+insert into public.adhdice_health_symptom_entries (id, user_id, symptom_id, journal_entry_id, entry_date, severity)
+select account_deletion_symptom_entry_id, account_deletion_user_id, account_deletion_symptom_id, account_deletion_parent_id, date '2026-10-08', 3
   from pg_temp.health_journal_tombstone_test_ids;
 
 set local role authenticated;
@@ -176,5 +204,43 @@ begin
   end if;
 end;
 $journal_tombstone_owner_assertions$;
+
+do $journal_account_delete_assertions$
+declare
+  v_ids record;
+begin
+  select * into v_ids from pg_temp.health_journal_tombstone_test_ids;
+
+  if not exists (select 1 from public.adhdice_health_checkins where id = v_ids.account_deletion_parent_id and user_id = v_ids.account_deletion_user_id)
+     or not exists (select 1 from public.adhdice_health_journal_signals where id = v_ids.account_deletion_signal_id and user_id = v_ids.account_deletion_user_id)
+     or not exists (select 1 from public.adhdice_health_journal_signal_values where id = v_ids.account_deletion_signal_value_id and user_id = v_ids.account_deletion_user_id)
+     or not exists (select 1 from public.adhdice_health_journal_signal_occurrences where id = v_ids.account_deletion_signal_occurrence_id and user_id = v_ids.account_deletion_user_id)
+     or not exists (select 1 from public.adhdice_health_symptoms where id = v_ids.account_deletion_symptom_id and user_id = v_ids.account_deletion_user_id)
+     or not exists (select 1 from public.adhdice_health_symptom_entries where id = v_ids.account_deletion_symptom_entry_id and user_id = v_ids.account_deletion_user_id) then
+    raise exception 'The account deletion fixture did not populate all six Journal tables.';
+  end if;
+
+  delete from auth.users where id = v_ids.account_deletion_user_id;
+  if not found then
+    raise exception 'The populated Journal test account was not deleted.';
+  end if;
+
+  if exists (select 1 from public.adhdice_health_checkins where user_id = v_ids.account_deletion_user_id)
+     or exists (select 1 from public.adhdice_health_journal_signals where user_id = v_ids.account_deletion_user_id)
+     or exists (select 1 from public.adhdice_health_journal_signal_values where user_id = v_ids.account_deletion_user_id)
+     or exists (select 1 from public.adhdice_health_journal_signal_occurrences where user_id = v_ids.account_deletion_user_id)
+     or exists (select 1 from public.adhdice_health_symptoms where user_id = v_ids.account_deletion_user_id)
+     or exists (select 1 from public.adhdice_health_symptom_entries where user_id = v_ids.account_deletion_user_id) then
+    raise exception 'Journal rows remained after full account deletion.';
+  end if;
+
+  if exists (
+    select 1 from public.adhdice_health_journal_record_tombstones
+     where user_id = v_ids.account_deletion_user_id
+  ) then
+    raise exception 'Tombstones remained after their owning account was deleted.';
+  end if;
+end;
+$journal_account_delete_assertions$;
 
 rollback;

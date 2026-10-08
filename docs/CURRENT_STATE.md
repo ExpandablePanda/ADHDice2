@@ -42,10 +42,13 @@ deletions suppress related Feelings and occurrences.
 The authored, additive deletion-tombstone migration guards Journal IDs across
 check-ins, Feeling definitions and values, occurrences, and Symptoms. Its
 authenticated delete RPC creates tombstones and deletes atomically; direct
-deletes are also recorded by row triggers, including cascades. A focused SQL
-regression script covers idempotence, ownership, cascades, and stale-ID
-rejection. The migration and SQL test are source only and were not applied or
-executed against Supabase. Automated client regressions cover ambiguous create
+deletes are also recorded by row triggers, including Journal child cascades.
+During full account deletion, triggers skip tombstone writes after the owner
+auth row is gone, allowing the account cascade to remove existing tombstones.
+A focused SQL regression script covers account deletion with all six Journal
+tables populated, idempotence, ownership, cascades, and stale-ID rejection. The
+migration and SQL test are source only and were not applied or executed against
+Supabase. Automated client regressions cover ambiguous create
 replay, scoped edits, deletion precedence, persistence failures, normal saves,
 and Trigger association preservation. Browser QA and live RLS/RPC behavior
 remain for Andrew to verify after the migration is applied.
