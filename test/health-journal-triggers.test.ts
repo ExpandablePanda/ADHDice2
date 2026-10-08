@@ -239,11 +239,14 @@ test("event save retains stable UUIDs and only replaces explicitly edited occurr
   assert.match(journalForm, /eventSaveResult\.triggerAssociationError/);
   assert.match(journalForm, /triggerEditorDirtyEntryIdRef/);
   assert.match(journalForm, /const id = draft\.id \?\? createPersistedJournalUuid\(\)/);
-  assert.match(journalHook, /requestedEntryId && existingRow[\s\S]*?\.update\(remoteCheckInFields\)[\s\S]*?: await client[\s\S]*?\.insert\(/);
+  assert.match(journalHook, /saveJournalPendingUpsert\([\s\S]*?existingRow \? "update" : "create"/);
   assert.match(journalHook, /replaceHealthJournalTriggerAssociations\(userId, nextRow\.id, triggerReplacements, client\)/);
   assert.match(journalHook, /replacementResult\.links/);
   assert.match(journalHook, /isCurrentOperation\(operation\)/);
-  assert.ok(journalHook.indexOf("for (const occurrence of input.journalSignalOccurrences)") < journalHook.indexOf("const remoteCheckInFields"), "local occurrence validation must precede the Event write");
+  const eventSaveStart = journalHook.indexOf("async function saveJournalEntry");
+  const eventSaveEnd = journalHook.indexOf("async function saveCheckIn", eventSaveStart);
+  const eventSaveSource = journalHook.slice(eventSaveStart, eventSaveEnd);
+  assert.ok(eventSaveSource.indexOf("for (const occurrence of input.journalSignalOccurrences)") < eventSaveSource.indexOf("saveJournalPendingUpsert("), "local occurrence validation must precede the Event write");
   assert.match(journalHook, /could not be confirmed for Trigger associations/);
 });
 

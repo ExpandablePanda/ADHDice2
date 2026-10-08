@@ -11,13 +11,13 @@ import type {
   HealthSymptomEntry,
 } from "../src/lib/database.types.ts";
 import {
-  didHealthJournalDeleteAffectRow,
   quarantineHealthJournalPendingUpsert,
   recordHealthJournalPendingDelete,
   recordHealthJournalPendingUpsert,
   replayHealthJournalPendingMutations,
   type HealthJournalPendingMutationJournal,
 } from "../src/lib/health-journal-pending-mutations.ts";
+import { deleteHealthJournalRecordWithTombstone } from "../src/lib/health-journal-tombstones.ts";
 
 const hookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 
@@ -134,7 +134,6 @@ test("a deleted Journal Entry suppresses stale child Feeling and Symptom occurre
   const pendingDelete = recordHealthJournalPendingDelete({}, "checkin", "entry-1");
   assert.deepEqual(replayHealthJournalPendingMutations("signal_occurrence", [feelingOccurrence], pendingDelete, "user-1"), []);
   assert.deepEqual(replayHealthJournalPendingMutations("symptom_entry", [symptomOccurrence], pendingDelete, "user-1"), []);
-  assert.match(hookSource, /\.delete\(\)[\s\S]*?\.eq\("id", entryId\)[\s\S]*?\.select\("id"\)/);
 });
 
 test("a pending edit to a remotely deleted row stays preserved but cannot recreate it", () => {
@@ -146,7 +145,6 @@ test("a pending edit to a remotely deleted row stays preserved but cannot recrea
   assert.deepEqual(replayHealthJournalPendingMutations("checkin", [], pendingUpdate, "user-1"), []);
   assert.equal(Object.keys(pendingUpdate).length, 1);
   assert.equal(replayHealthJournalPendingMutations("checkin", [checkIn()], pendingUpdate, "user-1")[0]?.reflection, "offline edit");
-  assert.match(hookSource, /mutation\.intent === "update"[\s\S]*?\.update\(row\)/);
 });
 
 test("ambiguous cached records are quarantined locally without being projected or uploaded", () => {
@@ -158,13 +156,19 @@ test("ambiguous cached records are quarantined locally without being projected o
   assert.match(hookSource, /held locally[\s\S]*They were not restored or uploaded/);
 });
 
-test("a failed remote deletion cannot produce a delete success", () => {
-  assert.equal(didHealthJournalDeleteAffectRow([], "entry-1"), false);
-  assert.equal(didHealthJournalDeleteAffectRow([{ id: "other-entry" }], "entry-1"), false);
-  assert.equal(didHealthJournalDeleteAffectRow([{ id: "entry-1" }], "entry-1"), true);
-  const deletePath = hookSource.slice(hookSource.indexOf("async function deleteJournalEntry"), hookSource.indexOf("async function updateSymptomDefinition"));
-  assert.match(deletePath, /if \(!deletedRemotely && !hasPendingNewEntry\)[\s\S]*?return false/);
-  assert.match(deletePath, /setHealthSuccessMessage\(\{[\s\S]*?deletedRemotely \? "Journal Entry deleted\."/);
+test("a failed tombstone RPC cannot produce a confirmed deletion", async () => {
+  const failingClient = { rpc: () => Promise.resolve({ data: null, error: { message: "tombstone unavailable" } }) } as never;
+  await assert.rejects(
+    deleteHealthJournalRecordWithTombstone({ client: failingClient, entity: "checkin", id: "entry-1" }),
+    /tombstone unavailable/,
+  );
+  const idempotentClient = {
+    rpc: () => Promise.resolve({ data: [{ deleted: false, id: "entry-1", tombstoned: true }], error: null }),
+  } as never;
+  assert.deepEqual(await deleteHealthJournalRecordWithTombstone({ client: idempotentClient, entity: "checkin", id: "entry-1" }), {
+    deleted: false,
+    tombstoned: true,
+  });
 });
 
 test("explicitly pending new Journal records survive remote hydration", () => {
@@ -190,12 +194,4 @@ test("explicitly pending new Journal records survive remote hydration", () => {
   assert.equal(replayHealthJournalPendingMutations<HealthJournalSignalOccurrence>("signal_occurrence", [], withSymptomEntry, "user-1")[0]?.id, "feeling-occurrence-1");
   assert.equal(replayHealthJournalPendingMutations<HealthSymptom>("symptom", [], withSymptomEntry, "user-1")[0]?.id, "symptom-1");
   assert.equal(replayHealthJournalPendingMutations<HealthSymptomEntry>("symptom_entry", [], withSymptomEntry, "user-1")[0]?.id, "symptom-occurrence-1");
-});
-
-test("normal Journal edits and Trigger persistence retain their active save paths", () => {
-  assert.match(hookSource, /async function saveJournalEntry/);
-  assert.match(hookSource, /\.from\("adhdice_health_checkins"\)\.update\(remoteCheckInFields\)/);
-  assert.match(hookSource, /replaceHealthJournalTriggerAssociations\(userId, nextRow\.id, triggerReplacements, client\)/);
-  assert.match(hookSource, /recordJournalPendingMutation\(\{ entity: "signal", operation: "upsert", intent: "update", row: nextRow \}\)/);
-  assert.match(hookSource, /recordJournalPendingMutation\(\{ entity: "symptom_entry", operation: "upsert", intent: "update", row: nextRow \}\)/);
 });

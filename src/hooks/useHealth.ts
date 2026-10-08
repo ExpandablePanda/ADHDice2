@@ -84,26 +84,26 @@ import {
 import { getHealthJournalScaleDenominator, normalizeHealthJournalCustomQuestions, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
 import {
   getHealthJournalOccurrenceOwnershipError,
-  persistHealthJournalOccurrenceRows,
   readHealthJournalOccurrenceOwners,
   type HealthJournalOccurrencePersistenceClient,
 } from "@/lib/health-journal-occurrence-persistence";
 import {
   clearCompletedHealthJournalPendingMutations,
   clearHealthJournalPendingMutation,
-  clearHealthJournalPendingMutationsForEntry,
-  didHealthJournalDeleteAffectRow,
   getHealthJournalPendingMutationKey,
   normalizeHealthJournalPendingMutations,
   quarantineHealthJournalPendingUpsert,
   recordHealthJournalPendingDelete,
   recordHealthJournalPendingUpsert,
+  replayHealthJournalPendingUpsertMutation,
   replayHealthJournalPendingMutations,
   type HealthJournalPendingEntity,
   type HealthJournalPendingMutation,
   type HealthJournalPendingMutationJournal,
+  type HealthJournalPendingReplayClient,
   type HealthJournalPendingUpsert,
 } from "@/lib/health-journal-pending-mutations";
+import { deleteHealthJournalRecordWithTombstone } from "@/lib/health-journal-tombstones";
 import {
   createHealthJournalTrigger,
   getHealthJournalTriggerNameIdentity,
@@ -158,17 +158,50 @@ import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-perfor
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
-type JournalPendingQueryResult = { data: { id: string }[] | null; error: { message: string } | null };
+type JournalPendingQueryResult = { data: { id: string; journal_entry_id?: string | null; user_id: string }[] | null; error: { message: string } | null };
 type JournalPendingFilter = PromiseLike<JournalPendingQueryResult> & {
   eq(column: string, value: string): JournalPendingFilter;
   select(columns: string): JournalPendingFilter;
 };
 type JournalPendingMutationTable = {
-  delete(): JournalPendingFilter;
   insert(values: Record<string, unknown>): { select(columns: string): JournalPendingFilter };
   select(columns: string): JournalPendingFilter;
   update(values: Record<string, unknown>): JournalPendingFilter;
 };
+type JournalPendingMutationClient = {
+  from(table: string): JournalPendingMutationTable;
+};
+
+const JOURNAL_PENDING_TABLE_BY_ENTITY: Record<HealthJournalPendingEntity, string> = {
+  checkin: "adhdice_health_checkins",
+  signal: "adhdice_health_journal_signals",
+  signal_value: "adhdice_health_journal_signal_values",
+  signal_occurrence: "adhdice_health_journal_signal_occurrences",
+  symptom: "adhdice_health_symptoms",
+  symptom_entry: "adhdice_health_symptom_entries",
+};
+
+function createHealthJournalPendingReplayClient(client: SupabaseClient): HealthJournalPendingReplayClient {
+  const remote = client as unknown as JournalPendingMutationClient;
+  const selectRemoteRow = "*";
+  return {
+    read: async (entity, id, userId) => remote.from(JOURNAL_PENDING_TABLE_BY_ENTITY[entity])
+      .select(selectRemoteRow)
+      .eq("id", id)
+      .eq("user_id", userId),
+    insert: async (entity, row) => remote.from(JOURNAL_PENDING_TABLE_BY_ENTITY[entity])
+      .insert(row)
+      .select(selectRemoteRow),
+    update: async ({ entity, id, journalEntryId, row, userId }) => {
+      let query = remote.from(JOURNAL_PENDING_TABLE_BY_ENTITY[entity])
+        .update(row)
+        .eq("id", id)
+        .eq("user_id", userId);
+      if (journalEntryId) query = query.eq("journal_entry_id", journalEntryId);
+      return query.select(selectRemoteRow);
+    },
+  };
+}
 export type HealthImportSaveProgress = {
   completed: number;
   message: string;
@@ -647,24 +680,23 @@ export function useHealth(
     }
   }
 
-  function persistJournalPendingMutations(journal: HealthJournalPendingMutationJournal) {
+  function persistJournalPendingMutations(journal: HealthJournalPendingMutationJournal): LocalStorageWriteResult {
     journalPendingMutationsRef.current = journal;
     if (userId) {
-      rememberHealthLocalPersistenceFailure(
-        persistHealthJournalPendingMutations(userId, journal),
-        "local",
-        "journal-pending",
-      );
+      const result = persistHealthJournalPendingMutations(userId, journal);
+      rememberHealthLocalPersistenceFailure(result, "local", "journal-pending");
+      return result;
     }
+    return { ok: true };
   }
 
-  function recordJournalPendingMutation(mutation: HealthJournalPendingMutation) {
+  function recordJournalPendingMutation(mutation: HealthJournalPendingMutation): LocalStorageWriteResult {
     const nextJournal = mutation.operation === "upsert"
       ? mutation.intent === "unknown"
         ? { ...journalPendingMutationsRef.current, [getHealthJournalPendingMutationKey(mutation.entity, mutation.row)]: mutation }
         : recordHealthJournalPendingUpsert(journalPendingMutationsRef.current, mutation)
       : recordHealthJournalPendingDelete(journalPendingMutationsRef.current, mutation.entity, mutation.id, mutation.journalEntryId);
-    persistJournalPendingMutations(nextJournal);
+    return persistJournalPendingMutations(nextJournal);
   }
 
   function clearJournalPendingMutation(entity: HealthJournalPendingEntity, rowOrId: { id: string; journal_entry_id?: string; signal_id?: string } | string) {
@@ -672,9 +704,82 @@ export function useHealth(
     if (nextJournal !== journalPendingMutationsRef.current) persistJournalPendingMutations(nextJournal);
   }
 
-  function clearJournalPendingMutationsForEntry(journalEntryId: string) {
-    const nextJournal = clearHealthJournalPendingMutationsForEntry(journalPendingMutationsRef.current, journalEntryId);
-    if (nextJournal !== journalPendingMutationsRef.current) persistJournalPendingMutations(nextJournal);
+  function prepareJournalPendingUpsertForSave(
+    entity: HealthJournalPendingEntity,
+    row: HealthJournalPendingUpsert["row"],
+    preferredIntent: "create" | "update",
+  ): { error?: string; intent: "create" | "update" | null } {
+    const key = getHealthJournalPendingMutationKey(entity, row);
+    const existing = journalPendingMutationsRef.current[key];
+    if (existing?.operation === "delete") {
+      return { error: "A pending Journal deletion takes precedence over this write.", intent: null };
+    }
+
+    let intent = preferredIntent;
+    if (existing?.operation === "upsert") {
+      if (existing.intent === "create" && existing.submissionState === "never_submitted") intent = "create";
+      else if (existing.intent === "update" || (existing.intent === "create" && existing.submissionState === "confirmed" && preferredIntent === "update")) intent = "update";
+      else return { error: "This Journal creation may already have reached Supabase and remains held locally.", intent: null };
+    }
+
+    const stored = recordJournalPendingMutation({ entity, intent, operation: "upsert", row } as HealthJournalPendingMutation);
+    if (!stored.ok) {
+      return { error: "The pending Journal write could not be saved locally, so no remote write was attempted.", intent: null };
+    }
+    return { intent };
+  }
+
+  async function saveJournalPendingUpsert(
+    entity: HealthJournalPendingEntity,
+    row: HealthJournalPendingUpsert["row"],
+    preferredIntent: "create" | "update",
+    remoteEnabled: boolean,
+  ): Promise<{ error?: string; row: HealthJournalPendingUpsert["row"] }> {
+    const activeUserId = userId;
+    if (!activeUserId) return { error: "The Journal owner could not be confirmed locally.", row };
+    const prepared = prepareJournalPendingUpsertForSave(entity, row, preferredIntent);
+    if (prepared.error || !prepared.intent) return { error: prepared.error, row };
+    const key = getHealthJournalPendingMutationKey(entity, row);
+    const mutation = journalPendingMutationsRef.current[key];
+    if (!mutation || mutation.operation !== "upsert") {
+      return { error: "The pending Journal write could not be confirmed locally.", row };
+    }
+    if (!remoteEnabled || !client || storageMode !== "remote") return { row };
+
+    const parentId = "journal_entry_id" in row ? row.journal_entry_id : undefined;
+    const confirmedParentEntryIds = new Set<string>();
+    if (typeof parentId === "string") {
+      if (journalPendingMutationsRef.current[getHealthJournalPendingMutationKey("checkin", parentId)]?.operation === "delete") {
+        return { error: "A pending Journal Entry deletion suppresses this Feeling write.", row };
+      }
+      const parentResult = await createHealthJournalPendingReplayClient(client).read("checkin", parentId, activeUserId);
+      if (parentResult.error || !parentResult.data?.some((candidate) => candidate.id === parentId && candidate.user_id === activeUserId)) {
+        return { error: parentResult.error?.message ?? "The parent Journal Entry is missing remotely; this Feeling write remains held locally.", row };
+      }
+      confirmedParentEntryIds.add(parentId);
+    }
+
+    const replay = await replayHealthJournalPendingUpsertMutation({
+      confirmedParentEntryIds,
+      journal: journalPendingMutationsRef.current,
+      key,
+      mutation: mutation as Extract<HealthJournalPendingMutation, { operation: "upsert" }>,
+      persist: (nextJournal) => persistJournalPendingMutations(nextJournal).ok,
+      remote: createHealthJournalPendingReplayClient(client),
+      userId: activeUserId,
+    });
+    journalPendingMutationsRef.current = replay.journal;
+    if (replay.status !== "completed" || !replay.row) {
+      return { error: replay.error?.message ?? "The Journal write remains held locally and was not confirmed remotely.", row };
+    }
+    if (replay.alreadyPresent) {
+      return { error: "The pending Journal creation already exists remotely; review and save it again to apply this edit.", row };
+    }
+    const cleared = clearHealthJournalPendingMutation(journalPendingMutationsRef.current, entity, row);
+    if (cleared !== journalPendingMutationsRef.current && !persistJournalPendingMutations(cleared).ok) {
+      return { error: "The Journal write succeeded remotely, but its pending state could not be cleared locally.", row };
+    }
+    return { row: replay.row as HealthJournalPendingUpsert["row"] };
   }
 
   function buildHealthSnapshot(
@@ -1171,66 +1276,101 @@ export function useHealth(
         symptom_entry: 5,
       };
       const pendingMutations = Object.entries(pendingMutationsAtHydrationStart).sort(([leftKey, left], [rightKey, right]) => {
-        const leftDeleteOrder = left.operation === "delete" ? 10 : 0;
-        const rightDeleteOrder = right.operation === "delete" ? 10 : 0;
-        return leftDeleteOrder - rightDeleteOrder
-          || pendingMutationOrder[left.entity] - pendingMutationOrder[right.entity]
-          || leftKey.localeCompare(rightKey);
+        const getOrder = (mutation: HealthJournalPendingMutation) => mutation.operation === "delete"
+          ? mutation.entity === "checkin" ? 0 : 1
+          : mutation.entity === "checkin" ? 2 : 3 + pendingMutationOrder[mutation.entity];
+        return getOrder(left) - getOrder(right) || leftKey.localeCompare(rightKey);
       });
       const completedPendingMutations: { key: string; mutation: HealthJournalPendingMutation }[] = [];
       let journalRecoveryError: { message: string } | null = null;
       let ambiguousPendingMutationCount = 0;
+      const blockedParentEntryIds = new Set(Object.values(pendingMutationsAtHydrationStart)
+        .filter((mutation) => mutation.entity === "checkin" && mutation.operation === "delete")
+        .map((mutation) => mutation.operation === "delete" ? mutation.id : ""));
+      const deletedParentEntryIds = new Set<string>();
+      const confirmedParentEntryIds = new Set((checkInsResult.data ?? []).map((entry) => entry.id));
+      const pendingReplayClient = createHealthJournalPendingReplayClient(client);
 
-      for (const [key, mutation] of pendingMutations) {
+      for (const [key] of pendingMutations) {
         if (!isActive || !isCurrentOperation(hydrationOperation)) return;
-        const tableByEntity: Record<HealthJournalPendingEntity, string> = {
-          checkin: "adhdice_health_checkins",
-          signal: "adhdice_health_journal_signals",
-          signal_value: "adhdice_health_journal_signal_values",
-          signal_occurrence: "adhdice_health_journal_signal_occurrences",
-          symptom: "adhdice_health_symptoms",
-          symptom_entry: "adhdice_health_symptom_entries",
-        };
-        const mutationTable = client.from(tableByEntity[mutation.entity]) as unknown as JournalPendingMutationTable;
-        let result: JournalPendingQueryResult;
-        if (mutation.operation === "upsert" && mutation.intent === "create") {
-          const row = { ...mutation.row, user_id: userId };
-          result = await mutationTable.insert(row as unknown as Record<string, unknown>).select("id");
-          if (result.error) {
-            // A prior insert may have reached Supabase even if its response was lost.
-            // Confirm by identity before clearing the explicit create intent.
-            const confirmed = await mutationTable.select("id")
-              .eq("id", mutation.row.id).eq("user_id", userId);
-            if (!confirmed.error && didHealthJournalDeleteAffectRow(confirmed.data, mutation.row.id)) {
-              result = { data: confirmed.data, error: null };
-            }
-          }
-        } else if (mutation.operation === "upsert" && mutation.intent === "update") {
-          const row = { ...mutation.row, user_id: userId } as Record<string, unknown>;
-          delete row.id;
-          delete row.created_at;
-          result = await mutationTable.update(row)
-            .eq("id", mutation.row.id).eq("user_id", userId).select("id");
-        } else {
-          if (mutation.operation === "delete") {
-            let query = mutationTable.delete().eq("id", mutation.id).eq("user_id", userId);
-            if (mutation.journalEntryId) query = query.eq("journal_entry_id", mutation.journalEntryId);
-            result = await query.select("id");
+        const mutation = journalPendingMutationsRef.current[key];
+        if (!mutation) continue;
+        const parentEntryId = mutation.operation === "delete"
+          ? mutation.journalEntryId
+          : "journal_entry_id" in mutation.row && typeof mutation.row.journal_entry_id === "string"
+            ? mutation.row.journal_entry_id
+            : undefined;
+
+        if (parentEntryId && blockedParentEntryIds.has(parentEntryId)) {
+          if (deletedParentEntryIds.has(parentEntryId)) {
+            completedPendingMutations.push({ key, mutation });
           } else {
             ambiguousPendingMutationCount += 1;
+            journalRecoveryError ??= { message: "A pending Journal Entry deletion is still being retried; related Feeling writes remain held locally." };
+          }
+          continue;
+        }
+
+        if (mutation.operation === "delete") {
+          if (mutation.entity === "symptom") {
+            ambiguousPendingMutationCount += 1;
+            journalRecoveryError ??= { message: "Symptom definition deletion is not a supported Journal tombstone operation; the pending record remains held locally." };
             continue;
           }
+          try {
+            const tombstone = await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: mutation.entity,
+              id: mutation.id,
+              ...(mutation.journalEntryId ? { journalEntryId: mutation.journalEntryId } : {}),
+            });
+            if (!isActive || !isCurrentOperation(hydrationOperation)) return;
+            if (!tombstone.tombstoned) {
+              journalRecoveryError ??= { message: `Could not confirm the deletion tombstone for Journal ${mutation.entity.replaceAll("_", " ")} ${mutation.id}.` };
+            } else {
+              completedPendingMutations.push({ key, mutation });
+              if (mutation.entity === "checkin") {
+                deletedParentEntryIds.add(mutation.id);
+                confirmedParentEntryIds.delete(mutation.id);
+              }
+            }
+          } catch (error) {
+            if (!isActive || !isCurrentOperation(hydrationOperation)) return;
+            journalRecoveryError ??= { message: error instanceof Error ? error.message : "Could not persist a Journal deletion tombstone." };
+          }
+          continue;
         }
+
+        const replayResult = await replayHealthJournalPendingUpsertMutation({
+          blockedParentEntryIds,
+          confirmedParentEntryIds,
+          journal: journalPendingMutationsRef.current,
+          key,
+          mutation,
+          persist: (nextJournal) => {
+            journalPendingMutationsRef.current = nextJournal;
+            const result = persistHealthJournalPendingMutations(userId, nextJournal);
+            if (!result.ok) {
+              healthLocalPersistenceFailureRef.current = {
+                mode: "local",
+                reason: result.reason,
+                source: "journal-pending",
+              };
+            }
+            return result.ok;
+          },
+          remote: pendingReplayClient,
+          userId,
+        });
+        journalPendingMutationsRef.current = replayResult.journal;
         if (!isActive || !isCurrentOperation(hydrationOperation)) return;
-        if (result.error) {
-          journalRecoveryError ??= result.error;
-        } else if (mutation.operation === "upsert" && !didHealthJournalDeleteAffectRow(result.data, mutation.row.id)) {
-          const reason = mutation.intent === "update"
-            ? "the row no longer exists remotely, so this edit was preserved locally and not recreated"
-            : `could not confirm saved Journal ${mutation.entity.replaceAll("_", " ")} ${mutation.row.id}`;
-          journalRecoveryError ??= { message: `Journal ${mutation.entity.replaceAll("_", " ")} ${mutation.row.id} ${reason}.` };
+        if (replayResult.status === "completed") {
+          const confirmedMutation = replayResult.journal[key];
+          if (confirmedMutation) completedPendingMutations.push({ key, mutation: confirmedMutation });
+          if (mutation.entity === "checkin") confirmedParentEntryIds.add(mutation.row.id);
         } else {
-          completedPendingMutations.push({ key, mutation });
+          ambiguousPendingMutationCount += 1;
+          journalRecoveryError ??= replayResult.error ?? { message: `Journal ${mutation.entity.replaceAll("_", " ")} ${mutation.row.id} remains held locally.` };
         }
       }
 
@@ -1247,6 +1387,7 @@ export function useHealth(
             reason: pendingWriteResult.reason,
             source: "journal-pending",
           };
+          journalRecoveryError ??= { message: "Completed Journal recovery could not be cleared from local storage; it will be checked again safely." };
         }
       }
       if (journalRecoveryError) {
@@ -1848,34 +1989,23 @@ export function useHealth(
         setMessage({ tone: "warn", text: error instanceof Error ? error.message : "Could not confirm Feeling occurrence ownership." });
         return null;
       }
-      const remoteCheckInFields = {
-        clarity_score: input.checkIn.clarity_score !== undefined ? input.checkIn.clarity_score : existingRow?.clarity_score ?? null,
-        energy_score: input.checkIn.energy_score !== undefined ? input.checkIn.energy_score : existingRow?.energy_score ?? null,
-        entry_date: input.checkIn.entry_date,
-        entry_time: entryTime,
-        entry_type: localRow.entry_type,
-        mood_score: input.checkIn.mood_score !== undefined ? input.checkIn.mood_score : existingRow?.mood_score ?? null,
-        reflection: input.checkIn.reflection !== undefined ? input.checkIn.reflection : existingRow?.reflection ?? "",
-        stress_score: input.checkIn.stress_score !== undefined ? input.checkIn.stress_score : existingRow?.stress_score ?? null,
-        symptom_tags: input.checkIn.symptom_tags !== undefined ? input.checkIn.symptom_tags : existingRow?.symptom_tags ?? [],
-        structured_answers: localRow.structured_answers,
-      };
-      const result = requestedEntryId && existingRow
-        ? await client.from("adhdice_health_checkins").update(remoteCheckInFields).eq("id", requestedEntryId).eq("user_id", userId).select("*").single()
-        : await client.from("adhdice_health_checkins").insert({ ...(requestedEntryId ? { id: requestedEntryId } : {}), ...remoteCheckInFields, user_id: userId }).select("*").single();
-      const { data, error } = result;
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) {
-          journalRemoteEnabledRef.current = false;
-          setMessage({ tone: "neutral", text: "Journal is using local storage until the 7.13.43 Journal migration is applied." });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return null;
-        }
-      } else {
-        nextRow = data ? normalizeHealthCheckIn(data) : localRow;
+      const pendingDelete = journalPendingMutationsRef.current[getHealthJournalPendingMutationKey("checkin", localRow.id)];
+      if (pendingDelete?.operation === "delete") {
+        setMessage({ tone: "warn", text: "This Journal Entry is pending deletion and cannot be recreated." });
+        return null;
       }
+      const saveResult = await saveJournalPendingUpsert(
+        "checkin",
+        localRow,
+        existingRow ? "update" : "create",
+        journalRemoteEnabledRef.current,
+      );
+      if (!isCurrentOperation(operation)) return null;
+      if (saveResult.error) {
+        setMessage({ tone: "warn", text: saveResult.error });
+        return null;
+      }
+      nextRow = normalizeHealthCheckIn(saveResult.row as HealthCheckIn);
     }
     const scoredValues = input.signalValues
       .map((draft) => ({
@@ -1941,96 +2071,113 @@ export function useHealth(
     const removedJournalSignalOccurrences = currentOwnedJournalSignalOccurrences.filter((entry) => !keptJournalSignalOccurrenceIds.has(entry.id));
 
     let childWriteError: { message: string } | null = null;
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      if (journalRemoteEnabledRef.current && scoredValues.length > 0) {
-        const { data, error } = await client
-          .from("adhdice_health_journal_signal_values")
-          .upsert(scoredValues, { onConflict: "user_id,journal_entry_id,signal_id" })
-          .select("*");
-        if (!isCurrentOperation(operation)) return null;
-        if (error) childWriteError = error;
-        else if (data) scoredValues.splice(0, scoredValues.length, ...data);
-      }
-      if (!childWriteError && journalRemoteEnabledRef.current) {
-        for (const value of removedValues) {
-          const { data, error } = await client
-            .from("adhdice_health_journal_signal_values")
-            .delete()
-            .eq("id", value.id)
-            .eq("user_id", userId)
-            .select("id");
-          if (!isCurrentOperation(operation)) return null;
-          if (error || !didHealthJournalDeleteAffectRow(data, value.id)) {
-            childWriteError = error ?? { message: `Could not confirm removal of Journal Feeling value ${value.id}.` };
-            break;
-          }
+    const saveChildRows = async <TRow extends HealthJournalPendingUpsert["row"]>(
+      entity: HealthJournalPendingEntity,
+      rows: TRow[],
+      currentRows: readonly TRow[],
+      enabled: boolean,
+    ) => {
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index]!;
+        const existedLocally = currentRows.some((current) => current.id === row.id);
+        const result = await saveJournalPendingUpsert(
+          entity,
+          row,
+          existedLocally ? "update" : "create",
+          enabled,
+        );
+        if (!isCurrentOperation(operation)) return false;
+        if (result.error) {
+          childWriteError = { message: result.error };
+          return false;
         }
+        rows[index] = result.row as TRow;
       }
-      if (!childWriteError && symptomEntriesRemoteEnabledRef.current && occurrenceRows.length > 0) {
-        try {
-          const data = await persistHealthJournalOccurrenceRows({
-            client: client as unknown as HealthJournalOccurrencePersistenceClient,
-            journalEntryId: nextRow.id,
-            rows: occurrenceRows,
-            table: "adhdice_health_symptom_entries",
-            userId,
-          });
-          if (!isCurrentOperation(operation)) return null;
-          occurrenceRows.splice(0, occurrenceRows.length, ...data);
-        } catch (error) {
-          if (!isCurrentOperation(operation)) return null;
-          childWriteError = { message: error instanceof Error ? error.message : "Could not save Symptom occurrences." };
+      return true;
+    };
+    const journalRemoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
+    const symptomEntriesRemoteEnabled = Boolean(client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current);
+    const journalSignalOccurrencesRemoteEnabled = Boolean(client && storageMode === "remote" && journalSignalOccurrencesRemoteEnabledRef.current);
+
+    if (scoredValues.length > 0) {
+      await saveChildRows("signal_value", scoredValues, currentValues, journalRemoteEnabled);
+    }
+    if (!childWriteError) {
+      for (const value of removedValues) {
+        if (!recordJournalPendingMutation({ entity: "signal_value", id: value.id, journalEntryId: nextRow.id, operation: "delete" }).ok) {
+          childWriteError = { message: "The Feeling value deletion could not be saved locally; no remote deletion was attempted." };
+          break;
         }
-      }
-      if (!childWriteError && symptomEntriesRemoteEnabledRef.current) {
-        for (const entry of removedOccurrences) {
-          const { data, error } = await client
-            .from("adhdice_health_symptom_entries")
-            .delete()
-            .eq("id", entry.id)
-            .eq("user_id", userId)
-            .eq("journal_entry_id", nextRow.id)
-            .select("id");
-          if (!isCurrentOperation(operation)) return null;
-          if (error || !didHealthJournalDeleteAffectRow(data, entry.id)) {
-            childWriteError = error ?? { message: `Could not confirm removal of Journal symptom occurrence ${entry.id}.` };
-            break;
-          }
-        }
-      }
-      if (!childWriteError && journalSignalOccurrencesRemoteEnabledRef.current && journalSignalOccurrenceRows.length > 0) {
-        try {
-          const data = await persistHealthJournalOccurrenceRows({
-            client: client as unknown as HealthJournalOccurrencePersistenceClient,
-            journalEntryId: nextRow.id,
-            rows: journalSignalOccurrenceRows,
-            table: "adhdice_health_journal_signal_occurrences",
-            userId,
-          });
-          if (!isCurrentOperation(operation)) return null;
-          journalSignalOccurrenceRows.splice(0, journalSignalOccurrenceRows.length, ...data.map(normalizeHealthJournalSignalOccurrence));
-        } catch (error) {
-          if (!isCurrentOperation(operation)) return null;
-          childWriteError = { message: error instanceof Error ? error.message : "Could not save Feeling occurrences." };
-        }
-      }
-      if (!childWriteError && journalSignalOccurrencesRemoteEnabledRef.current) {
-        for (const occurrence of removedJournalSignalOccurrences) {
-          const { data, error } = await client
-            .from("adhdice_health_journal_signal_occurrences")
-            .delete()
-            .eq("id", occurrence.id)
-            .eq("user_id", userId)
-            .eq("journal_entry_id", nextRow.id)
-            .select("id");
-          if (!isCurrentOperation(operation)) return null;
-          if (error || !didHealthJournalDeleteAffectRow(data, occurrence.id)) {
-            childWriteError = error ?? { message: `Could not confirm removal of Journal Feeling occurrence ${occurrence.id}.` };
+        if (journalRemoteEnabled && client) {
+          try {
+            await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: "signal_value",
+              id: value.id,
+              journalEntryId: nextRow.id,
+            });
+            clearJournalPendingMutation("signal_value", value.id);
+          } catch (error) {
+            childWriteError = { message: error instanceof Error ? error.message : `Could not confirm removal of Journal Feeling value ${value.id}.` };
             break;
           }
         }
       }
     }
+    if (!childWriteError && occurrenceRows.length > 0) {
+      await saveChildRows("symptom_entry", occurrenceRows, currentOwnedOccurrences, symptomEntriesRemoteEnabled);
+    }
+    if (!childWriteError) {
+      for (const entry of removedOccurrences) {
+        if (!recordJournalPendingMutation({ entity: "symptom_entry", id: entry.id, journalEntryId: nextRow.id, operation: "delete" }).ok) {
+          childWriteError = { message: "The Symptom occurrence deletion could not be saved locally; no remote deletion was attempted." };
+          break;
+        }
+        if (symptomEntriesRemoteEnabled && client) {
+          try {
+            await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: "symptom_entry",
+              id: entry.id,
+              journalEntryId: nextRow.id,
+            });
+            clearJournalPendingMutation("symptom_entry", entry.id);
+          } catch (error) {
+            childWriteError = { message: error instanceof Error ? error.message : `Could not confirm removal of Journal symptom occurrence ${entry.id}.` };
+            break;
+          }
+        }
+      }
+    }
+    if (!childWriteError && journalSignalOccurrenceRows.length > 0) {
+      await saveChildRows("signal_occurrence", journalSignalOccurrenceRows, currentOwnedJournalSignalOccurrences, journalSignalOccurrencesRemoteEnabled);
+      for (let index = 0; index < journalSignalOccurrenceRows.length; index += 1) {
+        journalSignalOccurrenceRows[index] = normalizeHealthJournalSignalOccurrence(journalSignalOccurrenceRows[index]!);
+      }
+    }
+    if (!childWriteError) {
+      for (const occurrence of removedJournalSignalOccurrences) {
+        if (!recordJournalPendingMutation({ entity: "signal_occurrence", id: occurrence.id, journalEntryId: nextRow.id, operation: "delete" }).ok) {
+          childWriteError = { message: "The Feeling occurrence deletion could not be saved locally; no remote deletion was attempted." };
+          break;
+        }
+        if (journalSignalOccurrencesRemoteEnabled && client) {
+          try {
+            await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: "signal_occurrence",
+              id: occurrence.id,
+              journalEntryId: nextRow.id,
+            });
+            clearJournalPendingMutation("signal_occurrence", occurrence.id);
+          } catch (error) {
+            childWriteError = { message: error instanceof Error ? error.message : `Could not confirm removal of Journal Feeling occurrence ${occurrence.id}.` };
+            break;
+          }
+        }
+      }
+    }
+    if (!isCurrentOperation(operation)) return null;
 
     let triggerAssociationSaveError: string | null = null;
     if (triggerReplacements.length > 0 && !childWriteError) {
@@ -2100,39 +2247,6 @@ export function useHealth(
       journalSignalOccurrences: nextJournalSignalOccurrences,
       symptomEntries: sortHealthSymptomEntries(nextSymptomEntries),
     });
-    clearJournalPendingMutationsForEntry(nextRow.id);
-    const checkInNeedsReplay = !client || storageMode !== "remote" || !journalRemoteEnabledRef.current;
-    const childRowsNeedReplay = checkInNeedsReplay || Boolean(childWriteError);
-    if (checkInNeedsReplay) {
-      recordJournalPendingMutation({ entity: "checkin", operation: "upsert", intent: existingRow ? "update" : "create", row: nextRow });
-    }
-    if (childRowsNeedReplay || !journalRemoteEnabledRef.current) {
-      for (const value of scoredValues) recordJournalPendingMutation({
-        entity: "signal_value",
-        operation: "upsert",
-        intent: currentValues.some((current) => current.id === value.id) ? "update" : "create",
-        row: value,
-      });
-    }
-    if (childRowsNeedReplay || !symptomEntriesRemoteEnabledRef.current) {
-      for (const entry of occurrenceRows) recordJournalPendingMutation({
-        entity: "symptom_entry",
-        operation: "upsert",
-        intent: currentOwnedOccurrences.some((current) => current.id === entry.id) ? "update" : "create",
-        row: entry,
-      });
-    }
-    if (childRowsNeedReplay || !journalSignalOccurrencesRemoteEnabledRef.current) {
-      for (const occurrence of journalSignalOccurrenceRows) recordJournalPendingMutation({
-        entity: "signal_occurrence",
-        operation: "upsert",
-        intent: currentOwnedJournalSignalOccurrences.some((current) => current.id === occurrence.id) ? "update" : "create",
-        row: occurrence,
-      });
-    }
-    for (const value of removedValues) recordJournalPendingMutation({ entity: "signal_value", id: value.id, journalEntryId: nextRow.id, operation: "delete" });
-    for (const entry of removedOccurrences) recordJournalPendingMutation({ entity: "symptom_entry", id: entry.id, journalEntryId: nextRow.id, operation: "delete" });
-    for (const occurrence of removedJournalSignalOccurrences) recordJournalPendingMutation({ entity: "signal_occurrence", id: occurrence.id, journalEntryId: nextRow.id, operation: "delete" });
     if (!isCurrentOperation(operation)) return null;
     applySnapshot(nextSnapshot, {
       persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
@@ -2231,30 +2345,15 @@ export function useHealth(
       updated_at: now,
       user_id: userId,
     });
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_journal_signals")
-        .insert({ ...localRow, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) {
-          journalRemoteEnabledRef.current = false;
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return null;
-        }
-      } else {
-        nextRow = normalizeHealthJournalSignal(data ?? localRow);
-      }
+    const remoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("signal", localRow, "create", remoteEnabled);
+    if (!isCurrentOperation(operation)) return null;
+    if (saveResult.error) {
+      if (isMissingHealthPersistence(saveResult.error)) journalRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return null;
     }
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      clearJournalPendingMutation("signal", nextRow.id);
-    } else {
-      recordJournalPendingMutation({ entity: "signal", operation: "upsert", intent: "create", row: nextRow });
-    }
+    const nextRow = normalizeHealthJournalSignal(saveResult.row as HealthJournalSignal);
     if (!isCurrentOperation(operation)) return null;
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
@@ -2312,38 +2411,13 @@ export function useHealth(
       setMessage({ tone: "warn", text: "Enter a Journal feeling name." });
       return false;
     }
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_journal_signals")
-        .update({
-          archived_at: nextRow.archived_at,
-          color: nextRow.color,
-          high_label: nextRow.high_label,
-          in_template: nextRow.in_template,
-          low_label: nextRow.low_label,
-          name: nextRow.name,
-          scale_labels: nextRow.scale_labels,
-          template_sort_order: nextRow.template_sort_order,
-        })
-        .eq("id", signalId)
-        .eq("user_id", userId)
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) journalRemoteEnabledRef.current = false;
-        else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else if (data) {
-        Object.assign(nextRow, normalizeHealthJournalSignal(data));
-      }
-    }
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      clearJournalPendingMutation("signal", nextRow.id);
-    } else {
-      recordJournalPendingMutation({ entity: "signal", operation: "upsert", intent: "update", row: nextRow });
+    const remoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("signal", nextRow, "update", remoteEnabled);
+    if (!isCurrentOperation(operation)) return false;
+    if (saveResult.error) {
+      if (isMissingHealthPersistence(saveResult.error)) journalRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
     }
     if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
@@ -2401,32 +2475,28 @@ export function useHealth(
     const pendingMutationKey = getHealthJournalPendingMutationKey("signal", signalId);
     const pendingSignalMutation = journalPendingMutationsRef.current[pendingMutationKey];
     const hasPendingNewSignal = pendingSignalMutation?.operation === "upsert" && pendingSignalMutation.intent === "create";
+    if (!recordJournalPendingMutation({ entity: "signal", id: signalId, operation: "delete" }).ok) {
+      setMessage({ tone: "warn", text: "The Feeling deletion could not be saved locally, so no remote deletion was attempted." });
+      return false;
+    }
     let deletedRemotely = false;
     if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_journal_signals")
-        .delete()
-        .eq("id", signalId)
-        .eq("user_id", userId)
-        .select("id");
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) journalRemoteEnabledRef.current = false;
-        else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else {
-        deletedRemotely = didHealthJournalDeleteAffectRow(data, signalId);
-        if (!deletedRemotely && !hasPendingNewSignal) {
-          setMessage({ tone: "warn", text: "Could not confirm that this Feeling was deleted remotely; no delete success was reported." });
-          return false;
-        }
+      try {
+        await deleteHealthJournalRecordWithTombstone({
+          client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+          entity: "signal",
+          id: signalId,
+        });
+        deletedRemotely = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not confirm the Feeling deletion tombstone.";
+        if (isMissingHealthPersistence(message)) journalRemoteEnabledRef.current = false;
+        setMessage({ tone: "warn", text: message });
+        return false;
       }
     }
     if (!isCurrentOperation(operation)) return false;
-    clearJournalPendingMutation("signal", signalId);
-    recordJournalPendingMutation({ entity: "signal", id: signalId, operation: "delete" });
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       journalSignals: currentSnapshot.journalSignals.filter((signal) => signal.id !== signalId),
@@ -2463,25 +2533,13 @@ export function useHealth(
     const nextSignals = currentSnapshot.journalSignals.map((signal) => orderById.has(signal.id)
       ? { ...signal, in_template: true, template_sort_order: orderById.get(signal.id) ?? signal.template_sort_order, updated_at: new Date().toISOString() }
       : signal);
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      for (const signal of nextSignals.filter((candidate) => orderById.has(candidate.id))) {
-        const { error } = await client
-          .from("adhdice_health_journal_signals")
-          .update({ in_template: true, template_sort_order: signal.template_sort_order })
-          .eq("id", signal.id)
-          .eq("user_id", userId);
-        if (!isCurrentOperation(operation)) return false;
-        if (error) {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      }
-    }
+    const remoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
     for (const signal of nextSignals.filter((candidate) => orderById.has(candidate.id))) {
-      if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-        clearJournalPendingMutation("signal", signal.id);
-      } else {
-        recordJournalPendingMutation({ entity: "signal", operation: "upsert", intent: "update", row: signal });
+      const result = await saveJournalPendingUpsert("signal", signal, "update", remoteEnabled);
+      if (!isCurrentOperation(operation)) return false;
+      if (result.error) {
+        setMessage({ tone: "warn", text: result.error });
+        return false;
       }
     }
     if (!isCurrentOperation(operation)) return false;
@@ -2498,22 +2556,22 @@ export function useHealth(
     const pendingEntryKey = getHealthJournalPendingMutationKey("checkin", entryId);
     const pendingJournalEntryMutation = journalPendingMutationsRef.current[pendingEntryKey];
     const hasPendingNewEntry = pendingJournalEntryMutation?.operation === "upsert" && pendingJournalEntryMutation.intent === "create";
+    if (!recordJournalPendingMutation({ entity: "checkin", id: entryId, operation: "delete" }).ok) {
+      setMessage({ tone: "warn", text: "The Journal Entry deletion could not be saved locally, so no remote deletion was attempted." });
+      return false;
+    }
     let deletedRemotely = false;
     if (client && storageMode === "remote") {
-      const { data, error } = await client
-        .from("adhdice_health_checkins")
-        .delete()
-        .eq("id", entryId)
-        .eq("user_id", userId)
-        .select("id");
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
-        return false;
-      }
-      deletedRemotely = didHealthJournalDeleteAffectRow(data, entryId);
-      if (!deletedRemotely && !hasPendingNewEntry) {
-        setMessage({ tone: "warn", text: "Could not confirm that this Journal Entry was deleted remotely; no delete success was reported." });
+      try {
+        await deleteHealthJournalRecordWithTombstone({
+          client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+          entity: "checkin",
+          id: entryId,
+        });
+        deletedRemotely = true;
+      } catch (error) {
+        setMessage({ tone: "warn", text: error instanceof Error ? error.message : "Could not confirm the Journal Entry deletion tombstone." });
         return false;
       }
     }
@@ -2533,8 +2591,6 @@ export function useHealth(
       weightEntries,
     });
     if (!isCurrentOperation(operation)) return false;
-    clearJournalPendingMutationsForEntry(entryId);
-    recordJournalPendingMutation({ entity: "checkin", id: entryId, operation: "delete" });
     const removedOccurrenceIds = new Set([
       ...currentSnapshot.symptomEntries.filter((entry) => entry.journal_entry_id === entryId).map((entry) => entry.id),
       ...currentSnapshot.journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entryId).map((occurrence) => occurrence.id),
@@ -2601,38 +2657,15 @@ export function useHealth(
       color: normalizeHealthSymptomColor(normalizedInput.color ?? currentSymptom.color),
       updated_at: now,
     };
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptoms")
-        .update(normalizedInput)
-        .eq("id", symptomId)
-        .eq("user_id", userId)
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomDefinitionsRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else {
-        nextRow = data ? normalizeHealthSymptom(data) : localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom", localRow, "update", remoteEnabled);
     if (!isCurrentOperation(operation)) return false;
-    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
-      clearJournalPendingMutation("symptom", nextRow.id);
-    } else {
-      recordJournalPendingMutation({ entity: "symptom", operation: "upsert", intent: "update", row: nextRow });
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomDefinitionsRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
     }
+    const nextRow = saveResult.row as HealthSymptom;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2683,36 +2716,15 @@ export function useHealth(
       updated_at: now,
       user_id: userId,
     };
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptoms")
-        .insert({ ...input, archived_at: null, color: localRow.color, name, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomDefinitionsRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return null;
-        }
-      } else {
-        nextRow = data ? normalizeHealthSymptom(data) : localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom", localRow, "create", remoteEnabled);
     if (!isCurrentOperation(operation)) return null;
-    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
-      clearJournalPendingMutation("symptom", nextRow.id);
-    } else {
-      recordJournalPendingMutation({ entity: "symptom", operation: "upsert", intent: "create", row: nextRow });
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomDefinitionsRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return null;
     }
+    const nextRow = saveResult.row as HealthSymptom;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2784,40 +2796,15 @@ export function useHealth(
       updated_at: now,
       user_id: userId,
     };
-    let nextRow = localRow;
-    const normalizedInput: Omit<HealthSymptomEntryInsert, "user_id"> = {
-      ...input,
-      note: normalizeHealthSymptomNote(input.note),
-    };
-    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptom_entries")
-        .insert({ ...normalizedInput, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomEntriesRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else {
-        nextRow = data ?? localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom_entry", localRow, "create", remoteEnabled);
     if (!isCurrentOperation(operation)) return false;
-    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      clearJournalPendingMutation("symptom_entry", nextRow.id);
-    } else {
-      recordJournalPendingMutation({ entity: "symptom_entry", operation: "upsert", intent: "create", row: nextRow });
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomEntriesRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
     }
+    const nextRow = saveResult.row as HealthSymptomEntry;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2850,6 +2837,10 @@ export function useHealth(
       return false;
     }
     const nextJournalEntryId = input.journal_entry_id ?? currentEntry.journal_entry_id;
+    if (nextJournalEntryId !== currentEntry.journal_entry_id) {
+      setMessage({ tone: "warn", text: "A Feeling occurrence cannot be moved between Journal Entries." });
+      return false;
+    }
     const currentCheckIns = healthSnapshotRef.current?.checkIns ?? checkIns;
     if (!nextJournalEntryId || !currentCheckIns.some((entry) => entry.id === nextJournalEntryId && entry.user_id === userId)) {
       setMessage({ tone: "warn", text: "Feeling occurrences must belong to a Journal Entry." });
@@ -2881,38 +2872,15 @@ export function useHealth(
       symptom_id: nextSymptomId,
       updated_at: now,
     };
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptom_entries")
-        .update(normalizedInput)
-        .eq("id", entryId)
-        .eq("user_id", userId)
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomEntriesRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else {
-        nextRow = data ?? localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom_entry", localRow, "update", remoteEnabled);
     if (!isCurrentOperation(operation)) return false;
-    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      clearJournalPendingMutation("symptom_entry", nextRow.id);
-    } else {
-      recordJournalPendingMutation({ entity: "symptom_entry", operation: "upsert", intent: "update", row: nextRow });
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomEntriesRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
     }
+    const nextRow = saveResult.row as HealthSymptomEntry;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2943,38 +2911,38 @@ export function useHealth(
     const pendingEntryKey = getHealthJournalPendingMutationKey("symptom_entry", entryId);
     const pendingSymptomEntryMutation = journalPendingMutationsRef.current[pendingEntryKey];
     const hasPendingNewEntry = pendingSymptomEntryMutation?.operation === "upsert" && pendingSymptomEntryMutation.intent === "create";
+    const currentSymptomEntry = (healthSnapshotRef.current?.symptomEntries ?? symptomEntries).find((entry) => entry.id === entryId);
+    const journalEntryId = currentSymptomEntry?.journal_entry_id
+      ?? (pendingSymptomEntryMutation?.operation === "upsert" && "journal_entry_id" in pendingSymptomEntryMutation.row ? pendingSymptomEntryMutation.row.journal_entry_id ?? undefined : undefined)
+      ?? (pendingSymptomEntryMutation?.operation === "delete" ? pendingSymptomEntryMutation.journalEntryId : undefined);
+    if (!recordJournalPendingMutation({ entity: "symptom_entry", id: entryId, journalEntryId, operation: "delete" }).ok) {
+      setMessage({ tone: "warn", text: "The Symptom occurrence deletion could not be saved locally, so no remote deletion was attempted." });
+      return false;
+    }
     let deletedRemotely = false;
     if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptom_entries")
-        .delete()
-        .eq("id", entryId)
-        .eq("user_id", userId)
-        .select("id");
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
+      try {
+        await deleteHealthJournalRecordWithTombstone({
+          client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+          entity: "symptom_entry",
+          id: entryId,
+          ...(journalEntryId ? { journalEntryId } : {}),
+        });
+        deletedRemotely = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not confirm the Symptom occurrence deletion tombstone.";
+        if (isMissingHealthSymptomPersistence(message)) {
           symptomEntriesRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
+          setMessage({ tone: "neutral", text: "Symptom tracking is using local storage until the Health Journal tombstone migration is applied." });
         } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
+          setMessage({ tone: "warn", text: message });
         }
-      } else {
-        deletedRemotely = didHealthJournalDeleteAffectRow(data, entryId);
-        if (!deletedRemotely && !hasPendingNewEntry) {
-          setMessage({ tone: "warn", text: "Could not confirm that this Symptom occurrence was deleted remotely; no delete success was reported." });
-          return false;
-        }
+        return false;
       }
     }
 
     if (!isCurrentOperation(operation)) return false;
-    clearJournalPendingMutation("symptom_entry", entryId);
-    recordJournalPendingMutation({ entity: "symptom_entry", id: entryId, operation: "delete" });
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,

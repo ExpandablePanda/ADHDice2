@@ -86,6 +86,7 @@ export async function persistHealthJournalOccurrenceRows<TRow extends {
   rows: readonly TRow[];
   table: HealthJournalOccurrenceTable;
   userId: string;
+  knownExistingIds?: ReadonlySet<string>;
 }): Promise<TRow[]> {
   if (input.rows.length === 0) return [];
   if (input.rows.some((row) => row.user_id !== input.userId || row.journal_entry_id !== input.journalEntryId)) {
@@ -97,7 +98,11 @@ export async function persistHealthJournalOccurrenceRows<TRow extends {
   if (ownershipError) throw new Error(ownershipError);
 
   const ownerById = new Map(owners.map((owner) => [owner.id, owner]));
-  const insertedRows = input.rows.filter((row) => !ownerById.has(row.id));
+  const missingKnownRows = input.rows.filter((row) => input.knownExistingIds?.has(row.id) && !ownerById.has(row.id));
+  if (missingKnownRows.length > 0) {
+    throw new Error("A saved Feeling occurrence no longer exists remotely and was not recreated.");
+  }
+  const insertedRows = input.rows.filter((row) => !ownerById.has(row.id) && !input.knownExistingIds?.has(row.id));
   const existingRows = input.rows.filter((row) => ownerById.has(row.id));
   const savedById = new Map<string, TRow>();
 

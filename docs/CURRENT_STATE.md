@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.121`.
+- Current working app version: `7.16.122`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -28,6 +28,27 @@ Focused Journal data-integrity, occurrence-persistence, Check-In, Symptoms, and
 Trigger tests passed. Targeted lint/typecheck still report pre-existing
 diagnostics in the Health hook and other Health code. Browser behavior and live
 remote synchronization remain unverified; no remote records or schema changed.
+
+## 2026-10-08 7.16.122 Journal sync tombstones
+
+Pending Journal creates now persist a submission state before remote writes.
+Only records explicitly known never to have been submitted may retry as new
+inserts. Creates with an unknown, legacy, or possibly submitted history remain
+queued locally, are excluded from the saved Journal projection, and show a
+recoverable warning. Pending edits update only an existing row owned by the
+same user and, for Feeling children, the same Journal Entry. Pending parent
+deletions suppress related Feelings and occurrences.
+
+The authored, additive deletion-tombstone migration guards Journal IDs across
+check-ins, Feeling definitions and values, occurrences, and Symptoms. Its
+authenticated delete RPC creates tombstones and deletes atomically; direct
+deletes are also recorded by row triggers, including cascades. A focused SQL
+regression script covers idempotence, ownership, cascades, and stale-ID
+rejection. The migration and SQL test are source only and were not applied or
+executed against Supabase. Automated client regressions cover ambiguous create
+replay, scoped edits, deletion precedence, persistence failures, normal saves,
+and Trigger association preservation. Browser QA and live RLS/RPC behavior
+remain for Andrew to verify after the migration is applied.
 
 ## 2026-10-08 7.16.120 Journal occurrence ownership and editor identity hotfix
 

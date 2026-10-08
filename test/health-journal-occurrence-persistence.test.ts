@@ -255,3 +255,17 @@ test("scenario 15: a legacy Journal check-in with no occurrences stays a no-op o
   assert.deepEqual(remote.calls, []);
   assert.equal("linked_event_ids" in normalizeHealthJournalStructuredAnswers({ reflection: "legacy reflection" }), false);
 });
+
+test("scenario 16: a remotely saved occurrence ID cannot be reinserted when missing", async () => {
+  const remote = createRemoteOccurrenceClient();
+  await assert.rejects(persistHealthJournalOccurrenceRows({
+    client: remote.client,
+    journalEntryId: "entry-new",
+    knownExistingIds: new Set(["deleted-occurrence"]),
+    rows: [occurrence("deleted-occurrence")],
+    table: symptomTable,
+    userId: "user-1",
+  }), /no longer exists remotely and was not recreated/);
+  assert.equal(remote.rows.get(symptomTable)?.length, 0);
+  assert.deepEqual(remote.calls.map((call) => call.operation), ["select"]);
+});

@@ -3510,6 +3510,14 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      adhdice_delete_health_journal_record: {
+        Args: {
+          p_entity: "checkin" | "signal" | "signal_value" | "signal_occurrence" | "symptom_entry";
+          p_journal_entry_id: string | null;
+          p_record_id: string;
+        };
+        Returns: Array<{ deleted: boolean; id: string; tombstoned: boolean }>;
+      };
       adhdice_get_latest_manual_task_commands: {
         Args: {
           p_entity_ids: string[];

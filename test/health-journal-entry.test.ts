@@ -350,9 +350,8 @@ test("7.12.35 source contract covers scale-label migration, unified Symptoms, co
   assert.match(scaleLabelsMigrationSource, /set low_label = scale_labels\[1\],[\s\S]*high_label = scale_labels\[11\]/);
   assert.match(schemaSource, /scale_labels text\[\] not null/);
   assert.match(schemaSource, /check \(cardinality\(scale_labels\) = 11\)/);
-  assert.match(healthHookSource, /recordJournalPendingMutation\(\{ entity: "signal", operation: "upsert", intent: "create", row: nextRow \}\)/);
-  assert.match(healthHookSource, /row = \{ \.\.\.mutation\.row, user_id: userId \}/);
-  assert.match(healthHookSource, /scale_labels: nextRow\.scale_labels/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\("signal", localRow, "create", remoteEnabled\)/);
+  assert.match(healthHookSource, /scale_labels: normalizeHealthJournalScaleLabels\(input\.scale_labels, kind, input\.low_label, input\.high_label\)/);
   assert.match(healthPageSource, /expandedJournalScaleKey/);
   assert.match(healthPageSource, /Type # while writing to tag a symptom or feeling/);
   assert.match(healthPageSource, /journal-tag-picker/);
@@ -450,10 +449,9 @@ test("7.12.41 source contract covers unified tag occurrence overlays and shared 
   assert.match(schemaSource, /color text,[\s\S]*scale_labels text\[\] not null/);
   assert.match(schemaSource, /adhdice_health_journal_signals_color_check/);
   assert.match(schemaSource, /kind in \('emotion', 'other'\) and color is not null and color ~/);
-  assert.match(healthHookSource, /recordJournalPendingMutation\(\{ entity: "signal", operation: "upsert", intent: "create", row: nextRow \}\)/);
-  assert.match(healthHookSource, /color: nextRow\.color/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\("signal", localRow, "create", remoteEnabled\)/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\("signal", nextRow, "update", remoteEnabled\)/);
   assert.match(healthHookSource, /color: kind === "symptom" \? null : input\.color/);
-  assert.match(healthHookSource, /update\([\s\S]*color: nextRow\.color/);
 });
 
 test("7.12.39 source contract covers interactive History tags, exact ownership details, no-scroll overlays, and canonical symptom color reuse", () => {
@@ -570,12 +568,11 @@ test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS
   assert.match(multipleEntriesMigrationSource, /notify pgrst, 'reload schema'/);
   assert.doesNotMatch(schemaSource, /unique \(user_id, entry_date\)/);
   assert.match(schemaSource, /entry_time time without time zone not null/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.insert\(\{ \.\.\.\(requestedEntryId \? \{ id: requestedEntryId \} : \{\}\), \.\.\.remoteCheckInFields, user_id: userId \}\)/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.update\(remoteCheckInFields\)[\s\S]*\.eq\("id", requestedEntryId\)/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\([\s\S]*?existingRow \? "update" : "create"/);
   assert.doesNotMatch(healthHookSource, /onConflict: "user_id,entry_date"/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_values"\)[\s\S]*\.upsert\(scoredValues/);
-  assert.match(healthHookSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: occurrenceRows,[\s\S]*?table: "adhdice_health_symptom_entries"/);
-  assert.match(healthHookSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: journalSignalOccurrenceRows,[\s\S]*?table: "adhdice_health_journal_signal_occurrences"/);
+  assert.match(healthHookSource, /saveChildRows\("signal_value", scoredValues/);
+  assert.match(healthHookSource, /saveChildRows\("symptom_entry", occurrenceRows/);
+  assert.match(healthHookSource, /saveChildRows\("signal_occurrence", journalSignalOccurrenceRows/);
   assert.match(healthHookSource, /journal_entry_id: nextRow\.id/);
   assert.match(healthHookSource, /checkIns\.filter\(\(entry\) => entry\.id !== nextRow\.id\)/);
   assert.match(healthHookSource, /journalSignalOccurrences.*storageKey\(userId, "journal-signal-occurrences"\)/s);
@@ -627,11 +624,11 @@ test("7.12.42 hardens Journal occurrence reruns and native kind integrity", () =
   const guardIndex = saveJournalSource.indexOf("hasInvalidNativeOccurrenceSignal");
   assert.ok(guardIndex >= 0);
   assert.match(saveJournalSource, /signal\?\.user_id === userId[\s\S]*?signal\.kind === "emotion"[\s\S]*?signal\.kind === "other"/);
-  assert.ok(guardIndex < saveJournalSource.indexOf('.from("adhdice_health_checkins")'));
+  assert.ok(guardIndex < saveJournalSource.indexOf("saveJournalPendingUpsert("));
   assert.match(saveJournalSource, /hasInvalidNativeOccurrenceSignal[\s\S]*?Choose an Emotion or Other Feeling for each occurrence\./);
   assert.ok(guardIndex < saveJournalSource.indexOf("const journalSignalOccurrenceRows"));
-  assert.match(saveJournalSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: journalSignalOccurrenceRows,[\s\S]*?table: "adhdice_health_journal_signal_occurrences"/);
-  assert.match(saveJournalSource, /persistHealthJournalOccurrenceRows\(\{[\s\S]*?rows: occurrenceRows,[\s\S]*?table: "adhdice_health_symptom_entries"/);
+  assert.match(saveJournalSource, /saveChildRows\("signal_occurrence", journalSignalOccurrenceRows/);
+  assert.match(saveJournalSource, /saveChildRows\("symptom_entry", occurrenceRows/);
 });
 
 test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, and one Feeling section", () => {
