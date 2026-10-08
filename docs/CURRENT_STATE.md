@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.116`.
+- Current working app version: `7.16.117`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,13 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.117 Journal Trigger link replacement API
+
+`updateHealthJournalTriggerLink` now requires a complete replacement containing
+both `effect` and `previous_score`; clearing a previous score requires explicit
+`null`. Missing or invalid replacement fields are rejected before the remote
+mutation. This API-specific contract leaves the database Update type unchanged.
 
 ## 2026-10-08 7.16.116 Journal Trigger persistence foundation
 

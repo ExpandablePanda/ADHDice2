@@ -5,7 +5,6 @@ import type {
   HealthJournalTriggerEffect,
   HealthJournalTriggerLink,
   HealthJournalTriggerLinkInsert,
-  HealthJournalTriggerLinkUpdate,
 } from "@/lib/database.types";
 
 export const HEALTH_JOURNAL_TRIGGER_EFFECTS = ["associated", "worsened", "improved"] as const;
@@ -19,6 +18,10 @@ export type {
   HealthJournalTriggerUpdate,
 } from "@/lib/database.types";
 export type HealthJournalTriggerOccurrenceReference = Pick<HealthJournalTriggerLink, "symptom_occurrence_id" | "journal_signal_occurrence_id">;
+export type HealthJournalTriggerLinkReplacement = {
+  effect: HealthJournalTriggerEffect;
+  previous_score: number | null;
+};
 
 type TriggerClient = SupabaseClient<Database> | null;
 type TriggerClientArgument = TriggerClient | undefined;
@@ -177,7 +180,13 @@ export async function addHealthJournalTriggerLink(userId: string, input: Omit<He
   return data as HealthJournalTriggerLink;
 }
 
-export async function updateHealthJournalTriggerLink(userId: string, linkId: string, input: HealthJournalTriggerLinkUpdate, client?: TriggerClientArgument) {
+export async function updateHealthJournalTriggerLink(userId: string, linkId: string, input: HealthJournalTriggerLinkReplacement, client?: TriggerClientArgument) {
+  if (!input || typeof input !== "object"
+    || !Object.hasOwn(input, "effect")
+    || !Object.hasOwn(input, "previous_score")
+    || input.previous_score === undefined) {
+    throw new Error("Journal Trigger association replacement requires effect and previous_score fields.");
+  }
   if (!isHealthJournalTriggerEffect(input.effect)) throw new Error("Journal Trigger association effect is invalid.");
   const previousScore = normalizeHealthJournalTriggerPreviousScore(input.previous_score);
   if (!previousScore.valid) throw new Error(previousScore.error);

@@ -10,6 +10,7 @@ import {
   isHealthJournalTriggerEffect,
   normalizeHealthJournalTriggerName,
   normalizeHealthJournalTriggerPreviousScore,
+  updateHealthJournalTriggerLink,
   validateHealthJournalTriggerOccurrenceReference,
   validateHealthJournalTriggerName,
 } from "../src/lib/health-journal-triggers.ts";
@@ -17,6 +18,17 @@ import {
 const migration = readFileSync(new URL("../supabase/add_health_journal_triggers_7_16_116.sql", import.meta.url), "utf8");
 const persistence = readFileSync(new URL("../src/lib/health-journal-triggers.ts", import.meta.url), "utf8");
 const journalHook = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
+
+function makeTriggerLinkUpdateClient(response: { data: unknown; error: { message: string } | null }) {
+  const updates: unknown[] = [];
+  const query = {
+    update(value: unknown) { updates.push(value); return this; },
+    eq() { return this; },
+    select() { return this; },
+    single() { return Promise.resolve(response); },
+  };
+  return { client: { from: () => query } as never, updates };
+}
 
 test("Trigger names trim and collapse whitespace and reject normalized duplicates", () => {
   assert.equal(normalizeHealthJournalTriggerName("  listening\t\n to   music "), "listening to music");
@@ -102,6 +114,45 @@ test("persistence refuses local-only success and propagates Supabase errors", as
   }, failingClient), /Could not add Journal Trigger association: remote rejected the link/);
   assert.match(persistence, /if \(error\) throwPersistenceError\("add Journal Trigger association", error\)/);
   assert.match(persistence, /function throwPersistenceError\(action: string, error: \{ message: string \}\)[\s\S]*?throw new Error/);
+});
+
+test("association update fully replaces effect and previous score", async () => {
+  const persisted = { id: "link-1", effect: "improved", previous_score: 4 };
+  const retainedScore = makeTriggerLinkUpdateClient({ data: persisted, error: null });
+  await updateHealthJournalTriggerLink("u1", "link-1", { effect: "worsened", previous_score: 4 }, retainedScore.client);
+  assert.deepEqual(retainedScore.updates, [{ effect: "worsened", previous_score: 4 }]);
+
+  const clearedScore = makeTriggerLinkUpdateClient({ data: { ...persisted, previous_score: null }, error: null });
+  await updateHealthJournalTriggerLink("u1", "link-1", { effect: "improved", previous_score: null }, clearedScore.client);
+  assert.deepEqual(clearedScore.updates, [{ effect: "improved", previous_score: null }]);
+
+  const zeroScore = makeTriggerLinkUpdateClient({ data: { ...persisted, previous_score: 0 }, error: null });
+  await updateHealthJournalTriggerLink("u1", "link-1", { effect: "improved", previous_score: 0 }, zeroScore.client);
+  assert.deepEqual(zeroScore.updates, [{ effect: "improved", previous_score: 0 }]);
+});
+
+test("association update rejects incomplete or invalid replacements before mutation", async () => {
+  const client = makeTriggerLinkUpdateClient({ data: null, error: null });
+  await assert.rejects(updateHealthJournalTriggerLink("u1", "link-1", { effect: "improved" } as never, client.client), /requires effect and previous_score fields/);
+  await assert.rejects(updateHealthJournalTriggerLink("u1", "link-1", { effect: "improved", previous_score: undefined } as never, client.client), /requires effect and previous_score fields/);
+  await assert.rejects(updateHealthJournalTriggerLink("u1", "link-1", { previous_score: null } as never, client.client), /requires effect and previous_score fields/);
+  await assert.rejects(updateHealthJournalTriggerLink("u1", "link-1", { effect: "unknown", previous_score: null } as never, client.client), /effect is invalid/);
+  await assert.rejects(updateHealthJournalTriggerLink("u1", "link-1", { effect: "associated", previous_score: 0 }, client.client), /cannot include a previous score/);
+  await assert.rejects(updateHealthJournalTriggerLink("u1", "link-1", { effect: "improved", previous_score: 11 }, client.client), /integer from 0 through 10/);
+  assert.deepEqual(client.updates, []);
+});
+
+test("association update propagates Supabase mutation failures and filters by owner", async () => {
+  const queryCalls: string[][] = [];
+  const query = {
+    update() { return this; },
+    eq(column: string, value: string) { queryCalls.push([column, value]); return this; },
+    select() { return this; },
+    single() { return Promise.resolve({ data: null, error: { message: "remote update failed" } }); },
+  };
+  const client = { from: () => query } as never;
+  await assert.rejects(updateHealthJournalTriggerLink("u1", "link-1", { effect: "improved", previous_score: null }, client), /Could not update Journal Trigger association: remote update failed/);
+  assert.deepEqual(queryCalls, [["id", "link-1"], ["user_id", "u1"]]);
 });
 
 test("Trigger persistence uses only occurrence identities and does not claim transaction atomicity", () => {
