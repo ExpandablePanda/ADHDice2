@@ -84,6 +84,12 @@ import {
 } from "@/lib/health-journal";
 import { getHealthJournalScaleDenominator, normalizeHealthJournalCustomQuestions, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
 import {
+  getHealthJournalOccurrenceOwnershipError,
+  persistHealthJournalOccurrenceRows,
+  readHealthJournalOccurrenceOwners,
+  type HealthJournalOccurrencePersistenceClient,
+} from "@/lib/health-journal-occurrence-persistence";
+import {
   createHealthJournalTrigger,
   getHealthJournalTriggerNameIdentity,
   listHealthJournalTriggers,
@@ -1735,17 +1741,25 @@ export function useHealth(
       setMessage({ tone: "warn", text: "Snapshot Feeling scores must be between 0 and 10." });
       return null;
     }
+    const symptomOccurrenceOwnershipError = getHealthJournalOccurrenceOwnershipError(
+      input.symptomOccurrences,
+      currentSnapshot.symptomEntries,
+      nextRow.id,
+    );
+    const journalSignalOccurrenceOwnershipError = getHealthJournalOccurrenceOwnershipError(
+      input.journalSignalOccurrences,
+      currentSnapshot.journalSignalOccurrences,
+      nextRow.id,
+    );
+    const occurrenceOwnershipError = symptomOccurrenceOwnershipError ?? journalSignalOccurrenceOwnershipError;
+    if (occurrenceOwnershipError) {
+      setMessage({ tone: "warn", text: occurrenceOwnershipError });
+      return null;
+    }
     for (const occurrence of input.symptomOccurrences) {
       const occurrenceSymptom = currentSnapshot.symptoms.find((symptom) => symptom.id === occurrence.symptom_id);
       const occurrenceSignal = currentSnapshot.journalSignals.find((signal) => signal.kind === "symptom" && signal.symptom_id === occurrence.symptom_id);
       const occurrenceDenominator = getHealthJournalScaleDenominator(occurrenceSignal);
-      const isOwnedOccurrence = occurrence.id
-        ? currentSnapshot.symptomEntries.some((entry) => entry.id === occurrence.id && entry.journal_entry_id === nextRow.id)
-        : false;
-      if (occurrence.id && !isOwnedOccurrence) {
-        setMessage({ tone: "warn", text: "That Feeling occurrence belongs to another Journal Entry." });
-        return null;
-      }
       const isExistingArchivedOccurrence = occurrence.id
         ? currentSnapshot.symptomEntries.some((entry) => entry.id === occurrence.id && entry.journal_entry_id === nextRow.id)
         : false;
@@ -1768,16 +1782,44 @@ export function useHealth(
         setMessage({ tone: "warn", text: "Choose an active Emotion or Other Feeling for each occurrence." });
         return null;
       }
-      if (occurrence.id && !isExistingOccurrence) {
-        setMessage({ tone: "warn", text: "That Feeling occurrence belongs to another Journal Entry." });
-        return null;
-      }
       if (!Number.isInteger(occurrence.score) || occurrence.score < 1 || occurrence.score > occurrenceDenominator || !occurrence.occurred_at || !Number.isFinite(Date.parse(occurrence.occurred_at))) {
         setMessage({ tone: "warn", text: `Feeling occurrences need a score from 1 to ${occurrenceDenominator} and a valid time.` });
         return null;
       }
     }
     if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
+      try {
+        const occurrenceClient = client as unknown as HealthJournalOccurrencePersistenceClient;
+        const [symptomRemoteOwners, signalRemoteOwners] = await Promise.all([
+          symptomEntriesRemoteEnabledRef.current
+            ? readHealthJournalOccurrenceOwners(
+            occurrenceClient,
+            "adhdice_health_symptom_entries",
+            userId,
+            input.symptomOccurrences.flatMap((occurrence) => occurrence.id ? [occurrence.id] : []),
+            )
+            : Promise.resolve([]),
+          journalSignalOccurrencesRemoteEnabledRef.current
+            ? readHealthJournalOccurrenceOwners(
+            occurrenceClient,
+            "adhdice_health_journal_signal_occurrences",
+            userId,
+            input.journalSignalOccurrences.flatMap((occurrence) => occurrence.id ? [occurrence.id] : []),
+            )
+            : Promise.resolve([]),
+        ]);
+        if (!isCurrentOperation(operation)) return null;
+        const remoteOwnershipError = getHealthJournalOccurrenceOwnershipError(input.symptomOccurrences, symptomRemoteOwners, nextRow.id)
+          ?? getHealthJournalOccurrenceOwnershipError(input.journalSignalOccurrences, signalRemoteOwners, nextRow.id);
+        if (remoteOwnershipError) {
+          setMessage({ tone: "warn", text: remoteOwnershipError });
+          return null;
+        }
+      } catch (error) {
+        if (!isCurrentOperation(operation)) return null;
+        setMessage({ tone: "warn", text: error instanceof Error ? error.message : "Could not confirm Feeling occurrence ownership." });
+        return null;
+      }
       const remoteCheckInFields = {
         clarity_score: input.checkIn.clarity_score !== undefined ? input.checkIn.clarity_score : existingRow?.clarity_score ?? null,
         energy_score: input.checkIn.energy_score !== undefined ? input.checkIn.energy_score : existingRow?.energy_score ?? null,
@@ -1896,13 +1938,20 @@ export function useHealth(
         }
       }
       if (!childWriteError && symptomEntriesRemoteEnabledRef.current && occurrenceRows.length > 0) {
-        const { data, error } = await client
-          .from("adhdice_health_symptom_entries")
-          .upsert(occurrenceRows, { onConflict: "id" })
-          .select("*");
-        if (!isCurrentOperation(operation)) return null;
-        if (error) childWriteError = error;
-        else if (data) occurrenceRows.splice(0, occurrenceRows.length, ...data);
+        try {
+          const data = await persistHealthJournalOccurrenceRows({
+            client: client as unknown as HealthJournalOccurrencePersistenceClient,
+            journalEntryId: nextRow.id,
+            rows: occurrenceRows,
+            table: "adhdice_health_symptom_entries",
+            userId,
+          });
+          if (!isCurrentOperation(operation)) return null;
+          occurrenceRows.splice(0, occurrenceRows.length, ...data);
+        } catch (error) {
+          if (!isCurrentOperation(operation)) return null;
+          childWriteError = { message: error instanceof Error ? error.message : "Could not save Symptom occurrences." };
+        }
       }
       if (!childWriteError && symptomEntriesRemoteEnabledRef.current) {
         for (const entry of removedOccurrences) {
@@ -1920,13 +1969,20 @@ export function useHealth(
         }
       }
       if (!childWriteError && journalSignalOccurrencesRemoteEnabledRef.current && journalSignalOccurrenceRows.length > 0) {
-        const { data, error } = await client
-          .from("adhdice_health_journal_signal_occurrences")
-          .upsert(journalSignalOccurrenceRows, { onConflict: "id" })
-          .select("*");
-        if (!isCurrentOperation(operation)) return null;
-        if (error) childWriteError = error;
-        else if (data) journalSignalOccurrenceRows.splice(0, journalSignalOccurrenceRows.length, ...data.map(normalizeHealthJournalSignalOccurrence));
+        try {
+          const data = await persistHealthJournalOccurrenceRows({
+            client: client as unknown as HealthJournalOccurrencePersistenceClient,
+            journalEntryId: nextRow.id,
+            rows: journalSignalOccurrenceRows,
+            table: "adhdice_health_journal_signal_occurrences",
+            userId,
+          });
+          if (!isCurrentOperation(operation)) return null;
+          journalSignalOccurrenceRows.splice(0, journalSignalOccurrenceRows.length, ...data.map(normalizeHealthJournalSignalOccurrence));
+        } catch (error) {
+          if (!isCurrentOperation(operation)) return null;
+          childWriteError = { message: error instanceof Error ? error.message : "Could not save Feeling occurrences." };
+        }
       }
       if (!childWriteError && journalSignalOccurrencesRemoteEnabledRef.current) {
         for (const occurrence of removedJournalSignalOccurrences) {

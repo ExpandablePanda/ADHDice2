@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.119`.
+- Current working app version: `7.16.120`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,33 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
 - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-08 7.16.120 Journal occurrence ownership and editor identity hotfix
+
+New Event Feeling occurrences keep the stable client UUID assigned by the
+editor. `useHealth` accepts an ID that is not persisted yet, continues to allow
+an ID already owned by the target Event, and rejects IDs owned by another
+Journal Entry. Remote saves verify ownership under the authenticated user,
+insert previously unseen IDs, and update existing rows only through matching
+`id`, `user_id`, and `journal_entry_id` filters. This removes the bare-ID
+occurrence upserts that could reassign another occurrence. Repeated saves of
+the same draft reuse the ID and therefore update the same occurrence.
+
+The Journal editor now derives preservation identity from the selected entry,
+separate from the Event draft ID. `+ New entry` clears `HealthPage` selection
+and resets Event occurrences and IDs. Unsaved explicit navigation asks before
+discarding the draft; asynchronous Trigger data for the same selected entry
+continues to preserve Trigger edits, while a confirmed selection change loads
+the selected record. Start/End of Day linked Events and legacy check-in saves
+retain their existing paths.
+
+Executable occurrence-persistence regressions cover new symptom and Emotion
+rows, multiple Trigger links, existing-ID edits, cross-entry rejection,
+partial-save retries, duplicate prevention, editor selection transitions,
+scored hashtags, linked Events, and empty legacy occurrence writes. Focused
+Journal tests passed. Targeted lint/typecheck still report pre-existing
+diagnostics outside this fix. Browser QA and live remote RLS/RPC behavior remain
+unverified; no schema or RPC migration was changed.
 
 ## 2026-10-08 7.16.119 Journal Trigger History loading
 

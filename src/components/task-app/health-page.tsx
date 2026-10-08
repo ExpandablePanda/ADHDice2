@@ -3603,9 +3603,13 @@ export function HealthPage({
                 mealEntries={mealEntries}
                 metricEntries={metricEntries}
                 onAfterSave={startNewJournalEntry}
+                onStartNewEntry={startNewJournalEntry}
+                onRestoreSelectedJournalEntry={(entryId) => {
+                  setSelectedJournalEntryId(entryId);
+                  const previousEntry = entryId ? checkIns.find((entry) => entry.id === entryId) : null;
+                  if (previousEntry) setJournalDate(previousEntry.entry_date);
+                }}
                 onConsumeJournalEntryRequest={(requestId) => {
-                  setJournalWorkspaceMode("entry");
-                  startNewJournalEntry();
                   onConsumeJournalEntryRequest(requestId);
                 }}
                 onOpenFood={() => persistHealthTabPreference("Food")}
