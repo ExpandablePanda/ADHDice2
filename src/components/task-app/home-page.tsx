@@ -1167,29 +1167,31 @@ export function HomePage({
               <>
                 <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
                 {!isUnsectioned ? <>
-                  <AdhdIconButton
-                    aria-label={`Rename ${section.label}`}
-                    className="h-6 w-6"
-                    iconClassName="h-3.5 w-3.5"
-                    onClick={() => beginRoutineSectionRename(section)}
-                    size="sm"
-                    title={`Rename ${section.label}`}
-                    tone="ghost"
-                  >
-                    <Pencil aria-hidden="true" />
-                  </AdhdIconButton>
-                  <AdhdIconButton
-                    aria-label={`Delete ${section.label}`}
-                    className="h-6 w-6"
-                    iconClassName="h-3 w-3"
-                    onClick={() => setRoutineSectionDeleteConfirmation({ id: section.id, label: section.label })}
-                    size="sm"
-                    title={`Delete ${section.label}`}
-                    tone="danger"
-                    variant="rowToolbar"
-                  >
-                    <Trash2 aria-hidden="true" />
-                  </AdhdIconButton>
+                  <div className="flex items-center gap-0">
+                    <AdhdIconButton
+                      aria-label={`Rename ${section.label}`}
+                      className="h-6 w-6"
+                      iconClassName="h-3.5 w-3.5"
+                      onClick={() => beginRoutineSectionRename(section)}
+                      size="sm"
+                      title={`Rename ${section.label}`}
+                      tone="ghost"
+                    >
+                      <Pencil aria-hidden="true" />
+                    </AdhdIconButton>
+                    <AdhdIconButton
+                      aria-label={`Delete ${section.label}`}
+                      className="h-6 w-6"
+                      iconClassName="h-3 w-3"
+                      onClick={() => setRoutineSectionDeleteConfirmation({ id: section.id, label: section.label })}
+                      size="sm"
+                      title={`Delete ${section.label}`}
+                      tone="danger"
+                      variant="rowToolbar"
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </AdhdIconButton>
+                  </div>
                 </> : null}
               </>
             )}
