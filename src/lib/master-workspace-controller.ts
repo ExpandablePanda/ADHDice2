@@ -1,7 +1,6 @@
 import {
-  initializeMasterWorkspaceState,
-  closeMasterSplit,
   getMasterWorkspaceStorageKey,
+  initializeMasterWorkspaceState,
   loadMasterWorkspaceState,
   normalizeMasterWorkspaceState,
   saveMasterWorkspaceState,
@@ -31,9 +30,9 @@ export function restoreMasterWorkspaceForUser(
     const savedValue = storage.getItem(getMasterWorkspaceStorageKey(userId));
     if (savedValue !== null) {
       try {
-        return { state: closeMasterSplit(normalizeMasterWorkspaceState(JSON.parse(savedValue))), restored: true };
+        return { state: normalizeMasterWorkspaceState(JSON.parse(savedValue)), restored: true };
       } catch {
-        return { state: closeMasterSplit(loadMasterWorkspaceState(storage, userId)), restored: true };
+        return { state: loadMasterWorkspaceState(storage, userId), restored: true };
       }
     }
   } catch {

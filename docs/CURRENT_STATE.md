@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.123`.
+- Current working app version: `7.16.124`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -54,6 +54,15 @@ paused until draft protection is available; page tabs can be created inactive,
 same-page tabs can be activated, and closing is limited to changes that keep the
 current page mounted. Split Right, independent page presentation, and draft
 protection remain deferred. Browser QA and production build were not run.
+
+## 2026-10-08 7.16.124 Master Tabs T2 Split-State Preservation
+
+T2 restoration now retains the complete normalized Master Workspace state,
+including right-panel tabs and focused-panel identity. The single-panel shell
+still renders only the focused panel through the existing TaskApp route
+boundary; hidden panel state survives local persistence and subsequent refreshes.
+Malformed stored-state recovery, authenticated readiness fencing, user
+isolation, and the development feature gate remain unchanged.
 
 ## 2026-10-08 7.16.117 Home Routine Unsectioned Sections
 
