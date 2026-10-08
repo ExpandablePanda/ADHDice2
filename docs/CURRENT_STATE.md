@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.128`.
+- Current working app version: `7.16.129`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -142,6 +142,32 @@ section-state contracts, Water history editing, Journal entry, Food history,
 and Active Workout tests passed (111/111); targeted ESLint with the existing
 `react-hooks/set-state-in-effect` rule disabled passed. Browser QA, production
 build, full typecheck, and broad tests were not run.
+
+## 2026-10-08 7.16.129 T5a Cross-Page Master Tab Navigation
+
+The focused Master Tab now owns experimental-mode page navigation while the
+existing single TaskApp remains the only rendered page and data authority.
+Safe cross-page activation, immediate New Tab activation, active-tab close, and
+last-tab Home fallback use the same focused workspace state. Task snapshots and
+Health section selections survive cross-page movement and refresh; dormant
+right-panel state remains persisted unchanged. Navigator deep destinations are
+written once before the rendered page follows them, preventing legacy route
+synchronization from replacing the selected destination.
+
+Tasks, Health, Water, Food, Journal, Fitness, Notes, Quick Capture, and Scratch
+Paper transition guards block unsafe exits and retain failed-save drafts.
+Uncovered Health Weight, Sleep, Settings, and Insights local editors now report
+section safety. Active Fitness workouts remain gated until Finish or Discard.
+Full session draft snapshot/restore remains deferred to T5b.
+
+Focused verification for 7.16.129: current Master Workspace, Tasks UI-state,
+Health Fitness Goals/Plans, Active Workout, Water, Journal, and meal-draft
+checks passed (189/189); targeted ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled reported no errors; and
+`git diff --check` passed. The older `health-fitness` source-contract tests
+still fail against pre-task 7.16.128 source/version assumptions, including a
+7.13.1 version expectation. Browser QA, production build, and full typecheck
+were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

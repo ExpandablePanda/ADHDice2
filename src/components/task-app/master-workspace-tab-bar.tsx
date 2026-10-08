@@ -43,7 +43,9 @@ type MasterWorkspaceTabBarProps = {
   activeTabId: string;
   canActivateTab: (tabId: string) => boolean;
   canCloseTab: (tabId: string) => boolean;
+  canOpenNewTab: boolean;
   canNavigate: boolean;
+  transitionBlockedReason: string | null;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
   onOpenPage: (page: AppPage) => void;
@@ -54,7 +56,9 @@ export function MasterWorkspaceTabBar({
   activeTabId,
   canActivateTab,
   canCloseTab,
+  canOpenNewTab,
   canNavigate,
+  transitionBlockedReason,
   onActivate,
   onClose,
   onOpenPage,
@@ -73,7 +77,7 @@ export function MasterWorkspaceTabBar({
                 disabled={!canActivateTab(tab.id)}
                 onClick={() => onActivate(tab.id)}
                 selected={tab.id === activeTabId}
-                title={canActivateTab(tab.id) ? `Open ${getMasterTabLabel(tab)}` : "This switch is paused to protect the current page or an unfinished draft."}
+                title={canActivateTab(tab.id) ? `Open ${getMasterTabLabel(tab)}` : transitionBlockedReason ?? "This switch is paused to protect the current page."}
                 type="button"
               >
                 {getMasterTabLabel(tab)}
@@ -83,7 +87,7 @@ export function MasterWorkspaceTabBar({
                 disabled={!canCloseTab(tab.id)}
                 onClick={() => onClose(tab.id)}
                 size="sm"
-                title={canCloseTab(tab.id) ? `Close ${getMasterTabLabel(tab)} tab` : "This tab cannot be closed while it would change the rendered page or discard an unfinished draft."}
+                title={canCloseTab(tab.id) ? `Close ${getMasterTabLabel(tab)} tab` : transitionBlockedReason ?? "This tab cannot be closed while it would change the rendered page."}
                 variant="rowToolbar"
               >
                 <X aria-hidden="true" />
@@ -95,9 +99,9 @@ export function MasterWorkspaceTabBar({
           <AdhdChip
             aria-expanded={isPageMenuOpen}
             aria-haspopup="menu"
-            disabled={!canNavigate}
+            disabled={!canNavigate || !canOpenNewTab}
             onClick={() => setIsPageMenuOpen((open) => !open)}
-            title={canNavigate ? "Open a new page tab" : "New tabs can be opened from Home to protect unfinished drafts."}
+            title={!canNavigate ? "Wait for the workspace to finish loading before opening a tab." : transitionBlockedReason ?? "Open a new page tab"}
             type="button"
           >
             <span className="inline-flex items-center gap-1"><Plus aria-hidden="true" className="h-3.5 w-3.5" /> New tab</span>
@@ -122,7 +126,7 @@ export function MasterWorkspaceTabBar({
           ) : null}
         </div>
       </div>
-      {tabs.some((tab) => !canActivateTab(tab.id) || !canCloseTab(tab.id)) ? <p className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">Some tab switches stay paused while they could change the rendered page or discard an unfinished editor. New page tabs stay inactive until that page is already open through existing navigation.</p> : null}
+      {transitionBlockedReason ? <p aria-live="polite" className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">{transitionBlockedReason}</p> : null}
     </nav>
   );
 }

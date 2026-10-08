@@ -90,9 +90,11 @@ function normalizeDraftQuestion(draft: QuestionDraft, sortOrder: number, existin
 
 export function JournalQuestionSettings({
   onSave,
+  onDraftSafetyChange,
   questions,
 }: {
   onSave: (questions: readonly HealthJournalCustomQuestion[]) => Promise<boolean>;
+  onDraftSafetyChange?: (isUnsafe: boolean) => void;
   questions: readonly HealthJournalCustomQuestion[];
 }) {
   const normalizedQuestions = useMemo(() => normalizeHealthJournalCustomQuestions(questions), [questions]);
@@ -107,6 +109,11 @@ export function JournalQuestionSettings({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setLocalQuestions(normalizedQuestions);
   }, [normalizedQuestions]);
+
+  useEffect(() => {
+    onDraftSafetyChange?.(isEditorOpen || isSaving);
+    return () => onDraftSafetyChange?.(false);
+  }, [isEditorOpen, isSaving, onDraftSafetyChange]);
 
   function startCreate() {
     setDraft(EMPTY_DRAFT);
@@ -178,14 +185,14 @@ export function JournalQuestionSettings({
 
       {isEditorOpen ? (
         <div className="grid gap-3 rounded-[1rem] border border-[#e4deef] bg-[#fbfaff] p-4 dark:border-white/10 dark:bg-white/[0.03]">
-          <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Question text</span><input autoFocus className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setDraft((current) => ({ ...current, question: event.target.value }))} value={draft.question} /></label>
+          <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Question text</span><input autoFocus className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSaving} onChange={(event) => setDraft((current) => ({ ...current, question: event.target.value }))} value={draft.question} /></label>
           <div className="grid gap-3 sm:grid-cols-2">
-            <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Show in</span><select className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setDraft((current) => ({ ...current, target: event.target.value as HealthJournalQuestionTarget }))} value={draft.target}>{HEALTH_JOURNAL_CUSTOM_QUESTION_TARGETS.map((target) => <option key={target} value={target}>{TARGET_LABELS[target]}</option>)}</select></label>
-            <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Input type</span><select className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => setDraft((current) => ({ ...current, input_type: event.target.value as HealthJournalCustomInputType }))} value={draft.input_type}>{HEALTH_JOURNAL_CUSTOM_INPUT_TYPES.map((inputType) => <option key={inputType} value={inputType}>{INPUT_TYPE_LABELS[inputType]}</option>)}</select></label>
+            <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Show in</span><select className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSaving} onChange={(event) => setDraft((current) => ({ ...current, target: event.target.value as HealthJournalQuestionTarget }))} value={draft.target}>{HEALTH_JOURNAL_CUSTOM_QUESTION_TARGETS.map((target) => <option key={target} value={target}>{TARGET_LABELS[target]}</option>)}</select></label>
+            <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Input type</span><select className={HEALTH_COMPACT_INPUT_CLASS} disabled={isSaving} onChange={(event) => setDraft((current) => ({ ...current, input_type: event.target.value as HealthJournalCustomInputType }))} value={draft.input_type}>{HEALTH_JOURNAL_CUSTOM_INPUT_TYPES.map((inputType) => <option key={inputType} value={inputType}>{INPUT_TYPE_LABELS[inputType]}</option>)}</select></label>
           </div>
-          {draft.input_type === "single_choice" || draft.input_type === "multiple_choice" ? <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Choices</span><textarea className={LONG_TEXT_CLASS} onChange={(event) => setDraft((current) => ({ ...current, optionsText: event.target.value }))} placeholder="One choice per line" value={draft.optionsText} /></label> : null}
+          {draft.input_type === "single_choice" || draft.input_type === "multiple_choice" ? <label className="grid gap-2"><span className="text-sm font-semibold text-[#26324f] dark:text-white">Choices</span><textarea className={LONG_TEXT_CLASS} disabled={isSaving} onChange={(event) => setDraft((current) => ({ ...current, optionsText: event.target.value }))} placeholder="One choice per line" value={draft.optionsText} /></label> : null}
           {error ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{error}</p> : null}
-          <div className="flex justify-end gap-2"><AdhdChip onClick={() => { setIsEditorOpen(false); setDraft(EMPTY_DRAFT); setError(null); }} type="button">Cancel</AdhdChip><AdhdChip onClick={saveDraft} tone="purple" type="button">Save question</AdhdChip></div>
+          <div className="flex justify-end gap-2"><AdhdChip disabled={isSaving} onClick={() => { setIsEditorOpen(false); setDraft(EMPTY_DRAFT); setError(null); }} type="button">Cancel</AdhdChip><AdhdChip disabled={isSaving} onClick={saveDraft} tone="purple" type="button">{isSaving ? "Saving…" : "Save question"}</AdhdChip></div>
         </div>
       ) : null}
 

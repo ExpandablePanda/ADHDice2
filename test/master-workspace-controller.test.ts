@@ -4,6 +4,7 @@ import {
   activateMasterTabWithTaskWorkspace,
   canPersistLegacyTaskWorkspace,
   closeMasterTabWithTaskWorkspace,
+  getMasterWorkspaceTransitionBlockReason,
   isMasterWorkspaceFeatureEnabled,
   isHealthMasterTabTransitionBlocked,
   isTasksMasterTabTransitionBlocked,
@@ -94,6 +95,44 @@ test("Tasks master tab activation saves the current snapshot and restores each t
   assert.equal(backToFirst.state.panels[0].tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "second changed");
 });
 
+test("Tasks to Health to Notes to Tasks restores the focused page and nested Tasks state", () => {
+  const initial = restoreMasterWorkspaceForUser(memoryStorage(), "cross-page-user", "Tasks", taskWorkspace("tasks before", { view: "calendar" })).state;
+  const panelId = initial.panels[0].id;
+  const withHealth = createMasterTab(initial, panelId, {
+    id: "health-cross-page",
+    destination: { kind: "health-tab", page: "Health", tab: "Fitness" },
+    presentation: { healthSection: "Fitness" },
+  }, false);
+  const withNotes = createMasterTab(withHealth, panelId, {
+    id: "notes-cross-page",
+    destination: { kind: "page", page: "Notes" },
+    presentation: {},
+  }, false);
+
+  const toHealth = activateMasterTabWithTaskWorkspace(withNotes, panelId, "health-cross-page", taskWorkspace("tasks saved", { view: "matrix" }));
+  assert.equal(toHealth.state.panels[0].activeTabId, "health-cross-page");
+  const toNotes = activateMasterTabWithTaskWorkspace(toHealth.state, panelId, "notes-cross-page", DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  assert.equal(toNotes.state.panels[0].activeTabId, "notes-cross-page");
+  const backToTasks = activateMasterTabWithTaskWorkspace(toNotes.state, panelId, "master-tab-1", DEFAULT_TASK_WORKSPACE_TABS_STATE);
+
+  assert.equal(backToTasks.state.panels[0].tabs.find((tab) => tab.id === "master-tab-1")?.destination.page, "Tasks");
+  assert.equal(backToTasks.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "tasks saved");
+  assert.equal(backToTasks.taskWorkspaceTabsState?.tabs[0].taskUiState.view, "matrix");
+  assert.equal(backToTasks.state.panels[0].tabs.find((tab) => tab.id === "health-cross-page")?.presentation.healthSection, "Fitness");
+});
+
+test("new cross-page tab creation can activate the destination immediately", () => {
+  const initial = restoreMasterWorkspaceForUser(memoryStorage(), "new-page-user", "Home", DEFAULT_TASK_WORKSPACE_TABS_STATE).state;
+  const opened = createMasterTab(initial, initial.panels[0].id, {
+    id: "new-health-page",
+    destination: { kind: "page", page: "Health" },
+    presentation: { healthSection: "Water" },
+  }, true);
+
+  assert.equal(opened.panels[0].activeTabId, "new-health-page");
+  assert.equal(opened.panels[0].tabs.find((tab) => tab.id === "new-health-page")?.destination.page, "Health");
+});
+
 test("closing an active Tasks master tab restores the remaining active tab", () => {
   const first = taskWorkspace("remaining", { bucket: "today", view: "table" });
   const initialized = restoreMasterWorkspaceForUser(memoryStorage(), "close-user", "Tasks", first).state;
@@ -108,6 +147,22 @@ test("closing an active Tasks master tab restores the remaining active tab", () 
   assert.equal(transition.state.panels[0].activeTabId, "master-tab-1");
   assert.equal(transition.state.panels[0].tabs.length, 1);
   assert.equal(transition.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "remaining");
+});
+
+test("closing a background cross-page tab leaves the active route and presentation intact", () => {
+  const initialized = restoreMasterWorkspaceForUser(memoryStorage(), "background-close-user", "Tasks", taskWorkspace("active Tasks")).state;
+  const panelId = initialized.panels[0].id;
+  const withBackground = createMasterTab(initialized, panelId, {
+    id: "background-notes",
+    destination: { kind: "page", page: "Notes" },
+    presentation: {},
+  }, false);
+  const transition = closeMasterTabWithTaskWorkspace(withBackground, panelId, "background-notes", taskWorkspace("active Tasks latest"));
+
+  assert.equal(transition.state.panels[0].activeTabId, "master-tab-1");
+  assert.equal(transition.state.panels[0].tabs.length, 1);
+  assert.equal(transition.state.panels[0].tabs[0].destination.page, "Tasks");
+  assert.equal(transition.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "active Tasks latest");
 });
 
 test("refresh preserves nested Tasks snapshots for both master tabs", () => {
@@ -145,6 +200,16 @@ test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", false), false);
   assert.equal(isTasksMasterTabTransitionBlocked("Home", true), false);
+});
+
+test("cross-page navigation is safe when pristine and reports the owning draft guard", () => {
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Tasks", "Today", false, {}, false), null);
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Health", "Fitness", false, {}, false), null);
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Notes", "Today", false, {}, false), null);
+  assert.match(getMasterWorkspaceTransitionBlockReason("Tasks", "Today", true, {}, false) ?? "", /Tasks editor/);
+  assert.match(getMasterWorkspaceTransitionBlockReason("Health", "Water", false, { Water: true }, false) ?? "", /Health Water edit/);
+  assert.match(getMasterWorkspaceTransitionBlockReason("Notes", "Today", false, {}, true) ?? "", /Notes or Scratch Paper/);
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Home", "Today", true, {}, true), null);
 });
 
 test("Health A to Health B to Health A restores independent sections and survives refresh", () => {

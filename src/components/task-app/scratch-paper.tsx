@@ -487,6 +487,7 @@ function ScratchCurrentNoteEditor({
   notes,
   onCreate,
   onCreateTask,
+  onDraftSafetyChange,
   onCurrentNoteIdChange,
   onOpenTask,
   onSetStatus,
@@ -501,6 +502,7 @@ function ScratchCurrentNoteEditor({
   voiceMemos,
 }: ScratchPaperData & {
   onCurrentNoteIdChange: (noteId: string | null) => void;
+  onDraftSafetyChange?: (source: string, isUnsafe: boolean) => void;
   onScratchNoteRevealHandled?: () => void;
   requestedScratchNoteId?: string | null;
 }) {
@@ -532,6 +534,8 @@ function ScratchCurrentNoteEditor({
   const initializedRef = useRef(false);
   const saveInFlightRef = useRef(false);
   const scratchNoteRevealAttemptRef = useRef<string | null>(null);
+
+  useEffect(() => () => onDraftSafetyChange?.("scratch-current", false), [onDraftSafetyChange]);
 
   const dismissTaskPicker = useCallback((reason: ScratchPickerCloseReason = "none") => {
     setTaskQuery("");
@@ -582,14 +586,16 @@ function ScratchCurrentNoteEditor({
   }, [dismissTaskPicker, isLinking]);
 
   const handleDictationBody = useCallback((nextBody: string, range: { end: number; start: number }) => {
+    if (saveInFlightRef.current) return;
     initializedRef.current = true;
     setBody(nextBody);
     setCaretInsertRange(range);
     setIsDirty(true);
+    onDraftSafetyChange?.("scratch-current", true);
     setFocusedElement("editor");
     const tokenTaskIds = new Set(parseScratchTaskTokenSegments(nextBody).flatMap((segment) => segment.kind === "task" ? [segment.taskId] : []));
     setLinkedTaskIds((current) => current.filter((taskId) => tokenTaskIds.has(taskId) || !tasks.some((task) => task.id === taskId)));
-  }, [tasks]);
+  }, [onDraftSafetyChange, tasks]);
 
   const dictation = useScratchDictation({
     body,
@@ -621,7 +627,8 @@ function ScratchCurrentNoteEditor({
     setLastOpenEvent("none");
     setLastCloseReason("none");
     setIsDirty(false);
-  }, [cancelDictation, links, onCurrentNoteIdChange, tasks]);
+    onDraftSafetyChange?.("scratch-current", false);
+  }, [cancelDictation, links, onCurrentNoteIdChange, onDraftSafetyChange, tasks]);
 
   useEffect(() => {
     let noteToLoad: ScratchNote | null | undefined;
@@ -641,10 +648,14 @@ function ScratchCurrentNoteEditor({
     if (saveInFlightRef.current || (!currentNoteId && !body.trim() && !title.trim() && linkedTaskIds.length === 0)) return null;
     saveInFlightRef.current = true;
     setIsSaving(true);
+    onDraftSafetyChange?.("scratch-current", true);
     try {
       if (currentNoteId) {
         const saved = await onUpdate(currentNoteId, { body, linkedTaskIds, title });
-        if (saved) setIsDirty(false);
+        if (saved) {
+          setIsDirty(false);
+          onDraftSafetyChange?.("scratch-current", false);
+        }
         return saved ? currentNoteId : null;
       }
       const createdNoteId = await onCreate({ body, linkedTaskIds, title });
@@ -652,18 +663,21 @@ function ScratchCurrentNoteEditor({
       setCurrentNoteId(createdNoteId);
       onCurrentNoteIdChange(createdNoteId);
       setIsDirty(false);
+      onDraftSafetyChange?.("scratch-current", false);
       return createdNoteId;
     } finally {
       saveInFlightRef.current = false;
       setIsSaving(false);
     }
-  }, [body, currentNoteId, linkedTaskIds, onCreate, onCurrentNoteIdChange, onUpdate, title]);
+  }, [body, currentNoteId, linkedTaskIds, onCreate, onCurrentNoteIdChange, onDraftSafetyChange, onUpdate, title]);
 
   function linkTask(task: Task) {
+    if (saveInFlightRef.current) return;
     initializedRef.current = true;
     setLinkedTaskIds((current) => current.includes(task.id) ? current : [...current, task.id]);
     setBody((current) => replaceScratchRangeWithTaskToken(current, taskInsertRange ?? { end: current.length, start: current.length }, task));
     setIsDirty(true);
+    onDraftSafetyChange?.("scratch-current", true);
     dismissTaskPicker("selection");
   }
 
@@ -673,9 +687,11 @@ function ScratchCurrentNoteEditor({
     slashCommand: ReturnType<typeof extractScratchSlashCommand>,
     openEvent?: ScratchPickerOpenEvent,
   ) {
+    if (saveInFlightRef.current) return;
     initializedRef.current = true;
     setBody(nextBody);
     setIsDirty(true);
+    onDraftSafetyChange?.("scratch-current", true);
     const tokenTaskIds = new Set(parseScratchTaskTokenSegments(nextBody).flatMap((segment) => segment.kind === "task" ? [segment.taskId] : []));
     setLinkedTaskIds((current) => current.filter((taskId) => tokenTaskIds.has(taskId) || !tasks.some((task) => task.id === taskId)));
     if (slashCommand) {
@@ -753,7 +769,7 @@ function ScratchCurrentNoteEditor({
         </div>
         <TaskTableChipButton disabled={currentNoteId === null && !body.trim() && !title.trim() && linkedTaskIds.length === 0} onClick={() => { void startNewNote(); }}><Plus className="h-3 w-3" /> New Note</TaskTableChipButton>
       </div>
-      {isTitleVisible || title ? <input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => { initializedRef.current = true; setTitle(event.target.value); setIsDirty(true); }} placeholder="Optional title" value={title} /> : null}
+      {isTitleVisible || title ? <input className={TASK_TABLE_INPUT_CLASS} disabled={isSaving} onChange={(event) => { if (saveInFlightRef.current) return; initializedRef.current = true; setTitle(event.target.value); setIsDirty(true); onDraftSafetyChange?.("scratch-current", true); }} placeholder="Optional title" value={title} /> : null}
       <div className="relative rounded-[0.95rem] border border-[#ddd2ff] bg-white dark:border-white/15 dark:bg-white/8">
         <ScratchInlineEditor
           body={body}
@@ -783,9 +799,11 @@ function ScratchCurrentNoteEditor({
               onCreateTask={onCreateTask}
               onLink={linkTask}
               onUnlink={(taskId) => {
+                if (saveInFlightRef.current) return;
                 setLinkedTaskIds((current) => current.filter((id) => id !== taskId));
                 setBody((current) => removeScratchTaskToken(current, taskId));
                 setIsDirty(true);
+                onDraftSafetyChange?.("scratch-current", true);
               }}
               query={taskQuery}
               setQuery={setTaskQuery}
@@ -825,7 +843,7 @@ function ScratchCurrentNoteEditor({
   );
 }
 
-function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOpenTask, onSetStatus, onSetTaskStatus, onTranscribeAudio, onUpdate, tasks, userId, voiceMemos }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[] }) {
+function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onDraftSafetyChange, onOpenTask, onSetStatus, onSetTaskStatus, onTranscribeAudio, onUpdate, tasks, userId, voiceMemos }: ScratchPaperActions & { links: ScratchNoteTaskLink[]; note: ScratchNote; tasks: Task[]; onDraftSafetyChange?: (source: string, isUnsafe: boolean) => void }) {
   const noteTaskIds = linkedTaskIdsForNote(note.id, links);
   const [isEditing, setIsEditing] = useState(false);
   const [title, setTitle] = useState(note.title ?? "");
@@ -837,11 +855,13 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
   const [caretInsertRange, setCaretInsertRange] = useState<{ end: number; start: number } | null>(null);
   const [taskInsertRange, setTaskInsertRange] = useState<{ end: number; start: number } | null>(null);
   const [isDirty, setIsDirty] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [pickerSource, setPickerSource] = useState<ScratchPickerSource>("none");
   const [lastOpenEvent, setLastOpenEvent] = useState<ScratchPickerOpenEvent | "none">("none");
   const [lastCloseReason, setLastCloseReason] = useState<ScratchPickerCloseReason>("none");
   const [focusedElement, setFocusedElement] = useState<ScratchFocusedElement>("other");
   const editorRef = useRef<HTMLDivElement | null>(null);
+  const saveInFlightRef = useRef(false);
   const pickerInputRef = useRef<HTMLInputElement | null>(null);
   const pickerAreaRef = useRef<HTMLElement | null>(null);
   const linkedTasks = noteTaskIds.flatMap((taskId) => {
@@ -849,6 +869,8 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
     return task ? [task] : [];
   });
   const allLinkedComplete = linkedTasks.length > 0 && linkedTasks.every(isLinkedTaskComplete);
+
+  useEffect(() => () => onDraftSafetyChange?.(`scratch-card:${note.id}`, false), [note.id, onDraftSafetyChange]);
 
   const dismissTaskPicker = useCallback((reason: ScratchPickerCloseReason = "none") => {
     setTaskQuery("");
@@ -899,8 +921,10 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
   }, [dismissTaskPicker, isLinking]);
 
   function updateDraftBody(nextBody: string, _caretOffset: number, slashCommand: ReturnType<typeof extractScratchSlashCommand>) {
+    if (saveInFlightRef.current) return;
     setBody(nextBody);
     setIsDirty(true);
+    onDraftSafetyChange?.(`scratch-card:${note.id}`, true);
     const tokenTaskIds = new Set(parseScratchTaskTokenSegments(nextBody).flatMap((segment) => segment.kind === "task" ? [segment.taskId] : []));
     setLinkedTaskIds((current) => current.filter((taskId) => tokenTaskIds.has(taskId) || !tasks.some((task) => task.id === taskId)));
     if (slashCommand) {
@@ -936,15 +960,38 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
     getCaretRange: () => caretInsertRange,
     isPickerOpen: isLinking,
     noteKey: note.id,
-    onBodyChange: handleDictationBody,
+    onBodyChange: (nextBody, range) => {
+      if (saveInFlightRef.current) return;
+      handleDictationBody(nextBody, range);
+      onDraftSafetyChange?.(`scratch-card:${note.id}`, true);
+    },
     onTranscribeAudio,
     userId,
   });
 
+  async function saveEdit() {
+    if (saveInFlightRef.current) return;
+    saveInFlightRef.current = true;
+    setIsSaving(true);
+    onDraftSafetyChange?.(`scratch-card:${note.id}`, true);
+    dictation.cancel();
+    try {
+      const saved = await onUpdate(note.id, { body, linkedTaskIds, title });
+      if (saved) {
+        setIsDirty(false);
+        setIsEditing(false);
+        onDraftSafetyChange?.(`scratch-card:${note.id}`, false);
+      }
+    } finally {
+      saveInFlightRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
   if (isEditing) {
     return (
       <article className="space-y-2 rounded-[1rem] border border-[#e9e3f7] bg-white/85 p-3 dark:border-white/10 dark:bg-white/[0.04]" data-dirty={isDirty ? "true" : "false"} ref={pickerAreaRef}>
-        {isTitleVisible || title ? <input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => { setTitle(event.target.value); setIsDirty(true); }} placeholder="Optional title" value={title} /> : null}
+        {isTitleVisible || title ? <input className={TASK_TABLE_INPUT_CLASS} disabled={isSaving} onChange={(event) => { if (saveInFlightRef.current) return; setTitle(event.target.value); setIsDirty(true); onDraftSafetyChange?.(`scratch-card:${note.id}`, true); }} placeholder="Optional title" value={title} /> : null}
         <div className="relative rounded-[0.95rem] border border-[#ddd2ff] bg-white dark:border-white/15 dark:bg-white/8">
           <ScratchInlineEditor
             body={body}
@@ -968,14 +1015,18 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
                 onCreateTask={onCreateTask}
                 onLink={(task) => {
                   setLinkedTaskIds((current) => current.includes(task.id) ? current : [...current, task.id]);
+                  if (saveInFlightRef.current) return;
                   setBody((current) => replaceScratchRangeWithTaskToken(current, taskInsertRange ?? { end: current.length, start: current.length }, task));
                   setIsDirty(true);
+                  onDraftSafetyChange?.(`scratch-card:${note.id}`, true);
                   dismissTaskPicker("selection");
                 }}
                 onUnlink={(taskId) => {
+                  if (saveInFlightRef.current) return;
                   setLinkedTaskIds((current) => current.filter((id) => id !== taskId));
                   setBody((current) => removeScratchTaskToken(current, taskId));
                   setIsDirty(true);
+                  onDraftSafetyChange?.(`scratch-card:${note.id}`, true);
                 }}
                 query={taskQuery}
                 setQuery={setTaskQuery}
@@ -994,11 +1045,12 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
           >
             / Link Task
           </TaskTableChipButton>
-          <TaskTableChipButton onClick={() => { dictation.cancel(); setIsDirty(false); setIsEditing(false); }}>Cancel</TaskTableChipButton>
+          <TaskTableChipButton disabled={isSaving} onClick={() => { dictation.cancel(); setIsDirty(false); setIsEditing(false); onDraftSafetyChange?.(`scratch-card:${note.id}`, false); }}>Cancel</TaskTableChipButton>
           <TaskTableChipButton
-            onClick={() => { dictation.cancel(); void onUpdate(note.id, { body, linkedTaskIds, title }).then((saved) => { if (saved) { setIsDirty(false); setIsEditing(false); } }); }}
+            disabled={isSaving}
+            onClick={() => { void saveEdit(); }}
             toneClassName="border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff]"
-          >Save</TaskTableChipButton>
+          >{isSaving ? "Saving…" : "Save"}</TaskTableChipButton>
         </div>
         {process.env.NODE_ENV === "development" ? (
           <p className="break-all text-[9px] leading-tight text-[#8d87a7] dark:text-white/35">
@@ -1030,7 +1082,7 @@ function ScratchNoteCard({ getTaskStatusOptions, links, note, onCreateTask, onOp
   );
 }
 
-export function ScratchPaperWidget(props: ScratchPaperData & { onViewNotes: () => void }) {
+export function ScratchPaperWidget(props: ScratchPaperData & { onViewNotes: () => void; onDraftSafetyChange?: (source: string, isUnsafe: boolean) => void }) {
   const [search, setSearch] = useState("");
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
   const activeNotes = useMemo(() => props.notes.filter((note) => {
@@ -1047,13 +1099,13 @@ export function ScratchPaperWidget(props: ScratchPaperData & { onViewNotes: () =
       <div className="min-h-0 flex-1 overflow-y-auto pr-1">
         <div className="space-y-3 pb-1">
           <section className="space-y-2 rounded-[1rem] border border-[#ece6fb] bg-white/78 p-2.5 dark:border-white/10 dark:bg-white/[0.04]">
-            <ScratchCurrentNoteEditor {...props} onCurrentNoteIdChange={setCurrentNoteId} />
+            <ScratchCurrentNoteEditor {...props} onCurrentNoteIdChange={setCurrentNoteId} onDraftSafetyChange={props.onDraftSafetyChange} />
           </section>
           <section className="space-y-2">
             <input className={`${TASK_TABLE_INPUT_CLASS} py-1.5`} onChange={(event) => setSearch(event.target.value)} placeholder="Search active notes" value={search} />
             {props.error ? <p className="text-xs text-[#c64c62]">Apply the Scratch Paper SQL migration, then refresh.</p> : null}
             {props.isLoading ? <p className="text-xs text-[#8d87a7]">Loading notes...</p> : null}
-            {activeNotes.filter((note) => note.id !== currentNoteId).map((note) => <ScratchNoteCard key={note.id} {...props} note={note} />)}
+            {activeNotes.filter((note) => note.id !== currentNoteId).map((note) => <ScratchNoteCard key={note.id} {...props} note={note} onDraftSafetyChange={props.onDraftSafetyChange} />)}
             {!props.isLoading && activeNotes.filter((note) => note.id !== currentNoteId).length === 0 ? <p className="text-xs text-[#8d87a7] dark:text-white/40">No other active notes.</p> : null}
           </section>
         </div>
@@ -1062,18 +1114,39 @@ export function ScratchPaperWidget(props: ScratchPaperData & { onViewNotes: () =
   );
 }
 
-export function ScratchPaperPageSection({ onScratchNoteRevealHandled, requestedScratchNoteId, ...props }: ScratchPaperData & {
+export function ScratchPaperPageSection({ onDraftSafetyChange, onScratchNoteRevealHandled, requestedScratchNoteId, ...props }: ScratchPaperData & {
+  onDraftSafetyChange?: (source: string, isUnsafe: boolean) => void;
   onScratchNoteRevealHandled?: () => void;
   requestedScratchNoteId?: string | null;
 }) {
   const [filter, setFilter] = useState<"all" | ScratchNoteStatus>("all");
   const [search, setSearch] = useState("");
   const [currentNoteId, setCurrentNoteId] = useState<string | null>(null);
+  const [unsafeCardIds, setUnsafeCardIds] = useState<Set<string>>(() => new Set());
+  const reportScratchDraftSafety = useCallback((source: string, isUnsafe: boolean) => {
+    if (source.startsWith("scratch-card:")) {
+      const noteId = source.slice("scratch-card:".length);
+      setUnsafeCardIds((current) => {
+        const next = new Set(current);
+        if (isUnsafe) next.add(noteId);
+        else next.delete(noteId);
+        return next;
+      });
+    }
+    onDraftSafetyChange?.(source, isUnsafe);
+  }, [onDraftSafetyChange]);
   const filteredNotes = useMemo(() => props.notes.filter((note) => {
     const matchesFilter = filter === "all" || note.status === filter;
     const query = search.trim().toLowerCase();
     return matchesFilter && (!query || `${note.title ?? ""} ${note.body}`.toLowerCase().includes(query));
   }), [filter, props.notes, search]);
+  const visibleNotes = useMemo(() => {
+    const visibleIds = new Set(filteredNotes.map((note) => note.id));
+    return [
+      ...filteredNotes,
+      ...props.notes.filter((note) => unsafeCardIds.has(note.id) && !visibleIds.has(note.id)),
+    ];
+  }, [filteredNotes, props.notes, unsafeCardIds]);
 
   useEffect(() => {
     if (!requestedScratchNoteId) return;
@@ -1099,7 +1172,7 @@ export function ScratchPaperPageSection({ onScratchNoteRevealHandled, requestedS
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div><h2 className="text-lg font-semibold text-[#2f294a] dark:text-white">Scratch Paper</h2><p className="text-sm text-[#827a9e] dark:text-white/45">Quick notes that can stay linked to current tasks.</p></div>
       </div>
-      <ScratchCurrentNoteEditor {...props} onCurrentNoteIdChange={setCurrentNoteId} onScratchNoteRevealHandled={onScratchNoteRevealHandled} requestedScratchNoteId={requestedScratchNoteId} />
+      <ScratchCurrentNoteEditor {...props} onCurrentNoteIdChange={setCurrentNoteId} onDraftSafetyChange={reportScratchDraftSafety} onScratchNoteRevealHandled={onScratchNoteRevealHandled} requestedScratchNoteId={requestedScratchNoteId} />
       <div className="my-4 flex flex-wrap gap-1.5">
         {(["all", "active", "resolved", "trashed"] as const).map((value) => (
           <TaskTableChipButton key={value} onClick={() => setFilter(value)} toneClassName={filter === value ? "border-[#ddd2ff] bg-[#6f57f6] text-white" : undefined}>
@@ -1110,7 +1183,7 @@ export function ScratchPaperPageSection({ onScratchNoteRevealHandled, requestedS
       <input className={TASK_TABLE_INPUT_CLASS} onChange={(event) => setSearch(event.target.value)} placeholder="Search Scratch Paper notes" value={search} />
       {props.error ? <p className="mt-3 text-sm text-[#c64c62]">Scratch Paper is waiting for its SQL migration. Apply it in Supabase, then refresh.</p> : null}
       <div className="mt-4 grid gap-3 md:grid-cols-2">
-        {filteredNotes.filter((note) => note.id !== currentNoteId).map((note) => <ScratchNoteCard key={note.id} {...props} note={note} />)}
+        {visibleNotes.filter((note) => note.id !== currentNoteId).map((note) => <ScratchNoteCard key={note.id} {...props} note={note} onDraftSafetyChange={reportScratchDraftSafety} />)}
       </div>
       {!props.isLoading && filteredNotes.length === 0 ? <p className="mt-6 text-center text-sm text-[#8d87a7]">No notes match this view.</p> : null}
     </div>

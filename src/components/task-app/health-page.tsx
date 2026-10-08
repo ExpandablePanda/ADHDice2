@@ -269,7 +269,7 @@ type HealthPageProps = {
   onToggleSleepClock: () => void;
   onFinishSleepClock: (kind: HealthSleepKind) => void;
   onLogManualSleep: (input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<boolean>;
-  onUpdateSleepSession: (entryId: string, input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<void>;
+  onUpdateSleepSession: (entryId: string, input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<boolean>;
   mealEntries: HealthMealEntry[];
   mealPlanEntries: HealthMealPlanEntry[];
   metricEntries: HealthMetricEntry[];
@@ -1267,10 +1267,20 @@ export function HealthPage({
   workoutExercises,
   workoutSets,
 }: HealthPageProps) {
-  const reportFoodDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Food", isUnsafe), [onDraftSafetyChange]);
-  const reportJournalDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Journal", isUnsafe), [onDraftSafetyChange]);
-  const reportWaterDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Water", isUnsafe), [onDraftSafetyChange]);
-  const reportFitnessDraftSafety = useCallback((isUnsafe: boolean) => onDraftSafetyChange("Fitness", isUnsafe), [onDraftSafetyChange]);
+  const draftSafetySourcesRef = useRef(new Map<string, { isUnsafe: boolean; section: HealthTab }>());
+  const reportSectionDraftSafety = useCallback((section: HealthTab, source: string, isUnsafe: boolean) => {
+    const key = `${section}:${source}`;
+    if (draftSafetySourcesRef.current.get(key)?.isUnsafe === isUnsafe) return;
+    if (isUnsafe) draftSafetySourcesRef.current.set(key, { isUnsafe, section });
+    else draftSafetySourcesRef.current.delete(key);
+    const hasUnsafeSource = [...draftSafetySourcesRef.current.values()].some((entry) => entry.section === section && entry.isUnsafe);
+    onDraftSafetyChange(section, hasUnsafeSource);
+  }, [onDraftSafetyChange]);
+  const reportFoodDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Food", "food-library", isUnsafe), [reportSectionDraftSafety]);
+  const reportJournalDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Journal", "journal-check-in", isUnsafe), [reportSectionDraftSafety]);
+  const reportJournalQuestionDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Settings", "journal-questions", isUnsafe), [reportSectionDraftSafety]);
+  const reportWaterDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Water", "water-panel", isUnsafe), [reportSectionDraftSafety]);
+  const reportFitnessDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Fitness", "fitness-tab", isUnsafe), [reportSectionDraftSafety]);
   const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
   const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
@@ -1309,6 +1319,11 @@ export function HealthPage({
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [importParseStatus, setImportParseStatus] = useState(DEFAULT_IMPORT_STATUS);
   const [isSavingImport, setIsSavingImport] = useState(false);
+  const [isSavingHealthProfile, setIsSavingHealthProfile] = useState(false);
+  const [isSavingMeal, setIsSavingMeal] = useState(false);
+  const [isSavingWeight, setIsSavingWeight] = useState(false);
+  const [isSavingManualSleep, setIsSavingManualSleep] = useState(false);
+  const [isSavingSleepEdit, setIsSavingSleepEdit] = useState(false);
   const [importSaveStatus, setImportSaveStatus] = useState("");
   const [weightDraft, setWeightDraft] = useState("");
   const [weightNote, setWeightNote] = useState("");
@@ -1384,6 +1399,80 @@ export function HealthPage({
   const previousFeelingTrendDefinitionKeysRef = useRef<string[]>([]);
   const hasInitializedFeelingTrendSelectionRef = useRef(false);
   const today = todayHealthDate();
+  const hasUnsafeFoodDraft = Boolean(
+    (activeMealEntrySlot && hasMeaningfulMealDraft(mealDraft))
+    || editingMealId
+    || isSavingMeal
+    || mealSaveInFlightRef.current,
+  );
+  const hasUnsafeJournalLocalDraft = Boolean(
+    journalOccurrenceEditorOpen
+    || journalOccurrences.length > 0
+    || isJournalAddOpen
+    || journalLibraryCreateKind
+    || journalLibraryEditId
+    || isSymptomCreateOpen
+    || isCreatingSymptom
+    || editingSymptomId
+    || journalTagOverlay
+    || journalHistoryTagOverlay,
+  );
+  const hasUnsafeWeightDraft = Boolean(weightDraft.trim() || weightNote.trim() || isSavingWeight);
+  const isManualSleepDraftChanged = manualSleepDraft.date !== initialSleepInputs.date
+    || manualSleepDraft.hours !== "8"
+    || manualSleepDraft.kind !== "Sleep"
+    || manualSleepDraft.minutes !== "0"
+    || manualSleepDraft.time !== initialSleepInputs.time;
+  const hasUnsafeSleepDraft = Boolean(
+    isManualSleepDraftChanged
+    || editingSleepId
+    || isSavingManualSleep
+    || isSavingSleepEdit
+    || sleepActiveSession,
+  );
+  const healthSettingsFields: Array<keyof HealthProfileUpdate> = [
+    "calorie_goal",
+    "carbs_goal_grams",
+    "fat_goal_grams",
+    "movement_goal_calories",
+    "movement_goal_minutes",
+    "preferred_weight_unit",
+    "protein_goal_grams",
+    "sleep_goal_minutes",
+  ];
+  const hasUnsafeHealthSettingsDraft = Boolean(profile && Object.keys(profileDraft).length > 0 && (
+    healthSettingsFields.some((field) => profileDraft[field] !== profile[field])
+    || targetWeightDraft !== (profile.target_weight_kg === null
+      ? ""
+      : formatEditableWeight(profile.target_weight_kg, profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit))
+    || isSavingHealthProfile
+  ));
+  const hasUnsafeHealthImportDraft = Boolean(importPreview || isParsingImport || isSavingImport);
+
+  useEffect(() => {
+    reportSectionDraftSafety("Food", "health-page-food", hasUnsafeFoodDraft);
+    return () => reportSectionDraftSafety("Food", "health-page-food", false);
+  }, [hasUnsafeFoodDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Journal", "health-page-journal", hasUnsafeJournalLocalDraft);
+    return () => reportSectionDraftSafety("Journal", "health-page-journal", false);
+  }, [hasUnsafeJournalLocalDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Weight", "weight-entry", hasUnsafeWeightDraft);
+    return () => reportSectionDraftSafety("Weight", "weight-entry", false);
+  }, [hasUnsafeWeightDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Sleep", "sleep-entry", hasUnsafeSleepDraft);
+    return () => reportSectionDraftSafety("Sleep", "sleep-entry", false);
+  }, [hasUnsafeSleepDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Settings", "health-settings", hasUnsafeHealthSettingsDraft);
+    return () => reportSectionDraftSafety("Settings", "health-settings", false);
+  }, [hasUnsafeHealthSettingsDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Insights", "health-import", hasUnsafeHealthImportDraft);
+    return () => reportSectionDraftSafety("Insights", "health-import", false);
+  }, [hasUnsafeHealthImportDraft, reportSectionDraftSafety]);
 
   useEffect(() => {
     journalSignalsRef.current = journalSignals;
@@ -1936,12 +2025,18 @@ export function HealthPage({
   }
 
   async function handleSaveManualSleep() {
+    if (isSavingManualSleep) return;
     const payload = resolveSleepDraft(manualSleepDraft);
     if (!payload) return;
-    const saved = await onLogManualSleep(payload);
-    if (saved) {
-      const nextInputs = getCurrentHealthDateTimeInputs();
-      setManualSleepDraft({ date: nextInputs.date, hours: "8", kind: sleepKind, minutes: "0", time: nextInputs.time });
+    setIsSavingManualSleep(true);
+    try {
+      const saved = await onLogManualSleep(payload);
+      if (saved) {
+        const nextInputs = getCurrentHealthDateTimeInputs();
+        setManualSleepDraft({ date: nextInputs.date, hours: "8", kind: sleepKind, minutes: "0", time: nextInputs.time });
+      }
+    } finally {
+      setIsSavingManualSleep(false);
     }
   }
 
@@ -1962,12 +2057,18 @@ export function HealthPage({
   }
 
   async function handleSaveSleepEdit() {
-    if (!editingSleepId || !sleepEditDraft) return;
+    if (!editingSleepId || !sleepEditDraft || isSavingSleepEdit) return;
     const payload = resolveSleepDraft(sleepEditDraft);
     if (!payload) return;
-    await onUpdateSleepSession(editingSleepId, payload);
-    setEditingSleepId(null);
-    setSleepEditDraft(null);
+    setIsSavingSleepEdit(true);
+    try {
+      const saved = await onUpdateSleepSession(editingSleepId, payload);
+      if (!saved) return;
+      setEditingSleepId(null);
+      setSleepEditDraft(null);
+    } finally {
+      setIsSavingSleepEdit(false);
+    }
   }
 
   if (!profile) {
@@ -2013,20 +2114,26 @@ export function HealthPage({
   }
 
   async function handleSaveProfile() {
+    if (isSavingHealthProfile) return false;
     const parsedTargetWeight = parseNullableNumber(targetWeightDraft);
-    await saveProfile({
-      ...profileDraft,
-      calorie_goal: parseNullableInteger(profileDraft.calorie_goal),
-      carbs_goal_grams: parseNullableInteger(profileDraft.carbs_goal_grams),
-      fat_goal_grams: parseNullableInteger(profileDraft.fat_goal_grams),
-      movement_goal_calories: parseNullableInteger(profileDraft.movement_goal_calories),
-      movement_goal_minutes: parseNullableInteger(profileDraft.movement_goal_minutes),
-      protein_goal_grams: parseNullableInteger(profileDraft.protein_goal_grams),
-      sleep_goal_minutes: parseNullableInteger(profileDraft.sleep_goal_minutes),
-      target_weight_kg: parsedTargetWeight === null
-        ? null
-        : displayWeightToKilograms(parsedTargetWeight, profileDraft.preferred_weight_unit ?? activeProfile.preferred_weight_unit),
-    });
+    setIsSavingHealthProfile(true);
+    try {
+      return await saveProfile({
+        ...profileDraft,
+        calorie_goal: parseNullableInteger(profileDraft.calorie_goal),
+        carbs_goal_grams: parseNullableInteger(profileDraft.carbs_goal_grams),
+        fat_goal_grams: parseNullableInteger(profileDraft.fat_goal_grams),
+        movement_goal_calories: parseNullableInteger(profileDraft.movement_goal_calories),
+        movement_goal_minutes: parseNullableInteger(profileDraft.movement_goal_minutes),
+        protein_goal_grams: parseNullableInteger(profileDraft.protein_goal_grams),
+        sleep_goal_minutes: parseNullableInteger(profileDraft.sleep_goal_minutes),
+        target_weight_kg: parsedTargetWeight === null
+          ? null
+          : displayWeightToKilograms(parsedTargetWeight, profileDraft.preferred_weight_unit ?? activeProfile.preferred_weight_unit),
+      });
+    } finally {
+      setIsSavingHealthProfile(false);
+    }
   }
 
   async function handleSaveJournal() {
@@ -2671,14 +2778,16 @@ export function HealthPage({
   }
 
   async function submitMeal(): Promise<boolean> {
-    if (!canSaveMeal || mealSaveInFlightRef.current) {
+    if (!canSaveMeal || mealSaveInFlightRef.current || isSavingMeal) {
       return false;
     }
     mealSaveInFlightRef.current = true;
+    setIsSavingMeal(true);
     try {
       return await handleSaveMeal();
     } finally {
       mealSaveInFlightRef.current = false;
+      setIsSavingMeal(false);
     }
   }
 
@@ -2847,7 +2956,7 @@ export function HealthPage({
   }
 
   async function handleSaveWeight() {
-    if (!profile) {
+    if (!profile || isSavingWeight) {
       return;
     }
     const parsed = Number.parseFloat(weightDraft);
@@ -2855,15 +2964,20 @@ export function HealthPage({
       return;
     }
 
-    const saved = await addWeightEntry({
-      entry_date: today,
-      note: emptyToNull(weightNote),
-      source: "manual",
-      weight_kg: displayWeightToKilograms(parsed, profile.preferred_weight_unit),
-    });
-    if (saved) {
-      setWeightDraft("");
-      setWeightNote("");
+    setIsSavingWeight(true);
+    try {
+      const saved = await addWeightEntry({
+        entry_date: today,
+        note: emptyToNull(weightNote),
+        source: "manual",
+        weight_kg: displayWeightToKilograms(parsed, profile.preferred_weight_unit),
+      });
+      if (saved) {
+        setWeightDraft("");
+        setWeightNote("");
+      }
+    } finally {
+      setIsSavingWeight(false);
     }
   }
 
@@ -3137,6 +3251,7 @@ export function HealthPage({
   }
 
   function resetImportPreviewState() {
+    if (isSavingImport) return;
     importAbortRef.current?.abort();
     importAbortRef.current = null;
     setImportPreview(null);
@@ -3144,7 +3259,6 @@ export function HealthPage({
     setImportParseStatus(DEFAULT_IMPORT_STATUS);
     setImportSaveStatus("");
     setIsParsingImport(false);
-    setIsSavingImport(false);
   }
 
   async function handleAppleFilePicked(file: File | null) {
@@ -3181,7 +3295,7 @@ export function HealthPage({
   }
 
   async function handleSaveImport() {
-    if (!importPreview) {
+    if (!importPreview || isSavingImport) {
       return;
     }
     setIsSavingImport(true);
@@ -4439,15 +4553,15 @@ export function HealthPage({
           <HealthPanel icon={<Scale />} shellSurface subtitle="Weigh-in" title="Track trend, not perfection">
             <div className="grid gap-4 sm:grid-cols-[0.8fr_1.2fr]">
               <Field label={`Weight (${profile.preferred_weight_unit})`}>
-                <input className="health-input" inputMode="decimal" onChange={(event) => setWeightDraft(event.target.value)} placeholder={profile.preferred_weight_unit === "kg" ? "78.2" : "172.4"} value={weightDraft} />
+                <input className="health-input" disabled={isSavingWeight} inputMode="decimal" onChange={(event) => setWeightDraft(event.target.value)} placeholder={profile.preferred_weight_unit === "kg" ? "78.2" : "172.4"} value={weightDraft} />
               </Field>
               <Field label="Note">
-                <input className="health-input" onChange={(event) => setWeightNote(event.target.value)} placeholder="Optional context" value={weightNote} />
+                <input className="health-input" disabled={isSavingWeight} onChange={(event) => setWeightNote(event.target.value)} placeholder="Optional context" value={weightNote} />
               </Field>
             </div>
             <div className="mt-4 flex justify-end">
-              <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveWeight} onClick={() => { void handleSaveWeight(); }} type="button">
-                Save Weight
+              <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveWeight || isSavingWeight} onClick={() => { void handleSaveWeight(); }} type="button">
+                {isSavingWeight ? "Saving…" : "Save Weight"}
               </button>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -4541,11 +4655,13 @@ export function HealthPage({
 
           <PageShell id="sleep-log" label="Log Sleep">
           <HealthPanel icon={<MoonStar />} shellSurface subtitle="Manual entry" title="Log sleep">
-            <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
-            <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
+            <fieldset className="contents" disabled={isSavingManualSleep}>
+              <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
+              <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
+            </fieldset>
             {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
             <div className="mt-4 flex justify-end">
-              <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveManualSleep(); }} type="button">Log Sleep</button>
+              <button className="ui-pill-button-strong-light" disabled={isSavingManualSleep} onClick={() => { void handleSaveManualSleep(); }} type="button">{isSavingManualSleep ? "Saving…" : "Log Sleep"}</button>
             </div>
           </HealthPanel>
           </PageShell>
@@ -4597,12 +4713,14 @@ export function HealthPage({
                     </div>
                     {editingSleepId === session.id && sleepEditDraft ? (
                       <div className="mt-3 border-t border-[#edf0fb] pt-3 dark:border-white/10">
-                        <SleepKindSelector onChange={(kind) => setSleepEditDraft((current) => current ? { ...current, kind } : current)} value={sleepEditDraft.kind} />
-                        <SleepDraftFields draft={sleepEditDraft} onChange={(next) => setSleepEditDraft(next)} />
+                        <fieldset className="contents" disabled={isSavingSleepEdit}>
+                          <SleepKindSelector onChange={(kind) => setSleepEditDraft((current) => current ? { ...current, kind } : current)} value={sleepEditDraft.kind} />
+                          <SleepDraftFields draft={sleepEditDraft} onChange={(next) => setSleepEditDraft(next)} />
+                        </fieldset>
                         {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
                         <div className="mt-3 flex justify-end gap-2">
-                          <button className="ui-pill-button-light" onClick={() => { setEditingSleepId(null); setSleepEditDraft(null); }} type="button">Cancel</button>
-                          <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveSleepEdit(); }} type="button">Save</button>
+                          <button className="ui-pill-button-light" disabled={isSavingSleepEdit} onClick={() => { setEditingSleepId(null); setSleepEditDraft(null); }} type="button">Cancel</button>
+                          <button className="ui-pill-button-strong-light" disabled={isSavingSleepEdit} onClick={() => { void handleSaveSleepEdit(); }} type="button">{isSavingSleepEdit ? "Saving…" : "Save"}</button>
                         </div>
                       </div>
                     ) : null}
@@ -4632,6 +4750,7 @@ export function HealthPage({
                     accept=".xml,.zip,text/xml,application/zip"
                     aria-describedby="apple-health-import-help"
                     className="health-input"
+                    disabled={isSavingImport}
                     onChange={(event) => {
                       void handleAppleFilePicked(event.target.files?.[0] ?? null);
                       event.currentTarget.value = "";
@@ -4641,6 +4760,7 @@ export function HealthPage({
                 </Field>
                 <button
                   className="rounded-full bg-[#eef3ff] px-4 py-2 text-sm font-semibold text-[#4e5ec8] dark:bg-[#1d2342] dark:text-[#c4d1ff]"
+                  disabled={isSavingImport}
                   onClick={resetImportPreviewState}
                   type="button"
                 >
@@ -4736,6 +4856,7 @@ export function HealthPage({
           <ReorderablePageShells layout={pageShellLayout}>
           <PageShell id="settings-content" label="Health Settings">
           <HealthPanel icon={<Target />} shellSurface subtitle="Health settings">
+            <fieldset className="contents" disabled={isSavingHealthProfile}>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Field label="Weight unit">
               <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
@@ -4784,10 +4905,11 @@ export function HealthPage({
             </div>
             <div className="mt-4 flex justify-end">
               <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
-                Save Goals
+                {isSavingHealthProfile ? "Saving…" : "Save Goals"}
               </button>
             </div>
-            <JournalQuestionSettings onSave={saveJournalQuestions} questions={activeProfile.journal_questions ?? []} />
+            </fieldset>
+            <JournalQuestionSettings onDraftSafetyChange={reportJournalQuestionDraftSafety} onSave={saveJournalQuestions} questions={activeProfile.journal_questions ?? []} />
             <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
           </HealthPanel>
           </PageShell>

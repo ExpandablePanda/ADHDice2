@@ -72,6 +72,25 @@ export function isTasksMasterTabTransitionBlocked(activePage: AppPage, hasUnsafe
   return activePage === "Tasks" && hasUnsafeTasksDraft;
 }
 
+export function getMasterWorkspaceTransitionBlockReason(
+  activePage: AppPage,
+  currentHealthSection: HealthTab,
+  hasUnsafeTasksDraft: boolean,
+  healthDraftSafetyBySection: Partial<Record<HealthTab, boolean>>,
+  hasUnsafeNotesDraft: boolean,
+): string | null {
+  if (isTasksMasterTabTransitionBlocked(activePage, hasUnsafeTasksDraft)) {
+    return "Save or close the unfinished Tasks editor before switching pages.";
+  }
+  if (activePage === "Health" && healthDraftSafetyBySection[currentHealthSection]) {
+    return `Save or cancel the unfinished Health ${currentHealthSection} edit before switching pages.`;
+  }
+  if (activePage === "Notes" && hasUnsafeNotesDraft) {
+    return "Save or cancel the unfinished Notes or Scratch Paper edit before switching pages.";
+  }
+  return null;
+}
+
 export function isHealthMasterTabTransitionBlocked(
   currentSection: HealthTab,
   targetSection: HealthTab,

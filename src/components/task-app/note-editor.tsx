@@ -7,8 +7,10 @@ type NoteEditorProps = {
   isNew: boolean;
   note: Note;
   onClose: () => void;
-  onDelete: (id: string) => Promise<void>;
-  onSave: (note: Note) => Promise<void>;
+  onDelete: (id: string) => Promise<boolean>;
+  onSave: (note: Note) => Promise<boolean>;
+  isSaving: boolean;
+  saveError: string | null;
   tasks: Task[];
 };
 
@@ -18,6 +20,8 @@ export function NoteEditorComponent({
   onClose,
   onDelete,
   onSave,
+  isSaving,
+  saveError,
 }: NoteEditorProps) {
   const [draft, setDraft] = useState<Note>(note);
   const [tagInput, setTagInput] = useState("");
@@ -31,12 +35,13 @@ export function NoteEditorComponent({
   return (
     <section className="px-4 pb-32">
       <div className="flex items-center gap-3 pt-4 pb-4">
-        <button onClick={onClose} type="button" className="ui-pill-button-light">
+        <button disabled={isSaving} onClick={onClose} type="button" className="ui-pill-button-light">
           ← Back
         </button>
         <div className="flex-1" />
         {!isNew ? (
           <button
+            disabled={isSaving}
             onClick={() => { void onDelete(draft.id); }}
             type="button"
             className="ui-pill-button-danger-light"
@@ -45,18 +50,21 @@ export function NoteEditorComponent({
           </button>
         ) : null}
         <button
+          disabled={isSaving}
           onClick={() => { void onSave(draft); }}
           type="button"
           className="ui-pill-button-strong-light"
         >
-          Save
+          {isSaving ? "Saving…" : "Save"}
         </button>
       </div>
+      {saveError ? <p aria-live="polite" className="mb-3 text-sm font-semibold text-[#c64c62] dark:text-[#ffb1c0]" role="alert">{saveError}</p> : null}
 
       <input
         autoFocus
         className="mb-3 w-full border-b-2 bg-transparent pb-2 text-2xl font-bold outline-none border-[#6f57f6] text-[#1e2540] placeholder:text-[#bbb8d0] dark:border-[#cabfff]/50 dark:text-white dark:placeholder:text-white/25"
         onChange={(e) => setDraft((d) => ({ ...d, title: e.target.value }))}
+        disabled={isSaving}
         placeholder="Title"
         value={draft.title}
       />
@@ -64,6 +72,7 @@ export function NoteEditorComponent({
       <textarea
         className="mb-4 min-h-40 w-full resize-y rounded-2xl px-4 py-3 text-sm outline-none bg-[#f7f5ff] text-[#1f2642] placeholder:text-[#9b9fba] dark:bg-white/5 dark:text-white dark:placeholder:text-white/30"
         onChange={(e) => setDraft((d) => ({ ...d, body: e.target.value }))}
+        disabled={isSaving}
         placeholder="Write something…"
         value={draft.body}
       />
@@ -75,6 +84,7 @@ export function NoteEditorComponent({
             <button
               key={t}
               onClick={() => setDraft((d) => ({ ...d, tags: d.tags.filter((x) => x !== t) }))}
+              disabled={isSaving}
               type="button"
               className="ui-pill-button-strong-light"
             >
@@ -87,12 +97,14 @@ export function NoteEditorComponent({
             className="flex-1 rounded-xl px-3 py-2 text-sm outline-none bg-[#f7f5ff] text-[#1e2540] dark:bg-white/5 dark:text-white"
             onKeyDown={(e) => { if (e.key === "Enter") addTag(); }}
             onChange={(e) => setTagInput(e.target.value)}
+            disabled={isSaving}
             placeholder="Add tag…"
             value={tagInput}
           />
           <button
             className="ui-pill-button-strong-light"
             onClick={addTag}
+            disabled={isSaving}
             type="button"
           >
             Add

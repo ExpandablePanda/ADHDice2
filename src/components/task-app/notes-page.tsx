@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { NoteEditorComponent } from "./note-editor";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -16,6 +16,7 @@ import type { VoiceMemoData } from "@/hooks/useVoiceMemos";
 type NotesPageProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
   currentUser: User;
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
   onOpenNoteHandled?: () => void;
   openNoteId?: string | null;
   tasks: Task[];
@@ -26,6 +27,7 @@ type NotesPageProps = {
 export function NotesPageComponent({
   client,
   currentUser,
+  onDraftSafetyChange,
   onOpenNoteHandled,
   openNoteId,
   tasks,
@@ -39,7 +41,16 @@ export function NotesPageComponent({
   const [editing, setEditing] = useState<Note | null>(null);
   const [isNew, setIsNew] = useState(false);
   const [quickCapture, setQuickCapture] = useState("");
+  const [isSavingQuickCapture, setIsSavingQuickCapture] = useState(false);
+  const [isSavingNote, setIsSavingNote] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [requestedScratchNoteId, setRequestedScratchNoteId] = useState<string | null>(null);
+  const unsafeDraftSourcesRef = useRef(new Set<string>());
+  const reportDraftSafety = useCallback((source: string, isUnsafe: boolean) => {
+    if (isUnsafe) unsafeDraftSourcesRef.current.add(source);
+    else unsafeDraftSourcesRef.current.delete(source);
+    onDraftSafetyChange(unsafeDraftSourcesRef.current.size > 0);
+  }, [onDraftSafetyChange]);
   const handleScratchNoteRevealHandled = useCallback(() => setRequestedScratchNoteId(null), []);
 
   useEffect(() => {
@@ -63,8 +74,10 @@ export function NotesPageComponent({
     }
     setEditing(targetNote);
     setIsNew(false);
+    setSaveError(null);
+    reportDraftSafety("note-editor", true);
     onOpenNoteHandled?.();
-  }, [notes, onOpenNoteHandled, openNoteId]);
+  }, [notes, onOpenNoteHandled, openNoteId, reportDraftSafety]);
 
   const allTags = useMemo(() => {
     const set = new Set<string>();
@@ -86,57 +99,111 @@ export function NotesPageComponent({
   );
 
   async function handleQuickCapture() {
-    if (!quickCapture.trim()) return;
-    const { data } = await client
-      .from("adhdice_notes")
-      .insert({ user_id: currentUser.id, title: quickCapture.trim(), body: "" })
-      .select("*")
-      .single();
-    if (data) setNotes((prev) => [data, ...prev]);
-    setQuickCapture("");
-  }
-
-  async function handleSaveNote(note: Note) {
-    if (isNew) {
-      const { data } = await client
+    if (isSavingQuickCapture || !quickCapture.trim()) return;
+    reportDraftSafety("quick-capture", true);
+    setIsSavingQuickCapture(true);
+    setSaveError(null);
+    try {
+      const { data, error } = await client
         .from("adhdice_notes")
-        .insert({
-          user_id: currentUser.id,
-          title: note.title,
-          body: note.body,
-          tags: note.tags,
-          linked_task_ids: note.linked_task_ids,
-        })
+        .insert({ user_id: currentUser.id, title: quickCapture.trim(), body: "" })
         .select("*")
         .single();
-      if (data) setNotes((prev) => [data, ...prev]);
-    } else {
-      await client
-        .from("adhdice_notes")
-        .update({
-          title: note.title,
-          body: note.body,
-          tags: note.tags,
-          linked_task_ids: note.linked_task_ids,
-        })
-        .eq("id", note.id);
-      setNotes((prev) =>
-        prev.map((n) =>
-          n.id === note.id ? { ...n, ...note, updated_at: new Date().toISOString() } : n,
-        ),
-      );
+      if (error || !data) {
+        setSaveError(error?.message ?? "Quick Capture could not be saved.");
+        return;
+      }
+      setNotes((prev) => [data, ...prev]);
+      setQuickCapture("");
+      reportDraftSafety("quick-capture", false);
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : "Quick Capture could not be saved.");
+    } finally {
+      setIsSavingQuickCapture(false);
     }
-    setEditing(null);
-    setIsNew(false);
   }
 
-  async function handleDeleteNote(id: string) {
-    await client.from("adhdice_notes").delete().eq("id", id);
-    setNotes((prev) => prev.filter((n) => n.id !== id));
-    setEditing(null);
+  async function handleSaveNote(note: Note): Promise<boolean> {
+    if (isSavingNote) return false;
+    setIsSavingNote(true);
+    reportDraftSafety("note-editor", true);
+    setSaveError(null);
+    try {
+      if (isNew) {
+        const { data, error } = await client
+          .from("adhdice_notes")
+          .insert({
+            user_id: currentUser.id,
+            title: note.title,
+            body: note.body,
+            tags: note.tags,
+            linked_task_ids: note.linked_task_ids,
+          })
+          .select("*")
+          .single();
+        if (error || !data) {
+          setSaveError(error?.message ?? "Note could not be saved.");
+          return false;
+        }
+        setNotes((prev) => [data, ...prev]);
+      } else {
+        const { error } = await client
+          .from("adhdice_notes")
+          .update({
+            title: note.title,
+            body: note.body,
+            tags: note.tags,
+            linked_task_ids: note.linked_task_ids,
+          })
+          .eq("id", note.id);
+        if (error) {
+          setSaveError(error.message);
+          return false;
+        }
+        setNotes((prev) => prev.map((entry) => (
+          entry.id === note.id ? { ...entry, ...note, updated_at: new Date().toISOString() } : entry
+        )));
+      }
+      setEditing(null);
+      setIsNew(false);
+      reportDraftSafety("note-editor", false);
+      return true;
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : "Note could not be saved.");
+      return false;
+    } finally {
+      setIsSavingNote(false);
+    }
+  }
+
+  async function handleDeleteNote(id: string): Promise<boolean> {
+    if (isSavingNote) return false;
+    setIsSavingNote(true);
+    reportDraftSafety("note-editor", true);
+    setSaveError(null);
+    try {
+      const { error } = await client.from("adhdice_notes").delete().eq("id", id);
+      if (error) {
+        setSaveError(error.message);
+        return false;
+      }
+      setNotes((prev) => prev.filter((note) => note.id !== id));
+      setEditing(null);
+      setIsNew(false);
+      reportDraftSafety("note-editor", false);
+      return true;
+    } catch (caught) {
+      setSaveError(caught instanceof Error ? caught.message : "Note could not be deleted.");
+      return false;
+    } finally {
+      setIsSavingNote(false);
+    }
   }
 
   function openNew() {
+    if (isSavingNote) return;
+    reportDraftSafety("note-editor", true);
+    setSaveError(null);
     setEditing({
       id: "",
       user_id: currentUser.id,
@@ -154,13 +221,18 @@ export function NotesPageComponent({
     return (
       <NoteEditorComponent
         isNew={isNew}
+        isSaving={isSavingNote}
         note={editing}
         onClose={() => {
+          if (isSavingNote) return;
+          reportDraftSafety("note-editor", false);
           setEditing(null);
           setIsNew(false);
+          setSaveError(null);
         }}
         onDelete={handleDeleteNote}
         onSave={handleSaveNote}
+        saveError={saveError}
         tasks={tasks}
       />
     );
@@ -185,6 +257,7 @@ export function NotesPageComponent({
       <PageShellBody>
         <ScratchPaperPageSection
           {...scratchPaper}
+          onDraftSafetyChange={reportDraftSafety}
           onScratchNoteRevealHandled={handleScratchNoteRevealHandled}
           requestedScratchNoteId={requestedScratchNoteId}
         />
@@ -201,22 +274,29 @@ export function NotesPageComponent({
           onKeyDown={(e) => {
             if (e.key === "Enter") void handleQuickCapture();
           }}
-          onChange={(e) => setQuickCapture(e.target.value)}
+          disabled={isSavingQuickCapture}
+          onChange={(e) => {
+            const value = e.target.value;
+            setQuickCapture(value);
+            reportDraftSafety("quick-capture", Boolean(value.trim()) || isSavingQuickCapture);
+          }}
           placeholder="Quick capture — press Enter to save…"
           value={quickCapture}
         />
         {quickCapture ? (
           <button
+            disabled={isSavingQuickCapture}
             className="ui-pill-button-strong-light"
             onClick={() => {
               void handleQuickCapture();
             }}
             type="button"
           >
-            Save
+            {isSavingQuickCapture ? "Saving…" : "Save"}
           </button>
         ) : null}
       </div>
+      {saveError && !editing ? <p aria-live="polite" className="mb-3 text-sm font-semibold text-[#c64c62] dark:text-[#ffb1c0]" role="alert">{saveError}</p> : null}
 
       <div className="mb-3 flex gap-2 rounded-2xl px-4 py-2.5 bg-[#f7f5ff] dark:bg-white/5">
         <input
@@ -253,6 +333,9 @@ export function NotesPageComponent({
               key={note.id}
               className="mb-3 w-full break-inside-avoid rounded-2xl px-4 py-3 text-left transition hover:opacity-80 bg-[#f7f5ff] dark:bg-white/5"
               onClick={() => {
+                if (isSavingNote) return;
+                reportDraftSafety("note-editor", true);
+                setSaveError(null);
                 setEditing(note);
                 setIsNew(false);
               }}

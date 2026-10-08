@@ -1230,12 +1230,30 @@ export function TaskApp() {
   const [batchIntakeHealthActive, setBatchIntakeHealthActive] = useState(false);
   const [batchIntakeFocusActive, setBatchIntakeFocusActive] = useState(false);
   const [healthDraftSafetyBySection, setHealthDraftSafetyBySection] = useState<Partial<Record<HealthTab, boolean>>>({});
+  const [hasUnsafeNotesDraft, setHasUnsafeNotesDraft] = useState(false);
   const masterWorkspaceControllerRef = useRef<ReturnType<typeof useMasterWorkspaceController> | null>(null);
   const updateHealthDraftSafety = useCallback((section: HealthTab, isUnsafe: boolean) => {
     setHealthDraftSafetyBySection((current) => current[section] === isUnsafe
       ? current
       : { ...current, [section]: isUnsafe });
   }, []);
+  const requestPageNavigation = useCallback((page: AppPage) => {
+    const controller = masterWorkspaceControllerRef.current;
+    if (controller?.isEnabled) {
+      // Navigator updates the focused destination before asking TaskApp to render it.
+      if (controller.activeTab.destination.page === page && activePage !== page) {
+        setActivePage(page);
+        return true;
+      }
+      const accepted = controller.navigateToPage(page);
+      if (!accepted && controller.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: controller.transitionBlockedReason });
+      }
+      return accepted;
+    }
+    setActivePage(page);
+    return true;
+  }, [activePage, setActivePage, setMessage]);
   const focusDomainMutationBarrierRef = useRef<WorkspaceDomainMutationBarrier>(() => {});
   const invalidateFocusDomainGeneration = useCallback(() => {
     focusDomainMutationBarrierRef.current();
@@ -1388,10 +1406,10 @@ export function TaskApp() {
   }) => {
     if (!sleepCategory) {
       setMessage({ tone: "warn", text: "Create a Sleep Focus category first, then edit sleep." });
-      return;
+      return false;
     }
     const existing = focusHistory.find((entry) => entry.id === entryId);
-    await handleUpdateFocusHistoryEntry(entryId, {
+    return handleUpdateFocusHistoryEntry(entryId, {
       categoryId: existing ? existing.categoryId : sleepCategory.id,
       title: existing ? existing.title : sleepCategory.title,
       focusType: existing ? existing.focusType : sleepCategory.focusType,
@@ -2302,10 +2320,11 @@ export function TaskApp() {
     saveLogicalDaySettings({ dayStartTime, timezone: userTimeZone });
   }, [dayStartTime, userTimeZone]);
 
-  const openTaskFromExternalNavigation = useCallback((taskId: string) => {
+  const openTaskFromExternalNavigation = useCallback((taskId: string, masterDestinationAlreadyUpdated = false) => {
     const nextTaskWorkspaceTabId = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab))?.id
       ?? taskWorkspaceTabsState.activeTabId;
-    setActivePage("Tasks");
+    if (masterDestinationAlreadyUpdated) setActivePage("Tasks");
+    else if (!requestPageNavigation("Tasks")) return;
     setActiveTaskWorkspaceTab(nextTaskWorkspaceTabId);
     setTaskUiState((current) => (
       current.tasksSurface === "tasks"
@@ -2317,7 +2336,7 @@ export function TaskApp() {
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorFocusRequest(null);
     setSharedTaskEditorOverlayTaskId(taskId);
-  }, [setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
+  }, [requestPageNavigation, setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
 
   useEffect(() => {
     if (typeof window === "undefined" || isRestoringPersistedUiState) {
@@ -3086,8 +3105,8 @@ export function TaskApp() {
   }, [homeDailyProgress, homeFullHistoryShadowProgress, isFullTaskHistoryLoaded, isHomeCurrentDayHistoryReady, todayKey]);
   const openHomeRecord = useCallback((metricKey: RecordMetricKey) => {
     setPendingProgressRecordMetricKey(metricKey);
-    setActivePage("Achievements");
-  }, [setActivePage]);
+    requestPageNavigation("Achievements");
+  }, [requestPageNavigation]);
   const clearPendingProgressRecordMetricKey = useCallback(() => {
     setPendingProgressRecordMetricKey(null);
   }, []);
@@ -5162,7 +5181,7 @@ export function TaskApp() {
   }, [updateTask]);
 
   const showCustomRulesetTasks = useCallback((rulesetId: string) => {
-    setActivePage("Tasks");
+    if (!requestPageNavigation("Tasks")) return;
     setIsTaskFiltersOpen(true);
     setTaskUiState((prev) => ({
       ...prev,
@@ -5182,7 +5201,7 @@ export function TaskApp() {
       },
       view: "table",
     }));
-  }, [setActivePage, setIsTaskFiltersOpen, setTaskUiState]);
+  }, [requestPageNavigation, setIsTaskFiltersOpen, setTaskUiState]);
 
   const moveCustomRulesetTasksToTaskAndDelete = useCallback(async (rulesetId: string) => {
     const rulesetName = customBehaviorRulesets.find((ruleset) => ruleset.id === rulesetId)?.name ?? "the Custom Task Type";
@@ -5213,7 +5232,7 @@ export function TaskApp() {
       view: taskUiState.view === "list" ? "list" : "table",
     };
 
-    setActivePage("Tasks");
+    if (!requestPageNavigation("Tasks")) return;
     setSuppressDetachedListNoticeTaskId(null);
     setRequestedListOverlayTaskId(taskId);
     createTaskWorkspaceTab({
@@ -5221,7 +5240,7 @@ export function TaskApp() {
       label: nextLabel,
       taskUiState: nextTaskUiState,
     });
-  }, [activeTaskWorkspaceTab.isRailHidden, activeTaskWorkspaceTab.taskUiState, createTaskWorkspaceTab, setActivePage, taskUiState.view, tasks]);
+  }, [activeTaskWorkspaceTab.isRailHidden, activeTaskWorkspaceTab.taskUiState, createTaskWorkspaceTab, requestPageNavigation, taskUiState.view, tasks]);
 
   const handleTaskWorkspaceSurfaceChange = useCallback((surface: TaskUiState["tasksSurface"]) => {
     if (surface === "attention") {
@@ -5271,37 +5290,50 @@ export function TaskApp() {
     const action: NavigatorSearchAction = target.action;
     clearPageShellNavigationHighlight();
     const masterWorkspaceController = masterWorkspaceControllerRef.current;
-    if (masterWorkspaceController?.featureEnabled && !masterWorkspaceController.updateFocusedDestination(action)) return;
+    if (masterWorkspaceController?.featureEnabled && !masterWorkspaceController.updateFocusedDestination(action)) {
+      if (masterWorkspaceController.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: masterWorkspaceController.transitionBlockedReason });
+      }
+      return;
+    }
+    const hasExperimentalDestination = Boolean(masterWorkspaceController?.featureEnabled);
+    const syncRenderedPage = (page: AppPage) => {
+      if (hasExperimentalDestination) {
+        setActivePage(page);
+        return true;
+      }
+      return requestPageNavigation(page);
+    };
     if (action.kind !== "page-shell") setRequestedPageShell(null);
     if (action.kind === "page") {
       setRequestedSettingsSection(null);
-      setActivePage(action.page);
+      syncRenderedPage(action.page);
     } else if (action.kind === "tasks-surface") {
       setRequestedSettingsSection(null);
-      setActivePage("Tasks");
+      if (!syncRenderedPage("Tasks")) return;
       handleTaskWorkspaceSurfaceChange(action.surface);
     } else if (action.kind === "tasks-view") {
       setRequestedSettingsSection(null);
-      setActivePage("Tasks");
+      if (!syncRenderedPage("Tasks")) return;
       handleTaskWorkspaceSurfaceChange("tasks");
       setTaskUiState((prev) => ({ ...prev, view: action.view }));
     } else if (action.kind === "task") {
       setRequestedSettingsSection(null);
-      openTaskFromExternalNavigation(action.taskId);
+      openTaskFromExternalNavigation(action.taskId, hasExperimentalDestination);
     } else if (action.kind === "health-tab") {
       setRequestedSettingsSection(null);
-      setActivePage("Health");
+      if (!syncRenderedPage("Health")) return;
       if (!masterWorkspaceControllerRef.current?.featureEnabled) persistHealthTabPreference(action.tab);
     } else if (action.kind === "page-shell") {
       setRequestedSettingsSection(null);
       setRequestedPageShell(action);
-      setActivePage(action.page);
+      if (!syncRenderedPage(action.page)) return;
       if (action.healthTab && !masterWorkspaceControllerRef.current?.featureEnabled) persistHealthTabPreference(action.healthTab);
     } else {
-      setActivePage("Settings");
+      if (!syncRenderedPage("Settings")) return;
       setRequestedSettingsSection(action.section);
     }
-  }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
+  }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, requestPageNavigation, setActivePage, setMessage, setTaskUiState]);
 
   const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[]) => {
     setSuppressDetachedListNoticeTaskId(null);
@@ -5645,6 +5677,7 @@ export function TaskApp() {
   const masterWorkspace = useMasterWorkspaceController({
     activePage,
     healthDraftSafetyBySection,
+    hasUnsafeNotesDraft,
     hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen,
     initialHealthSection: legacyHealthTabPreference,
     isReady: isAuthenticatedAppBootReady,
@@ -5660,9 +5693,12 @@ export function TaskApp() {
   const isMasterTabsFeatureEnabled = masterWorkspace.featureEnabled;
   const selectMasterHealthSection = masterWorkspace.selectHealthSection;
   const handleHealthTabSelection = useCallback((tab: HealthTab) => {
-    if (isMasterTabsFeatureEnabled) selectMasterHealthSection(tab);
-    else persistHealthTabPreference(tab);
-  }, [isMasterTabsFeatureEnabled, selectMasterHealthSection]);
+    if (isMasterTabsFeatureEnabled) {
+      if (!selectMasterHealthSection(tab) && masterWorkspaceControllerRef.current?.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: masterWorkspaceControllerRef.current.transitionBlockedReason });
+      }
+    } else persistHealthTabPreference(tab);
+  }, [isMasterTabsFeatureEnabled, selectMasterHealthSection, setMessage]);
   const {
     archiveGoal: archiveFitnessGoal,
     createGoal: createFitnessGoal,
@@ -8104,9 +8140,9 @@ export function TaskApp() {
           onNextTaskTimer={() => cycleHudTaskTimer("next")}
           onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
           onOpenNote={(noteId) => {
+            if (!requestPageNavigation("Notes")) return;
             closeSharedTaskEditorOverlay();
             setNotePageOpenNoteId(noteId);
-            setActivePage("Notes");
           }}
           onOpenTaskHistory={openTaskHistoryForTask}
           onPauseTaskTimer={pauseHudTaskTimer}
@@ -8290,7 +8326,7 @@ export function TaskApp() {
                       onOpenComposer={openInlineNewListTaskComposer}
                       onOpenFocusPlanner={openFocusPlanner}
                       onOpenQuickCapture={() => { void openTaskImportPanel(); }}
-                      onViewScratchPaper={() => setActivePage("Notes")}
+                      onViewScratchPaper={() => { requestPageNavigation("Notes"); }}
                       onNextTaskTimer={() => cycleHudTaskTimer("next")}
                       onPauseTaskTimer={pauseHudTaskTimer}
                       onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
@@ -8350,7 +8386,9 @@ export function TaskApp() {
           activeTabId={masterWorkspace.activeTab.id}
           canActivateTab={masterWorkspace.canActivateTab}
           canCloseTab={masterWorkspace.canCloseTab}
+          canOpenNewTab={masterWorkspace.canOpenNewTab}
           canNavigate={masterWorkspace.canNavigate}
+          transitionBlockedReason={masterWorkspace.transitionBlockedReason}
           onActivate={masterWorkspace.activateTab}
           onClose={masterWorkspace.closeTab}
           onOpenPage={masterWorkspace.openPageTab}
@@ -8439,12 +8477,12 @@ export function TaskApp() {
             onOpenTask={openTaskEditorFromId}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
-              setActivePage("Tasks");
+              if (!requestPageNavigation("Tasks")) return;
               handleTaskWorkspaceSurfaceChange("tasks");
               setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
             }}
             onOpenMilestoneTask={(taskId) => {
-              setActivePage("Tasks");
+              if (!requestPageNavigation("Tasks")) return;
               openTaskInSharedTasksEditorFromPaths(taskId);
             }}
             tasks={tasks}
@@ -8620,8 +8658,8 @@ export function TaskApp() {
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenNote: (noteId) => {
+                    if (!requestPageNavigation("Notes")) return;
                     setNotePageOpenNoteId(noteId);
-                    setActivePage("Notes");
                   },
                   onSetDue: (taskId, schedule, options) => {
                     const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
@@ -8804,8 +8842,8 @@ export function TaskApp() {
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenNote: (noteId) => {
+                    if (!requestPageNavigation("Notes")) return;
                     setNotePageOpenNoteId(noteId);
-                    setActivePage("Notes");
                   },
                   onSetDue: (taskId, schedule, options) => {
                     const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
@@ -9112,6 +9150,7 @@ export function TaskApp() {
           <NotesPage
             client={client}
             currentUser={currentUser}
+            onDraftSafetyChange={setHasUnsafeNotesDraft}
             onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
             openNoteId={notePageOpenNoteId}
             scratchPaper={scratchPaperData}
@@ -9150,7 +9189,7 @@ export function TaskApp() {
             count={activeTasks.length}
             isDark={theme === "dark"}
             page={activePage}
-            setActivePage={setActivePage}
+            setActivePage={requestPageNavigation}
             userId={currentUser.id}
           />
         )}
@@ -9163,7 +9202,7 @@ export function TaskApp() {
           activePage={activePage}
           dockIcons={dockIcons}
           dockItems={dockItems}
-          onNavigate={setActivePage}
+          onNavigate={requestPageNavigation}
           onNavigateSearchTarget={handleNavigatorSearchTarget}
           renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
           searchTargets={navigatorSearchTargets}

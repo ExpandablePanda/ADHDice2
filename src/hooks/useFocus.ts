@@ -1456,8 +1456,8 @@ export function useFocus(
       endedAt?: string | null;
       notes: string;
     },
-  ) {
-    if (!client || !userId) return;
+  ): Promise<boolean> {
+    if (!client || !userId) return false;
 
     const completedAt = data.endedAt !== undefined
       ? data.endedAt
@@ -1483,8 +1483,8 @@ export function useFocus(
       .select("*")
       .single();
 
-    if (error) { setMessage({ tone: "warn", text: error.message }); return; }
-    if (!updated) { setMessage({ tone: "warn", text: "Focus entry updated, but the response was empty." }); return; }
+    if (error) { setMessage({ tone: "warn", text: error.message }); return false; }
+    if (!updated) { setMessage({ tone: "warn", text: "Focus entry updated, but the response was empty." }); return false; }
 
     const nextEntry = {
       ...mapFocusSessionRow(updated),
@@ -1501,6 +1501,7 @@ export function useFocus(
     });
     queueDailySurplusPrompt(focusHistory, nextHistorySnapshot, nextEntry);
     setMessage({ tone: "good", text: "Focus entry updated." });
+    return true;
   }
 
   async function handleDeleteFocusHistoryEntry(entryId: string) {
