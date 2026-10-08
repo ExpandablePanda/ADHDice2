@@ -149,6 +149,26 @@ export function isTaskHistoryEntryClearable({
   return hasClearableHistoryOutcome || hasRemovableCalendarOverride;
 }
 
+export function canRecalculateTaskHistoryFromDate({
+  selectedDate,
+  task,
+  todayDateKey,
+  isMultiSelect = false,
+}: {
+  selectedDate: string;
+  task: Pick<Task, "repeat_frequency" | "status">;
+  todayDateKey: string;
+  isMultiSelect?: boolean;
+}) {
+  return !isMultiSelect
+    && selectedDate <= todayDateKey
+    && task.status !== "complete"
+    && task.status !== "archived"
+    && task.status !== "trashed"
+    && task.repeat_frequency !== "per_week"
+    && task.repeat_frequency !== "per_month";
+}
+
 export function getTaskHistoryCalendarVisibleActionStatuses({
   engineStatuses,
   historicalOverride = false,

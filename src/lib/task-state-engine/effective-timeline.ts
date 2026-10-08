@@ -694,12 +694,15 @@ export function buildTaskEffectiveTimeline(
       if (behaviorPolicy.unresolvedOccurrence === "missed"
         && input.replay?.materializeAutomaticMissed
         && date < input.logicalDate
+        && (input.replay.kind !== "recompute" || date >= input.replay.changedLogicalDate)
         && !completed
         && !override
         && activeDueOn
         && (
           (input.task.recurrence.kind === "rolling"
-            && (unresolvedDueOn !== null || scheduledOccurrences(input.task.recurrence, activeDueOn, date, date).includes(date)))
+            && (input.replay.kind !== "recompute" || input.task.recurrence.intervalDays === 1
+              ? unresolvedDueOn !== null || scheduledOccurrences(input.task.recurrence, activeDueOn, date, date).includes(date)
+              : date === activeDueOn))
           || (input.task.recurrence.kind === "none" && date === activeDueOn)
           || (isFixedRecurrence && isFixedScheduledDate)
         )) {

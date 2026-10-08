@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { buildTrustedTaskStateCommand, buildTrustedTaskStateCommandReplayDescriptor, validateTaskStateCommandIntent, type ScheduleChangeIntent } from "../supabase/functions/task-state-command/domain.ts";
-import { normalizeTaskStateCommand, planTaskStateCommand } from "../src/lib/task-state-canonical/command-service.ts";
+import { normalizeTaskStateCommand, planTaskStateCommand, serializeCanonicalTaskStateCommandForRpc } from "../src/lib/task-state-canonical/command-service.ts";
 import type { CanonicalTaskStateReadModel } from "../src/lib/task-state-canonical/read-model.ts";
 import type { CanonicalLogicalDayContext, CanonicalTaskOccurrence, CanonicalTaskScheduleBoundary } from "../src/lib/task-state-canonical/types.ts";
 
@@ -179,6 +179,67 @@ test("browser intent accepts only command input and derives identity from the au
   assert.equal(command.commandId, descriptor.commandId);
   assert.equal(command.idempotenceIdentity, descriptor.idempotenceIdentity);
   assert.equal(normalized.acceptedPayloadDigest, descriptor.acceptedPayloadDigest);
+});
+
+test("recalculate_history accepts only its bounded date and keeps planner-owned retirement fields out of the browser intent", () => {
+  const intent = {
+    type: "recalculate_history",
+    task_id: "task-1",
+    replay_identity: "recalculate-history-1",
+    expected_revision: 3,
+    from_logical_date: "2026-08-01",
+  } as const;
+
+  assert.deepEqual(validateTaskStateCommandIntent(intent), intent);
+  assert.equal(validateTaskStateCommandIntent({ ...intent, recalculate_history_delete_ids: ["history-1"] }), null);
+  assert.equal(validateTaskStateCommandIntent({ ...intent, from_logical_date: "2026-08-32" }), null);
+
+  const command = buildTrustedTaskStateCommand({
+    intent,
+    userId: "owner-1",
+    readModel,
+    logicalDay,
+    now: "2026-08-10T12:00:00.000Z",
+  });
+  assert.equal(command.type, "recalculate_history");
+  assert.equal(command.fromLogicalDate, intent.from_logical_date);
+  const normalized = normalizeTaskStateCommand(command);
+  assert.equal(normalized.commandType, "recalculate_history");
+  const rpcPayload = serializeCanonicalTaskStateCommandForRpc({
+    command: normalized,
+    normalizedResult: {
+      commandId: normalized.commandId,
+      commandType: normalized.commandType,
+      state: "accepted",
+      conflictCode: null,
+      expectedRevision: normalized.expectedRevision,
+      nextRevision: null,
+      canonicalTaskPatch: {},
+      compatibilityProjection: {
+        status: "pending",
+        dueOn: null,
+        completedAt: null,
+        activeStatusLogicalDate: null,
+        activeOccurrenceDueOn: null,
+      },
+      historyFact: null,
+      automaticHistoryFacts: [],
+      automaticHistoryDeleteIds: [],
+      calendarOverrideHistoryDeleteIds: [],
+      recalculateHistoryDeleteIds: [],
+      recalculateCalendarOverrideIds: [],
+      occurrence: null,
+      scheduleBoundary: null,
+      occurrenceEffectiveOverride: null,
+      calendarOverride: null,
+      rewardEntitlement: null,
+      quotaPeriodFacts: [],
+      warnings: [],
+    },
+  });
+  assert.equal(rpcPayload.payload.recalculate_from_logical_date, intent.from_logical_date);
+  assert.equal("recalculate_history_delete_ids" in rpcPayload.payload, false);
+  assert.equal("recalculate_calendar_override_ids" in rpcPayload.payload, false);
 });
 
 test("server Delay reuses an existing non-superseded occurrence for the logical date", () => {

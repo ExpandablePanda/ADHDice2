@@ -11,6 +11,7 @@ const scheduleAutoMissedMigration = readFileSync(new URL("../supabase/patch_task
 const blankDueMigration = readFileSync(new URL("../supabase/patch_task_calendar_override_blank_due_7_16_99.sql", import.meta.url), "utf8");
 const inProgressMigration = readFileSync(new URL("../supabase/patch_task_calendar_override_in_progress_7_16_103.sql", import.meta.url), "utf8");
 const calendarAuthorityMigration = readFileSync(new URL("../supabase/patch_task_calendar_manual_authority_and_historical_delay_7_16_106.sql", import.meta.url), "utf8");
+const recalculateHistoryMigration = readFileSync(new URL("../supabase/patch_task_calendar_recalculate_history_7_16_111.sql", import.meta.url), "utf8");
 
 const liveAchievementEvaluationFixture = `
           || coalesce(v_automatic_history_delete_ids, '[]'::jsonb)
@@ -324,6 +325,90 @@ test("7.16.110 preserves the original automatic History delete block during the 
     transformed.includes(currentLiveRpcFixture.slice(originalAutomaticHistoryBlockStart, originalAutomaticHistoryBlockEnd)),
     "transformed RPC must preserve the complete original automatic History block",
   );
+});
+
+test("7.16.111 transforms the current live RPC with a bounded, fail-closed recalculation plan", () => {
+  assert.match(recalculateHistoryMigration, /Source-only migration\. Do not execute or deploy/i);
+  assert.doesNotMatch(recalculateHistoryMigration, /select\s+public\.adhdice_execute_task_state_command\b/i);
+
+  const liveAchievementEvaluator = `    v_achievement_evaluation := public.adhdice_evaluate_achievements(
+      p_user_id,
+      v_achievement_operation_id,
+      'immediate'
+    );`;
+  const liveAchievementEvaluatorWithDeletes = `    v_achievement_evaluation := public.adhdice_evaluate_achievements_incremental_for_history_facts(
+      p_user_id,
+      array(
+        select value::uuid
+        from jsonb_array_elements_text(
+          (case when v_history_id is null then '[]'::jsonb else jsonb_build_array(v_history_id) end)
+          || coalesce(v_automatic_history_ids, '[]'::jsonb)
+          || coalesce(v_automatic_history_delete_ids, '[]'::jsonb)
+        ) value
+      ),
+      v_achievement_operation_id,
+      'immediate'
+    );`;
+  const liveHistoryResult = "    'history_fact_ids', v_automatic_history_ids,\n";
+  const liveHistoryResultWithDeletes = "    'history_fact_ids', v_automatic_history_ids,\n"
+    + "    'history_fact_delete_ids', v_automatic_history_delete_ids,\n";
+  const currentLiveRpcFixture = replaceExactlyOnce(
+    replaceExactlyOnce(sql, liveAchievementEvaluator, liveAchievementEvaluatorWithDeletes, "live Achievement evaluator"),
+    liveHistoryResult,
+    liveHistoryResultWithDeletes,
+    "live History result reference",
+  );
+
+  const afterCalendarAuthority = applyCalendarAuthorityReplacements(currentLiveRpcFixture, calendarAuthorityMigration);
+  const replacements = extractCalendarAuthorityReplacements(recalculateHistoryMigration);
+  assert.equal(replacements.length, 14, "7.16.111 must contain all fourteen expected definition replacements");
+  const transformed = replacements.reduce((currentDefinition, replacement, index) => {
+    const occurrences = currentDefinition.split(replacement.needle).length - 1;
+    assert.equal(
+      occurrences,
+      1,
+      `7.16.111 replacement ${index + 1} must match the transformed current-live-RPC anchor exactly once`,
+    );
+    return currentDefinition.replace(replacement.needle, replacement.replacement);
+  }, afterCalendarAuthority);
+
+  assert.match(transformed, /v_recalculate_history_delete_ids jsonb/);
+  assert.match(transformed, /v_recalculate_calendar_override_ids jsonb/);
+  assert.match(transformed, /'recalculate_history'/);
+  assert.match(transformed, /recalculate_from_logical_date/);
+  assert.match(transformed, /Historical recalculation for quota recurrence is not supported yet\./);
+  assert.match(transformed, /outcome <> 'missed'/);
+  assert.match(transformed, /Historical recalculation may retire only owned Missed History facts/);
+  assert.match(transformed, /set resolution_state = 'superseded'/);
+  assert.match(transformed, /set is_active = false/);
+  assert.match(transformed, /'recalculate_history_delete_ids', v_recalculate_history_delete_ids/);
+  assert.match(transformed, /coalesce\(v_recalculate_history_delete_ids, '\[\]'::jsonb\)/);
+
+  const recalculateBlockStart = transformed.indexOf("  if v_recalculate_history_delete_ids <> '[]'::jsonb then");
+  const automaticBlockStart = transformed.indexOf(
+    "  if v_automatic_history_delete_ids <> '[]'::jsonb then\n"
+      + "    update public.adhdice_task_occurrences occurrence\n"
+      + "       set resolution_state = 'unresolved',",
+  );
+  assert.ok(recalculateBlockStart >= 0);
+  assert.ok(automaticBlockStart > recalculateBlockStart);
+  assert.match(
+    transformed.slice(recalculateBlockStart, automaticBlockStart),
+    /delete from public\.adhdice_task_history_facts fact/,
+  );
+  assert.match(
+    transformed.slice(recalculateBlockStart, automaticBlockStart),
+    /resolved_history_id in \(\s*select value::uuid from jsonb_array_elements_text\(v_recalculate_history_delete_ids\)/,
+  );
+  assert.match(transformed, /Historical recalculation cannot retire a History fact with a reward entitlement/);
+  assert.match(transformed, /Historical recalculation Missed facts require past, owned, current schedule evidence/);
+  assert.match(transformed, /Final Achievement evaluation failed/);
+  assert.match(recalculateHistoryMigration, /execute definition;/);
+
+  for (const delimiter of ["$needle$", "$replacement$", "$assert$", "$rpc$"]) {
+    const occurrences = recalculateHistoryMigration.split(delimiter).length - 1;
+    assert.equal(occurrences % 2, 0, `${delimiter} must occur an even number of times`);
+  }
 });
 
 test("clear_outcome retires the same-date Calendar override before removing the canonical outcome", () => {

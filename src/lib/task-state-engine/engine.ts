@@ -308,7 +308,26 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const nowIso = (input.now instanceof Date ? input.now : new Date(input.now)).toISOString();
   const changes: TaskHistoryChange[] = [];
   const errors: string[] = [];
-  const rows = normalizeLegacySuccessfulHistory(task, input.history.filter((row) => row.taskId === task.id));
+  // Calendar override replay uses the same historical recompute action seam,
+  // but it retains an active override on the requested date. Recalculate
+  // History removes the requested range's overrides before entering the
+  // engine, so that distinction keeps ordinary manual override semantics
+  // unchanged while enabling bounded Missed replay here.
+  const recomputeActionDate = input.action?.type === "recompute" ? input.action.fromLogicalDate : null;
+  const isHistoricalRecompute = recomputeActionDate !== null
+    && !(input.calendarOverrides ?? []).some((override) => override.logicalDate >= recomputeActionDate);
+  const recomputeFromLogicalDate = isHistoricalRecompute
+    ? recomputeActionDate
+    : null;
+  // Recompute is deliberately a replay input, not an outcome correction. A
+  // stale Missed fact must not become the replay cursor for the current
+  // schedule, but every protected factual anchor remains in the source rows.
+  const replayInputHistory = input.history
+    .filter((row) => row.taskId === task.id)
+    .filter((row) => !recomputeFromLogicalDate
+      || row.logicalDate < recomputeFromLogicalDate
+      || row.outcome !== "missed");
+  const rows = normalizeLegacySuccessfulHistory(task, replayInputHistory);
   const byDate = authoritativeRowsByDate(rows);
   const recurrenceByDate = authoritativeRowsByDate(rows.filter((row) => row.recurrenceAuthoritative !== false));
   const unscheduled = isUnscheduled(task.recurrence, task.dueOn);
@@ -502,7 +521,10 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
         ...(input.action.manualDueOn !== undefined ? { manualDueOn: input.action.manualDueOn } : {}),
       }
     : null;
-  if (scheduleReplay) {
+  const recomputeReplay = isHistoricalRecompute
+    ? { changedLogicalDate: recomputeActionDate, kind: "recompute" as const }
+    : null;
+  if (scheduleReplay || recomputeReplay) {
     const replayPlan = buildTaskEffectiveTimeline({
       behaviorPolicy,
       behaviorPolicyRevisions: input.behaviorPolicyRevisions,
@@ -516,7 +538,10 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       calendarEnd,
       ...(input.calendarOverrides ? { calendarOverrides: input.calendarOverrides } : {}),
       ...(input.workflow ? { workflow: input.workflow } : {}),
-      replay: { ...scheduleReplay, materializeAutomaticMissed: true },
+      replay: {
+        ...(scheduleReplay ?? recomputeReplay!),
+        materializeAutomaticMissed: true,
+      },
     });
     for (const row of replayPlan.automaticHistoryRows ?? []) {
       rows.push(row);
@@ -809,7 +834,11 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     currentBehaviorSelectionEffectiveFromLogicalDate: input.currentBehaviorSelectionEffectiveFromLogicalDate,
     currentBehaviorPolicyEffectiveFromLogicalDate: input.currentBehaviorPolicyEffectiveFromLogicalDate,
     task,
-    history: rows,
+    history: recomputeReplay
+      ? rows.filter((row) => !(row.provenance === "reconciliation"
+        && row.outcome === "missed"
+        && row.logicalDate >= recomputeReplay.changedLogicalDate))
+      : rows,
     quotaPeriodFacts: input.quotaPeriodFacts,
     logicalDate: today,
     calendarStart,
@@ -832,8 +861,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
               ...scheduleReplay!,
             },
           }
-        : input.action?.type === "recompute"
-          ? { replay: { changedLogicalDate: input.action.fromLogicalDate, kind: "recompute" as const } }
+        : recomputeReplay
+          ? { replay: { ...recomputeReplay, materializeAutomaticMissed: true } }
           : {}),
   });
   const hasOtherSuccessAfterReplacement = Boolean(action && rows.some((row) => (
@@ -849,11 +878,18 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
     && !hasOtherSuccessAfterReplacement,
   );
   const usesReplayTimeline = scheduleChange
+    || Boolean(recomputeReplay)
     || (input.calendarOverrides !== undefined && input.calendarOverrides.length > 0)
     || Boolean(action && (action.historicalOverride || action.replaceExisting) && !preservesManualFutureCursor);
   if (usesReplayTimeline) {
     nextDue = replayTimeline.nextDueOn;
-    calendar = Object.fromEntries(Object.entries(replayTimeline.days).map(([date, day]) => [date, day.state]));
+    const replayCalendar = Object.fromEntries(Object.entries(replayTimeline.days).map(([date, day]) => [date, day.state]));
+    calendar = recomputeReplay
+      ? {
+          ...calendar,
+          ...Object.fromEntries(Object.entries(replayCalendar).filter(([date]) => date >= recomputeReplay.changedLogicalDate)),
+        }
+      : replayCalendar;
   }
 
   // Active Status is calculated once from the engine's resolved recurrence,

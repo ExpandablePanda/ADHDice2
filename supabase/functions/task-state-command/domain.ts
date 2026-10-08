@@ -12,7 +12,7 @@ const COMMAND_TYPES = new Set([
   "set_outcome", "complete_task", "delay_occurrence", "set_due_date", "set_repeat",
   "calendar_override", "archive_task", "trash_task", "restore_task", "start_in_progress",
   "clear_in_progress", "clear_outcome", "reconcile_rollover",
-  "clear_quota_balance",
+  "clear_quota_balance", "recalculate_history",
 ]);
 const COMMON_KEYS = new Set(["type", "task_id", "replay_identity", "expected_revision"]);
 const FORBIDDEN_KEYS = new Set([
@@ -47,6 +47,7 @@ export type TaskStateCommandIntent =
   | { type: "set_repeat"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string; schedule: ScheduleChangeIntent }
   | { type: "calendar_override"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; override_state: "unscheduled" | "not_due" | "due_open" | "blank_due" | "in_progress"; reason?: string | null }
   | { type: "clear_outcome"; task_id: string; replay_identity: string; expected_revision?: number; logical_date: string; occurrence_key?: string; scheduled_due_on?: string }
+  | { type: "recalculate_history"; task_id: string; replay_identity: string; expected_revision?: number; from_logical_date: string }
   | { type: "clear_quota_balance"; task_id: string; replay_identity: string; expected_revision?: number; logical_date?: string }
   | { type: "archive_task" | "clear_in_progress"; task_id: string; replay_identity: string; expected_revision?: number }
   | { type: "reconcile_rollover"; task_id: string; replay_identity: string; expected_revision?: number }
@@ -191,6 +192,9 @@ export function validateTaskStateCommandIntent(value: unknown): TaskStateCommand
   } else if (type === "clear_outcome") {
     ["logical_date", "occurrence_key", "scheduled_due_on"].forEach((key) => allowed.add(key));
     if (!isDate(value.logical_date)) return null;
+  } else if (type === "recalculate_history") {
+    allowed.add("from_logical_date");
+    if (!isValidCalendarDate(value.from_logical_date)) return null;
   } else if (type === "clear_quota_balance") {
     // Clear Balance is intentionally parameterless beyond the command identity;
     // the locked canonical Task supplies the current quota period and owner.
@@ -572,6 +576,8 @@ export function buildTrustedTaskStateCommand(input: {
       return { ...base, type: "calendar_override", calendarOverride: serverCalendarOverride(intent, base, logicalDay, now) };
     case "clear_outcome":
       return { ...base, type: "clear_outcome", logicalDate: intent.logical_date, occurrenceId: occurrence?.id ?? null, occurrenceKey: intent.occurrence_key ?? occurrence?.occurrence_key ?? null, scheduledDueOn: intent.scheduled_due_on ?? occurrence?.scheduled_due_on ?? null, occurrence: occurrence ?? undefined };
+    case "recalculate_history":
+      return { ...base, type: "recalculate_history", fromLogicalDate: intent.from_logical_date };
     case "clear_quota_balance":
       if ((readModel.task.repeat_frequency !== "per_week" && readModel.task.repeat_frequency !== "per_month")
         || readModel.task.repeat_quota_balance_enabled !== true) {

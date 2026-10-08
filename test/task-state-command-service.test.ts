@@ -2331,3 +2331,121 @@ test("reward entitlement identity is stable per entity and logical date", () => 
   assert.equal(first.normalizedResult.rewardEntitlement?.identity, second.normalizedResult.rewardEntitlement?.identity);
   assert.match(first.normalizedResult.rewardEntitlement?.identity ?? "", /task-1:2026-08-10/);
 });
+
+test("recalculate_history plans only post-boundary stale Missed deletion and Calendar override retirement", () => {
+  const planningState = state({ status: "missed", due_on: "2026-09-07", repeat_frequency: "daily", repeat_interval: 5 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "missed",
+      dueOn: "2026-09-02",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+    },
+    history: [
+      missedHistory("2026-08-31"),
+      doneHistory("2026-09-02"),
+      ...["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06", "2026-09-07"].map((logicalDate) => missedHistory(logicalDate)),
+    ],
+    calendarOverrides: [
+      { id: "override-before", logicalDate: "2026-08-31", overrideState: "not_due" },
+      { id: "override-from", logicalDate: "2026-09-01", overrideState: "blank_due" },
+      { id: "override-after", logicalDate: "2026-09-06", overrideState: "due_open" },
+    ],
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    type: "recalculate_history",
+    commandId: "00000000-0000-4000-8000-000000000111",
+    fromLogicalDate: "2026-09-01",
+    logicalDay: { ...logicalDay, logicalDate: "2026-09-10", identity: "user-1:2026-09-10:America/New_York:06:00:3" },
+  }));
+  const payload = serializeCanonicalTaskStateCommandForRpc(plan).payload as Record<string, unknown>;
+
+  assert.equal(plan.command.commandType, "recalculate_history");
+  assert.equal(plan.normalizedResult.compatibilityProjection.dueOn, "2026-09-07");
+  assert.deepEqual(plan.normalizedResult.recalculateHistoryDeleteIds, [
+    "missed-2026-09-03",
+    "missed-2026-09-04",
+    "missed-2026-09-05",
+    "missed-2026-09-06",
+  ]);
+  assert.deepEqual(plan.normalizedResult.recalculateCalendarOverrideIds, ["override-from", "override-after"]);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryFacts, []);
+  assert.deepEqual(plan.normalizedResult.calendarOverrideHistoryDeleteIds, []);
+  assert.equal(plan.normalizedResult.rewardEntitlement, null);
+  assert.equal(payload.recalculate_from_logical_date, "2026-09-01");
+  assert.deepEqual(payload.recalculate_history_delete_ids, plan.normalizedResult.recalculateHistoryDeleteIds);
+  assert.deepEqual(payload.recalculate_calendar_override_ids, plan.normalizedResult.recalculateCalendarOverrideIds);
+  assert.equal("history_fact_delete_ids" in payload, false);
+  assert.equal("reward_program_version" in payload, false);
+});
+
+test("recalculate_history rejects quota recurrence before producing a mutation plan", () => {
+  for (const repeatFrequency of ["per_week", "per_month"] as const) {
+    const planningState = state({ repeat_frequency: repeatFrequency });
+    planningState.engineInput = {
+      ...planningState.engineInput!,
+      task: {
+        ...planningState.engineInput!.task,
+        recurrence: {
+          kind: "quota",
+          period: repeatFrequency === "per_week" ? "week" : "month",
+          count: 3,
+          balanceEnabled: false,
+          incomingBalance: 0,
+          incomingBalancePeriodKey: null,
+        },
+      },
+    };
+    assert.throws(
+      () => planTaskStateCommand(planningState, command({
+        type: "recalculate_history",
+        commandId: `00000000-0000-4000-8000-00000000011${repeatFrequency === "per_week" ? "2" : "3"}`,
+        fromLogicalDate: "2026-08-01",
+      })),
+      (error: unknown) => error instanceof Error
+        && "code" in error
+        && error.code === "HISTORICAL_RECALCULATION_UNSUPPORTED",
+      repeatFrequency,
+    );
+  }
+});
+
+test("recalculate_history materializes a newly required Missed fact through the current schedule boundary", () => {
+  const planningState = state({ status: "missed", due_on: "2026-09-07", repeat_frequency: "daily", repeat_interval: 5 });
+  planningState.engineInput = {
+    ...planningState.engineInput!,
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: {
+      ...planningState.engineInput!.task,
+      activeStatus: "missed",
+      dueOn: "2026-09-02",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      canonical_schedule_boundary: { id: "boundary-current" },
+    } as typeof planningState.engineInput.task & { canonical_schedule_boundary: { id: string } },
+    history: [
+      doneHistory("2026-09-02"),
+      ...["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"].map((logicalDate) => missedHistory(logicalDate)),
+    ],
+  };
+  const plan = planTaskStateCommand(planningState, command({
+    type: "recalculate_history",
+    commandId: "00000000-0000-4000-8000-000000000114",
+    fromLogicalDate: "2026-09-01",
+    logicalDay: { ...logicalDay, logicalDate: "2026-09-10", identity: "user-1:2026-09-10:America/New_York:06:00:3" },
+  }));
+
+  assert.deepEqual(plan.normalizedResult.recalculateHistoryDeleteIds, [
+    "missed-2026-09-03",
+    "missed-2026-09-04",
+    "missed-2026-09-05",
+    "missed-2026-09-06",
+  ]);
+  assert.deepEqual(plan.normalizedResult.automaticHistoryFacts.map((fact) => [fact.logical_date, fact.schedule_boundary_id]), [["2026-09-07", "boundary-current"]]);
+  assert.deepEqual(plan.normalizedResult.recalculateCalendarOverrideIds, []);
+});

@@ -11,6 +11,7 @@ import {
   TASK_HISTORY_FAST_CYCLE_ORDER,
   type TaskHistoryFastCyclePending,
 } from "../src/lib/task-history-fast-cycle.ts";
+import { canRecalculateTaskHistoryFromDate } from "../src/lib/task-complete.ts";
 
 const adapterSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
 const presentationSource = readFileSync(new URL("../src/components/task-app/task-history-calendar-presentation.tsx", import.meta.url), "utf8");
@@ -66,6 +67,18 @@ test("fast-cycle order is exact, excludes Automatic, and waits 5 seconds", () =>
     calendarOverrideActions: ["blank_due"],
     includeInProgress: false,
   }), ["done", "did_my_best", "delayed", "missed", "complete", "blank", "not_due", "due"]);
+  assert.equal(adapterSource.includes(">Automatic<"), false);
+  assert.equal(adapterSource.includes('"Automatic"'), false);
+});
+
+test("recalculation is available only for editable past or today dates", () => {
+  const task = { repeat_frequency: "daily" as const, status: "pending" as const };
+  assert.equal(canRecalculateTaskHistoryFromDate({ selectedDate: "2026-10-04", task, todayDateKey: "2026-10-05" }), true);
+  assert.equal(canRecalculateTaskHistoryFromDate({ selectedDate: "2026-10-05", task, todayDateKey: "2026-10-05" }), true);
+  assert.equal(canRecalculateTaskHistoryFromDate({ selectedDate: "2026-10-06", task, todayDateKey: "2026-10-05" }), false);
+  assert.equal(canRecalculateTaskHistoryFromDate({ selectedDate: "2026-10-04", task, todayDateKey: "2026-10-05", isMultiSelect: true }), false);
+  assert.equal(canRecalculateTaskHistoryFromDate({ selectedDate: "2026-10-04", task: { ...task, repeat_frequency: "per_week" }, todayDateKey: "2026-10-05" }), false);
+  assert.equal(canRecalculateTaskHistoryFromDate({ selectedDate: "2026-10-04", task: { ...task, status: "complete" }, todayDateKey: "2026-10-05" }), false);
 });
 
 test("calculated states use an internal null position and visible states advance in locked order", () => {
@@ -217,6 +230,11 @@ test("first click selects only, multi-select and future dates remain outside cyc
   assert.match(adapterSource, /onRequestComplete\?: \(logicalDate: string\)/);
   assert.match(adapterSource, /if \(pendingEdit\.action === "delayed"\)[\s\S]*?setShowDelayEditor\(true\);[\s\S]*?return true;/);
   assert.match(adapterSource, /if \(pendingEdit\.action === "complete"\)[\s\S]*?return onRequestComplete\(pendingEdit\.dateKey\) !== false;/);
+  assert.match(adapterSource, /Recalculate from \{formatTaskHistoryRecalculateDate\(selectedDate\)\}/);
+  assert.match(adapterSource, /Confirm historical recalculation/);
+  assert.match(adapterSource, /onClick=\{\(\) => setRecalculateConfirmationDate\(null\)\}/);
+  assert.match(adapterSource, /onClick=\{\(\) => \{ void handleRecalculateFromDate\(\); \}\}/);
+  assert.doesNotMatch(adapterSource, /status === "clear" \? "Automatic"/);
 });
 
 test("Delayed opens the existing picker and Complete opens shared confirmation without immediate writes", () => {

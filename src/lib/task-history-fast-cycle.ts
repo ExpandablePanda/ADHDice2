@@ -34,9 +34,9 @@ export function getTaskHistoryFastCycleActions({
   calendarOverrideActions: readonly string[];
   includeInProgress?: boolean;
 }) {
-  // Automatic remains an explicit selected-day action, but never a cycle
-  // position. An eligible Calendar edit always uses the same locked order;
-  // canonical action authority still validates the final mutation.
+  // Recalculation and other engine-level actions are deliberate selected-day
+  // commands, never fast-cycle positions. The canonical action authority still
+  // validates the final mutation.
   if (!canClear && calendarActionStatuses.length === 0 && calendarOverrideActions.length === 0) return [];
   return TASK_HISTORY_FAST_CYCLE_ORDER.filter((action) => includeInProgress || action !== "in_progress");
 }

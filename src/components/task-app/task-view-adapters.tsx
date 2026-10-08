@@ -41,7 +41,7 @@ import type { AppPage } from "@/lib/task-ui-state";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import type { ImportTasksResult, TaskImportOptions, TaskImportProgress } from "@/hooks/useTaskCrudActions";
-import { getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses, isTaskHistoryEntryClearable, type TaskHistoryCalendarOverrideAction } from "@/lib/task-complete";
+import { canRecalculateTaskHistoryFromDate, getTaskHistoryCalendarOverrideActions, getTaskHistoryCalendarVisibleActionStatuses, isTaskHistoryEntryClearable, type TaskHistoryCalendarOverrideAction } from "@/lib/task-complete";
 import { createTaskHistoryCalendarReadRevision, logicalDateForTimestamp, resolveTaskHistoryCalendarActionStatuses, resolveTaskHistoryCalendarRead } from "@/lib/task-state-engine";
 import { computeTaskEffectiveTimelineStreaks, taskEffectiveTimelineDaysFromStates } from "@/lib/task-state-engine/effective-timeline";
 import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
@@ -88,6 +88,12 @@ function formatCalendarDate(dateKey: string) {
     return dateKey;
   }
   return `${Number(month)}/${Number(day)}/${year}`;
+}
+
+function formatTaskHistoryRecalculateDate(dateKey: string) {
+  // The logical date is already selected; UTC keeps the label stable even for
+  // user timezones that cross a civil-date boundary at UTC noon.
+  return new Intl.DateTimeFormat(undefined, { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(`${dateKey}T12:00:00Z`));
 }
 
 function formatHistoryDateTime(timestamp: string) {
@@ -399,6 +405,7 @@ export function TaskHistoryModal({
   onLoadOlderTaskHistory,
   onSetDelayedStatus,
   onSetCalendarOverride,
+  onRecalculateFromDate,
   onSetStatuses,
   task,
   taskCandidates = [],
@@ -436,6 +443,7 @@ export function TaskHistoryModal({
   onSetStatuses: (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed") => Promise<boolean | void>;
   onSetDelayedStatus?: (entryDate: string, nextDueOn: string) => Promise<void>;
   onSetCalendarOverride?: (logicalDate: string, overrideState: TaskHistoryCalendarOverrideAction) => Promise<boolean | void>;
+  onRecalculateFromDate?: (fromLogicalDate: string) => Promise<boolean | void>;
   task: Task;
   taskCandidates?: readonly Task[];
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
@@ -497,6 +505,7 @@ export function TaskHistoryModal({
   const taskSearchRef = useRef<HTMLDivElement>(null);
   const isTaskTitleSaveInFlightRef = useRef(false);
   const [showDelayEditor, setShowDelayEditor] = useState(false);
+  const [recalculateConfirmationDate, setRecalculateConfirmationDate] = useState<string | null>(null);
   const [isRefreshingTaskAuthority, setIsRefreshingTaskAuthority] = useState(false);
 
   const taskSearchResults = useMemo(
@@ -766,6 +775,13 @@ export function TaskHistoryModal({
     && task.status !== "complete"
     && task.status !== "archived"
     && task.status !== "trashed";
+  const canRecalculateSelectedDate = Boolean(onRecalculateFromDate)
+    && canRecalculateTaskHistoryFromDate({
+      selectedDate,
+      task,
+      todayDateKey: today,
+      isMultiSelect,
+    });
   function canClearDates(dateKeys: readonly string[]) {
     return dateKeys.length > 0
       && dateKeys.every((dateKey) => isTaskHistoryEntryClearable({
@@ -776,8 +792,6 @@ export function TaskHistoryModal({
       todayDateKey: today,
       }));
   }
-  const canClearSelectedDate = canClearDates(selectedDates);
-
   function getFastCycleContext(dateKey: string) {
     const entry = historyByDate.get(dateKey) ?? null;
     const timelineDay = calendarRead?.timeline?.days[dateKey] ?? null;
@@ -840,10 +854,8 @@ export function TaskHistoryModal({
   const pendingCycleForSelectedDate = pendingCycle?.taskId === task.id && pendingCycle.dateKey === selectedDate
     ? pendingCycle
     : null;
-  type CalendarActionStatus = "clear" | "complete" | "delayed" | "did_my_best" | "done" | "missed";
-  const visibleCalendarActionStatuses: CalendarActionStatus[] = canClearSelectedDate
-    ? ["clear", ...calendarActionStatuses as CalendarActionStatus[]]
-    : calendarActionStatuses as CalendarActionStatus[];
+  type CalendarActionStatus = "complete" | "delayed" | "did_my_best" | "done" | "missed";
+  const visibleCalendarActionStatuses: CalendarActionStatus[] = calendarActionStatuses as CalendarActionStatus[];
   const taskCalendarMonthKey = `${displayedMonth.year}-${String(displayedMonth.month + 1).padStart(2, "0")}`;
   const taskCalendarMonthDays = getTaskHistoryCalendarMonthDays(taskCalendarMonthKey).map((dateKey) => dateKey && knownDateKeys.has(dateKey) ? dateKey : null);
 
@@ -1014,6 +1026,7 @@ export function TaskHistoryModal({
 
   async function selectDate(dateKey: string) {
     setShowDelayEditor(false);
+    setRecalculateConfirmationDate(null);
     if (!isMultiSelect) {
       if (isSavingRef.current) return;
       if (dateKey !== selectedDate) {
@@ -1047,6 +1060,7 @@ export function TaskHistoryModal({
 
   async function toggleMultiSelect() {
     setShowDelayEditor(false);
+    setRecalculateConfirmationDate(null);
     if (isSavingRef.current) return;
     if (!isMultiSelect) await fastCycleController.flush();
     if (isSavingRef.current) return;
@@ -1082,6 +1096,19 @@ export function TaskHistoryModal({
     await action();
   }
 
+  async function handleRecalculateFromDate() {
+    if (!onRecalculateFromDate || !canRecalculateSelectedDate || isSavingRef.current) return;
+    isSavingRef.current = true;
+    setIsSaving(true);
+    try {
+      const committed = await onRecalculateFromDate(selectedDate);
+      if (committed !== false) setRecalculateConfirmationDate(null);
+    } finally {
+      isSavingRef.current = false;
+      setIsSaving(false);
+    }
+  }
+
   const taskSelectedActions = (
     <div className="flex flex-wrap gap-2">
       <TaskTableChipButton onClick={toggleMultiSelect} toneClassName={isMultiSelect ? "border-[#ddd2ff] bg-[#6f57f6] text-white dark:border-[#7f67ff] dark:bg-[#7f67ff] dark:text-white" : TASK_TABLE_INACTIVE_CHIP_CLASS}>{isMultiSelect ? `${selectedDates.length} Selected` : "Select Multiple"}</TaskTableChipButton>
@@ -1102,14 +1129,19 @@ export function TaskHistoryModal({
               await handleSetStatus(status);
             });
           }}
-          toneClassName={status === "clear"
-            ? `${TASK_TABLE_INACTIVE_CHIP_CLASS} disabled:opacity-50`
-            : `${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
+          toneClassName={`${isSelectedStatus(status) ? TASK_STATUS_INVERTED_CHIP_STYLES[status] : `${statusTone(status)} opacity-78 hover:opacity-100`} disabled:opacity-50`}
         >
-          {status === "clear" ? null : renderTaskStatusCircle(status, "sm")}
-          <span>{status === "clear" ? "Automatic" : formatTaskStatusLabel(status)}</span>
+          {renderTaskStatusCircle(status, "sm")}
+          <span>{formatTaskStatusLabel(status)}</span>
         </TaskTableChipButton>
       ))}
+      {canRecalculateSelectedDate ? (
+        <TaskTableChipButton
+          disabled={isSaving}
+          onClick={() => { void runAfterPendingCycle(() => setRecalculateConfirmationDate(selectedDate)); }}
+          toneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] hover:bg-[#e9e1ff] disabled:opacity-50 dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff] dark:hover:bg-[#2b2050]"
+        >Recalculate from {formatTaskHistoryRecalculateDate(selectedDate)}</TaskTableChipButton>
+      ) : null}
       {calendarOverrideActions.map((overrideState) => (
         <TaskTableChipButton
           className="gap-2"
@@ -1176,6 +1208,17 @@ export function TaskHistoryModal({
       selectedDayContent={<div className="mt-3">
         {pendingCycleForSelectedDate ? <p className="text-xs text-[#827a97] dark:text-white/52">Pending preview — not saved yet.</p> : <p className="text-xs text-[#827a97] dark:text-white/52">{isMultiSelect ? `${selectedDates.length} dates selected. The selected result will be saved to every selected date.` : selectedIsFuture ? "Future dates cannot be edited yet." : selectedIsDue ? "This date is part of the task's due schedule." : "This date is outside the inferred due schedule and will be treated as a manual history entry."}</p>}
         {!isMultiSelect && selectedEntry ? <p className="mt-2 text-xs text-[#8d87a7] dark:text-white/45">{[formatTaskHistoryLoggedLine(selectedEntry) ?? "Logged time unavailable", formatTaskHistoryEditedLine(selectedEntry)].filter((value): value is string => Boolean(value)).join(" • ")}</p> : null}
+        {recalculateConfirmationDate === selectedDate ? (
+          <div aria-label="Confirm historical recalculation" className="mt-4 rounded-[1rem] border border-[#ddd2ff] bg-[#faf8ff] p-4 text-sm text-[#4f4b68] dark:border-[#42306f] dark:bg-[#22193f] dark:text-white/75" role="dialog">
+            <p className="font-semibold text-[#2f2949] dark:text-white">Recalculate from {formatTaskHistoryRecalculateDate(selectedDate)}?</p>
+            <p className="mt-2">Calculated due, missed, not-due, blank, and manual Calendar states from {formatTaskHistoryRecalculateDate(selectedDate)} forward will be rebuilt using the Task&apos;s current repeat settings.</p>
+            <p className="mt-2">Done, Did My Best, Delayed, and Complete History will be kept.</p>
+            <div className="mt-4 flex flex-wrap justify-end gap-2">
+              <button className="rounded-full border border-[#ddd6f9] bg-white px-3 py-1.5 text-xs font-semibold text-[#5d5874] dark:border-white/10 dark:bg-white/[0.04] dark:text-white/75" disabled={isSaving} onClick={() => setRecalculateConfirmationDate(null)} type="button">Cancel</button>
+              <button className="rounded-full border border-[#ddd2ff] bg-[#6f57f6] px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={isSaving} onClick={() => { void handleRecalculateFromDate(); }} type="button">Recalculate</button>
+            </div>
+          </div>
+        ) : null}
         {showDelayEditor && canDelaySelectedDate ? <div className="mt-3"><TaskDelayPicker anchorDateKey={selectedDate === today ? today : selectedDate} description={selectedDate === today ? "Delay today’s live task without changing past rewards or completion history." : "Correct this saved occurrence to Delayed using the app’s existing history semantics without double-counting rewards."} inputClassName="h-10 rounded-[0.9rem] border border-[#ded6f2] bg-white px-3 text-sm text-[#27304c] outline-none transition focus:border-[#b39eff] dark:border-white/12 dark:bg-[#22193f] dark:text-white dark:focus:border-[#6d56d6]" onCancel={() => setShowDelayEditor(false)} onSave={(nextDueOn) => handleSaveDelayedStatus(nextDueOn)} primaryToneClassName="border-[#ddd2ff] bg-[#f1ecff] text-[#6f57f6] dark:border-[#42306f] dark:bg-[#22193f] dark:text-[#cabfff]" saveLabel="Save delayed status" /></div> : null}
       </div>}
       selectedDayLabel={formatTaskHistoryCalendarDay(selectedDate, stateEngineContext?.timezone ?? "UTC")}

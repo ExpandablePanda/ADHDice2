@@ -67,6 +67,7 @@ export type CanonicalCommandType =
   | "start_in_progress"
   | "clear_in_progress"
   | "reconcile_rollover"
+  | "recalculate_history"
   | "hierarchy_change";
 
 export type CanonicalCommandOperationState =

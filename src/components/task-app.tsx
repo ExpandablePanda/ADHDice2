@@ -7420,6 +7420,45 @@ export function TaskApp() {
     return setTaskHistoryCalendarOverride(taskId, logicalDate, "in_progress", "In Progress");
   }
 
+  async function recalculateTaskHistoryFromDate(taskId: string, fromLogicalDate: string): Promise<boolean> {
+    const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
+      ?? tasks.find((candidate) => candidate.id === taskId)
+      ?? null;
+    if (!currentTask) return false;
+    if (fromLogicalDate > todayKey) return false;
+    if (currentTask.repeat_frequency === "per_week" || currentTask.repeat_frequency === "per_month") {
+      setMessage({ tone: "warn", text: "Historical recalculation for quota recurrence is not supported yet." });
+      return false;
+    }
+    const pendingTaskIds = [taskId];
+    beginPendingTaskMutationScope(pendingTaskIds);
+    try {
+      const committed = await updateTask(taskId, {}, {
+        canonicalIntent: {
+          type: "recalculate_history",
+          from_logical_date: fromLogicalDate,
+        },
+        expectedTask: currentTask,
+        replayIdentity: createTaskStateReplayIdentity(),
+      });
+      if (!committed) {
+        setMessage({ tone: "warn", text: "Task was not recalculated. The canonical Task State command was rejected or could not be reconciled." });
+        return false;
+      }
+      const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
+      const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
+      if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
+        setMessage({ tone: "warn", text: "Task was recalculated, but Calendar History could not be reconciled." });
+        return false;
+      }
+      await reconcileTaskHistoryMutation(taskId, refreshedHistory.history);
+      await refreshTaskHistoryStreakSummary(taskId);
+      return true;
+    } finally {
+      endPendingTaskMutationScope(pendingTaskIds);
+    }
+  }
+
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
     onRequestComplete: (logicalDate: string) => requestTaskComplete(taskHistoryModalTask, { logicalDate }),
@@ -7458,6 +7497,10 @@ export function TaskApp() {
         }
       }
       return committed;
+    },
+    onRecalculateFromDate: (fromLogicalDate: string) => {
+      if (!taskHistoryModalTaskId) return Promise.resolve(false);
+      return recalculateTaskHistoryFromDate(taskHistoryModalTaskId, fromLogicalDate);
     },
     onSetStatuses: async (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) {

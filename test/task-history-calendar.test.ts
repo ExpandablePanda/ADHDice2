@@ -87,10 +87,13 @@ test("Task calendar keeps Task history projections and mutation ownership separa
   assert.doesNotMatch(modal, /onMarkDoneToday|onRemoveCompletionOnLogicalDay/);
 });
 
-test("Task History separates Blank override from Automatic reset", () => {
+test("Task History replaces the Automatic action with bounded recalculation", () => {
   assert.match(modal, /const calendarOverridesByDate = new Map/);
   assert.match(modal, /calendarOverride: calendarOverridesByDate\.get\(dateKey\)/);
-  assert.match(modal, /status === "clear" \? "Automatic" : formatTaskStatusLabel\(status\)/);
+  assert.match(modal, /Recalculate from \{formatTaskHistoryRecalculateDate\(selectedDate/);
+  assert.match(modal, /Calculated due, missed, not-due, blank, and manual Calendar states/);
+  assert.match(modal, /Done, Did My Best, Delayed, and Complete History will be kept\./);
+  assert.doesNotMatch(modal, />Automatic<|"Automatic"/);
   assert.match(modal, /overrideState === "blank_due" \? "Blank"/);
-  assert.doesNotMatch(modal, /status === "clear" \? "Clear"/);
+  assert.match(modal, /onClick=\{\(\) => \{ void runAfterPendingCycle\(\(\) => setRecalculateConfirmationDate\(selectedDate\)\); \}\}/);
 });

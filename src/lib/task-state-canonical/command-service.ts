@@ -142,6 +142,11 @@ export type CanonicalRolloverCommand = CanonicalTaskStateCommandBase & {
   scheduleBoundaryId?: string | null;
 };
 
+export type CanonicalRecalculateHistoryCommand = CanonicalTaskStateCommandBase & {
+  type: "recalculate_history";
+  fromLogicalDate: string;
+};
+
 export type CanonicalTaskStateCommand =
   | CanonicalHandledOutcomeCommand
   | CanonicalCompleteCommand
@@ -152,7 +157,8 @@ export type CanonicalTaskStateCommand =
   | CanonicalCalendarOverrideCommand
   | CanonicalClearOutcomeCommand
   | CanonicalClearQuotaBalanceCommand
-  | CanonicalRolloverCommand;
+  | CanonicalRolloverCommand
+  | CanonicalRecalculateHistoryCommand;
 
 export type CanonicalCommandEnvelope = {
   commandId: string;
@@ -249,6 +255,10 @@ export type CanonicalNormalizedCommandResult = {
   automaticHistoryDeleteIds: string[];
   /** Server-planned same-date replaceable History retired by a Calendar override. */
   calendarOverrideHistoryDeleteIds?: string[];
+  /** Server-planned stale Missed facts retired by bounded historical replay. */
+  recalculateHistoryDeleteIds?: string[];
+  /** Server-planned active Calendar overrides retired by bounded replay. */
+  recalculateCalendarOverrideIds?: string[];
   occurrence: CanonicalTaskOccurrence | null;
   scheduleBoundary: CanonicalTaskScheduleBoundary | null;
   occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null;
@@ -294,6 +304,8 @@ export function isCanonicalTaskStateCommandSemanticNoOp(input: {
     && (normalizedResult.automaticHistoryFacts ?? []).length === 0
     && (normalizedResult.automaticHistoryDeleteIds ?? []).length === 0
     && (normalizedResult.calendarOverrideHistoryDeleteIds ?? []).length === 0
+    && (normalizedResult.recalculateHistoryDeleteIds ?? []).length === 0
+    && (normalizedResult.recalculateCalendarOverrideIds ?? []).length === 0
     && normalizedResult.occurrence === null
     && normalizedResult.scheduleBoundary === null
     && normalizedResult.occurrenceEffectiveOverride === null
@@ -334,6 +346,9 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
   if (command.commandType === "clear_quota_balance") {
     payload.clear_quota_balance = true;
   }
+  if (command.commandType === "recalculate_history") {
+    payload.recalculate_from_logical_date = command.payload.fromLogicalDate;
+  }
   if (command.commandType === "set_due_date" && command.payload.manual_action === "unscheduled_status") {
     payload.manual_action = "unscheduled_status";
   }
@@ -369,6 +384,12 @@ export function serializeCanonicalTaskStateCommandForRpc(plan: CanonicalTaskComm
   }
   if ((normalizedResult.calendarOverrideHistoryDeleteIds ?? []).length > 0) {
     payload.history_fact_delete_ids = normalizedResult.calendarOverrideHistoryDeleteIds;
+  }
+  if ((normalizedResult.recalculateHistoryDeleteIds ?? []).length > 0) {
+    payload.recalculate_history_delete_ids = normalizedResult.recalculateHistoryDeleteIds;
+  }
+  if ((normalizedResult.recalculateCalendarOverrideIds ?? []).length > 0) {
+    payload.recalculate_calendar_override_ids = normalizedResult.recalculateCalendarOverrideIds;
   }
   if (normalizedResult.occurrence) payload.occurrence = normalizedResult.occurrence;
   if (normalizedResult.scheduleBoundary) payload.schedule_boundary = normalizedResult.scheduleBoundary;
@@ -447,6 +468,7 @@ function commandType(command: CanonicalTaskStateCommand): CanonicalCommandType {
     case "clear_outcome": return "clear_outcome";
     case "clear_quota_balance": return "clear_quota_balance";
     case "rollover": return "reconcile_rollover";
+    case "recalculate_history": return "recalculate_history";
   }
 }
 
@@ -540,6 +562,20 @@ function engineInputForCalendarOverride(
     calendarOverrides: override.is_active
       ? [...remaining, taskCalendarOverrideFromCanonical(override)]
       : remaining,
+  };
+}
+
+function engineInputForHistoryRecalculate(
+  engineInput: TaskStateEngineInput,
+  fromLogicalDate: string,
+): TaskStateEngineInput {
+  return {
+    ...engineInput,
+    // The engine independently excludes Missed facts in this replay mode;
+    // only the active override range needs to be narrowed at this boundary.
+    calendarOverrides: (engineInput.calendarOverrides ?? [])
+      .filter((override) => override.logicalDate < fromLogicalDate),
+    action: { type: "recompute", fromLogicalDate },
   };
 }
 
@@ -735,6 +771,8 @@ function initialResult(
     automaticHistoryFacts: [],
     automaticHistoryDeleteIds: [],
     calendarOverrideHistoryDeleteIds: [],
+    recalculateHistoryDeleteIds: [],
+    recalculateCalendarOverrideIds: [],
     occurrence: null,
     scheduleBoundary: null,
     occurrenceEffectiveOverride: null,
@@ -802,12 +840,24 @@ export function planTaskStateCommand(
   }
 
   let engineResult: ReturnType<typeof evaluateTaskState> | undefined;
-  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "clear_outcome", "clear_quota_balance", "rollover"].includes(input.type)
+  const needsEngineProjection = ["handled_outcome", "delay", "schedule_change", "calendar_override", "clear_outcome", "clear_quota_balance", "recalculate_history", "rollover"].includes(input.type)
     || (input.type === "restore" && task.container_state !== "active");
   if (needsEngineProjection && !state.engineInput) {
     throw new CanonicalCommandPlanningError(
       "ENGINE_SNAPSHOT_REQUIRED",
       `${input.type} planning requires the canonical engine snapshot; a client projection cannot substitute for it.`,
+    );
+  }
+  if (input.type === "recalculate_history" && state.engineInput?.task.recurrence.kind === "quota") {
+    throw new CanonicalCommandPlanningError(
+      "HISTORICAL_RECALCULATION_UNSUPPORTED",
+      "Historical recalculation for quota recurrence is not supported yet.",
+    );
+  }
+  if (input.type === "recalculate_history" && input.fromLogicalDate > input.logicalDay.logicalDate) {
+    throw new CanonicalCommandPlanningError(
+      "TASK_ACTION_NOT_AVAILABLE",
+      "Historical recalculation is unavailable for future logical dates.",
     );
   }
   if (input.type === "calendar_override" && state.engineInput) {
@@ -851,7 +901,7 @@ export function planTaskStateCommand(
     }
   }
   const shouldEvaluateEngine = Boolean(state.engineInput && (
-    ["handled_outcome", "complete", "delay", "schedule_change", "calendar_override", "clear_outcome", "rollover"].includes(input.type)
+    ["handled_outcome", "complete", "delay", "schedule_change", "calendar_override", "clear_outcome", "recalculate_history", "rollover"].includes(input.type)
     || (input.type === "restore" && task.container_state !== "active")
   ));
   if (shouldEvaluateEngine) {
@@ -897,6 +947,8 @@ export function planTaskStateCommand(
           ? { type: "reconcile_rollover" as const }
         : input.type === "calendar_override"
               ? { type: "recompute" as const, fromLogicalDate: input.calendarOverride.logical_date }
+              : input.type === "recalculate_history"
+                ? { type: "recompute" as const, fromLogicalDate: input.fromLogicalDate }
               : input.type === "clear_outcome"
                 ? undefined
           : undefined;
@@ -930,6 +982,8 @@ export function planTaskStateCommand(
               ...engineInputForCalendarOverride(state.engineInput!, input.calendarOverride),
               action,
             }
+        : input.type === "recalculate_history"
+          ? engineInputForHistoryRecalculate(state.engineInput!, input.fromLogicalDate)
         : { ...state.engineInput!, ...(action ? { action } : {}) };
     engineResult = evaluateTaskState(engineInput);
     if (engineResult.validationErrors.length > 0) {
@@ -943,6 +997,8 @@ export function planTaskStateCommand(
   let automaticHistoryFacts: CanonicalHistoryFactPlan[] = [];
   let automaticHistoryDeleteIds: string[] = [];
   let calendarOverrideHistoryDeleteIds: string[] = [];
+  let recalculateHistoryDeleteIds: string[] = [];
+  let recalculateCalendarOverrideIds: string[] = [];
   let occurrence: CanonicalTaskOccurrence | null = null;
   let scheduleBoundary: CanonicalTaskScheduleBoundary | null = null;
   let occurrenceEffectiveOverride: CanonicalTaskOccurrenceEffectiveOverride | null = null;
@@ -1115,6 +1171,31 @@ export function planTaskStateCommand(
         : [];
       break;
     }
+    case "recalculate_history": {
+      projection = requireProjection(engineResult, task);
+      const fromLogicalDate = input.fromLogicalDate;
+      const originalMissedRows = state.engineInput?.history
+        .filter((row) => row.logicalDate >= fromLogicalDate && row.outcome === "missed")
+        ?? [];
+      const replayedAutomaticMissedRows = engineResult?.timeline.automaticHistoryRows
+        ?.filter((row) => row.logicalDate >= fromLogicalDate && row.outcome === "missed")
+        ?? [];
+      const replayedMissedDates = new Set(replayedAutomaticMissedRows.map((row) => row.logicalDate));
+      const existingMissedDates = new Set(originalMissedRows.map((row) => row.logicalDate));
+      recalculateHistoryDeleteIds = originalMissedRows
+        .filter((row) => !replayedMissedDates.has(row.logicalDate))
+        .map((row) => row.id);
+      const scheduleBoundaryId = (
+        state.engineInput?.task as TaskStateEngineInput["task"] & { canonical_schedule_boundary?: { id?: string | null } }
+      ).canonical_schedule_boundary?.id ?? null;
+      automaticHistoryFacts = replayedAutomaticMissedRows
+        .filter((row) => !existingMissedDates.has(row.logicalDate))
+        .map((row) => automaticHistoryFactFor(command, row, scheduleBoundaryId));
+      recalculateCalendarOverrideIds = (state.engineInput?.calendarOverrides ?? [])
+        .filter((override) => override.logicalDate >= fromLogicalDate)
+        .map((override) => override.id);
+      break;
+    }
     case "clear_outcome": {
       projection = requireProjection(engineResult, task);
       occurrence = input.occurrence ?? null;
@@ -1197,6 +1278,8 @@ export function planTaskStateCommand(
   normalizedResult.automaticHistoryFacts = automaticHistoryFacts;
   normalizedResult.automaticHistoryDeleteIds = automaticHistoryDeleteIds;
   normalizedResult.calendarOverrideHistoryDeleteIds = calendarOverrideHistoryDeleteIds;
+  normalizedResult.recalculateHistoryDeleteIds = recalculateHistoryDeleteIds;
+  normalizedResult.recalculateCalendarOverrideIds = recalculateCalendarOverrideIds;
   normalizedResult.occurrence = occurrence;
   normalizedResult.scheduleBoundary = scheduleBoundary;
   normalizedResult.occurrenceEffectiveOverride = occurrenceEffectiveOverride;
