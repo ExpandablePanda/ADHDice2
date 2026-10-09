@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { getMasterWorkspaceTransitionBlockReason } from "../src/lib/master-workspace-controller.ts";
 
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
@@ -43,16 +44,38 @@ test("Food and Journal editor owners report draft safety before Health tab activ
   assert.match(healthPageSource, /reportSectionDraftSafety\("Journal", "health-page-journal", hasUnsafeJournalLocalDraft\)/);
   assert.match(healthLibrarySource, /const hasUnsafeDraft = Boolean\([\s\S]*?foodImportText[\s\S]*?recipeDraft[\s\S]*?mealDraft/);
   assert.match(healthLibrarySource, /onDraftSafetyChange\(hasUnsafeDraft\)/);
-  assert.match(journalFormSource, /const isDraftUnsafe = !areHealthJournalDraftsEqual\(currentDraft, draftBaseline\)/);
-  assert.match(journalFormSource, /const hasUnsafeDraft = isSaving \|\| isDraftUnsafe \|\| isEventCaptureDraftUnsafe/);
+  assert.match(journalFormSource, /const isDraftDirty = Boolean\(sharedSession\?\.dirty \|\| sharedLinkedEventSession\?\.dirty\)[\s\S]*?!areHealthJournalDraftsEqual\(currentDraft, draftBaseline\)/);
+  assert.match(journalFormSource, /const hasUnsafeDraft = isSaving \|\| isEventCaptureDraftUnsafe \|\| \(!sharedSessionEnabled && isDraftDirty\)/);
+  assert.match(journalFormSource, /sessionStore\.ensureSession\(sessionDraftId, sessionCanonicalRecordId, initialDraft\)/);
+  assert.doesNotMatch(healthPageSource, /journalOccurrences\.length > 0/);
+  assert.match(healthPageSource, /journalOccurrenceEditorOpen/);
   assert.match(journalFormSource, /onDraftSafetyChange\(hasUnsafeDraft\)/);
   assert.match(journalFormSource, /onDraftSafetyChange=\{setIsEventCaptureDraftUnsafe\}/);
   assert.match(journalEventCaptureSource, /onDraftSafetyChange\(Boolean\(tagOverlay\) \|\| isCreatingSignal\)/);
   assert.match(journalFormSource, /Discard Draft/);
+  assert.match(journalFormSource, /sessionStore\.attachView\(sessionDraftId, sessionViewId\)/);
+  assert.match(journalFormSource, /const linkedEventSessionDraftId = sharedSessionEnabled[\s\S]*?`journal-entry:\$\{sharedBaseDraft\.eventDraft\.id\}`/);
+  assert.match(journalFormSource, /sessionStore\.updateDraft\(linkedEventSessionDraftId, \(current\) => \(\{[\s\S]*?eventDraft: update\(current\.eventDraft\)/);
+  assert.match(journalFormSource, /sessionStore\.saveFailed\(sessionDraftId, saveRevision, error\)/);
+  assert.match(journalFormSource, /sessionStore\.saveSucceeded\(sessionDraftId, saveRevision, savedDraft\)/);
+  assert.match(journalFormSource, /sessionStore\.saveSucceeded\(canonicalDraftId, linkedEventSaveRevision, savedEventDraft\)/);
   assert.match(controllerHookSource, /isHealthMasterTabTransitionBlocked\(/);
   assert.match(controllerHookSource, /targetTab\.destination\.page !== activeMasterPage/);
   assert.match(controllerHookSource, /isTabTransitionBlocked\(targetTab\)/);
   assert.match(controllerHookSource, /return !isTabTransitionBlocked\(nextTab\)/);
+});
+
+test("retained Journal drafts navigate without a false saved-occurrence guard", () => {
+  const journalGuardStart = healthPageSource.indexOf("const hasUnsafeJournalLocalDraft = Boolean(");
+  const journalGuardEnd = healthPageSource.indexOf(");", journalGuardStart);
+  const journalGuard = healthPageSource.slice(journalGuardStart, journalGuardEnd);
+  assert.doesNotMatch(journalGuard, /journalOccurrences\.length/);
+  assert.match(journalGuard, /journalOccurrenceEditorOpen/);
+  assert.match(journalFormSource, /const hasUnsafeDraft = isSaving \|\| isEventCaptureDraftUnsafe \|\| \(!sharedSessionEnabled && isDraftDirty\)/);
+  assert.match(taskAppSource, /journalSessionStore=\{masterWorkspace\.isEnabled \? journalDraftSessionStore : null\}/);
+  assert.match(taskAppSource, /protectUnsavedJournalDrafts/);
+  assert.match(taskAppSource, /beforeunload/);
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Health", "Journal", false, { Journal: false }, false), null);
 });
 
 test("Water reports through the existing Health draft-safety seam", () => {
@@ -124,7 +147,7 @@ test("Navigator deep destinations update the focused tab and restore shell or Se
 
 test("cross-page Master Tabs activate immediately and protect Tasks snapshots from stale route sync", () => {
   assert.match(controllerHookSource, /const activeMasterPage = activeTab\.destination\.page/);
-  assert.match(controllerHookSource, /const transition = activateMasterTabWithTaskWorkspace\(workspace, currentPanel\.id, tabId, taskWorkspaceTabsState\)/);
+  assert.match(controllerHookSource, /const withScroll = snapshotTabScrollPosition\(workspace, currentPanel\.id, activeTab\.id\)[\s\S]*?activateMasterTabWithTaskWorkspace\(withScroll, currentPanel\.id, tabId, taskWorkspaceTabsState\)/);
   assert.match(controllerHookSource, /setActivePage\(targetTab\.destination\.page\)/);
   assert.match(controllerHookSource, /const pendingRouteRef = useRef/);
   assert.match(controllerHookSource, /const lastLegacyRoutePageRef = useRef\(activePage\)/);

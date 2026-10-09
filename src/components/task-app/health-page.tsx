@@ -222,13 +222,20 @@ import { HealthStandardTimeInput } from "./health-standard-time-input";
 import { HealthTodayTab } from "./health-today-tab";
 import { PageShellHeader } from "./page-shell-header";
 import { JournalCheckInForm } from "./journal-check-in-form";
+import type { JournalCheckInDraftSnapshot } from "./journal-check-in-form";
 import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
+import type { EditingSessionStore } from "@/lib/editing-session-store";
+import type { MasterJournalWorkspaceMode, MasterTabPresentationState } from "@/lib/master-workspace-state";
 
 type HealthPageProps = {
   activeTab: HealthTab;
   onSelectTab: (tab: HealthTab) => void;
   onDraftSafetyChange: (section: HealthTab, isUnsafe: boolean) => void;
+  activeMasterTabId?: string;
+  journalView?: MasterTabPresentationState["journalView"];
+  onJournalViewChange?: (journalView: MasterTabPresentationState["journalView"]) => void;
+  journalSessionStore?: EditingSessionStore<JournalCheckInDraftSnapshot> | null;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
   journalSignals: HealthJournalSignal[];
@@ -462,7 +469,7 @@ type JournalHistoryTagOverlay = {
 } | null;
 
 type JournalSignalCreateKind = "emotion" | "other";
-type JournalWorkspaceMode = "entry" | "history" | "split-history-left" | "split-history-right";
+type JournalWorkspaceMode = MasterJournalWorkspaceMode;
 
 const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
   Mood: ["Very bad", "Bad", "Poor", "Low", "Okay", "Fair", "Good", "Very good", "Great", "Excellent"],
@@ -1166,6 +1173,10 @@ export function HealthPage({
   activeTab,
   onSelectTab,
   onDraftSafetyChange,
+  activeMasterTabId,
+  journalView,
+  onJournalViewChange,
+  journalSessionStore,
   checkIns,
   journalSignals,
   journalSignalValues,
@@ -1329,7 +1340,19 @@ export function HealthPage({
   const [weightNote, setWeightNote] = useState("");
   const [journalDate, setJournalDate] = useState(todayHealthDate());
   const [journalEntryTime, setJournalEntryTime] = useState(getCurrentHealthDateTimeInputs().time);
-  const [selectedJournalEntryId, setSelectedJournalEntryId] = useState<string | null>(null);
+  const [legacySelectedJournalEntryId, setLegacySelectedJournalEntryId] = useState<string | null>(null);
+  const selectedJournalEntryId = journalView ? journalView.selectedEntryId : legacySelectedJournalEntryId;
+  const setSelectedJournalEntryId = (nextEntryId: string | null) => {
+    if (journalView && onJournalViewChange) {
+      onJournalViewChange({
+        ...journalView,
+        selectedEntryId: nextEntryId,
+        ...(nextEntryId === null ? { newDraftId: `journal-new:${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}` } : {}),
+      });
+      return;
+    }
+    setLegacySelectedJournalEntryId(nextEntryId);
+  };
   const [journalReflection, setJournalReflection] = useState("");
   const [journalMood, setJournalMood] = useState<number | null>(null);
   const [journalEnergy, setJournalEnergy] = useState<number | null>(null);
@@ -1358,7 +1381,14 @@ export function HealthPage({
   const [journalOccurrenceTime, setJournalOccurrenceTime] = useState(getCurrentHealthDateTimeInputs().time);
   const [journalOccurrenceNote, setJournalOccurrenceNote] = useState("");
   const [journalFormError, setJournalFormError] = useState<string | null>(null);
-  const [journalWorkspaceMode, setJournalWorkspaceMode] = useState<JournalWorkspaceMode>("entry");
+  const [legacyJournalWorkspaceMode, setLegacyJournalWorkspaceMode] = useState<JournalWorkspaceMode>("entry");
+  const journalWorkspaceMode = journalView?.workspaceMode ?? legacyJournalWorkspaceMode;
+  const setJournalWorkspaceMode = (nextMode: JournalWorkspaceMode | ((current: JournalWorkspaceMode) => JournalWorkspaceMode)) => {
+    const resolvedMode = typeof nextMode === "function" ? nextMode(journalWorkspaceMode) : nextMode;
+    if (journalView && onJournalViewChange) {
+      onJournalViewChange({ ...journalView, workspaceMode: resolvedMode });
+    } else setLegacyJournalWorkspaceMode(resolvedMode);
+  };
   const [isJournalHistoryMenuOpen, setIsJournalHistoryMenuOpen] = useState(false);
   const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
   const [expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds] = useState<Set<string>>(() => new Set());
@@ -1407,7 +1437,6 @@ export function HealthPage({
   );
   const hasUnsafeJournalLocalDraft = Boolean(
     journalOccurrenceEditorOpen
-    || journalOccurrences.length > 0
     || isJournalAddOpen
     || journalLibraryCreateKind
     || journalLibraryEditId
@@ -1522,6 +1551,10 @@ export function HealthPage({
     () => selectedJournalEntryId ? checkIns.find((entry) => entry.id === selectedJournalEntryId) ?? null : null,
     [checkIns, selectedJournalEntryId],
   );
+  const currentNewJournalSession = journalView?.newDraftId
+    ? journalSessionStore?.getSnapshot(journalView.newDraftId)
+    : null;
+  const hasUnsafeNewJournalDraft = Boolean(currentNewJournalSession?.dirty || currentNewJournalSession?.isSaving);
 
   useEffect(() => {
     if (selectedJournalEntry) {
@@ -2582,6 +2615,7 @@ export function HealthPage({
   }
 
   function startNewJournalEntry() {
+    if (hasUnsafeNewJournalDraft) return;
     if (journalWorkspaceMode === "history") {
       setJournalWorkspaceMode("entry");
     }
@@ -3656,7 +3690,7 @@ export function HealthPage({
                       </AdhdDropdownPanel>
                     ) : null}
                   </div>
-                  {journalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
+                  {journalWorkspaceMode === "history" ? <AdhdChip disabled={hasUnsafeNewJournalDraft} onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
                 </div>
               )}
               id={getHealthTabPanelId("Journal")}
@@ -3669,6 +3703,7 @@ export function HealthPage({
             <div className={(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
             {journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <JournalCheckInForm
+                key={selectedJournalEntryId ? `journal-entry:${selectedJournalEntryId}` : journalView?.newDraftId ?? `journal-new:${activeMasterTabId ?? "legacy"}`}
                 checkIns={checkIns}
                 customQuestions={activeProfile.journal_questions ?? []}
                 createJournalSignal={createJournalSignal}
@@ -3681,6 +3716,10 @@ export function HealthPage({
                 metricEntries={metricEntries}
                 onAfterSave={startNewJournalEntry}
                 onDraftSafetyChange={reportJournalDraftSafety}
+                sessionStore={journalSessionStore}
+                sessionDraftId={selectedJournalEntryId ? `journal-entry:${selectedJournalEntryId}` : journalView?.newDraftId ?? `journal-new:${activeMasterTabId ?? "legacy"}`}
+                sessionCanonicalRecordId={selectedJournalEntryId ? `health-check-in:${selectedJournalEntryId}` : `unsaved:${journalView?.newDraftId ?? activeMasterTabId ?? "legacy"}`}
+                sessionViewId={activeMasterTabId}
                 onOpenFood={() => onSelectTab("Food")}
                 onOpenSleep={() => onSelectTab("Sleep")}
                 saveJournalEntry={saveJournalEntry}

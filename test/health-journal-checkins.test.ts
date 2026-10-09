@@ -72,9 +72,10 @@ test("Journal draft comparison releases reverted fields and distinguishes saved 
     eventDraft: { ...existingDraft.eventDraft, occurrences: [...existingDraft.eventDraft.occurrences, { ...savedOccurrence, draftKey: "new-occurrence", id: undefined }] },
   }), false);
 
-  assert.match(formSource, /const isDraftUnsafe = !areHealthJournalDraftsEqual\(currentDraft, draftBaseline\)/);
+  assert.match(formSource, /const isDraftDirty = Boolean\(sharedSession\?\.dirty \|\| sharedLinkedEventSession\?\.dirty\)[\s\S]*?!areHealthJournalDraftsEqual\(currentDraft, draftBaseline\)/);
   assert.match(formSource, /onClick=\{discardDraft\} type="button"\>Discard Draft/);
-  assert.match(formSource, /setEntryType\(draftBaseline\.entryType\)[\s\S]*?setEventDraft\(draftBaseline\.eventDraft\)[\s\S]*?setEventCaptureResetKey/);
+  assert.match(formSource, /sessionStore\.discardDraft\(sessionDraftId\)/);
+  assert.match(formSource, /setLocalSession\(\{ draft: draftBaseline, baseline: draftBaseline \}\)/);
   assert.match(formSource, /The Journal entry could not be saved\. Your draft is still here\./);
   assert.match(eventCaptureSource, /onDraftSafetyChange\(Boolean\(tagOverlay\) \|\| isCreatingSignal\)/);
 });
@@ -287,9 +288,8 @@ test("7.13.51 Journal QA correction reduces Event Feeling scale-description typo
   assert.match(eventChoiceSource, />Yes<\/AdhdChip>/);
   assert.match(eventChoiceSource, />No<\/AdhdChip>/);
   assert.doesNotMatch(eventChoiceSource, /type="checkbox"/);
-  assert.match(formSource, /setEventCaptureEnabled\(false\)/);
-  assert.match(formSource, /const nextEventCaptureEnabled = nextEntryType !== "event" && Boolean\(linkedEventId\)/);
-  assert.match(formSource, /setEventCaptureEnabled\(nextEventCaptureEnabled\)/);
+  assert.match(formSource, /eventCaptureEnabled: nextEntryType !== "event" && Boolean\(linkedEventId\)/);
+  assert.match(formSource, /const setEventCaptureEnabled = \(value: SetStateAction<boolean>\) => setDraftField\("eventCaptureEnabled", value\)/);
   assert.match(formSource, /linked_event_ids: entryType === "event" \? answers\.linked_event_ids : eventCaptureEnabled && eventDraft\.id \? \[eventDraft\.id\] : \[\]/);
   assert.match(formSource, /event_record: eventDraft\.notes/);
   assert.match(summarySource, /label: "Event notes"/);

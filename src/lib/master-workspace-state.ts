@@ -18,8 +18,15 @@ export const MASTER_WORKSPACE_SPLIT_RATIO_MAX = 0.75;
 
 export type MasterPanelSide = "left" | "right";
 export type MasterTabDestination = NavigatorSearchAction;
+export type MasterJournalWorkspaceMode = "entry" | "history" | "split-history-left" | "split-history-right";
 export type MasterTabPresentationState = {
   healthSection?: HealthTab;
+  scrollTop?: number;
+  journalView?: {
+    selectedEntryId: string | null;
+    newDraftId: string;
+    workspaceMode: MasterJournalWorkspaceMode;
+  };
   tasksWorkspace?: TaskWorkspaceTabsState;
 };
 
@@ -49,6 +56,7 @@ export type MasterWorkspaceStorage = Pick<Storage, "getItem" | "setItem" | "remo
 const VALID_TASK_SURFACES = new Set(["tasks", "attention", "paths", "report", "on_time", "brainstorm", "completed_milestones"]);
 const VALID_TASK_VIEWS = new Set(["table", "list", "cards", "matrix", "calendar"]);
 const VALID_SETTINGS_SECTIONS = new Set(["appearance", "day-reset", "economy", "import-export"]);
+const VALID_JOURNAL_WORKSPACE_MODES = new Set(["entry", "history", "split-history-left", "split-history-right"]);
 function createRegisteredShellKeySet() {
   return new Set(getRegisteredPageShellPages().flatMap(({ canonicalLayout, pageKey }) => (
     canonicalLayout.order.map((shellId) => `${pageKey}\u0000${shellId}`)
@@ -153,10 +161,35 @@ function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
   };
 }
 
-function normalizePresentation(value: unknown, destination: MasterTabDestination): MasterTabPresentationState {
+function defaultJournalDraftId(tabId: string) {
+  return `journal-new:${tabId}`;
+}
+
+function normalizePresentation(value: unknown, destination: MasterTabDestination, tabId: string): MasterTabPresentationState {
   const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const presentation: MasterTabPresentationState = {};
   if (isHealthTab(candidate.healthSection)) presentation.healthSection = candidate.healthSection;
+  if (typeof candidate.scrollTop === "number" && Number.isFinite(candidate.scrollTop) && candidate.scrollTop >= 0) {
+    presentation.scrollTop = candidate.scrollTop;
+  }
+  const rawJournalView = candidate.journalView && typeof candidate.journalView === "object"
+    ? candidate.journalView as Record<string, unknown>
+    : null;
+  if (rawJournalView || destination.page === "Health") {
+    presentation.journalView = {
+      selectedEntryId: rawJournalView?.selectedEntryId === null
+        ? null
+        : typeof rawJournalView?.selectedEntryId === "string" && rawJournalView.selectedEntryId.trim()
+          ? rawJournalView.selectedEntryId.trim()
+          : null,
+      newDraftId: typeof rawJournalView?.newDraftId === "string" && rawJournalView.newDraftId.trim()
+        ? rawJournalView.newDraftId.trim()
+        : defaultJournalDraftId(tabId),
+      workspaceMode: typeof rawJournalView?.workspaceMode === "string" && VALID_JOURNAL_WORKSPACE_MODES.has(rawJournalView.workspaceMode)
+        ? rawJournalView.workspaceMode as MasterJournalWorkspaceMode
+        : "entry",
+    };
+  }
   if (candidate.tasksWorkspace !== undefined) {
     presentation.tasksWorkspace = cloneTaskWorkspaceState(candidate.tasksWorkspace);
   }
@@ -170,6 +203,61 @@ function normalizePresentation(value: unknown, destination: MasterTabDestination
     presentation.tasksWorkspace = cloneTaskWorkspaceState(presentation.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE);
   }
   return presentation;
+}
+
+export function getMasterTabJournalView(tab: MasterWorkspaceTab) {
+  return tab.presentation.journalView ?? {
+    selectedEntryId: null,
+    newDraftId: defaultJournalDraftId(tab.id),
+    workspaceMode: "entry" as const,
+  };
+}
+
+export function updateMasterTabJournalView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  journalView: MasterTabPresentationState["journalView"],
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab || !journalView) return state;
+  if (
+    tab.presentation.journalView?.selectedEntryId === journalView.selectedEntryId
+    && tab.presentation.journalView?.newDraftId === journalView.newDraftId
+    && tab.presentation.journalView?.workspaceMode === journalView.workspaceMode
+  ) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, journalView: { ...journalView } },
+      }),
+    }),
+  };
+}
+
+export function updateMasterTabScrollPosition(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  scrollTop: number,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab || !Number.isFinite(scrollTop) || scrollTop < 0 || tab.presentation.scrollTop === scrollTop) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, scrollTop },
+      }),
+    }),
+  };
 }
 
 export function updateMasterTabTasksWorkspace(
@@ -257,7 +345,7 @@ export function normalizeMasterWorkspaceState(value: unknown): MasterWorkspaceSt
       const tab = tabValue as Record<string, unknown>;
       const tabId = uniqueId(tab.id, `master-tab-${panelIndex + 1}-${tabIndex + 1}`, usedTabIds);
       const destination = normalizeDestination(tab.destination);
-      return [{ id: tabId, destination, presentation: normalizePresentation(tab.presentation, destination) }];
+      return [{ id: tabId, destination, presentation: normalizePresentation(tab.presentation, destination, tabId) }];
     });
     const usableTabs = tabs.length > 0 ? tabs : [makeHomeTab(uniqueId(undefined, `master-tab-${panelIndex + 1}-1`, usedTabIds))];
     const activeTabId = typeof panel.activeTabId === "string" && usableTabs.some((tab) => tab.id === panel.activeTabId)
@@ -328,7 +416,7 @@ export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, 
   const focusedPanel = state.panels.find((panel) => panel.id === state.focusedPanelId);
   const focusedTab = focusedPanel?.tabs.find((tab) => tab.id === focusedPanel.activeTabId);
   if (!focusedPanel || !focusedTab) return state;
-  const presentation = normalizePresentation(focusedTab.presentation, destinationCopy);
+  const presentation = normalizePresentation(focusedTab.presentation, destinationCopy, focusedTab.id);
   if (
     JSON.stringify(focusedTab.destination) === JSON.stringify(destinationCopy)
     && JSON.stringify(focusedTab.presentation) === JSON.stringify(presentation)
@@ -357,7 +445,7 @@ export function createMasterTab(
   const panel = state.panels.find((candidate) => candidate.id === panelId);
   if (!panel || state.panels.some((candidate) => candidate.tabs.some((existing) => existing.id === tab.id))) return state;
   const destination = normalizeDestination(tab.destination);
-  const nextTab = { id: tab.id, destination, presentation: normalizePresentation(tab.presentation, destination) };
+  const nextTab = { id: tab.id, destination, presentation: normalizePresentation(tab.presentation, destination, tab.id) };
   return {
     ...state,
     focusedPanelId: activate ? panelId : state.focusedPanelId,
@@ -415,7 +503,7 @@ export function duplicateFocusedPageIntoRightPanel(
   const duplicate: MasterWorkspaceTab = {
     id: ids.tabId,
     destination: focusedTab.destination,
-    presentation: normalizePresentation(focusedTab.presentation, focusedTab.destination),
+    presentation: normalizePresentation(focusedTab.presentation, focusedTab.destination, ids.tabId),
   };
   if (!rightPanel) {
     if (state.panels.some((panel) => panel.tabs.some((tab) => tab.id === ids.tabId))) return state;

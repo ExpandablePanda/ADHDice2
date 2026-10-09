@@ -633,8 +633,8 @@ test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, 
   assert.match(healthPageSource, /setTimeout\(\(\) => \{[\s\S]*?openJournalHistoryMenu\(\);[\s\S]*?\}, 500\)/);
   assert.match(healthPageSource, /selectJournalWorkspaceMode\("split-history-left"\)/);
   assert.match(healthPageSource, /selectJournalWorkspaceMode\("split-history-right"\)/);
-  assert.match(journalHeaderSource, /journalWorkspaceMode === "history" \? <AdhdChip onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
-  assert.match(healthPageSource, /function startNewJournalEntry\(\) \{\s*if \(journalWorkspaceMode === "history"\) \{\s*setJournalWorkspaceMode\("entry"\);/);
+  assert.match(journalHeaderSource, /journalWorkspaceMode === "history" \? <AdhdChip disabled=\{hasUnsafeNewJournalDraft\} onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
+  assert.match(healthPageSource, /function startNewJournalEntry\(\) \{\s*if \(hasUnsafeNewJournalDraft\) return;\s*if \(journalWorkspaceMode === "history"\) \{\s*setJournalWorkspaceMode\("entry"\);/);
   assert.match(journalEditorSource, /<AdhdChip onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
   assert.match(healthPageSource, /journalWorkspaceMode === "split-history-left" \|\| journalWorkspaceMode === "split-history-right"/);
   assert.match(healthPageSource, /const \[isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen\] = useState\(false\)/);

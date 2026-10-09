@@ -135,6 +135,9 @@ import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
+import { createEditingSessionStore } from "@/lib/editing-session-store";
+import { areHealthJournalDraftsEqual } from "@/lib/health-journal-checkins";
+import type { JournalCheckInDraftSnapshot } from "./task-app/journal-check-in-form";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
@@ -1347,6 +1350,11 @@ export function TaskApp() {
   } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health" || batchIntakeHealthActive);
   const legacyHealthTabPreference = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const currentUserId = session?.user?.id ?? null;
+  const journalDraftSessionStore = useMemo(
+    () => createEditingSessionStore<JournalCheckInDraftSnapshot>(currentUserId ?? "signed-out", areHealthJournalDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => journalDraftSessionStore.reset(), [journalDraftSessionStore]);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
   const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
@@ -5685,8 +5693,19 @@ export function TaskApp() {
     setActivePage,
     taskWorkspaceTabsState,
     userId: session?.user?.id,
+    draftProtection: journalDraftSessionStore,
   });
   masterWorkspaceControllerRef.current = masterWorkspace;
+  useEffect(() => {
+    if (!masterWorkspace.featureEnabled || typeof window === "undefined") return;
+    const protectUnsavedJournalDrafts = (event: BeforeUnloadEvent) => {
+      if (!journalDraftSessionStore.hasUnsavedDrafts()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", protectUnsavedJournalDrafts);
+    return () => window.removeEventListener("beforeunload", protectUnsavedJournalDrafts);
+  }, [journalDraftSessionStore, masterWorkspace.featureEnabled]);
   const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
     ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
     : legacyHealthTabPreference;
@@ -9025,6 +9044,10 @@ export function TaskApp() {
             activeTab={activeHealthTab}
             onSelectTab={handleHealthTabSelection}
             onDraftSafetyChange={updateHealthDraftSafety}
+            activeMasterTabId={masterWorkspace.isEnabled ? masterWorkspace.activeTab.id : undefined}
+            journalView={masterWorkspace.isEnabled ? masterWorkspace.activeJournalView : undefined}
+            onJournalViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateJournalView : undefined}
+            journalSessionStore={masterWorkspace.isEnabled ? journalDraftSessionStore : null}
             awards={healthAwards}
             archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}

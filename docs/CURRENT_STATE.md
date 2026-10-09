@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-08
+Last reviewed: 2026-10-09
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.130`.
+- Current working app version: `7.16.131`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -194,6 +194,29 @@ ESLint with the existing `react-hooks/set-state-in-effect` rule disabled and
 `git diff --check` passed. The unrelated Fitness source-contract baseline was
 not rerun. Browser QA, production build, full typecheck, and broad test suites
 were not run.
+
+## 2026-10-09 7.16.131 T5b.1 Shared Journal Editing Sessions
+
+TaskApp now owns one authenticated-user-scoped in-memory editing-session store.
+Master Tabs keep independent Journal selection, entry/history mode, and scroll
+position; each saved Journal entry resolves to one shared draft session, while
+each tab's unsaved entry has a distinct temporary identity. The active
+Start-of-Day, End-of-Day, and Event form edits the shared snapshot, which
+survives page unmounts, ignores incoming refreshes while dirty, reconciles on
+save, and retains content after a failed save. A linked Event uses its own
+canonical session shared with a directly opened Event view. Explicit discard
+restores the session baseline. Tab switching permits retained Journal drafts,
+while pending saves, transient occurrence editing, and closing the last view
+of dirty work remain protected. Saved Feeling occurrences no longer trigger
+the false local draft guard. Other Health editors, Food, Notes, Tasks, and
+Split Right do not use the shared session architecture.
+
+Focused verification for 7.16.131: editing-session store, Master Workspace
+state/controller/Health, Journal entry/check-in/symptom tests passed (118/118).
+Targeted ESLint passed with the existing `react-hooks/set-state-in-effect`
+rule disabled; the normal targeted lint also reports existing synchronous
+effect updates in TaskApp and HealthPage. `git diff --check` passed. Browser QA,
+production build, full typecheck, and broad test suites were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

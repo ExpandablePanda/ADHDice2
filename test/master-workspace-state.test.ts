@@ -10,6 +10,7 @@ import {
   createMasterTab,
   duplicateFocusedPageIntoRightPanel,
   getMasterWorkspaceStorageKey,
+  getMasterTabJournalView,
   initializeMasterWorkspaceState,
   masterTabTasksWorkspaceMatchesLiveState,
   loadMasterWorkspaceState,
@@ -17,6 +18,8 @@ import {
   replaceFocusedMasterTabDestination,
   saveMasterWorkspaceState,
   updateMasterTabTasksWorkspace,
+  updateMasterTabJournalView,
+  updateMasterTabScrollPosition,
   type MasterWorkspaceStorage,
 } from "../src/lib/master-workspace-state.ts";
 import { DEFAULT_TASK_WORKSPACE_TABS_STATE, type TaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
@@ -77,6 +80,48 @@ test("Health master tabs own independent section snapshots and focused selection
   assert.equal(focusedJournal.panels[0].tabs[0].presentation.healthSection, "Journal");
   assert.deepEqual(focusedJournal.panels[0].tabs[0].destination, { kind: "health-tab", page: "Health", tab: "Journal" });
   assert.equal(focusedJournal.panels[0].tabs[1].presentation.healthSection, "Journal");
+});
+
+test("Journal selection, presentation mode, and new draft identity are independent per Master Tab", () => {
+  const initial = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Journal");
+  const panelId = initial.panels[0].id;
+  const second = createMasterTab(initial, panelId, {
+    id: "journal-tab-b",
+    destination: { kind: "health-tab", page: "Health", tab: "Journal" },
+    presentation: { healthSection: "Journal" },
+  }, false);
+  const firstTab = second.panels[0].tabs[0];
+  const secondTab = second.panels[0].tabs[1];
+  const firstView = getMasterTabJournalView(firstTab);
+  const secondView = getMasterTabJournalView(secondTab);
+  assert.notEqual(firstView.newDraftId, secondView.newDraftId);
+
+  const selectedFirst = updateMasterTabJournalView(second, panelId, firstTab.id, {
+    ...firstView,
+    selectedEntryId: "entry-1",
+    workspaceMode: "history",
+  });
+  const firstAfter = selectedFirst.panels[0].tabs[0];
+  const secondAfter = selectedFirst.panels[0].tabs[1];
+  assert.equal(getMasterTabJournalView(firstAfter).selectedEntryId, "entry-1");
+  assert.equal(getMasterTabJournalView(firstAfter).workspaceMode, "history");
+  assert.equal(getMasterTabJournalView(secondAfter).selectedEntryId, null);
+  assert.equal(getMasterTabJournalView(secondAfter).workspaceMode, "entry");
+  assert.equal("draft" in firstAfter.presentation, false);
+});
+
+test("Master Tabs retain independent scroll positions", () => {
+  const initial = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Journal");
+  const panelId = initial.panels[0].id;
+  const withSecond = createMasterTab(initial, panelId, {
+    id: "scroll-tab-b",
+    destination: { kind: "page", page: "Home" },
+    presentation: {},
+  }, false);
+  const withFirstScroll = updateMasterTabScrollPosition(withSecond, panelId, "master-tab-1", 420);
+  assert.equal(withFirstScroll.panels[0].tabs[0].presentation.scrollTop, 420);
+  assert.equal(withFirstScroll.panels[0].tabs[1].presentation.scrollTop, undefined);
+  assert.equal(updateMasterTabScrollPosition(withFirstScroll, panelId, "scroll-tab-b", -1), withFirstScroll);
 });
 
 test("deep destination normalization derives Health sections from NavigatorSearchAction", () => {

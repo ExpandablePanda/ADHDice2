@@ -13,6 +13,11 @@ import {
 import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
 import type { HealthTab } from "@/lib/health-utils";
 
+export type MasterWorkspaceDraftProtection = {
+  canCloseView(viewId: string): boolean;
+  detachView(viewId: string): void;
+};
+
 export type MasterWorkspaceTaskTransition = {
   state: MasterWorkspaceState;
   taskWorkspaceTabsState?: TaskWorkspaceTabsState;

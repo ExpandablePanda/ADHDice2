@@ -9,14 +9,19 @@ import {
   isHealthMasterTabTransitionBlocked,
   persistMasterWorkspaceForReadyUser,
   restoreMasterWorkspaceForUser,
+  type MasterWorkspaceDraftProtection,
 } from "@/lib/master-workspace-controller";
 import {
   closeMasterTab,
   createMasterTab,
   createDefaultMasterWorkspaceState,
+  getMasterTabJournalView,
   masterTabTasksWorkspaceMatchesLiveState,
   replaceFocusedMasterTabDestination,
+  updateMasterTabJournalView,
+  updateMasterTabScrollPosition,
   updateMasterTabTasksWorkspace,
+  type MasterTabPresentationState,
   type MasterTabDestination,
   type MasterWorkspaceState,
 } from "@/lib/master-workspace-state";
@@ -34,10 +39,17 @@ type UseMasterWorkspaceControllerOptions = {
   setActivePage: (page: AppPage) => void;
   taskWorkspaceTabsState: TaskWorkspaceTabsState;
   userId: string | null | undefined;
+  draftProtection?: MasterWorkspaceDraftProtection;
 };
 
 function createTabId() {
   return `master-tab-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+}
+
+function snapshotTabScrollPosition(state: MasterWorkspaceState, panelId: string, tabId: string) {
+  return typeof window === "undefined"
+    ? state
+    : updateMasterTabScrollPosition(state, panelId, tabId, window.scrollY);
 }
 
 export function useMasterWorkspaceController({
@@ -51,6 +63,7 @@ export function useMasterWorkspaceController({
   setActivePage,
   taskWorkspaceTabsState,
   userId,
+  draftProtection,
 }: UseMasterWorkspaceControllerOptions) {
   const isEnabled = isMasterWorkspaceFeatureEnabled(
     process.env.NODE_ENV,
@@ -61,6 +74,7 @@ export function useMasterWorkspaceController({
   const currentPanel = workspace.panels.find((panel) => panel.id === workspace.focusedPanelId) ?? workspace.panels[0];
   const activeTab = currentPanel.tabs.find((tab) => tab.id === currentPanel.activeTabId) ?? currentPanel.tabs[0];
   const activeMasterPage = activeTab.destination.page;
+  const activeJournalView = getMasterTabJournalView(activeTab);
   const canNavigate = isEnabled && isReady && Boolean(userId) && restoredUserId === userId;
   const currentHealthSection = activeMasterPage === "Health"
     ? activeTab.presentation.healthSection ?? initialHealthSection
@@ -90,6 +104,16 @@ export function useMasterWorkspaceController({
   }, [activeMasterPage, activeTab.id, currentTransitionBlockReason, hasUnsafeTasksDraft, isHealthSectionTransitionBlocked]);
   const pendingRouteRef = useRef<{ from: AppPage; to: AppPage } | null>(null);
   const lastLegacyRoutePageRef = useRef(activePage);
+  const lastScrollRestoreRef = useRef({ tabId: activeTab.id, scrollTop: activeTab.presentation.scrollTop ?? 0 });
+
+  useLayoutEffect(() => {
+    const nextScrollTop = activeTab.presentation.scrollTop ?? 0;
+    const previous = lastScrollRestoreRef.current;
+    if (typeof window !== "undefined" && (previous.tabId !== activeTab.id || previous.scrollTop !== nextScrollTop)) {
+      window.scrollTo(0, nextScrollTop);
+    }
+    lastScrollRestoreRef.current = { tabId: activeTab.id, scrollTop: nextScrollTop };
+  }, [activeTab.id, activeTab.presentation.scrollTop]);
 
   useLayoutEffect(() => {
     if (!isEnabled || !isReady || !userId || restoredUserId === userId || typeof window === "undefined") return;
@@ -159,8 +183,9 @@ export function useMasterWorkspaceController({
     const targetTab = currentPanel.tabs.find((tab) => tab.id === tabId);
     if (!targetTab || isTabTransitionBlocked(targetTab)) return;
     if (targetTab.id === activeTab.id) return;
-    const transition = activateMasterTabWithTaskWorkspace(workspace, currentPanel.id, tabId, taskWorkspaceTabsState);
-    if (transition.state === workspace) return;
+    const withScroll = snapshotTabScrollPosition(workspace, currentPanel.id, activeTab.id);
+    const transition = activateMasterTabWithTaskWorkspace(withScroll, currentPanel.id, tabId, taskWorkspaceTabsState);
+    if (transition.state === withScroll) return;
     markPendingRoute(targetTab.destination.page);
     setWorkspace(transition.state);
     if (transition.taskWorkspaceTabsState) replaceTaskWorkspaceTabsState(transition.taskWorkspaceTabsState);
@@ -173,19 +198,20 @@ export function useMasterWorkspaceController({
     const healthSection = activeMasterPage === "Health"
       ? activeTab.presentation.healthSection ?? initialHealthSection
       : initialHealthSection;
-    const next = createMasterTab(workspace, currentPanel.id, {
+    const withScroll = snapshotTabScrollPosition(workspace, currentPanel.id, activeTab.id);
+    const next = createMasterTab(withScroll, currentPanel.id, {
       id,
       destination: { kind: "page", page },
       presentation: page === "Tasks"
         ? { tasksWorkspace: taskWorkspaceTabsState }
         : page === "Health" ? { healthSection } : {},
     }, true);
-    if (next === workspace) return false;
+    if (next === withScroll) return false;
     markPendingRoute(page);
     setWorkspace(next);
     setActivePage(page);
     return true;
-  }, [activeMasterPage, activeTab.presentation.healthSection, canNavigate, currentPanel.id, currentTransitionBlockReason, initialHealthSection, markPendingRoute, setActivePage, taskWorkspaceTabsState, workspace]);
+  }, [activeMasterPage, activeTab.id, activeTab.presentation.healthSection, canNavigate, currentPanel.id, currentTransitionBlockReason, initialHealthSection, markPendingRoute, setActivePage, taskWorkspaceTabsState, workspace]);
 
   const canOpenNewTab = canNavigate && !currentTransitionBlockReason;
 
@@ -199,38 +225,43 @@ export function useMasterWorkspaceController({
       return true;
     }
     if (currentTransitionBlockReason) return false;
+    const withScroll = snapshotTabScrollPosition(workspace, currentPanel.id, activeTab.id);
     markPendingRoute(page);
-    setWorkspace((current) => replaceFocusedMasterTabDestination(current, { kind: "page", page }));
+    setWorkspace(replaceFocusedMasterTabDestination(withScroll, { kind: "page", page }));
     setActivePage(page);
     return true;
-  }, [activeMasterPage, canNavigate, currentTransitionBlockReason, markPendingRoute, setActivePage]);
+  }, [activeMasterPage, activeTab.id, canNavigate, currentPanel.id, currentTransitionBlockReason, markPendingRoute, setActivePage, workspace]);
 
   const canCloseTab = useCallback((tabId: string) => {
     if (!canNavigate) return false;
+    if (draftProtection && !draftProtection.canCloseView(tabId)) return false;
     const currentTab = currentPanel.tabs.find((tab) => tab.id === tabId);
     if (!currentTab) return false;
     if (tabId !== activeTab.id) return currentPanel.tabs.length > 1;
+    if (currentTransitionBlockReason) return false;
     if (activeMasterPage === "Tasks" && hasUnsafeTasksDraft) return false;
     const next = closeMasterTab(workspace, currentPanel.id, tabId);
     if (next === workspace) return false;
     const nextPanel = next.panels.find((panel) => panel.id === currentPanel.id) ?? next.panels[0];
     const nextTab = nextPanel.tabs.find((tab) => tab.id === nextPanel.activeTabId) ?? nextPanel.tabs[0];
     return !isTabTransitionBlocked(nextTab);
-  }, [activeMasterPage, activeTab.id, canNavigate, currentPanel.id, currentPanel.tabs, hasUnsafeTasksDraft, isTabTransitionBlocked, workspace]);
+  }, [activeMasterPage, activeTab.id, canNavigate, currentPanel.id, currentPanel.tabs, currentTransitionBlockReason, draftProtection, hasUnsafeTasksDraft, isTabTransitionBlocked, workspace]);
 
   const closeTab = useCallback((tabId: string) => {
     if (!canCloseTab(tabId)) return;
-    const transition = closeMasterTabWithTaskWorkspace(workspace, currentPanel.id, tabId, taskWorkspaceTabsState);
-    if (transition.state === workspace) return;
+    const withScroll = tabId === activeTab.id ? snapshotTabScrollPosition(workspace, currentPanel.id, activeTab.id) : workspace;
+    const transition = closeMasterTabWithTaskWorkspace(withScroll, currentPanel.id, tabId, taskWorkspaceTabsState);
+    if (transition.state === withScroll) return;
     const nextPanel = transition.state.panels.find((panel) => panel.id === currentPanel.id) ?? transition.state.panels[0];
     const nextTab = nextPanel.tabs.find((tab) => tab.id === nextPanel.activeTabId) ?? nextPanel.tabs[0];
+    draftProtection?.detachView(tabId);
     markPendingRoute(nextTab.destination.page);
     setWorkspace(transition.state);
     if (tabId === activeTab.id && transition.taskWorkspaceTabsState) {
       replaceTaskWorkspaceTabsState(transition.taskWorkspaceTabsState);
     }
     setActivePage(nextTab.destination.page);
-  }, [activeTab.id, canCloseTab, currentPanel.id, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage, taskWorkspaceTabsState, workspace]);
+  }, [activeTab.id, canCloseTab, currentPanel.id, draftProtection, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage, taskWorkspaceTabsState, workspace]);
 
   const canActivateTab = useCallback((tabId: string) => {
     const targetTab = currentPanel.tabs.find((tab) => tab.id === tabId);
@@ -249,19 +280,31 @@ export function useMasterWorkspaceController({
       && targetHealthSection
       && isHealthSectionTransitionBlocked(targetHealthSection)
     ) return false;
+    const withScroll = snapshotTabScrollPosition(workspace, currentPanel.id, activeTab.id);
     markPendingRoute(destination.page);
-    setWorkspace((current) => replaceFocusedMasterTabDestination(current, destination));
+    setWorkspace(replaceFocusedMasterTabDestination(withScroll, destination));
     return true;
-  }, [activeMasterPage, canNavigate, currentTransitionBlockReason, hasUnsafeTasksDraft, isHealthSectionTransitionBlocked, markPendingRoute]);
+  }, [activeMasterPage, activeTab.id, canNavigate, currentPanel.id, currentTransitionBlockReason, hasUnsafeTasksDraft, isHealthSectionTransitionBlocked, markPendingRoute, workspace]);
 
   const selectHealthSection = useCallback((healthSection: HealthTab) => {
     if (!canNavigate || activeMasterPage !== "Health") return false;
     return updateFocusedDestination({ kind: "health-tab", page: "Health", tab: healthSection });
   }, [activeMasterPage, canNavigate, updateFocusedDestination]);
 
+  const updateJournalView = useCallback((journalView: MasterTabPresentationState["journalView"]) => {
+    if (!canNavigate || !journalView) return false;
+    setWorkspace((current) => {
+      const panel = current.panels.find((candidate) => candidate.id === currentPanel.id);
+      if (!panel || panel.activeTabId !== activeTab.id) return current;
+      return updateMasterTabJournalView(current, currentPanel.id, activeTab.id, journalView);
+    });
+    return true;
+  }, [activeTab.id, canNavigate, currentPanel.id]);
+
   return useMemo(() => ({
     activateTab,
     activeTab,
+    activeJournalView,
     canActivateTab,
     canCloseTab,
     canOpenNewTab,
@@ -274,7 +317,8 @@ export function useMasterWorkspaceController({
     navigateToPage,
     selectHealthSection,
     updateFocusedDestination,
+    updateJournalView,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, userId, workspace]);
+  }), [activateTab, activeJournalView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, userId, workspace]);
 }
