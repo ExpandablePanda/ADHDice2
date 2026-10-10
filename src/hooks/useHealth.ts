@@ -1479,11 +1479,19 @@ export function useHealth(
   }
 
   async function saveJournalEntry(input: HealthJournalEntrySaveInput) {
+    const diagnoseNullJournalSave = (stage: string, entryId?: string, coreWriteState = "unknown") => {
+      if (!isWorkspacePerformanceDiagnosticsEnabled()) return;
+      console.warn(`[health:journal-save] result=null stage=${stage} entryId=${entryId ?? "unavailable"} coreWrite=${coreWriteState}`);
+    };
     if (!userId || !profile) {
+      diagnoseNullJournalSave("owner-unavailable");
       return null;
     }
     const operation = captureOperation();
-    if (!operation) return null;
+    if (!operation) {
+      diagnoseNullJournalSave("operation-unavailable");
+      return null;
+    }
 
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
@@ -1542,6 +1550,7 @@ export function useHealth(
       user_id: userId,
     };
 
+    let coreWriteState = "not-applied";
     let nextRow = localRow;
     if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
       const remoteCheckInFields = {
@@ -1570,13 +1579,18 @@ export function useHealth(
           .select("*")
           .single();
       const { data, error } = result;
-      if (!isCurrentOperation(operation)) return null;
+      coreWriteState = error ? "remote-response-error" : data ? "remote-confirmed" : "unknown";
+      if (!isCurrentOperation(operation)) {
+        diagnoseNullJournalSave("owner-changed-after-core-write", localRow.id, coreWriteState);
+        return null;
+      }
       if (error) {
         if (isMissingHealthPersistence(error.message)) {
           journalRemoteEnabledRef.current = false;
           setMessage({ tone: "neutral", text: "Journal is using local storage until the 7.13.43 Journal migration is applied." });
         } else {
           setMessage({ tone: "warn", text: error.message });
+          diagnoseNullJournalSave("core-write-error", localRow.id, coreWriteState);
           return null;
         }
       } else {
@@ -1587,10 +1601,12 @@ export function useHealth(
     const currentValues = currentSnapshot.journalSignalValues.filter((value) => value.journal_entry_id === nextRow.id);
     if (input.signalValues.some((draft) => !currentSnapshot.journalSignals.some((signal) => signal.id === draft.signal_id))) {
       setMessage({ tone: "warn", text: "Choose valid template Feelings before saving the Journal Entry." });
+      diagnoseNullJournalSave("invalid-signal-value", nextRow.id, coreWriteState);
       return null;
     }
     if (input.signalValues.some((draft) => draft.score !== null && normalizeHealthJournalScore(draft.score) !== draft.score)) {
       setMessage({ tone: "warn", text: "Snapshot Feeling scores must be between 0 and 10." });
+      diagnoseNullJournalSave("invalid-signal-score", nextRow.id, coreWriteState);
       return null;
     }
     for (const occurrence of input.symptomOccurrences) {
@@ -1602,6 +1618,7 @@ export function useHealth(
         : false;
       if (occurrence.id && !isOwnedOccurrence) {
         setMessage({ tone: "warn", text: "That Feeling occurrence belongs to another Journal Entry." });
+        diagnoseNullJournalSave("foreign-symptom-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       const isExistingArchivedOccurrence = occurrence.id
@@ -1609,10 +1626,12 @@ export function useHealth(
         : false;
       if (!occurrenceSymptom || (occurrenceSymptom.archived_at !== null && !isExistingArchivedOccurrence)) {
         setMessage({ tone: "warn", text: "Choose an active symptom for each occurrence." });
+        diagnoseNullJournalSave("invalid-symptom-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       if (!Number.isInteger(occurrence.severity) || occurrence.severity < 1 || occurrence.severity > occurrenceDenominator) {
         setMessage({ tone: "warn", text: `Feeling occurrence severity must be between 1 and ${occurrenceDenominator}.` });
+        diagnoseNullJournalSave("invalid-symptom-occurrence-score", nextRow.id, coreWriteState);
         return null;
       }
     }
@@ -1624,14 +1643,17 @@ export function useHealth(
         : false;
       if (!isValidNativeJournalSignal(signal) || (signal?.archived_at !== null && !isExistingOccurrence)) {
         setMessage({ tone: "warn", text: "Choose an active Emotion or Other Feeling for each occurrence." });
+        diagnoseNullJournalSave("invalid-feeling-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       if (occurrence.id && !isExistingOccurrence) {
         setMessage({ tone: "warn", text: "That Feeling occurrence belongs to another Journal Entry." });
+        diagnoseNullJournalSave("foreign-feeling-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       if (!Number.isInteger(occurrence.score) || occurrence.score < 1 || occurrence.score > occurrenceDenominator || !occurrence.occurred_at || !Number.isFinite(Date.parse(occurrence.occurred_at))) {
         setMessage({ tone: "warn", text: `Feeling occurrences need a score from 1 to ${occurrenceDenominator} and a valid time.` });
+        diagnoseNullJournalSave("invalid-feeling-occurrence-score-or-time", nextRow.id, coreWriteState);
         return null;
       }
     }
@@ -1703,7 +1725,10 @@ export function useHealth(
           .from("adhdice_health_journal_signal_values")
           .upsert(scoredValues, { onConflict: "user_id,journal_entry_id,signal_id" })
           .select("*");
-        if (!isCurrentOperation(operation)) return null;
+        if (!isCurrentOperation(operation)) {
+          diagnoseNullJournalSave("owner-changed-after-signal-value-write", nextRow.id, coreWriteState);
+          return null;
+        }
         if (error) childWriteError = error;
         else if (data) scoredValues.splice(0, scoredValues.length, ...data);
       }
@@ -1714,7 +1739,10 @@ export function useHealth(
             .delete()
             .eq("id", value.id)
             .eq("user_id", userId);
-          if (!isCurrentOperation(operation)) return null;
+          if (!isCurrentOperation(operation)) {
+            diagnoseNullJournalSave("owner-changed-after-signal-value-delete", nextRow.id, coreWriteState);
+            return null;
+          }
           if (error) {
             childWriteError = error;
             break;
@@ -1726,7 +1754,10 @@ export function useHealth(
           .from("adhdice_health_symptom_entries")
           .upsert(occurrenceRows, { onConflict: "id" })
           .select("*");
-        if (!isCurrentOperation(operation)) return null;
+        if (!isCurrentOperation(operation)) {
+          diagnoseNullJournalSave("owner-changed-after-symptom-occurrence-write", nextRow.id, coreWriteState);
+          return null;
+        }
         if (error) childWriteError = error;
         else if (data) occurrenceRows.splice(0, occurrenceRows.length, ...data);
       }
@@ -1738,7 +1769,10 @@ export function useHealth(
             .eq("id", entry.id)
             .eq("user_id", userId)
             .eq("journal_entry_id", nextRow.id);
-          if (!isCurrentOperation(operation)) return null;
+          if (!isCurrentOperation(operation)) {
+            diagnoseNullJournalSave("owner-changed-after-symptom-occurrence-delete", nextRow.id, coreWriteState);
+            return null;
+          }
           if (error) {
             childWriteError = error;
             break;
@@ -1750,7 +1784,10 @@ export function useHealth(
           .from("adhdice_health_journal_signal_occurrences")
           .upsert(journalSignalOccurrenceRows, { onConflict: "id" })
           .select("*");
-        if (!isCurrentOperation(operation)) return null;
+        if (!isCurrentOperation(operation)) {
+          diagnoseNullJournalSave("owner-changed-after-feeling-occurrence-write", nextRow.id, coreWriteState);
+          return null;
+        }
         if (error) childWriteError = error;
         else if (data) journalSignalOccurrenceRows.splice(0, journalSignalOccurrenceRows.length, ...data.map(normalizeHealthJournalSignalOccurrence));
       }
@@ -1762,7 +1799,10 @@ export function useHealth(
             .eq("id", occurrence.id)
             .eq("user_id", userId)
             .eq("journal_entry_id", nextRow.id);
-          if (!isCurrentOperation(operation)) return null;
+          if (!isCurrentOperation(operation)) {
+            diagnoseNullJournalSave("owner-changed-after-feeling-occurrence-delete", nextRow.id, coreWriteState);
+            return null;
+          }
           if (error) {
             childWriteError = error;
             break;
@@ -1795,10 +1835,14 @@ export function useHealth(
       journalSignalOccurrences: nextJournalSignalOccurrences,
       symptomEntries: sortHealthSymptomEntries(nextSymptomEntries),
     });
-    if (!isCurrentOperation(operation)) return null;
+    if (!isCurrentOperation(operation)) {
+      diagnoseNullJournalSave("owner-changed-before-snapshot-apply", nextRow.id, coreWriteState);
+      return null;
+    }
     applySnapshot(nextSnapshot, {
       persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
     });
+    if (coreWriteState !== "remote-confirmed") coreWriteState = "local-applied";
     if (childWriteError) {
       if (isMissingHealthPersistence(childWriteError.message)) {
         journalRemoteEnabledRef.current = false;
@@ -1808,10 +1852,14 @@ export function useHealth(
         tone: "warn",
         text: `Journal Entry core fields were saved, but a Feeling value or occurrence update failed: ${childWriteError.message}`,
       });
+      diagnoseNullJournalSave("child-write-error", nextRow.id, coreWriteState);
       return null;
     }
     await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
-    if (!isCurrentOperation(operation)) return null;
+    if (!isCurrentOperation(operation)) {
+      diagnoseNullJournalSave("owner-changed-after-award-claim", nextRow.id, coreWriteState);
+      return null;
+    }
     setHealthSuccessMessage({ tone: "good", text: existingRow ? "Journal Entry updated." : "Journal Entry saved." });
     return nextRow;
   }

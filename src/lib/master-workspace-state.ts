@@ -213,6 +213,18 @@ export function getMasterTabJournalView(tab: MasterWorkspaceTab) {
   };
 }
 
+export function selectJournalHistoryEntryForEdit(
+  journalView: NonNullable<MasterTabPresentationState["journalView"]>,
+  entryId: string,
+  onJournalViewChange: (journalView: MasterTabPresentationState["journalView"]) => void,
+) {
+  onJournalViewChange({
+    ...journalView,
+    selectedEntryId: entryId,
+    workspaceMode: journalView.workspaceMode === "history" ? "entry" : journalView.workspaceMode,
+  });
+}
+
 export function updateMasterTabJournalView(
   state: MasterWorkspaceState,
   panelId: string,

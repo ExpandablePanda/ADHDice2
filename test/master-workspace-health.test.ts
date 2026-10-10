@@ -65,6 +65,15 @@ test("Food and Journal editor owners report draft safety before Health tab activ
   assert.match(controllerHookSource, /return !isTabTransitionBlocked\(nextTab\)/);
 });
 
+test("History Edit is wired to one atomic view update and the selected canonical Journal session", () => {
+  assert.match(healthPageSource, /selectJournalHistoryEntryForEdit\(journalView, entry\.id, onJournalViewChange\)/);
+  assert.match(healthPageSource, /onClick=\{\(\) => selectJournalEntry\(entry\)\} type="button">Edit/);
+  assert.match(healthPageSource, /selectedJournalEntry=\{selectedJournalEntry\}/);
+  assert.match(healthPageSource, /sessionDraftId=\{selectedJournalEntryId \? `journal-entry:\$\{selectedJournalEntryId\}`/);
+  assert.match(healthPageSource, /sessionCanonicalRecordId=\{selectedJournalEntryId \? `health-check-in:\$\{selectedJournalEntryId\}`/);
+  assert.match(healthPageSource, /else \{\s+if \(journalWorkspaceMode === "history"\) \{\s+setJournalWorkspaceMode\("entry"\);\s+\}\s+setSelectedJournalEntryId\(entry\.id\);/);
+});
+
 test("retained Journal drafts navigate without a false saved-occurrence guard", () => {
   const journalGuardStart = healthPageSource.indexOf("const hasUnsafeJournalLocalDraft = Boolean(");
   const journalGuardEnd = healthPageSource.indexOf(");", journalGuardStart);

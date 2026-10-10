@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.131`.
+- Current working app version: `7.16.132`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -217,6 +217,16 @@ Targeted ESLint passed with the existing `react-hooks/set-state-in-effect`
 rule disabled; the normal targeted lint also reports existing synchronous
 effect updates in TaskApp and HealthPage. `git diff --check` passed. Browser QA,
 production build, full typecheck, and broad test suites were not run.
+
+## 2026-10-10 7.16.132 Journal History Edit and Event Save Diagnostics
+
+History Edit now updates the active Journal tab's workspace mode and selected
+entry in one presentation change, preserving its other state and leaving peer
+Master Tabs untouched. Existing split-history modes and feature-gate-off local
+state remain in place. The Event save path retains its record identity and
+user-visible persistence warning; opt-in development diagnostics identify a
+null-return stage and whether the core record write was confirmed. The reported
+browser failure's exact runtime cause remains unconfirmed pending those logs.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

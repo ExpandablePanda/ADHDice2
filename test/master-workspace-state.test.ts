@@ -17,11 +17,13 @@ import {
   normalizeMasterWorkspaceState,
   replaceFocusedMasterTabDestination,
   saveMasterWorkspaceState,
+  selectJournalHistoryEntryForEdit,
   updateMasterTabTasksWorkspace,
   updateMasterTabJournalView,
   updateMasterTabScrollPosition,
   type MasterWorkspaceStorage,
 } from "../src/lib/master-workspace-state.ts";
+import { createEditingSessionStore } from "../src/lib/editing-session-store.ts";
 import { DEFAULT_TASK_WORKSPACE_TABS_STATE, type TaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
 
 function memoryStorage(): MasterWorkspaceStorage & { values: Map<string, string> } {
@@ -108,6 +110,51 @@ test("Journal selection, presentation mode, and new draft identity are independe
   assert.equal(getMasterTabJournalView(secondAfter).selectedEntryId, null);
   assert.equal(getMasterTabJournalView(secondAfter).workspaceMode, "entry");
   assert.equal("draft" in firstAfter.presentation, false);
+});
+
+test("History Edit applies one Journal view transition and resolves the existing canonical draft", () => {
+  const initial = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Journal");
+  const panelId = initial.panels[0].id;
+  const second = createMasterTab(initial, panelId, {
+    id: "journal-tab-edit-peer",
+    destination: { kind: "health-tab", page: "Health", tab: "Journal" },
+    presentation: { healthSection: "Journal" },
+  }, false);
+  const firstTab = second.panels[0].tabs[0];
+  const historyView = { ...getMasterTabJournalView(firstTab), selectedEntryId: null, workspaceMode: "history" as const };
+  const updates: Array<NonNullable<Parameters<typeof updateMasterTabJournalView>[3]>> = [];
+  const clickEdit = () => selectJournalHistoryEntryForEdit(historyView, "entry-1", (nextView) => {
+    if (nextView) updates.push(nextView);
+  });
+
+  clickEdit();
+
+  assert.equal(updates.length, 1);
+  assert.deepEqual(updates[0], { ...historyView, selectedEntryId: "entry-1", workspaceMode: "entry" });
+  const editedWorkspace = updateMasterTabJournalView(second, panelId, firstTab.id, updates[0]);
+  const selectedView = getMasterTabJournalView(editedWorkspace.panels[0].tabs[0]);
+  assert.equal(selectedView.selectedEntryId, "entry-1");
+  assert.equal(selectedView.workspaceMode, "entry");
+  assert.equal(getMasterTabJournalView(editedWorkspace.panels[0].tabs[1]).selectedEntryId, null);
+  assert.equal(getMasterTabJournalView(editedWorkspace.panels[0].tabs[1]).workspaceMode, "entry");
+
+  const sessionStore = createEditingSessionStore<{ value: string }>("user-1", (left, right) => left.value === right.value);
+  const sessionDraftId = `journal-entry:${selectedView.selectedEntryId}`;
+  const canonicalRecordId = `health-check-in:${selectedView.selectedEntryId}`;
+  sessionStore.ensureSession(sessionDraftId, canonicalRecordId, { value: "saved baseline" });
+  sessionStore.updateDraft(sessionDraftId, (current) => ({ ...current, value: "shared unsaved edit" }));
+  const resolvedSession = sessionStore.ensureSession(sessionDraftId, canonicalRecordId, { value: "saved baseline" });
+  assert.equal(resolvedSession.canonicalRecordId, "health-check-in:entry-1");
+  assert.equal(resolvedSession.draft.value, "shared unsaved edit");
+
+  for (const workspaceMode of ["split-history-left", "split-history-right"] as const) {
+    const splitView = { ...historyView, workspaceMode };
+    let splitUpdate: NonNullable<Parameters<typeof updateMasterTabJournalView>[3]> | null = null;
+    selectJournalHistoryEntryForEdit(splitView, "entry-2", (nextView) => { splitUpdate = nextView; });
+    assert.equal(splitUpdate?.selectedEntryId, "entry-2");
+    assert.equal(splitUpdate?.workspaceMode, workspaceMode);
+    assert.equal(splitUpdate?.newDraftId, splitView.newDraftId);
+  }
 });
 
 test("Master Tabs retain independent scroll positions", () => {

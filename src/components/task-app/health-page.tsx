@@ -226,7 +226,7 @@ import type { JournalCheckInDraftSnapshot } from "./journal-check-in-form";
 import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
 import type { EditingSessionStore } from "@/lib/editing-session-store";
-import type { MasterJournalWorkspaceMode, MasterTabPresentationState } from "@/lib/master-workspace-state";
+import { selectJournalHistoryEntryForEdit, type MasterJournalWorkspaceMode, type MasterTabPresentationState } from "@/lib/master-workspace-state";
 
 type HealthPageProps = {
   activeTab: HealthTab;
@@ -2644,10 +2644,14 @@ export function HealthPage({
   }
 
   function selectJournalEntry(entry: HealthCheckIn) {
-    if (journalWorkspaceMode === "history") {
-      setJournalWorkspaceMode("entry");
+    if (journalView && onJournalViewChange) {
+      selectJournalHistoryEntryForEdit(journalView, entry.id, onJournalViewChange);
+    } else {
+      if (journalWorkspaceMode === "history") {
+        setJournalWorkspaceMode("entry");
+      }
+      setSelectedJournalEntryId(entry.id);
     }
-    setSelectedJournalEntryId(entry.id);
     setJournalDate(entry.entry_date);
   }
 
