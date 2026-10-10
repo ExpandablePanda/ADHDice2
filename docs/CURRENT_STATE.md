@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-09
+Last reviewed: 2026-10-10
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.132`.
+- Current working app version: `7.16.133`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -227,6 +227,20 @@ state remain in place. The Event save path retains its record identity and
 user-visible persistence warning; opt-in development diagnostics identify a
 null-return stage and whether the core record write was confirmed. The reported
 browser failure's exact runtime cause remains unconfirmed pending those logs.
+
+## 2026-10-10 7.16.133 Journal Tombstone Trigger Repair
+
+The Journal tombstone trigger's child ownership check now reads
+`journal_entry_id` only after a separate child-entity guard, avoiding access to
+a field absent from `adhdice_health_checkins`. The additive corrective
+migration replaces only the existing trigger function and retains its
+security-definer settings, advisory lock, immutable identity checks, tombstone
+protections, account-deletion handling, and function permissions. Trigger
+bindings are not changed. Database execution remains pending review and
+explicit authorization.
+Focused SQL source regression tests passed (2/2), along with targeted ESLint
+and `git diff --check`. No SQL was executed; live application and postcondition
+verification remain pending reviewed authorization.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller
