@@ -16,9 +16,11 @@ import {
   createMasterTab,
   createDefaultMasterWorkspaceState,
   getMasterTabJournalView,
+  getMasterTabNotesView,
   masterTabTasksWorkspaceMatchesLiveState,
   replaceFocusedMasterTabDestination,
   updateMasterTabJournalView,
+  updateMasterTabNotesView,
   updateMasterTabScrollPosition,
   updateMasterTabTasksWorkspace,
   type MasterTabPresentationState,
@@ -75,6 +77,7 @@ export function useMasterWorkspaceController({
   const activeTab = currentPanel.tabs.find((tab) => tab.id === currentPanel.activeTabId) ?? currentPanel.tabs[0];
   const activeMasterPage = activeTab.destination.page;
   const activeJournalView = getMasterTabJournalView(activeTab);
+  const activeNotesView = getMasterTabNotesView(activeTab);
   const canNavigate = isEnabled && isReady && Boolean(userId) && restoredUserId === userId;
   const currentHealthSection = activeMasterPage === "Health"
     ? activeTab.presentation.healthSection ?? initialHealthSection
@@ -301,10 +304,21 @@ export function useMasterWorkspaceController({
     return true;
   }, [activeTab.id, canNavigate, currentPanel.id]);
 
+  const updateNotesView = useCallback((notesView: NonNullable<MasterTabPresentationState["notesView"]>) => {
+    if (!canNavigate) return false;
+    setWorkspace((current) => {
+      const panel = current.panels.find((candidate) => candidate.id === currentPanel.id);
+      if (!panel || panel.activeTabId !== activeTab.id) return current;
+      return updateMasterTabNotesView(current, currentPanel.id, activeTab.id, notesView);
+    });
+    return true;
+  }, [activeTab.id, canNavigate, currentPanel.id]);
+
   return useMemo(() => ({
     activateTab,
     activeTab,
     activeJournalView,
+    activeNotesView,
     canActivateTab,
     canCloseTab,
     canOpenNewTab,
@@ -318,7 +332,8 @@ export function useMasterWorkspaceController({
     selectHealthSection,
     updateFocusedDestination,
     updateJournalView,
+    updateNotesView,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeJournalView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, userId, workspace]);
+  }), [activateTab, activeJournalView, activeNotesView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, updateNotesView, userId, workspace]);
 }

@@ -82,7 +82,8 @@ test("retained Journal drafts navigate without a false saved-occurrence guard", 
   assert.match(journalGuard, /journalOccurrenceEditorOpen/);
   assert.match(journalFormSource, /const hasUnsafeDraft = isSaving \|\| isEventCaptureDraftUnsafe \|\| \(!sharedSessionEnabled && isDraftDirty\)/);
   assert.match(taskAppSource, /journalSessionStore=\{masterWorkspace\.isEnabled \? journalDraftSessionStore : null\}/);
-  assert.match(taskAppSource, /protectUnsavedJournalDrafts/);
+  assert.match(taskAppSource, /protectUnsavedEditingSessions/);
+  assert.match(taskAppSource, /notesDraftSessionStore\.hasUnsavedDrafts\(\)/);
   assert.match(taskAppSource, /beforeunload/);
   assert.equal(getMasterWorkspaceTransitionBlockReason("Health", "Journal", false, { Journal: false }, false), null);
 });
@@ -179,7 +180,7 @@ test("Notes and Scratch Paper pending edits are reported without one editor clea
   assert.match(notesPageSource, /onDraftSafetyChange=\{reportNoteEditorDraftSafety\}/);
   assert.match(notesPageSource, /if \(error \|\| !data\)[\s\S]*?return false/);
   assert.match(notesPageSource, /onDraftSafetyChange=\{reportDraftSafety\}/);
-  assert.match(noteEditorSource, /disabled=\{isSaving\}/);
+  assert.match(noteEditorSource, /disabled=\{isSavingNow\}/);
   assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\("scratch-current", isSaving \|\| isDirty\)/);
   assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\(`scratch-card:\$\{note\.id\}`, isDraftUnsafe\)/);
   assert.match(scratchPaperSource, /unsafeCardIds\.has\(note\.id\)/);

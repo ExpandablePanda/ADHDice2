@@ -106,6 +106,21 @@ test("save success reconciles draft and baseline and protects sibling views when
   assert.equal(store.hasUnsavedDrafts(), false);
 });
 
+test("a completed delete removes its session and clears every attached view mapping", () => {
+  const store = createStore();
+  store.ensureSession("note:note-1", "note-1", emptyDraft());
+  store.attachView("note:note-1", "tab-a");
+  store.attachView("note:note-1", "tab-b");
+  const saveRevision = store.beginSave("note:note-1");
+
+  assert.equal(store.removeAfterSave("note:note-1", saveRevision! + 1), false);
+  assert.equal(store.removeAfterSave("note:note-1", saveRevision!), true);
+  assert.equal(store.getSnapshot("note:note-1"), null);
+  assert.deepEqual(store.getDraftIdsForView("tab-a"), []);
+  assert.deepEqual(store.getDraftIdsForView("tab-b"), []);
+  assert.equal(store.canCloseView("tab-a"), true);
+});
+
 test("account-scoped stores cannot share or reopen one another's sessions", () => {
   const firstAccount = createStore("user-1");
   const secondAccount = createStore("user-2");

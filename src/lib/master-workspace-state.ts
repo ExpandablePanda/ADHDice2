@@ -19,6 +19,15 @@ export const MASTER_WORKSPACE_SPLIT_RATIO_MAX = 0.75;
 export type MasterPanelSide = "left" | "right";
 export type MasterTabDestination = NavigatorSearchAction;
 export type MasterJournalWorkspaceMode = "entry" | "history" | "split-history-left" | "split-history-right";
+export type MasterNotesSelection =
+  | { kind: "list" }
+  | { kind: "saved"; noteId: string }
+  | { kind: "new"; draftId: string };
+export type MasterNotesWorkspaceView = {
+  selection: MasterNotesSelection;
+  search: string;
+  activeTag: string | null;
+};
 export type MasterTabPresentationState = {
   healthSection?: HealthTab;
   scrollTop?: number;
@@ -27,6 +36,7 @@ export type MasterTabPresentationState = {
     newDraftId: string;
     workspaceMode: MasterJournalWorkspaceMode;
   };
+  notesView?: MasterNotesWorkspaceView;
   tasksWorkspace?: TaskWorkspaceTabsState;
 };
 
@@ -57,6 +67,11 @@ const VALID_TASK_SURFACES = new Set(["tasks", "attention", "paths", "report", "o
 const VALID_TASK_VIEWS = new Set(["table", "list", "cards", "matrix", "calendar"]);
 const VALID_SETTINGS_SECTIONS = new Set(["appearance", "day-reset", "economy", "import-export"]);
 const VALID_JOURNAL_WORKSPACE_MODES = new Set(["entry", "history", "split-history-left", "split-history-right"]);
+const DEFAULT_NOTES_WORKSPACE_VIEW: MasterNotesWorkspaceView = {
+  selection: { kind: "list" },
+  search: "",
+  activeTag: null,
+};
 function createRegisteredShellKeySet() {
   return new Set(getRegisteredPageShellPages().flatMap(({ canonicalLayout, pageKey }) => (
     canonicalLayout.order.map((shellId) => `${pageKey}\u0000${shellId}`)
@@ -165,6 +180,28 @@ function defaultJournalDraftId(tabId: string) {
   return `journal-new:${tabId}`;
 }
 
+function defaultNotesWorkspaceView(): MasterNotesWorkspaceView {
+  return { selection: { kind: "list" }, search: "", activeTag: null };
+}
+
+function normalizeNotesWorkspaceView(value: unknown): MasterNotesWorkspaceView {
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const rawSelection = candidate.selection && typeof candidate.selection === "object"
+    ? candidate.selection as Record<string, unknown>
+    : {};
+  let selection: MasterNotesSelection = { kind: "list" };
+  if (rawSelection.kind === "saved" && typeof rawSelection.noteId === "string" && rawSelection.noteId.trim()) {
+    selection = { kind: "saved", noteId: rawSelection.noteId.trim() };
+  } else if (rawSelection.kind === "new" && typeof rawSelection.draftId === "string" && rawSelection.draftId.trim()) {
+    selection = { kind: "new", draftId: rawSelection.draftId.trim() };
+  }
+  return {
+    selection,
+    search: typeof candidate.search === "string" ? candidate.search : "",
+    activeTag: typeof candidate.activeTag === "string" && candidate.activeTag.trim() ? candidate.activeTag.trim() : null,
+  };
+}
+
 function normalizePresentation(value: unknown, destination: MasterTabDestination, tabId: string): MasterTabPresentationState {
   const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const presentation: MasterTabPresentationState = {};
@@ -190,6 +227,9 @@ function normalizePresentation(value: unknown, destination: MasterTabDestination
         : "entry",
     };
   }
+  if (candidate.notesView !== undefined || destination.page === "Notes") {
+    presentation.notesView = normalizeNotesWorkspaceView(candidate.notesView ?? defaultNotesWorkspaceView());
+  }
   if (candidate.tasksWorkspace !== undefined) {
     presentation.tasksWorkspace = cloneTaskWorkspaceState(candidate.tasksWorkspace);
   }
@@ -210,6 +250,33 @@ export function getMasterTabJournalView(tab: MasterWorkspaceTab) {
     selectedEntryId: null,
     newDraftId: defaultJournalDraftId(tab.id),
     workspaceMode: "entry" as const,
+  };
+}
+
+export function getMasterTabNotesView(tab: MasterWorkspaceTab) {
+  return tab.presentation.notesView ?? DEFAULT_NOTES_WORKSPACE_VIEW;
+}
+
+export function updateMasterTabNotesView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  notesView: MasterNotesWorkspaceView,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const current = getMasterTabNotesView(tab);
+  if (JSON.stringify(current) === JSON.stringify(notesView)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, notesView: normalizeNotesWorkspaceView(notesView) },
+      }),
+    }),
   };
 }
 

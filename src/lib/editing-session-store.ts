@@ -62,6 +62,7 @@ export type EditingSessionStore<Draft> = {
   beginSave(draftId: string): number | null;
   saveSucceeded(draftId: string, saveRevision: number, savedDraft: Draft): boolean;
   saveFailed(draftId: string, saveRevision: number, error: string): boolean;
+  removeAfterSave(draftId: string, saveRevision: number): boolean;
   rebaseIfClean(draftId: string, nextBaseline: Draft): boolean;
   hasUnsavedDrafts(): boolean;
   reset(): void;
@@ -250,6 +251,21 @@ export function createEditingSessionStore<Draft>(
         if (!current.isSaving || current.saveRevision !== saveRevision) return current;
         return Object.freeze({ ...current, isSaving: false, saveError: error, saveRevision: null });
       });
+    },
+    removeAfterSave(draftId, saveRevision) {
+      const current = sessions.get(draftId);
+      if (!current || !current.isSaving || current.saveRevision !== saveRevision) return false;
+      sessions.delete(draftId);
+      if (draftIdsByCanonicalRecord.get(current.canonicalRecordId) === draftId) {
+        draftIdsByCanonicalRecord.delete(current.canonicalRecordId);
+      }
+      for (const viewId of current.viewIds) {
+        const draftIds = draftIdsByView.get(viewId);
+        draftIds?.delete(draftId);
+        if (draftIds?.size === 0) draftIdsByView.delete(viewId);
+      }
+      publish(draftId);
+      return true;
     },
     rebaseIfClean(draftId, nextBaseline) {
       const current = sessions.get(draftId);

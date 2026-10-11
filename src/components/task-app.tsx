@@ -136,6 +136,7 @@ import { useAchievementNotifications, useAchievementProgress } from "@/hooks/use
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
 import { createEditingSessionStore } from "@/lib/editing-session-store";
+import { areNotesEditingSessionDraftsEqual, type NotesEditingSessionDraft } from "@/lib/note-draft-safety";
 import { areHealthJournalDraftsEqual } from "@/lib/health-journal-checkins";
 import type { JournalCheckInDraftSnapshot } from "./task-app/journal-check-in-form";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
@@ -1355,6 +1356,71 @@ export function TaskApp() {
     [currentUserId],
   );
   useEffect(() => () => journalDraftSessionStore.reset(), [journalDraftSessionStore]);
+  const notesDraftSessionStore = useMemo(
+    () => createEditingSessionStore<NotesEditingSessionDraft>(currentUserId ?? "signed-out", areNotesEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => notesDraftSessionStore.reset(), [notesDraftSessionStore]);
+  const [notesCollectionState, setNotesCollectionState] = useState<{ ownerId: string | null; notes: Note[] }>({ ownerId: null, notes: [] });
+  const notesCollectionOwnerRef = useRef(currentUserId);
+  const notesLoadedOwnerRef = useRef<string | null>(null);
+  const notesLoadingOwnerRef = useRef<string | null>(null);
+  const notesLoadGenerationRef = useRef(0);
+  if (notesCollectionOwnerRef.current !== currentUserId) {
+    notesCollectionOwnerRef.current = currentUserId;
+    notesLoadedOwnerRef.current = null;
+    notesLoadingOwnerRef.current = null;
+    notesLoadGenerationRef.current += 1;
+  }
+  useEffect(() => {
+    if (
+      !supabase
+      || activePage !== "Notes"
+      || !currentUserId
+      || notesLoadedOwnerRef.current === currentUserId
+      || notesLoadingOwnerRef.current === currentUserId
+    ) return;
+    const generation = ++notesLoadGenerationRef.current;
+    notesLoadingOwnerRef.current = currentUserId;
+    void supabase
+      .from("adhdice_notes")
+      .select("*")
+      .eq("user_id", currentUserId)
+      .order("updated_at", { ascending: false })
+      .then(({ data }) => {
+        if (generation !== notesLoadGenerationRef.current || notesCollectionOwnerRef.current !== currentUserId) return;
+        notesLoadedOwnerRef.current = currentUserId;
+        notesLoadingOwnerRef.current = null;
+        setNotesCollectionState({ ownerId: currentUserId, notes: data ?? [] });
+      })
+      .catch(() => {
+        if (generation !== notesLoadGenerationRef.current || notesCollectionOwnerRef.current !== currentUserId) return;
+        notesLoadedOwnerRef.current = currentUserId;
+        notesLoadingOwnerRef.current = null;
+        setNotesCollectionState({ ownerId: currentUserId, notes: [] });
+      });
+  }, [activePage, currentUserId, supabase]);
+  const updateNotesCollection = useCallback((update: (current: Note[]) => Note[]) => {
+    const ownerId = currentUserId;
+    if (!ownerId) return;
+    setNotesCollectionState((current) => current.ownerId === ownerId
+      && notesCollectionOwnerRef.current === ownerId
+      ? { ...current, notes: update(current.notes) }
+      : current);
+  }, [currentUserId]);
+  const notesForCurrentUser = notesCollectionState.ownerId === currentUserId ? notesCollectionState.notes : [];
+  const areNotesLoadedForCurrentUser = Boolean(currentUserId)
+    && notesCollectionState.ownerId === currentUserId
+    && notesLoadedOwnerRef.current === currentUserId;
+  const masterWorkspaceDraftProtection = useMemo(() => ({
+    canCloseView(viewId: string) {
+      return journalDraftSessionStore.canCloseView(viewId) && notesDraftSessionStore.canCloseView(viewId);
+    },
+    detachView(viewId: string) {
+      journalDraftSessionStore.detachView(viewId);
+      notesDraftSessionStore.detachView(viewId);
+    },
+  }), [journalDraftSessionStore, notesDraftSessionStore]);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
   const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
@@ -5693,19 +5759,19 @@ export function TaskApp() {
     setActivePage,
     taskWorkspaceTabsState,
     userId: session?.user?.id,
-    draftProtection: journalDraftSessionStore,
+    draftProtection: masterWorkspaceDraftProtection,
   });
   masterWorkspaceControllerRef.current = masterWorkspace;
   useEffect(() => {
     if (!masterWorkspace.featureEnabled || typeof window === "undefined") return;
-    const protectUnsavedJournalDrafts = (event: BeforeUnloadEvent) => {
-      if (!journalDraftSessionStore.hasUnsavedDrafts()) return;
+    const protectUnsavedEditingSessions = (event: BeforeUnloadEvent) => {
+      if (!journalDraftSessionStore.hasUnsavedDrafts() && !notesDraftSessionStore.hasUnsavedDrafts()) return;
       event.preventDefault();
       event.returnValue = "";
     };
-    window.addEventListener("beforeunload", protectUnsavedJournalDrafts);
-    return () => window.removeEventListener("beforeunload", protectUnsavedJournalDrafts);
-  }, [journalDraftSessionStore, masterWorkspace.featureEnabled]);
+    window.addEventListener("beforeunload", protectUnsavedEditingSessions);
+    return () => window.removeEventListener("beforeunload", protectUnsavedEditingSessions);
+  }, [journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore]);
   const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
     ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
     : legacyHealthTabPreference;
@@ -9170,16 +9236,24 @@ export function TaskApp() {
             userId={currentUserId}
           />
         ) : activePage === "Notes" ? (
-          <NotesPage
-            client={client}
-            currentUser={currentUser}
-            onDraftSafetyChange={setHasUnsafeNotesDraft}
-            onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
-            openNoteId={notePageOpenNoteId}
-            scratchPaper={scratchPaperData}
-            tasks={tasks}
-            voiceMemos={voiceMemos}
-          />
+          areNotesLoadedForCurrentUser ? (
+            <NotesPage
+              client={client}
+              currentUser={currentUser}
+              notes={notesForCurrentUser}
+              onNotesChange={updateNotesCollection}
+              onDraftSafetyChange={setHasUnsafeNotesDraft}
+              onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
+              openNoteId={notePageOpenNoteId}
+              notesSessionStore={masterWorkspace.isEnabled ? notesDraftSessionStore : null}
+              activeMasterTabId={masterWorkspace.isEnabled ? masterWorkspace.activeTab.id : undefined}
+              notesView={masterWorkspace.isEnabled ? masterWorkspace.activeNotesView : undefined}
+              onNotesViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateNotesView : undefined}
+              scratchPaper={scratchPaperData}
+              tasks={tasks}
+              voiceMemos={voiceMemos}
+            />
+          ) : <PageLoadingFallback />
         ) : activePage === "Settings" ? (
           <TaskSettingsPage
             accentColor={accentColor}

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.133`.
+- Current working app version: `7.16.134`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -211,6 +211,20 @@ of dirty work remain protected. Saved Feeling occurrences no longer trigger
 the false local draft guard. Other Health editors, Food, Notes, Tasks, and
 Split Right do not use the shared session architecture.
 
+T5b.1 browser QA is complete. The tested Journal draft-navigation, same-entry
+two-way editing, shared discard, independent saved-entry editing, save-one and
+preserve-another behavior, History Edit, and Event persistence scenarios passed.
+Seven lower-frequency Journal scenarios remain deferred to a later regression
+pass:
+
+1. Create two independent new Journal entries.
+2. Save only one of two new entries.
+3. Close one of two views of the same entry.
+4. Protect the last view of a dirty entry when closing its tab.
+5. Save a check-in with a linked Event and Feeling.
+6. Start a new Journal entry immediately after saving.
+7. Verify unsaved-draft protection on browser refresh.
+
 Focused verification for 7.16.131: editing-session store, Master Workspace
 state/controller/Health, Journal entry/check-in/symptom tests passed (118/118).
 Targeted ESLint passed with the existing `react-hooks/set-state-in-effect`
@@ -236,11 +250,35 @@ a field absent from `adhdice_health_checkins`. The additive corrective
 migration replaces only the existing trigger function and retains its
 security-definer settings, advisory lock, immutable identity checks, tombstone
 protections, account-deletion handling, and function permissions. Trigger
-bindings are not changed. Database execution remains pending review and
-explicit authorization.
-Focused SQL source regression tests passed (2/2), along with targeted ESLint
-and `git diff --check`. No SQL was executed; live application and postcondition
-verification remain pending reviewed authorization.
+bindings are not changed. The migration was applied to the database and its
+postcondition was verified on 2026-10-10. Focused SQL source regression tests
+passed (2/2), along with targeted ESLint and `git diff --check`.
+
+## 2026-10-10 7.16.134 T5b.2 Shared Notes Editing Sessions
+
+Notes Library now uses the authenticated-user-scoped editing-session store
+already established by T5b.1. Saved Notes share one draft by Note ID across
+Master Tabs; new Notes use unique generated IDs, and Quick Capture has its own
+per-tab session identity. Each tab retains its own Note selection, search, and
+tag filter in Master Workspace presentation state. Draft contents remain in
+memory only. The Notes collection is loaded once by TaskApp and shared across
+views. Save, retry, discard, and delete reconcile through the session store;
+the last dirty view cannot be closed, while closing a duplicate view preserves
+the remaining view's draft. Scratch Paper, Food, Tasks, and other Health
+editors are unchanged. The Master Tabs gate-off path retains the legacy local
+editor behavior.
+
+Focused verification for 7.16.134: editing-session store, Notes session,
+Master Workspace state/controller/Health, and Notes draft-safety tests passed
+(71/71). Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` rule disabled. `git diff --check` passed.
+Browser QA remains outstanding for same-Note cross-tab edits and shared save or
+discard, new and saved Note isolation across navigation, last-dirty-view close
+protection, and Notes list/Quick Capture regressions. Production build, full
+typecheck, and broad test suites were not run. A scoped TypeScript check was
+attempted and reported existing diagnostics across TaskApp and imported
+workspace modules; it reported no diagnostics in the changed Notes, editing
+session, or Master Workspace state/controller modules.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

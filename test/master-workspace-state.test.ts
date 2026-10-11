@@ -11,6 +11,7 @@ import {
   duplicateFocusedPageIntoRightPanel,
   getMasterWorkspaceStorageKey,
   getMasterTabJournalView,
+  getMasterTabNotesView,
   initializeMasterWorkspaceState,
   masterTabTasksWorkspaceMatchesLiveState,
   loadMasterWorkspaceState,
@@ -20,6 +21,7 @@ import {
   selectJournalHistoryEntryForEdit,
   updateMasterTabTasksWorkspace,
   updateMasterTabJournalView,
+  updateMasterTabNotesView,
   updateMasterTabScrollPosition,
   type MasterWorkspaceStorage,
 } from "../src/lib/master-workspace-state.ts";
@@ -155,6 +157,42 @@ test("History Edit applies one Journal view transition and resolves the existing
     assert.equal(splitUpdate?.workspaceMode, workspaceMode);
     assert.equal(splitUpdate?.newDraftId, splitView.newDraftId);
   }
+});
+
+test("Notes selection and filters persist as per-tab navigation without draft contents", () => {
+  const initial = initializeMasterWorkspaceState("Notes", DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  const panelId = initial.panels[0].id;
+  const second = createMasterTab(initial, panelId, {
+    id: "notes-tab-b",
+    destination: { kind: "page", page: "Notes" },
+    presentation: {},
+  }, false);
+  const firstTab = second.panels[0].tabs[0];
+  const secondTab = second.panels[0].tabs[1];
+  const firstView = getMasterTabNotesView(firstTab);
+  const secondView = getMasterTabNotesView(secondTab);
+
+  const selectedFirst = updateMasterTabNotesView(second, panelId, firstTab.id, {
+    ...firstView,
+    selection: { kind: "saved", noteId: "note-1" },
+    search: "meeting",
+    activeTag: "work",
+  });
+  const selectedFirstAfterPageSwitch = replaceFocusedMasterTabDestination(selectedFirst, { kind: "page", page: "Home" });
+  const restoredFirst = replaceFocusedMasterTabDestination(selectedFirstAfterPageSwitch, { kind: "page", page: "Notes" });
+  const persisted = memoryStorage();
+
+  assert.equal(getMasterTabNotesView(restoredFirst.panels[0].tabs[0]).selection.kind, "saved");
+  assert.deepEqual(getMasterTabNotesView(restoredFirst.panels[0].tabs[0]), {
+    selection: { kind: "saved", noteId: "note-1" },
+    search: "meeting",
+    activeTag: "work",
+  });
+  assert.deepEqual(getMasterTabNotesView(restoredFirst.panels[0].tabs[1]), secondView);
+  assert.equal(saveMasterWorkspaceState(persisted, "notes-user", restoredFirst), true);
+  const serialized = persisted.values.get(getMasterWorkspaceStorageKey("notes-user")) ?? "";
+  assert.match(serialized, /"noteId":"note-1"/);
+  assert.doesNotMatch(serialized, /"body"|"title"|"linked_task_ids"/);
 });
 
 test("Master Tabs retain independent scroll positions", () => {
