@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.139`.
+- Current working app version: `7.16.140`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -354,6 +354,25 @@ the existing `react-hooks/set-state-in-effect` rule disabled. `git diff --check`
 passed. Andrew completed T5b.3 browser QA on 7.16.137; T5b.3 is closed. The
 production build, full typecheck, broad test suite, and live Supabase behavior
 were not run.
+
+## 2026-10-11 7.16.140 False Food Save Mismatch Correction
+
+Health Meal insert reconciliation now compares timestamps by instant, compares
+the three persisted macro columns at PostgreSQL `numeric(7,2)` precision, and
+compares food/nutrition JSONB snapshots structurally after normal JSON
+serialization. A mismatched insert response is checked by exact entry ID and
+authenticated user before the draft is rejected. Matching rows from a stable
+draft-ID retry reconcile into the existing Health collection once; conflicting
+rows retain the editable draft. The existing Add Food and Quick Entry save path
+still updates visible Food totals and evaluates normal awards. Read-only
+inspection of the QA-period insert confirmed the PostgREST timestamp
+representation used `+00:00` while the application emits a `Z` timestamp with
+milliseconds for the same instant; the inspected row's macros were exact
+integer values, so macro rounding was not its mismatch. Focused verification:
+`test/health-food-editing-session.test.ts` and
+`test/health-meal-logging.test.ts` passed (55/55); targeted ESLint and
+`git diff --check` passed. Browser QA, production build, full typecheck, and
+broad tests were not run. No SQL or schema change was made.
 
 ## 2026-10-11 7.16.139 Food Add Editor Update Correction
 

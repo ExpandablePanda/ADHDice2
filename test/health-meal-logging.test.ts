@@ -5,6 +5,7 @@ import { readFileSync } from "node:fs";
 const source = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const scannerSource = readFileSync(new URL("../src/components/task-app/health-barcode-scanner.tsx", import.meta.url), "utf8");
 const useHealthSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
+const addMealEntrySource = useHealthSource.slice(useHealthSource.indexOf("async function addMealEntry("), useHealthSource.indexOf("async function addMealEntries("));
 const healthUtilsSource = readFileSync(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8");
 const masterWorkspaceSource = readFileSync(new URL("../src/lib/master-workspace-state.ts", import.meta.url), "utf8");
 const masterWorkspaceControllerSource = readFileSync(new URL("../src/hooks/useMasterWorkspaceController.ts", import.meta.url), "utf8");
@@ -409,6 +410,18 @@ test("canonical persistence, editing, deletion, and totals remain unchanged", ()
   assert.match(source, /function startEditingMeal\(entry: HealthMealEntry\)/);
   assert.match(source, /deleteMealEntry\(entry\.id\)/);
   assert.match(source, /sumMealNutritionForDate\(mealEntries, foodHistoryDate\)/);
+});
+
+test("confirmed meal inserts reconcile one Health row, visible totals, and normal awards", () => {
+  assert.match(addMealEntrySource, /reconcileHealthMealEntryInsert\(/);
+  assert.match(addMealEntrySource, /\.eq\("id", id\)\s*\.eq\("user_id", userId\)/);
+  assert.match(addMealEntrySource, /const nextMealEntries = \[nextRow, \.\.\.mealEntries\.filter\(\(entry\) => entry\.id !== nextRow\.id\)\]/);
+  assert.match(addMealEntrySource, /mealEntries: nextMealEntries/);
+  assert.match(addMealEntrySource, /applySnapshot\(nextSnapshot\)/);
+  assert.match(addMealEntrySource, /await claimEligibleAwards\(nextSnapshot, operation, \{ persistRemotely: storageMode === "remote" \}\)/);
+  assert.match(source, /sumMealNutritionForDate\(mealEntries, foodHistoryDate\)/);
+  assert.match(newMealSaveSource, /addMealEntry\(prepared\.input\)/);
+  assert.match(newMealSaveSource, /mealDraft: isQuickEntryOpen \? \{ \.\.\.resetDraft, servingQuantity: 1 \} : resetDraft/);
 });
 
 test("Food totals and the meal editor use projected calorie authority without blocking save", () => {

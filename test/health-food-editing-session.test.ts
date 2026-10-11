@@ -7,6 +7,7 @@ import {
   createDefaultMealDraft,
   createHealthFoodEditingSessionDraft,
   healthMealEntrySessionId,
+  healthMealEntryInsertMatches,
   healthMealNewEntrySessionId,
   hasUnsafeUnconvertedHealthFoodDraft,
   prepareHealthMealEntryFromDraft,
@@ -95,6 +96,29 @@ function createMealRow(input: Omit<HealthMealEntryInsert, "user_id">): HealthMea
     updated_at: "2026-10-11T16:30:00.000Z",
     user_id: "user-1",
     ...input,
+  };
+}
+
+function reverseJsonObjectKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(reverseJsonObjectKeys);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).reverse().map(([key, child]) => [key, reverseJsonObjectKeys(child)]));
+  }
+  return value;
+}
+
+function createPostgrestMealRow(input: Omit<HealthMealEntryInsert, "user_id">): HealthMealEntry {
+  const row = createMealRow(input);
+  const postgresNumeric = (value: number | null | undefined) => value == null ? null : Number(value.toFixed(2));
+  const jsonbValue = (value: unknown) => value == null ? null : JSON.parse(JSON.stringify(value)) as unknown;
+  return {
+    ...row,
+    logged_at: input.logged_at?.replace(/\.000Z$/, "+00:00") ?? row.logged_at,
+    protein_g: postgresNumeric(input.protein_g),
+    carbs_g: postgresNumeric(input.carbs_g),
+    fat_g: postgresNumeric(input.fat_g),
+    food_snapshot: reverseJsonObjectKeys(jsonbValue(row.food_snapshot)) as HealthMealEntry["food_snapshot"],
+    nutrition_snapshot: reverseJsonObjectKeys(jsonbValue(row.nutrition_snapshot)) as HealthMealEntry["nutrition_snapshot"],
   };
 }
 
@@ -222,6 +246,121 @@ test("save reconciles shared baseline, discard restores it, and failed save reta
   assert.equal(store.canCloseView("tab-a"), true);
 });
 
+test("PostgREST timestamp and JSONB serialization differences match the original meal", () => {
+  const prepared = prepareHealthMealEntryFromDraft(createFoodDraft(), {
+    date: "2026-10-11",
+    id: "7fcd013f-1a64-4f2a-9e6d-8f43cd6122cb",
+    loggedAt: "2026-10-11T16:37:00.000Z",
+    mealSlot: "lunch",
+  });
+  assert.ok(prepared);
+  const input = {
+    ...prepared.input,
+    food_snapshot: {
+      ...prepared.input.food_snapshot,
+      serialization_only: undefined,
+    },
+  } as Omit<HealthMealEntryInsert, "user_id">;
+  const response = createPostgrestMealRow(input);
+  assert.equal(response.logged_at, "2026-10-11T16:37:00+00:00");
+  assert.equal(healthMealEntryInsertMatches(response, input), true);
+});
+
+test("macro comparison accepts only PostgreSQL numeric(7,2) rounding", () => {
+  const prepared = prepareHealthMealEntryFromDraft(createFoodDraft(), {
+    date: "2026-10-11",
+    id: "431f42c6-5554-43e6-bae7-e870b010ce71",
+    loggedAt: "2026-10-11T16:30:00.000Z",
+    mealSlot: "lunch",
+  });
+  assert.ok(prepared);
+  const input = {
+    ...prepared.input,
+    protein_g: 12.345,
+    carbs_g: 22.254,
+    fat_g: 3.755,
+    nutrition_snapshot: {
+      ...prepared.input.nutrition_snapshot,
+      protein_g: 12.345,
+      carbs_g: 22.254,
+      fat_g: 3.755,
+    },
+  };
+  const row = createMealRow(input);
+  row.protein_g = 12.35;
+  row.carbs_g = 22.25;
+  row.fat_g = 3.76;
+  assert.equal(healthMealEntryInsertMatches(row, input), true);
+  assert.equal(healthMealEntryInsertMatches({ ...row, protein_g: 12.36 }, input), false);
+});
+
+test("meal insert matching strictly rejects food, calories, date, slot, serving, and record ID mismatches", () => {
+  const prepared = prepareHealthMealEntryFromDraft(createFoodDraft(), {
+    date: "2026-10-11",
+    id: "d56a8089-6f47-4d42-8328-9acd242df95c",
+    loggedAt: "2026-10-11T16:30:00.000Z",
+    mealSlot: "lunch",
+  });
+  assert.ok(prepared);
+  const input = prepared.input;
+  const row = createPostgrestMealRow(input);
+  assert.equal(healthMealEntryInsertMatches(row, input), true);
+  assert.equal(healthMealEntryInsertMatches({ ...row, food_name: "Different food" }, input), false);
+  assert.equal(healthMealEntryInsertMatches({ ...row, calories: row.calories + 1 }, input), false);
+  assert.equal(healthMealEntryInsertMatches({ ...row, entry_date: "2026-10-10" }, input), false);
+  assert.equal(healthMealEntryInsertMatches({ ...row, meal_slot: "breakfast" }, input), false);
+  assert.equal(healthMealEntryInsertMatches({ ...row, consumed_quantity: 51 }, input), false);
+  assert.equal(healthMealEntryInsertMatches({ ...row, id: "a7f27b85-ae69-4e1b-a32e-92b9038d9768" }, input), false);
+});
+
+test("mismatched successful insert responses reconcile through exact-ID readback before rejecting", async () => {
+  const prepared = prepareHealthMealEntryFromDraft(createFoodDraft(), {
+    date: "2026-10-11",
+    id: "7aee750b-179a-4b6f-bbb0-85bd4c295e08",
+    loggedAt: "2026-10-11T16:30:00.000Z",
+    mealSlot: "lunch",
+  });
+  assert.ok(prepared);
+  const persistedRow = createPostgrestMealRow(prepared.input);
+  let lookupId = "";
+  const reconciled = await reconcileHealthMealEntryInsert({
+    input: prepared.input,
+    result: { data: { ...persistedRow, logged_at: "2026-10-11T16:31:00+00:00" }, error: null },
+    lookupById: async (id) => {
+      lookupId = id;
+      return { row: persistedRow };
+    },
+  });
+  assert.equal(lookupId, prepared.input.id);
+  assert.equal(reconciled.row?.id, prepared.input.id);
+  assert.equal(reconciled.error, null);
+
+  const rejected = await reconcileHealthMealEntryInsert({
+    input: prepared.input,
+    result: { data: { ...persistedRow, id: "a7f27b85-ae69-4e1b-a32e-92b9038d9768" }, error: null },
+    lookupById: async () => ({ row: { ...persistedRow, food_name: "Different food" } }),
+  });
+  assert.equal(rejected.row, null);
+  assert.match(rejected.error ?? "", /did not match the draft/);
+});
+
+test("duplicate-ID collisions with a different persisted meal stay failures", async () => {
+  const prepared = prepareHealthMealEntryFromDraft(createFoodDraft(), {
+    date: "2026-10-11",
+    id: "c0f1af77-a018-45df-9e7e-63b08dbfa50d",
+    loggedAt: "2026-10-11T16:30:00.000Z",
+    mealSlot: "lunch",
+  });
+  assert.ok(prepared);
+  const reconciled = await reconcileHealthMealEntryInsert({
+    input: prepared.input,
+    result: { data: null, error: { code: "23505", message: "duplicate meal ID" } },
+    lookupById: async (id) => ({ row: createPostgrestMealRow({ ...prepared.input, id, food_name: "Another food" }) }),
+  });
+  assert.equal(reconciled.row, null);
+  assert.match(reconciled.error ?? "", /already in use by a different saved entry/);
+});
+
 test("new meal draft uses exact nutrition serialization and an idempotent same-ID retry", async () => {
   const store = createStore();
   const recordId = "3ac9177d-741f-4a6c-83f5-40ca7c448ae7";
@@ -250,7 +389,7 @@ test("new meal draft uses exact nutrition serialization and an idempotent same-I
     const result = existing
       ? { data: null, error: { code: "23505", message: "duplicate meal ID" } }
       : { data: null, error: { code: "08006", message: "write acknowledgment was lost" } };
-    if (!existing) authority.set(sessionDraft.entryId, createMealRow(prepared.input as unknown as Record<string, unknown>));
+    if (!existing) authority.set(sessionDraft.entryId, createPostgrestMealRow(prepared.input));
     const reconciled = await reconcileHealthMealEntryInsert({
       input: prepared.input,
       result,
@@ -282,9 +421,9 @@ test("new meal draft uses exact nutrition serialization and an idempotent same-I
   assert.equal(saved.source_food_id, "food-1");
   assert.equal(saved.food_snapshot?.source_food_id, "food-1");
   assert.equal(saved.nutrition_snapshot?.calories, 121.01694915254238);
-  assert.equal(saved.protein_g, saved.nutrition_snapshot?.protein_g);
-  assert.equal(saved.carbs_g, saved.nutrition_snapshot?.carbs_g);
-  assert.equal(saved.fat_g, saved.nutrition_snapshot?.fat_g);
+  assert.equal(saved.protein_g, Number(saved.nutrition_snapshot?.protein_g?.toFixed(2)));
+  assert.equal(saved.carbs_g, Number(saved.nutrition_snapshot?.carbs_g?.toFixed(2)));
+  assert.equal(saved.fat_g, Number(saved.nutrition_snapshot?.fat_g?.toFixed(2)));
   assert.equal(store.getSnapshot(draftId), null);
   const reopenedId = healthMealEntrySessionId(recordId);
   store.ensureSession(reopenedId, recordId, { kind: "saved-entry", mealEditDraft: createMealEditDraft(saved.entry_date) });
