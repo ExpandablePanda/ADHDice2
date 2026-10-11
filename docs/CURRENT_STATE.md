@@ -1,18 +1,27 @@
 # Current State
 
-Last reviewed: 2026-10-08
+Last reviewed: 2026-10-11
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.122`.
+- Current working app version: `7.16.123`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
   - `src/lib/app-version.ts`
-- visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+  - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-11 7.16.123 Journal Feeling scale label editing
+
+The shared Journal Library scale-label editor uses compact, auto-growing
+multiline textareas for Symptoms, Emotions, and Other Feelings. Full label text
+wraps and remains editable on narrow screens; the score labels, stored values,
+validation, and existing save path are unchanged. Focused source-contract tests
+cover textarea sizing and the shared production render paths. Browser QA remains
+for Andrew.
 
 ## 2026-10-08 7.16.121 Journal deletion integrity hotfix
 

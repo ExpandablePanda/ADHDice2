@@ -681,6 +681,39 @@ test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, 
   assert.match(healthPageSource, /occurrence\.note\?\.trim\(\)/);
 });
 
+test("Journal Library scale labels use compact auto-growing textareas in Symptoms and Feeling sections", () => {
+  const textareaResizeStart = healthPageSource.indexOf("function resizeJournalScaleLabelTextarea(");
+  const scaleLabelEditorStart = healthPageSource.indexOf("function JournalScaleLabelsEditor(");
+  const scaleLabelEditorEnd = healthPageSource.indexOf("function JournalFeelingCreationRow(", scaleLabelEditorStart);
+  const scaleLabelEditingSource = healthPageSource.slice(textareaResizeStart, scaleLabelEditorEnd);
+  const scaleLabelEditorSource = healthPageSource.slice(scaleLabelEditorStart, scaleLabelEditorEnd);
+  const feelingLibraryStart = healthPageSource.indexOf("function JournalFeelingLibrarySection(");
+  const feelingLibraryEnd = healthPageSource.indexOf("function JournalSymptomLibrarySection(", feelingLibraryStart);
+  const feelingLibrarySource = healthPageSource.slice(feelingLibraryStart, feelingLibraryEnd);
+  const symptomLibraryStart = healthPageSource.indexOf("function JournalSymptomLibrarySection(");
+  const symptomLibraryEnd = healthPageSource.indexOf("export function HealthPage(", symptomLibraryStart);
+  const symptomLibrarySource = healthPageSource.slice(symptomLibraryStart, symptomLibraryEnd);
+
+  assert.ok(textareaResizeStart >= 0 && scaleLabelEditorStart > textareaResizeStart && scaleLabelEditorEnd > scaleLabelEditorStart);
+  assert.match(scaleLabelEditingSource, /function resizeJournalScaleLabelTextarea\(element: HTMLTextAreaElement \| null\)/);
+  assert.match(scaleLabelEditingSource, /element\.style\.height = "auto";[\s\S]*?element\.style\.height = `\$\{element\.scrollHeight\}px`/);
+  assert.match(scaleLabelEditorSource, /<textarea aria-label=\{`\$\{displayName\} score \$\{index\} label`\}/);
+  assert.match(scaleLabelEditorSource, /resizeJournalScaleLabelTextarea\(event\.currentTarget\)/);
+  assert.match(scaleLabelEditorSource, /nextLabels\[index\] = event\.target\.value/);
+  assert.match(scaleLabelEditorSource, /onChange\(\{ \.\.\.draft, scaleLabels: nextLabels \}\)/);
+  assert.match(scaleLabelEditorSource, /ref=\{resizeJournalScaleLabelTextarea\} rows=\{1\} value=\{label\} wrap="soft" \/>/);
+  assert.match(scaleLabelEditorSource, /grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3/);
+  assert.doesNotMatch(scaleLabelEditorSource, /<input aria-label=\{`\$\{displayName\} score/);
+  assert.ok(feelingLibraryStart >= 0 && feelingLibraryEnd > feelingLibraryStart);
+  assert.match(feelingLibrarySource, /const sectionSignals = signals\.filter\(\(signal\) => signal\.kind === kind/);
+  assert.match(feelingLibrarySource, /<JournalScaleLabelsEditor draft=\{draft\}/);
+  assert.match(symptomLibrarySource, /<JournalScaleLabelsEditor draft=\{journalLibraryEditDraft\} nameDisabled/);
+  assert.match(symptomLibrarySource, /title="Symptoms"/);
+  assert.match(feelingLibrarySource, /const sectionTitle = kind === "emotion" \? "Emotions" : "Other Feelings"/);
+  assert.match(healthPageSource, /<JournalFeelingLibrarySection[\s\S]*?kind="emotion"/);
+  assert.match(healthPageSource, /<JournalFeelingLibrarySection[\s\S]*?kind="other"/);
+});
+
 test("7.12.49 keeps Journal rating cards unified, date groups independent, and resets after save", () => {
   const loggedFormatterStart = healthPageSource.indexOf("function formatJournalLoggedAt");
   const loggedFormatterEnd = healthPageSource.indexOf("const FEELING_TREND_GROUPS", loggedFormatterStart);

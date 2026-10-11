@@ -954,6 +954,12 @@ function HealthJournalColorControl({
   return <HealthColorControl color={getHealthJournalSignalDisplayColor(signal, symptoms.find((symptom) => symptom.id === signal.symptom_id))} isOpen={isOpen} label={getHealthJournalSignalDisplayName(signal, symptoms)} onSetColor={onSetColor} onToggle={onToggle} />;
 }
 
+function resizeJournalScaleLabelTextarea(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${element.scrollHeight}px`;
+}
+
 function JournalScaleLabelsEditor({
   draft,
   nameDisabled = false,
@@ -974,12 +980,12 @@ function JournalScaleLabelsEditor({
   const labels = Array.from({ length: HEALTH_JOURNAL_SCORE_OPTIONS.length }, (_, index) => draft.scaleLabels[index] ?? "");
   const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
   return (
-    <div className="grid gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+    <div className="grid min-w-0 gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
       {signal.kind === "symptom" ? <p className="text-sm font-semibold text-[#26324f] dark:text-white">{displayName}</p> : <Field label="Name"><input aria-label={`Edit ${displayName} name`} className={HEALTH_COMPACT_INPUT_CLASS} disabled={nameDisabled} onChange={(event) => onChange({ ...draft, name: event.target.value })} value={draft.name} /></Field>}
-      <div className="grid gap-2" id={`journal-scale-labels-${signal.id}`}>
+      <div className="grid min-w-0 gap-2" id={`journal-scale-labels-${signal.id}`}>
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Scale labels</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {labels.map((label, index) => <label className="flex min-w-0 items-center gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><input aria-label={`${displayName} score ${index} label`} className="min-w-0 flex-1 bg-transparent text-sm text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; onChange({ ...draft, scaleLabels: nextLabels }); }} value={label} /></label>)}
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {labels.map((label, index) => <label className="flex min-w-0 items-start gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="mt-0.5 w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><textarea aria-label={`${displayName} score ${index} label`} className="min-h-[1.25rem] min-w-0 flex-1 resize-none overflow-hidden bg-transparent p-0 text-sm leading-5 text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; resizeJournalScaleLabelTextarea(event.currentTarget); onChange({ ...draft, scaleLabels: nextLabels }); }} ref={resizeJournalScaleLabelTextarea} rows={1} value={label} wrap="soft" /></label>)}
         </div>
       </div>
       <div className="flex justify-end gap-2"><AdhdChip onClick={onCancel} type="button">Cancel</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">Save</AdhdChip></div>
