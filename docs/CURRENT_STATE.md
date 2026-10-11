@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.134`.
+- Current working app version: `7.16.135`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -279,6 +279,25 @@ typecheck, and broad test suites were not run. A scoped TypeScript check was
 attempted and reported existing diagnostics across TaskApp and imported
 workspace modules; it reported no diagnostics in the changed Notes, editing
 session, or Master Workspace state/controller modules.
+
+## 2026-10-10 7.16.135 T5b.2 Notes Save Regression Diagnostics
+
+The reported browser save failure could not be attributed to a specific stage
+from the available source and report; no Supabase response or runtime trace was
+provided. The shared save operation now runs through a focused production
+helper with development-only diagnostics for the selected session/draft,
+Supabase write response, persisted-row reconciliation, session baseline, shared
+Notes collection update, and Note reopening. Diagnostics omit Note contents.
+Save-failure draft retention, user-scoped writes, fixed Note identity on retry,
+and success-after-persistence behavior are preserved. No SQL or policy changes
+were made.
+
+Focused verification for 7.16.135: Notes save pathway, editing-session, and
+draft-safety tests passed (16/16). Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` rule disabled; the standard targeted command
+still reports the existing rule at the open-Note effect. `git diff --check`
+passed. Live Supabase behavior and browser QA remain unverified. Production
+build, full typecheck, and broad test suites were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

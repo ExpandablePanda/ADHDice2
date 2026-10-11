@@ -15,6 +15,7 @@ import type { VoiceMemoData } from "@/hooks/useVoiceMemos";
 import type { EditingSessionStore } from "@/lib/editing-session-store";
 import type { MasterNotesWorkspaceView } from "@/lib/master-workspace-state";
 import { areNoteDraftsEqual, createNoteRecordId, type NotesEditingSessionDraft } from "@/lib/note-draft-safety";
+import { logNotesSaveDiagnostic, reconcilePersistedNote, saveSharedNoteSession } from "@/lib/notes-save";
 
 type NotesPageProps = {
   client: NonNullable<ReturnType<typeof createBrowserSupabaseClient>>;
@@ -80,6 +81,7 @@ export function NotesPageComponent({
   const [whitespaceQuickCapture, setWhitespaceQuickCapture] = useState("");
   const [saveError, setSaveError] = useState<string | null>(null);
   const [requestedScratchNoteId, setRequestedScratchNoteId] = useState<string | null>(null);
+  const pendingSavedNoteCollectionCheckRef = useRef<Note | null>(null);
   const unsafeDraftSourcesRef = useRef(new Set<string>());
   const sharedSessionsEnabled = Boolean(notesSessionStore && activeMasterTabId && notesView && onNotesViewChange);
   const viewId = activeMasterTabId ?? "legacy-notes-view";
@@ -98,6 +100,24 @@ export function NotesPageComponent({
     reportDraftSafety("note-editor", isUnsafe);
   }, [reportDraftSafety]);
   const handleScratchNoteRevealHandled = useCallback(() => setRequestedScratchNoteId(null), []);
+
+  useEffect(() => {
+    const expected = pendingSavedNoteCollectionCheckRef.current;
+    if (!expected) return;
+    const observed = notes.find((note) => note.id === expected.id) ?? null;
+    const session = notesSessionStore?.getSnapshot(noteSessionId(expected.id)) ?? null;
+    logNotesSaveDiagnostic("shared-collection-update-observed", {
+      noteId: expected.id,
+      rowPresent: Boolean(observed),
+      editableFieldsMatchPersistedRow: Boolean(observed && areNoteDraftsEqual(observed, expected)),
+      sessionBaselineMatchesPersistedRow: Boolean(
+        session?.baseline.kind === "note"
+        && areNoteDraftsEqual(session.baseline.note, expected),
+      ),
+      sharedViewCount: session?.viewIds.length ?? 0,
+    });
+    pendingSavedNoteCollectionCheckRef.current = null;
+  }, [notes, notesSessionStore]);
 
   const captureDraftId = `quick-capture:${viewId}`;
   const subscribeCapture = useCallback((listener: () => void) => (
@@ -170,8 +190,19 @@ export function NotesPageComponent({
   const openSavedNote = useCallback((note: Note) => {
     if (sharedSessionsEnabled && notesSessionStore) {
       const draftId = noteSessionId(note.id);
+      const priorSession = notesSessionStore.getSnapshot(draftId);
       notesSessionStore.ensureSession(draftId, note.id, { kind: "note", note });
       notesSessionStore.attachView(draftId, viewId);
+      const openedSession = notesSessionStore.getSnapshot(draftId);
+      logNotesSaveDiagnostic("note-opened", {
+        noteId: note.id,
+        collectionMatchesSessionBaseline: Boolean(
+          openedSession?.baseline.kind === "note"
+          && areNoteDraftsEqual(openedSession.baseline.note, note),
+        ),
+        priorSessionWasDirty: priorSession?.dirty ?? false,
+        sharedViewCount: openedSession?.viewIds.length ?? 0,
+      });
       updateView((current) => ({ ...current, selection: { kind: "saved", noteId: note.id } }));
     } else {
       setLegacyEditing(note);
@@ -231,16 +262,6 @@ export function NotesPageComponent({
     setSaveError(null);
   }
 
-  async function reconcilePersistedNote(id: string, expected: Note): Promise<Note | null> {
-    const { data, error } = await client
-      .from("adhdice_notes")
-      .select("*")
-      .eq("user_id", currentUser.id)
-      .eq("id", id)
-      .maybeSingle();
-    return !error && data && areNoteDraftsEqual(data, expected) ? data : null;
-  }
-
   async function reconcileQuickCapture(id: string, expected: Note): Promise<Note | null> {
     const { data, error } = await client
       .from("adhdice_notes")
@@ -275,58 +296,19 @@ export function NotesPageComponent({
 
   async function saveSharedNote(): Promise<boolean> {
     if (!notesSessionStore || !selectedDraftId) return false;
-    const session = notesSessionStore.getSnapshot(selectedDraftId);
-    if (!session || session.draft.kind !== "note") return false;
-    const saveRevision = notesSessionStore.beginSave(selectedDraftId);
-    if (saveRevision === null) return false;
-    const draft = session.draft.note;
-    let persistenceError = "Note could not be saved. Check your connection and try again.";
-    try {
-      let savedNote: Note | null = null;
-      if (view.selection.kind === "new") {
-        const { data, error } = await client
-          .from("adhdice_notes")
-          .insert({
-            id: draft.id,
-            user_id: currentUser.id,
-            title: draft.title,
-            body: draft.body,
-            tags: draft.tags,
-            linked_task_ids: draft.linked_task_ids,
-          })
-          .select("*")
-          .single();
-        if (error) persistenceError = error.message;
-        savedNote = !error && data ? data : await reconcilePersistedNote(draft.id, draft);
-      } else {
-        const { data, error } = await client
-          .from("adhdice_notes")
-          .update({
-            title: draft.title,
-            body: draft.body,
-            tags: draft.tags,
-            linked_task_ids: draft.linked_task_ids,
-          })
-          .eq("id", draft.id)
-          .eq("user_id", currentUser.id)
-          .select("*")
-          .single();
-        if (error) persistenceError = error.message;
-        savedNote = !error && data ? data : await reconcilePersistedNote(draft.id, draft);
-      }
-      if (!savedNote) {
-        notesSessionStore.saveFailed(selectedDraftId, saveRevision, persistenceError);
-        return false;
-      }
-      notesSessionStore.saveSucceeded(selectedDraftId, saveRevision, { kind: "note", note: savedNote });
-      onNotesChange((current) => newestFirst([savedNote!, ...current.filter((note) => note.id !== savedNote!.id)]));
-      updateView((current) => ({ ...current, selection: { kind: "list" } }));
-      setSaveError(null);
-      return true;
-    } catch (caught) {
-      notesSessionStore.saveFailed(selectedDraftId, saveRevision, caught instanceof Error ? caught.message : "Note could not be saved.");
-      return false;
-    }
+    const result = await saveSharedNoteSession({
+      client,
+      userId: currentUser.id,
+      sessionStore: notesSessionStore,
+      draftId: selectedDraftId,
+      isNew: view.selection.kind === "new",
+      onCollectionUpdate: (savedNote) => { pendingSavedNoteCollectionCheckRef.current = savedNote; },
+      onNotesChange,
+    });
+    if (!result.ok) return false;
+    updateView((current) => ({ ...current, selection: { kind: "list" } }));
+    setSaveError(null);
+    return true;
   }
 
   async function deleteSharedNote(id: string): Promise<boolean> {
@@ -378,7 +360,7 @@ export function NotesPageComponent({
           .select("*")
           .single();
         if (error) persistenceError = error.message;
-        savedNote = !error && data ? data : await reconcilePersistedNote(note.id, note);
+        savedNote = !error && data ? data : await reconcilePersistedNote(client, currentUser.id, note.id, note);
       } else {
         const { data, error } = await client
           .from("adhdice_notes")
@@ -388,7 +370,7 @@ export function NotesPageComponent({
           .select("*")
           .single();
         if (error) persistenceError = error.message;
-        savedNote = !error && data ? data : await reconcilePersistedNote(note.id, note);
+        savedNote = !error && data ? data : await reconcilePersistedNote(client, currentUser.id, note.id, note);
       }
       if (!savedNote) {
         setSaveError(persistenceError);

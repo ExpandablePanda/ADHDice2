@@ -6,6 +6,7 @@ import { areNoteDraftsEqual } from "../src/lib/note-draft-safety.ts";
 
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const notesPageSource = readFileSync(new URL("../src/components/task-app/notes-page.tsx", import.meta.url), "utf8");
+const notesSaveSource = readFileSync(new URL("../src/lib/notes-save.ts", import.meta.url), "utf8");
 const notesRouteSource = readFileSync(new URL("../src/components/task-app/notes-page-route.tsx", import.meta.url), "utf8");
 const noteEditorSource = readFileSync(new URL("../src/components/task-app/note-editor.tsx", import.meta.url), "utf8");
 
@@ -41,14 +42,15 @@ test("same Note edits use the shared snapshot while tab navigation retains selec
 });
 
 test("save, discard, and delete reconcile the Note session and preserve failed content", () => {
-  assert.match(notesPageSource, /notesSessionStore\.beginSave\(selectedDraftId\)/);
-  assert.match(notesPageSource, /notesSessionStore\.saveSucceeded\(selectedDraftId, saveRevision, \{ kind: "note", note: savedNote \}\)/);
-  assert.match(notesPageSource, /notesSessionStore\.saveFailed\(selectedDraftId, saveRevision/);
+  assert.match(notesPageSource, /saveSharedNoteSession\(\{/);
+  assert.match(notesSaveSource, /sessionStore\.beginSave\(draftId\)/);
+  assert.match(notesSaveSource, /sessionStore\.saveSucceeded\(draftId, saveRevision, \{ kind: "note", note: savedNote \}\)/);
+  assert.match(notesSaveSource, /sessionStore\.saveFailed\(draftId, saveRevision/);
   assert.match(notesPageSource, /notesSessionStore\.discardDraft\(selectedDraftId\)/);
   assert.match(notesPageSource, /notesSessionStore\.removeAfterSave\(selectedDraftId, saveRevision\)/);
-  assert.match(notesPageSource, /\.eq\("id", draft\.id\)\s*\.eq\("user_id", currentUser\.id\)/);
-  assert.match(notesPageSource, /\.insert\(\{\s*id: draft\.id/);
-  assert.match(notesPageSource, /reconcilePersistedNote\(draft\.id, draft\)/);
+  assert.match(notesSaveSource, /\.eq\("id", draft\.id\)\s*\.eq\("user_id", userId\)/);
+  assert.match(notesSaveSource, /\.insert\(\{\s*id: draft\.id/);
+  assert.match(notesSaveSource, /reconcilePersistedNote\(client, userId, draft\.id, draft\)/);
   assert.match(notesPageSource, /if \(error\) \{[\s\S]*\.select\("id"\)[\s\S]*\.eq\("user_id", currentUser\.id\)[\s\S]*\.eq\("id", id\)/);
 });
 
