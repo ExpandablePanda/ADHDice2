@@ -137,6 +137,8 @@ import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHist
 import { useHealth } from "@/hooks/useHealth";
 import { createEditingSessionStore } from "@/lib/editing-session-store";
 import { areNotesEditingSessionDraftsEqual, type NotesEditingSessionDraft } from "@/lib/note-draft-safety";
+import { areScratchPaperDraftsEqual } from "@/lib/scratch-paper-draft";
+import type { ScratchPaperEditingSessionDraft } from "@/lib/scratch-paper-draft";
 import { areHealthJournalDraftsEqual } from "@/lib/health-journal-checkins";
 import type { JournalCheckInDraftSnapshot } from "./task-app/journal-check-in-form";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
@@ -1361,6 +1363,11 @@ export function TaskApp() {
     [currentUserId],
   );
   useEffect(() => () => notesDraftSessionStore.reset(), [notesDraftSessionStore]);
+  const scratchPaperDraftSessionStore = useMemo(
+    () => createEditingSessionStore<ScratchPaperEditingSessionDraft>(currentUserId ?? "signed-out", areScratchPaperDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => scratchPaperDraftSessionStore.reset(), [scratchPaperDraftSessionStore]);
   const [notesCollectionState, setNotesCollectionState] = useState<{ ownerId: string | null; notes: Note[] }>({ ownerId: null, notes: [] });
   const notesCollectionOwnerRef = useRef(currentUserId);
   const notesLoadedOwnerRef = useRef<string | null>(null);
@@ -1414,13 +1421,16 @@ export function TaskApp() {
     && notesLoadedOwnerRef.current === currentUserId;
   const masterWorkspaceDraftProtection = useMemo(() => ({
     canCloseView(viewId: string) {
-      return journalDraftSessionStore.canCloseView(viewId) && notesDraftSessionStore.canCloseView(viewId);
+      return journalDraftSessionStore.canCloseView(viewId)
+        && notesDraftSessionStore.canCloseView(viewId)
+        && scratchPaperDraftSessionStore.canCloseView(viewId);
     },
     detachView(viewId: string) {
       journalDraftSessionStore.detachView(viewId);
       notesDraftSessionStore.detachView(viewId);
+      scratchPaperDraftSessionStore.detachView(viewId);
     },
-  }), [journalDraftSessionStore, notesDraftSessionStore]);
+  }), [journalDraftSessionStore, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
   const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
@@ -5765,13 +5775,15 @@ export function TaskApp() {
   useEffect(() => {
     if (!masterWorkspace.featureEnabled || typeof window === "undefined") return;
     const protectUnsavedEditingSessions = (event: BeforeUnloadEvent) => {
-      if (!journalDraftSessionStore.hasUnsavedDrafts() && !notesDraftSessionStore.hasUnsavedDrafts()) return;
+      if (!journalDraftSessionStore.hasUnsavedDrafts()
+        && !notesDraftSessionStore.hasUnsavedDrafts()
+        && !scratchPaperDraftSessionStore.hasUnsavedDrafts()) return;
       event.preventDefault();
       event.returnValue = "";
     };
     window.addEventListener("beforeunload", protectUnsavedEditingSessions);
     return () => window.removeEventListener("beforeunload", protectUnsavedEditingSessions);
-  }, [journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore]);
+  }, [journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
     ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
     : legacyHealthTabPreference;
@@ -7931,6 +7943,8 @@ export function TaskApp() {
   };
   const scratchPaperData: ScratchPaperData = {
     error: scratchNotes.error,
+    editingSessionStore: masterWorkspace.isEnabled ? scratchPaperDraftSessionStore : null,
+    editingViewId: masterWorkspace.isEnabled ? masterWorkspace.activeTab.id : undefined,
     isLoading: scratchNotes.isLoading,
     links: scratchNotes.links,
     notes: scratchNotes.notes,
@@ -7951,6 +7965,8 @@ export function TaskApp() {
     tasks,
     userId: currentUserId,
     voiceMemos,
+    scratchPaperView: masterWorkspace.isEnabled ? masterWorkspace.activeScratchPaperView : undefined,
+    onScratchPaperViewChange: masterWorkspace.isEnabled ? masterWorkspace.updateScratchPaperView : undefined,
   };
 
   const taskOperationsHeaderProps = {

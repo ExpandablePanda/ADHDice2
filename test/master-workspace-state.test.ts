@@ -12,6 +12,7 @@ import {
   getMasterWorkspaceStorageKey,
   getMasterTabJournalView,
   getMasterTabNotesView,
+  getMasterTabScratchPaperView,
   initializeMasterWorkspaceState,
   masterTabTasksWorkspaceMatchesLiveState,
   loadMasterWorkspaceState,
@@ -22,6 +23,7 @@ import {
   updateMasterTabTasksWorkspace,
   updateMasterTabJournalView,
   updateMasterTabNotesView,
+  updateMasterTabScratchPaperView,
   updateMasterTabScrollPosition,
   type MasterWorkspaceStorage,
 } from "../src/lib/master-workspace-state.ts";
@@ -193,6 +195,51 @@ test("Notes selection and filters persist as per-tab navigation without draft co
   const serialized = persisted.values.get(getMasterWorkspaceStorageKey("notes-user")) ?? "";
   assert.match(serialized, /"noteId":"note-1"/);
   assert.doesNotMatch(serialized, /"body"|"title"|"linked_task_ids"/);
+});
+
+test("Scratch Paper selection, search, and status filter persist independently across tabs and page navigation", () => {
+  const initial = initializeMasterWorkspaceState("Home", DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  const panelId = initial.panels[0].id;
+  const second = createMasterTab(initial, panelId, {
+    id: "scratch-tab-b",
+    destination: { kind: "page", page: "Notes" },
+    presentation: {},
+  }, false);
+  const firstTab = second.panels[0].tabs[0];
+  const secondTab = second.panels[0].tabs[1];
+  const firstView = getMasterTabScratchPaperView(firstTab);
+  const secondView = getMasterTabScratchPaperView(secondTab);
+  assert.notEqual(firstView.newDraftId, secondView.newDraftId);
+
+  const firstUpdated = updateMasterTabScratchPaperView(second, panelId, firstTab.id, {
+    ...firstView,
+    currentNoteId: "note-1",
+    search: "meeting",
+    filter: "resolved",
+  });
+  const firstAfterPageNavigation = replaceFocusedMasterTabDestination(firstUpdated, { kind: "page", page: "Notes" });
+  const activatedSecond = activateMasterTab(firstAfterPageNavigation, panelId, secondTab.id);
+  const secondUpdated = updateMasterTabScratchPaperView(activatedSecond, panelId, secondTab.id, {
+    ...secondView,
+    currentNoteId: "note-2",
+    search: "idea",
+    filter: "trashed",
+  });
+  const secondAfterPageNavigation = replaceFocusedMasterTabDestination(secondUpdated, { kind: "page", page: "Home" });
+  const restoredFirst = activateMasterTab(secondAfterPageNavigation, panelId, firstTab.id);
+
+  assert.deepEqual(getMasterTabScratchPaperView(restoredFirst.panels[0].tabs[0]), {
+    ...firstView,
+    currentNoteId: "note-1",
+    search: "meeting",
+    filter: "resolved",
+  });
+  assert.deepEqual(getMasterTabScratchPaperView(restoredFirst.panels[0].tabs[1]), {
+    ...secondView,
+    currentNoteId: "note-2",
+    search: "idea",
+    filter: "trashed",
+  });
 });
 
 test("Master Tabs retain independent scroll positions", () => {
@@ -435,7 +482,23 @@ test("persistence is user scoped and malformed JSON recovers safely", () => {
 });
 
 test("unknown schema versions recover to the default workspace", () => {
-  assert.deepEqual(normalizeMasterWorkspaceState({ schemaVersion: 99, panels: [] }), createDefaultMasterWorkspaceState());
+  const actual = normalizeMasterWorkspaceState({ schemaVersion: 99, panels: [] });
+  const expected = createDefaultMasterWorkspaceState();
+  const withoutScratchDraftIds = (state: ReturnType<typeof createDefaultMasterWorkspaceState>) => ({
+    ...state,
+    panels: state.panels.map((panel) => ({
+      ...panel,
+      tabs: panel.tabs.map((tab) => ({
+        ...tab,
+        presentation: {
+          ...tab.presentation,
+          scratchPaperView: { ...getMasterTabScratchPaperView(tab), newDraftId: "stable-id" },
+        },
+      })),
+    })),
+  });
+  assert.deepEqual(withoutScratchDraftIds(actual), withoutScratchDraftIds(expected));
+  assert.match(getMasterTabScratchPaperView(actual.panels[0].tabs[0]).newDraftId, /^[0-9a-f-]{36}$/i);
 });
 
 test("transitions are immutable and activate, replace, and create tabs", () => {

@@ -86,6 +86,12 @@ export function NotesPageComponent({
   const sharedSessionsEnabled = Boolean(notesSessionStore && activeMasterTabId && notesView && onNotesViewChange);
   const viewId = activeMasterTabId ?? "legacy-notes-view";
   const view = notesView ?? legacyView;
+  const sharedScratchPaperSessionsEnabled = Boolean(
+    scratchPaper.editingSessionStore
+    && scratchPaper.editingViewId
+    && scratchPaper.scratchPaperView
+    && scratchPaper.onScratchPaperViewChange,
+  );
   const updateView = useCallback((update: (current: MasterNotesWorkspaceView) => MasterNotesWorkspaceView) => {
     const next = update(view);
     if (onNotesViewChange) onNotesViewChange(next);
@@ -529,7 +535,7 @@ export function NotesPageComponent({
       <PageShellBody>
         <ScratchPaperPageSection
           {...scratchPaper}
-          onDraftSafetyChange={reportDraftSafety}
+          onDraftSafetyChange={sharedScratchPaperSessionsEnabled ? undefined : reportDraftSafety}
           onScratchNoteRevealHandled={handleScratchNoteRevealHandled}
           requestedScratchNoteId={requestedScratchNoteId}
         />

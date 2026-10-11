@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-10
+Last reviewed: 2026-10-11
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.135`.
+- Current working app version: `7.16.136`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -272,13 +272,11 @@ Focused verification for 7.16.134: editing-session store, Notes session,
 Master Workspace state/controller/Health, and Notes draft-safety tests passed
 (71/71). Targeted ESLint passed with the existing
 `react-hooks/set-state-in-effect` rule disabled. `git diff --check` passed.
-Browser QA remains outstanding for same-Note cross-tab edits and shared save or
-discard, new and saved Note isolation across navigation, last-dirty-view close
-protection, and Notes list/Quick Capture regressions. Production build, full
-typecheck, and broad test suites were not run. A scoped TypeScript check was
-attempted and reported existing diagnostics across TaskApp and imported
-workspace modules; it reported no diagnostics in the changed Notes, editing
-session, or Master Workspace state/controller modules.
+T5b.2 Shared Notes Editing Sessions passed Andrew's browser QA on 7.16.135.
+Production build, full typecheck, and broad test suites were not run. A scoped
+TypeScript check was attempted and reported existing diagnostics across TaskApp
+and imported workspace modules; it reported no diagnostics in the changed
+Notes, editing session, or Master Workspace state/controller modules.
 
 ## 2026-10-10 7.16.135 T5b.2 Notes Save Regression Diagnostics
 
@@ -298,6 +296,34 @@ draft-safety tests passed (16/16). Targeted ESLint passed with the existing
 still reports the existing rule at the open-Note effect. `git diff --check`
 passed. Live Supabase behavior and browser QA remain unverified. Production
 build, full typecheck, and broad test suites were not run.
+
+## 2026-10-11 7.16.136 T5b.3 Shared Scratch Paper Sessions
+
+Scratch Paper now uses the authenticated-user-scoped editing-session store for
+saved records keyed by canonical Scratch Note ID. The Current Note editor,
+individual Note cards, the HUD widget, and different Master Tabs share the same
+draft authority. Per-tab Scratch Paper selection, new-draft identity, search,
+and status filter live in Master Workspace presentation state. The existing
+`useScratchNotes` collection remains the only loader. Dirty drafts survive
+unmounts and refreshes; shared Save and Discard propagate across views, failed
+saves retain their draft for retry, and dirty sessions protect the last Master
+Tab view and browser unload.
+
+The two-stage save verifies the Scratch Note row and reconciles task links by
+adding missing links before deleting stale ones. A link-stage failure remains
+visible as a failed save and leaves the draft retryable; a create retry uses the
+same generated Note ID. Master Tabs disabled continues to use the legacy local
+editor path. No Scratch Paper editing surface was intentionally deferred; SQL,
+Split Right, and other editor families remain outside this ticket.
+
+Focused verification for 7.16.136: shared-session, persistence-stage,
+Master Workspace presentation, editing-session store, and Scratch Paper draft
+tests passed (44/44); targeted ESLint passed with the repository's existing
+`react-hooks/set-state-in-effect` rule disabled; `git diff --check` passed.
+The standard targeted ESLint command still reports existing
+`react-hooks/set-state-in-effect` findings in TaskApp and NotesPage. Andrew's
+browser QA for T5b.3, production build, full typecheck, and broad test suites
+remain outstanding.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

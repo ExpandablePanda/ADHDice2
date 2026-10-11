@@ -17,14 +17,17 @@ import {
   createDefaultMasterWorkspaceState,
   getMasterTabJournalView,
   getMasterTabNotesView,
+  getMasterTabScratchPaperView,
   masterTabTasksWorkspaceMatchesLiveState,
   replaceFocusedMasterTabDestination,
   updateMasterTabJournalView,
   updateMasterTabNotesView,
+  updateMasterTabScratchPaperView,
   updateMasterTabScrollPosition,
   updateMasterTabTasksWorkspace,
   type MasterTabPresentationState,
   type MasterTabDestination,
+  type MasterScratchPaperWorkspaceView,
   type MasterWorkspaceState,
 } from "@/lib/master-workspace-state";
 import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
@@ -78,6 +81,7 @@ export function useMasterWorkspaceController({
   const activeMasterPage = activeTab.destination.page;
   const activeJournalView = getMasterTabJournalView(activeTab);
   const activeNotesView = getMasterTabNotesView(activeTab);
+  const activeScratchPaperView = getMasterTabScratchPaperView(activeTab);
   const canNavigate = isEnabled && isReady && Boolean(userId) && restoredUserId === userId;
   const currentHealthSection = activeMasterPage === "Health"
     ? activeTab.presentation.healthSection ?? initialHealthSection
@@ -314,11 +318,22 @@ export function useMasterWorkspaceController({
     return true;
   }, [activeTab.id, canNavigate, currentPanel.id]);
 
+  const updateScratchPaperView = useCallback((scratchPaperView: MasterScratchPaperWorkspaceView) => {
+    if (!canNavigate) return false;
+    setWorkspace((current) => {
+      const panel = current.panels.find((candidate) => candidate.id === currentPanel.id);
+      if (!panel || panel.activeTabId !== activeTab.id) return current;
+      return updateMasterTabScratchPaperView(current, currentPanel.id, activeTab.id, scratchPaperView);
+    });
+    return true;
+  }, [activeTab.id, canNavigate, currentPanel.id]);
+
   return useMemo(() => ({
     activateTab,
     activeTab,
     activeJournalView,
     activeNotesView,
+    activeScratchPaperView,
     canActivateTab,
     canCloseTab,
     canOpenNewTab,
@@ -333,7 +348,8 @@ export function useMasterWorkspaceController({
     updateFocusedDestination,
     updateJournalView,
     updateNotesView,
+    updateScratchPaperView,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeJournalView, activeNotesView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, updateNotesView, userId, workspace]);
+  }), [activateTab, activeJournalView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, updateNotesView, updateScratchPaperView, userId, workspace]);
 }

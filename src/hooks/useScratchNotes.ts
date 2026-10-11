@@ -4,14 +4,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import type { ScratchNote, ScratchNoteStatus, ScratchNoteTaskLink } from "@/lib/database.types";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
+import { createScratchPaperRecordId, type ScratchPaperDraftValues } from "@/lib/scratch-paper-draft";
+import { persistScratchPaperNoteInStages, replaceScratchPaperTaskLinksSafely } from "@/lib/scratch-paper-save";
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 
-export type ScratchNoteDraft = {
-  body: string;
-  linkedTaskIds: string[];
-  title: string;
-};
+export type ScratchNoteDraft = ScratchPaperDraftValues;
 
 function messageFromError(error: unknown) {
   return error instanceof Error ? error.message : "Scratch Paper could not sync.";
@@ -54,63 +52,113 @@ export function useScratchNotes(client: SupabaseClient, userId: string | null) {
     return () => window.clearTimeout(timeoutId);
   }, [refresh]);
 
-  const replaceLinks = useCallback(async (noteId: string, taskIds: string[]) => {
-    if (!client || !userId) return false;
-    const { error: deleteError } = await client
-      .from("adhdice_scratch_note_task_links")
-      .delete()
-      .eq("note_id", noteId)
-      .eq("user_id", userId);
-    if (deleteError) throw deleteError;
-
-    const uniqueTaskIds = [...new Set(taskIds)];
-    if (uniqueTaskIds.length > 0) {
-      const { error: insertError } = await client.from("adhdice_scratch_note_task_links").insert(
-        uniqueTaskIds.map((taskId) => ({ note_id: noteId, task_id: taskId, user_id: userId })),
-      );
-      if (insertError) throw insertError;
+  const persistDraft = useCallback(async (
+    noteId: string,
+    draft: ScratchNoteDraft,
+    writeNote: () => Promise<ScratchNote | null>,
+  ) => {
+    if (!client || !userId) return { corePersisted: false, error: "Scratch Paper is unavailable.", ok: false };
+    try {
+      const result = await persistScratchPaperNoteInStages({
+        draft,
+        noteId,
+        readNote: async () => {
+          const { data, error: readError } = await client
+            .from("adhdice_scratch_notes")
+            .select("*")
+            .eq("id", noteId)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (readError) throw readError;
+          return data;
+        },
+        replaceLinks: () => replaceScratchPaperTaskLinksSafely(noteId, userId, draft.linkedTaskIds, {
+          async listTaskIds(targetNoteId, targetUserId) {
+            const { data, error: listError } = await client
+              .from("adhdice_scratch_note_task_links")
+              .select("task_id")
+              .eq("note_id", targetNoteId)
+              .eq("user_id", targetUserId)
+              .order("created_at", { ascending: true });
+            if (listError) throw listError;
+            return (data ?? []).map((link) => link.task_id);
+          },
+          async insertTaskIds(targetNoteId, targetUserId, taskIds) {
+            const { error: insertError } = await client.from("adhdice_scratch_note_task_links").insert(
+              taskIds.map((taskId) => ({ note_id: targetNoteId, task_id: taskId, user_id: targetUserId })),
+            );
+            if (insertError) throw insertError;
+          },
+          async deleteTaskIds(targetNoteId, targetUserId, taskIds) {
+            const { error: deleteError } = await client
+              .from("adhdice_scratch_note_task_links")
+              .delete()
+              .eq("note_id", targetNoteId)
+              .eq("user_id", targetUserId)
+              .in("task_id", [...taskIds]);
+            if (deleteError) throw deleteError;
+          },
+        }),
+        userId,
+        writeNote,
+      });
+      if (!result.ok) {
+        if (result.corePersisted) await refresh();
+        setError(result.error);
+        return result;
+      }
+      await refresh();
+      return result;
+    } catch (caught) {
+      const errorMessage = messageFromError(caught);
+      setError(errorMessage);
+      return { corePersisted: false, error: errorMessage, ok: false };
     }
-    return true;
-  }, [client, userId]);
+  }, [client, refresh, userId]);
 
-  const createNote = useCallback(async (draft: ScratchNoteDraft) => {
+  const createNote = useCallback(async (draft: ScratchNoteDraft, requestedNoteId?: string) => {
     if (createInFlightRef.current || !client || !userId || (!draft.body.trim() && !draft.title.trim() && draft.linkedTaskIds.length === 0)) return null;
     createInFlightRef.current = true;
+    const noteId = requestedNoteId ?? createScratchPaperRecordId();
     try {
-      const { data, error: insertError } = await client
-        .from("adhdice_scratch_notes")
-        .insert({ body: draft.body.trim(), title: draft.title.trim() || null, user_id: userId })
-        .select("*")
-        .single();
-      if (insertError) throw insertError;
-      await replaceLinks(data.id, draft.linkedTaskIds);
-      await refresh();
-      return data.id;
+      const result = await persistDraft(noteId, draft, async () => {
+          const { data, error: insertError } = await client
+            .from("adhdice_scratch_notes")
+            .insert({ body: draft.body.trim(), id: noteId, title: draft.title.trim() || null, user_id: userId })
+            .select("*")
+            .single();
+          if (insertError) throw insertError;
+          return data;
+      });
+      return result.ok ? noteId : null;
     } catch (caught) {
       setError(messageFromError(caught));
       return null;
     } finally {
       createInFlightRef.current = false;
     }
-  }, [client, refresh, replaceLinks, userId]);
+  }, [client, persistDraft, userId]);
 
   const updateNote = useCallback(async (noteId: string, draft: ScratchNoteDraft) => {
     if (!client || !userId) return false;
     try {
-      const { error: updateError } = await client
-        .from("adhdice_scratch_notes")
-        .update({ body: draft.body.trim(), title: draft.title.trim() || null, updated_at: new Date().toISOString() })
-        .eq("id", noteId)
-        .eq("user_id", userId);
-      if (updateError) throw updateError;
-      await replaceLinks(noteId, draft.linkedTaskIds);
-      await refresh();
-      return true;
+      const result = await persistDraft(noteId, draft, async () => {
+          const { data, error: updateError } = await client
+            .from("adhdice_scratch_notes")
+            .update({ body: draft.body.trim(), title: draft.title.trim() || null, updated_at: new Date().toISOString() })
+            .eq("id", noteId)
+            .eq("user_id", userId)
+            .select("*")
+            .maybeSingle();
+          if (updateError) throw updateError;
+          return data;
+      });
+      return result.ok;
     } catch (caught) {
       setError(messageFromError(caught));
       return false;
     }
-  }, [client, refresh, replaceLinks, userId]);
+  }, [client, persistDraft, userId]);
 
   const setNoteStatus = useCallback(async (noteId: string, status: ScratchNoteStatus) => {
     if (!client || !userId) return false;

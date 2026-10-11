@@ -1,6 +1,8 @@
 import { HEALTH_TABS, type HealthTab } from "@/lib/health-utils";
 import { getRegisteredPageShellPages } from "@/lib/page-shell-layout";
 import type { NavigatorSearchAction } from "@/lib/navigator-search";
+import type { ScratchNoteStatus } from "@/lib/database.types";
+import { createScratchPaperRecordId } from "@/lib/scratch-paper-draft";
 import {
   DEFAULT_TASK_WORKSPACE_TABS_STATE,
   isAppPage,
@@ -28,6 +30,13 @@ export type MasterNotesWorkspaceView = {
   search: string;
   activeTag: string | null;
 };
+export type MasterScratchPaperWorkspaceView = {
+  currentNoteId: string | null;
+  newDraftId: string;
+  isNewNoteSelected: boolean;
+  search: string;
+  filter: "all" | ScratchNoteStatus;
+};
 export type MasterTabPresentationState = {
   healthSection?: HealthTab;
   scrollTop?: number;
@@ -37,6 +46,7 @@ export type MasterTabPresentationState = {
     workspaceMode: MasterJournalWorkspaceMode;
   };
   notesView?: MasterNotesWorkspaceView;
+  scratchPaperView?: MasterScratchPaperWorkspaceView;
   tasksWorkspace?: TaskWorkspaceTabsState;
 };
 
@@ -67,6 +77,7 @@ const VALID_TASK_SURFACES = new Set(["tasks", "attention", "paths", "report", "o
 const VALID_TASK_VIEWS = new Set(["table", "list", "cards", "matrix", "calendar"]);
 const VALID_SETTINGS_SECTIONS = new Set(["appearance", "day-reset", "economy", "import-export"]);
 const VALID_JOURNAL_WORKSPACE_MODES = new Set(["entry", "history", "split-history-left", "split-history-right"]);
+const VALID_SCRATCH_PAPER_FILTERS = new Set(["all", "active", "resolved", "trashed"]);
 const DEFAULT_NOTES_WORKSPACE_VIEW: MasterNotesWorkspaceView = {
   selection: { kind: "list" },
   search: "",
@@ -202,9 +213,35 @@ function normalizeNotesWorkspaceView(value: unknown): MasterNotesWorkspaceView {
   };
 }
 
+function defaultScratchPaperWorkspaceView(): MasterScratchPaperWorkspaceView {
+  return { currentNoteId: null, newDraftId: createScratchPaperRecordId(), isNewNoteSelected: false, search: "", filter: "all" };
+}
+
+function isScratchPaperRecordId(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function normalizeScratchPaperWorkspaceView(value: unknown): MasterScratchPaperWorkspaceView {
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    currentNoteId: typeof candidate.currentNoteId === "string" && candidate.currentNoteId.trim()
+      ? candidate.currentNoteId.trim()
+      : null,
+    newDraftId: isScratchPaperRecordId(candidate.newDraftId)
+      ? candidate.newDraftId
+      : createScratchPaperRecordId(),
+    isNewNoteSelected: candidate.isNewNoteSelected === true,
+    search: typeof candidate.search === "string" ? candidate.search : "",
+    filter: typeof candidate.filter === "string" && VALID_SCRATCH_PAPER_FILTERS.has(candidate.filter)
+      ? candidate.filter as MasterScratchPaperWorkspaceView["filter"]
+      : "all",
+  };
+}
+
 function normalizePresentation(value: unknown, destination: MasterTabDestination, tabId: string): MasterTabPresentationState {
   const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const presentation: MasterTabPresentationState = {};
+  presentation.scratchPaperView = normalizeScratchPaperWorkspaceView(candidate.scratchPaperView);
   if (isHealthTab(candidate.healthSection)) presentation.healthSection = candidate.healthSection;
   if (typeof candidate.scrollTop === "number" && Number.isFinite(candidate.scrollTop) && candidate.scrollTop >= 0) {
     presentation.scrollTop = candidate.scrollTop;
@@ -257,6 +294,10 @@ export function getMasterTabNotesView(tab: MasterWorkspaceTab) {
   return tab.presentation.notesView ?? DEFAULT_NOTES_WORKSPACE_VIEW;
 }
 
+export function getMasterTabScratchPaperView(tab: MasterWorkspaceTab) {
+  return tab.presentation.scratchPaperView ?? defaultScratchPaperWorkspaceView();
+}
+
 export function updateMasterTabNotesView(
   state: MasterWorkspaceState,
   panelId: string,
@@ -275,6 +316,30 @@ export function updateMasterTabNotesView(
       tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
         ...candidateTab,
         presentation: { ...candidateTab.presentation, notesView: normalizeNotesWorkspaceView(notesView) },
+      }),
+    }),
+  };
+}
+
+export function updateMasterTabScratchPaperView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  scratchPaperView: MasterScratchPaperWorkspaceView,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const current = getMasterTabScratchPaperView(tab);
+  const normalized = normalizeScratchPaperWorkspaceView(scratchPaperView);
+  if (JSON.stringify(current) === JSON.stringify(normalized)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, scratchPaperView: normalized },
       }),
     }),
   };
@@ -377,7 +442,7 @@ export function masterTabTasksWorkspaceMatchesLiveState(
 }
 
 function makeHomeTab(id = "master-tab-1"): MasterWorkspaceTab {
-  return { id, destination: { kind: "page", page: "Home" }, presentation: {} };
+  return { id, destination: { kind: "page", page: "Home" }, presentation: { scratchPaperView: defaultScratchPaperWorkspaceView() } };
 }
 
 export function createDefaultMasterWorkspaceState(): MasterWorkspaceState {
@@ -471,9 +536,11 @@ export function initializeMasterWorkspaceState(
       tabs: [{
         ...firstPanel.tabs[0],
         destination: { kind: "page", page: previousActivePage },
-        presentation: tasksWorkspace
-          ? { tasksWorkspace }
-          : previousActivePage === "Health" ? { healthSection: initialHealthSection } : {},
+        presentation: {
+          ...firstPanel.tabs[0].presentation,
+          ...(tasksWorkspace ? { tasksWorkspace } : {}),
+          ...(previousActivePage === "Health" ? { healthSection: initialHealthSection } : {}),
+        },
       }],
     }],
   };

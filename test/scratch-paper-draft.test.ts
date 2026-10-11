@@ -24,21 +24,20 @@ test("Scratch Paper compares title, body, and linked Task IDs to the persisted b
 });
 
 test("current and card Scratch Paper editors report independent comparison and save states", () => {
-  assert.match(scratchPaperSource, /const isDirty = !areScratchPaperDraftsEqual\(currentDraft, draftBaseline\)/);
+  assert.match(scratchPaperSource, /const isDirty = currentSession\?\.dirty \?\? !areScratchPaperDraftsEqual\(currentDraft, draftBaseline\)/);
   assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\("scratch-current", isSaving \|\| isDirty\)/);
-  assert.match(scratchPaperSource, /const isDirty = !areScratchPaperDraftsEqual\(cardDraft, draftBaseline\)/);
+  assert.match(scratchPaperSource, /const isDirty = sessionForDisplay\?\.dirty \?\? !areScratchPaperDraftsEqual\(cardDraft, draftBaseline\)/);
   assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\(`scratch-card:\$\{note\.id\}`, isDraftUnsafe\)/);
   assert.match(scratchPaperSource, /unsafeCardIds\.has\(note\.id\)/);
-  assert.match(scratchPaperSource, /if \(saved\) \{\s*setDraftBaseline\(cardDraft\);\s*setIsEditing\(false\);/);
+  assert.match(scratchPaperSource, /if \(saved\) \{\s*if \(!sessionDraftId\) setLocalDraftBaseline\(cardDraft\);\s*setIsEditing\(false\);/);
 });
 
 test("Discard Draft restores saved Scratch Paper content and task links without persistence", () => {
   const discardStart = scratchPaperSource.indexOf("function discardDraft()", scratchPaperSource.indexOf("function ScratchNoteCard"));
-  const discardEnd = scratchPaperSource.indexOf("if (isEditing)", discardStart);
+  const discardEnd = scratchPaperSource.indexOf("if (isEditingSurface)", discardStart);
   const discardSource = scratchPaperSource.slice(discardStart, discardEnd);
-  assert.match(discardSource, /setTitle\(draftBaseline\.title\)/);
-  assert.match(discardSource, /setBody\(draftBaseline\.body\)/);
-  assert.match(discardSource, /setLinkedTaskIds\(\[\.\.\.draftBaseline\.linkedTaskIds\]\)/);
+  assert.match(discardSource, /editingSessionStore\.discardDraft\(sessionDraftId\)/);
+  assert.match(discardSource, /setLocalDraft\(draftBaseline\)/);
   assert.doesNotMatch(discardSource, /onUpdate|onCreate|\.from\(/);
   assert.match(scratchPaperSource, /Discard Draft/);
 });
