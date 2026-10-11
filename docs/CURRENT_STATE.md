@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.138`.
+- Current working app version: `7.16.139`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -354,6 +354,32 @@ the existing `react-hooks/set-state-in-effect` rule disabled. `git diff --check`
 passed. Andrew completed T5b.3 browser QA on 7.16.137; T5b.3 is closed. The
 production build, full typecheck, broad test suite, and live Supabase behavior
 were not run.
+
+## 2026-10-11 7.16.139 Food Add Editor Update Correction
+
+The Add Food failure with Master Tabs enabled came from HealthPage resolving
+functional Food view updates against its captured `foodView` prop. The Add
+Food handler makes sequential presentation updates; each could start from the
+same rendered snapshot and overwrite the selected meal slot. HealthPage now
+forwards updater functions to the Master Workspace controller, and the
+workspace reducer resolves each updater against the latest Food view in its
+functional `setWorkspace(current => ...)` update. Slot, editor mode, plan ID,
+and Quick Entry updates now compose within one event.
+
+Per-tab Food presentation, stable new-meal draft IDs, shared saved-entry draft
+sessions, date/slot draft protection, and existing persistence remain on their
+prior authorities. No nutrition calculations, schema, or SQL changed.
+
+Focused verification: Master Workspace state, Food logging, and Food editing
+session tests passed (73/73). Scoped ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled reported no errors and three
+existing unused-disable warnings in the controller. Standard scoped ESLint
+still reports two existing synchronous-effect findings in HealthPage. The
+adjacent `test/master-workspace-health.test.ts` remains baseline-red on its
+source assertion forbidding `useSyncExternalStore` in HealthPage, which was
+already used by the 7.16.138 Food session path. `git diff --check` passed.
+Browser recheck, production build, full typecheck, and broad suite were not
+run.
 
 ## 2026-10-11 7.16.138 T5b.4 Food Editing Sessions, Focused First Slice
 

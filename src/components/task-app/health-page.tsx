@@ -235,7 +235,7 @@ import type { JournalCheckInDraftSnapshot } from "./journal-check-in-form";
 import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
 import type { EditingSessionStore } from "@/lib/editing-session-store";
-import { createDefaultMasterFoodWorkspaceView, selectJournalHistoryEntryForEdit, type MasterFoodWorkspaceView, type MasterJournalWorkspaceMode, type MasterTabPresentationState } from "@/lib/master-workspace-state";
+import { createDefaultMasterFoodWorkspaceView, selectJournalHistoryEntryForEdit, type MasterFoodWorkspaceView, type MasterFoodWorkspaceViewUpdate, type MasterJournalWorkspaceMode, type MasterTabPresentationState } from "@/lib/master-workspace-state";
 
 type HealthPageProps = {
   activeTab: HealthTab;
@@ -246,7 +246,7 @@ type HealthPageProps = {
   onJournalViewChange?: (journalView: MasterTabPresentationState["journalView"]) => void;
   journalSessionStore?: EditingSessionStore<JournalCheckInDraftSnapshot> | null;
   foodView?: MasterFoodWorkspaceView;
-  onFoodViewChange?: (foodView: MasterFoodWorkspaceView) => void;
+  onFoodViewChange?: (foodView: MasterFoodWorkspaceViewUpdate) => void;
   foodSessionStore?: EditingSessionStore<HealthFoodEditingSessionDraft> | null;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
@@ -1293,7 +1293,7 @@ export function HealthPage({
   const activeFoodView = foodView ?? legacyFoodView;
   const setFoodView = useCallback((update: SetStateAction<MasterFoodWorkspaceView>) => {
     if (foodView && onFoodViewChange) {
-      onFoodViewChange(typeof update === "function" ? update(foodView) : update);
+      onFoodViewChange(update);
       return;
     }
     setLegacyFoodView(update);

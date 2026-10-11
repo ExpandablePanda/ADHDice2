@@ -23,6 +23,7 @@ import {
   selectJournalHistoryEntryForEdit,
   updateMasterTabTasksWorkspace,
   updateMasterTabJournalView,
+  updateMasterTabFoodView,
   updateMasterTabNotesView,
   updateMasterTabScratchPaperView,
   updateMasterTabScrollPosition,
@@ -518,6 +519,45 @@ test("transitions are immutable and activate, replace, and create tabs", () => {
   const replaced = replaceFocusedMasterTabDestination(activated, { kind: "health-tab", page: "Health", tab: "Journal" });
   assert.deepEqual(replaced.panels[0].tabs[0].destination, { kind: "health-tab", page: "Health", tab: "Journal" });
   assert.equal(replaced.panels[0].tabs[0].presentation.tasksWorkspace, undefined);
+});
+
+test("functional Food presentation updates compose against the latest tab state", () => {
+  const initial = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food");
+  const panelId = initial.panels[0].id;
+  const tabId = initial.panels[0].activeTabId;
+  let current = initial;
+
+  for (const slot of ["breakfast", "lunch", "dinner", "snack"] as const) {
+    current = updateMasterTabFoodView(current, panelId, tabId, (view) => ({
+      ...view,
+      activeMealEntrySlot: slot,
+      mealEditorMode: "actual",
+      editingMealPlanId: null,
+    }));
+    const view = getMasterTabFoodView(current.panels[0].tabs[0]);
+    assert.equal(view.activeMealEntrySlot, slot);
+    assert.equal(view.mealEditorMode, "actual");
+  }
+
+  current = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view, activeMealEntrySlot: "dinner" }));
+  current = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view, mealEditorMode: "plan" }));
+  current = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view, editingMealPlanId: null }));
+  const plannedView = getMasterTabFoodView(current.panels[0].tabs[0]);
+  assert.equal(plannedView.activeMealEntrySlot, "dinner");
+  assert.equal(plannedView.mealEditorMode, "plan");
+  assert.equal(plannedView.editingMealPlanId, null);
+
+  current = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view, activeMealEntrySlot: "breakfast" }));
+  current = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view, mealEditorMode: "actual" }));
+  current = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view, isQuickEntryOpen: true }));
+  const quickEntryView = getMasterTabFoodView(current.panels[0].tabs[0]);
+  assert.equal(quickEntryView.activeMealEntrySlot, "breakfast");
+  assert.equal(quickEntryView.mealEditorMode, "actual");
+  assert.equal(quickEntryView.isQuickEntryOpen, true);
+  assert.equal(quickEntryView.newMealDraftId, getMasterTabFoodView(initial.panels[0].tabs[0]).newMealDraftId);
+
+  const unchanged = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view }));
+  assert.strictEqual(unchanged, current);
 });
 
 test("split duplication copies destination and settings, then closing split discards its tabs", () => {

@@ -6,6 +6,8 @@ const source = readFileSync(new URL("../src/components/task-app/health-page.tsx"
 const scannerSource = readFileSync(new URL("../src/components/task-app/health-barcode-scanner.tsx", import.meta.url), "utf8");
 const useHealthSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
 const healthUtilsSource = readFileSync(new URL("../src/lib/health-utils.ts", import.meta.url), "utf8");
+const masterWorkspaceSource = readFileSync(new URL("../src/lib/master-workspace-state.ts", import.meta.url), "utf8");
+const masterWorkspaceControllerSource = readFileSync(new URL("../src/hooks/useMasterWorkspaceController.ts", import.meta.url), "utf8");
 const foodSource = source.slice(source.indexOf('{activeTab === "Food"'), source.indexOf('{activeTab === "Water"'));
 const inlineEditorSource = source.slice(source.indexOf("function renderMealEntryEditor()"), source.indexOf("\n\n  return (", source.indexOf("function renderMealEntryEditor()")));
 const barcodeToolsSource = source.slice(source.indexOf("function renderMealBarcodeTools()"), source.indexOf("function renderMealCategoryFilter()"));
@@ -238,6 +240,18 @@ test("each section opens the one shared inline editor for its own slot", () => {
   assert.match(foodSource, /onClick=\{\(\) => openMealComposerForSlot\(slot\)\}/);
   assert.match(foodSource, /activeMealEntrySlot === slot \? renderMealEntryEditor\(\) : null/);
   assert.match(source, /setActiveMealEntrySlot\(slot\);/);
+});
+
+test("Master Tabs receive functional Food view updates against current tab presentation", () => {
+  assert.match(source, /onFoodViewChange\?: \(foodView: MasterFoodWorkspaceViewUpdate\) => void/);
+  assert.match(source, /if \(foodView && onFoodViewChange\) \{\s+onFoodViewChange\(update\);/);
+  assert.doesNotMatch(source, /onFoodViewChange\(typeof update === "function" \? update\(foodView\)/);
+  const updateFoodViewStart = masterWorkspaceControllerSource.indexOf("const updateFoodView = useCallback");
+  const updateFoodViewEnd = masterWorkspaceControllerSource.indexOf("\n\n  return useMemo", updateFoodViewStart);
+  const updateFoodViewSource = masterWorkspaceControllerSource.slice(updateFoodViewStart, updateFoodViewEnd);
+  assert.match(updateFoodViewSource, /setWorkspace\(\(current\) => \{/);
+  assert.match(updateFoodViewSource, /updateMasterTabFoodView\(current, currentPanel\.id, activeTab\.id, foodViewUpdate\)/);
+  assert.match(masterWorkspaceSource, /typeof foodViewUpdate === "function"\s+\? foodViewUpdate\(getMasterTabFoodView\(tab\)\)/);
 });
 
 test("inline editor keeps actual fast-entry order and adds Date/Meal only for plan mode", () => {

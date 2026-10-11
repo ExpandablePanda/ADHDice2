@@ -55,6 +55,8 @@ export type MasterFoodWorkspaceView = {
   foodLibrarySearchQuery: string;
   ingredientSearchQuery: string;
 };
+
+export type MasterFoodWorkspaceViewUpdate = MasterFoodWorkspaceView | ((current: MasterFoodWorkspaceView) => MasterFoodWorkspaceView);
 export type MasterTabPresentationState = {
   healthSection?: HealthTab;
   scrollTop?: number;
@@ -380,11 +382,14 @@ export function updateMasterTabFoodView(
   state: MasterWorkspaceState,
   panelId: string,
   tabId: string,
-  foodView: MasterFoodWorkspaceView,
+  foodViewUpdate: MasterFoodWorkspaceViewUpdate,
 ): MasterWorkspaceState {
   const panel = state.panels.find((candidate) => candidate.id === panelId);
   const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
   if (!panel || !tab) return state;
+  const foodView = typeof foodViewUpdate === "function"
+    ? foodViewUpdate(getMasterTabFoodView(tab))
+    : foodViewUpdate;
   const normalized = normalizeFoodWorkspaceView(foodView);
   if (JSON.stringify(getMasterTabFoodView(tab)) === JSON.stringify(normalized)) return state;
   return {

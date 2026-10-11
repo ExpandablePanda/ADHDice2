@@ -30,7 +30,7 @@ import {
   type MasterTabPresentationState,
   type MasterTabDestination,
   type MasterScratchPaperWorkspaceView,
-  type MasterFoodWorkspaceView,
+  type MasterFoodWorkspaceViewUpdate,
   type MasterWorkspaceState,
 } from "@/lib/master-workspace-state";
 import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
@@ -332,12 +332,12 @@ export function useMasterWorkspaceController({
     return true;
   }, [activeTab.id, canNavigate, currentPanel.id]);
 
-  const updateFoodView = useCallback((foodView: MasterFoodWorkspaceView) => {
+  const updateFoodView = useCallback((foodViewUpdate: MasterFoodWorkspaceViewUpdate) => {
     if (!canNavigate) return false;
     setWorkspace((current) => {
       const panel = current.panels.find((candidate) => candidate.id === currentPanel.id);
       if (!panel || panel.activeTabId !== activeTab.id) return current;
-      return updateMasterTabFoodView(current, currentPanel.id, activeTab.id, foodView);
+      return updateMasterTabFoodView(current, currentPanel.id, activeTab.id, foodViewUpdate);
     });
     return true;
   }, [activeTab.id, canNavigate, currentPanel.id]);
