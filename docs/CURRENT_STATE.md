@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.136`.
+- Current working app version: `7.16.137`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -321,9 +321,40 @@ Master Workspace presentation, editing-session store, and Scratch Paper draft
 tests passed (44/44); targeted ESLint passed with the repository's existing
 `react-hooks/set-state-in-effect` rule disabled; `git diff --check` passed.
 The standard targeted ESLint command still reports existing
-`react-hooks/set-state-in-effect` findings in TaskApp and NotesPage. Andrew's
-browser QA for T5b.3, production build, full typecheck, and broad test suites
-remain outstanding.
+`react-hooks/set-state-in-effect` findings in TaskApp and NotesPage. Browser QA
+was pending at release and later reproduced the new-note failure recorded in
+7.16.137 below.
+
+## 2026-10-11 7.16.137 T5b.3 New Scratch Paper Save Correction
+
+Andrew reproduced a browser failure on 7.16.136 with Master Tabs enabled: text
+typed into a new Scratch Note appeared in the editor, but `Discard Draft` did
+not appear and `Save Note` did not create a record. The production `onInput`
+handler was wired. Its serializer recursively visited element children but
+returned no value for DOM Text nodes, including the text node the browser puts
+inside the editor's rendered span. The serialized body therefore stayed empty,
+the shared session stayed clean, and the empty new-note Save button remained
+disabled. The failure occurred before the Supabase create path; no Supabase
+error was observed.
+
+The serializer now reads Text node contents while retaining line-break, block,
+and Task-token serialization. Current Note and card editors use the same
+serializer. Their shared session field setter now has a direct production
+helper used by the regression integration. The test drives a contentEditable-
+shaped node tree through that serializer, per-tab session initialization and
+update, new-note save, staged row/link persistence, failed-link retry under the
+same Note ID, and reloaded persisted body/title/links. It verifies the other
+tab's new draft remains independent and a retry leaves one record.
+
+Focused verification for 7.16.137: `test/scratch-paper-editing-session.test.ts`,
+`test/scratch-paper-dictation.test.ts`, and
+`test/scratch-paper-draft-safety.test.ts` passed (26/26). Scoped ESLint for the
+changed Scratch Paper component, editor helper, and focused tests passed with
+the existing `react-hooks/set-state-in-effect` rule disabled. `git diff --check`
+passed. Andrew's browser QA for typing, immediate Discard Draft visibility,
+save, reopen, Task links, dictation, and card editing is pending. The browser,
+production build, full typecheck, broad test suite, and live Supabase behavior
+were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

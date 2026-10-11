@@ -303,9 +303,9 @@ test("note switching fences a late transcript and cancels recording", async () =
 
 test("New Note, Resolve, Trash, and unmount cleanup use cancellation rather than transcription", () => {
   assert.match(scratchSource, /cancelDictation\(\);/);
-  assert.match(scratchSource, /loadNote\(null\)/);
+  assert.match(scratchSource, /loadNote\(null,\s*createScratchPaperRecordId\(\)\)/);
   assert.match(scratchSource, /changeCurrentStatus\(status: ScratchNoteStatus\)[\s\S]{0,100}cancelDictation\(\);/);
-  assert.match(scratchSource, /dictation\.cancel\(\);\s*try \{\s*const saved = await onUpdate\(note\.id/);
+  assert.match(scratchSource, /async function saveEdit\(\) \{[\s\S]{0,240}dictation\.cancel\(\);\s*try \{\s*const saved = sessionDraftId && editingSessionStore/);
   assert.match(dictationHookSource, /if \(!enabled\) controller\.cancel\(\)/);
   assert.match(dictationHookSource, /useEffect\(\(\) => \(\) => controller\.cancel\(\), \[controller\]\)/);
 });

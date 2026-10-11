@@ -3,6 +3,8 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { createEditingSessionStore } from "../src/lib/editing-session-store.ts";
+import { serializeScratchEditor, setScratchPaperDraftField } from "../src/lib/scratch-paper-editor.ts";
+import { parseScratchTaskTokenSegments } from "../src/lib/scratch-paper-task-links.ts";
 import {
   areScratchPaperDraftsEqual,
   createScratchPaperRecordId,
@@ -34,6 +36,20 @@ function core(noteId: string, draft: ScratchPaperDraftValues): ScratchPaperNoteC
     title: draft.title.trim() || null,
     user_id: "user-1",
   };
+}
+
+function textNode(textContent: string) {
+  return { childNodes: [], nodeType: 3, textContent } as unknown as Node;
+}
+
+function elementNode(tagName: string, childNodes: Node[] = [], taskToken?: string) {
+  return {
+    childNodes,
+    dataset: taskToken ? { taskToken } : {},
+    nodeType: 1,
+    tagName,
+    textContent: null,
+  } as unknown as Node;
 }
 
 test("saved Notes, Note cards, current editor, and HUD resolve one canonical Scratch Paper session", () => {
@@ -158,6 +174,109 @@ test("failed persistence retains the shared draft and allows retry", async () =>
   assert.equal(store.getSnapshot(draftId)?.dirty, false);
 });
 
+test("new-note contentEditable input becomes a dirty shared draft and saves once with its title and Task links", async () => {
+  const store = createStore();
+  const newDraftId = createScratchPaperRecordId();
+  const secondTabDraftId = createScratchPaperRecordId();
+  const draftId = scratchPaperSessionId(newDraftId);
+  const secondDraftId = scratchPaperSessionId(secondTabDraftId);
+  const initial = emptyDraft();
+  store.ensureSession(draftId, newDraftId, initial);
+  store.attachView(draftId, "tab-a");
+  store.ensureSession(secondDraftId, secondTabDraftId, initial);
+  store.attachView(secondDraftId, "tab-b");
+
+  // ScratchInlineEditor renders text inside a span; browser input adds a Text node there.
+  const editor = elementNode("DIV", [
+    elementNode("SPAN", [textNode("Actual editor body")]),
+    elementNode("DIV", [textNode("second line")]),
+    elementNode("SPAN", [], "[[task:task-1|Follow up]]"),
+  ]);
+  const nextBody = serializeScratchEditor(editor);
+  assert.equal(nextBody, "Actual editor body\nsecond line[[task:task-1|Follow up]]");
+
+  setScratchPaperDraftField(store, draftId, newDraftId, initial, "tab-a", "body", nextBody);
+  setScratchPaperDraftField(store, draftId, newDraftId, initial, "tab-a", "title", "Editor integration");
+  const parsedTaskIds = parseScratchTaskTokenSegments(nextBody)
+    .flatMap((segment) => segment.kind === "task" ? [segment.taskId] : []);
+  setScratchPaperDraftField(store, draftId, newDraftId, initial, "tab-a", "linkedTaskIds", parsedTaskIds);
+
+  const draftBeforeSave = store.getSnapshot(draftId);
+  assert.equal(draftBeforeSave?.dirty, true);
+  assert.deepEqual(draftBeforeSave?.draft, {
+    body: nextBody,
+    linkedTaskIds: ["task-1"],
+    title: "Editor integration",
+  });
+  assert.equal(store.getSnapshot(secondDraftId)?.dirty, false);
+  assert.deepEqual(store.getSnapshot(secondDraftId)?.draft, initial);
+
+  const persistedNotes = new Map<string, ScratchPaperNoteCore>();
+  const persistedLinks = new Map<string, readonly string[]>();
+  const createAttempts: string[] = [];
+  let failFirstLinkWrite = true;
+  const createNote = async (draft: ScratchPaperDraftValues, noteId: string) => {
+    createAttempts.push(noteId);
+    const result = await persistScratchPaperNoteInStages({
+      draft,
+      noteId,
+      readNote: async () => persistedNotes.get(noteId) ?? null,
+      replaceLinks: async () => {
+        if (failFirstLinkWrite) {
+          failFirstLinkWrite = false;
+          throw new Error("link insert failed");
+        }
+        persistedLinks.set(noteId, [...draft.linkedTaskIds]);
+      },
+      userId: "user-1",
+      writeNote: async () => {
+        if (persistedNotes.has(noteId)) throw new Error("duplicate Note ID");
+        const persisted = core(noteId, draft);
+        persistedNotes.set(noteId, persisted);
+        return persisted;
+      },
+    });
+    return result.ok ? noteId : null;
+  };
+
+  const save = () => saveScratchPaperEditingSession({
+    createNote,
+    draftId,
+    isNew: true,
+    noteId: newDraftId,
+    sessionStore: store,
+    updateNote: async () => false,
+  });
+
+  assert.equal(await save(), false);
+  assert.equal(store.getSnapshot(draftId)?.dirty, true);
+  assert.match(store.getSnapshot(draftId)?.saveError ?? "", /could not be saved/);
+  assert.equal(persistedNotes.size, 1);
+
+  assert.equal(await save(), true);
+  assert.equal(createAttempts.length, 2);
+  assert.deepEqual(createAttempts, [newDraftId, newDraftId]);
+  assert.equal(persistedNotes.size, 1);
+  assert.deepEqual(persistedNotes.get(newDraftId), core(newDraftId, {
+    body: nextBody,
+    linkedTaskIds: ["task-1"],
+    title: "Editor integration",
+  }));
+  assert.deepEqual(persistedLinks.get(newDraftId), ["task-1"]);
+  assert.equal(store.getSnapshot(draftId)?.dirty, false);
+
+  const reopenedStore = createStore();
+  const reopenedId = scratchPaperSessionId(newDraftId);
+  const reopened = reopenedStore.ensureSession(reopenedId, newDraftId, {
+    body: persistedNotes.get(newDraftId)!.body,
+    linkedTaskIds: [...(persistedLinks.get(newDraftId) ?? [])],
+    title: persistedNotes.get(newDraftId)!.title ?? "",
+  });
+  assert.equal(reopened.draft.body, "Actual editor body\nsecond line[[task:task-1|Follow up]]");
+  assert.equal(reopened.draft.title, "Editor integration");
+  assert.deepEqual(reopened.draft.linkedTaskIds, ["task-1"]);
+});
+
 test("last dirty view is protected while duplicate views can close", () => {
   const store = createStore();
   const draftId = scratchPaperSessionId("note-1");
@@ -238,6 +357,15 @@ test("production routes share the store and keep Scratch Paper drafts outside pa
   assert.match(scratchPaperSource, /scratchPaperSessionId\(note\.id\)/);
   assert.match(scratchPaperSource, /activeNotes\.find\(\(note\) => note\.id === newDraftId\)/);
   assert.match(scratchPaperSource, /saveScratchPaperEditingSession/);
+  assert.match(scratchPaperSource, /onInput=\{\(event\) => \{\s*emitEditorChange\(event\.currentTarget, event\.nativeEvent as InputEvent\);/);
+  assert.match(scratchPaperSource, /function emitEditorChange\([\s\S]*?const nextBody = serializeScratchEditor\(editor\)/);
+  assert.match(scratchPaperSource, /onChange=\{updateBody\}/);
+  assert.match(scratchPaperSource, /setScratchPaperDraftField\(editingSessionStore, sessionDraftId, sessionNoteId, initialDraft, editingViewId, field, next\)/);
+  assert.match(scratchPaperSource, /const currentDraft = currentSession\?\.draft \?\? localDraft/);
+  assert.match(scratchPaperSource, /const isDirty = currentSession\?\.dirty \?\?/);
+  assert.match(scratchPaperSource, /currentSession\?\.saveError[\s\S]*?role="alert"/);
+  assert.match(scratchPaperSource, /currentNoteId \|\| isDirty \? <TaskTableChipButton[\s\S]*?>Discard Draft/);
+  assert.match(scratchPaperSource, /disabled=\{isSaving \|\| \(!currentNoteId && !body\.trim\(\) && !title\.trim\(\) && linkedTaskIds\.length === 0\)\}/);
   assert.match(notesPageSource, /sharedScratchPaperSessionsEnabled \? undefined : reportDraftSafety/);
   assert.match(scratchHookSource, /persistScratchPaperNoteInStages/);
   assert.match(scratchHookSource, /replaceScratchPaperTaskLinksSafely/);

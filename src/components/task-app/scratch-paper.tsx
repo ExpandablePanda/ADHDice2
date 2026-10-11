@@ -9,6 +9,7 @@ import type { EditingSessionStore } from "@/lib/editing-session-store";
 import { useScratchDictation } from "@/hooks/useScratchDictation";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { restoreScratchEditorOffset } from "@/lib/scratch-paper-dictation";
+import { serializeScratchEditor, setScratchPaperDraftField } from "@/lib/scratch-paper-editor";
 import {
   areScratchPaperDraftsEqual,
   createScratchPaperRecordId,
@@ -99,21 +100,6 @@ function useScratchPaperEditingSession(
   }, [attach, canonicalRecordId, draftId, initialDraft, sessionStore, viewId]);
 
   return session;
-}
-
-function updateScratchPaperDraftField<Field extends keyof ScratchPaperDraftValues>(
-  sessionStore: EditingSessionStore<ScratchPaperEditingSessionDraft> | null | undefined,
-  draftId: string | null,
-  field: Field,
-  next: ScratchPaperDraftValues[Field] | ((current: ScratchPaperDraftValues[Field]) => ScratchPaperDraftValues[Field]),
-) {
-  if (!sessionStore || !draftId) return false;
-  return sessionStore.updateDraft(draftId, (current) => ({
-    ...current,
-    [field]: typeof next === "function"
-      ? (next as (current: ScratchPaperDraftValues[Field]) => ScratchPaperDraftValues[Field])(current[field])
-      : next,
-  }));
 }
 
 function createLocalScratchPaperView(): MasterScratchPaperWorkspaceView {
@@ -289,22 +275,6 @@ function ScratchRenderedBody({
       </div>
     </div>
   );
-}
-
-function serializeScratchEditor(node: Node): string {
-  if (node instanceof HTMLElement && node.dataset.taskToken) {
-    return node.dataset.taskToken;
-  }
-  if (node instanceof HTMLBRElement) {
-    return "\n";
-  }
-
-  return Array.from(node.childNodes).reduce((output, child) => {
-    const isBlock = child instanceof HTMLElement && (child.tagName === "DIV" || child.tagName === "P");
-    const childOutput = serializeScratchEditor(child);
-    const needsBlockBreak = isBlock && output && !output.endsWith("\n") && !childOutput.startsWith("\n");
-    return `${output}${needsBlockBreak ? "\n" : ""}${childOutput}`;
-  }, "");
 }
 
 function getScratchEditorOffset(editor: HTMLElement) {
@@ -645,9 +615,7 @@ function ScratchCurrentNoteEditor({
     next: ScratchPaperDraftValues[Field] | ((current: ScratchPaperDraftValues[Field]) => ScratchPaperDraftValues[Field]),
   ) => {
     if (sharedSessionEnabled && editingSessionStore && sessionDraftId) {
-      editingSessionStore.ensureSession(sessionDraftId, sessionNoteId, initialDraft);
-      if (editingViewId) editingSessionStore.attachView(sessionDraftId, editingViewId);
-      updateScratchPaperDraftField(editingSessionStore, sessionDraftId, field, next);
+      setScratchPaperDraftField(editingSessionStore, sessionDraftId, sessionNoteId, initialDraft, editingViewId, field, next);
       return;
     }
     setLocalDraft((current) => ({
@@ -1056,9 +1024,7 @@ function ScratchNoteCard({ editingSessionStore, editingViewId, getTaskStatusOpti
     next: ScratchPaperDraftValues[Field] | ((current: ScratchPaperDraftValues[Field]) => ScratchPaperDraftValues[Field]),
   ) => {
     if (sessionDraftId && editingSessionStore) {
-      editingSessionStore.ensureSession(sessionDraftId, note.id, initialDraft);
-      if (editingViewId) editingSessionStore.attachView(sessionDraftId, editingViewId);
-      updateScratchPaperDraftField(editingSessionStore, sessionDraftId, field, next);
+      setScratchPaperDraftField(editingSessionStore, sessionDraftId, note.id, initialDraft, editingViewId, field, next);
       return;
     }
     setLocalDraft((current) => ({
