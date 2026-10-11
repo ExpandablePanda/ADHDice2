@@ -156,6 +156,7 @@ import {
   getHealthJournalSignalDisplayColor,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
+  getHealthJournalHistoryGroupsIncludingEntry,
   groupHealthJournalEntriesByDate,
   normalizeHealthJournalEntryTime,
   findHealthJournalReflectionTagMatches,
@@ -228,6 +229,7 @@ import { PageShellHeader } from "./page-shell-header";
 import { JournalCheckInForm } from "./journal-check-in-form";
 import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
+import { JournalTriggerStatistics } from "./journal-trigger-statistics";
 
 type HealthPageProps = {
   journalEntryRequest: { entryType: "start_of_day" | "end_of_day"; id: number } | null;
@@ -240,6 +242,8 @@ type HealthPageProps = {
   journalTriggers: HealthJournalTrigger[];
   journalTriggerLinks: HealthJournalTriggerLink[];
   journalTriggerDataError: string | null;
+  journalStatisticsDataError: string | null;
+  refreshJournalStatisticsData: () => void;
   isLoadingJournalTriggers: boolean;
   hasLoadedJournalTriggerData: boolean;
   loadJournalTriggerData: () => Promise<boolean>;
@@ -472,7 +476,7 @@ type JournalHistoryTagOverlay = {
 } | null;
 
 type JournalSignalCreateKind = "emotion" | "other";
-type JournalWorkspaceMode = "entry" | "history" | "split-history-left" | "split-history-right";
+type JournalWorkspaceMode = "entry" | "history" | "statistics" | "split-history-left" | "split-history-right";
 
 const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
   Mood: ["Very bad", "Bad", "Poor", "Low", "Okay", "Fair", "Good", "Very good", "Great", "Excellent"],
@@ -1200,6 +1204,8 @@ export function HealthPage({
   journalTriggers,
   journalTriggerLinks,
   journalTriggerDataError,
+  journalStatisticsDataError,
+  refreshJournalStatisticsData,
   isLoadingJournalTriggers,
   hasLoadedJournalTriggerData,
   loadJournalTriggerData,
@@ -1384,6 +1390,7 @@ export function HealthPage({
   const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
   const [expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds] = useState<Set<string>>(() => new Set());
   const [collapsedJournalHistoryDates, setCollapsedJournalHistoryDates] = useState<Set<string>>(() => new Set());
+  const [journalHistoryRevealEntryId, setJournalHistoryRevealEntryId] = useState<string | null>(null);
   const [selectedFeelingTrendDefinitionKeys, setSelectedFeelingTrendDefinitionKeys] = useState<Set<string>>(() => new Set());
   const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
   const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
@@ -1637,6 +1644,18 @@ export function HealthPage({
     () => groupHealthJournalEntriesByDate(checkIns),
     [checkIns],
   );
+  const visibleJournalHistoryGroups = useMemo(
+    () => getHealthJournalHistoryGroupsIncludingEntry(journalHistoryGroups, journalHistoryRevealEntryId),
+    [journalHistoryGroups, journalHistoryRevealEntryId],
+  );
+  useEffect(() => {
+    if (!journalHistoryRevealEntryId || journalEntryRequest || journalWorkspaceMode !== "history") return;
+    const frame = window.requestAnimationFrame(() => {
+      const entry = document.getElementById("journal-history-entry-" + journalHistoryRevealEntryId);
+      entry?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [journalEntryRequest, journalHistoryRevealEntryId, journalWorkspaceMode]);
   const journalOccurrenceChoices = useMemo(() => {
     const choices = journalFeelingChoices.map((choice) => {
       if (choice.signal || choice.kind !== "symptom" || !choice.symptomId) return choice;
@@ -2019,6 +2038,9 @@ export function HealthPage({
 
   const activeProfile = profile;
   const visibleJournalWorkspaceMode = journalEntryRequest ? "entry" : journalWorkspaceMode;
+  const isVisibleJournalHistory = visibleJournalWorkspaceMode === "history"
+    || visibleJournalWorkspaceMode === "split-history-left"
+    || visibleJournalWorkspaceMode === "split-history-right";
   const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
   const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
   const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
@@ -2480,6 +2502,20 @@ export function HealthPage({
 
   function selectJournalWorkspaceMode(mode: JournalWorkspaceMode) {
     setJournalWorkspaceMode(mode);
+    setIsJournalHistoryMenuOpen(false);
+  }
+
+  function viewJournalEntryInHistory(entryId: string) {
+    const entry = checkIns.find((candidate) => candidate.id === entryId);
+    if (!entry) return;
+    setJournalHistoryRevealEntryId(entryId);
+    setCollapsedJournalHistoryDates((current) => {
+      if (!current.has(entry.entry_date)) return current;
+      const next = new Set(current);
+      next.delete(entry.entry_date);
+      return next;
+    });
+    setJournalWorkspaceMode("history");
     setIsJournalHistoryMenuOpen(false);
   }
 
@@ -3538,6 +3574,32 @@ export function HealthPage({
               className="min-w-0"
               headerActions={(
                 <div className="flex flex-wrap items-center justify-end gap-1">
+                  <div aria-label="Journal views" className="flex flex-wrap items-center gap-1" role="group">
+                    <AdhdChip
+                      aria-pressed={visibleJournalWorkspaceMode === "entry"}
+                      onClick={() => selectJournalWorkspaceMode("entry")}
+                      selected={visibleJournalWorkspaceMode === "entry"}
+                      type="button"
+                    >
+                      Entry
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-pressed={isVisibleJournalHistory}
+                      onClick={() => selectJournalWorkspaceMode("history")}
+                      selected={isVisibleJournalHistory}
+                      type="button"
+                    >
+                      History
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-pressed={visibleJournalWorkspaceMode === "statistics"}
+                      onClick={() => selectJournalWorkspaceMode("statistics")}
+                      selected={visibleJournalWorkspaceMode === "statistics"}
+                      type="button"
+                    >
+                      Statistics
+                    </AdhdChip>
+                  </div>
                   <div className="relative">
                     <AdhdIconButton
                       aria-controls="journal-history-layout-menu"
@@ -3589,7 +3651,7 @@ export function HealthPage({
               role="tabpanel"
             >
             <div className={(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
-            {visibleJournalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+            <div hidden={visibleJournalWorkspaceMode === "history" || visibleJournalWorkspaceMode === "statistics"} className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <JournalCheckInForm
                 checkIns={checkIns}
                 customQuestions={activeProfile.journal_questions ?? []}
@@ -3625,7 +3687,26 @@ export function HealthPage({
                 symptomEntries={symptomEntries}
                 symptoms={symptoms}
               />
-            </div> : null}
+            </div>
+            {visibleJournalWorkspaceMode === "statistics" ? (
+              <JournalTriggerStatistics
+                checkIns={checkIns}
+                healthDataLoading={isLoading}
+                healthDataError={journalStatisticsDataError}
+                hasLoadedJournalTriggerData={hasLoadedJournalTriggerData}
+                isLoadingJournalTriggers={isLoadingJournalTriggers}
+                journalSignals={journalSignals}
+                journalSignalOccurrences={journalSignalOccurrences}
+                journalTriggerDataError={journalTriggerDataError}
+                journalTriggers={journalTriggers}
+                journalTriggerLinks={journalTriggerLinks}
+                loadJournalTriggerData={loadJournalTriggerData}
+                onViewInHistory={viewJournalEntryInHistory}
+                retryHealthData={refreshJournalStatisticsData}
+                symptomEntries={symptomEntries}
+                symptoms={symptoms}
+              />
+            ) : null}
             {false && visibleJournalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <div className="grid min-w-0 gap-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
@@ -3812,13 +3893,13 @@ export function HealthPage({
               </div>
             </div> : null}
 
-            {visibleJournalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? `${visibleJournalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
+            {isVisibleJournalHistory ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? `${visibleJournalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
               <div className="space-y-4">
                 <SectionMiniTitle title="Journal History" />
                 {isLoadingJournalTriggers ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Loading Journal Trigger associations…</p> : null}
                 {journalTriggerDataError ? <div className="flex flex-wrap items-center gap-2 rounded-[0.9rem] border border-[#f2cbd4] bg-[#fff7f8] px-3 py-2 dark:border-[#6f3341] dark:bg-[#351d26]"><p className="min-w-0 flex-1 text-xs font-semibold text-[#a33f58] dark:text-[#ffb0c1]" role="alert">Could not load Journal Trigger associations: {journalTriggerDataError}</p><AdhdChip onClick={() => { void loadJournalTriggerData(); }} type="button">Retry</AdhdChip></div> : null}
                 {!hasLoadedJournalTriggerData && !isLoadingJournalTriggers && !journalTriggerDataError ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Journal Trigger associations have not loaded yet.</p> : null}
-                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => {
+                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : visibleJournalHistoryGroups.map((group) => {
                   const isJournalHistoryDateCollapsed = collapsedJournalHistoryDates.has(group.date);
                   return (
                   <section className="grid gap-2" key={group.date}>
@@ -3884,7 +3965,7 @@ export function HealthPage({
                       const eventInterval = entry.entry_type === "event"
                         ? formatHealthJournalEventInterval({ endDate: entryAnswers.event_end_date, endTime: entryAnswers.event_end_time, endTimeEstimated: entryAnswers.event_end_time_estimated, startDate: entry.entry_date, startTime: entry.entry_time, startTimeEstimated: entryAnswers.event_start_time_estimated })
                         : null;
-                      return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
+                      return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b39eff] dark:border-white/10 dark:bg-white/[0.04]" id={"journal-history-entry-" + entry.id} key={entry.id} tabIndex={-1}>
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="grid gap-1">
                             <div>

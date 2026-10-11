@@ -539,6 +539,7 @@ export function useHealth(
   const [journalTriggers, setJournalTriggers] = useState<HealthJournalTrigger[]>([]);
   const [journalTriggerLinks, setJournalTriggerLinks] = useState<HealthJournalTriggerLink[]>([]);
   const [journalTriggerDataError, setJournalTriggerDataError] = useState<string | null>(null);
+  const [journalStatisticsDataError, setJournalStatisticsDataError] = useState<string | null>(null);
   const [isLoadingJournalTriggers, setIsLoadingJournalTriggers] = useState(false);
   const [hasLoadedJournalTriggerData, setHasLoadedJournalTriggerData] = useState(false);
   const [journalTriggerDataOwnerId, setJournalTriggerDataOwnerId] = useState<string | null>(null);
@@ -1005,6 +1006,7 @@ export function useHealth(
       setJournalTriggers([]);
       setJournalTriggerLinks([]);
       setJournalTriggerDataError(null);
+      setJournalStatisticsDataError(null);
       setIsLoadingJournalTriggers(false);
       setHasLoadedJournalTriggerData(false);
       setJournalTriggerDataOwnerId(null);
@@ -1075,6 +1077,7 @@ export function useHealth(
     const cachedRemoteAuthority = healthRemoteAuthorityRef.current;
     if (!forceRemoteHydration && cachedRemoteAuthority?.client === client && cachedRemoteAuthority.userId === userId) {
       setStorageMode("remote");
+      setJournalStatisticsDataError(null);
       applySnapshot(cachedRemoteAuthority.snapshot, { persistenceMode: "remote" });
       setIsLoading(false);
       return;
@@ -1140,6 +1143,19 @@ export function useHealth(
         awardsResult.error,
       ].filter(Boolean);
 
+      const journalStatisticsDataErrors = [
+        checkInsResult.error,
+        journalSignalsResult.error,
+        journalSignalOccurrencesResult.error,
+        symptomsResult.error,
+        symptomEntriesResult.error,
+      ].filter((error): error is { message: string } => error !== null);
+      if (journalStatisticsDataErrors.length > 0) {
+        setJournalStatisticsDataError(
+          `Could not load required Journal statistics data: ${journalStatisticsDataErrors.map((error) => error.message).join("; ")}`,
+        );
+      }
+
       const symptomPersistenceErrors = [symptomsResult.error, symptomEntriesResult.error].filter(Boolean);
       const journalPersistenceErrors = [journalSignalsResult.error, journalSignalValuesResult.error].filter(Boolean);
       const journalSignalOccurrencePersistenceError = journalSignalOccurrencesResult.error;
@@ -1150,6 +1166,9 @@ export function useHealth(
 
       if (errors.length > 0) {
         const firstError = errors[0];
+        setJournalStatisticsDataError(
+          `Could not refresh required Journal statistics data: ${firstError?.message ?? "Health data loading failed."}`,
+        );
         if (firstError && isMissingHealthPersistence(firstError.message)) {
           setStorageMode("local");
           setMessage({
@@ -1567,6 +1586,7 @@ export function useHealth(
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[health] hydrated pages=${healthPageCount} user=${userId}`);
       }
+      if (journalStatisticsDataErrors.length === 0) setJournalStatisticsDataError(null);
       setIsLoading(false);
     })();
 
@@ -4901,6 +4921,7 @@ export function useHealth(
     isLoadingJournalTriggers: hasCurrentJournalTriggerRequest && isLoadingJournalTriggers,
     hasLoadedJournalTriggerData: hasCurrentJournalTriggerData && hasLoadedJournalTriggerData,
     loadJournalTriggerData,
+    journalStatisticsDataError,
     createJournalTrigger,
     journalSignals,
     journalSignalValues,

@@ -111,6 +111,20 @@ export function groupHealthJournalEntriesByDate(entries: readonly HealthCheckIn[
   return [...groups.entries()].map(([date, groupedEntries]) => ({ date, entries: groupedEntries }));
 }
 
+export function getHealthJournalHistoryGroupsIncludingEntry(
+  groups: ReturnType<typeof groupHealthJournalEntriesByDate>,
+  entryId: string | null,
+  visibleGroupLimit = 12,
+) {
+  const visibleGroups = groups.slice(0, visibleGroupLimit);
+  if (!entryId || visibleGroups.some((group) => group.entries.some((entry) => entry.id === entryId))) {
+    return visibleGroups;
+  }
+  const revealedGroup = groups.find((group) => group.entries.some((entry) => entry.id === entryId));
+  if (!revealedGroup) return visibleGroups;
+  return [...visibleGroups, revealedGroup].sort((left, right) => right.date.localeCompare(left.date));
+}
+
 export function normalizeHealthJournalSignalColor(color: string | null | undefined) {
   const normalized = color?.trim().toLowerCase() ?? "";
   return /^#[0-9a-f]{6}$/.test(normalized) ? normalized : DEFAULT_HEALTH_JOURNAL_FEELING_COLOR;

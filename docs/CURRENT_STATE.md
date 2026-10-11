@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.123`.
+- Current working app version: `7.16.124`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,36 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-11 7.16.124 Journal Trigger Statistics V1
+
+Health → Journal now has distinct Entry, History, and Statistics views. The
+existing History Left and History Right split layouts remain available, and the
+Entry form stays mounted while another view is shown so unsaved Journal drafts
+remain intact. Statistics are read-only and use the loaded Trigger definitions,
+association rows, Journal Entries, and linked symptom or Feeling occurrences.
+
+Counts deduplicate by association ID; Entry and Trigger totals use distinct
+identities. Date filtering uses each linked occurrence's `entry_date` with
+inclusive local calendar boundaries. The 7-day chart is daily, 30- and 90-day
+charts use Monday-start calendar weeks, and All Time uses monthly periods with
+zero-count gaps. Explicit association effects remain authoritative; score
+differences do not infer effects. Archived Trigger names and counts remain
+visible. Malformed or orphaned association rows are excluded and reported.
+“View in History” reveals the original entry, including entries older than the
+normal 12-date History window, without selecting it for editing.
+
+The focused Statistics and Trigger tests passed. Isolated lint passed for the
+new component, calculation module, History helper, and new tests. Lint over the
+integration files still reports repository diagnostics in `task-app.tsx`,
+`health-page.tsx`, and `useHealth.ts`, including existing effect/state rules.
+A targeted TypeScript check reports repository diagnostics in Health and shared
+modules; it reports none in the new Statistics component or calculation module.
+The existing Journal entry source-contract
+tests also retain two baseline failures because they expect older
+`journalWorkspaceMode` markup while the base commit uses
+`visibleJournalWorkspaceMode`. Browser QA, build, and full typecheck were not
+run; browser QA remains with Andrew. No SQL or Supabase records changed.
 
 ## 2026-10-11 7.16.123 Journal Feeling scale label editing
 

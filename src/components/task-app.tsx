@@ -1261,6 +1261,7 @@ export function TaskApp() {
     journalTriggers: healthJournalTriggers,
     journalTriggerLinks: healthJournalTriggerLinks,
     journalTriggerDataError: healthJournalTriggerDataError,
+    journalStatisticsDataError: healthJournalStatisticsDataError,
     isLoadingJournalTriggers: isLoadingHealthJournalTriggers,
     hasLoadedJournalTriggerData: hasLoadedHealthJournalTriggerData,
     loadJournalTriggerData: loadHealthJournalTriggerData,
@@ -1287,6 +1288,7 @@ export function TaskApp() {
     favorites: healthFavorites,
     importAudits: healthImportAudits,
     isLoading: isHealthLoading,
+    refreshHealth: refreshHealthData,
     importAppleHealthData,
     mealEntries: healthMealEntries,
     mealPlanEntries: healthMealPlanEntries,
@@ -8953,6 +8955,8 @@ export function TaskApp() {
             journalTriggers={healthJournalTriggers}
             journalTriggerLinks={healthJournalTriggerLinks}
             journalTriggerDataError={healthJournalTriggerDataError}
+            journalStatisticsDataError={healthJournalStatisticsDataError}
+            refreshJournalStatisticsData={refreshHealthData}
             isLoadingJournalTriggers={isLoadingHealthJournalTriggers}
             hasLoadedJournalTriggerData={hasLoadedHealthJournalTriggerData}
             loadJournalTriggerData={loadHealthJournalTriggerData}
