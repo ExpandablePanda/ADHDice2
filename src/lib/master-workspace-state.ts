@@ -42,6 +42,7 @@ export type MasterScratchPaperWorkspaceView = {
 export type MasterFoodWorkspaceView = {
   historyDate: string;
   newMealDraftId: string;
+  newPlannedMealDraftId: string;
   activeMealEntrySlot: HealthMealSlot | null;
   selectedMealEntryId: string | null;
   mealEditorMode: "actual" | "plan";
@@ -242,6 +243,7 @@ export function createDefaultMasterFoodWorkspaceView(): MasterFoodWorkspaceView 
   return {
     historyDate: todayHealthDate(),
     newMealDraftId: createHealthFoodDraftId(),
+    newPlannedMealDraftId: createHealthFoodDraftId(),
     activeMealEntrySlot: null,
     selectedMealEntryId: null,
     mealEditorMode: "actual",
@@ -287,6 +289,9 @@ function normalizeFoodWorkspaceView(value: unknown): MasterFoodWorkspaceView {
       : todayHealthDate(),
     newMealDraftId: typeof candidate.newMealDraftId === "string" && candidate.newMealDraftId.trim()
       ? candidate.newMealDraftId.trim()
+      : createHealthFoodDraftId(),
+    newPlannedMealDraftId: typeof candidate.newPlannedMealDraftId === "string" && candidate.newPlannedMealDraftId.trim()
+      ? candidate.newPlannedMealDraftId.trim()
       : createHealthFoodDraftId(),
     activeMealEntrySlot: typeof candidate.activeMealEntrySlot === "string" && slots.has(candidate.activeMealEntrySlot)
       ? candidate.activeMealEntrySlot as HealthMealSlot

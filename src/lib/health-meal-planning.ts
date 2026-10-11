@@ -1,4 +1,5 @@
 import type {
+  HealthMealEntry,
   HealthMealEntryInsert,
   HealthMealPlanEntry,
   HealthMealPlanEntryInsert,
@@ -102,6 +103,30 @@ export function buildActualMealEntryInputFromPlan(
     consumed_unit: plan.consumed_unit ?? null,
     food_snapshot: plan.food_snapshot ?? null,
   };
+}
+
+export function reconcileHealthMealPlanConfirmation({
+  mealEntries,
+  mealPlanEntries,
+  planId,
+  actualEntry,
+  confirmedAt,
+}: {
+  mealEntries: HealthMealEntry[];
+  mealPlanEntries: HealthMealPlanEntry[];
+  planId: string;
+  actualEntry: HealthMealEntry;
+  confirmedAt: string;
+}) {
+  const plan = mealPlanEntries.find((entry) => entry.id === planId);
+  if (!plan) return { mealEntries, mealPlanEntries };
+  const nextMealEntries = mealEntries.some((entry) => entry.id === actualEntry.id)
+    ? mealEntries
+    : [actualEntry, ...mealEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at));
+  const nextPlanEntries = mealPlanEntries.map((entry) => entry.id === planId
+    ? { ...entry, confirmed_at: confirmedAt, confirmed_meal_entry_id: actualEntry.id, updated_at: confirmedAt }
+    : entry);
+  return { mealEntries: nextMealEntries, mealPlanEntries: nextPlanEntries };
 }
 
 export function buildHealthMealPlanUpdateFromPayload(payload: Omit<HealthMealPlanEntryInsert, "user_id">): HealthMealPlanEntryUpdate {

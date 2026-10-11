@@ -494,7 +494,7 @@ test("unknown schema versions recover to the default workspace", () => {
         ...tab,
         presentation: {
           ...tab.presentation,
-          foodView: { ...getMasterTabFoodView(tab), newMealDraftId: "stable-food-draft-id" },
+          foodView: { ...getMasterTabFoodView(tab), newMealDraftId: "stable-food-draft-id", newPlannedMealDraftId: "stable-planned-draft-id" },
           scratchPaperView: { ...getMasterTabScratchPaperView(tab), newDraftId: "stable-id" },
         },
       })),
@@ -503,6 +503,21 @@ test("unknown schema versions recover to the default workspace", () => {
   assert.deepEqual(withoutScratchDraftIds(actual), withoutScratchDraftIds(expected));
   assert.match(getMasterTabScratchPaperView(actual.panels[0].tabs[0]).newDraftId, /^[0-9a-f-]{36}$/i);
   assert.match(getMasterTabFoodView(actual.panels[0].tabs[0]).newMealDraftId, /^[0-9a-f-]{36}$/i);
+  assert.match(getMasterTabFoodView(actual.panels[0].tabs[0]).newPlannedMealDraftId, /^[0-9a-f-]{36}$/i);
+});
+
+test("each Health tab gets an independent planned-entry identity separate from actual Food", () => {
+  const initial = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food");
+  const firstFoodView = getMasterTabFoodView(initial.panels[0].tabs[0]);
+  const next = createMasterTab(initial, initial.panels[0].id, {
+    id: "another-health-tab",
+    destination: { kind: "page", page: "Health" },
+    presentation: { healthSection: "Food" },
+  });
+  const secondFoodView = getMasterTabFoodView(next.panels[0].tabs[1]);
+  assert.notEqual(firstFoodView.newPlannedMealDraftId, firstFoodView.newMealDraftId);
+  assert.notEqual(secondFoodView.newPlannedMealDraftId, secondFoodView.newMealDraftId);
+  assert.notEqual(firstFoodView.newPlannedMealDraftId, secondFoodView.newPlannedMealDraftId);
 });
 
 test("transitions are immutable and activate, replace, and create tabs", () => {
@@ -555,6 +570,7 @@ test("functional Food presentation updates compose against the latest tab state"
   assert.equal(quickEntryView.mealEditorMode, "actual");
   assert.equal(quickEntryView.isQuickEntryOpen, true);
   assert.equal(quickEntryView.newMealDraftId, getMasterTabFoodView(initial.panels[0].tabs[0]).newMealDraftId);
+  assert.equal(quickEntryView.newPlannedMealDraftId, getMasterTabFoodView(initial.panels[0].tabs[0]).newPlannedMealDraftId);
 
   const unchanged = updateMasterTabFoodView(current, panelId, tabId, (view) => ({ ...view }));
   assert.strictEqual(unchanged, current);

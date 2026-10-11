@@ -95,7 +95,12 @@ import {
   selectHealthFoodMealEntriesBySourceId,
   type HealthFoodHistoryRepairResult,
 } from "@/lib/health-meal-recalculation";
-import { healthMealEntryInsertMatches, reconcileHealthMealEntryInsert } from "@/lib/health-meal-draft";
+import {
+  healthMealEntryInsertMatches,
+  healthMealPlanEntryInsertMatches,
+  reconcileHealthMealEntryInsert,
+  reconcileHealthMealPlanEntryInsert,
+} from "@/lib/health-meal-draft";
 import {
   reconcileHealthWorkouts,
   sortHealthWorkouts,
@@ -107,6 +112,7 @@ import {
   clearHealthMealPlanPendingMutation,
   isHealthMealPlanConfirmEligible,
   normalizeHealthMealPlanPendingMutations,
+  reconcileHealthMealPlanConfirmation,
   recordHealthMealPlanPendingDelete,
   recordHealthMealPlanPendingUpsert,
   replayHealthMealPlanPendingMutations,
@@ -3078,32 +3084,34 @@ export function useHealth(
     if (!operation) return false;
 
     const now = new Date().toISOString();
+    const planId = input.id ?? createLocalId("health-meal-plan");
+    const normalizedInput = { ...input, id: planId };
     const localRow: HealthMealPlanEntry = {
-      attribution: input.attribution ?? null,
-      barcode: input.barcode ?? null,
-      brand_name: input.brand_name ?? null,
-      calories: input.calories,
-      carbs_g: input.carbs_g ?? null,
+      attribution: normalizedInput.attribution ?? null,
+      barcode: normalizedInput.barcode ?? null,
+      brand_name: normalizedInput.brand_name ?? null,
+      calories: normalizedInput.calories,
+      carbs_g: normalizedInput.carbs_g ?? null,
       confirmed_at: null,
       confirmed_meal_entry_id: null,
       created_at: now,
-      fat_g: input.fat_g ?? null,
-      food_name: input.food_name,
-      id: input.id ?? createLocalId("health-meal-plan"),
-      meal_slot: input.meal_slot,
-      nutrition_snapshot: input.nutrition_snapshot ?? null,
-      planned_at: input.planned_at,
-      planned_date: input.planned_date,
-      planned_time: input.planned_time,
-      protein_g: input.protein_g ?? null,
-      provider: input.provider ?? "manual",
-      provider_item_id: input.provider_item_id ?? null,
-      serving_fraction: input.serving_fraction ?? null,
-      serving_label: input.serving_label ?? null,
-      source_food_id: input.source_food_id ?? null,
-      consumed_quantity: input.consumed_quantity ?? null,
-      consumed_unit: input.consumed_unit ?? null,
-      food_snapshot: input.food_snapshot ?? null,
+      fat_g: normalizedInput.fat_g ?? null,
+      food_name: normalizedInput.food_name,
+      id: planId,
+      meal_slot: normalizedInput.meal_slot,
+      nutrition_snapshot: normalizedInput.nutrition_snapshot ?? null,
+      planned_at: normalizedInput.planned_at,
+      planned_date: normalizedInput.planned_date,
+      planned_time: normalizedInput.planned_time,
+      protein_g: normalizedInput.protein_g ?? null,
+      provider: normalizedInput.provider ?? "manual",
+      provider_item_id: normalizedInput.provider_item_id ?? null,
+      serving_fraction: normalizedInput.serving_fraction ?? null,
+      serving_label: normalizedInput.serving_label ?? null,
+      source_food_id: normalizedInput.source_food_id ?? null,
+      consumed_quantity: normalizedInput.consumed_quantity ?? null,
+      consumed_unit: normalizedInput.consumed_unit ?? null,
+      food_snapshot: normalizedInput.food_snapshot ?? null,
       updated_at: now,
       user_id: userId,
     };
@@ -3111,26 +3119,51 @@ export function useHealth(
     let nextRow = localRow;
     let persistedRemotely = false;
     if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
-      const { data, error } = await client
+      const result = await client
         .from("adhdice_health_meal_plan_entries")
-        .insert({ ...input, user_id: userId })
+        .insert({ ...normalizedInput, user_id: userId })
         .select("*")
         .single();
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (!isMissingHealthPersistence(error.message)) {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
+      if (result.error && isMissingHealthPersistence(result.error.message)) {
         mealPlanRemoteEnabledRef.current = false;
         setMessage({ tone: "neutral", text: "Meal planning is saved locally until the 7.11.61 migration is applied." });
       } else {
-        nextRow = data ?? localRow;
+        const reconciled = await reconcileHealthMealPlanEntryInsert({
+          input: normalizedInput,
+          result,
+          lookupById: async (id) => {
+            const { data, error } = await client
+              .from("adhdice_health_meal_plan_entries")
+              .select("*")
+              .eq("id", id)
+              .eq("user_id", userId)
+              .maybeSingle();
+            if (!isCurrentOperation(operation)) return { row: null, error: "Health operation is no longer active." };
+            return { row: data, error: error?.message ?? null };
+          },
+        });
+        if (!reconciled.row) {
+          setMessage({ tone: "warn", text: reconciled.error ?? "The planned meal save could not be confirmed." });
+          return false;
+        }
+        nextRow = reconciled.row;
         persistedRemotely = true;
       }
     }
 
     if (!isCurrentOperation(operation)) return false;
+    const currentMealPlans = healthSnapshotRef.current?.mealPlanEntries ?? mealPlanEntries;
+    if (!persistedRemotely) {
+      const existingLocal = currentMealPlans.find((entry) => entry.id === planId);
+      if (existingLocal) {
+        if (!healthMealPlanEntryInsertMatches(existingLocal, normalizedInput)) {
+          setMessage({ tone: "warn", text: "The plan ID is already in use by a different planned meal." });
+          return false;
+        }
+        nextRow = existingLocal;
+      }
+    }
     if (persistedRemotely) {
       clearMealPlanPendingMutation(nextRow.id);
     } else {
@@ -3143,7 +3176,7 @@ export function useHealth(
       favorites,
       importAudits,
       mealEntries,
-      mealPlanEntries: [nextRow, ...mealPlanEntries.filter((entry) => entry.id !== nextRow.id)].sort(sortHealthMealPlans),
+      mealPlanEntries: [nextRow, ...currentMealPlans.filter((entry) => entry.id !== nextRow.id)].sort(sortHealthMealPlans),
       metricEntries,
       profile,
       recipes,
@@ -3355,12 +3388,13 @@ export function useHealth(
       updated_at: confirmedAt,
       user_id: userId,
     };
-    const nextMealEntries = mealEntries.some((entry) => entry.id === actualMealEntryId)
-      ? mealEntries
-      : [actualRow, ...mealEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at));
-    const nextPlanEntries = mealPlanEntries.map((entry) => entry.id === planId
-      ? { ...entry, confirmed_at: confirmedAt, confirmed_meal_entry_id: actualMealEntryId, updated_at: confirmedAt }
-      : entry);
+    const { mealEntries: nextMealEntries, mealPlanEntries: nextPlanEntries } = reconcileHealthMealPlanConfirmation({
+      mealEntries,
+      mealPlanEntries,
+      planId,
+      actualEntry: actualRow,
+      confirmedAt,
+    });
     const nextSnapshot = buildHealthSnapshot({
       awards,
       checkIns,

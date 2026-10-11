@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.140`.
+- Current working app version: `7.16.141`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -373,6 +373,41 @@ integer values, so macro rounding was not its mismatch. Focused verification:
 `test/health-meal-logging.test.ts` passed (55/55); targeted ESLint and
 `git diff --check` passed. Browser QA, production build, full typecheck, and
 broad tests were not run. No SQL or schema change was made.
+
+## 2026-10-11 7.16.141 T5b.4b Shared Planned Meal Editing Sessions
+
+T5b.4a Actual Food Editing passed Andrew's six browser QA tests on 7.16.140.
+Planned Meal editing now uses a separate user-scoped editing-session store.
+Saved plan sessions are keyed by canonical `HealthMealPlanEntry` ID and shared
+across Master Tabs. Each tab has its own stable `newPlannedMealDraftId`,
+independent of actual Food's `newMealDraftId`. Plan draft contents, including
+planned date, meal slot, entered food values, and library-save choice, live in
+the shared session store. Quick Entry mode, selected Food history date, active
+slot, selected saved plan, and other editor presentation remain per-tab Master
+Workspace state.
+
+The existing `addMealPlanEntry` and `updateMealPlanEntry` paths remain the
+persistence authorities and retain local pending-mutation replay/fallback.
+New-plan retries reuse one stable plan ID. An ambiguous insert acknowledgment
+is reconciled by exact authenticated user and plan ID, then checked against
+PostgreSQL timestamp, numeric, and JSONB normalization before success is
+reported. Successful writes reconcile the session and Health collection;
+failed writes retain the draft with an actionable error. Planned entries remain
+outside consumed-food totals until the existing Done confirmation succeeds.
+Done and Remove are blocked with feedback while any tab has a dirty plan draft;
+the existing confirmation RPC, eligibility, rewards, and idempotent confirmed
+entry relationship are unchanged. Explicit Discard Draft is available.
+
+Custom Food definition, Recipe, and Saved Meal definition sessions remain
+deferred to T5b.4c. No SQL or schema change was made.
+
+Focused verification for 7.16.141: the Planned Meal session, Master Workspace,
+meal planning, actual Food session, and meal logging tests passed (118/118).
+Standard targeted ESLint reports 14 `react-hooks/set-state-in-effect` errors
+and 67 warnings in the selected files. With that existing rule disabled, it
+reports zero errors and 66 warnings. `git diff --check` passed. Browser QA is
+pending; production build and full typecheck were not run. Browser, build, and
+full-typecheck behavior remain unverified.
 
 ## 2026-10-11 7.16.139 Food Add Editor Update Correction
 

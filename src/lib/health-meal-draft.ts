@@ -2,11 +2,13 @@ import type {
   HealthFoodLibraryItem,
   HealthMealEntry,
   HealthMealEntryInsert,
+  HealthMealPlanEntry,
+  HealthMealPlanEntryInsert,
   HealthNutritionDetails,
   HealthServingMeasureUnit,
 } from "@/lib/database.types";
 import type { EditingSessionStore } from "@/lib/editing-session-store";
-import { getCurrentHealthDateTimeInputs } from "@/lib/health-utils";
+import { getCurrentHealthDateTimeInputs, normalizeHealthMealTime } from "@/lib/health-utils";
 import { buildHealthMealFoodSnapshot, formatHealthConsumedMealLabel, normalizeHealthMealStoredCalories } from "@/lib/health-meal-recalculation";
 import { calculateHealthFoodNutrition } from "@/lib/health-nutrition";
 
@@ -324,6 +326,73 @@ export async function reconcileHealthMealEntryInsert({
     return { row: null, error: "The saved meal did not match the draft. Your draft is still available to retry." };
   }
   return { row: null, error: result.error?.message ?? "The meal save could not be confirmed. Retry with the same draft." };
+}
+
+export function healthMealPlanEntryInsertMatches(
+  plan: HealthMealPlanEntry,
+  input: Omit<HealthMealPlanEntryInsert, "user_id">,
+) {
+  if (!input.id || plan.id !== input.id) return false;
+  const expected: Record<string, unknown> = {
+    attribution: input.attribution ?? null,
+    barcode: input.barcode ?? null,
+    brand_name: input.brand_name ?? null,
+    food_name: input.food_name,
+    meal_slot: input.meal_slot,
+    planned_date: input.planned_date,
+    provider: input.provider ?? "manual",
+    provider_item_id: input.provider_item_id ?? null,
+    serving_label: input.serving_label ?? null,
+    consumed_unit: input.consumed_unit ?? null,
+    source_food_id: input.source_food_id ?? null,
+  };
+  const actual = plan as unknown as Record<string, unknown>;
+  if (!Object.entries(expected).every(([key, value]) => (actual[key] ?? null) === value)) return false;
+  const expectedTime = normalizeHealthMealTime(input.planned_time);
+  const actualTime = normalizeHealthMealTime(plan.planned_time);
+  if (!expectedTime || !actualTime || expectedTime !== actualTime) return false;
+  if (normalizeHealthMealStoredCalories(input.calories) !== plan.calories) return false;
+  if (!mealMacroMatches(plan.protein_g, input.protein_g ?? null)
+    || !mealMacroMatches(plan.carbs_g, input.carbs_g ?? null)
+    || !mealMacroMatches(plan.fat_g, input.fat_g ?? null)) return false;
+  if (!nullableMealDecimalsEqual(plan.consumed_quantity ?? null, input.consumed_quantity ?? null)
+    || !nullableMealDecimalsEqual(plan.serving_fraction ?? null, input.serving_fraction ?? null)) return false;
+  if (!mealTimestampsEqual(plan.planned_at, input.planned_at)) return false;
+  if (plan.confirmed_at !== null || plan.confirmed_meal_entry_id !== null) return false;
+  return jsonbValuesEqual(plan.food_snapshot ?? null, input.food_snapshot ?? null)
+    && jsonbValuesEqual(plan.nutrition_snapshot ?? null, input.nutrition_snapshot ?? null);
+}
+
+export async function reconcileHealthMealPlanEntryInsert({
+  input,
+  result,
+  lookupById,
+}: {
+  input: Omit<HealthMealPlanEntryInsert, "user_id">;
+  result: { data: HealthMealPlanEntry | null; error: { code?: string; message: string } | null };
+  lookupById: (id: string) => Promise<{ row: HealthMealPlanEntry | null; error?: string | null }>;
+}): Promise<{ row: HealthMealPlanEntry | null; error: string | null }> {
+  if (!result.error && result.data && healthMealPlanEntryInsertMatches(result.data, input)) return { row: result.data, error: null };
+  const acknowledgmentMayBeAmbiguous = !result.error
+    || result.error.code === "23505"
+    || !result.error.code
+    || result.error.code.startsWith("08")
+    || result.error.code === "40003";
+  const mismatchedAcknowledgment = Boolean(result.data);
+  if (!acknowledgmentMayBeAmbiguous && !mismatchedAcknowledgment) return { row: null, error: result.error?.message ?? "The planned meal could not be saved." };
+  if (!input.id) {
+    return { row: null, error: result.error?.message ?? "The saved planned meal did not match the draft. Your draft is still available to retry." };
+  }
+  const lookup = await lookupById(input.id);
+  if (lookup.error) return { row: null, error: lookup.error };
+  if (lookup.row && healthMealPlanEntryInsertMatches(lookup.row, input)) return { row: lookup.row, error: null };
+  if (result.error?.code === "23505") {
+    return { row: null, error: "The plan ID is already in use by a different planned meal." };
+  }
+  if (mismatchedAcknowledgment) {
+    return { row: null, error: "The saved planned meal did not match the draft. Your draft is still available to retry." };
+  }
+  return { row: null, error: result.error?.message ?? "The planned meal save could not be confirmed. Retry with the same draft." };
 }
 
 export type MealFoodSelection = {
