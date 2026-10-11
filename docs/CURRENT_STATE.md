@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.137`.
+- Current working app version: `7.16.138`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -351,10 +351,57 @@ Focused verification for 7.16.137: `test/scratch-paper-editing-session.test.ts`,
 `test/scratch-paper-draft-safety.test.ts` passed (26/26). Scoped ESLint for the
 changed Scratch Paper component, editor helper, and focused tests passed with
 the existing `react-hooks/set-state-in-effect` rule disabled. `git diff --check`
-passed. Andrew's browser QA for typing, immediate Discard Draft visibility,
-save, reopen, Task links, dictation, and card editing is pending. The browser,
+passed. Andrew completed T5b.3 browser QA on 7.16.137; T5b.3 is closed. The
 production build, full typecheck, broad test suite, and live Supabase behavior
 were not run.
+
+## 2026-10-11 7.16.138 T5b.4 Food Editing Sessions, Focused First Slice
+
+T5b.3 closed after browser QA on 7.16.137. The active Food data authority is
+the existing `useHealth` collection: Add Food and Quick Entry call
+`addMealEntry`, logged-history edits call `updateMealEntry`, and the Health
+library keeps its existing `saveFavoriteFood`, `saveRecipe`, and `saveSavedMeal`
+mutations. Meal Plan create/edit/confirm remains on the separate planning and
+confirmation paths.
+
+Actual consumed-food entries now use the user-scoped TaskApp editing-session
+store. Saved entry drafts are keyed by canonical `HealthMealEntry` ID and are
+shared across Master Tabs. Each tab's new-entry draft uses its stable
+`newMealDraftId` as the session and persisted record ID. Food presentation is
+stored separately per tab: history date, active slot, selected history record,
+editor mode, Quick Entry state, food selection/category filters, library
+section, and library search filters. Draft contents remain in the session
+store. Actual food drafts survive page changes and HealthPage remounts; changing
+the history date or meal slot cannot reassign a dirty draft. Save errors retain
+the draft, retries reuse the same record ID, successful saves reconcile the
+shared baseline, and Discard restores the baseline without mutating persisted
+Health data.
+
+The existing `addMealEntry` mutation still owns local/remote behavior and
+awards. It checks duplicate local IDs and reconciles ambiguous remote insert
+acknowledgments against the exact user-scoped record and nutrition payload
+before reporting success. Serving quantities, source food references,
+snapshots, calculated macros, date, time, slot, and timestamps use the existing
+nutrition calculator and meal serialization path.
+
+This is a focused first slice, not completion of T5b.4. Planned Meal draft
+editing remains on its legacy guarded path. Custom Food definition editing,
+Recipe editing, and Saved Meal editing remain in `HealthLibraryPanel` with
+their existing draft guards and persistence APIs; their draft contents do not
+use shared sessions. These distinct editor models are deferred to the next
+T5b.4 slice.
+
+Focused verification for 7.16.138: Food session, meal draft/logging, Master
+Workspace state/controller tests passed (105/105). Standard targeted ESLint
+reports 14 `react-hooks/set-state-in-effect` errors and 67 existing warnings.
+With that existing rule disabled, the changed paths report no errors and 69
+warnings. The configured TypeScript check still fails with 282 diagnostics
+across 60 repository files; no diagnostics remain in the new Food session
+helper, Health library presentation wiring, or Master Workspace Food state.
+`git diff --check` passed. Browser QA remains pending for cross-tab sharing,
+date/slot changes, save/discard/retry, barcode, Favorites/Recent, measured
+Custom Food, planned Meal guards, local/remote fallback, and award behavior.
+Production build and broad tests were not run.
 
 Focused verification for 7.16.125: Master Workspace state, controller, and
 Tasks UI-state tests passed (42/42); focused ESLint for the state/controller

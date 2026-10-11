@@ -141,6 +141,7 @@ import { areScratchPaperDraftsEqual } from "@/lib/scratch-paper-draft";
 import type { ScratchPaperEditingSessionDraft } from "@/lib/scratch-paper-draft";
 import { areHealthJournalDraftsEqual } from "@/lib/health-journal-checkins";
 import type { JournalCheckInDraftSnapshot } from "./task-app/journal-check-in-form";
+import { areHealthFoodEditingSessionDraftsEqual, type HealthFoodEditingSessionDraft } from "@/lib/health-meal-draft";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
@@ -1358,6 +1359,11 @@ export function TaskApp() {
     [currentUserId],
   );
   useEffect(() => () => journalDraftSessionStore.reset(), [journalDraftSessionStore]);
+  const healthFoodDraftSessionStore = useMemo(
+    () => createEditingSessionStore<HealthFoodEditingSessionDraft>(currentUserId ?? "signed-out", areHealthFoodEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => healthFoodDraftSessionStore.reset(), [healthFoodDraftSessionStore]);
   const notesDraftSessionStore = useMemo(
     () => createEditingSessionStore<NotesEditingSessionDraft>(currentUserId ?? "signed-out", areNotesEditingSessionDraftsEqual),
     [currentUserId],
@@ -1422,15 +1428,17 @@ export function TaskApp() {
   const masterWorkspaceDraftProtection = useMemo(() => ({
     canCloseView(viewId: string) {
       return journalDraftSessionStore.canCloseView(viewId)
+        && healthFoodDraftSessionStore.canCloseView(viewId)
         && notesDraftSessionStore.canCloseView(viewId)
         && scratchPaperDraftSessionStore.canCloseView(viewId);
     },
     detachView(viewId: string) {
       journalDraftSessionStore.detachView(viewId);
+      healthFoodDraftSessionStore.detachView(viewId);
       notesDraftSessionStore.detachView(viewId);
       scratchPaperDraftSessionStore.detachView(viewId);
     },
-  }), [journalDraftSessionStore, notesDraftSessionStore, scratchPaperDraftSessionStore]);
+  }), [healthFoodDraftSessionStore, journalDraftSessionStore, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
   const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
@@ -5776,6 +5784,7 @@ export function TaskApp() {
     if (!masterWorkspace.featureEnabled || typeof window === "undefined") return;
     const protectUnsavedEditingSessions = (event: BeforeUnloadEvent) => {
       if (!journalDraftSessionStore.hasUnsavedDrafts()
+        && !healthFoodDraftSessionStore.hasUnsavedDrafts()
         && !notesDraftSessionStore.hasUnsavedDrafts()
         && !scratchPaperDraftSessionStore.hasUnsavedDrafts()) return;
       event.preventDefault();
@@ -5783,7 +5792,7 @@ export function TaskApp() {
     };
     window.addEventListener("beforeunload", protectUnsavedEditingSessions);
     return () => window.removeEventListener("beforeunload", protectUnsavedEditingSessions);
-  }, [journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore, scratchPaperDraftSessionStore]);
+  }, [healthFoodDraftSessionStore, journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
     ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
     : legacyHealthTabPreference;
@@ -9130,6 +9139,9 @@ export function TaskApp() {
             journalView={masterWorkspace.isEnabled ? masterWorkspace.activeJournalView : undefined}
             onJournalViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateJournalView : undefined}
             journalSessionStore={masterWorkspace.isEnabled ? journalDraftSessionStore : null}
+            foodView={masterWorkspace.isEnabled ? masterWorkspace.activeFoodView : undefined}
+            onFoodViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateFoodView : undefined}
+            foodSessionStore={masterWorkspace.isEnabled ? healthFoodDraftSessionStore : null}
             awards={healthAwards}
             archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}

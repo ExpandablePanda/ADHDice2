@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, Apple, BookOpen, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, History, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref, type SetStateAction } from "react";
 
 import type {
   HealthAchievementAward,
@@ -75,6 +75,15 @@ import {
   mealFoodSelectionFromLibraryItem,
   prepareMealDraftForSelectedSlot,
   resetMealDraftForNextItem,
+  createHealthFoodDraftId,
+  createHealthFoodEditingSessionDraft,
+  hasUnsafeUnconvertedHealthFoodDraft,
+  healthMealEntrySessionId,
+  healthMealNewEntrySessionId,
+  prepareHealthMealEntryFromDraft,
+  saveHealthFoodEditingSession,
+  type HealthFoodEditingSessionDraft,
+  type MealEditDraft,
   type MealDraft,
   type MealFoodSelection,
 } from "@/lib/health-meal-draft";
@@ -226,7 +235,7 @@ import type { JournalCheckInDraftSnapshot } from "./journal-check-in-form";
 import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
 import type { EditingSessionStore } from "@/lib/editing-session-store";
-import { selectJournalHistoryEntryForEdit, type MasterJournalWorkspaceMode, type MasterTabPresentationState } from "@/lib/master-workspace-state";
+import { createDefaultMasterFoodWorkspaceView, selectJournalHistoryEntryForEdit, type MasterFoodWorkspaceView, type MasterJournalWorkspaceMode, type MasterTabPresentationState } from "@/lib/master-workspace-state";
 
 type HealthPageProps = {
   activeTab: HealthTab;
@@ -236,6 +245,9 @@ type HealthPageProps = {
   journalView?: MasterTabPresentationState["journalView"];
   onJournalViewChange?: (journalView: MasterTabPresentationState["journalView"]) => void;
   journalSessionStore?: EditingSessionStore<JournalCheckInDraftSnapshot> | null;
+  foodView?: MasterFoodWorkspaceView;
+  onFoodViewChange?: (foodView: MasterFoodWorkspaceView) => void;
+  foodSessionStore?: EditingSessionStore<HealthFoodEditingSessionDraft> | null;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
   journalSignals: HealthJournalSignal[];
@@ -477,26 +489,6 @@ const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
   Stress: ["Calm", "Very low", "Low", "Mild", "Moderate", "Noticeable", "High", "Very high", "Severe", "Overwhelmed"],
   "Mental clarity": ["Foggy", "Very foggy", "Unclear", "Distracted", "Mixed", "Fair", "Clear", "Very clear", "Sharp", "Crystal clear"],
 };
-
-type MealEditDraft = {
-  mode: "legacy" | "structured";
-  calories: string;
-  carbs: string;
-  date: string;
-  fat: string;
-  mealSlot: HealthMealEntry["meal_slot"];
-  protein: string;
-  quantity: string;
-  measurement: string;
-  servingLabel: string;
-  time: string;
-};
-
-function createQuickFoodId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `quick-food-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
 
 function createJournalDraftId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -1177,6 +1169,9 @@ export function HealthPage({
   journalView,
   onJournalViewChange,
   journalSessionStore,
+  foodView,
+  onFoodViewChange,
+  foodSessionStore,
   checkIns,
   journalSignals,
   journalSignalValues,
@@ -1294,24 +1289,58 @@ export function HealthPage({
   const reportFitnessDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Fitness", "fitness-tab", isUnsafe), [reportSectionDraftSafety]);
   const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
   const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
+  const [legacyFoodView, setLegacyFoodView] = useState<MasterFoodWorkspaceView>(() => createDefaultMasterFoodWorkspaceView());
+  const activeFoodView = foodView ?? legacyFoodView;
+  const setFoodView = useCallback((update: SetStateAction<MasterFoodWorkspaceView>) => {
+    if (foodView && onFoodViewChange) {
+      onFoodViewChange(typeof update === "function" ? update(foodView) : update);
+      return;
+    }
+    setLegacyFoodView(update);
+  }, [foodView, onFoodViewChange]);
+  const setFoodViewField = useCallback(function setFoodViewField<Key extends keyof MasterFoodWorkspaceView>(
+    key: Key,
+    value: SetStateAction<MasterFoodWorkspaceView[Key]>,
+  ) {
+    setFoodView((current) => ({
+      ...current,
+      [key]: typeof value === "function"
+        ? (value as (previous: MasterFoodWorkspaceView[Key]) => MasterFoodWorkspaceView[Key])(current[key])
+        : value,
+    }));
+  }, [setFoodView]);
+  const foodHistoryDate = activeFoodView.historyDate;
+  const activeMealEntrySlot = activeFoodView.activeMealEntrySlot;
+  const mealEditorMode = activeFoodView.mealEditorMode;
+  const editingMealPlanId = activeFoodView.editingMealPlanId;
+  const editingMealId = activeFoodView.selectedMealEntryId;
+  const isQuickEntryOpen = activeFoodView.isQuickEntryOpen;
+  const customFoodSearchQuery = activeFoodView.customFoodSearchQuery;
+  const selectedCustomFoodCategory = activeFoodView.selectedCustomFoodCategory;
+  const isCustomFoodCategoriesOpen = activeFoodView.isCustomFoodCategoriesOpen;
+  const expandedFavoriteId = activeFoodView.expandedFavoriteId;
+  const setFoodHistoryDate = useCallback((value: SetStateAction<string>) => setFoodViewField("historyDate", value), [setFoodViewField]);
+  const setActiveMealEntrySlot = useCallback((value: SetStateAction<HealthMealEntry["meal_slot"] | null>) => setFoodViewField("activeMealEntrySlot", value), [setFoodViewField]);
+  const setMealEditorMode = useCallback((value: SetStateAction<"actual" | "plan">) => setFoodViewField("mealEditorMode", value), [setFoodViewField]);
+  const setEditingMealPlanId = useCallback((value: SetStateAction<string | null>) => setFoodViewField("editingMealPlanId", value), [setFoodViewField]);
+  const setEditingMealId = useCallback((value: SetStateAction<string | null>) => setFoodViewField("selectedMealEntryId", value), [setFoodViewField]);
+  const setIsQuickEntryOpen = useCallback((value: SetStateAction<boolean>) => setFoodViewField("isQuickEntryOpen", value), [setFoodViewField]);
+  const setCustomFoodSearchQuery = useCallback((value: SetStateAction<string>) => setFoodViewField("customFoodSearchQuery", value), [setFoodViewField]);
+  const setSelectedCustomFoodCategory = useCallback((value: SetStateAction<string | null>) => setFoodViewField("selectedCustomFoodCategory", value), [setFoodViewField]);
+  const setIsCustomFoodCategoriesOpen = useCallback((value: SetStateAction<boolean>) => setFoodViewField("isCustomFoodCategoriesOpen", value), [setFoodViewField]);
+  const setExpandedFavoriteId = useCallback((value: SetStateAction<string | null>) => setFoodViewField("expandedFavoriteId", value), [setFoodViewField]);
+  const setFoodLibrarySection = useCallback((value: MasterFoodWorkspaceView["librarySection"]) => setFoodViewField("librarySection", value), [setFoodViewField]);
+  const setFoodLibrarySearchQuery = useCallback((value: string) => setFoodViewField("foodLibrarySearchQuery", value), [setFoodViewField]);
+  const setIngredientSearchQuery = useCallback((value: string) => setFoodViewField("ingredientSearchQuery", value), [setFoodViewField]);
+  const [foodEditorNotice, setFoodEditorNotice] = useState<string | null>(null);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
-  const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
-  const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
-  const [mealEditorMode, setMealEditorMode] = useState<"actual" | "plan">("actual");
-  const [editingMealPlanId, setEditingMealPlanId] = useState<string | null>(null);
-  const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
-  const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
-  const [isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen] = useState(false);
-  const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
+  const [legacyMealDraft, setLegacyMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
+  const [legacySaveQuickEntryToLibrary, setLegacySaveQuickEntryToLibrary] = useState(false);
   const [sleepLedgerDate, setSleepLedgerDate] = useState(todayHealthDate());
-  const [expandedFavoriteId, setExpandedFavoriteId] = useState<string | null>(null);
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookupError, setBarcodeLookupError] = useState("");
   const [barcodeLookupStatus, setBarcodeLookupStatus] = useState<"idle" | "barcode">("idle");
-  const [isQuickEntryOpen, setIsQuickEntryOpen] = useState(false);
-  const [saveQuickEntryToLibrary, setSaveQuickEntryToLibrary] = useState(false);
-  const [editingMealId, setEditingMealId] = useState<string | null>(null);
-  const [mealEditDraft, setMealEditDraft] = useState<MealEditDraft>({
+  const [legacyMealEditDraft, setLegacyMealEditDraft] = useState<MealEditDraft>({
     mode: "legacy",
     calories: "",
     carbs: "",
@@ -1429,11 +1458,108 @@ export function HealthPage({
   const previousFeelingTrendDefinitionKeysRef = useRef<string[]>([]);
   const hasInitializedFeelingTrendSelectionRef = useRef(false);
   const today = todayHealthDate();
+  const foodSessionViewId = activeMasterTabId ?? "health-food-legacy";
+  const newFoodSessionDraftId = healthMealNewEntrySessionId(activeFoodView.newMealDraftId);
+  const newFoodSessionInitialDraft = useMemo(() => {
+    const initialMealDraft = {
+      ...createDefaultMealDraft(activeMealEntrySlot ?? "breakfast"),
+      date: foodHistoryDate,
+      mealSlot: activeMealEntrySlot ?? "breakfast",
+    };
+    return createHealthFoodEditingSessionDraft(initialMealDraft, {
+      entryId: activeFoodView.newMealDraftId,
+      quickFoodId: activeFoodView.newMealDraftId,
+    });
+  }, [activeFoodView.newMealDraftId, activeMealEntrySlot, foodHistoryDate]);
+  const subscribeToNewFoodSession = useCallback((listener: () => void) => (
+    foodSessionStore ? foodSessionStore.subscribeToSession(newFoodSessionDraftId, listener) : () => {}
+  ), [foodSessionStore, newFoodSessionDraftId]);
+  const getNewFoodSessionSnapshot = useCallback(
+    () => foodSessionStore?.getSnapshot(newFoodSessionDraftId) ?? null,
+    [foodSessionStore, newFoodSessionDraftId],
+  );
+  const newFoodSession = useSyncExternalStore(subscribeToNewFoodSession, getNewFoodSessionSnapshot, () => null);
+  const savedMealForEditing = editingMealId ? mealEntries.find((entry) => entry.id === editingMealId) ?? null : null;
+  const savedFoodSessionDraftId = editingMealId ? healthMealEntrySessionId(editingMealId) : "";
+  const savedFoodSessionInitialDraft = useMemo<HealthFoodEditingSessionDraft>(() => ({
+    kind: "saved-entry",
+    mealEditDraft: savedMealForEditing ? createMealEditDraftFromEntry(savedMealForEditing) : legacyMealEditDraft,
+  }), [legacyMealEditDraft, savedMealForEditing]);
+  const subscribeToSavedFoodSession = useCallback((listener: () => void) => (
+    foodSessionStore && savedFoodSessionDraftId
+      ? foodSessionStore.subscribeToSession(savedFoodSessionDraftId, listener)
+      : () => {}
+  ), [foodSessionStore, savedFoodSessionDraftId]);
+  const getSavedFoodSessionSnapshot = useCallback(
+    () => foodSessionStore && savedFoodSessionDraftId ? foodSessionStore.getSnapshot(savedFoodSessionDraftId) : null,
+    [foodSessionStore, savedFoodSessionDraftId],
+  );
+  const savedFoodSession = useSyncExternalStore(subscribeToSavedFoodSession, getSavedFoodSessionSnapshot, () => null);
+  const mealDraft = mealEditorMode === "plan" || !foodSessionStore
+    ? legacyMealDraft
+    : newFoodSession && newFoodSession.draft.kind === "new-entry" ? newFoodSession.draft.mealDraft : newFoodSessionInitialDraft.mealDraft;
+  const mealEditDraft = foodSessionStore && savedFoodSession?.draft.kind === "saved-entry"
+    ? savedFoodSession.draft.mealEditDraft
+    : legacyMealEditDraft;
+  const saveQuickEntryToLibrary = mealEditorMode === "actual" && newFoodSession?.draft.kind === "new-entry"
+    ? newFoodSession.draft.saveToLibrary
+    : legacySaveQuickEntryToLibrary;
+  const setMealDraft = useCallback((update: SetStateAction<MealDraft>) => {
+    if (foodSessionStore && mealEditorMode === "actual") {
+      foodSessionStore.updateDraft(newFoodSessionDraftId, (current) => current.kind === "new-entry"
+        ? { ...current, mealDraft: typeof update === "function" ? update(current.mealDraft) : update }
+        : current);
+      return;
+    }
+    setLegacyMealDraft(update);
+  }, [foodSessionStore, mealEditorMode, newFoodSessionDraftId]);
+  const setMealEditDraft = useCallback((update: SetStateAction<MealEditDraft>) => {
+    if (foodSessionStore && editingMealId) {
+      foodSessionStore.updateDraft(savedFoodSessionDraftId, (current) => current.kind === "saved-entry"
+        ? { ...current, mealEditDraft: typeof update === "function" ? update(current.mealEditDraft) : update }
+        : current);
+      return;
+    }
+    setLegacyMealEditDraft(update);
+  }, [editingMealId, foodSessionStore, savedFoodSessionDraftId]);
+  const setSaveQuickEntryToLibrary = useCallback((update: SetStateAction<boolean>) => {
+    if (foodSessionStore && mealEditorMode === "actual") {
+      foodSessionStore.updateDraft(newFoodSessionDraftId, (current) => current.kind === "new-entry"
+        ? { ...current, saveToLibrary: typeof update === "function" ? update(current.saveToLibrary) : update }
+        : current);
+      return;
+    }
+    setLegacySaveQuickEntryToLibrary(update);
+  }, [foodSessionStore, mealEditorMode, newFoodSessionDraftId]);
+
+  useLayoutEffect(() => {
+    if (!foodSessionStore) return;
+    foodSessionStore.ensureSession(
+      newFoodSessionDraftId,
+      `unsaved-health-meal:${activeFoodView.newMealDraftId}`,
+      newFoodSessionInitialDraft,
+    );
+    foodSessionStore.attachView(newFoodSessionDraftId, foodSessionViewId);
+  }, [activeFoodView.newMealDraftId, foodSessionStore, foodSessionViewId, newFoodSessionDraftId, newFoodSessionInitialDraft]);
+  useLayoutEffect(() => {
+    if (!foodSessionStore || !editingMealId) return;
+    if (savedMealForEditing) {
+      foodSessionStore.ensureSession(savedFoodSessionDraftId, editingMealId, savedFoodSessionInitialDraft);
+    }
+    if (foodSessionStore.getSnapshot(savedFoodSessionDraftId)) {
+      foodSessionStore.attachView(savedFoodSessionDraftId, foodSessionViewId);
+    }
+  }, [editingMealId, foodSessionStore, foodSessionViewId, savedFoodSessionDraftId, savedFoodSessionInitialDraft, savedMealForEditing]);
   const hasUnsafeFoodDraft = Boolean(
-    (activeMealEntrySlot && hasMeaningfulMealDraft(mealDraft))
-    || editingMealId
-    || isSavingMeal
-    || mealSaveInFlightRef.current,
+    hasUnsafeUnconvertedHealthFoodDraft({
+      activeMealSlot: activeMealEntrySlot,
+      editingMealPlanId,
+      isSaving: isSavingMeal || mealSaveInFlightRef.current,
+      mealDraft: legacyMealDraft,
+      mealEditorMode,
+    })
+    || newFoodSession?.isSaving
+    || savedFoodSession?.isSaving
   );
   const hasUnsafeJournalLocalDraft = Boolean(
     journalOccurrenceEditorOpen
@@ -2005,7 +2131,7 @@ export function HealthPage({
     () => calculateMealDraft(mealDraft),
     [mealDraft],
   );
-  const mealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
+  const mealDate = mealDraft.date;
   const mealEditorNutrition = useMemo(
     () => sumMealNutritionForDate(mealEntries, mealDate),
     [mealDate, mealEntries],
@@ -2037,7 +2163,7 @@ export function HealthPage({
   const mealLoggedAt = buildHealthMealLoggedAt(mealDate, mealDraft.time);
   const mealTimestampError = mealLoggedAt === null
     ? "Choose a valid meal date and time."
-    : mealEditorMode === "actual" && isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time)
+    : mealEditorMode === "actual" && isHealthMealTimestampFuture(mealDraft.date, mealDraft.time)
       ? "Future meal times cannot be saved."
       : null;
   const canSaveMeal = activeMealEntrySlot !== null && mealDraft.foodName.trim().length > 0 && mealCalculation !== null && mealTimestampError === null;
@@ -2711,104 +2837,144 @@ export function HealthPage({
   }
 
   async function handleSaveMeal(): Promise<boolean> {
-    const calculation = mealCalculation;
     if (!activeMealEntrySlot) {
       return false;
     }
-    const selectedMealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
-    const loggedAt = buildHealthMealLoggedAt(selectedMealDate, mealDraft.time);
-    if (!calculation || !loggedAt || (mealEditorMode === "actual" && isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time))) {
-      return false;
-    }
-
-    let sourceFoodId = mealDraft.sourceFoodId;
-    if (isQuickEntryOpen && saveQuickEntryToLibrary) {
-      const libraryInput = {
-        calories: Math.round(calculation.nutrientTotals.calories),
-        carbs_g: calculation.nutrientTotals.carbs_g,
-        food_name: mealDraft.foodName.trim(),
-        fat_g: calculation.nutrientTotals.fat_g,
-        food_category: "Uncategorized",
-        id: createQuickFoodId(),
-        protein_g: calculation.nutrientTotals.protein_g,
-        provider: "manual",
-        ...(calculation.nutrientTotals.nutrition_details
-          ? { nutrition_details: calculation.nutrientTotals.nutrition_details }
-          : {}),
-        serving_label: "1 serving",
-        serving_size: "1 serving",
-        serving_quantity: 1,
-        serving_unit: "serving",
-        is_favorite: false,
-      };
-      const existingLibraryFood = favorites.find(
-        (food) => getHealthFoodIdentityKey(food) === getHealthFoodIdentityKey(libraryInput),
-      );
-      const savedLibraryFood = await saveFavoriteFood(libraryInput);
-      if (!savedLibraryFood) {
-        return false;
-      }
-      sourceFoodId = existingLibraryFood?.id ?? libraryInput.id;
-    } else if (isQuickEntryOpen) {
-      sourceFoodId = null;
-    }
-
-    const foodSnapshot = buildMealFoodSnapshot({ ...mealDraft, sourceFoodId });
-    const saved = mealEditorMode === "plan"
-      ? await (async () => {
-        const payload = buildHealthMealPlanPayload({
-          calculation,
-          draft: { ...mealDraft, sourceFoodId },
-          foodSnapshot,
-          mealSlot: activeMealEntrySlot,
-          plannedDate: selectedMealDate,
-          plannedTime: mealDraft.time,
-        });
-        if (editingMealPlanId) {
-          return updateMealPlanEntry(editingMealPlanId, buildHealthMealPlanUpdateFromPayload(payload));
-        }
-        return addMealPlanEntry(payload);
-      })()
-      : await addMealEntry({
-        attribution: mealDraft.attribution,
-        barcode: mealDraft.barcode,
-        brand_name: emptyToNull(mealDraft.brandName),
-        calories: Math.round(calculation.nutrientTotals.calories),
-        carbs_g: calculation.nutrientTotals.carbs_g,
-        entry_date: foodHistoryDate,
-        fat_g: calculation.nutrientTotals.fat_g,
-        food_name: mealDraft.foodName.trim(),
-        meal_slot: activeMealEntrySlot,
-        logged_at: loggedAt,
-        protein_g: calculation.nutrientTotals.protein_g,
-        provider: mealDraft.provider ?? "manual",
-        provider_item_id: mealDraft.providerItemId,
-        serving_label: formatHealthConsumedMealLabel(calculation, mealDraft.servingLabel),
-        source_food_id: sourceFoodId,
-        consumed_quantity: calculation.consumed.quantity,
-        consumed_unit: calculation.consumed.unit,
-        serving_fraction: calculation.servingFraction,
-        food_snapshot: foodSnapshot,
-        nutrition_snapshot: calculation.nutrientTotals,
+    if (mealEditorMode === "plan") {
+      const calculation = calculateMealDraft(legacyMealDraft);
+      const loggedAt = buildHealthMealLoggedAt(legacyMealDraft.date, legacyMealDraft.time);
+      if (!calculation || !loggedAt) return false;
+      let sourceFoodId = legacyMealDraft.sourceFoodId;
+      if (isQuickEntryOpen && legacySaveQuickEntryToLibrary) {
+        const libraryInput = {
+          calories: Math.round(calculation.nutrientTotals.calories),
+          carbs_g: calculation.nutrientTotals.carbs_g,
+          food_name: legacyMealDraft.foodName.trim(),
+          fat_g: calculation.nutrientTotals.fat_g,
+          food_category: "Uncategorized",
+          id: activeFoodView.newMealDraftId,
+          protein_g: calculation.nutrientTotals.protein_g,
+          provider: "manual",
+          ...(calculation.nutrientTotals.nutrition_details ? { nutrition_details: calculation.nutrientTotals.nutrition_details } : {}),
+          serving_label: "1 serving",
+          serving_size: "1 serving",
+          serving_quantity: 1,
+          serving_unit: "serving",
+          is_favorite: false,
+        };
+        const existingLibraryFood = favorites.find((food) => getHealthFoodIdentityKey(food) === getHealthFoodIdentityKey(libraryInput));
+        const savedLibraryFood = await saveFavoriteFood(libraryInput);
+        if (!savedLibraryFood) return false;
+        sourceFoodId = existingLibraryFood?.id ?? libraryInput.id;
+      } else if (isQuickEntryOpen) sourceFoodId = null;
+      const foodSnapshot = buildMealFoodSnapshot({ ...legacyMealDraft, sourceFoodId });
+      const payload = buildHealthMealPlanPayload({
+        calculation,
+        draft: { ...legacyMealDraft, sourceFoodId },
+        foodSnapshot,
+        mealSlot: activeMealEntrySlot,
+        plannedDate: legacyMealDraft.date,
+        plannedTime: legacyMealDraft.time,
       });
-    if (!saved) {
-      return false;
-    }
-    if (mealEditorMode === "plan" && editingMealPlanId) {
-      setEditingMealPlanId(null);
-      setMealEditorMode("actual");
-      setActiveMealEntrySlot(null);
-      setIsQuickEntryOpen(false);
+      const saved = editingMealPlanId
+        ? await updateMealPlanEntry(editingMealPlanId, buildHealthMealPlanUpdateFromPayload(payload))
+        : await addMealPlanEntry(payload);
+      if (!saved) return false;
+      if (editingMealPlanId) {
+        setEditingMealPlanId(null);
+        setMealEditorMode("actual");
+        setActiveMealEntrySlot(null);
+        setIsQuickEntryOpen(false);
+        return true;
+      }
+      setLegacyMealDraft((current) => ({ ...resetMealDraftForNextItem(current), date: current.date, mealSlot: current.mealSlot }));
+      setCustomFoodSearchQuery("");
+      setBarcodeLookupError("");
+      setLegacySaveQuickEntryToLibrary(false);
       return true;
     }
-    setMealDraft((current) => {
-      const nextDraft = {
-        ...resetMealDraftForNextItem(current),
-        date: selectedMealDate,
-        mealSlot: activeMealEntrySlot,
-      };
-      return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
-    });
+
+    const persistNewMeal = async (sessionDraft: HealthFoodEditingSessionDraft) => {
+      if (sessionDraft.kind !== "new-entry") return { error: "This Food draft is no longer available. Reopen Add Food and retry." } as const;
+      const draft = sessionDraft.mealDraft;
+      const loggedAt = buildHealthMealLoggedAt(draft.date, draft.time);
+      if (!loggedAt || isHealthMealTimestampFuture(draft.date, draft.time) || draft.mealSlot !== activeMealEntrySlot) {
+        return { error: "Choose a valid date, time, meal slot, and completed food before saving." } as const;
+      }
+      let sourceFoodId = draft.sourceFoodId;
+      const initialPreparation = prepareHealthMealEntryFromDraft(draft, {
+        date: draft.date,
+        id: sessionDraft.entryId,
+        loggedAt,
+        mealSlot: draft.mealSlot,
+      });
+      if (!initialPreparation) return { error: "Enter a valid food, amount, and measurement before saving." } as const;
+      const calculation = initialPreparation.calculation;
+      if (isQuickEntryOpen && sessionDraft.saveToLibrary) {
+        const libraryInput = {
+          calories: Math.round(calculation.nutrientTotals.calories),
+          carbs_g: calculation.nutrientTotals.carbs_g,
+          food_name: draft.foodName.trim(),
+          fat_g: calculation.nutrientTotals.fat_g,
+          food_category: "Uncategorized",
+          id: sessionDraft.quickFoodId,
+          protein_g: calculation.nutrientTotals.protein_g,
+          provider: "manual",
+          ...(calculation.nutrientTotals.nutrition_details ? { nutrition_details: calculation.nutrientTotals.nutrition_details } : {}),
+          serving_label: "1 serving",
+          serving_size: "1 serving",
+          serving_quantity: 1,
+          serving_unit: "serving",
+          is_favorite: false,
+        };
+        const existingLibraryFood = favorites.find((food) => getHealthFoodIdentityKey(food) === getHealthFoodIdentityKey(libraryInput));
+        const savedLibraryFood = await saveFavoriteFood(libraryInput);
+        if (!savedLibraryFood) return { error: "The Custom Food could not be saved. Your meal draft is still here." } as const;
+        sourceFoodId = existingLibraryFood?.id ?? libraryInput.id;
+      } else if (isQuickEntryOpen) sourceFoodId = null;
+      const prepared = sourceFoodId === initialPreparation.input.source_food_id
+        ? initialPreparation
+        : prepareHealthMealEntryFromDraft(draft, {
+          date: draft.date,
+          id: sessionDraft.entryId,
+          loggedAt,
+          mealSlot: draft.mealSlot,
+          sourceFoodId,
+        });
+      if (!prepared) return { error: "The meal’s nutrition could not be calculated. Your draft is still here." } as const;
+      const saved = await addMealEntry(prepared.input);
+      if (!saved) return { error: "The meal could not be saved. Check the warning above and retry; your draft is still here." } as const;
+      const resetDraft = resetMealDraftForNextItem(draft);
+      return {
+        savedDraft: {
+          ...sessionDraft,
+          mealDraft: isQuickEntryOpen ? { ...resetDraft, servingQuantity: 1 } : resetDraft,
+          saveToLibrary: false,
+        },
+      } as const;
+    };
+
+    let saved = false;
+    if (foodSessionStore) {
+      saved = await saveHealthFoodEditingSession({
+        store: foodSessionStore,
+        draftId: newFoodSessionDraftId,
+        removeAfterSuccess: true,
+        save: persistNewMeal,
+      });
+    } else {
+      const legacySessionDraft = createHealthFoodEditingSessionDraft(legacyMealDraft, {
+        entryId: activeFoodView.newMealDraftId,
+        quickFoodId: activeFoodView.newMealDraftId,
+      });
+      const result = await persistNewMeal(legacySessionDraft);
+      if (!("error" in result)) {
+        setLegacyMealDraft(result.savedDraft.kind === "new-entry" ? result.savedDraft.mealDraft : legacyMealDraft);
+        saved = true;
+      }
+    }
+    if (!saved) return false;
+    setFoodViewField("newMealDraftId", createHealthFoodDraftId());
     setCustomFoodSearchQuery("");
     setBarcodeLookupError("");
     setSaveQuickEntryToLibrary(false);
@@ -2840,48 +3006,104 @@ export function HealthPage({
   }
 
   function openMealComposerForSlot(slot: HealthMealEntry["meal_slot"], mode: "actual" | "plan" = "actual") {
-    const preserveFoodDraft = hasMeaningfulMealDraft(mealDraft);
-    setActiveMealEntrySlot(slot);
-    setMealEditorMode(mode);
-    setEditingMealPlanId(null);
-    setMealDraft((current) => preserveFoodDraft
-      ? { ...current, date: foodHistoryDate, mealSlot: slot }
-      : prepareMealDraftForSelectedSlot(current, foodHistoryDate, slot));
-    if (!preserveFoodDraft) {
+    if (mode === "actual") {
+      const currentSession = foodSessionStore?.getSnapshot(newFoodSessionDraftId);
+      if (currentSession?.dirty && currentSession.draft.kind === "new-entry") {
+        if (currentSession.draft.mealDraft.mealSlot !== slot) {
+          setFoodEditorNotice(`Finish or discard the ${getMealSlotLabel(currentSession.draft.mealDraft.mealSlot)} draft before opening ${getMealSlotLabel(slot)}.`);
+          return;
+        }
+        setActiveMealEntrySlot(currentSession.draft.mealDraft.mealSlot);
+        setMealEditorMode("actual");
+        setEditingMealPlanId(null);
+        setFoodEditorNotice(currentSession.draft.mealDraft.date === foodHistoryDate
+          ? null
+          : `This draft is still for ${formatHealthDateLabel(currentSession.draft.mealDraft.date)}. Save or discard it before logging for ${formatHealthDateLabel(foodHistoryDate)}.`);
+        return;
+      }
+      const currentDraft = currentSession?.draft.kind === "new-entry"
+        ? currentSession.draft.mealDraft
+        : mealDraft;
+      const nextMealDraft = prepareMealDraftForSelectedSlot(currentDraft, foodHistoryDate, slot);
+      if (foodSessionStore && currentSession?.draft.kind === "new-entry") {
+        foodSessionStore.rebaseIfClean(newFoodSessionDraftId, {
+          ...currentSession.draft,
+          mealDraft: nextMealDraft,
+          saveToLibrary: false,
+        });
+      } else if (!foodSessionStore) {
+        setLegacyMealDraft(nextMealDraft);
+      }
+      setActiveMealEntrySlot(slot);
+      setMealEditorMode("actual");
+      setEditingMealPlanId(null);
+      setFoodEditorNotice(null);
+      setIsQuickEntryOpen(false);
+      setSaveQuickEntryToLibrary(false);
+    } else {
+      setActiveMealEntrySlot(slot);
+      setMealEditorMode("plan");
+      setEditingMealPlanId(null);
+      setLegacyMealDraft(prepareMealDraftForSelectedSlot(legacyMealDraft, foodHistoryDate, slot));
+      setIsQuickEntryOpen(false);
+      setLegacySaveQuickEntryToLibrary(false);
+    }
+    if (!hasMeaningfulMealDraft(mealDraft)) {
       setIsQuickEntryOpen(false);
       setCustomFoodSearchQuery("");
       setBarcodeLookupError("");
       setSelectedCustomFoodCategory(null);
       setIsCustomFoodCategoriesOpen(false);
     }
-    setSaveQuickEntryToLibrary(false);
   }
 
   function closeMealEntryEditor() {
+    const currentNewSession = foodSessionStore?.getSnapshot(newFoodSessionDraftId);
+    if (mealEditorMode === "actual" && (currentNewSession?.dirty || currentNewSession?.saveError)) {
+      setFoodEditorNotice("Save or discard this Food draft before closing its editor.");
+      return;
+    }
+    if (mealEditorMode === "plan" && (editingMealPlanId || hasMeaningfulMealDraft(legacyMealDraft))) {
+      setFoodEditorNotice("Save or clear this planned meal draft before closing its editor.");
+      return;
+    }
     setActiveMealEntrySlot(null);
     setEditingMealPlanId(null);
+    if (mealEditorMode === "plan") setLegacySaveQuickEntryToLibrary(false);
     setMealEditorMode("actual");
     setIsScannerOpen(false);
+  }
+
+  function discardNewMealDraft() {
+    if (foodSessionStore) foodSessionStore.discardDraft(newFoodSessionDraftId);
+    else setLegacyMealDraft((current) => resetMealDraftForNextItem(current));
     setSaveQuickEntryToLibrary(false);
+    setFoodEditorNotice(null);
+    setBarcodeLookupError("");
+    setBarcodeLookupStatus("idle");
+  }
+
+  function closeMealEdit() {
+    if (foodSessionStore && editingMealId) foodSessionStore.discardDraft(savedFoodSessionDraftId);
+    else if (savedMealForEditing) setLegacyMealEditDraft(createMealEditDraftFromEntry(savedMealForEditing));
+    setEditingMealId(null);
   }
 
   function handleFoodHistoryDateChange(date: string) {
-    setActiveMealEntrySlot(null);
-    setEditingMealPlanId(null);
-    setMealEditorMode("actual");
-    setIsScannerOpen(false);
     setFoodHistoryDate(date);
+    const draft = foodSessionStore?.getSnapshot(newFoodSessionDraftId)?.draft;
+    setFoodEditorNotice(draft?.kind === "new-entry" && draft.mealDraft.date !== date
+      ? `Your unfinished draft remains for ${formatHealthDateLabel(draft.mealDraft.date)} · ${getMealSlotLabel(draft.mealDraft.mealSlot)}.`
+      : null);
   }
 
   function openQuickEntry() {
     setIsQuickEntryOpen(true);
-    setSaveQuickEntryToLibrary(false);
     setCustomFoodSearchQuery("");
-    setMealDraft((current) => ({
+    setSaveQuickEntryToLibrary(false);
+    setMealDraft((current) => hasMeaningfulMealDraft(current) ? current : ({
       ...resetMealDraftForNextItem(current),
       barcode: current.barcode,
-      date: foodHistoryDate,
-      mealSlot: activeMealEntrySlot ?? current.mealSlot,
       servingQuantity: 1,
     }));
   }
@@ -2889,31 +3111,14 @@ export function HealthPage({
   function closeQuickEntry() {
     setIsQuickEntryOpen(false);
     setSaveQuickEntryToLibrary(false);
-    setMealDraft((current) => ({
-      ...resetMealDraftForNextItem(current),
-    }));
   }
 
   function startEditingMeal(entry: HealthMealEntry) {
-    const structuredMeal = getStructuredMealDefinition(entry);
-    const parsedServing = parseQuantityServingLabel(entry.serving_label ?? "");
-    const quantity = parsedServing.quantity;
     setMealEditorMode("actual");
     setEditingMealPlanId(null);
     setEditingMealId(entry.id);
-    setMealEditDraft({
-      mode: structuredMeal ? "structured" : "legacy",
-      calories: structuredMeal ? String(structuredMeal.calories) : String(Math.round(entry.calories / quantity)),
-      carbs: entry.carbs_g === null ? "" : String(scaleNullableNumber(entry.carbs_g / quantity, 1)),
-      date: entry.entry_date,
-      fat: entry.fat_g === null ? "" : String(scaleNullableNumber(entry.fat_g / quantity, 1)),
-      mealSlot: entry.meal_slot,
-      protein: entry.protein_g === null ? "" : String(scaleNullableNumber(entry.protein_g / quantity, 1)),
-      quantity: structuredMeal ? String(entry.consumed_quantity) : String(quantity),
-      measurement: structuredMeal?.consumedUnit ?? "serving",
-      servingLabel: structuredMeal?.servingLabel ?? parsedServing.servingLabel,
-      time: formatTimeInput(entry.logged_at),
-    });
+    if (!foodSessionStore) setLegacyMealEditDraft(createMealEditDraftFromEntry(entry));
+    setFoodEditorNotice(null);
   }
 
   function startEditingMealPlan(plan: HealthMealPlanEntry) {
@@ -2922,10 +3127,10 @@ export function HealthPage({
     setMealEditorMode("plan");
     setEditingMealId(null);
     setEditingMealPlanId(plan.id);
-    setMealDraft(mealDraftFromHealthMealPlan(plan));
+    setLegacyMealDraft(mealDraftFromHealthMealPlan(plan));
     setCustomFoodSearchQuery(plan.brand_name ? `${plan.brand_name} · ${plan.food_name}` : plan.food_name);
     setIsQuickEntryOpen(false);
-    setSaveQuickEntryToLibrary(false);
+    setLegacySaveQuickEntryToLibrary(false);
     setBarcodeLookupError("");
     setSelectedCustomFoodCategory(null);
     setIsCustomFoodCategoriesOpen(false);
@@ -2934,63 +3139,70 @@ export function HealthPage({
   async function saveMealEdit(entryId: string) {
     const currentEntry = mealEntries.find((entry) => entry.id === entryId);
     const structuredMeal = currentEntry ? getStructuredMealDefinition(currentEntry) : null;
-    const loggedAt = buildHealthMealLoggedAt(mealEditDraft.date, mealEditDraft.time);
-    if (!loggedAt || isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time)) {
-      return;
-    }
-    if (!currentEntry) {
-      return;
-    }
-    if (structuredMeal && mealEditDraft.mode === "structured") {
-      const calculation = calculateMealSelection(
-        structuredMeal,
-        parsePositiveQuantity(mealEditDraft.quantity),
-        mealEditDraft.measurement,
-      );
-      if (!calculation || !mealEditDraft.date || !mealEditDraft.time) {
-        return;
+    if (!currentEntry) return;
+    const persistEdit = async (sessionDraft: HealthFoodEditingSessionDraft) => {
+      if (sessionDraft.kind !== "saved-entry") return { error: "This saved Food draft is no longer available. Reopen it and retry." } as const;
+      const draft = sessionDraft.mealEditDraft;
+      const loggedAt = buildHealthMealLoggedAt(draft.date, draft.time);
+      if (!loggedAt || isHealthMealTimestampFuture(draft.date, draft.time)) {
+        return { error: "Choose a past or current meal time. Your draft is still here." } as const;
       }
-      const saved = await updateMealEntry(entryId, {
-        calories: Math.round(calculation.nutrientTotals.calories),
-        carbs_g: calculation.nutrientTotals.carbs_g,
-        entry_date: mealEditDraft.date,
-        fat_g: calculation.nutrientTotals.fat_g,
-        logged_at: loggedAt,
-        meal_slot: mealEditDraft.mealSlot,
-        protein_g: calculation.nutrientTotals.protein_g,
-        serving_label: formatHealthConsumedMealLabel(calculation, structuredMeal.servingLabel),
-        source_food_id: currentEntry.source_food_id ?? structuredMeal.sourceFoodId,
-        consumed_quantity: calculation.consumed.quantity,
-        consumed_unit: calculation.consumed.unit,
-        serving_fraction: calculation.servingFraction,
-        food_snapshot: currentEntry.food_snapshot ?? buildMealFoodSnapshot(structuredMeal),
-        nutrition_snapshot: calculation.nutrientTotals,
+      let update: HealthMealEntryUpdate;
+      if (structuredMeal && draft.mode === "structured") {
+        const calculation = calculateMealSelection(structuredMeal, parsePositiveQuantity(draft.quantity), draft.measurement);
+        if (!calculation) return { error: "Enter a valid amount and measurement. Your draft is still here." } as const;
+        update = {
+          calories: Math.round(calculation.nutrientTotals.calories),
+          carbs_g: calculation.nutrientTotals.carbs_g,
+          entry_date: draft.date,
+          fat_g: calculation.nutrientTotals.fat_g,
+          logged_at: loggedAt,
+          meal_slot: draft.mealSlot,
+          protein_g: calculation.nutrientTotals.protein_g,
+          serving_label: formatHealthConsumedMealLabel(calculation, structuredMeal.servingLabel),
+          source_food_id: currentEntry.source_food_id ?? structuredMeal.sourceFoodId,
+          consumed_quantity: calculation.consumed.quantity,
+          consumed_unit: calculation.consumed.unit,
+          serving_fraction: calculation.servingFraction,
+          food_snapshot: currentEntry.food_snapshot ?? buildMealFoodSnapshot(structuredMeal),
+          nutrition_snapshot: calculation.nutrientTotals,
+        };
+      } else {
+        const calories = Number.parseInt(draft.calories, 10);
+        const quantity = parsePositiveQuantity(draft.quantity);
+        if (!Number.isFinite(calories) || calories < 0 || quantity === null) {
+          return { error: "Enter valid calories and serving amount. Your draft is still here." } as const;
+        }
+        update = {
+          calories: Math.round(calories * quantity),
+          carbs_g: scaleNullableNumber(parseNullableNumber(draft.carbs), quantity),
+          entry_date: draft.date,
+          fat_g: scaleNullableNumber(parseNullableNumber(draft.fat), quantity),
+          logged_at: loggedAt,
+          meal_slot: draft.mealSlot,
+          protein_g: scaleNullableNumber(parseNullableNumber(draft.protein), quantity),
+          serving_label: formatQuantityServingLabel(quantity, draft.servingLabel),
+        };
+      }
+      if (!await updateMealEntry(entryId, update)) {
+        return { error: "The meal could not be updated. Check the warning above and retry; your draft is still here." } as const;
+      }
+      return { savedDraft: sessionDraft } as const;
+    };
+
+    let saved: boolean;
+    if (foodSessionStore) {
+      saved = await saveHealthFoodEditingSession({
+        store: foodSessionStore,
+        draftId: savedFoodSessionDraftId,
+        save: persistEdit,
       });
-      if (saved) {
-        setEditingMealId(null);
-      }
-      return;
+    } else {
+      const sessionDraft: HealthFoodEditingSessionDraft = { kind: "saved-entry", mealEditDraft };
+      const result = await persistEdit(sessionDraft);
+      saved = !("error" in result);
     }
-
-    const calories = Number.parseInt(mealEditDraft.calories, 10);
-    const quantity = parsePositiveQuantity(mealEditDraft.quantity);
-    if (!Number.isFinite(calories) || calories < 0 || quantity === null || !mealEditDraft.date || !mealEditDraft.time) {
-      return;
-    }
-
-    const saved = await updateMealEntry(entryId, {
-      calories: Math.round(calories * quantity),
-      carbs_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.carbs), quantity),
-      entry_date: mealEditDraft.date,
-      fat_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.fat), quantity),
-      logged_at: loggedAt,
-      meal_slot: mealEditDraft.mealSlot,
-      protein_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.protein), quantity),
-      serving_label: formatQuantityServingLabel(quantity, mealEditDraft.servingLabel),
-    });
-    if (saved) {
-      setEditingMealId(null);
-    }
+    if (saved) setEditingMealId(null);
   }
 
   async function handleSaveWeight() {
@@ -3383,8 +3595,13 @@ export function HealthPage({
 
   function renderMealEntryEditor() {
     const isPlanMode = mealEditorMode === "plan";
+    const isNewFoodDraftDirty = Boolean(newFoodSession?.dirty || newFoodSession?.saveError)
+      || (!foodSessionStore && hasMeaningfulMealDraft(legacyMealDraft));
     return (
       <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+        {!isPlanMode ? <p className="text-xs font-medium text-[#73809c] dark:text-white/50">Draft for {getMealSlotLabel(mealDraft.mealSlot)} · {formatHealthDateLabel(mealDraft.date)}</p> : null}
+        {foodEditorNotice ? <InlineNotice text={foodEditorNotice} /> : null}
+        {!isPlanMode && newFoodSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{newFoodSession.saveError}</p> : null}
         <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(4rem,0.4fr)_minmax(5.5rem,0.5fr)_auto] sm:items-end">
           <Field label="Food">
             <HealthAutocomplete
@@ -3539,6 +3756,7 @@ export function HealthPage({
             <span className="text-xs text-[#73809c] dark:text-white/50">{isPlanMode ? "Add another food to this plan, or finish when you’re done." : "Add another food to this meal, or finish when you’re done."}</span>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            {!isPlanMode && isNewFoodDraftDirty ? <AdhdChip disabled={Boolean(newFoodSession?.isSaving)} onClick={discardNewMealDraft} type="button">Discard Draft</AdhdChip> : null}
             <AdhdChip contentClassName="gap-1.5" icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={clearMealDraft} title="Clear current food selection">Clear</AdhdChip>
             <AdhdChip onClick={closeMealEntryEditor}>Done</AdhdChip>
           <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveMeal} onClick={() => { void submitMeal(); }} type="button">{isPlanMode ? (isQuickEntryOpen ? "Add Quick Entry to Plan" : editingMealPlanId ? "Save Plan" : "Add to Plan") : isQuickEntryOpen ? "Add Quick Entry" : "Add Food"}</button>
@@ -4335,6 +4553,7 @@ export function HealthPage({
                           </Field>
                         </div>
                         {isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time) ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Choose a past or current meal time.</p> : null}
+                        {savedFoodSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{savedFoodSession.saveError}</p> : null}
                         <div aria-live="polite" className="text-sm text-[#5d6783] dark:text-white/65">
                           {editCalculation ? (
                             <>
@@ -4344,11 +4563,11 @@ export function HealthPage({
                           ) : "Enter a positive amount using one of this food’s supported measurements."}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" onClick={() => setEditingMealId(null)} type="button">
+                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" disabled={Boolean(savedFoodSession?.isSaving)} onClick={closeMealEdit} type="button">
                             <X aria-hidden="true" className="h-3.5 w-3.5" />
-                            Cancel
+                            {savedFoodSession?.dirty || savedFoodSession?.saveError ? "Discard Draft" : "Cancel"}
                           </button>
-                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60" disabled={!editCalculation} onClick={() => { void saveMealEdit(entry.id); }} type="button">
+                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60" disabled={!editCalculation || Boolean(savedFoodSession?.isSaving)} onClick={() => { void saveMealEdit(entry.id); }} type="button">
                             <Check aria-hidden="true" className="h-3.5 w-3.5" />
                             Save
                           </button>
@@ -4376,6 +4595,7 @@ export function HealthPage({
                           </Field>
                         </div>
                         {isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time) ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Choose a past or current meal time.</p> : null}
+                        {savedFoodSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{savedFoodSession.saveError}</p> : null}
                         <div className="grid gap-3 sm:grid-cols-[1.4fr_repeat(4,minmax(0,1fr))]">
                           <Field label="Serving">
                             <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, servingLabel: event.target.value }))} value={mealEditDraft.servingLabel} />
@@ -4394,11 +4614,11 @@ export function HealthPage({
                           </Field>
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" onClick={() => setEditingMealId(null)} type="button">
+                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" disabled={Boolean(savedFoodSession?.isSaving)} onClick={closeMealEdit} type="button">
                             <X aria-hidden="true" className="h-3.5 w-3.5" />
-                            Cancel
+                            {savedFoodSession?.dirty || savedFoodSession?.saveError ? "Discard Draft" : "Cancel"}
                           </button>
-                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5" onClick={() => { void saveMealEdit(entry.id); }} type="button">
+                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60" disabled={Boolean(savedFoodSession?.isSaving)} onClick={() => { void saveMealEdit(entry.id); }} type="button">
                             <Check aria-hidden="true" className="h-3.5 w-3.5" />
                             Save
                           </button>
@@ -4558,6 +4778,12 @@ export function HealthPage({
             deleteRecipe={deleteRecipe}
             deleteSavedMeal={deleteSavedMeal}
             favorites={favorites}
+            foodSearchQuery={activeFoodView.foodLibrarySearchQuery}
+            ingredientSearchQuery={activeFoodView.ingredientSearchQuery}
+            onFoodSearchQueryChange={setFoodLibrarySearchQuery}
+            onIngredientSearchQueryChange={setIngredientSearchQuery}
+            onSectionChange={setFoodLibrarySection}
+            section={activeFoodView.librarySection}
             mealEntries={mealEntries}
             recipes={recipes}
             saveFood={saveFavoriteFood}
@@ -5578,6 +5804,25 @@ function getStructuredMealDefinition(entry: HealthMealEntry): MealFoodSelection 
     servingQuantity,
     servingUnit: snapshot.serving_unit.trim(),
     sourceFoodId: entry.source_food_id ?? snapshot.source_food_id,
+  };
+}
+
+function createMealEditDraftFromEntry(entry: HealthMealEntry): MealEditDraft {
+  const structuredMeal = getStructuredMealDefinition(entry);
+  const parsedServing = parseQuantityServingLabel(entry.serving_label ?? "");
+  const quantity = parsedServing.quantity;
+  return {
+    mode: structuredMeal ? "structured" : "legacy",
+    calories: structuredMeal ? String(structuredMeal.calories) : String(Math.round(entry.calories / quantity)),
+    carbs: entry.carbs_g === null ? "" : String(scaleNullableNumber(entry.carbs_g / quantity, 1)),
+    date: entry.entry_date,
+    fat: entry.fat_g === null ? "" : String(scaleNullableNumber(entry.fat_g / quantity, 1)),
+    mealSlot: entry.meal_slot,
+    protein: entry.protein_g === null ? "" : String(scaleNullableNumber(entry.protein_g / quantity, 1)),
+    quantity: structuredMeal ? String(entry.consumed_quantity) : String(quantity),
+    measurement: structuredMeal?.consumedUnit ?? "serving",
+    servingLabel: structuredMeal?.servingLabel ?? parsedServing.servingLabel,
+    time: formatTimeInput(entry.logged_at),
   };
 }
 

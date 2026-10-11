@@ -11,6 +11,7 @@ const inlineEditorSource = source.slice(source.indexOf("function renderMealEntry
 const barcodeToolsSource = source.slice(source.indexOf("function renderMealBarcodeTools()"), source.indexOf("function renderMealCategoryFilter()"));
 const categorySource = source.slice(source.indexOf("function renderMealCategoryFilter()"), source.indexOf("function renderMealEntryEditor()"));
 const saveSource = source.slice(source.indexOf("async function handleSaveMeal()"), source.indexOf("function openMealComposerForSlot"));
+const newMealSaveSource = saveSource.slice(saveSource.indexOf("const persistNewMeal"), saveSource.indexOf("let saved = false"));
 const submitSource = source.slice(source.indexOf("async function submitMeal()"), source.indexOf("function clearMealDraft"));
 const clearSource = source.slice(source.indexOf("function clearMealDraft"), source.indexOf("function openMealComposerForSlot"));
 const healthPanelSource = source.slice(source.indexOf("function HealthPanel("));
@@ -112,7 +113,7 @@ test("inline Add Food removes manual barcode controls and keeps one compact scan
 });
 
 test("inline Add Food categories are collapsed by default and visibly retain an active filter", () => {
-  assert.match(source, /const \[isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen\] = useState\(false\)/);
+  assert.match(source, /const isCustomFoodCategoriesOpen = activeFoodView\.isCustomFoodCategoriesOpen/);
   assert.match(categorySource, /aria-expanded=\{isCustomFoodCategoriesOpen\}/);
   assert.match(categorySource, /\{selectedCustomFoodCategory && !isCustomFoodCategoriesOpen \? `Categories · \$\{selectedCustomFoodCategory\}` : "Categories"\}/);
   assert.match(categorySource, /\{isCustomFoodCategoriesOpen \? \(/);
@@ -143,7 +144,7 @@ test("Categories are visually placed beneath Food without changing the fast keyb
   assert.ok(inlineEditorSource.indexOf('label="Amount"') < inlineEditorSource.indexOf('label="Time"'));
   assert.ok(inlineEditorSource.indexOf('label="Time"') < inlineEditorSource.indexOf("renderMealBarcodeTools()"));
   assert.ok(inlineEditorSource.indexOf("renderMealBarcodeTools()") < inlineEditorSource.indexOf("renderMealCategoryFilter()"));
-  assert.match(source, /const \[isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen\] = useState\(false\)/);
+  assert.match(source, /const isCustomFoodCategoriesOpen = activeFoodView\.isCustomFoodCategoriesOpen/);
 });
 
 test("Amount Enter fast-submits actual and plan food, while invalid or composing Enter does nothing", () => {
@@ -151,7 +152,7 @@ test("Amount Enter fast-submits actual and plan food, while invalid or composing
   assert.match(inlineEditorSource, /event\.isComposing/);
   assert.match(inlineEditorSource, /event\.preventDefault\(\)/);
   assert.match(inlineEditorSource, /if \(canSaveMeal\) \{\s+const shouldRefocusFood = mealEditorMode === "actual" && !isQuickEntryOpen && editingMealId === null && editingMealPlanId === null;\s+void submitMeal\(\)\.then\(\(saved\) => \{\s+if \(saved && shouldRefocusFood\) \{\s+mealFoodAutocompleteRef\.current\?\.focus\(\);/);
-  assert.match(submitSource, /if \(!canSaveMeal \|\| mealSaveInFlightRef\.current\) \{\s+return false;/);
+  assert.match(submitSource, /if \(!canSaveMeal \|\| mealSaveInFlightRef\.current \|\| isSavingMeal\) \{\s+return false;/);
   assert.match(submitSource, /return await handleSaveMeal\(\);/);
   assert.match(inlineEditorSource, /: isQuickEntryOpen \? "Add Quick Entry" : "Add Food"/);
   assert.match(inlineEditorSource, /editingMealPlanId \? "Save Plan" : "Add to Plan"/);
@@ -160,7 +161,7 @@ test("Amount Enter fast-submits actual and plan food, while invalid or composing
 test("Food refocus is success-only and keyboard-only", () => {
   const saveButtonSource = inlineEditorSource.slice(inlineEditorSource.indexOf('<button className="ui-pill-button-strong-light'));
   assert.match(inlineEditorSource, /focusRef=\{mealFoodAutocompleteRef\}/);
-  assert.match(saveSource, /if \(!saved\) \{\s+return false;\s+\}/);
+  assert.match(saveSource, /if \(!saved\) return false;/);
   assert.match(saveSource, /return true;/);
   assert.match(inlineEditorSource, /if \(saved && shouldRefocusFood\) \{\s+mealFoodAutocompleteRef\.current\?\.focus\(\);/);
   assert.match(saveButtonSource, /onClick=\{\(\) => \{ void submitMeal\(\); \}\}/);
@@ -233,7 +234,7 @@ test("the meal ledger keeps breakfast, lunch, dinner, and snack as its only slot
 });
 
 test("each section opens the one shared inline editor for its own slot", () => {
-  assert.match(source, /const \[activeMealEntrySlot, setActiveMealEntrySlot\] = useState/);
+  assert.match(source, /const activeMealEntrySlot = activeFoodView\.activeMealEntrySlot/);
   assert.match(foodSource, /onClick=\{\(\) => openMealComposerForSlot\(slot\)\}/);
   assert.match(foodSource, /activeMealEntrySlot === slot \? renderMealEntryEditor\(\) : null/);
   assert.match(source, /setActiveMealEntrySlot\(slot\);/);
@@ -252,29 +253,28 @@ test("inline editor keeps actual fast-entry order and adds Date/Meal only for pl
 });
 
 test("selected ledger date and active section are the canonical new-entry authorities", () => {
-  assert.match(saveSource, /const selectedMealDate = mealEditorMode === \"plan\" \? mealDraft\.date : foodHistoryDate/);
-  assert.match(saveSource, /buildHealthMealLoggedAt\(selectedMealDate, mealDraft\.time\)/);
-  assert.match(saveSource, /entry_date: foodHistoryDate,/);
-  assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
-  assert.match(source, /prepareMealDraftForSelectedSlot\(current, foodHistoryDate, slot\)/);
-  assert.match(source, /preserveFoodDraft\s*\? \{ \.\.\.current, date: foodHistoryDate, mealSlot: slot \}/);
+  assert.match(newMealSaveSource, /draft\.mealSlot !== activeMealEntrySlot/);
+  assert.match(newMealSaveSource, /date: draft\.date/);
+  assert.match(newMealSaveSource, /mealSlot: draft\.mealSlot/);
+  assert.match(source, /prepareMealDraftForSelectedSlot\(currentDraft, foodHistoryDate, slot\)/);
+  assert.match(source, /currentSession\.draft\.mealDraft\.date === foodHistoryDate/);
 });
 
 test("successful save preserves context, clears food fields, and keeps the inline editor open", () => {
-  assert.match(saveSource, /if \(!saved\) \{\s+return false;\s+\}/);
-  assert.match(saveSource, /setMealDraft\(\(current\) => \{[\s\S]*?resetMealDraftForNextItem\(current\)/);
-  assert.match(saveSource, /date: selectedMealDate,/);
-  assert.match(saveSource, /mealSlot: activeMealEntrySlot,/);
-  assert.match(saveSource, /return isQuickEntryOpen \? \{ \.\.\.nextDraft, servingQuantity: 1 \} : nextDraft/);
-  assert.match(saveSource, /mealEditorMode === "plan" && editingMealPlanId/);
-  assert.match(saveSource, /setActiveMealEntrySlot\(null\)/);
-  assert.doesNotMatch(saveSource, /createDefaultMealDraft/);
+  assert.match(newMealSaveSource, /resetMealDraftForNextItem\(draft\)/);
+  assert.match(newMealSaveSource, /date: draft\.date/);
+  assert.match(newMealSaveSource, /mealSlot: draft\.mealSlot/);
+  assert.match(saveSource, /removeAfterSuccess: true/);
+  assert.match(saveSource, /setFoodViewField\("newMealDraftId", createHealthFoodDraftId\(\)\)/);
+  assert.match(saveSource, /if \(!saved\) return false;/);
+  assert.doesNotMatch(newMealSaveSource, /createDefaultMealDraft/);
 });
 
 test("failed canonical saves leave the inline draft intact", () => {
-  assert.match(saveSource, /addMealEntry\(\{/);
-  assert.equal((saveSource.match(/resetMealDraftForNextItem/g) ?? []).length, 2);
-  assert.match(saveSource, /if \(!saved\) \{\s+return false;\s+\}/);
+  assert.match(newMealSaveSource, /addMealEntry\(prepared\.input\)/);
+  assert.match(newMealSaveSource, /meal could not be saved[\s\S]*draft is still here/);
+  assert.match(saveSource, /if \(!saved\) return false;/);
+  assert.match(saveSource, /saveHealthFoodEditingSession/);
 });
 
 test("normal Health Meal saves keep their rounded calorie contract", () => {
@@ -283,12 +283,16 @@ test("normal Health Meal saves keep their rounded calorie contract", () => {
 });
 
 test("Done closes only the active inline editor", () => {
-  assert.match(source, /function closeMealEntryEditor\(\) \{\s+setActiveMealEntrySlot\(null\);/);
+  assert.match(source, /function closeMealEntryEditor\(\) \{[\s\S]*?setActiveMealEntrySlot\(null\);/);
+  assert.match(source, /Save or discard this Food draft before closing its editor/);
   assert.match(inlineEditorSource, /<AdhdChip onClick=\{closeMealEntryEditor\}>Done<\/AdhdChip>/);
 });
 
-test("changing the ledger date closes the editor before changing date authority", () => {
-  assert.match(source, /function handleFoodHistoryDateChange\(date: string\) \{\s+setActiveMealEntrySlot\(null\);\s+setEditingMealPlanId\(null\);\s+setMealEditorMode\("actual"\);\s+setIsScannerOpen\(false\);\s+setFoodHistoryDate\(date\);/);
+test("changing the ledger date preserves the draft date and meal slot", () => {
+  const dateChangeSource = source.slice(source.indexOf("function handleFoodHistoryDateChange"), source.indexOf("function openQuickEntry"));
+  assert.match(dateChangeSource, /setFoodHistoryDate\(date\)/);
+  assert.match(dateChangeSource, /unfinished draft remains for/);
+  assert.doesNotMatch(dateChangeSource, /setActiveMealEntrySlot\(null\)|setEditingMealPlanId\(null\)|setMealEditorMode\("actual"\)/);
   assert.equal((source.match(/onChange=\{handleFoodHistoryDateChange\}/g) ?? []).length, 2);
   assert.doesNotMatch(saveSource, /setFoodHistoryDate/);
 });
@@ -296,14 +300,15 @@ test("changing the ledger date closes the editor before changing date authority"
 test("Quick Entry remains available inside the active section and uses its context", () => {
   assert.match(inlineEditorSource, /onClick=\{isQuickEntryOpen \? closeQuickEntry : openQuickEntry\}/);
   assert.match(inlineEditorSource, /Add Quick Entry/);
-  assert.match(source, /date: foodHistoryDate,\s+mealSlot: activeMealEntrySlot \?\? current\.mealSlot,\s+servingQuantity: 1/);
+  assert.match(source, /hasMeaningfulMealDraft\(current\) \? current/);
   assert.match(source, /\.\.\.resetMealDraftForNextItem\(current\),\s+barcode: current\.barcode,/);
   assert.match(saveSource, /sourceFoodId = null/);
-  assert.match(saveSource, /return isQuickEntryOpen \? \{ \.\.\.nextDraft, servingQuantity: 1 \} : nextDraft/);
+  assert.match(source, /date: foodHistoryDate,\s+mealSlot: activeMealEntrySlot \?\? "breakfast"/);
+  assert.match(newMealSaveSource, /mealDraft: isQuickEntryOpen \? \{ \.\.\.resetDraft, servingQuantity: 1 \} : resetDraft/);
 });
 
 test("future timestamp validation remains on the canonical selected-date save path", () => {
-  assert.match(source, /isHealthMealTimestampFuture\(foodHistoryDate, mealDraft\.time\)/);
+  assert.match(source, /isHealthMealTimestampFuture\(mealDraft\.date, mealDraft\.time\)/);
   assert.match(source, /Future meal times cannot be saved\./);
 });
 
@@ -324,8 +329,8 @@ test("Favorite reuse fills the active Breakfast, Lunch, Dinner, or Snack editor"
   assert.match(favoriteHandlerSource, /foodLibraryItem: item/);
   assert.match(foodSource, /`Use in \$\{getMealSlotLabel\(activeMealEntrySlot\)\}`/);
   assert.match(source, /activeMealEntrySlot === slot \? renderMealEntryEditor\(\) : null/);
-  assert.match(saveSource, /entry_date: foodHistoryDate,/);
-  assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
+  assert.match(newMealSaveSource, /date: draft\.date/);
+  assert.match(newMealSaveSource, /mealSlot: draft\.mealSlot/);
 });
 
 test("Favorite reuse preserves selected date, active slot, current time, and normal Add confirmation", () => {
@@ -354,8 +359,8 @@ test("Recent Food reuse fills the active editor without changing date or meal sl
   assert.match(recentHandlerSource, /consumedUnit: item\.consumed_unit/);
   assert.match(lookupHandlerSource, /setMealDraft\(\(current\) => \(\{\s+\.\.\.current,/);
   assert.doesNotMatch(lookupHandlerSource, /date:|mealSlot:/);
-  assert.match(saveSource, /entry_date: foodHistoryDate,/);
-  assert.match(saveSource, /meal_slot: activeMealEntrySlot,/);
+  assert.match(newMealSaveSource, /date: draft\.date/);
+  assert.match(newMealSaveSource, /mealSlot: draft\.mealSlot/);
   assert.match(inlineEditorSource, /disabled=\{!canSaveMeal\}/);
 });
 
@@ -371,7 +376,7 @@ test("Food Library selection surfaces share the remembered-serving resolver", ()
 test("plan editing bypasses remembered history while new plans may reuse the shared food path", () => {
   assert.match(lookupHandlerSource, /mealEditorMode === "plan" && editingMealPlanId !== null/);
   assert.doesNotMatch(lookupHandlerSource, /mealPlanEntries/);
-  assert.match(source, /setMealDraft\(mealDraftFromHealthMealPlan\(plan\)\)/);
+  assert.match(source, /setLegacyMealDraft\(mealDraftFromHealthMealPlan\(plan\)\)/);
   assert.match(source, /onClick=\{\(\) => openMealComposerForSlot\(slot, "plan"\)\}/);
 });
 

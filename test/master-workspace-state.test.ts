@@ -12,6 +12,7 @@ import {
   getMasterWorkspaceStorageKey,
   getMasterTabJournalView,
   getMasterTabNotesView,
+  getMasterTabFoodView,
   getMasterTabScratchPaperView,
   initializeMasterWorkspaceState,
   masterTabTasksWorkspaceMatchesLiveState,
@@ -492,6 +493,7 @@ test("unknown schema versions recover to the default workspace", () => {
         ...tab,
         presentation: {
           ...tab.presentation,
+          foodView: { ...getMasterTabFoodView(tab), newMealDraftId: "stable-food-draft-id" },
           scratchPaperView: { ...getMasterTabScratchPaperView(tab), newDraftId: "stable-id" },
         },
       })),
@@ -499,6 +501,7 @@ test("unknown schema versions recover to the default workspace", () => {
   });
   assert.deepEqual(withoutScratchDraftIds(actual), withoutScratchDraftIds(expected));
   assert.match(getMasterTabScratchPaperView(actual.panels[0].tabs[0]).newDraftId, /^[0-9a-f-]{36}$/i);
+  assert.match(getMasterTabFoodView(actual.panels[0].tabs[0]).newMealDraftId, /^[0-9a-f-]{36}$/i);
 });
 
 test("transitions are immutable and activate, replace, and create tabs", () => {

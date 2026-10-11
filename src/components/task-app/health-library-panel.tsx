@@ -25,6 +25,7 @@ import {
   buildSavedMealRecipeItem,
   countHealthFoodMealEntries,
   composeHealthFoodStructuredServingLabel,
+  type HealthFoodLibrarySection,
   formatQuantity,
   getHealthFoodIdentityKey,
   getHealthFoodAutocompleteValues,
@@ -56,8 +57,6 @@ import { HealthCollapsiblePanel } from "./health-collapsible-panel";
 import { HealthBarcodeScanner } from "./health-barcode-scanner";
 import { HealthAutocomplete, HealthDropdown, HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import type { HealthFoodHistoryRepairResult } from "@/lib/health-meal-recalculation";
-
-type LibrarySection = "foods" | "recipes" | "meals";
 
 type FoodDraft = {
   id?: string;
@@ -148,6 +147,12 @@ const EMPTY_MEAL_DRAFT: MealDraft = {
 };
 
 type HealthLibraryPanelProps = {
+  section: HealthFoodLibrarySection;
+  onSectionChange: (section: HealthFoodLibrarySection) => void;
+  foodSearchQuery: string;
+  onFoodSearchQueryChange: (query: string) => void;
+  ingredientSearchQuery: string;
+  onIngredientSearchQueryChange: (query: string) => void;
   onDraftSafetyChange: (isUnsafe: boolean) => void;
   favorites: HealthFoodLibraryItem[];
   recipes: HealthRecipe[];
@@ -175,6 +180,12 @@ type HealthLibraryPanelProps = {
 };
 
 export function HealthLibraryPanel({
+  section,
+  onSectionChange,
+  foodSearchQuery,
+  onFoodSearchQueryChange,
+  ingredientSearchQuery,
+  onIngredientSearchQueryChange,
   onDraftSafetyChange,
   favorites,
   recipes,
@@ -189,9 +200,7 @@ export function HealthLibraryPanel({
   saveSavedMeal,
   updatePreviousFoodLogs,
 }: HealthLibraryPanelProps) {
-  const [section, setSection] = useState<LibrarySection>("foods");
   const [foodDraft, setFoodDraft] = useState<FoodDraft>(EMPTY_FOOD_DRAFT);
-  const [foodSearchQuery, setFoodSearchQuery] = useState("");
   const [foodImportText, setFoodImportText] = useState("");
   const [foodImportRows, setFoodImportRows] = useState<FoodImportRow[]>([]);
   const [foodImportStatus, setFoodImportStatus] = useState("");
@@ -207,7 +216,6 @@ export function HealthLibraryPanel({
   const [isSavingFood, setIsSavingFood] = useState(false);
   const [foodSaveFeedback, setFoodSaveFeedback] = useState("");
   const [updatingFoodLogsId, setUpdatingFoodLogsId] = useState<string | null>(null);
-  const [ingredientSearchQuery, setIngredientSearchQuery] = useState("");
   const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
   const [mealDraft, setMealDraft] = useState<MealDraft>(EMPTY_MEAL_DRAFT);
 
@@ -437,7 +445,7 @@ export function HealthLibraryPanel({
   }
 
   function openFoodImport() {
-    setSection("foods");
+    onSectionChange("foods");
     setIsFoodImportOpen(true);
     setFoodImportStatus("");
   }
@@ -545,13 +553,13 @@ export function HealthLibraryPanel({
       title="Custom nutrition library"
     >
       <div className="mb-5 flex flex-wrap gap-2">
-        <AdhdChip count={favorites.length} onClick={() => setSection("foods")} selected={section === "foods"}>
+        <AdhdChip count={favorites.length} onClick={() => onSectionChange("foods")} selected={section === "foods"}>
           Foods
         </AdhdChip>
-        <AdhdChip count={recipes.length} onClick={() => setSection("recipes")} selected={section === "recipes"}>
+        <AdhdChip count={recipes.length} onClick={() => onSectionChange("recipes")} selected={section === "recipes"}>
           Recipes
         </AdhdChip>
-        <AdhdChip count={savedMeals.length} onClick={() => setSection("meals")} selected={section === "meals"}>
+        <AdhdChip count={savedMeals.length} onClick={() => onSectionChange("meals")} selected={section === "meals"}>
           Meals
         </AdhdChip>
       </div>
@@ -647,7 +655,7 @@ export function HealthLibraryPanel({
               <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
                 <HealthAutocomplete
                   ariaLabel="Search custom foods"
-                  onChange={setFoodSearchQuery}
+                  onChange={onFoodSearchQueryChange}
                   placeholder="Food, brand, category, serving, barcode"
                   suggestions={foodSearchSuggestions}
                   value={foodSearchQuery}
@@ -655,7 +663,7 @@ export function HealthLibraryPanel({
                 <AdhdChip
                   contentClassName="gap-1.5"
                   icon={<Search aria-hidden="true" className="h-3 w-3" />}
-                  onClick={() => setFoodSearchQuery("")}
+                  onClick={() => onFoodSearchQueryChange("")}
                   selected
                 >
                   Clear
@@ -858,7 +866,7 @@ export function HealthLibraryPanel({
             <HealthCollapsiblePanel subtitle="Search by brand, food, or serving before adding an ingredient." title="Add ingredients" variant="subpanel">
               <input
                 className={`${HEALTH_COMPACT_INPUT_CLASS} mb-3`}
-                onChange={(event) => setIngredientSearchQuery(event.target.value)}
+                onChange={(event) => onIngredientSearchQueryChange(event.target.value)}
                 placeholder="Search custom foods"
                 value={ingredientSearchQuery}
               />

@@ -15,12 +15,14 @@ import {
   closeMasterTab,
   createMasterTab,
   createDefaultMasterWorkspaceState,
+  getMasterTabFoodView,
   getMasterTabJournalView,
   getMasterTabNotesView,
   getMasterTabScratchPaperView,
   masterTabTasksWorkspaceMatchesLiveState,
   replaceFocusedMasterTabDestination,
   updateMasterTabJournalView,
+  updateMasterTabFoodView,
   updateMasterTabNotesView,
   updateMasterTabScratchPaperView,
   updateMasterTabScrollPosition,
@@ -28,6 +30,7 @@ import {
   type MasterTabPresentationState,
   type MasterTabDestination,
   type MasterScratchPaperWorkspaceView,
+  type MasterFoodWorkspaceView,
   type MasterWorkspaceState,
 } from "@/lib/master-workspace-state";
 import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
@@ -82,6 +85,7 @@ export function useMasterWorkspaceController({
   const activeJournalView = getMasterTabJournalView(activeTab);
   const activeNotesView = getMasterTabNotesView(activeTab);
   const activeScratchPaperView = getMasterTabScratchPaperView(activeTab);
+  const activeFoodView = getMasterTabFoodView(activeTab);
   const canNavigate = isEnabled && isReady && Boolean(userId) && restoredUserId === userId;
   const currentHealthSection = activeMasterPage === "Health"
     ? activeTab.presentation.healthSection ?? initialHealthSection
@@ -328,10 +332,21 @@ export function useMasterWorkspaceController({
     return true;
   }, [activeTab.id, canNavigate, currentPanel.id]);
 
+  const updateFoodView = useCallback((foodView: MasterFoodWorkspaceView) => {
+    if (!canNavigate) return false;
+    setWorkspace((current) => {
+      const panel = current.panels.find((candidate) => candidate.id === currentPanel.id);
+      if (!panel || panel.activeTabId !== activeTab.id) return current;
+      return updateMasterTabFoodView(current, currentPanel.id, activeTab.id, foodView);
+    });
+    return true;
+  }, [activeTab.id, canNavigate, currentPanel.id]);
+
   return useMemo(() => ({
     activateTab,
     activeTab,
     activeJournalView,
+    activeFoodView,
     activeNotesView,
     activeScratchPaperView,
     canActivateTab,
@@ -347,9 +362,10 @@ export function useMasterWorkspaceController({
     selectHealthSection,
     updateFocusedDestination,
     updateJournalView,
+    updateFoodView,
     updateNotesView,
     updateScratchPaperView,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeJournalView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, updateNotesView, updateScratchPaperView, userId, workspace]);
+  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, userId, workspace]);
 }

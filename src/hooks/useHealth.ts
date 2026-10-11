@@ -95,6 +95,7 @@ import {
   selectHealthFoodMealEntriesBySourceId,
   type HealthFoodHistoryRepairResult,
 } from "@/lib/health-meal-recalculation";
+import { healthMealEntryInsertMatches, reconcileHealthMealEntryInsert } from "@/lib/health-meal-draft";
 import {
   reconcileHealthWorkouts,
   sortHealthWorkouts,
@@ -2626,6 +2627,7 @@ export function useHealth(
     }
 
     const now = new Date().toISOString();
+    const entryId = input.id ?? createLocalId("health-meal");
     const localRow: HealthMealEntry = {
       attribution: input.attribution ?? null,
       barcode: input.barcode ?? null,
@@ -2636,7 +2638,7 @@ export function useHealth(
       entry_date: input.entry_date,
       fat_g: input.fat_g ?? null,
       food_name: input.food_name,
-      id: input.id ?? createLocalId("health-meal"),
+      id: entryId,
       logged_at: input.logged_at ?? now,
       meal_slot: input.meal_slot,
       protein_g: input.protein_g ?? null,
@@ -2655,7 +2657,7 @@ export function useHealth(
 
     let nextRow = localRow;
     if (client && storageMode === "remote") {
-      const { data, error } = await client
+      const result = await client
         .from("adhdice_health_meal_entries")
         .insert({
           ...input,
@@ -2665,14 +2667,38 @@ export function useHealth(
         .select("*")
         .single();
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
+      const reconciled = await reconcileHealthMealEntryInsert({
+        input: { ...input, calories: storedCalories },
+        result,
+        lookupById: async (id) => {
+          const { data, error } = await client
+            .from("adhdice_health_meal_entries")
+            .select("*")
+            .eq("id", id)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (!isCurrentOperation(operation)) return { row: null, error: "Health operation is no longer active." };
+          return { row: data, error: error?.message ?? null };
+        },
+      });
+      if (!reconciled.row) {
+        setMessage({ tone: "warn", text: reconciled.error ?? "The meal save could not be confirmed." });
         return false;
       }
-      nextRow = data ?? localRow;
+      nextRow = reconciled.row;
+    } else {
+      const existingLocal = mealEntries.find((entry) => entry.id === entryId);
+      if (existingLocal) {
+        if (!healthMealEntryInsertMatches(existingLocal, { ...input, id: entryId, calories: storedCalories })) {
+          setMessage({ tone: "warn", text: "The meal ID is already in use by a different saved entry." });
+          return false;
+        }
+        nextRow = existingLocal;
+      }
     }
 
-    const nextMealEntries = [nextRow, ...mealEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at));
+    const nextMealEntries = [nextRow, ...mealEntries.filter((entry) => entry.id !== nextRow.id)]
+      .sort((left, right) => right.logged_at.localeCompare(left.logged_at));
     const nextSnapshot = buildHealthSnapshot({
       awards,
       checkIns,

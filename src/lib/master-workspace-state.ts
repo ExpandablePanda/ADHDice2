@@ -1,8 +1,10 @@
-import { HEALTH_TABS, type HealthTab } from "@/lib/health-utils";
+import { HEALTH_TABS, todayHealthDate, type HealthTab } from "@/lib/health-utils";
 import { getRegisteredPageShellPages } from "@/lib/page-shell-layout";
 import type { NavigatorSearchAction } from "@/lib/navigator-search";
-import type { ScratchNoteStatus } from "@/lib/database.types";
+import type { HealthMealSlot, ScratchNoteStatus } from "@/lib/database.types";
 import { createScratchPaperRecordId } from "@/lib/scratch-paper-draft";
+import { createHealthFoodDraftId } from "@/lib/health-meal-draft";
+import type { HealthFoodLibrarySection } from "@/lib/health-library";
 import {
   DEFAULT_TASK_WORKSPACE_TABS_STATE,
   isAppPage,
@@ -37,6 +39,22 @@ export type MasterScratchPaperWorkspaceView = {
   search: string;
   filter: "all" | ScratchNoteStatus;
 };
+export type MasterFoodWorkspaceView = {
+  historyDate: string;
+  newMealDraftId: string;
+  activeMealEntrySlot: HealthMealSlot | null;
+  selectedMealEntryId: string | null;
+  mealEditorMode: "actual" | "plan";
+  editingMealPlanId: string | null;
+  isQuickEntryOpen: boolean;
+  customFoodSearchQuery: string;
+  selectedCustomFoodCategory: string | null;
+  isCustomFoodCategoriesOpen: boolean;
+  expandedFavoriteId: string | null;
+  librarySection: HealthFoodLibrarySection;
+  foodLibrarySearchQuery: string;
+  ingredientSearchQuery: string;
+};
 export type MasterTabPresentationState = {
   healthSection?: HealthTab;
   scrollTop?: number;
@@ -47,6 +65,7 @@ export type MasterTabPresentationState = {
   };
   notesView?: MasterNotesWorkspaceView;
   scratchPaperView?: MasterScratchPaperWorkspaceView;
+  foodView?: MasterFoodWorkspaceView;
   tasksWorkspace?: TaskWorkspaceTabsState;
 };
 
@@ -217,6 +236,25 @@ function defaultScratchPaperWorkspaceView(): MasterScratchPaperWorkspaceView {
   return { currentNoteId: null, newDraftId: createScratchPaperRecordId(), isNewNoteSelected: false, search: "", filter: "all" };
 }
 
+export function createDefaultMasterFoodWorkspaceView(): MasterFoodWorkspaceView {
+  return {
+    historyDate: todayHealthDate(),
+    newMealDraftId: createHealthFoodDraftId(),
+    activeMealEntrySlot: null,
+    selectedMealEntryId: null,
+    mealEditorMode: "actual",
+    editingMealPlanId: null,
+    isQuickEntryOpen: false,
+    customFoodSearchQuery: "",
+    selectedCustomFoodCategory: null,
+    isCustomFoodCategoriesOpen: false,
+    expandedFavoriteId: null,
+    librarySection: "foods",
+    foodLibrarySearchQuery: "",
+    ingredientSearchQuery: "",
+  };
+}
+
 function isScratchPaperRecordId(value: unknown): value is string {
   return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
@@ -235,6 +273,41 @@ function normalizeScratchPaperWorkspaceView(value: unknown): MasterScratchPaperW
     filter: typeof candidate.filter === "string" && VALID_SCRATCH_PAPER_FILTERS.has(candidate.filter)
       ? candidate.filter as MasterScratchPaperWorkspaceView["filter"]
       : "all",
+  };
+}
+
+function normalizeFoodWorkspaceView(value: unknown): MasterFoodWorkspaceView {
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const slots = new Set(["breakfast", "lunch", "dinner", "snack"]);
+  return {
+    historyDate: typeof candidate.historyDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.historyDate)
+      ? candidate.historyDate
+      : todayHealthDate(),
+    newMealDraftId: typeof candidate.newMealDraftId === "string" && candidate.newMealDraftId.trim()
+      ? candidate.newMealDraftId.trim()
+      : createHealthFoodDraftId(),
+    activeMealEntrySlot: typeof candidate.activeMealEntrySlot === "string" && slots.has(candidate.activeMealEntrySlot)
+      ? candidate.activeMealEntrySlot as HealthMealSlot
+      : null,
+    selectedMealEntryId: typeof candidate.selectedMealEntryId === "string" && candidate.selectedMealEntryId.trim()
+      ? candidate.selectedMealEntryId.trim()
+      : null,
+    mealEditorMode: candidate.mealEditorMode === "plan" ? "plan" : "actual",
+    editingMealPlanId: typeof candidate.editingMealPlanId === "string" && candidate.editingMealPlanId.trim()
+      ? candidate.editingMealPlanId.trim()
+      : null,
+    isQuickEntryOpen: candidate.isQuickEntryOpen === true,
+    customFoodSearchQuery: typeof candidate.customFoodSearchQuery === "string" ? candidate.customFoodSearchQuery : "",
+    selectedCustomFoodCategory: typeof candidate.selectedCustomFoodCategory === "string" && candidate.selectedCustomFoodCategory.trim()
+      ? candidate.selectedCustomFoodCategory.trim()
+      : null,
+    isCustomFoodCategoriesOpen: candidate.isCustomFoodCategoriesOpen === true,
+    expandedFavoriteId: typeof candidate.expandedFavoriteId === "string" && candidate.expandedFavoriteId.trim()
+      ? candidate.expandedFavoriteId.trim()
+      : null,
+    librarySection: candidate.librarySection === "recipes" || candidate.librarySection === "meals" ? candidate.librarySection : "foods",
+    foodLibrarySearchQuery: typeof candidate.foodLibrarySearchQuery === "string" ? candidate.foodLibrarySearchQuery : "",
+    ingredientSearchQuery: typeof candidate.ingredientSearchQuery === "string" ? candidate.ingredientSearchQuery : "",
   };
 }
 
@@ -264,6 +337,7 @@ function normalizePresentation(value: unknown, destination: MasterTabDestination
         : "entry",
     };
   }
+  presentation.foodView = normalizeFoodWorkspaceView(candidate.foodView ?? createDefaultMasterFoodWorkspaceView());
   if (candidate.notesView !== undefined || destination.page === "Notes") {
     presentation.notesView = normalizeNotesWorkspaceView(candidate.notesView ?? defaultNotesWorkspaceView());
   }
@@ -296,6 +370,33 @@ export function getMasterTabNotesView(tab: MasterWorkspaceTab) {
 
 export function getMasterTabScratchPaperView(tab: MasterWorkspaceTab) {
   return tab.presentation.scratchPaperView ?? defaultScratchPaperWorkspaceView();
+}
+
+export function getMasterTabFoodView(tab: MasterWorkspaceTab) {
+  return tab.presentation.foodView ?? createDefaultMasterFoodWorkspaceView();
+}
+
+export function updateMasterTabFoodView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  foodView: MasterFoodWorkspaceView,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const normalized = normalizeFoodWorkspaceView(foodView);
+  if (JSON.stringify(getMasterTabFoodView(tab)) === JSON.stringify(normalized)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, foodView: normalized },
+      }),
+    }),
+  };
 }
 
 export function updateMasterTabNotesView(
@@ -442,7 +543,14 @@ export function masterTabTasksWorkspaceMatchesLiveState(
 }
 
 function makeHomeTab(id = "master-tab-1"): MasterWorkspaceTab {
-  return { id, destination: { kind: "page", page: "Home" }, presentation: { scratchPaperView: defaultScratchPaperWorkspaceView() } };
+  return {
+    id,
+    destination: { kind: "page", page: "Home" },
+    presentation: {
+      foodView: createDefaultMasterFoodWorkspaceView(),
+      scratchPaperView: defaultScratchPaperWorkspaceView(),
+    },
+  };
 }
 
 export function createDefaultMasterWorkspaceState(): MasterWorkspaceState {
@@ -540,6 +648,7 @@ export function initializeMasterWorkspaceState(
           ...firstPanel.tabs[0].presentation,
           ...(tasksWorkspace ? { tasksWorkspace } : {}),
           ...(previousActivePage === "Health" ? { healthSection: initialHealthSection } : {}),
+          ...(previousActivePage === "Health" ? { foodView: createDefaultMasterFoodWorkspaceView() } : {}),
         },
       }],
     }],
