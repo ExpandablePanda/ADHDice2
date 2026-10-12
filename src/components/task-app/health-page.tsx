@@ -69,6 +69,7 @@ import type { HealthImportSaveProgress, HealthJournalEntrySaveInput } from "@/ho
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
 import type { HealthCustomFoodEditingSessionDraft, HealthCustomFoodSaveInput } from "@/lib/health-custom-food-editing-session";
+import type { HealthLibraryDefinitionSaveOptions, HealthRecipeEditingSessionDraft, HealthSavedMealEditingSessionDraft } from "@/lib/health-library-definition-editing-session";
 import {
   createDefaultMealDraft,
   hasMeaningfulMealDraft,
@@ -261,6 +262,8 @@ type HealthPageProps = {
   onFoodViewChange?: (foodView: MasterFoodWorkspaceViewUpdate) => void;
   foodSessionStore?: EditingSessionStore<HealthFoodEditingSessionDraft> | null;
   customFoodSessionStore?: EditingSessionStore<HealthCustomFoodEditingSessionDraft> | null;
+  recipeSessionStore?: EditingSessionStore<HealthRecipeEditingSessionDraft> | null;
+  savedMealSessionStore?: EditingSessionStore<HealthSavedMealEditingSessionDraft> | null;
   mealPlanSessionStore?: EditingSessionStore<HealthMealPlanEditingSessionDraft> | null;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
@@ -327,14 +330,14 @@ type HealthPageProps = {
     notes?: string;
     servings: number;
     ingredients: HealthRecipeIngredient[];
-  }) => Promise<boolean>;
+  }, options?: HealthLibraryDefinitionSaveOptions) => Promise<HealthRecipe | null>;
   savedMeals: HealthSavedMeal[];
   saveSavedMeal: (input: {
     id?: string;
     name: string;
     default_meal_slot: HealthMealEntry["meal_slot"];
     items: HealthSavedMealItem[];
-  }) => Promise<boolean>;
+  }, options?: HealthLibraryDefinitionSaveOptions) => Promise<HealthSavedMeal | null>;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
   addMealEntry: (input: Omit<HealthMealEntryInsert, "user_id">) => Promise<boolean>;
   addMealPlanEntry: (input: Omit<HealthMealPlanEntryInsert, "user_id">) => Promise<boolean>;
@@ -1164,6 +1167,8 @@ export function HealthPage({
   onFoodViewChange,
   foodSessionStore,
   customFoodSessionStore,
+  recipeSessionStore,
+  savedMealSessionStore,
   mealPlanSessionStore,
   checkIns,
   journalSignals,
@@ -4966,7 +4971,10 @@ export function HealthPage({
             deleteSavedMeal={deleteSavedMeal}
             favorites={favorites}
             customFoodSessionStore={customFoodSessionStore}
-            customFoodView={customFoodSessionStore && foodView ? activeFoodView : undefined}
+            recipeSessionStore={recipeSessionStore}
+            savedMealSessionStore={savedMealSessionStore}
+            foodView={foodView ? activeFoodView : undefined}
+            onFoodViewChange={foodView ? onFoodViewChange : undefined}
             editingViewId={activeMasterTabId}
             foodSearchQuery={activeFoodView.foodLibrarySearchQuery}
             ingredientSearchQuery={activeFoodView.ingredientSearchQuery}
@@ -4982,7 +4990,6 @@ export function HealthPage({
             saveSavedMeal={saveSavedMeal}
             updatePreviousFoodLogs={updatePreviousFoodLogs}
             pendingFoodHistoryRepairIds={pendingFoodHistoryRepairIds}
-            onCustomFoodViewChange={customFoodSessionStore && onFoodViewChange ? onFoodViewChange : undefined}
             onDraftSafetyChange={reportFoodDraftSafety}
             shellSurface
           />

@@ -90,6 +90,17 @@ import {
 } from "@/lib/health-library";
 import { healthCustomFoodWriteMatchesCanonicalRow } from "@/lib/health-custom-food-editing-session";
 import {
+  HEALTH_RECIPE_SAVE_FAILURE_MESSAGE,
+  HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE,
+  HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE,
+  HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE,
+  healthRecipeWriteMatchesCanonicalRow,
+  healthSavedMealWriteMatchesCanonicalRow,
+  reconcileHealthRecipeCollection,
+  reconcileHealthSavedMealCollection,
+  type HealthLibraryDefinitionSaveOptions,
+} from "@/lib/health-library-definition-editing-session";
+import {
   buildHealthFoodHistoryMealEntryUpdate,
   formatHealthFoodHistoryRepairResult,
   healthMealEntryUpdateMatchesRow,
@@ -3789,168 +3800,334 @@ export function useHealth(
     return true;
   }
 
-  async function saveRecipe(input: Omit<HealthRecipeInsert, "user_id">) {
+  async function saveRecipe(input: Omit<HealthRecipeInsert, "user_id">, options: HealthLibraryDefinitionSaveOptions = {}) {
     if (!userId || !profile) {
-      return false;
+      return null;
     }
     const operation = captureOperation();
-    if (!operation) return false;
-
+    if (!operation) return null;
+    const mode = options.mode ?? "legacy-upsert";
+    const recordId = mode === "legacy-upsert" ? input.id : options.recordId;
+    if (mode !== "legacy-upsert" && !recordId) {
+      setMessage({ tone: "warn", text: "This recipe draft has no stable record ID. Keep the draft open and try again." });
+      return null;
+    }
+    if (mode === "update-only" && !options.expectedUpdatedAt) {
+      setMessage({ tone: "warn", text: "This recipe's saved version is unavailable. Reopen it before saving." });
+      return null;
+    }
     const now = new Date().toISOString();
-    const localRow: HealthRecipe = {
-      created_at: now,
-      id: input.id ?? createLocalId("health-recipe"),
-      ingredients: input.ingredients,
-      name: input.name,
-      notes: input.notes ?? "",
-      servings: input.servings,
-      updated_at: now,
-      user_id: userId,
-    };
-    let nextRow = localRow;
+    const expected: Pick<HealthRecipe, "id" | "user_id" | "name" | "notes" | "servings" | "ingredients"> | null = recordId
+      ? { id: recordId, user_id: userId, ingredients: input.ingredients, name: input.name, notes: input.notes ?? "", servings: input.servings }
+      : null;
+    let nextRow: HealthRecipe | null = null;
     if (client && storageMode === "remote") {
-      const { data, error } = await client
-        .from("adhdice_health_recipes")
-        .upsert({ ...input, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
-        return false;
+      if (mode === "create-only") {
+        let writeError: { code?: string; message: string } | null = null;
+        try {
+          const { error } = await client.from("adhdice_health_recipes").insert({
+            id: recordId!,
+            ingredients: input.ingredients,
+            name: input.name,
+            notes: input.notes ?? "",
+            servings: input.servings,
+            user_id: userId,
+          }).select("*").maybeSingle();
+          writeError = error;
+        } catch (error) {
+          writeError = { message: error instanceof Error ? error.message : HEALTH_RECIPE_SAVE_FAILURE_MESSAGE };
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_recipes").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthRecipeWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = data
+            ? HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE
+            : writeError?.code === "23505"
+              ? HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE
+              : writeError?.message ?? readError?.message ?? HEALTH_RECIPE_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else if (mode === "update-only") {
+        let writeErrorMessage = "";
+        try {
+          const { error } = await client.from("adhdice_health_recipes").update({
+            ingredients: input.ingredients,
+            name: input.name,
+            notes: input.notes ?? "",
+            servings: input.servings,
+          }).eq("id", recordId!).eq("user_id", userId).eq("updated_at", options.expectedUpdatedAt!).select("*").maybeSingle();
+          if (error) writeErrorMessage = error.message;
+        } catch (error) {
+          writeErrorMessage = error instanceof Error ? error.message : HEALTH_RECIPE_SAVE_FAILURE_MESSAGE;
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_recipes").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthRecipeWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = !data
+            ? "This recipe no longer exists. Your draft is preserved; choose New recipe to create a separate definition."
+            : data.updated_at !== options.expectedUpdatedAt
+              ? "This recipe changed elsewhere. Your draft is preserved; reopen the recipe and review the saved version."
+              : writeErrorMessage || HEALTH_RECIPE_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else {
+        const { data, error } = await client.from("adhdice_health_recipes").upsert({ ...input, user_id: userId }).select("*").single();
+        if (!isCurrentOperation(operation)) return null;
+        if (error || !data) {
+          setMessage({ tone: "warn", text: error?.message ?? HEALTH_RECIPE_SAVE_FAILURE_MESSAGE });
+          return null;
+        }
+        nextRow = data;
       }
-      nextRow = data ?? localRow;
+    } else {
+      const snapshot = healthSnapshotRef.current;
+      if (!snapshot || snapshot.profile.user_id !== userId) return null;
+      const existing = recordId ? snapshot.recipes.find((recipe) => recipe.id === recordId) ?? null : null;
+      if (mode === "create-only" && existing) {
+        if (!healthRecipeWriteMatchesCanonicalRow(existing, expected!)) {
+          setMessage({ tone: "warn", text: HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE });
+          return null;
+        }
+        nextRow = existing;
+      } else if (mode === "update-only") {
+        if (!existing) {
+          setMessage({ tone: "warn", text: "This recipe no longer exists. Your draft is preserved; choose New recipe to create a separate definition." });
+          return null;
+        }
+        if (existing.updated_at !== options.expectedUpdatedAt) {
+          setMessage({ tone: "warn", text: "This recipe changed elsewhere. Your draft is preserved; reopen the recipe and review the saved version." });
+          return null;
+        }
+        nextRow = { ...existing, ...expected!, updated_at: now };
+      } else if (mode === "create-only") {
+        nextRow = {
+          created_at: now,
+          id: recordId!,
+          ingredients: input.ingredients,
+          name: input.name,
+          notes: input.notes ?? "",
+          servings: input.servings,
+          updated_at: now,
+          user_id: userId,
+        };
+      } else {
+        nextRow = {
+          created_at: now,
+          id: input.id ?? createLocalId("health-recipe"),
+          ingredients: input.ingredients,
+          name: input.name,
+          notes: input.notes ?? "",
+          servings: input.servings,
+          updated_at: now,
+          user_id: userId,
+          ...(existing ? { created_at: existing.created_at } : {}),
+        };
+      }
     }
 
-    if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes: [nextRow, ...recipes.filter((entry) => entry.id !== nextRow.id)]
-        .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
-      savedMeals,
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!isCurrentOperation(operation) || !latest || latest.profile.user_id !== userId || !nextRow) return null;
+    applySnapshot({ ...latest, recipes: reconcileHealthRecipeCollection(latest.recipes, nextRow) });
     setHealthSuccessMessage({ tone: "good", text: "Recipe saved." });
-    return true;
+    return nextRow;
   }
 
   async function deleteRecipe(recipeId: string) {
-    if (!profile) {
+    if (!profile || !userId) {
       return false;
     }
     const operation = captureOperation();
     if (!operation) return false;
     if (client && storageMode === "remote") {
-      const { error } = await client.from("adhdice_health_recipes").delete().eq("id", recipeId);
+      const { data, error } = await client.from("adhdice_health_recipes").delete().eq("id", recipeId).eq("user_id", userId).select("id").maybeSingle();
       if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
+      if (!data) {
+        const { data: existing, error: readError } = await client.from("adhdice_health_recipes").select("id").eq("id", recipeId).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return false;
+        if (readError || existing) {
+          setMessage({ tone: "warn", text: readError?.message ?? "This recipe could not be confirmed as removed." });
+          return false;
+        }
+      }
     }
     if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes: recipes.filter((entry) => entry.id !== recipeId),
-      savedMeals,
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!latest || latest.profile.user_id !== userId) return false;
+    applySnapshot({ ...latest, recipes: latest.recipes.filter((entry) => entry.id !== recipeId) });
     setHealthSuccessMessage({ tone: "good", text: "Recipe removed." });
     return true;
   }
 
-  async function saveSavedMeal(input: Omit<HealthSavedMealInsert, "user_id">) {
+  async function saveSavedMeal(input: Omit<HealthSavedMealInsert, "user_id">, options: HealthLibraryDefinitionSaveOptions = {}) {
     if (!userId || !profile) {
-      return false;
+      return null;
     }
     const operation = captureOperation();
-    if (!operation) return false;
+    if (!operation) return null;
+    const mode = options.mode ?? "legacy-upsert";
+    const recordId = mode === "legacy-upsert" ? input.id : options.recordId;
+    if (mode !== "legacy-upsert" && !recordId) {
+      setMessage({ tone: "warn", text: "This saved meal draft has no stable record ID. Keep the draft open and try again." });
+      return null;
+    }
+    if (mode === "update-only" && !options.expectedUpdatedAt) {
+      setMessage({ tone: "warn", text: "This saved meal's saved version is unavailable. Reopen it before saving." });
+      return null;
+    }
     const now = new Date().toISOString();
-    const localRow: HealthSavedMeal = {
-      created_at: now,
-      default_meal_slot: input.default_meal_slot,
-      id: input.id ?? createLocalId("health-saved-meal"),
-      items: input.items,
-      name: input.name,
-      updated_at: now,
-      user_id: userId,
-    };
-    let nextRow = localRow;
+    const expected: Pick<HealthSavedMeal, "id" | "user_id" | "name" | "default_meal_slot" | "items"> | null = recordId
+      ? { id: recordId, user_id: userId, items: input.items, name: input.name, default_meal_slot: input.default_meal_slot }
+      : null;
+    let nextRow: HealthSavedMeal | null = null;
     if (client && storageMode === "remote") {
-      const { data, error } = await client
-        .from("adhdice_health_saved_meals")
-        .upsert({ ...input, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
-        return false;
+      if (mode === "create-only") {
+        let writeError: { code?: string; message: string } | null = null;
+        try {
+          const { error } = await client.from("adhdice_health_saved_meals").insert({
+            id: recordId!,
+            default_meal_slot: input.default_meal_slot,
+            items: input.items,
+            name: input.name,
+            user_id: userId,
+          }).select("*").maybeSingle();
+          writeError = error;
+        } catch (error) {
+          writeError = { message: error instanceof Error ? error.message : HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE };
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_saved_meals").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthSavedMealWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = data
+            ? HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE
+            : writeError?.code === "23505"
+              ? HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE
+              : writeError?.message ?? readError?.message ?? HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else if (mode === "update-only") {
+        let writeErrorMessage = "";
+        try {
+          const { error } = await client.from("adhdice_health_saved_meals").update({
+            default_meal_slot: input.default_meal_slot,
+            items: input.items,
+            name: input.name,
+          }).eq("id", recordId!).eq("user_id", userId).eq("updated_at", options.expectedUpdatedAt!).select("*").maybeSingle();
+          if (error) writeErrorMessage = error.message;
+        } catch (error) {
+          writeErrorMessage = error instanceof Error ? error.message : HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE;
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_saved_meals").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthSavedMealWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = !data
+            ? "This saved meal no longer exists. Your draft is preserved; choose New saved meal to create a separate definition."
+            : data.updated_at !== options.expectedUpdatedAt
+              ? "This saved meal changed elsewhere. Your draft is preserved; reopen it and review the saved version."
+              : writeErrorMessage || HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else {
+        const { data, error } = await client.from("adhdice_health_saved_meals").upsert({ ...input, user_id: userId }).select("*").single();
+        if (!isCurrentOperation(operation)) return null;
+        if (error || !data) {
+          setMessage({ tone: "warn", text: error?.message ?? HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE });
+          return null;
+        }
+        nextRow = data;
       }
-      nextRow = data ?? localRow;
+    } else {
+      const snapshot = healthSnapshotRef.current;
+      if (!snapshot || snapshot.profile.user_id !== userId) return null;
+      const existing = recordId ? snapshot.savedMeals.find((meal) => meal.id === recordId) ?? null : null;
+      if (mode === "create-only" && existing) {
+        if (!healthSavedMealWriteMatchesCanonicalRow(existing, expected!)) {
+          setMessage({ tone: "warn", text: HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE });
+          return null;
+        }
+        nextRow = existing;
+      } else if (mode === "update-only") {
+        if (!existing) {
+          setMessage({ tone: "warn", text: "This saved meal no longer exists. Your draft is preserved; choose New saved meal to create a separate definition." });
+          return null;
+        }
+        if (existing.updated_at !== options.expectedUpdatedAt) {
+          setMessage({ tone: "warn", text: "This saved meal changed elsewhere. Your draft is preserved; reopen it and review the saved version." });
+          return null;
+        }
+        nextRow = { ...existing, ...expected!, updated_at: now };
+      } else if (mode === "create-only") {
+        nextRow = {
+          created_at: now,
+          default_meal_slot: input.default_meal_slot,
+          id: recordId!,
+          items: input.items,
+          name: input.name,
+          updated_at: now,
+          user_id: userId,
+        };
+      } else {
+        nextRow = {
+          created_at: now,
+          default_meal_slot: input.default_meal_slot,
+          id: input.id ?? createLocalId("health-saved-meal"),
+          items: input.items,
+          name: input.name,
+          updated_at: now,
+          user_id: userId,
+          ...(existing ? { created_at: existing.created_at } : {}),
+        };
+      }
     }
 
-    if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes,
-      savedMeals: [nextRow, ...savedMeals.filter((entry) => entry.id !== nextRow.id)]
-        .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!isCurrentOperation(operation) || !latest || latest.profile.user_id !== userId || !nextRow) return null;
+    applySnapshot({ ...latest, savedMeals: reconcileHealthSavedMealCollection(latest.savedMeals, nextRow) });
     setHealthSuccessMessage({ tone: "good", text: "Custom meal saved." });
-    return true;
+    return nextRow;
   }
 
   async function deleteSavedMeal(mealId: string) {
-    if (!profile) {
+    if (!profile || !userId) {
       return false;
     }
     const operation = captureOperation();
     if (!operation) return false;
     if (client && storageMode === "remote") {
-      const { error } = await client.from("adhdice_health_saved_meals").delete().eq("id", mealId);
+      const { data, error } = await client.from("adhdice_health_saved_meals").delete().eq("id", mealId).eq("user_id", userId).select("id").maybeSingle();
       if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
+      if (!data) {
+        const { data: existing, error: readError } = await client.from("adhdice_health_saved_meals").select("id").eq("id", mealId).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return false;
+        if (readError || existing) {
+          setMessage({ tone: "warn", text: readError?.message ?? "This saved meal could not be confirmed as removed." });
+          return false;
+        }
+      }
     }
     if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes,
-      savedMeals: savedMeals.filter((entry) => entry.id !== mealId),
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!latest || latest.profile.user_id !== userId) return false;
+    applySnapshot({ ...latest, savedMeals: latest.savedMeals.filter((entry) => entry.id !== mealId) });
     setHealthSuccessMessage({ tone: "good", text: "Custom meal removed." });
     return true;
   }

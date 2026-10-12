@@ -18,9 +18,6 @@ import type {
   HealthServingMeasureUnit,
 } from "@/lib/database.types";
 import {
-  buildRecipeIngredient,
-  buildSavedMealFoodItem,
-  buildSavedMealRecipeItem,
   countHealthFoodMealEntries,
   type HealthFoodLibrarySection,
   formatQuantity,
@@ -56,9 +53,39 @@ import { formatHealthFoodHistoryRepairResult, isHealthFoodHistoryRepairComplete,
 import type { EditingSessionStore } from "@/lib/editing-session-store";
 import type { MasterFoodWorkspaceView, MasterFoodWorkspaceViewUpdate } from "@/lib/master-workspace-state";
 import {
+  createHealthLibraryDefinitionDraftId,
+  createHealthRecipeNewDraft,
+  createHealthRecipeSavedDraft,
+  createHealthSavedMealNewDraft,
+  createHealthSavedMealSavedDraft,
+  getHealthRecipeDefinitionDraftValidationMessage,
+  getHealthSavedMealDefinitionDraftValidationMessage,
+  appendHealthRecipeIngredient,
+  appendHealthSavedMealFoodItem,
+  appendHealthSavedMealRecipeItem,
+  deleteHealthRecipeDefinitionWithSession,
+  deleteHealthSavedMealDefinitionWithSession,
+  healthRecipeNewCanonicalId,
+  healthRecipeNewSessionId,
+  healthRecipeSavedSessionId,
+  healthSavedMealNewCanonicalId,
+  healthSavedMealNewSessionId,
+  healthSavedMealSavedSessionId,
+  removeHealthRecipeIngredient,
+  removeHealthSavedMealItem,
+  saveHealthRecipeEditingSession,
+  saveHealthSavedMealEditingSession,
+  updateHealthRecipeIngredientQuantity,
+  updateHealthSavedMealItemQuantity,
+  type HealthLibraryDefinitionSaveOptions,
+  type HealthRecipeEditingSessionDraft,
+  type HealthSavedMealEditingSessionDraft,
+} from "@/lib/health-library-definition-editing-session";
+import {
   applyHealthCustomFoodBarcodeLookup,
   canDeleteHealthCustomFoodSession,
   createEmptyHealthCustomFoodFormDraft,
+  createHealthCustomFoodDraftId,
   createHealthCustomFoodNewDraft,
   createHealthCustomFoodSavedDraft,
   discardHealthCustomFoodDraft,
@@ -84,6 +111,8 @@ type FoodSaveConfirmation = {
 };
 
 const EMPTY_FOOD_DRAFT = createEmptyHealthCustomFoodFormDraft();
+const EMPTY_RECIPE_DRAFT: RecipeDraft = { id: null, newRecordId: "", name: "", notes: "", servings: "1", ingredients: [], updatedAt: null };
+const EMPTY_MEAL_DRAFT: MealDraft = { id: null, newRecordId: "", name: "", mealSlot: "breakfast", items: [], updatedAt: null };
 
 type FoodImportRow = {
   draft: HealthCustomFoodImportDraft;
@@ -100,33 +129,8 @@ type FoodImportReview = FoodImportRow & {
   input: ReturnType<typeof validateHealthCustomFoodImportDraft>["input"];
 };
 
-type RecipeDraft = {
-  id?: string;
-  name: string;
-  notes: string;
-  servings: string;
-  ingredients: HealthRecipeIngredient[];
-};
-
-const EMPTY_RECIPE_DRAFT: RecipeDraft = {
-  name: "",
-  notes: "",
-  servings: "1",
-  ingredients: [],
-};
-
-type MealDraft = {
-  id?: string;
-  name: string;
-  mealSlot: HealthMealSlot;
-  items: HealthSavedMealItem[];
-};
-
-const EMPTY_MEAL_DRAFT: MealDraft = {
-  name: "",
-  mealSlot: "breakfast",
-  items: [],
-};
+type RecipeDraft = HealthRecipeEditingSessionDraft;
+type MealDraft = HealthSavedMealEditingSessionDraft;
 
 type HealthLibraryPanelProps = {
   section: HealthFoodLibrarySection;
@@ -148,8 +152,10 @@ type HealthLibraryPanelProps = {
   updatePreviousFoodLogs: (food: HealthFoodLibraryItem, options?: { mode?: "all" | "pending" }) => Promise<HealthFoodHistoryRepairResult>;
   pendingFoodHistoryRepairIds: readonly string[];
   customFoodSessionStore?: EditingSessionStore<HealthCustomFoodEditingSessionDraft> | null;
-  customFoodView?: MasterFoodWorkspaceView;
-  onCustomFoodViewChange?: (view: MasterFoodWorkspaceViewUpdate) => void;
+  recipeSessionStore?: EditingSessionStore<HealthRecipeEditingSessionDraft> | null;
+  savedMealSessionStore?: EditingSessionStore<HealthSavedMealEditingSessionDraft> | null;
+  foodView?: MasterFoodWorkspaceView;
+  onFoodViewChange?: (view: MasterFoodWorkspaceViewUpdate) => void;
   editingViewId?: string;
   saveRecipe: (input: {
     id?: string;
@@ -157,13 +163,13 @@ type HealthLibraryPanelProps = {
     notes?: string;
     servings: number;
     ingredients: HealthRecipeIngredient[];
-  }) => Promise<boolean>;
+  }, options?: HealthLibraryDefinitionSaveOptions) => Promise<HealthRecipe | null>;
   saveSavedMeal: (input: {
     id?: string;
     name: string;
     default_meal_slot: HealthMealSlot;
     items: HealthSavedMealItem[];
-  }) => Promise<boolean>;
+  }, options?: HealthLibraryDefinitionSaveOptions) => Promise<HealthSavedMeal | null>;
 };
 
 export function HealthLibraryPanel({
@@ -188,8 +194,10 @@ export function HealthLibraryPanel({
   updatePreviousFoodLogs,
   pendingFoodHistoryRepairIds,
   customFoodSessionStore,
-  customFoodView,
-  onCustomFoodViewChange,
+  recipeSessionStore,
+  savedMealSessionStore,
+  foodView,
+  onFoodViewChange,
   editingViewId,
 }: HealthLibraryPanelProps) {
   const [legacyFoodDraft, setLegacyFoodDraft] = useState<FoodDraft>(EMPTY_FOOD_DRAFT);
@@ -211,13 +219,17 @@ export function HealthLibraryPanel({
   const [historyRepairFeedback, setHistoryRepairFeedback] = useState("");
   const [historyRepairFoodId, setHistoryRepairFoodId] = useState<string | null>(null);
   const [updatingFoodLogsId, setUpdatingFoodLogsId] = useState<string | null>(null);
-  const [recipeDraft, setRecipeDraft] = useState<RecipeDraft>(EMPTY_RECIPE_DRAFT);
-  const [mealDraft, setMealDraft] = useState<MealDraft>(EMPTY_MEAL_DRAFT);
-  const hasSharedCustomFoodSessions = Boolean(customFoodSessionStore && customFoodView && editingViewId);
-  const customFoodEditorMode = customFoodView?.customFoodEditorMode ?? "new";
-  const selectedCustomFoodId = customFoodView?.selectedCustomFoodDefinitionId ?? null;
+  const [legacyRecipeDraft, setLegacyRecipeDraft] = useState<RecipeDraft>(() => createHealthRecipeNewDraft());
+  const [legacyMealDraft, setLegacyMealDraft] = useState<MealDraft>(() => createHealthSavedMealNewDraft());
+  const [recipeEditorFeedback, setRecipeEditorFeedback] = useState("");
+  const [savedMealEditorFeedback, setSavedMealEditorFeedback] = useState("");
+  const [recipeDeleteFeedback, setRecipeDeleteFeedback] = useState("");
+  const [savedMealDeleteFeedback, setSavedMealDeleteFeedback] = useState("");
+  const hasSharedCustomFoodSessions = Boolean(customFoodSessionStore && foodView && editingViewId && onFoodViewChange);
+  const customFoodEditorMode = foodView?.customFoodEditorMode ?? "new";
+  const selectedCustomFoodId = foodView?.selectedCustomFoodDefinitionId ?? null;
   const newCustomFoodSessionId = hasSharedCustomFoodSessions
-    ? healthCustomFoodNewSessionId(editingViewId!, customFoodView!.newCustomFoodDraftId)
+    ? healthCustomFoodNewSessionId(editingViewId!, foodView!.newCustomFoodDraftId)
     : "";
   const savedCustomFoodSessionId = hasSharedCustomFoodSessions && selectedCustomFoodId
     ? healthCustomFoodSavedSessionId(selectedCustomFoodId)
@@ -232,10 +244,10 @@ export function HealthLibraryPanel({
     ? favorites.find((food) => food.id === (hasSharedCustomFoodSessions ? selectedCustomFoodId : legacyFoodDraft.id)) ?? null
     : null;
   const activeCustomFoodInitialDraft = useMemo<HealthCustomFoodEditingSessionDraft | null>(() => {
-    if (!hasSharedCustomFoodSessions || !customFoodView) return null;
+    if (!hasSharedCustomFoodSessions || !foodView) return null;
     if (isSavedCustomFoodEditor) return selectedCanonicalFood ? createHealthCustomFoodSavedDraft(selectedCanonicalFood) : null;
-    return createHealthCustomFoodNewDraft(customFoodView.newCustomFoodDraftId);
-  }, [customFoodView, hasSharedCustomFoodSessions, isSavedCustomFoodEditor, selectedCanonicalFood]);
+    return createHealthCustomFoodNewDraft(foodView.newCustomFoodDraftId);
+  }, [foodView, hasSharedCustomFoodSessions, isSavedCustomFoodEditor, selectedCanonicalFood]);
   const subscribeToCustomFoodSession = useCallback((listener: () => void) => (
     customFoodSessionStore && activeCustomFoodSessionId
       ? customFoodSessionStore.subscribeToSession(activeCustomFoodSessionId, listener)
@@ -261,11 +273,95 @@ export function HealthLibraryPanel({
     if (!customFoodSessionStore || !activeCustomFoodSessionId || !activeCustomFoodInitialDraft || !editingViewId) return;
     const canonicalRecordId = isSavedCustomFoodEditor && selectedCustomFoodId
       ? healthCustomFoodSavedSessionId(selectedCustomFoodId)
-      : healthCustomFoodNewCanonicalId(editingViewId, customFoodView!.newCustomFoodDraftId);
+      : healthCustomFoodNewCanonicalId(editingViewId, foodView!.newCustomFoodDraftId);
     customFoodSessionStore.ensureSession(activeCustomFoodSessionId, canonicalRecordId, activeCustomFoodInitialDraft);
     customFoodSessionStore.attachView(activeCustomFoodSessionId, editingViewId);
     return () => customFoodSessionStore.detachView(editingViewId);
-  }, [activeCustomFoodInitialDraft, activeCustomFoodSessionId, customFoodSessionStore, customFoodView, editingViewId, isSavedCustomFoodEditor, selectedCustomFoodId]);
+  }, [activeCustomFoodInitialDraft, activeCustomFoodSessionId, customFoodSessionStore, foodView, editingViewId, isSavedCustomFoodEditor, selectedCustomFoodId]);
+
+  const hasSharedRecipeSessions = Boolean(recipeSessionStore && foodView && editingViewId && onFoodViewChange);
+  const recipeEditorMode = hasSharedRecipeSessions ? foodView!.recipeEditorMode : legacyRecipeDraft.id ? "saved" : "new";
+  const selectedRecipeId = hasSharedRecipeSessions ? foodView!.selectedRecipeDefinitionId : legacyRecipeDraft.id;
+  const activeRecipeSessionId = hasSharedRecipeSessions
+    ? recipeEditorMode === "saved" && selectedRecipeId
+      ? healthRecipeSavedSessionId(selectedRecipeId)
+      : healthRecipeNewSessionId(editingViewId!, foodView!.newRecipeDraftId)
+    : "";
+  const selectedCanonicalRecipe = recipeEditorMode === "saved"
+    ? recipes.find((recipe) => recipe.id === selectedRecipeId) ?? null
+    : null;
+  const activeRecipeInitialDraft = useMemo<RecipeDraft | null>(() => {
+    if (!hasSharedRecipeSessions || !foodView) return null;
+    if (recipeEditorMode === "saved") return selectedCanonicalRecipe ? createHealthRecipeSavedDraft(selectedCanonicalRecipe) : null;
+    return createHealthRecipeNewDraft(foodView.newRecipeDraftId);
+  }, [foodView, hasSharedRecipeSessions, recipeEditorMode, selectedCanonicalRecipe]);
+  const subscribeToRecipeSession = useCallback((listener: () => void) => (
+    recipeSessionStore && activeRecipeSessionId
+      ? recipeSessionStore.subscribeToSession(activeRecipeSessionId, listener)
+      : () => {}
+  ), [activeRecipeSessionId, recipeSessionStore]);
+  const getRecipeSessionSnapshot = useCallback(
+    () => recipeSessionStore && activeRecipeSessionId ? recipeSessionStore.getSnapshot(activeRecipeSessionId) : null,
+    [activeRecipeSessionId, recipeSessionStore],
+  );
+  const activeRecipeSession = useSyncExternalStore(subscribeToRecipeSession, getRecipeSessionSnapshot, () => null);
+  const recipeDraft = hasSharedRecipeSessions
+    ? activeRecipeSession?.draft ?? activeRecipeInitialDraft ?? EMPTY_RECIPE_DRAFT
+    : legacyRecipeDraft;
+  useLayoutEffect(() => {
+    if (!recipeSessionStore || !hasSharedRecipeSessions || !activeRecipeSessionId || !activeRecipeInitialDraft || !editingViewId || !foodView) return;
+    const canonicalId = recipeEditorMode === "saved" && selectedRecipeId
+      ? healthRecipeSavedSessionId(selectedRecipeId)
+      : healthRecipeNewCanonicalId(editingViewId, foodView.newRecipeDraftId);
+    recipeSessionStore.ensureSession(activeRecipeSessionId, canonicalId, activeRecipeInitialDraft);
+    recipeSessionStore.attachView(activeRecipeSessionId, editingViewId);
+  }, [activeRecipeInitialDraft, activeRecipeSessionId, editingViewId, foodView, hasSharedRecipeSessions, recipeEditorMode, recipeSessionStore, selectedRecipeId]);
+  const recipeIsMissing = hasSharedRecipeSessions && recipeEditorMode === "saved" && !selectedCanonicalRecipe;
+  const recipeIsUnsafe = hasSharedRecipeSessions
+    ? Boolean(activeRecipeSession?.dirty || activeRecipeSession?.isSaving)
+    : Boolean(legacyRecipeDraft.id || hasRecipeDraftContent(legacyRecipeDraft));
+
+  const hasSharedSavedMealSessions = Boolean(savedMealSessionStore && foodView && editingViewId && onFoodViewChange);
+  const savedMealEditorMode = hasSharedSavedMealSessions ? foodView!.savedMealEditorMode : legacyMealDraft.id ? "saved" : "new";
+  const selectedSavedMealId = hasSharedSavedMealSessions ? foodView!.selectedSavedMealDefinitionId : legacyMealDraft.id;
+  const activeSavedMealSessionId = hasSharedSavedMealSessions
+    ? savedMealEditorMode === "saved" && selectedSavedMealId
+      ? healthSavedMealSavedSessionId(selectedSavedMealId)
+      : healthSavedMealNewSessionId(editingViewId!, foodView!.newSavedMealDraftId)
+    : "";
+  const selectedCanonicalSavedMeal = savedMealEditorMode === "saved"
+    ? savedMeals.find((meal) => meal.id === selectedSavedMealId) ?? null
+    : null;
+  const activeSavedMealInitialDraft = useMemo<MealDraft | null>(() => {
+    if (!hasSharedSavedMealSessions || !foodView) return null;
+    if (savedMealEditorMode === "saved") return selectedCanonicalSavedMeal ? createHealthSavedMealSavedDraft(selectedCanonicalSavedMeal) : null;
+    return createHealthSavedMealNewDraft(foodView.newSavedMealDraftId);
+  }, [foodView, hasSharedSavedMealSessions, savedMealEditorMode, selectedCanonicalSavedMeal]);
+  const subscribeToSavedMealSession = useCallback((listener: () => void) => (
+    savedMealSessionStore && activeSavedMealSessionId
+      ? savedMealSessionStore.subscribeToSession(activeSavedMealSessionId, listener)
+      : () => {}
+  ), [activeSavedMealSessionId, savedMealSessionStore]);
+  const getSavedMealSessionSnapshot = useCallback(
+    () => savedMealSessionStore && activeSavedMealSessionId ? savedMealSessionStore.getSnapshot(activeSavedMealSessionId) : null,
+    [activeSavedMealSessionId, savedMealSessionStore],
+  );
+  const activeSavedMealSession = useSyncExternalStore(subscribeToSavedMealSession, getSavedMealSessionSnapshot, () => null);
+  const mealDraft = hasSharedSavedMealSessions
+    ? activeSavedMealSession?.draft ?? activeSavedMealInitialDraft ?? EMPTY_MEAL_DRAFT
+    : legacyMealDraft;
+  useLayoutEffect(() => {
+    if (!savedMealSessionStore || !hasSharedSavedMealSessions || !activeSavedMealSessionId || !activeSavedMealInitialDraft || !editingViewId || !foodView) return;
+    const canonicalId = savedMealEditorMode === "saved" && selectedSavedMealId
+      ? healthSavedMealSavedSessionId(selectedSavedMealId)
+      : healthSavedMealNewCanonicalId(editingViewId, foodView.newSavedMealDraftId);
+    savedMealSessionStore.ensureSession(activeSavedMealSessionId, canonicalId, activeSavedMealInitialDraft);
+    savedMealSessionStore.attachView(activeSavedMealSessionId, editingViewId);
+  }, [activeSavedMealInitialDraft, activeSavedMealSessionId, editingViewId, foodView, hasSharedSavedMealSessions, savedMealEditorMode, savedMealSessionStore, selectedSavedMealId]);
+  const savedMealIsMissing = hasSharedSavedMealSessions && savedMealEditorMode === "saved" && !selectedCanonicalSavedMeal;
+  const savedMealIsUnsafe = hasSharedSavedMealSessions
+    ? Boolean(activeSavedMealSession?.dirty || activeSavedMealSession?.isSaving)
+    : Boolean(legacyMealDraft.id || hasSavedMealDraftContent(legacyMealDraft));
   useLayoutEffect(() => () => {
     barcodeLookupGenerationRef.current += 1;
   }, []);
@@ -315,8 +411,8 @@ export function HealthLibraryPanel({
   const activeHistoryRepairFeedback = editingFood?.id === historyRepairFoodId ? historyRepairFeedback : "";
   const hasUnsafeDraft = Boolean(
     (!hasSharedCustomFoodSessions && (isSavedCustomFoodEditor ? !editingFood || editingFoodHasUnsavedChanges : editingFoodHasUnsavedChanges))
-    || (recipeDraft.id || JSON.stringify(recipeDraft) !== JSON.stringify(EMPTY_RECIPE_DRAFT))
-    || (mealDraft.id || JSON.stringify(mealDraft) !== JSON.stringify(EMPTY_MEAL_DRAFT))
+    || (!hasSharedRecipeSessions && recipeIsUnsafe)
+    || (!hasSharedSavedMealSessions && savedMealIsUnsafe)
     || foodImportText.trim()
     || foodImportRows.length > 0
     || isBarcodeScannerOpen
@@ -345,9 +441,25 @@ export function HealthLibraryPanel({
     updateFoodDraftFor(activeCustomFoodDraftId, update);
   }
 
-  function updateCustomFoodView(update: (current: MasterFoodWorkspaceView) => MasterFoodWorkspaceView) {
-    if (!customFoodView || !onCustomFoodViewChange) return;
-    onCustomFoodViewChange(update);
+  function setRecipeDraft(update: SetStateAction<RecipeDraft>) {
+    if (hasSharedRecipeSessions && recipeSessionStore && activeRecipeSessionId) {
+      recipeSessionStore.updateDraft(activeRecipeSessionId, (current) => typeof update === "function" ? update(current) : update);
+      return;
+    }
+    setLegacyRecipeDraft(update);
+  }
+
+  function setMealDraft(update: SetStateAction<MealDraft>) {
+    if (hasSharedSavedMealSessions && savedMealSessionStore && activeSavedMealSessionId) {
+      savedMealSessionStore.updateDraft(activeSavedMealSessionId, (current) => typeof update === "function" ? update(current) : update);
+      return;
+    }
+    setLegacyMealDraft(update);
+  }
+
+  function updateFoodView(update: (current: MasterFoodWorkspaceView) => MasterFoodWorkspaceView) {
+    if (!foodView || !onFoodViewChange) return;
+    onFoodViewChange(update);
   }
 
   function cancelFoodBarcodeLookup() {
@@ -459,8 +571,8 @@ export function HealthLibraryPanel({
 
   async function persistCustomFood(choice: "update" | "future") {
     if (isSavingFood) return;
-    const originalNewDraftId = customFoodView?.newCustomFoodDraftId;
-    const originalEditorMode = customFoodView?.customFoodEditorMode;
+    const originalNewDraftId = foodView?.newCustomFoodDraftId;
+    const originalEditorMode = foodView?.customFoodEditorMode;
     setIsSavingFood(true);
     try {
       let saved: HealthFoodLibraryItem | null = null;
@@ -490,7 +602,7 @@ export function HealthLibraryPanel({
         if (wasNew) {
           const savedFoodId = saved.id;
           const newDraftId = createHealthCustomFoodDraftId();
-          updateCustomFoodView((current) => current.customFoodEditorMode === "new"
+          updateFoodView((current) => current.customFoodEditorMode === "new"
             && current.newCustomFoodDraftId === originalNewDraftId
             && originalEditorMode === "new"
             ? {
@@ -604,7 +716,7 @@ export function HealthLibraryPanel({
     setFoodDeleteFeedback("");
     setHistoryRepairFeedback("");
     if (hasSharedCustomFoodSessions) {
-      updateCustomFoodView((current) => ({
+      updateFoodView((current) => ({
         ...current,
         selectedCustomFoodDefinitionId: food.id,
         customFoodEditorMode: "saved",
@@ -621,7 +733,7 @@ export function HealthLibraryPanel({
     setFoodDeleteFeedback("");
     setHistoryRepairFeedback("");
     if (hasSharedCustomFoodSessions) {
-      updateCustomFoodView((current) => ({ ...current, customFoodEditorMode: "new" }));
+      updateFoodView((current) => ({ ...current, customFoodEditorMode: "new" }));
       return;
     }
     setLegacyFoodDraft(EMPTY_FOOD_DRAFT);
@@ -630,14 +742,14 @@ export function HealthLibraryPanel({
   function discardCurrentFoodDraft() {
     cancelFoodBarcodeLookup();
     setFoodSaveFeedback("");
-    if (hasSharedCustomFoodSessions && customFoodSessionStore && customFoodView) {
+    if (hasSharedCustomFoodSessions && customFoodSessionStore && foodView) {
       const draftId = activeCustomFoodDraftId;
       const canonicalRecordId = isSavedCustomFoodEditor && selectedCustomFoodId
         ? healthCustomFoodSavedSessionId(selectedCustomFoodId)
-        : healthCustomFoodNewCanonicalId(editingViewId!, customFoodView.newCustomFoodDraftId);
+        : healthCustomFoodNewCanonicalId(editingViewId!, foodView.newCustomFoodDraftId);
       const latestBaseline = isSavedCustomFoodEditor && editingFood
         ? createHealthCustomFoodSavedDraft(editingFood)
-        : createHealthCustomFoodNewDraft(customFoodView.newCustomFoodDraftId);
+        : createHealthCustomFoodNewDraft(foodView.newCustomFoodDraftId);
       discardHealthCustomFoodDraft({ store: customFoodSessionStore, draftId, canonicalRecordId, latestBaseline });
       return;
     }
@@ -653,7 +765,7 @@ export function HealthLibraryPanel({
     setFoodDeleteFeedback("");
     const deleted = await deleteFood(food.id);
     if (deleted && hasSharedCustomFoodSessions && selectedCustomFoodId === food.id) {
-      updateCustomFoodView((current) => ({ ...current, customFoodEditorMode: "new", selectedCustomFoodDefinitionId: null }));
+      updateFoodView((current) => ({ ...current, customFoodEditorMode: "new", selectedCustomFoodDefinitionId: null }));
     }
   }
 
@@ -727,34 +839,211 @@ export function HealthLibraryPanel({
   }
 
   async function handleSaveRecipe() {
-    if (!recipeDraft.name.trim() || recipeDraft.ingredients.length === 0) {
+    const validationMessage = getHealthRecipeDefinitionDraftValidationMessage(recipeDraft);
+    if (validationMessage) {
+      setRecipeEditorFeedback(validationMessage);
+      return;
+    }
+    setRecipeEditorFeedback("");
+    if (hasSharedRecipeSessions && recipeSessionStore && editingViewId && foodView) {
+      const originalNewDraftId = foodView.newRecipeDraftId;
+      const isNew = recipeEditorMode === "new";
+      const canonicalRecordId = isNew
+        ? healthRecipeNewCanonicalId(editingViewId, originalNewDraftId)
+        : selectedRecipeId ? healthRecipeSavedSessionId(selectedRecipeId) : "";
+      const result = await saveHealthRecipeEditingSession({
+        store: recipeSessionStore,
+        draftId: activeRecipeSessionId,
+        canonicalRecordId,
+        isNew,
+        save: (draft, options) => saveRecipe({
+          id: options.recordId,
+          ingredients: draft.ingredients,
+          name: draft.name.trim(),
+          notes: draft.notes.trim(),
+          servings: parsePositive(draft.servings),
+        }, options),
+      });
+      if ("error" in result) {
+        setRecipeEditorFeedback(result.error);
+        return;
+      }
+      if (isNew) {
+        const savedSessionId = healthRecipeSavedSessionId(result.saved.id);
+        recipeSessionStore.ensureSession(savedSessionId, savedSessionId, createHealthRecipeSavedDraft(result.saved));
+        recipeSessionStore.attachView(savedSessionId, editingViewId);
+        const nextNewRecipeDraftId = createHealthLibraryDefinitionDraftId();
+        updateFoodView((current) => {
+          if (current.newRecipeDraftId !== originalNewDraftId) return current;
+          return {
+            ...current,
+            newRecipeDraftId: nextNewRecipeDraftId,
+            ...(current.recipeEditorMode === "new"
+              ? { recipeEditorMode: "saved" as const, selectedRecipeDefinitionId: result.saved.id }
+              : {}),
+          };
+        });
+      }
       return;
     }
     const saved = await saveRecipe({
-      id: recipeDraft.id,
+      id: recipeDraft.id ?? undefined,
       ingredients: recipeDraft.ingredients,
       name: recipeDraft.name.trim(),
       notes: recipeDraft.notes.trim(),
       servings: parsePositive(recipeDraft.servings),
     });
     if (saved) {
-      setRecipeDraft(EMPTY_RECIPE_DRAFT);
+      setLegacyRecipeDraft(createHealthRecipeNewDraft());
+    } else {
+      setRecipeEditorFeedback("Could not save this recipe. Your draft is still here; try again.");
     }
   }
 
   async function handleSaveMeal() {
-    if (!mealDraft.name.trim() || mealDraft.items.length === 0) {
+    const validationMessage = getHealthSavedMealDefinitionDraftValidationMessage(mealDraft);
+    if (validationMessage) {
+      setSavedMealEditorFeedback(validationMessage);
+      return;
+    }
+    setSavedMealEditorFeedback("");
+    if (hasSharedSavedMealSessions && savedMealSessionStore && editingViewId && foodView) {
+      const originalNewDraftId = foodView.newSavedMealDraftId;
+      const isNew = savedMealEditorMode === "new";
+      const canonicalRecordId = isNew
+        ? healthSavedMealNewCanonicalId(editingViewId, originalNewDraftId)
+        : selectedSavedMealId ? healthSavedMealSavedSessionId(selectedSavedMealId) : "";
+      const result = await saveHealthSavedMealEditingSession({
+        store: savedMealSessionStore,
+        draftId: activeSavedMealSessionId,
+        canonicalRecordId,
+        isNew,
+        save: (draft, options) => saveSavedMeal({
+          id: options.recordId,
+          default_meal_slot: draft.mealSlot,
+          items: draft.items,
+          name: draft.name.trim(),
+        }, options),
+      });
+      if ("error" in result) {
+        setSavedMealEditorFeedback(result.error);
+        return;
+      }
+      if (isNew) {
+        const savedSessionId = healthSavedMealSavedSessionId(result.saved.id);
+        savedMealSessionStore.ensureSession(savedSessionId, savedSessionId, createHealthSavedMealSavedDraft(result.saved));
+        savedMealSessionStore.attachView(savedSessionId, editingViewId);
+        const nextNewSavedMealDraftId = createHealthLibraryDefinitionDraftId();
+        updateFoodView((current) => {
+          if (current.newSavedMealDraftId !== originalNewDraftId) return current;
+          return {
+            ...current,
+            newSavedMealDraftId: nextNewSavedMealDraftId,
+            ...(current.savedMealEditorMode === "new"
+              ? { savedMealEditorMode: "saved" as const, selectedSavedMealDefinitionId: result.saved.id }
+              : {}),
+          };
+        });
+      }
       return;
     }
     const saved = await saveSavedMeal({
-      id: mealDraft.id,
+      id: mealDraft.id ?? undefined,
       default_meal_slot: mealDraft.mealSlot,
       items: mealDraft.items,
       name: mealDraft.name.trim(),
     });
     if (saved) {
-      setMealDraft(EMPTY_MEAL_DRAFT);
+      setLegacyMealDraft(createHealthSavedMealNewDraft());
+    } else {
+      setSavedMealEditorFeedback("Could not save this saved meal. Your draft is still here; try again.");
     }
+  }
+
+  function startNewRecipe() {
+    setRecipeEditorFeedback("");
+    if (hasSharedRecipeSessions) {
+      updateFoodView((current) => ({ ...current, recipeEditorMode: "new", selectedRecipeDefinitionId: null }));
+    } else {
+      setLegacyRecipeDraft(createHealthRecipeNewDraft());
+    }
+  }
+
+  function startEditingRecipe(recipe: HealthRecipe) {
+    setRecipeEditorFeedback("");
+    if (hasSharedRecipeSessions) {
+      updateFoodView((current) => ({ ...current, recipeEditorMode: "saved", selectedRecipeDefinitionId: recipe.id }));
+    } else {
+      setLegacyRecipeDraft(createHealthRecipeSavedDraft(recipe));
+    }
+  }
+
+  function discardRecipeDraft() {
+    setRecipeEditorFeedback("");
+    if (hasSharedRecipeSessions && recipeSessionStore && activeRecipeSessionId) {
+      const snapshot = recipeSessionStore.getSnapshot(activeRecipeSessionId);
+      if (snapshot && !snapshot.isSaving) recipeSessionStore.discardDraft(activeRecipeSessionId, activeRecipeInitialDraft ?? snapshot.baseline);
+      return;
+    }
+    setLegacyRecipeDraft(selectedCanonicalRecipe ? createHealthRecipeSavedDraft(selectedCanonicalRecipe) : createHealthRecipeNewDraft());
+  }
+
+  function startNewSavedMeal() {
+    setSavedMealEditorFeedback("");
+    if (hasSharedSavedMealSessions) {
+      updateFoodView((current) => ({ ...current, savedMealEditorMode: "new", selectedSavedMealDefinitionId: null }));
+    } else {
+      setLegacyMealDraft(createHealthSavedMealNewDraft());
+    }
+  }
+
+  function startEditingSavedMeal(meal: HealthSavedMeal) {
+    setSavedMealEditorFeedback("");
+    if (hasSharedSavedMealSessions) {
+      updateFoodView((current) => ({ ...current, savedMealEditorMode: "saved", selectedSavedMealDefinitionId: meal.id }));
+    } else {
+      setLegacyMealDraft(createHealthSavedMealSavedDraft(meal));
+    }
+  }
+
+  function discardSavedMealDraft() {
+    setSavedMealEditorFeedback("");
+    if (hasSharedSavedMealSessions && savedMealSessionStore && activeSavedMealSessionId) {
+      const snapshot = savedMealSessionStore.getSnapshot(activeSavedMealSessionId);
+      if (snapshot && !snapshot.isSaving) savedMealSessionStore.discardDraft(activeSavedMealSessionId, activeSavedMealInitialDraft ?? snapshot.baseline);
+      return;
+    }
+    setLegacyMealDraft(selectedCanonicalSavedMeal ? createHealthSavedMealSavedDraft(selectedCanonicalSavedMeal) : createHealthSavedMealNewDraft());
+  }
+
+  async function handleDeleteRecipe(recipe: HealthRecipe) {
+    setRecipeDeleteFeedback("");
+    if (hasSharedRecipeSessions && recipeSessionStore && editingViewId) {
+      const result = await deleteHealthRecipeDefinitionWithSession({
+        store: recipeSessionStore,
+        recipe,
+        viewId: editingViewId,
+        remove: deleteRecipe,
+      });
+      if ("error" in result) setRecipeDeleteFeedback(result.error);
+      return;
+    }
+    if (!await deleteRecipe(recipe.id)) setRecipeDeleteFeedback("Could not remove this recipe.");
+  }
+
+  async function handleDeleteSavedMeal(meal: HealthSavedMeal) {
+    setSavedMealDeleteFeedback("");
+    if (hasSharedSavedMealSessions && savedMealSessionStore && editingViewId) {
+      const result = await deleteHealthSavedMealDefinitionWithSession({
+        store: savedMealSessionStore,
+        meal,
+        viewId: editingViewId,
+        remove: deleteSavedMeal,
+      });
+      if ("error" in result) setSavedMealDeleteFeedback(result.error);
+      return;
+    }
+    if (!await deleteSavedMeal(meal.id)) setSavedMealDeleteFeedback("Could not remove this saved meal.");
   }
 
   return (
@@ -1066,17 +1355,19 @@ export function HealthLibraryPanel({
       {section === "recipes" ? (
         <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-4">
-            <HealthCollapsiblePanel subtitle="Add foods below, then set the batch yield." title={recipeDraft.id ? "Edit recipe" : "New recipe"} variant="subpanel">
+            <HealthCollapsiblePanel subtitle="Add foods below, then set the batch yield." title={recipeEditorMode === "saved" ? "Edit recipe" : "New recipe"} variant="subpanel">
+              {recipeEditorMode === "saved" ? <AdhdChip className="mb-3" onClick={startNewRecipe}>New recipe</AdhdChip> : null}
+              {recipeIsMissing ? <p aria-live="polite" className="mb-3 text-xs text-[#b34b63] dark:text-[#ffabbc]" role="alert">This recipe is no longer in the library. Its open draft is preserved; it will not be recreated when you save.</p> : null}
               <div className="grid gap-3 sm:grid-cols-2">
                 <LibraryField label="Recipe name">
-                  <input className="health-input" onChange={(event) => setRecipeDraft((current) => ({ ...current, name: event.target.value }))} value={recipeDraft.name} />
+                  <input className="health-input" disabled={Boolean(activeRecipeSession?.isSaving)} onChange={(event) => setRecipeDraft((current) => ({ ...current, name: event.target.value }))} value={recipeDraft.name} />
                 </LibraryField>
                 <LibraryField label="Servings in batch">
-                  <input className="health-input" inputMode="decimal" onChange={(event) => setRecipeDraft((current) => ({ ...current, servings: event.target.value }))} value={recipeDraft.servings} />
+                  <input className="health-input" disabled={Boolean(activeRecipeSession?.isSaving)} inputMode="decimal" onChange={(event) => setRecipeDraft((current) => ({ ...current, servings: event.target.value }))} value={recipeDraft.servings} />
                 </LibraryField>
                 <div className="sm:col-span-2">
                   <LibraryField label="Notes or instructions">
-                    <textarea className="health-input min-h-20 resize-y" onChange={(event) => setRecipeDraft((current) => ({ ...current, notes: event.target.value }))} value={recipeDraft.notes} />
+                    <textarea className="health-input min-h-20 resize-y" disabled={Boolean(activeRecipeSession?.isSaving)} onChange={(event) => setRecipeDraft((current) => ({ ...current, notes: event.target.value }))} value={recipeDraft.notes} />
                   </LibraryField>
                 </div>
               </div>
@@ -1085,34 +1376,40 @@ export function HealthLibraryPanel({
                   <IngredientRow
                     key={`${ingredient.food_id ?? ingredient.food_name}-${index}`}
                     name={ingredient.food_name}
-                    onQuantity={(quantity) => setRecipeDraft((current) => ({
-                      ...current,
-                      ingredients: current.ingredients.map((item, itemIndex) => itemIndex === index ? { ...item, quantity } : item),
-                    }))}
-                    onRemove={() => setRecipeDraft((current) => ({ ...current, ingredients: current.ingredients.filter((_, itemIndex) => itemIndex !== index) }))}
+                    onQuantity={(quantity) => setRecipeDraft((current) => updateHealthRecipeIngredientQuantity(current, index, quantity))}
+                    disabled={Boolean(activeRecipeSession?.isSaving)}
+                    onRemove={() => setRecipeDraft((current) => removeHealthRecipeIngredient(current, index))}
                     quantity={ingredient.quantity}
                   />
                 ))}
               </div>
               <NutritionLine {...recipePreview} />
               <div className="mt-4 flex flex-wrap gap-2">
-                <AdhdChip onClick={() => { void handleSaveRecipe(); }} selected>Save recipe</AdhdChip>
-                {recipeDraft.id ? <AdhdChip onClick={() => setRecipeDraft(EMPTY_RECIPE_DRAFT)}>Cancel</AdhdChip> : null}
+                <AdhdChip disabled={Boolean(activeRecipeSession?.isSaving) || recipeIsMissing} onClick={() => { void handleSaveRecipe(); }} selected>{activeRecipeSession?.isSaving ? "Saving..." : "Save recipe"}</AdhdChip>
+                {hasSharedRecipeSessions
+                  ? recipeEditorMode === "saved" || activeRecipeSession?.dirty || activeRecipeSession?.saveError
+                    ? <AdhdChip disabled={Boolean(activeRecipeSession?.isSaving)} onClick={discardRecipeDraft}>Discard Draft</AdhdChip>
+                    : null
+                  : recipeDraft.id ? <AdhdChip onClick={discardRecipeDraft}>Cancel</AdhdChip> : null}
+                {activeRecipeSession?.saveError || recipeEditorFeedback ? <p aria-live="polite" className="basis-full text-xs text-[#b34b63] dark:text-[#ffabbc]" role="alert">{activeRecipeSession?.saveError ?? recipeEditorFeedback}</p> : null}
+                {recipeDeleteFeedback ? <p aria-live="polite" className="basis-full text-xs text-[#b34b63] dark:text-[#ffabbc]" role="alert">{recipeDeleteFeedback}</p> : null}
               </div>
             </HealthCollapsiblePanel>
             <HealthCollapsiblePanel subtitle="Search by brand, food, or serving before adding an ingredient." title="Add ingredients" variant="subpanel">
               <input
                 className={`${HEALTH_COMPACT_INPUT_CLASS} mb-3`}
+                disabled={Boolean(activeRecipeSession?.isSaving)}
                 onChange={(event) => onIngredientSearchQueryChange(event.target.value)}
                 placeholder="Search custom foods"
                 value={ingredientSearchQuery}
               />
               <SourcePicker
+              disabled={Boolean(activeRecipeSession?.isSaving)}
               empty={ingredientSearchQuery.trim() ? "No custom foods match this ingredient search." : "Create a custom food first, then add it as an ingredient."}
               items={filteredIngredientFoods.map((food) => ({
                 id: food.id,
                 label: formatBrandedFoodName(food),
-                onAdd: () => setRecipeDraft((current) => ({ ...current, ingredients: [...current.ingredients, buildRecipeIngredient(food, 1)] })),
+                onAdd: () => setRecipeDraft((current) => appendHealthRecipeIngredient(current, food)),
               }))}
               />
             </HealthCollapsiblePanel>
@@ -1124,14 +1421,8 @@ export function HealthLibraryPanel({
                 <LibraryCardHeader detail={`${formatQuantity(recipe.servings)} servings / ${recipe.ingredients.length} ingredients`} title={recipe.name} />
                 <NutritionLine {...nutrition} />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setRecipeDraft({
-                    id: recipe.id,
-                    ingredients: recipe.ingredients,
-                    name: recipe.name,
-                    notes: recipe.notes,
-                    servings: String(recipe.servings),
-                  })}>Edit</AdhdChip>
-                  <AdhdChip contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteRecipe(recipe.id); }} tone="danger">Remove</AdhdChip>
+                  <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => startEditingRecipe(recipe)}>Edit</AdhdChip>
+                  <AdhdChip contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void handleDeleteRecipe(recipe); }} tone="danger">Remove</AdhdChip>
                 </div>
               </AdhdCard>
             );
@@ -1142,13 +1433,15 @@ export function HealthLibraryPanel({
       {section === "meals" ? (
         <div className="grid gap-5 xl:grid-cols-[0.9fr_1.1fr]">
           <div className="grid gap-4">
-            <HealthCollapsiblePanel subtitle="A meal can contain custom foods and recipe servings." title={mealDraft.id ? "Edit custom meal" : "New custom meal"} variant="subpanel">
+            <HealthCollapsiblePanel subtitle="A meal can contain custom foods and recipe servings." title={savedMealEditorMode === "saved" ? "Edit saved meal" : "New saved meal"} variant="subpanel">
+              {savedMealEditorMode === "saved" ? <AdhdChip className="mb-3" onClick={startNewSavedMeal}>New saved meal</AdhdChip> : null}
+              {savedMealIsMissing ? <p aria-live="polite" className="mb-3 text-xs text-[#b34b63] dark:text-[#ffabbc]" role="alert">This saved meal is no longer in the library. Its open draft is preserved; it will not be recreated when you save.</p> : null}
               <LibraryField label="Meal name">
-                <input className="health-input" onChange={(event) => setMealDraft((current) => ({ ...current, name: event.target.value }))} value={mealDraft.name} />
+                <input className="health-input" disabled={Boolean(activeSavedMealSession?.isSaving)} onChange={(event) => setMealDraft((current) => ({ ...current, name: event.target.value }))} value={mealDraft.name} />
               </LibraryField>
               <div className="mt-3 flex flex-wrap gap-2">
                 {HEALTH_MEAL_SLOTS.map((slot) => (
-                  <AdhdChip key={slot} onClick={() => setMealDraft((current) => ({ ...current, mealSlot: slot }))} selected={mealDraft.mealSlot === slot}>
+                  <AdhdChip disabled={Boolean(activeSavedMealSession?.isSaving)} key={slot} onClick={() => setMealDraft((current) => ({ ...current, mealSlot: slot }))} selected={mealDraft.mealSlot === slot}>
                     {getMealSlotLabel(slot)}
                   </AdhdChip>
                 ))}
@@ -1158,33 +1451,38 @@ export function HealthLibraryPanel({
                   <IngredientRow
                     key={`${item.source_type}-${item.source_id ?? item.name}-${index}`}
                     name={item.name}
-                    onQuantity={(quantity) => setMealDraft((current) => ({
-                      ...current,
-                      items: current.items.map((entry, itemIndex) => itemIndex === index ? { ...entry, quantity } : entry),
-                    }))}
-                    onRemove={() => setMealDraft((current) => ({ ...current, items: current.items.filter((_, itemIndex) => itemIndex !== index) }))}
+                    onQuantity={(quantity) => setMealDraft((current) => updateHealthSavedMealItemQuantity(current, index, quantity))}
+                    disabled={Boolean(activeSavedMealSession?.isSaving)}
+                    onRemove={() => setMealDraft((current) => removeHealthSavedMealItem(current, index))}
                     quantity={item.quantity}
                   />
                 ))}
               </div>
               <NutritionLine {...mealPreview} />
               <div className="mt-4 flex flex-wrap gap-2">
-                <AdhdChip onClick={() => { void handleSaveMeal(); }} selected>Save meal</AdhdChip>
-                {mealDraft.id ? <AdhdChip onClick={() => setMealDraft(EMPTY_MEAL_DRAFT)}>Cancel</AdhdChip> : null}
+                <AdhdChip disabled={Boolean(activeSavedMealSession?.isSaving) || savedMealIsMissing} onClick={() => { void handleSaveMeal(); }} selected>{activeSavedMealSession?.isSaving ? "Saving..." : "Save saved meal"}</AdhdChip>
+                {hasSharedSavedMealSessions
+                  ? savedMealEditorMode === "saved" || activeSavedMealSession?.dirty || activeSavedMealSession?.saveError
+                    ? <AdhdChip disabled={Boolean(activeSavedMealSession?.isSaving)} onClick={discardSavedMealDraft}>Discard Draft</AdhdChip>
+                    : null
+                  : mealDraft.id ? <AdhdChip onClick={discardSavedMealDraft}>Cancel</AdhdChip> : null}
+                {activeSavedMealSession?.saveError || savedMealEditorFeedback ? <p aria-live="polite" className="basis-full text-xs text-[#b34b63] dark:text-[#ffabbc]" role="alert">{activeSavedMealSession?.saveError ?? savedMealEditorFeedback}</p> : null}
+                {savedMealDeleteFeedback ? <p aria-live="polite" className="basis-full text-xs text-[#b34b63] dark:text-[#ffabbc]" role="alert">{savedMealDeleteFeedback}</p> : null}
               </div>
             </HealthCollapsiblePanel>
             <SourcePicker
+              disabled={Boolean(activeSavedMealSession?.isSaving)}
               empty="Create a custom food or recipe first."
               items={[
                 ...favorites.map((food) => ({
                   id: `food-${food.id}`,
                   label: formatBrandedFoodName(food),
-                  onAdd: () => setMealDraft((current) => ({ ...current, items: [...current.items, buildSavedMealFoodItem(food, 1)] })),
+                  onAdd: () => setMealDraft((current) => appendHealthSavedMealFoodItem(current, food)),
                 })),
                 ...recipes.map((recipe) => ({
                   id: `recipe-${recipe.id}`,
                   label: `${recipe.name} (recipe)`,
-                  onAdd: () => setMealDraft((current) => ({ ...current, items: [...current.items, buildSavedMealRecipeItem(recipe, 1)] })),
+                  onAdd: () => setMealDraft((current) => appendHealthSavedMealRecipeItem(current, recipe)),
                 })),
               ]}
               title="Add meal items"
@@ -1197,13 +1495,8 @@ export function HealthLibraryPanel({
                 <LibraryCardHeader detail={`${getMealSlotLabel(meal.default_meal_slot)} / ${meal.items.length} items`} title={meal.name} />
                 <NutritionLine {...nutrition} />
                 <div className="mt-3 flex flex-wrap gap-2">
-                  <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => setMealDraft({
-                    id: meal.id,
-                    items: meal.items,
-                    mealSlot: meal.default_meal_slot,
-                    name: meal.name,
-                  })}>Edit</AdhdChip>
-                  <AdhdChip contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void deleteSavedMeal(meal.id); }} tone="danger">Remove</AdhdChip>
+                  <AdhdChip contentClassName="gap-1.5" icon={<Pencil aria-hidden="true" className="h-3 w-3" />} onClick={() => startEditingSavedMeal(meal)}>Edit</AdhdChip>
+                  <AdhdChip contentClassName="gap-1.5" icon={<Trash2 aria-hidden="true" className="h-3 w-3" />} onClick={() => { void handleDeleteSavedMeal(meal); }} tone="danger">Remove</AdhdChip>
                 </div>
               </AdhdCard>
             );
@@ -1250,11 +1543,11 @@ function reviewFoodImportRows(rows: FoodImportRow[], favorites: HealthFoodLibrar
   });
 }
 
-function SourcePicker({ empty, items, title }: { empty: string; items: Array<{ id: string; label: string; onAdd: () => void }>; title?: string }) {
+function SourcePicker({ disabled = false, empty, items, title }: { disabled?: boolean; empty: string; items: Array<{ id: string; label: string; onAdd: () => void }>; title?: string }) {
   const content = items.length === 0 ? <p className="text-sm text-[#7d7598] dark:text-white/55">{empty}</p> : (
     <div className="flex flex-wrap gap-2">
       {items.map((item) => (
-        <AdhdChip contentClassName="gap-1.5" icon={<Plus aria-hidden="true" className="h-3 w-3" />} key={item.id} onClick={item.onAdd}>
+        <AdhdChip contentClassName="gap-1.5" disabled={disabled} icon={<Plus aria-hidden="true" className="h-3 w-3" />} key={item.id} onClick={item.onAdd}>
           {item.label}
         </AdhdChip>
       ))}
@@ -1271,16 +1564,16 @@ function SourcePicker({ empty, items, title }: { empty: string; items: Array<{ i
   );
 }
 
-function IngredientRow({ name, onQuantity, onRemove, quantity }: { name: string; onQuantity: (quantity: number) => void; onRemove: () => void; quantity: number }) {
+function IngredientRow({ disabled = false, name, onQuantity, onRemove, quantity }: { disabled?: boolean; name: string; onQuantity: (quantity: number) => void; onRemove: () => void; quantity: number }) {
   return (
     <div className="flex min-w-0 items-start gap-3 rounded-[1rem] border border-[#efe9ff] bg-white/80 px-3 py-2 dark:border-white/10 dark:bg-white/[0.04]">
       <span className="min-w-0 flex-1 break-words text-sm font-medium text-[#595378] dark:text-white/68">{name}</span>
       <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-2">
         <label className="flex items-center gap-2 text-xs text-[#7d7598] dark:text-white/55">
           Servings
-          <input className="health-input w-20" inputMode="decimal" min="0.01" onChange={(event) => onQuantity(parsePositive(event.target.value))} type="number" value={quantity} />
+          <input className="health-input w-20" disabled={disabled} inputMode="decimal" min="0.01" onChange={(event) => onQuantity(parsePositive(event.target.value))} type="number" value={quantity} />
         </label>
-        <AdhdChip onClick={onRemove} tone="danger">Remove</AdhdChip>
+        <AdhdChip disabled={disabled} onClick={onRemove} tone="danger">Remove</AdhdChip>
       </div>
     </div>
   );
@@ -1326,6 +1619,14 @@ function NutritionLine({ calories, protein, carbs, fat }: { calories: number | n
 
 function formatNutritionValue(value: number | null) {
   return typeof value === "number" && Number.isFinite(value) ? String(Math.round(value)) : "—";
+}
+
+function hasRecipeDraftContent(draft: RecipeDraft) {
+  return Boolean(draft.name.trim() || draft.notes.trim() || draft.servings !== "1" || draft.ingredients.length > 0);
+}
+
+function hasSavedMealDraftContent(draft: MealDraft) {
+  return Boolean(draft.name.trim() || draft.mealSlot !== "breakfast" || draft.items.length > 0);
 }
 
 function getFoodDraftValidationMessage(draft: FoodDraft) {

@@ -5,6 +5,7 @@ import type { HealthMealSlot, ScratchNoteStatus } from "@/lib/database.types";
 import { createScratchPaperRecordId } from "@/lib/scratch-paper-draft";
 import { createHealthFoodDraftId } from "@/lib/health-meal-draft";
 import { createHealthCustomFoodDraftId } from "@/lib/health-custom-food-editing-session";
+import { createHealthLibraryDefinitionDraftId } from "@/lib/health-library-definition-editing-session";
 import type { HealthFoodLibrarySection } from "@/lib/health-library";
 import {
   DEFAULT_TASK_WORKSPACE_TABS_STATE,
@@ -59,6 +60,12 @@ export type MasterFoodWorkspaceView = {
   selectedCustomFoodDefinitionId: string | null;
   newCustomFoodDraftId: string;
   customFoodEditorMode: "new" | "saved";
+  selectedRecipeDefinitionId: string | null;
+  newRecipeDraftId: string;
+  recipeEditorMode: "new" | "saved";
+  selectedSavedMealDefinitionId: string | null;
+  newSavedMealDraftId: string;
+  savedMealEditorMode: "new" | "saved";
 };
 
 export type MasterFoodWorkspaceViewUpdate = MasterFoodWorkspaceView | ((current: MasterFoodWorkspaceView) => MasterFoodWorkspaceView);
@@ -263,6 +270,12 @@ export function createDefaultMasterFoodWorkspaceView(): MasterFoodWorkspaceView 
     selectedCustomFoodDefinitionId: null,
     newCustomFoodDraftId: createHealthCustomFoodDraftId(),
     customFoodEditorMode: "new",
+    selectedRecipeDefinitionId: null,
+    newRecipeDraftId: createHealthLibraryDefinitionDraftId(),
+    recipeEditorMode: "new",
+    selectedSavedMealDefinitionId: null,
+    newSavedMealDraftId: createHealthLibraryDefinitionDraftId(),
+    savedMealEditorMode: "new",
   };
 }
 
@@ -294,6 +307,20 @@ function normalizeFoodWorkspaceView(value: unknown): MasterFoodWorkspaceView {
     && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.newCustomFoodDraftId)
     ? candidate.newCustomFoodDraftId
     : createHealthCustomFoodDraftId();
+  const newRecipeDraftId = typeof candidate.newRecipeDraftId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.newRecipeDraftId)
+    ? candidate.newRecipeDraftId
+    : createHealthLibraryDefinitionDraftId();
+  const selectedRecipeDefinitionId = typeof candidate.selectedRecipeDefinitionId === "string" && candidate.selectedRecipeDefinitionId.trim()
+    ? candidate.selectedRecipeDefinitionId.trim()
+    : null;
+  const newSavedMealDraftId = typeof candidate.newSavedMealDraftId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.newSavedMealDraftId)
+    ? candidate.newSavedMealDraftId
+    : createHealthLibraryDefinitionDraftId();
+  const selectedSavedMealDefinitionId = typeof candidate.selectedSavedMealDefinitionId === "string" && candidate.selectedSavedMealDefinitionId.trim()
+    ? candidate.selectedSavedMealDefinitionId.trim()
+    : null;
   return {
     historyDate: typeof candidate.historyDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.historyDate)
       ? candidate.historyDate
@@ -333,6 +360,12 @@ function normalizeFoodWorkspaceView(value: unknown): MasterFoodWorkspaceView {
     customFoodEditorMode: candidate.customFoodEditorMode === "saved" && typeof candidate.selectedCustomFoodDefinitionId === "string" && candidate.selectedCustomFoodDefinitionId.trim()
       ? "saved"
       : "new",
+    selectedRecipeDefinitionId,
+    newRecipeDraftId,
+    recipeEditorMode: candidate.recipeEditorMode === "saved" && selectedRecipeDefinitionId ? "saved" : "new",
+    selectedSavedMealDefinitionId,
+    newSavedMealDraftId,
+    savedMealEditorMode: candidate.savedMealEditorMode === "saved" && selectedSavedMealDefinitionId ? "saved" : "new",
   };
 }
 

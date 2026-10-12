@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.142`.
+- Current working app version: `7.16.143`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,48 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-11 7.16.143 T5b.4c.2 Shared Recipe and Saved Meal Definition Editing Sessions
+
+T5b.4a Actual Food passed browser QA on 7.16.140. T5b.4b Planned Meal core
+editing passed five browser checks on 7.16.141; three checks were skipped and
+Done/Remove lifecycle QA remains pending stabilization. T5b.4c.1 Custom Food
+definition editing passed browser QA on 7.16.142.
+
+Recipe and Saved Meal definitions now use separate owner-scoped editing-session
+stores. A saved definition is shared by its canonical record ID across Master
+Tabs. Each tab has separate stable new Recipe and Saved Meal draft IDs. Editor
+selection and mode remain per-tab presentation; draft content remains in the
+editing-session store across section changes, navigation, and remounts. Explicit
+Discard Draft restores a saved definition's latest confirmed canonical baseline
+or clears only the selected new draft. Dirty shared definitions block removal,
+and in-flight saves or deletes lock the session against conflicting edits.
+
+Recipe ingredients and Saved Meal items retain their stored source IDs, order,
+quantities, and nutrition snapshots. Existing source builders and nutrition
+preview helpers remain in use. Updating or removing a source definition does not
+propagate into Recipes or Saved Meals that already contain its snapshot.
+
+`useHealth.saveRecipe` and `useHealth.saveSavedMeal` remain the canonical
+persistence and collection authorities. New definitions use stable UUIDs and
+create-only writes; exact owner-scoped readback reconciles ambiguous
+acknowledgments and rejects conflicting ID collisions. Saved definitions update
+only the selected user-owned ID at its confirmed `updated_at` baseline. A
+successful save reconciles the returned record into the Health collection and
+shared session baseline. Failures keep the draft and ID for retry; missing or
+concurrently changed records remain explicit conflicts. No SQL or schema change
+was made. Legacy single-tab editing remains on its existing save path.
+
+Focused Recipe/Saved Meal, workspace, editing-store, and Custom Food session
+tests passed (61/61). Actual Food and Planned Meal regression selections passed
+(57/57). Broader typecheck still reports existing unrelated Task,
+Health, and UI type errors. Standard targeted ESLint reports existing
+`react-hooks/set-state-in-effect` errors; with that existing rule's findings
+excluded, targeted lint passes. One older Health Library source-text test still
+expects a pre-existing scroll class that differs from the current rendered
+source. `git diff --check` passes. Browser QA and production build are pending.
+Planned Meal Done/Remove lifecycle QA also remains pending. Recipe and Saved
+Meal browser QA is the remaining validation for this editing-session slice.
 
 ## 2026-10-11 7.16.142 T5b.4c.1 Shared Custom Food Definition Editing Sessions
 

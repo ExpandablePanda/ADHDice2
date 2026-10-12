@@ -58,7 +58,7 @@ export type EditingSessionStore<Draft> = {
   getDraftIdsForView(viewId: string): readonly string[];
   canCloseView(viewId: string): boolean;
   updateDraft(draftId: string, update: (current: Draft) => Draft): boolean;
-  discardDraft(draftId: string): boolean;
+  discardDraft(draftId: string, latestBaseline?: Draft): boolean;
   beginSave(draftId: string): number | null;
   saveSucceeded(draftId: string, saveRevision: number, savedDraft: Draft): boolean;
   saveFailed(draftId: string, saveRevision: number, error: string): boolean;
@@ -216,11 +216,12 @@ export function createEditingSessionStore<Draft>(
         });
       });
     },
-    discardDraft(draftId) {
+    discardDraft(draftId, latestBaseline) {
       return updateSession(draftId, (current) => {
-        if (current.isSaving || (!current.dirty && !current.saveError)) return current;
-        const baseline = immutable(current.baseline);
-        return Object.freeze({ ...current, draft: baseline, dirty: false, saveError: null, revision: current.revision + 1 });
+        const baselineSource = latestBaseline ?? current.baseline;
+        if (current.isSaving || (!current.dirty && !current.saveError && areEqual(current.baseline, baselineSource))) return current;
+        const baseline = immutable(baselineSource);
+        return Object.freeze({ ...current, baseline, draft: baseline, dirty: false, saveError: null, revision: current.revision + 1 });
       });
     },
     beginSave(draftId) {
