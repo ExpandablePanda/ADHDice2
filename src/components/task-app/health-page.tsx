@@ -44,7 +44,6 @@ import type {
   HealthSavedMeal,
   HealthSavedMealItem,
   HealthServingMeasureUnit,
-  HealthServingWeightUnit,
   HealthSymptom,
   HealthSymptomEntry,
   HealthSymptomEntryInsert,
@@ -69,6 +68,7 @@ import {
 import type { HealthImportSaveProgress, HealthJournalEntrySaveInput } from "@/hooks/useHealth";
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
+import type { HealthCustomFoodEditingSessionDraft, HealthCustomFoodSaveInput } from "@/lib/health-custom-food-editing-session";
 import {
   createDefaultMealDraft,
   hasMeaningfulMealDraft,
@@ -260,6 +260,7 @@ type HealthPageProps = {
   foodView?: MasterFoodWorkspaceView;
   onFoodViewChange?: (foodView: MasterFoodWorkspaceViewUpdate) => void;
   foodSessionStore?: EditingSessionStore<HealthFoodEditingSessionDraft> | null;
+  customFoodSessionStore?: EditingSessionStore<HealthCustomFoodEditingSessionDraft> | null;
   mealPlanSessionStore?: EditingSessionStore<HealthMealPlanEditingSessionDraft> | null;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
@@ -316,32 +317,9 @@ type HealthPageProps = {
   deleteJournalSignal: (signalId: string) => Promise<boolean>;
   reorderJournalSignals: (orderedSignalIds: readonly string[]) => Promise<boolean>;
   deleteJournalEntry: (entryId: string) => Promise<boolean>;
-  saveFavoriteFood: (input: {
-    attribution?: string | null;
-    barcode?: string | null;
-    brand_name?: string | null;
-    category?: string | null;
-    food_category?: string | null;
-    calories: number;
-    carbs_g?: number | null;
-    fat_g?: number | null;
-    nutrition_details?: HealthNutritionDetails | null;
-    food_name: string;
-    id?: string;
-    protein_g?: number | null;
-    provider?: string;
-    provider_item_id?: string | null;
-    serving_label?: string | null;
-    serving_size?: string | null;
-    serving_quantity?: number;
-    serving_unit?: string;
-    serving_measure_value?: number | null;
-    serving_measure_unit?: HealthServingMeasureUnit | null;
-    serving_weight_amount?: number | null;
-    serving_weight_unit?: HealthServingWeightUnit | null;
-    is_favorite?: boolean;
-  }) => Promise<HealthFoodLibraryItem | null>;
-  updatePreviousFoodLogs: (food: HealthFoodLibraryItem) => Promise<HealthFoodHistoryRepairResult>;
+  saveFavoriteFood: (input: HealthCustomFoodSaveInput, options?: { createOnly?: boolean }) => Promise<HealthFoodLibraryItem | null>;
+  updatePreviousFoodLogs: (food: HealthFoodLibraryItem, options?: { mode?: "all" | "pending" }) => Promise<HealthFoodHistoryRepairResult>;
+  pendingFoodHistoryRepairIds: readonly string[];
   setFavoriteFoodStatus: (itemId: string, isFavorite: boolean) => Promise<boolean>;
   saveRecipe: (input: {
     id?: string;
@@ -1185,6 +1163,7 @@ export function HealthPage({
   foodView,
   onFoodViewChange,
   foodSessionStore,
+  customFoodSessionStore,
   mealPlanSessionStore,
   checkIns,
   journalSignals,
@@ -1225,6 +1204,7 @@ export function HealthPage({
   deleteJournalEntry,
   saveFavoriteFood,
   updatePreviousFoodLogs,
+  pendingFoodHistoryRepairIds,
   setFavoriteFoodStatus,
   saveRecipe,
   savedMeals,
@@ -4985,6 +4965,9 @@ export function HealthPage({
             deleteRecipe={deleteRecipe}
             deleteSavedMeal={deleteSavedMeal}
             favorites={favorites}
+            customFoodSessionStore={customFoodSessionStore}
+            customFoodView={customFoodSessionStore && foodView ? activeFoodView : undefined}
+            editingViewId={activeMasterTabId}
             foodSearchQuery={activeFoodView.foodLibrarySearchQuery}
             ingredientSearchQuery={activeFoodView.ingredientSearchQuery}
             onFoodSearchQueryChange={setFoodLibrarySearchQuery}
@@ -4998,6 +4981,8 @@ export function HealthPage({
             savedMeals={savedMeals}
             saveSavedMeal={saveSavedMeal}
             updatePreviousFoodLogs={updatePreviousFoodLogs}
+            pendingFoodHistoryRepairIds={pendingFoodHistoryRepairIds}
+            onCustomFoodViewChange={customFoodSessionStore && onFoodViewChange ? onFoodViewChange : undefined}
             onDraftSafetyChange={reportFoodDraftSafety}
             shellSurface
           />

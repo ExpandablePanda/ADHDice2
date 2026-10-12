@@ -122,16 +122,17 @@ test("Health Library wires import preview, confirmation, and normal persistence"
 
 test("Custom Food editing exposes and persists barcode without changing import fields", () => {
   const panel = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const sessionHelper = readFileSync(new URL("../src/lib/health-custom-food-editing-session.ts", import.meta.url), "utf8");
   const barcodeHandler = panel.slice(panel.indexOf("function handleFoodBarcodeDetected"), panel.indexOf("function openFoodImport"));
   assert.match(panel, /barcode: string/);
-  assert.match(panel, /barcode: food\.barcode \?\? ""/);
-  assert.match(panel, /barcode: emptyToNull\(foodDraft\.barcode\)/);
+  assert.match(sessionHelper, /barcode: food\.barcode \?\? ""/);
+  assert.match(sessionHelper, /barcode: emptyToNull\(draft\.barcode\)/);
   assert.match(panel, /<HealthBarcodeScanner/);
-  assert.match(barcodeHandler, /setFoodDraft\(\(current\) => \(\{ \.\.\.current, barcode: scannedBarcode \}\)\)/);
+  assert.match(barcodeHandler, /updateFoodDraftFor\(requestDraftId, \(current\) => \(\{ \.\.\.current, barcode: scannedBarcode \}\)\)/);
   assert.match(panel, /Barcode scanned\. No food details found, enter the remaining information manually\./);
-  assert.match(panel, /mergeFoodDraftWithBarcodeResult/);
-  assert.match(panel, /parseBarcodeServingLabel\(result\.servingLabel\)/);
-  assert.match(panel, /servingMeasureValue: hasEditedServing \? draft\.servingMeasureValue : serving\.measureValue/);
+  assert.match(panel, /applyHealthCustomFoodBarcodeLookup/);
+  assert.match(sessionHelper, /parseBarcodeServingLabel\(result\.servingLabel\)/);
+  assert.match(sessionHelper, /servingMeasureValue: hasEditedServing \? draft\.servingMeasureValue : serving\.measureValue/);
   assert.doesNotMatch(barcodeHandler, /saveFood\(/);
   assert.match(panel, /Save food/);
 });

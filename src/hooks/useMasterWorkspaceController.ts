@@ -336,7 +336,7 @@ export function useMasterWorkspaceController({
     if (!canNavigate) return false;
     setWorkspace((current) => {
       const panel = current.panels.find((candidate) => candidate.id === currentPanel.id);
-      if (!panel || panel.activeTabId !== activeTab.id) return current;
+      if (!panel?.tabs.some((tab) => tab.id === activeTab.id)) return current;
       return updateMasterTabFoodView(current, currentPanel.id, activeTab.id, foodViewUpdate);
     });
     return true;

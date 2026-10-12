@@ -4,6 +4,7 @@ import type { NavigatorSearchAction } from "@/lib/navigator-search";
 import type { HealthMealSlot, ScratchNoteStatus } from "@/lib/database.types";
 import { createScratchPaperRecordId } from "@/lib/scratch-paper-draft";
 import { createHealthFoodDraftId } from "@/lib/health-meal-draft";
+import { createHealthCustomFoodDraftId } from "@/lib/health-custom-food-editing-session";
 import type { HealthFoodLibrarySection } from "@/lib/health-library";
 import {
   DEFAULT_TASK_WORKSPACE_TABS_STATE,
@@ -55,6 +56,9 @@ export type MasterFoodWorkspaceView = {
   librarySection: HealthFoodLibrarySection;
   foodLibrarySearchQuery: string;
   ingredientSearchQuery: string;
+  selectedCustomFoodDefinitionId: string | null;
+  newCustomFoodDraftId: string;
+  customFoodEditorMode: "new" | "saved";
 };
 
 export type MasterFoodWorkspaceViewUpdate = MasterFoodWorkspaceView | ((current: MasterFoodWorkspaceView) => MasterFoodWorkspaceView);
@@ -256,6 +260,9 @@ export function createDefaultMasterFoodWorkspaceView(): MasterFoodWorkspaceView 
     librarySection: "foods",
     foodLibrarySearchQuery: "",
     ingredientSearchQuery: "",
+    selectedCustomFoodDefinitionId: null,
+    newCustomFoodDraftId: createHealthCustomFoodDraftId(),
+    customFoodEditorMode: "new",
   };
 }
 
@@ -283,6 +290,10 @@ function normalizeScratchPaperWorkspaceView(value: unknown): MasterScratchPaperW
 function normalizeFoodWorkspaceView(value: unknown): MasterFoodWorkspaceView {
   const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
   const slots = new Set(["breakfast", "lunch", "dinner", "snack"]);
+  const newCustomFoodDraftId = typeof candidate.newCustomFoodDraftId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.newCustomFoodDraftId)
+    ? candidate.newCustomFoodDraftId
+    : createHealthCustomFoodDraftId();
   return {
     historyDate: typeof candidate.historyDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.historyDate)
       ? candidate.historyDate
@@ -315,6 +326,13 @@ function normalizeFoodWorkspaceView(value: unknown): MasterFoodWorkspaceView {
     librarySection: candidate.librarySection === "recipes" || candidate.librarySection === "meals" ? candidate.librarySection : "foods",
     foodLibrarySearchQuery: typeof candidate.foodLibrarySearchQuery === "string" ? candidate.foodLibrarySearchQuery : "",
     ingredientSearchQuery: typeof candidate.ingredientSearchQuery === "string" ? candidate.ingredientSearchQuery : "",
+    selectedCustomFoodDefinitionId: typeof candidate.selectedCustomFoodDefinitionId === "string" && candidate.selectedCustomFoodDefinitionId.trim()
+      ? candidate.selectedCustomFoodDefinitionId.trim()
+      : null,
+    newCustomFoodDraftId,
+    customFoodEditorMode: candidate.customFoodEditorMode === "saved" && typeof candidate.selectedCustomFoodDefinitionId === "string" && candidate.selectedCustomFoodDefinitionId.trim()
+      ? "saved"
+      : "new",
   };
 }
 

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.141`.
+- Current working app version: `7.16.142`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,53 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-11 7.16.142 T5b.4c.1 Shared Custom Food Definition Editing Sessions
+
+T5b.4a Actual Food editing passed Andrew's six browser QA checks on 7.16.140.
+T5b.4b Planned Meal core editing passed five tested browser checks on 7.16.141;
+three checks were skipped, and Done/Remove lifecycle QA remains deferred to
+stabilization.
+
+Custom Food Library definitions now use shared editing sessions keyed by the
+canonical food-library record ID. New definitions have an independent stable
+draft and record ID per Master Tab. Draft contents live only in the existing
+owner-scoped editing-session store; search, selected definition, editor mode,
+and new draft identity remain per-tab presentation. Switching tabs, pages, or
+Health sections preserves unfinished definitions. Explicit Discard Draft
+restores the latest canonical baseline for saved foods or clears only the
+selected tab's new draft. A dirty shared definition blocks deletion, and the
+existing dedicated favorite mutation continues to preserve all food metadata.
+
+`useHealth.saveFavoriteFood` remains the canonical collection and persistence
+authority. New definitions use create-only writes with their stable IDs, so an
+ID collision cannot overwrite a different record. Ambiguous acknowledgments
+are checked against the exact user-scoped record and normalized nutrition,
+serving, and JSON fields before the session baseline and Health collection are
+reconciled. Failed saves retain the draft and ID. Existing validators and
+nutrition serialization are retained, including explicit clearing of
+micronutrients and provider/source metadata from barcode lookups.
+
+When nutrition or serving changes affect consumed-food history, the user must
+choose Update all previous logs or Future entries only. Cancel makes no write.
+Definition save and history repair are separate steps; incomplete repairs keep
+their exact pending entry IDs, retries update only those entries, and an
+ambiguous history-write acknowledgment is verified against its user-scoped
+source-food row before retrying. Retrying history repair does not save the food
+definition again. Food Import remains on its separate guarded editor. Recipe
+and Saved Meal definition sessions remain deferred to T5b.4c.2. No SQL or
+schema change was made.
+
+Focused verification: Custom Food session/history/Master Workspace tests
+passed (60/60); targeted library/import checks passed (3/3); Actual Food and
+Planned Meal regression tests passed (93/93). Earlier broader neighboring
+selections reported five source-text assertion mismatches in older library,
+meal-logger, and workspace checks; the focused behavioral selections above
+passed. Targeted ESLint reported 14 errors, all existing
+`react-hooks/set-state-in-effect` findings confirmed in the branch baseline,
+and 67 warnings. With that rule disabled, targeted ESLint passed with zero
+errors. `git diff --check` passed. Browser QA is pending; production build and
+full typecheck were not run.
 
 ## 2026-10-08 7.16.121 Master Tabs T1 Workspace State Foundation
 

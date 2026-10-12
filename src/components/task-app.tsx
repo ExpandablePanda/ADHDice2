@@ -142,6 +142,7 @@ import type { ScratchPaperEditingSessionDraft } from "@/lib/scratch-paper-draft"
 import { areHealthJournalDraftsEqual } from "@/lib/health-journal-checkins";
 import type { JournalCheckInDraftSnapshot } from "./task-app/journal-check-in-form";
 import { areHealthFoodEditingSessionDraftsEqual, type HealthFoodEditingSessionDraft } from "@/lib/health-meal-draft";
+import { areHealthCustomFoodEditingSessionDraftsEqual, type HealthCustomFoodEditingSessionDraft } from "@/lib/health-custom-food-editing-session";
 import { areHealthMealPlanEditingSessionDraftsEqual, type HealthMealPlanEditingSessionDraft } from "@/lib/health-meal-plan-editing-session";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
@@ -1317,6 +1318,7 @@ export function TaskApp() {
     importAppleHealthData,
     mealEntries: healthMealEntries,
     mealPlanEntries: healthMealPlanEntries,
+    pendingFoodHistoryRepairIds,
     symptoms: healthSymptoms,
     symptomEntries: healthSymptomEntries,
     createSymptom: createHealthSymptom,
@@ -1365,6 +1367,11 @@ export function TaskApp() {
     [currentUserId],
   );
   useEffect(() => () => healthFoodDraftSessionStore.reset(), [healthFoodDraftSessionStore]);
+  const healthCustomFoodDraftSessionStore = useMemo(
+    () => createEditingSessionStore<HealthCustomFoodEditingSessionDraft>(currentUserId ?? "signed-out", areHealthCustomFoodEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => healthCustomFoodDraftSessionStore.reset(), [healthCustomFoodDraftSessionStore]);
   const healthMealPlanDraftSessionStore = useMemo(
     () => createEditingSessionStore<HealthMealPlanEditingSessionDraft>(currentUserId ?? "signed-out", areHealthMealPlanEditingSessionDraftsEqual),
     [currentUserId],
@@ -1435,6 +1442,7 @@ export function TaskApp() {
     canCloseView(viewId: string) {
       return journalDraftSessionStore.canCloseView(viewId)
         && healthFoodDraftSessionStore.canCloseView(viewId)
+        && healthCustomFoodDraftSessionStore.canCloseView(viewId)
         && healthMealPlanDraftSessionStore.canCloseView(viewId)
         && notesDraftSessionStore.canCloseView(viewId)
         && scratchPaperDraftSessionStore.canCloseView(viewId);
@@ -1442,11 +1450,12 @@ export function TaskApp() {
     detachView(viewId: string) {
       journalDraftSessionStore.detachView(viewId);
       healthFoodDraftSessionStore.detachView(viewId);
+      healthCustomFoodDraftSessionStore.detachView(viewId);
       healthMealPlanDraftSessionStore.detachView(viewId);
       notesDraftSessionStore.detachView(viewId);
       scratchPaperDraftSessionStore.detachView(viewId);
     },
-  }), [healthFoodDraftSessionStore, healthMealPlanDraftSessionStore, journalDraftSessionStore, notesDraftSessionStore, scratchPaperDraftSessionStore]);
+  }), [healthCustomFoodDraftSessionStore, healthFoodDraftSessionStore, healthMealPlanDraftSessionStore, journalDraftSessionStore, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
   const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
@@ -5793,6 +5802,7 @@ export function TaskApp() {
     const protectUnsavedEditingSessions = (event: BeforeUnloadEvent) => {
       if (!journalDraftSessionStore.hasUnsavedDrafts()
         && !healthFoodDraftSessionStore.hasUnsavedDrafts()
+        && !healthCustomFoodDraftSessionStore.hasUnsavedDrafts()
         && !healthMealPlanDraftSessionStore.hasUnsavedDrafts()
         && !notesDraftSessionStore.hasUnsavedDrafts()
         && !scratchPaperDraftSessionStore.hasUnsavedDrafts()) return;
@@ -5801,7 +5811,7 @@ export function TaskApp() {
     };
     window.addEventListener("beforeunload", protectUnsavedEditingSessions);
     return () => window.removeEventListener("beforeunload", protectUnsavedEditingSessions);
-  }, [healthFoodDraftSessionStore, healthMealPlanDraftSessionStore, journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore, scratchPaperDraftSessionStore]);
+  }, [healthCustomFoodDraftSessionStore, healthFoodDraftSessionStore, healthMealPlanDraftSessionStore, journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
     ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
     : legacyHealthTabPreference;
@@ -9151,6 +9161,7 @@ export function TaskApp() {
             foodView={masterWorkspace.isEnabled ? masterWorkspace.activeFoodView : undefined}
             onFoodViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateFoodView : undefined}
             foodSessionStore={masterWorkspace.isEnabled ? healthFoodDraftSessionStore : null}
+            customFoodSessionStore={masterWorkspace.isEnabled ? healthCustomFoodDraftSessionStore : null}
             mealPlanSessionStore={masterWorkspace.isEnabled ? healthMealPlanDraftSessionStore : null}
             awards={healthAwards}
             archiveGoal={archiveFitnessGoal}
@@ -9229,6 +9240,7 @@ export function TaskApp() {
             recipes={healthRecipes}
             saveFavoriteFood={saveFavoriteFood}
             updatePreviousFoodLogs={updateHealthPreviousFoodLogs}
+            pendingFoodHistoryRepairIds={pendingFoodHistoryRepairIds}
             setFavoriteFoodStatus={setFavoriteFoodStatus}
             saveRecipe={saveHealthRecipe}
             savedMeals={healthSavedMeals}

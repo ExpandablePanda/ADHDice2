@@ -88,9 +88,12 @@ import {
   normalizeHealthFoodLibraryItem,
   setHealthFoodFavoriteStatus,
 } from "@/lib/health-library";
+import { healthCustomFoodWriteMatchesCanonicalRow } from "@/lib/health-custom-food-editing-session";
 import {
   buildHealthFoodHistoryMealEntryUpdate,
   formatHealthFoodHistoryRepairResult,
+  healthMealEntryUpdateMatchesRow,
+  selectHealthFoodHistoryRepairRetryEntries,
   normalizeHealthMealStoredCalories,
   selectHealthFoodMealEntriesBySourceId,
   type HealthFoodHistoryRepairResult,
@@ -446,6 +449,18 @@ export function useHealth(
   const [mealEntries, setMealEntries] = useState<HealthMealEntry[]>([]);
   const [mealPlanEntries, setMealPlanEntries] = useState<HealthMealPlanEntry[]>([]);
   const [favorites, setFavorites] = useState<HealthFoodLibraryItem[]>([]);
+  const [pendingFoodHistoryRepairState, setPendingFoodHistoryRepairState] = useState<{
+    generation: number;
+    ids: string[];
+    userId: string | null;
+  }>({ generation: 0, ids: [], userId });
+  const pendingFoodHistoryRepairOwnerGenerationRef = useRef(0);
+  const pendingFoodHistoryRepairIds = pendingFoodHistoryRepairState.userId === userId
+    && pendingFoodHistoryRepairState.generation === pendingFoodHistoryRepairOwnerGenerationRef.current
+    ? pendingFoodHistoryRepairState.ids
+    : [];
+  const pendingFoodHistoryRepairRowsRef = useRef(new Map<string, readonly string[] | null>());
+  const foodHistoryRepairInFlightRef = useRef(new Map<string, Promise<HealthFoodHistoryRepairResult>>());
   const [weightEntries, setWeightEntries] = useState<HealthWeightEntry[]>([]);
   const [metricEntries, setMetricEntries] = useState<HealthMetricEntry[]>([]);
   const [recipes, setRecipes] = useState<HealthRecipe[]>([]);
@@ -486,8 +501,11 @@ export function useHealth(
       healthRemoteAuthorityRef.current = null;
     }
     healthOperationGenerationRef.current += 1;
+    pendingFoodHistoryRepairOwnerGenerationRef.current += 1;
     healthOwnerRef.current = { active, userId };
     healthFoodMutationRevisionRef.current = 0;
+    pendingFoodHistoryRepairRowsRef.current.clear();
+    foodHistoryRepairInFlightRef.current.clear();
     return () => {
       healthOperationGenerationRef.current += 1;
       healthOwnerRef.current = { active: false, userId: null };
@@ -2946,8 +2964,70 @@ export function useHealth(
     return true;
   }
 
-  async function updatePreviousFoodLogs(food: HealthFoodLibraryItem): Promise<HealthFoodHistoryRepairResult> {
+  function updatePendingFoodHistoryRepair(foodId: string, pendingEntryIds: readonly string[] | null | undefined) {
+    if (pendingEntryIds === undefined || (pendingEntryIds !== null && pendingEntryIds.length === 0)) {
+      pendingFoodHistoryRepairRowsRef.current.delete(foodId);
+    } else {
+      pendingFoodHistoryRepairRowsRef.current.set(foodId, pendingEntryIds ? [...pendingEntryIds] : null);
+    }
+    setPendingFoodHistoryRepairState({
+      generation: pendingFoodHistoryRepairOwnerGenerationRef.current,
+      ids: [...pendingFoodHistoryRepairRowsRef.current.keys()],
+      userId,
+    });
+  }
+
+  async function updatePreviousFoodLogs(
+    food: HealthFoodLibraryItem,
+    options: { mode?: "all" | "pending" } = {},
+  ): Promise<HealthFoodHistoryRepairResult> {
+    const existing = foodHistoryRepairInFlightRef.current.get(food.id);
+    if (existing) return existing;
+    const operationToken = captureOperation();
+    if (!operationToken) {
+      return {
+        failed: 1,
+        failureMessages: ["The Health operation could not be confirmed."],
+        pendingEntryIds: null,
+        requested: 0,
+        skipped: 0,
+        updated: 0,
+      };
+    }
+    const operation = Promise.resolve().then(() => performPreviousFoodLogUpdate(food, options.mode ?? "all", operationToken));
+    foodHistoryRepairInFlightRef.current.set(food.id, operation);
+    try {
+      return await operation;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The previous logs could not be checked.";
+      if (isCurrentOperation(operationToken)) updatePendingFoodHistoryRepair(food.id, null);
+      return {
+        failed: 1,
+        failureMessages: [message],
+        pendingEntryIds: null,
+        requested: 0,
+        skipped: 0,
+        updated: 0,
+      };
+    } finally {
+      if (foodHistoryRepairInFlightRef.current.get(food.id) === operation) {
+        foodHistoryRepairInFlightRef.current.delete(food.id);
+      }
+    }
+  }
+
+  async function performPreviousFoodLogUpdate(
+    food: HealthFoodLibraryItem,
+    mode: "all" | "pending",
+    operation: HealthOperationToken,
+  ): Promise<HealthFoodHistoryRepairResult> {
+    const retryEntryIds = mode === "pending" ? pendingFoodHistoryRepairRowsRef.current.get(food.id) : undefined;
+    if (mode === "pending" && Array.isArray(retryEntryIds) && retryEntryIds.length === 0) {
+      updatePendingFoodHistoryRepair(food.id, undefined);
+      return { failed: 0, failureMessages: [], requested: 0, skipped: 0, updated: 0 };
+    }
     let entries = selectHealthFoodMealEntriesBySourceId(mealEntries, food.id);
+    if (Array.isArray(retryEntryIds)) entries = selectHealthFoodHistoryRepairRetryEntries(entries, retryEntryIds);
     const result: HealthFoodHistoryRepairResult = {
       failed: 0,
       failureMessages: [],
@@ -2956,39 +3036,53 @@ export function useHealth(
       updated: 0,
     };
     if (!userId || !profile) {
+      result.failed = 1;
+      result.failureMessages.push("The current Health account could not be confirmed.");
+      result.pendingEntryIds = null;
       return result;
     }
     if (entries.length === 0 && !(client && storageMode === "remote")) {
-      if (entries.length === 0) {
-        setMessage({ tone: "neutral", text: formatHealthFoodHistoryRepairResult(result) });
-      }
+      updatePendingFoodHistoryRepair(food.id, undefined);
+      setMessage({ tone: "neutral", text: formatHealthFoodHistoryRepairResult(result) });
       return result;
     }
-    const operation = captureOperation();
-    if (!operation) {
+    if (!isCurrentOperation(operation)) {
+      result.failed = 1;
+      result.failureMessages.push("The Health operation is no longer active.");
+      result.pendingEntryIds = null;
       return result;
     }
 
     healthFoodMutationRevisionRef.current += 1;
     if (client && storageMode === "remote") {
       const remoteEntries = await fetchAllPagedRows(
-        (from, to) => client
-          .from("adhdice_health_meal_entries")
-          .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
-          .eq("user_id", userId)
-          .eq("source_food_id", food.id)
-          .order("logged_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
+        (from, to) => {
+          let query = client
+            .from("adhdice_health_meal_entries")
+            .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
+            .eq("user_id", userId)
+            .eq("source_food_id", food.id);
+          if (Array.isArray(retryEntryIds)) query = query.in("id", [...retryEntryIds]);
+          return query
+            .order("logged_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to);
+        },
         SUPABASE_READ_PAGE_SIZE,
       );
       if (!isCurrentOperation(operation)) {
+        result.failed = 1;
+        result.failureMessages.push("Health data changed before previous logs could be checked.");
+        result.requested = 0;
+        result.pendingEntryIds = null;
         return result;
       }
       if (remoteEntries.error) {
         result.failed = 1;
         result.failureMessages.push(remoteEntries.error.message);
         result.requested = 0;
+        result.pendingEntryIds = null;
+        updatePendingFoodHistoryRepair(food.id, null);
         setMessage({ tone: "warn", text: formatHealthFoodHistoryRepairResult(result) });
         return result;
       }
@@ -2996,20 +3090,22 @@ export function useHealth(
       result.requested = entries.length;
     }
     const updatedRows = new Map<string, HealthMealEntry>();
+    const pendingEntryIds = new Set<string>();
     for (const entry of entries) {
       let update: HealthMealEntryUpdate;
       try {
         update = buildHealthFoodHistoryMealEntryUpdate(food, entry);
       } catch {
         result.skipped += 1;
+        pendingEntryIds.add(entry.id);
         continue;
       }
 
       const now = new Date().toISOString();
       let nextRow: HealthMealEntry = { ...entry, ...update, updated_at: now };
       if (client && storageMode === "remote") {
-        let data: HealthMealEntry | null = null;
-        let error: { message?: string } | null = null;
+        let confirmedRow: HealthMealEntry | null = null;
+        let failureMessage: string | null = null;
         try {
           const response = await client
             .from("adhdice_health_meal_entries")
@@ -3019,28 +3115,64 @@ export function useHealth(
             .eq("source_food_id", food.id)
             .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
             .single();
-          data = response.data;
-          error = response.error;
+          if (!response.error && response.data && healthMealEntryUpdateMatchesRow(response.data, update)) {
+            confirmedRow = response.data;
+          } else {
+            failureMessage = response.error?.message ?? "The previous log update could not be confirmed.";
+          }
         } catch (caughtError) {
-          error = { message: caughtError instanceof Error ? caughtError.message : String(caughtError) };
+          failureMessage = caughtError instanceof Error ? caughtError.message : String(caughtError);
         }
+
+        if (!confirmedRow && isCurrentOperation(operation)) {
+          try {
+            const verification = await client
+              .from("adhdice_health_meal_entries")
+              .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
+              .eq("id", entry.id)
+              .eq("user_id", userId)
+              .eq("source_food_id", food.id)
+              .maybeSingle();
+            if (!verification.error && verification.data && healthMealEntryUpdateMatchesRow(verification.data, update)) {
+              confirmedRow = verification.data;
+            } else if (verification.error) {
+              failureMessage = verification.error.message;
+            }
+          } catch (caughtError) {
+            failureMessage = caughtError instanceof Error ? caughtError.message : String(caughtError);
+          }
+        }
+
         if (!isCurrentOperation(operation)) {
+          if (confirmedRow) {
+            updatedRows.set(entry.id, confirmedRow);
+            result.updated += 1;
+          } else {
+            pendingEntryIds.add(entry.id);
+          }
+          const incompleteIds = entries.filter((candidate) => !updatedRows.has(candidate.id)).map((candidate) => candidate.id);
+          result.failed += 1;
+          result.failureMessages.push("Health data changed before previous log updates completed.");
+          result.pendingEntryIds = incompleteIds;
           return result;
         }
-        if (error || !data) {
+        if (!confirmedRow) {
           result.failed += 1;
-          if (error?.message) {
-            result.failureMessages.push(error.message);
-          }
+          pendingEntryIds.add(entry.id);
+          if (failureMessage) result.failureMessages.push(failureMessage);
           continue;
         }
-        nextRow = data;
+        nextRow = confirmedRow;
       }
       updatedRows.set(entry.id, nextRow);
       result.updated += 1;
     }
 
     if (!isCurrentOperation(operation)) {
+      const incompleteIds = entries.filter((candidate) => !updatedRows.has(candidate.id)).map((candidate) => candidate.id);
+      result.failed += 1;
+      result.failureMessages.push("Health data changed before previous log updates completed.");
+      result.pendingEntryIds = incompleteIds;
       return result;
     }
     if (updatedRows.size > 0) {
@@ -3067,6 +3199,12 @@ export function useHealth(
       }));
     }
 
+    result.pendingEntryIds = [...pendingEntryIds];
+    if (result.skipped > 0 || result.failed > 0) {
+      updatePendingFoodHistoryRepair(food.id, result.pendingEntryIds);
+    } else {
+      updatePendingFoodHistoryRepair(food.id, undefined);
+    }
     const message = formatHealthFoodHistoryRepairResult(result);
     if (result.skipped > 0 || result.failed > 0) {
       setMessage({ tone: "warn", text: message });
@@ -3419,7 +3557,10 @@ export function useHealth(
     return true;
   }
 
-  async function saveFavoriteFood(input: Omit<HealthFoodLibraryItemInsert, "user_id">): Promise<HealthFoodLibraryItem | null> {
+  async function saveFavoriteFood(
+    input: Omit<HealthFoodLibraryItemInsert, "user_id">,
+    options: { createOnly?: boolean } = {},
+  ): Promise<HealthFoodLibraryItem | null> {
     if (!userId || !profile) {
       return null;
     }
@@ -3479,21 +3620,66 @@ export function useHealth(
     };
 
     let nextRow = localRow;
-    if (client && storageMode === "remote") {
-      const { data, error } = await client
-        .from("adhdice_health_food_library")
-        .upsert({
-          ...normalizedInput,
-          user_id: userId,
-        })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
+    const isRemoteSave = Boolean(client && storageMode === "remote");
+    if (options.createOnly && existingFood && !isRemoteSave) {
+      if (!healthCustomFoodWriteMatchesCanonicalRow(existingFood, localRow, userId)) {
+        setMessage({ tone: "warn", text: "This new food draft ID already belongs to a different library item. The existing food was left unchanged." });
         return null;
       }
-      nextRow = data ? normalizeHealthFoodLibraryItem(data) : localRow;
+      nextRow = existingFood;
+    }
+    if (client && storageMode === "remote") {
+      let data: HealthFoodLibraryItem | null = null;
+      let error: { message?: string } | null = null;
+      try {
+        const foodQuery = client.from("adhdice_health_food_library");
+        const response = options.createOnly
+          ? await foodQuery.insert({ ...normalizedInput, user_id: userId }).select("*").single()
+          : await foodQuery.upsert({ ...normalizedInput, user_id: userId }).select("*").single();
+        data = response.data;
+        error = response.error;
+      } catch (caughtError) {
+        error = { message: caughtError instanceof Error ? caughtError.message : String(caughtError) };
+      }
+      if (!isCurrentOperation(operation)) return null;
+      if (data) {
+        nextRow = normalizeHealthFoodLibraryItem(data);
+        if (normalizedInput.id && (nextRow.id !== normalizedInput.id
+          || !healthCustomFoodWriteMatchesCanonicalRow(nextRow, localRow, userId))) {
+          setMessage({ tone: "warn", text: "The saved food did not match the requested record and was not confirmed. Your draft is still available to retry." });
+          return null;
+        }
+      } else if (normalizedInput.id) {
+        let verifiedRow: HealthFoodLibraryItem | null = null;
+        let verificationError: string | null = null;
+        try {
+          const verification = await client
+            .from("adhdice_health_food_library")
+            .select("*")
+            .eq("id", normalizedInput.id)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (verification.error) verificationError = verification.error.message;
+          else if (verification.data) verifiedRow = normalizeHealthFoodLibraryItem(verification.data);
+        } catch (caughtError) {
+          verificationError = caughtError instanceof Error ? caughtError.message : String(caughtError);
+        }
+        if (!isCurrentOperation(operation)) return null;
+        if (verifiedRow && healthCustomFoodWriteMatchesCanonicalRow(verifiedRow, localRow, userId)) {
+          nextRow = verifiedRow;
+        } else {
+          const message = error?.message ?? verificationError ?? (options.createOnly
+            ? "This food draft ID already belongs to a different library item. Your draft is still available to retry."
+            : "The save could not be confirmed for this food record.");
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else if (error) {
+        setMessage({ tone: "warn", text: error.message ?? "The custom food could not be saved." });
+        return null;
+      } else {
+        nextRow = localRow;
+      }
     }
 
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
@@ -4616,6 +4802,7 @@ export function useHealth(
     deleteWaterEntry,
     deleteWeightEntry,
     favorites,
+    pendingFoodHistoryRepairIds,
     importAudits,
     isLoading,
     importAppleHealthData,

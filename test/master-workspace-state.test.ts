@@ -494,7 +494,12 @@ test("unknown schema versions recover to the default workspace", () => {
         ...tab,
         presentation: {
           ...tab.presentation,
-          foodView: { ...getMasterTabFoodView(tab), newMealDraftId: "stable-food-draft-id", newPlannedMealDraftId: "stable-planned-draft-id" },
+          foodView: {
+            ...getMasterTabFoodView(tab),
+            newMealDraftId: "stable-food-draft-id",
+            newPlannedMealDraftId: "stable-planned-draft-id",
+            newCustomFoodDraftId: "stable-custom-food-draft-id",
+          },
           scratchPaperView: { ...getMasterTabScratchPaperView(tab), newDraftId: "stable-id" },
         },
       })),
@@ -504,6 +509,7 @@ test("unknown schema versions recover to the default workspace", () => {
   assert.match(getMasterTabScratchPaperView(actual.panels[0].tabs[0]).newDraftId, /^[0-9a-f-]{36}$/i);
   assert.match(getMasterTabFoodView(actual.panels[0].tabs[0]).newMealDraftId, /^[0-9a-f-]{36}$/i);
   assert.match(getMasterTabFoodView(actual.panels[0].tabs[0]).newPlannedMealDraftId, /^[0-9a-f-]{36}$/i);
+  assert.match(getMasterTabFoodView(actual.panels[0].tabs[0]).newCustomFoodDraftId, /^[0-9a-f-]{36}$/i);
 });
 
 test("each Health tab gets an independent planned-entry identity separate from actual Food", () => {
