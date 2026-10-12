@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.125`.
+- Current working app version: `7.16.126`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -58,6 +58,13 @@ The focused Statistics and Trigger suites passed (33 tests), including render
 structure and date-label formatting coverage. Targeted lint passed for the
 Statistics component and test. Browser/manual QA, build, and full typecheck were
 not run; browser QA remains with Andrew.
+
+## 2026-10-11 7.16.126 Journal Statistics range chip label
+
+The default Statistics range chip now reads “30 days” without an inline
+default suffix. The 30-day range remains initially selected and uses the same
+shared chip padding and selected styling as before. Filtering behavior is
+unchanged.
 
 ## 2026-10-11 7.16.123 Journal Feeling scale label editing
 

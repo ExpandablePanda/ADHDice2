@@ -239,7 +239,7 @@ export function JournalTriggerStatistics({
             selected={range === option.value}
             type="button"
           >
-            {option.label}{option.value === "30_days" ? " (default)" : ""}
+            {option.label}
           </AdhdChip>
         ))}
       </div>

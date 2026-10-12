@@ -506,6 +506,11 @@ test("Statistics render separates chart labels, ranking fields, and effect count
   } as unknown as Parameters<typeof JournalTriggerStatistics>[0];
   const markup = renderToStaticMarkup(createElement(JournalTriggerStatistics, props));
 
+  const selectedRangeChip = markup.match(/<button\b(?=[^>]*aria-pressed="true")[\s\S]*?<\/button>/)?.[0];
+  assert.ok(selectedRangeChip);
+  assert.match(selectedRangeChip, /30 days/);
+  assert.doesNotMatch(selectedRangeChip, /\(default\)/);
+  assert.match(selectedRangeChip, /px-2 py-1/);
   assert.match(markup, /grid-cols-\[auto_minmax\(0,1fr\)_auto\]/);
   assert.match(markup, /w-full min-w-0 min-h-44/);
   assert.match(markup, /w-36 shrink-0/);
