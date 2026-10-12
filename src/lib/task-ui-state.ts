@@ -154,8 +154,7 @@ export function updateActiveTaskUiState(
   state: TaskWorkspaceTabsState,
   updater: TaskUiState | ((current: TaskUiState) => TaskUiState),
 ): TaskWorkspaceTabsState {
-  const activeTab = resolveActiveTaskWorkspaceTab(state);
-  const activeTabIndex = state.tabs.findIndex((tab) => tab.id === activeTab.id);
+  const activeTabIndex = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
   if (activeTabIndex < 0) return state;
 
   const currentTab = state.tabs[activeTabIndex];

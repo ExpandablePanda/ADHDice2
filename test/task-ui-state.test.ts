@@ -373,7 +373,7 @@ test("task presentation adapters resolve independent workspace snapshots", () =>
   assert.equal(second.tabs[0].taskUiState.search, "");
 });
 
-test("task presentation updates use the latest state and preserve other tabs", () => {
+test("valid active task tab updates only the intended tab and preserves others", () => {
   const firstTab = {
     ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0],
     id: "tasks-a",
@@ -404,7 +404,7 @@ test("task presentation updates use the latest state and preserve other tabs", (
   assert.equal(updateActiveTaskUiState(snapshot, (current) => current), snapshot);
 });
 
-test("invalid active task tab resolves and updates the existing first-tab fallback", () => {
+test("invalid active task tab reads fall back to the existing first tab", () => {
   const firstTab = {
     ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0],
     id: "tasks-first",
@@ -418,12 +418,23 @@ test("invalid active task tab resolves and updates the existing first-tab fallba
 
   assert.equal(resolveActiveTaskWorkspaceTab(snapshot), firstTab);
   assert.equal(resolveActiveTaskUiState(snapshot).view, "matrix");
-  const updated = updateActiveTaskUiState(snapshot, (current) => ({ ...current, search: "fallback" }));
-  assert.equal(updated.activeTabId, "missing-tab");
-  assert.equal(updated.tabs[0].taskUiState.search, "fallback");
-  assert.equal(snapshot.tabs[0].taskUiState.search, "");
-  assert.equal(resolveActiveTaskWorkspaceTab({ ...snapshot, tabs: [] }), DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0]);
-  assert.equal(updateActiveTaskUiState({ ...snapshot, tabs: [] }, (current) => ({ ...current, search: "ignored" })).tabs.length, 0);
+});
+
+test("invalid active task tab updates are a no-op", () => {
+  const snapshot = {
+    ...DEFAULT_TASK_WORKSPACE_TABS_STATE,
+    activeTabId: "missing-tab",
+    tabs: [{ ...DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0], id: "tasks-first" }],
+  };
+
+  assert.equal(updateActiveTaskUiState(snapshot, (current) => ({ ...current, search: "ignored" })), snapshot);
+});
+
+test("empty task workspace tab updates are a no-op", () => {
+  const snapshot = { ...DEFAULT_TASK_WORKSPACE_TABS_STATE, tabs: [] };
+
+  assert.equal(resolveActiveTaskWorkspaceTab(snapshot), DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0]);
+  assert.equal(updateActiveTaskUiState(snapshot, (current) => ({ ...current, search: "ignored" })), snapshot);
 });
 
 test("single-tab task presentation behavior and hook wiring remain intact", async () => {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.144`.
+- Current working app version: `7.16.145`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,18 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.145 T6.1a Invalid Active Tab Correction
+
+Task workspace reads retain the first-tab fallback when the active tab ID is
+invalid. Task UI state updates now require an exact active tab ID and return the
+original workspace state unchanged for an invalid ID or empty tab list. Valid
+active IDs continue to update only their matching tab, with the existing
+same-object updater remaining an identity-preserving no-op.
+
+Focused `test/task-ui-state.test.ts` passed (23/23), and targeted ESLint passed.
+`git diff --check` passed. Browser QA, production build, and full typecheck were
+not run for this pure state correction.
 
 ## 2026-10-12 7.16.144 T6.1a Tasks Presentation Adapter Foundation
 
