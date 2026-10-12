@@ -220,7 +220,6 @@ import {
   isDueToday,
   isLater,
   isOverdue,
-  sortTasksForCockpit,
 } from "@/lib/task-cockpit";
 import {
   createEngineRolloverPlan,
@@ -297,13 +296,14 @@ import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate, normalizePresetRepeatSelection, taskRepeatEditorValueToUpdate, type TaskRepeatEditorValue } from "@/lib/task-repeat";
 import {
   buildStableCanonicalTaskIndex,
+  buildTaskSearchPresentationScope,
   buildTaskAppStructuralData,
   buildTaskAppWorkspaceFacts,
   computeTaskAppDerivedData,
   getTaskContentFolderSearchMatchIds,
+  selectTaskSearchPresentation,
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
-import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
 import { selectCalendarTasks } from "@/lib/task-calendar-selection";
 import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { executeTaskRolloverSweep } from "@/lib/task-rollover-sweep";
@@ -4156,27 +4156,6 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalIndexRevision, projectionCache, taskAppStructuralData],
   );
-  const stableTaskSearchScope = useMemo(() => buildStableTaskSearchScope(
-    Array.from(stableCanonicalTaskIndex.entityFactsById.values()).map((fact) => ({
-      ancestorIds: fact.ancestorIds,
-      displayStatus: fact.displayStatus,
-      id: fact.id,
-      listIds: fact.listMemberships.map((membership) => membership.id),
-      rootParentId: fact.rootParentId,
-      searchDocument: fact.searchDocument,
-      task: fact.task,
-    })),
-    {
-      energyFilters: taskUiStateForDerivedData.energyFilters,
-      focusedTaskIds,
-      listNameById: stableCanonicalTaskIndex.listNameById,
-      matchAny: taskUiStateForDerivedData.matchAny,
-      quickFilters: taskUiStateForDerivedData.quickFilters,
-      selectedBucket: taskUiStateForDerivedData.selectedBucket,
-      statusFilters: taskUiStateForDerivedData.statusFilters,
-      tableColumnFilters: taskUiStateForDerivedData.tableColumnFilters,
-    },
-  ), [focusedTaskIds, stableCanonicalTaskIndex, taskUiStateForDerivedData]);
   const navigatorTaskSearchEntities = useMemo<readonly TaskSearchEntity[]>(
     () => Array.from(stableCanonicalTaskIndex.entityFactsById.values()).map((fact) => ({
       ancestorIds: fact.ancestorIds,
@@ -4189,21 +4168,29 @@ export function TaskApp() {
     })),
     [stableCanonicalTaskIndex],
   );
+  const stableTaskSearchScope = useMemo(
+    () => buildTaskSearchPresentationScope(stableCanonicalTaskIndex, taskUiState, navigatorTaskSearchEntities),
+    [
+      navigatorTaskSearchEntities,
+      stableCanonicalTaskIndex,
+      taskUiState.energyFilters,
+      taskUiState.matchAny,
+      taskUiState.quickFilters,
+      taskUiState.selectedBucket,
+      taskUiState.statusFilters,
+      taskUiState.tableColumnFilters,
+    ],
+  );
   const taskSearchSelection = useMemo(() => {
-    if (!shouldRunTaskSearch(activePage)) return null;
-    const result = queryTaskSearch(
-      effectiveSearchQuery,
-      stableTaskSearchScope,
-      taskUiStateForDerivedData.includeStepsByView[taskUiStateForDerivedData.view] === true,
-    );
-    const visibleTasks = sortTasksForCockpit(
-      result.visibleRootTaskIds
-        .map((taskId) => stableCanonicalTaskIndex.taskById.get(taskId))
-        .filter((task): task is NonNullable<typeof task> => Boolean(task)),
+    return selectTaskSearchPresentation({
       bucketContext,
-    );
-    return { ...result, visibleTasks };
-  }, [activePage, bucketContext, effectiveSearchQuery, stableCanonicalTaskIndex, stableTaskSearchScope, taskUiStateForDerivedData]);
+      index: stableCanonicalTaskIndex,
+      page: activePage,
+      presentation: taskUiState,
+      scope: stableTaskSearchScope,
+      search: effectiveSearchQuery,
+    });
+  }, [activePage, bucketContext, effectiveSearchQuery, stableCanonicalTaskIndex, stableTaskSearchScope, taskUiState.includeStepsByView, taskUiState.view]);
   const matchedTaskContentFolderIds = useMemo(
     () => getTaskContentFolderSearchMatchIds(stableCanonicalTaskIndex, effectiveSearchQuery),
     [effectiveSearchQuery, stableCanonicalTaskIndex],

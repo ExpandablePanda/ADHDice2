@@ -12,8 +12,28 @@ test("search does not depend on a deferred React value or duplicate root input",
 });
 
 test("inactive pages skip query-only search derivation", () => {
-  assert.match(appSource, /shouldRunTaskSearch\(activePage\)/);
+  assert.match(appSource, /selectTaskSearchPresentation\(\{[\s\S]*?page:\s*activePage,[\s\S]*?presentation:\s*taskUiState,[\s\S]*?scope:\s*stableTaskSearchScope,[\s\S]*?search:\s*effectiveSearchQuery/);
+  assert.match(derivedSource, /if \(!shouldRunTaskSearch\(page\)\) return null/);
   assert.match(appSource, /deferredSearchQuery: ""/);
+});
+
+test("TaskApp keeps search operators on the explicit input parser", () => {
+  assert.match(appSource, /parseTaskSearchInput\(taskUiState\.search, taskUiState\.duplicateTitleMode\)/);
+});
+
+test("search scope stays separately memoized and excludes search text", () => {
+  const scopeStart = appSource.indexOf("const stableTaskSearchScope = useMemo(");
+  const selectionStart = appSource.indexOf("const taskSearchSelection = useMemo(", scopeStart);
+  const canonicalIndexStart = appSource.indexOf("const stableCanonicalTaskIndex = useMemo(");
+  const searchEntitiesStart = appSource.indexOf("const navigatorTaskSearchEntities = useMemo<", canonicalIndexStart);
+  assert.ok(scopeStart >= 0 && selectionStart > scopeStart);
+  assert.ok(canonicalIndexStart >= 0 && searchEntitiesStart > canonicalIndexStart);
+  const scopeMemo = appSource.slice(scopeStart, selectionStart);
+  const canonicalIndexMemo = appSource.slice(canonicalIndexStart, searchEntitiesStart);
+  assert.match(scopeMemo, /buildTaskSearchPresentationScope\(/);
+  assert.match(scopeMemo, /navigatorTaskSearchEntities/);
+  assert.doesNotMatch(scopeMemo, /taskUiState\.search|effectiveSearchQuery/);
+  assert.doesNotMatch(canonicalIndexMemo, /taskUiState\.search|effectiveSearchQuery/);
 });
 
 test("search rows and rail totals share one committed selection result", () => {

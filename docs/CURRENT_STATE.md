@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.145`.
+- Current working app version: `7.16.146`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,27 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.146 T6.1b Tasks Search Presentation Foundation
+
+The active Tasks search path now builds its stable filter scope and visible
+selection through pure helpers with explicit presentation, page, query, scope,
+canonical index, and sorting context inputs. The normalized entity array stays
+shared with Navigator; the canonical index and its revision remain independent
+of search text, while search scope remains separately memoized by presentation
+filters. Existing search parsing, hierarchy/Steps selection, list facets, and
+cockpit sorting remain the authorities. `computeTaskAppDerivedData` and
+TaskApp's broader rendering/state responsibilities remain in place; this is a
+T6 foundation and does not complete Split Right.
+
+Focused presentation, selector, and canonical-projection tests passed (41/41);
+the search-related pipeline-contract selection passed (10/10). The unfiltered
+pipeline-contract run retains one unrelated List overlay source assertion
+failure. Three `task-search-focus-regression` cases fail because its existing
+component materializer does not provide `React.useCallback`. Targeted lint
+passes for helpers/tests; TaskApp targeted lint passes with the existing
+`react-hooks/set-state-in-effect` rule excluded. `git diff --check` passed.
+Browser QA, production build, and full typecheck were not run.
 
 ## 2026-10-12 7.16.145 T6.1a Invalid Active Tab Correction
 

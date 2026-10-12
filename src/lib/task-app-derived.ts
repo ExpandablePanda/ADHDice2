@@ -31,6 +31,14 @@ import { todayISO } from "@/lib/utils";
 import { matchesTaskTypeSelections } from "@/lib/task-type";
 import { quotaProgressForTask, type QuotaProgress } from "@/lib/task-state-engine/quota";
 import type { TaskHistoryOutcome } from "@/lib/task-state-engine/types";
+import {
+  buildStableTaskSearchScope,
+  queryTaskSearch,
+  shouldRunTaskSearch,
+  type StableTaskSearchScope,
+  type TaskSearchEntity,
+  type TaskSearchQueryResult,
+} from "@/lib/task-search-selector";
 
 type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
 
@@ -178,6 +186,10 @@ export type StableCanonicalTaskIndex = {
   taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
   todayDateKey: string;
   validChildTaskIdSet: ReadonlySet<string>;
+};
+
+export type TaskSearchPresentationSelection = TaskSearchQueryResult & {
+  visibleTasks: Task[];
 };
 
 export type TaskAppWorkspaceFacts = {
@@ -735,6 +747,53 @@ export function getTaskContentFolderSearchMatchIds(
       .filter(([, searchDocument]) => searchDocument.includes(query))
       .map(([folderId]) => folderId),
   );
+}
+
+export function buildTaskSearchPresentationScope(
+  index: StableCanonicalTaskIndex,
+  presentation: TaskUiState,
+  entities: readonly TaskSearchEntity[],
+): StableTaskSearchScope {
+  return buildStableTaskSearchScope(entities, {
+    energyFilters: presentation.energyFilters,
+    focusedTaskIds: index.focusedTaskIds,
+    listNameById: index.listNameById,
+    matchAny: presentation.matchAny,
+    quickFilters: presentation.quickFilters,
+    selectedBucket: presentation.selectedBucket,
+    statusFilters: presentation.statusFilters,
+    tableColumnFilters: presentation.tableColumnFilters,
+  });
+}
+
+export function selectTaskSearchPresentation({
+  bucketContext,
+  index,
+  page,
+  presentation,
+  scope,
+  search,
+}: {
+  bucketContext: TaskBucketContext;
+  index: StableCanonicalTaskIndex;
+  page: string;
+  presentation: TaskUiState;
+  scope: StableTaskSearchScope;
+  search: string;
+}): TaskSearchPresentationSelection | null {
+  if (!shouldRunTaskSearch(page)) return null;
+  const result = queryTaskSearch(
+    search,
+    scope,
+    presentation.includeStepsByView[presentation.view] === true,
+  );
+  const visibleTasks = sortTasksForCockpit(
+    result.visibleRootTaskIds
+      .map((taskId) => index.taskById.get(taskId))
+      .filter((task): task is Task => Boolean(task)),
+    bucketContext,
+  );
+  return { ...result, visibleTasks };
 }
 
 export function queryCanonicalTaskEntityProjection({
