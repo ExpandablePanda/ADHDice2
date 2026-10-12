@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-11
+Last reviewed: 2026-10-12
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.126`.
+- Current working app version: `7.16.127`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.127 Scratchpad Task matching and shared outcomes
+
+Task shorthand now preserves case- and whitespace-normalized exact-match
+precedence, then auto-selects only a unique punctuation-normalized canonical
+Task. Multiple normalized matches and unknown titles remain in review; the
+review picker uses the same match resolver. Multi-item `t:` shorthand accepts
+a deliberate trailing ` - outcome` as a shared default for unmarked Tasks,
+while item outcomes override it and mixed multi-date expressions keep their
+existing interpretation. Canonical Task IDs and saved titles remain intact.
+
+The focused Batch Intake suite passed (51 tests), and targeted ESLint passed for
+the parser, matcher, review component, and focused test file. Browser QA, build,
+full typecheck, and full-suite tests were not run. No SQL, Supabase changes, or
+live mutations were made.
 
 ## 2026-10-11 7.16.124 Journal Trigger Statistics V1
 

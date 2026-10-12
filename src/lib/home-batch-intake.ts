@@ -863,6 +863,28 @@ function parseMultiDateTaskExpression(value: string) {
   };
 }
 
+function isOutsideShorthandQuotes(value: string, position: number) {
+  let quoted = false;
+  for (let index = 0; index < position; index += 1) {
+    if (value[index] !== '"') continue;
+    if (quoted && value[index + 1] === '"') {
+      index += 1;
+      continue;
+    }
+    quoted = !quoted;
+  }
+  return !quoted;
+}
+
+function parseTrailingSharedTaskOutcome(rawToken: string) {
+  const suffix = rawToken.match(/\s+-\s+(did\s+my\s+best|dmb|done|missed)\s*$/i);
+  if (!suffix || !isOutsideShorthandQuotes(rawToken, suffix.index ?? 0)) return null;
+  const rawTitle = rawToken.slice(0, suffix.index).trim();
+  const taskTitle = tokenizeShorthandCsvTokens(rawTitle)[0]?.value ?? "";
+  if (!taskTitle) return null;
+  return { outcome: normalizeTaskOutcome(suffix[1] ?? ""), taskTitle };
+}
+
 function createMultiDateTaskDrafts(
   line: string,
   lineNumber: number,
@@ -911,11 +933,15 @@ function createTaskShorthandDrafts(
   referenceDate: string,
 ) {
   const tokens = tokenizeShorthandCsvTokens(body);
+  const trailingShared = tokens.length > 1 ? parseTrailingSharedTaskOutcome(tokens.at(-1)?.raw ?? "") : null;
+  const hasMixedMultiDateExpression = tokens.some((token) => (parseMultiDateTaskExpression(token.value)?.dateTokens.length ?? 0) > 0);
+  const sharedOutcome = trailingShared && !hasMixedMultiDateExpression ? trailingShared.outcome : null;
   const drafts: BatchIntakeTaskDraft[] = [];
   tokens.forEach((token, part) => {
-    const multiDateDrafts = createMultiDateTaskDrafts(line, lineNumber, date, token.value, referenceDate, part);
-    if (multiDateDrafts) drafts.push(...multiDateDrafts);
-    else drafts.push(createTaskDraft(line, lineNumber, date, token.value, part, "high"));
+    const title = sharedOutcome && part === tokens.length - 1 ? trailingShared!.taskTitle : token.value;
+    const multiDateDrafts = createMultiDateTaskDrafts(line, lineNumber, date, title, referenceDate, part);
+    const taskDrafts = multiDateDrafts ?? [createTaskDraft(line, lineNumber, date, title, part, "high")];
+    drafts.push(...taskDrafts.map((draft) => sharedOutcome && draft.outcome === null ? { ...draft, outcome: sharedOutcome } : draft));
   });
   if (tokens.length === 0) drafts.push(createTaskDraft(line, lineNumber, date, "", 0, "high"));
   return drafts;

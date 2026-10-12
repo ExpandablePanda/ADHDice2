@@ -69,9 +69,30 @@ t: nba 2k done, adhdice dmb, wolverine
 
 Outcome aliases are `done`, `dmb`, `did my best`, and `missed`. An unmarked
 Task has No change; it is not executable until reviewed and changed. Task
-matching uses canonical exact-match rules: one unique exact match can be
-selected automatically, while multiple exact matches and no exact match remain
-Needs Review. Fuzzy matches never auto-select and `t:` never creates a Task.
+matching first uses case- and whitespace-normalized exact matching. One unique
+exact match is selected automatically and takes precedence over any punctuation
+fallback. If there is no exact match, punctuation is treated as a word boundary
+and case, punctuation, and whitespace are normalized; only one
+unique normalized match is selected automatically. Multiple exact or
+normalized matches remain Needs Review until manually selected. Partial-name
+suggestions may appear in the review picker but never auto-select. Unknown Tasks
+remain Needs Review and `t:` never creates a Task. Matching preserves the
+canonical Task ID and title.
+
+A multi-item `t:` list may use a deliberate trailing ` - <outcome>` as a shared
+default for items without their own outcome:
+
+```text
+t: NBA 2K27, ADHDice, Pills am, Brush Teeth PM - done
+```
+
+The shared default accepts `Done`, `DMB`, `Did My Best`, and `Missed`.
+An item's explicit outcome overrides the shared default. A trailing ordinary
+word such as `done` does not set a list-wide default; without the deliberate
+` - ` separator, an outcome applies only to its own Task token. When the same
+list contains a multi-date Task expression, no shared default is inferred, so
+the existing multi-date interpretation is preserved. Quoted comma-containing
+Task titles continue to be treated as one item.
 
 ### Task multi-date history
 
