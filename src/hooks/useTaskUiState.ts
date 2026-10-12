@@ -29,12 +29,15 @@ import {
   normalizeTaskWorkspaceTabsState,
   parseStoredJson,
   renameTaskWorkspaceTabState,
+  resolveActiveTaskUiState,
+  resolveActiveTaskWorkspaceTab,
   reorderTaskWorkspaceTabToIndex,
   reorderTaskWorkspaceTabs,
   TASK_FILTERS_OPEN_STORAGE_KEY,
   TASK_FOCUS_STORAGE_KEY,
   TASK_ROUTING_STORAGE_KEY,
   TASK_UI_STORAGE_KEY,
+  updateActiveTaskUiState,
   type AppPage,
   type HudUiState,
   type TaskWorkspaceTab,
@@ -424,9 +427,8 @@ export function useTaskUiState({
     });
   }, []);
 
-  const activeTaskWorkspaceTab = taskWorkspaceTabsState.tabs.find((tab) => tab.id === taskWorkspaceTabsState.activeTabId)
-    ?? taskWorkspaceTabsState.tabs[0]
-    ?? DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0];
+  const activeTaskWorkspaceTab = resolveActiveTaskWorkspaceTab(taskWorkspaceTabsState);
+  const activeTaskUiState = resolveActiveTaskUiState(taskWorkspaceTabsState);
 
   const replaceTaskWorkspaceTabsState = useCallback((nextState: TaskWorkspaceTabsState) => {
     setTaskWorkspaceTabsState(normalizeTaskWorkspaceTabsState(nextState));
@@ -434,27 +436,7 @@ export function useTaskUiState({
 
   const setTaskUiState = useCallback<Dispatch<SetStateAction<TaskUiState>>>((updater) => {
     setTaskWorkspaceTabsState((current) => {
-      const activeTabId = current.activeTabId;
-      const nextTabs = current.tabs.map((tab) => {
-        if (tab.id !== activeTabId) {
-          return tab;
-        }
-        const nextTaskUiState = typeof updater === "function"
-          ? (updater as (value: TaskUiState) => TaskUiState)(tab.taskUiState)
-          : updater;
-        if (Object.is(nextTaskUiState, tab.taskUiState)) {
-          return tab;
-        }
-        return {
-          ...tab,
-          taskUiState: nextTaskUiState,
-        };
-      });
-
-      return {
-        ...current,
-        tabs: nextTabs,
-      };
+      return updateActiveTaskUiState(current, updater);
     });
   }, []);
 
@@ -856,6 +838,6 @@ export function useTaskUiState({
     setTaskUiState,
     taskTableLayoutPreferences,
     taskRouting,
-    taskUiState: activeTaskWorkspaceTab.taskUiState,
+    taskUiState: activeTaskUiState,
   };
 }

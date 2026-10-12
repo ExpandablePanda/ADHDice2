@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-11
+Last reviewed: 2026-10-12
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.143`.
+- Current working app version: `7.16.144`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,24 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.144 T6.1a Tasks Presentation Adapter Foundation
+
+Pure helpers now resolve the active nested Tasks workspace tab and its
+`TaskUiState` from an explicit `TaskWorkspaceTabsState` snapshot, and apply
+functional presentation updates to that snapshot without mutating it or its
+other tabs. `useTaskUiState` uses the helpers at its existing active-tab and
+setter seams; its public hook API and TaskApp callers are unchanged. Invalid
+active IDs retain first-tab fallback behavior, and an empty workspace resolves
+to the existing default tab. This is a state-adapter foundation only: TaskApp
+rendering, additional panel rendering, and cross-panel ownership remain
+deferred.
+
+Focused Task UI and Master Workspace tests passed (46/46). Targeted ESLint
+passes with the existing `react-hooks/set-state-in-effect` finding excluded;
+standard targeted ESLint reports that existing finding at the hook's user-reset
+effect. `git diff --check` passes. Browser QA, production build, and full
+typecheck were not run for this foundation.
 
 ## 2026-10-11 7.16.143 T5b.4c.2 Shared Recipe and Saved Meal Definition Editing Sessions
 

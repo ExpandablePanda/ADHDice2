@@ -140,6 +140,35 @@ export const DEFAULT_TASK_WORKSPACE_TABS_STATE: TaskWorkspaceTabsState = {
   uiStateVersion: TASK_UI_SCHEMA_VERSION,
 };
 
+export function resolveActiveTaskWorkspaceTab(state: TaskWorkspaceTabsState): TaskWorkspaceTab {
+  return state.tabs.find((tab) => tab.id === state.activeTabId)
+    ?? state.tabs[0]
+    ?? DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0];
+}
+
+export function resolveActiveTaskUiState(state: TaskWorkspaceTabsState): TaskUiState {
+  return resolveActiveTaskWorkspaceTab(state).taskUiState;
+}
+
+export function updateActiveTaskUiState(
+  state: TaskWorkspaceTabsState,
+  updater: TaskUiState | ((current: TaskUiState) => TaskUiState),
+): TaskWorkspaceTabsState {
+  const activeTab = resolveActiveTaskWorkspaceTab(state);
+  const activeTabIndex = state.tabs.findIndex((tab) => tab.id === activeTab.id);
+  if (activeTabIndex < 0) return state;
+
+  const currentTab = state.tabs[activeTabIndex];
+  const nextTaskUiState = typeof updater === "function"
+    ? updater(currentTab.taskUiState)
+    : updater;
+  if (Object.is(nextTaskUiState, currentTab.taskUiState)) return state;
+
+  const tabs = [...state.tabs];
+  tabs[activeTabIndex] = { ...currentTab, taskUiState: nextTaskUiState };
+  return { ...state, tabs };
+}
+
 export { DEFAULT_HUD_UI_STATE, normalizeHudUiState };
 export type { HudPage, HudUiState, HudWidgetLayoutItem, HudWidgetSize, HudWidgetType } from "@/lib/task-hud-layout";
 
