@@ -4,7 +4,10 @@ import { test } from "node:test";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 
-import { JournalTriggerStatistics } from "../src/components/task-app/journal-trigger-statistics.tsx";
+import {
+  formatJournalTriggerTimelinePeriodLabel,
+  JournalTriggerStatistics,
+} from "../src/components/task-app/journal-trigger-statistics.tsx";
 import {
   getHealthJournalHistoryGroupsIncludingEntry,
   groupHealthJournalEntriesByDate,
@@ -15,6 +18,7 @@ import {
   type HealthJournalTriggerStatisticsInput,
   type HealthJournalTriggerStatisticsRange,
 } from "../src/lib/health-journal-trigger-statistics.ts";
+import { todayHealthDate } from "../src/lib/health-utils.ts";
 
 const USER_ID = "user-1";
 type StatisticsLink = HealthJournalTriggerStatisticsInput["journalTriggerLinks"][number];
@@ -443,6 +447,75 @@ test("Statistics loading, failure, retry, and loaded empty states are distinct",
   assert.match(empty, />0</);
   assert.match(empty, /No Trigger associations in this date range/);
   assert.match(empty, /Trigger frequency timeline/);
+});
+
+test("timeline labels use compact readable date ranges for each grouping", () => {
+  const day = { key: "2026-10-11", startDate: "2026-10-11", endDate: "2026-10-11", count: 2 };
+  const sameMonthWeek = { key: "2026-10-05", startDate: "2026-10-05", endDate: "2026-10-11", count: 2 };
+  const crossMonthWeek = { key: "2026-09-28", startDate: "2026-09-28", endDate: "2026-10-04", count: 0 };
+  const crossYearWeek = { key: "2025-12-29", startDate: "2025-12-29", endDate: "2026-01-04", count: 1 };
+  const month = { key: "2026-10", startDate: "2026-10-01", endDate: "2026-10-31", count: 3 };
+  const dateAtNoon = (date: string) => {
+    const [year, monthValue, dayValue] = date.split("-").map(Number);
+    return new Date(year!, monthValue! - 1, dayValue!, 12);
+  };
+
+  assert.equal(
+    formatJournalTriggerTimelinePeriodLabel(day, "day"),
+    new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).format(dateAtNoon(day.startDate)),
+  );
+  assert.equal(
+    formatJournalTriggerTimelinePeriodLabel(sameMonthWeek, "week"),
+    new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).formatRange(dateAtNoon(sameMonthWeek.startDate), dateAtNoon(sameMonthWeek.endDate)),
+  );
+  assert.equal(
+    formatJournalTriggerTimelinePeriodLabel(crossMonthWeek, "week"),
+    new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short" }).formatRange(dateAtNoon(crossMonthWeek.startDate), dateAtNoon(crossMonthWeek.endDate)),
+  );
+  const yearRange = formatJournalTriggerTimelinePeriodLabel(crossYearWeek, "week");
+  assert.equal(
+    yearRange,
+    new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric" }).formatRange(dateAtNoon(crossYearWeek.startDate), dateAtNoon(crossYearWeek.endDate)),
+  );
+  assert.match(yearRange, /2025/);
+  assert.match(yearRange, /2026/);
+  assert.equal(
+    formatJournalTriggerTimelinePeriodLabel(month, "month"),
+    new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(dateAtNoon(month.startDate)),
+  );
+});
+
+test("Statistics render separates chart labels, ranking fields, and effect counts", () => {
+  const today = todayHealthDate();
+  const props = {
+    checkIns: [entry("entry-1")],
+    healthDataError: null,
+    healthDataLoading: false,
+    hasLoadedJournalTriggerData: true,
+    isLoadingJournalTriggers: false,
+    journalSignals: [{ id: "signal", user_id: USER_ID, name: "Mood" }],
+    journalSignalOccurrences: [feelingOccurrence("occurrence-1", "entry-1", today, "signal", 5)],
+    journalTriggerDataError: null,
+    journalTriggers: [trigger("trigger-a", "A deliberately long Trigger name for layout wrapping", "2026-01-01T00:00:00.000Z")],
+    journalTriggerLinks: [link("link-1", "trigger-a", "feeling", "occurrence-1", "improved", 0)],
+    loadJournalTriggerData: async () => true,
+    onViewInHistory: () => {},
+    retryHealthData: () => {},
+    symptomEntries: [],
+    symptoms: [],
+  } as unknown as Parameters<typeof JournalTriggerStatistics>[0];
+  const markup = renderToStaticMarkup(createElement(JournalTriggerStatistics, props));
+
+  assert.match(markup, /grid-cols-\[auto_minmax\(0,1fr\)_auto\]/);
+  assert.match(markup, /w-full min-w-0 min-h-44/);
+  assert.match(markup, /w-36 shrink-0/);
+  assert.match(markup, /title="\d{4}-\d{2}-\d{2} through \d{4}-\d{2}-\d{2}"/);
+  assert.match(markup, /A deliberately long Trigger name for layout wrapping/);
+  assert.match(markup, />Archived</);
+  assert.match(markup, /sm:grid-cols-3/);
+  assert.match(markup, /Associated/);
+  assert.match(markup, /Improved/);
+  assert.match(markup, /Worsened/);
 });
 
 test("Journal view navigation preserves Entry and split History controls and keeps the editor mounted", () => {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.124`.
+- Current working app version: `7.16.125`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -43,6 +43,21 @@ tests also retain two baseline failures because they expect older
 `journalWorkspaceMode` markup while the base commit uses
 `visibleJournalWorkspaceMode`. Browser QA, build, and full typecheck were not
 run; browser QA remains with Andrew. No SQL or Supabase records changed.
+
+## 2026-10-11 7.16.125 Journal Statistics spacing correction
+
+The Statistics timeline uses wider, wrapping period columns and compact
+locale-aware date ranges. Short timelines distribute their bars across the
+available width; longer timelines retain horizontal scrolling. Full ISO period
+dates remain available to assistive technology. Ranked Triggers now separate
+rank, name, and association count, and the effect breakdown gives each category
+its own row area on narrow screens and column on wider screens. Statistics
+calculations and Journal behavior are unchanged.
+
+The focused Statistics and Trigger suites passed (33 tests), including render
+structure and date-label formatting coverage. Targeted lint passed for the
+Statistics component and test. Browser/manual QA, build, and full typecheck were
+not run; browser QA remains with Andrew.
 
 ## 2026-10-11 7.16.123 Journal Feeling scale label editing
 

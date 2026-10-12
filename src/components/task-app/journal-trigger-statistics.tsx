@@ -48,13 +48,19 @@ function formatDate(dateKey: string, includeYear = false) {
   }).format(dateAtLocalNoon(dateKey));
 }
 
-function formatPeriod(period: HealthJournalTriggerTimelinePeriod, grouping: "day" | "week" | "month") {
-  if (grouping === "month") return formatDate(period.startDate, true);
-  if (grouping === "day") return formatDate(period.startDate);
-  if (period.startDate.slice(0, 4) !== period.endDate.slice(0, 4)) {
-    return formatDate(period.startDate, true) + " – " + formatDate(period.endDate, true);
+export function formatJournalTriggerTimelinePeriodLabel(
+  period: HealthJournalTriggerTimelinePeriod,
+  grouping: "day" | "week" | "month",
+) {
+  if (grouping === "month") {
+    return new Intl.DateTimeFormat(undefined, { month: "short", year: "numeric" }).format(dateAtLocalNoon(period.startDate));
   }
-  return formatDate(period.startDate) + " – " + formatDate(period.endDate, period.startDate.slice(5, 7) !== period.endDate.slice(5, 7));
+  if (grouping === "day") return formatDate(period.startDate);
+  return new Intl.DateTimeFormat(undefined, {
+    day: "numeric",
+    month: "short",
+    ...(period.startDate.slice(0, 4) !== period.endDate.slice(0, 4) ? { year: "numeric" as const } : {}),
+  }).formatRange(dateAtLocalNoon(period.startDate), dateAtLocalNoon(period.endDate));
 }
 
 function formatOccurrenceTime(value: string) {
@@ -71,7 +77,7 @@ function plural(count: number, singular: string, pluralLabel = singular + "s") {
 function StatisticValue({ label, value }: { label: string; value: number }) {
   return (
     <AdhdCard className="grid gap-1" padding="md">
-      <p className="text-xs font-semibold text-[#7d7598] dark:text-white/50">{label}</p>
+      <p className="text-sm leading-snug font-semibold text-[#7d7598] dark:text-white/50">{label}</p>
       <p className="text-2xl font-black text-[#26324f] dark:text-white">{value}</p>
     </AdhdCard>
   );
@@ -95,20 +101,21 @@ function TriggerFrequencyChart({
   }
   const maximumCount = Math.max(1, ...periods.map((period) => period.count));
   const groupingLabel = grouping === "day" ? "day" : grouping === "week" ? "calendar week starting Monday" : "month";
+  const distributePeriods = periods.length <= 4;
   return (
     <div className="grid gap-2">
-      <p className="text-xs text-[#7d88a3] dark:text-white/50">
+      <p className="text-sm leading-snug text-[#7d88a3] dark:text-white/50">
         {selectedTriggerName ? selectedTriggerName + " · " : "All Triggers · "}Counts by {groupingLabel}
       </p>
-      <ol aria-label={"Trigger frequency timeline, counts by " + groupingLabel} className="flex min-h-44 items-end gap-2 overflow-x-auto rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] px-3 pb-3 pt-4 dark:border-white/10 dark:bg-white/[0.025]">
+      <ol aria-label={"Trigger frequency timeline, counts by " + groupingLabel} className="flex w-full min-w-0 min-h-44 items-end gap-3 overflow-x-auto rounded-[1rem] border border-[#eeeaf8] bg-[#fbfaff] px-3 pb-3 pt-4 dark:border-white/10 dark:bg-white/[0.025]">
         {periods.map((period) => {
-          const periodLabel = formatPeriod(period, grouping);
+          const periodLabel = formatJournalTriggerTimelinePeriodLabel(period, grouping);
           const accessiblePeriod = period.startDate === period.endDate
             ? period.startDate
             : period.startDate + " through " + period.endDate;
           const countLabel = period.count + " " + plural(period.count, "association");
           return (
-            <li aria-label={accessiblePeriod + ": " + countLabel} className="flex w-14 shrink-0 flex-col items-center justify-end gap-2 text-center text-[10px] text-[#68738c] dark:text-white/55" key={period.key}>
+            <li aria-label={accessiblePeriod + ": " + countLabel} className={"flex flex-col items-center justify-end gap-2.5 text-center text-xs leading-tight text-[#68738c] dark:text-white/55 " + (distributePeriods ? "min-w-32 flex-1" : "w-36 shrink-0")} key={period.key} title={accessiblePeriod}>
               <span className="sr-only">{accessiblePeriod}: {countLabel}</span>
               <div aria-hidden="true" className="flex h-32 w-full items-end justify-center rounded-t-md bg-[#f0ecfb] dark:bg-white/[0.04]">
                 <div
@@ -116,8 +123,8 @@ function TriggerFrequencyChart({
                   style={{ height: (period.count / maximumCount) * 100 + "%" }}
                 />
               </div>
-              <span aria-hidden="true" className="font-bold text-[#3b355b] dark:text-white/80">{period.count}</span>
-              <span aria-hidden="true" className="whitespace-nowrap">{periodLabel}</span>
+              <span aria-hidden="true" className="font-bold tabular-nums text-sm leading-none text-[#3b355b] dark:text-white/80">{period.count}</span>
+              <span aria-hidden="true" className="min-h-8 w-full px-1 text-center text-xs leading-snug">{periodLabel}</span>
             </li>
           );
         })}
@@ -270,21 +277,26 @@ export function JournalTriggerStatistics({
       <AdhdCard className="grid gap-3" padding="md">
         <h3 className="font-semibold text-[#26324f] dark:text-white">Most Recorded Triggers</h3>
         {statistics.rankedTriggers.length > 0 ? (
-          <ol className="grid gap-2">
+          <ol className="grid gap-3">
             {statistics.rankedTriggers.map((trigger, index) => (
-              <li className="flex flex-wrap items-center gap-2" key={trigger.trigger.id}>
+              <li className="grid min-w-0" key={trigger.trigger.id}>
                 <AdhdChip
                   aria-pressed={selectedTriggerId === trigger.trigger.id}
-                  className="max-w-full"
-                  count={trigger.associationCount}
+                  className="w-full max-w-full rounded-xl py-2 whitespace-normal"
                   onClick={() => setSelectedTriggerId(trigger.trigger.id)}
                   selected={selectedTriggerId === trigger.trigger.id}
                   type="button"
+                  title={trigger.trigger.name + (trigger.trigger.archived_at ? " · Archived" : "")}
                 >
-                  <span className="font-bold">#{index + 1}</span> {trigger.trigger.name}
-                  {trigger.trigger.archived_at ? " · Archived" : ""}
+                  <span className="grid w-full min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-3 whitespace-normal text-left">
+                    <span className="shrink-0 font-bold tabular-nums">#{index + 1}</span>
+                    <span className="flex min-w-0 items-center gap-2">
+                      <span className="min-w-0 break-words">{trigger.trigger.name}</span>
+                      {trigger.trigger.archived_at ? <span className="shrink-0 text-xs font-semibold">Archived</span> : null}
+                    </span>
+                    <span className="shrink-0 font-bold tabular-nums">{trigger.associationCount}</span>
+                  </span>
                 </AdhdChip>
-                <span className="sr-only">{trigger.associationCount} {plural(trigger.associationCount, "association")}</span>
               </li>
             ))}
           </ol>
@@ -295,11 +307,11 @@ export function JournalTriggerStatistics({
 
       <AdhdCard className="grid gap-2" padding="md">
         <h3 className="font-semibold text-[#26324f] dark:text-white">Effect breakdown</h3>
-        <ul className="flex flex-wrap gap-x-5 gap-y-2 text-sm text-[#5f5876] dark:text-white/70">
+        <ul className="grid gap-2 text-sm text-[#5f5876] dark:text-white/70 sm:grid-cols-3">
           {(["associated", "improved", "worsened"] as const).map((effect) => (
-            <li className="flex gap-2" key={effect}>
-              <span>{EFFECT_LABELS[effect]}</span>
-              <strong className="text-[#26324f] dark:text-white">{statistics.effects[effect]}</strong>
+            <li className="flex min-w-0 items-center justify-between gap-3 rounded-[0.85rem] border border-[#eeeaf8] px-3 py-2 dark:border-white/10" key={effect}>
+              <span className="leading-snug">{EFFECT_LABELS[effect]}</span>
+              <strong className="shrink-0 tabular-nums text-[#26324f] dark:text-white">{statistics.effects[effect]}</strong>
             </li>
           ))}
         </ul>
