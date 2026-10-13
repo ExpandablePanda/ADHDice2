@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.150`.
+- Current working app version: `7.16.151`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,27 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.151 T6.2c Tasks Routing Race Correction
+
+Panel-targeted Tasks writes now read the latest Master Workspace state and the
+latest live `TaskWorkspaceTabsState`. The live Task UI hook remains the only
+active Tasks state owner; synchronous refs track its pending state and the
+Master Workspace state so a navigation transition can snapshot the latest
+value before React commits either update. Live writes carry the target nested
+Tasks tab ID and reject if that exact live tab is no longer active. Focused
+writes mirror the resulting live workspace into the exact Master panel/tab
+snapshot. Inactive writes update only that target snapshot. Results distinguish
+queued writes from explicit rejections.
+
+Focused Master Workspace controller/state and Task UI-state tests passed
+(85/85), including inactive-write/focus, focused-write/navigation, stale
+callback, rapid functional update, wrong-tab, single-panel, and persistence
+cases. Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` findings excluded; `git diff --check` passed.
+Full typecheck remains red on existing repository diagnostics, including the
+pre-existing missing `setIsDailyPlanningCollapsed` hook return. Browser QA and
+production build were not run.
 
 ## 2026-10-12 7.16.150 T6.2b Panel-Targeted Tasks Controller Bridge Foundation
 

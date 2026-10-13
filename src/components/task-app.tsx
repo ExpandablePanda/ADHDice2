@@ -1208,6 +1208,7 @@ export function TaskApp() {
   const countdownAlarmPulseIntervalRef = useRef<number | null>(null);
   const {
     activeTaskWorkspaceTab,
+    applyTaskUiStateUpdate,
     activePage,
     closeTaskWorkspaceTab,
     createTaskWorkspaceTab,
@@ -1219,6 +1220,7 @@ export function TaskApp() {
     renameTaskWorkspaceTab,
     reorderTaskWorkspaceTab,
     replaceTaskWorkspaceTabsState,
+    getTaskWorkspaceTabsState,
     setActivePage,
     setActiveTaskWorkspaceTab,
     setFocusedTaskIdsByDate,
@@ -5748,9 +5750,9 @@ export function TaskApp() {
     initialHealthSection: legacyHealthTabPreference,
     isReady: isAuthenticatedAppBootReady,
     replaceTaskWorkspaceTabsState,
-    setTaskUiState,
+    applyTaskUiStateUpdate,
+    getTaskWorkspaceTabsState,
     setActivePage,
-    taskUiState,
     taskWorkspaceTabsState,
     userId: session?.user?.id,
     draftProtection: masterWorkspaceDraftProtection,

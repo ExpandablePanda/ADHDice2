@@ -65,35 +65,38 @@ function routeTasksUpdate(
   panelId: string,
   tabId: string,
   updater: TaskUiState | ((current: TaskUiState) => TaskUiState),
-  options: { isReady?: boolean; latestWorkspace?: ReturnType<typeof restoreMasterWorkspaceForUser>["state"] } = {},
+  options: { isReady?: boolean } = {},
 ) {
   let workspace = state;
   let live = liveTaskWorkspace;
   let liveSetterCalls = 0;
   let workspaceSetterCalls = 0;
   let insideWorkspaceUpdater = false;
-  const accepted = updateMasterWorkspaceTasksUiState(
+  const result = updateMasterWorkspaceTasksUiState(
     state,
     panelId,
     tabId,
     updater,
     options.isReady ?? true,
-    (next) => {
+    (expectedTaskTabId, next) => {
       assert.equal(insideWorkspaceUpdater, false, "the live setter must not run inside the workspace updater");
       liveSetterCalls += 1;
+      if (live.activeTabId !== expectedTaskTabId || !live.tabs.some((tab) => tab.id === expectedTaskTabId)) return undefined;
       live = updateActiveTaskUiState(live, next);
+      return live;
     },
     (next) => {
       workspaceSetterCalls += 1;
       insideWorkspaceUpdater = true;
       try {
-        workspace = next(options.latestWorkspace ?? workspace);
+        workspace = next(workspace);
       } finally {
         insideWorkspaceUpdater = false;
       }
+      return workspace;
     },
   );
-  return { accepted, live, liveSetterCalls, workspace, workspaceSetterCalls };
+  return { result, live, liveSetterCalls, workspace, workspaceSetterCalls };
 }
 
 function twoTasksPanels(leftTasks: TaskWorkspaceTabsState, rightTasks: TaskWorkspaceTabsState) {
@@ -111,6 +114,21 @@ function twoTasksPanels(leftTasks: TaskWorkspaceTabsState, rightTasks: TaskWorks
     rightPanelId: "right-panel",
     rightTabId: "right-tasks",
     state: activateMasterPanel(withRightSnapshot, leftPanelId),
+  };
+}
+
+function twoTasksTabs(leftTasks: TaskWorkspaceTabsState, rightTasks: TaskWorkspaceTabsState) {
+  const initialized = restoreMasterWorkspaceForUser(memoryStorage(), "tab-target-user", "Tasks", leftTasks).state;
+  const panelId = initialized.focusedPanelId;
+  return {
+    panelId,
+    leftTabId: initialized.panels[0].activeTabId,
+    rightTabId: "right-tasks",
+    state: createMasterTab(initialized, panelId, {
+      id: "right-tasks",
+      destination: { kind: "page", page: "Tasks" },
+      presentation: { tasksWorkspace: rightTasks },
+    }, false),
   };
 }
 
@@ -149,9 +167,9 @@ test("focused active Tasks presentation reads and writes stay on the live task U
     view: "matrix",
   }));
 
-  assert.equal(routed.accepted, true);
+  assert.deepEqual(routed.result, { status: "queued", route: "live", panelId, tabId });
   assert.equal(routed.liveSetterCalls, 1);
-  assert.equal(routed.workspaceSetterCalls, 0);
+  assert.equal(routed.workspaceSetterCalls, 1);
   assert.equal(routed.live.tabs[0].taskUiState.search, "live after");
   assert.equal(routed.live.tabs[0].taskUiState.selectedBucket, "attention");
   assert.equal(routed.live.tabs[0].taskUiState.view, "matrix");
@@ -190,7 +208,7 @@ test("right Tasks presentation updates remain independent while the left panel s
     view: "cards",
   }));
 
-  assert.equal(rightUpdate.accepted, true);
+  assert.deepEqual(rightUpdate.result, { status: "queued", route: "snapshot", panelId: panels.rightPanelId, tabId: panels.rightTabId });
   assert.equal(rightUpdate.liveSetterCalls, 0);
   assert.equal(rightUpdate.workspaceSetterCalls, 1);
   assert.equal(rightUpdate.workspace.focusedPanelId, panels.leftPanelId);
@@ -247,7 +265,7 @@ test("inactive Tasks tabs update their own stored snapshot without changing the 
   assert.equal(routed.workspace.panels[0].tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.view, "list");
 });
 
-test("stored Tasks updates apply functionally to the latest workspace and do not race into the live mirror", () => {
+test("Tasks routing reads the latest workspace snapshot and active Tasks owner", () => {
   const panels = twoTasksPanels(taskWorkspace("left"), taskWorkspace("right"));
   const latestRightSnapshot = updateMasterTabTasksWorkspace(
     panels.state,
@@ -256,31 +274,137 @@ test("stored Tasks updates apply functionally to the latest workspace and do not
     taskWorkspace("right latest", { bucket: "attention", view: "calendar" }),
   );
   const latestUpdate = routeTasksUpdate(
-    panels.state,
+    latestRightSnapshot,
     taskWorkspace("left"),
     panels.rightPanelId,
     panels.rightTabId,
     (current) => ({ ...current, search: `${current.search} plus update` }),
-    { latestWorkspace: latestRightSnapshot },
   );
   const latestRight = latestUpdate.workspace.panels.find((panel) => panel.id === panels.rightPanelId)?.tabs[0].presentation.tasksWorkspace;
 
   assert.equal(latestRight?.tabs[0].taskUiState.search, "right latest plus update");
   assert.equal(latestRight?.tabs[0].taskUiState.selectedBucket, "attention");
 
-  const nowFocused = activateMasterPanel(panels.state, panels.rightPanelId);
+  const nowFocused = activateMasterPanel(latestRightSnapshot, panels.rightPanelId);
   const transitionRace = routeTasksUpdate(
-    panels.state,
-    taskWorkspace("left"),
+    nowFocused,
+    taskWorkspace("right latest", { bucket: "attention", view: "calendar" }),
     panels.rightPanelId,
     panels.rightTabId,
-    (current) => ({ ...current, search: "must be deferred to live owner" }),
-    { latestWorkspace: nowFocused },
+    (current) => ({ ...current, search: `${current.search} + update` }),
   );
-  assert.equal(transitionRace.accepted, true);
-  assert.equal(transitionRace.liveSetterCalls, 0);
+  assert.deepEqual(transitionRace.result, { status: "queued", route: "live", panelId: panels.rightPanelId, tabId: panels.rightTabId });
+  assert.equal(transitionRace.liveSetterCalls, 1);
   assert.equal(transitionRace.workspaceSetterCalls, 1);
-  assert.equal(transitionRace.workspace, nowFocused);
+  assert.equal(transitionRace.workspace.focusedPanelId, panels.rightPanelId);
+  assert.equal(transitionRace.live.tabs[0].taskUiState.search, "right latest + update");
+  assert.equal(transitionRace.workspace.panels.find((panel) => panel.id === panels.rightPanelId)?.tabs[0].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "right latest + update");
+});
+
+test("inactive Tasks update followed by focus change restores the updated target into the live owner", () => {
+  const panels = twoTasksTabs(taskWorkspace("left"), taskWorkspace("right"));
+  const routed = routeTasksUpdate(
+    panels.state,
+    taskWorkspace("left"),
+    panels.panelId,
+    panels.rightTabId,
+    (current) => ({ ...current, search: `${current.search} changed` }),
+  );
+  const transition = activateMasterTabWithTaskWorkspace(
+    routed.workspace,
+    panels.panelId,
+    panels.rightTabId,
+    routed.live,
+  );
+
+  assert.deepEqual(routed.result, { status: "queued", route: "snapshot", panelId: panels.panelId, tabId: panels.rightTabId });
+  assert.equal(transition.state.focusedPanelId, panels.panelId);
+  assert.equal(transition.state.panels.find((panel) => panel.id === panels.panelId)?.activeTabId, panels.rightTabId);
+  assert.equal(transition.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "right changed");
+  assert.equal(transition.state.panels.find((panel) => panel.id === panels.panelId)?.tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "right changed");
+});
+
+test("focused Tasks update followed by navigation is preserved once in the outgoing tab", () => {
+  const panels = twoTasksTabs(taskWorkspace("left"), taskWorkspace("right"));
+  const routed = routeTasksUpdate(
+    panels.state,
+    taskWorkspace("left"),
+    panels.panelId,
+    panels.leftTabId,
+    (current) => ({ ...current, search: `${current.search} changed` }),
+  );
+  const transition = activateMasterTabWithTaskWorkspace(
+    routed.workspace,
+    panels.panelId,
+    panels.rightTabId,
+    routed.live,
+  );
+  const storedLeft = transition.state.panels.find((panel) => panel.id === panels.panelId)?.tabs[0].presentation.tasksWorkspace;
+
+  assert.deepEqual(routed.result, { status: "queued", route: "live", panelId: panels.panelId, tabId: panels.leftTabId });
+  assert.equal(routed.live.tabs[0].taskUiState.search, "left changed");
+  assert.equal(storedLeft?.tabs[0].taskUiState.search, "left changed");
+  assert.equal(transition.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "right");
+});
+
+test("a stale Tasks update callback after focus changes writes only to its original tab snapshot", () => {
+  const panels = twoTasksTabs(taskWorkspace("left"), taskWorkspace("right"));
+  const workspaceRef = { current: panels.state };
+  const liveRef = { current: taskWorkspace("left") };
+  const staleCallback = (updater: TaskUiState | ((current: TaskUiState) => TaskUiState)) => routeTasksUpdate(
+    workspaceRef.current,
+    liveRef.current,
+    panels.panelId,
+    panels.leftTabId,
+    updater,
+  );
+  const focusedRight = activateMasterTabWithTaskWorkspace(
+    workspaceRef.current,
+    panels.panelId,
+    panels.rightTabId,
+    liveRef.current,
+  );
+  workspaceRef.current = focusedRight.state;
+  liveRef.current = focusedRight.taskWorkspaceTabsState ?? liveRef.current;
+  const staleCallbackResult = staleCallback((current) => ({ ...current, search: `${current.search} from stale callback` }));
+  const storedLeft = staleCallbackResult.workspace.panels.find((panel) => panel.id === panels.panelId)?.tabs[0].presentation.tasksWorkspace;
+  const activeRight = staleCallbackResult.workspace.panels.find((panel) => panel.id === panels.panelId)?.tabs[1].presentation.tasksWorkspace;
+
+  assert.deepEqual(staleCallbackResult.result, { status: "queued", route: "snapshot", panelId: panels.panelId, tabId: panels.leftTabId });
+  assert.equal(staleCallbackResult.liveSetterCalls, 0);
+  assert.equal(staleCallbackResult.live.tabs[0].taskUiState.search, "right");
+  assert.equal(storedLeft?.tabs[0].taskUiState.search, "left from stale callback");
+  assert.equal(activeRight?.tabs[0].taskUiState.search, "right");
+});
+
+test("rapid functional Tasks updates remain ordered across an inactive-to-focused transition", () => {
+  const panels = twoTasksTabs(taskWorkspace("left"), taskWorkspace("right"));
+  const first = routeTasksUpdate(
+    panels.state,
+    taskWorkspace("left"),
+    panels.panelId,
+    panels.rightTabId,
+    (current) => ({ ...current, search: `${current.search} +first` }),
+  );
+  const second = routeTasksUpdate(
+    first.workspace,
+    first.live,
+    panels.panelId,
+    panels.rightTabId,
+    (current) => ({ ...current, search: `${current.search} +second` }),
+  );
+  const transition = activateMasterTabWithTaskWorkspace(
+    second.workspace,
+    panels.panelId,
+    panels.rightTabId,
+    second.live,
+  );
+
+  assert.equal(first.result.status, "queued");
+  assert.equal(second.result.status, "queued");
+  assert.equal(transition.taskWorkspaceTabsState?.tabs[0].taskUiState.search, "right +first +second");
+  assert.equal(transition.state.panels.find((panel) => panel.id === panels.panelId)?.tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.search, "right +first +second");
+  assert.equal(second.live.tabs[0].taskUiState.search, "left");
 });
 
 test("invalid IDs, non-Tasks targets, and unready workspaces reject Tasks presentation writes", () => {
@@ -296,15 +420,33 @@ test("invalid IDs, non-Tasks targets, and unready workspaces reject Tasks presen
   const nonTasks = routeTasksUpdate(withNotes, taskWorkspace("tasks"), panelId, "notes-target", (current) => ({ ...current, search: "bad" }));
   const unready = routeTasksUpdate(initialized, taskWorkspace("tasks"), panelId, "master-tab-1", (current) => ({ ...current, search: "bad" }), { isReady: false });
 
-  assert.equal(invalidPanel.accepted, false);
-  assert.equal(invalidTab.accepted, false);
-  assert.equal(nonTasks.accepted, false);
-  assert.equal(unready.accepted, false);
+  for (const [result, reason] of [[invalidPanel, "invalid-target"], [invalidTab, "invalid-target"], [nonTasks, "invalid-target"], [unready, "not-ready"]] as const) {
+    assert.deepEqual(result.result, { status: "rejected", reason });
+  }
   for (const result of [invalidPanel, invalidTab, nonTasks, unready]) {
     assert.equal(result.liveSetterCalls, 0);
     assert.equal(result.workspaceSetterCalls, 0);
   }
   assert.equal(resolveMasterWorkspaceTasksUiState(initialized, " ", "master-tab-1", taskWorkspace("tasks").tabs[0].taskUiState), undefined);
+});
+
+test("focused Tasks update rejects a live nested tab that no longer belongs to the target snapshot", () => {
+  const current = restoreMasterWorkspaceForUser(memoryStorage(), "mismatched-live-user", "Tasks", taskWorkspace("target snapshot")).state;
+  const panelId = current.focusedPanelId;
+  const live = {
+    ...taskWorkspace("different live owner"),
+    activeTabId: "different-nested-tab",
+    tabs: [{ ...taskWorkspace("different live owner").tabs[0], id: "different-nested-tab" }],
+  };
+  const routed = routeTasksUpdate(current, live, panelId, current.panels[0].activeTabId, (state) => ({
+    ...state,
+    search: "must not hit a different nested tab",
+  }));
+
+  assert.deepEqual(routed.result, { status: "rejected", reason: "live-state-unavailable" });
+  assert.equal(routed.liveSetterCalls, 1);
+  assert.equal(routed.workspaceSetterCalls, 0);
+  assert.equal(routed.live.tabs[0].taskUiState.search, "different live owner");
 });
 
 test("legacy Tasks tabs without snapshots default safely, normalize updates, and preserve other presentation fields", () => {

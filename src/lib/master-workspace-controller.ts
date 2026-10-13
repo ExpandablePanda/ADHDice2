@@ -5,6 +5,7 @@ import {
   initializeMasterWorkspaceState,
   loadMasterWorkspaceState,
   normalizeMasterWorkspaceState,
+  resolveMasterTabTasksWorkspace,
   resolveMasterTabTasksUiState,
   saveMasterWorkspaceState,
   updateMasterTabTasksUiState,
@@ -26,8 +27,14 @@ export type MasterWorkspaceTaskTransition = {
 };
 
 export type MasterWorkspaceTaskUiStateUpdate = TaskUiState | ((current: TaskUiState) => TaskUiState);
-export type MasterWorkspaceTaskUiStateSetter = (update: MasterWorkspaceTaskUiStateUpdate) => void;
-export type MasterWorkspaceStateUpdater = (update: (current: MasterWorkspaceState) => MasterWorkspaceState) => void;
+export type MasterWorkspaceTaskUiStateSetter = (
+  expectedTaskTabId: string,
+  update: MasterWorkspaceTaskUiStateUpdate,
+) => TaskWorkspaceTabsState | undefined;
+export type MasterWorkspaceStateUpdater = (update: (current: MasterWorkspaceState) => MasterWorkspaceState) => MasterWorkspaceState;
+export type MasterWorkspaceTaskUiStateUpdateResult =
+  | { status: "queued"; route: "live" | "snapshot"; panelId: string; tabId: string }
+  | { status: "rejected"; reason: "not-ready" | "invalid-target" | "live-state-unavailable" | "target-removed" };
 
 export function resolveMasterWorkspaceTasksUiState(
   state: MasterWorkspaceState,
@@ -52,26 +59,37 @@ export function updateMasterWorkspaceTasksUiState(
   isReady: boolean,
   setTaskUiState: MasterWorkspaceTaskUiStateSetter,
   setWorkspace: MasterWorkspaceStateUpdater,
-): boolean {
-  if (!isReady || !resolveMasterTabTasksUiState(state, panelId, tabId)) return false;
+): MasterWorkspaceTaskUiStateUpdateResult {
+  if (!isReady) return { status: "rejected", reason: "not-ready" };
+  if (!resolveMasterTabTasksUiState(state, panelId, tabId)) {
+    return { status: "rejected", reason: "invalid-target" };
+  }
 
   const panel = state.panels.find((candidate) => candidate.id === panelId);
   const targetsFocusedActiveTab = state.focusedPanelId === panelId && panel?.activeTabId === tabId;
   if (targetsFocusedActiveTab) {
-    setTaskUiState(updater);
-    return true;
+    const targetTaskWorkspace = resolveMasterTabTasksWorkspace(state, panelId, tabId);
+    if (!targetTaskWorkspace) return { status: "rejected", reason: "invalid-target" };
+    const nextTaskWorkspace = setTaskUiState(targetTaskWorkspace.activeTabId, updater);
+    if (!nextTaskWorkspace) return { status: "rejected", reason: "live-state-unavailable" };
+
+    const nextWorkspace = setWorkspace((current) => (
+      updateMasterTabTasksWorkspace(current, panelId, tabId, nextTaskWorkspace)
+    ));
+    if (!resolveMasterTabTasksUiState(nextWorkspace, panelId, tabId)) {
+      return { status: "rejected", reason: "target-removed" };
+    }
+    return { status: "queued", route: "live", panelId, tabId };
   }
 
-  setWorkspace((current) => {
-    const currentTasksUiState = resolveMasterTabTasksUiState(current, panelId, tabId);
-    if (!currentTasksUiState) return current;
-
-    const currentPanel = current.panels.find((candidate) => candidate.id === panelId);
-    if (current.focusedPanelId === panelId && currentPanel?.activeTabId === tabId) return current;
-
+  const nextWorkspace = setWorkspace((current) => {
+    if (!resolveMasterTabTasksUiState(current, panelId, tabId)) return current;
     return updateMasterTabTasksUiState(current, panelId, tabId, updater);
   });
-  return true;
+  if (!resolveMasterTabTasksUiState(nextWorkspace, panelId, tabId)) {
+    return { status: "rejected", reason: "target-removed" };
+  }
+  return { status: "queued", route: "snapshot", panelId, tabId };
 }
 
 function getActiveTaskWorkspaceTabsState(state: MasterWorkspaceState, panelId: string): TaskWorkspaceTabsState | undefined {
