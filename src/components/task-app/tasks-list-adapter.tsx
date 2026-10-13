@@ -2555,6 +2555,10 @@ function TasksSimpleList({
   selectedBucket,
   tableProps,
 }: TasksListAdapterProps) {
+  const onDraftEditingChangeRef = useRef(onDraftEditingChange);
+  useEffect(() => {
+    onDraftEditingChangeRef.current = onDraftEditingChange;
+  }, [onDraftEditingChange]);
   const selectedTaskIds = tableProps.selectedTaskIds ?? [];
   const [rowModelCache] = useState(createStableTaskRowModelCache);
   const canRemoveFromCurrentList = (taskId: string) => canRemoveTaskFromCurrentList(
@@ -2593,7 +2597,7 @@ function TasksSimpleList({
   }, []);
 
   useEffect(() => {
-    onDraftEditingChange?.(Boolean(
+    onDraftEditingChangeRef.current?.(Boolean(
       editingTaskTitleId
       || activeQuickPanel
       || activeTaskContentFolderEdit
@@ -2601,8 +2605,8 @@ function TasksSimpleList({
       || isTaskTableEditorOpen
       || nestedDraftTaskIds.size > 0,
     ));
-  }, [activeQuickPanel, activeTaskContentFolderEdit, editingTaskTitleId, isTaskTableEditorOpen, nestedDraftTaskIds.size, onDraftEditingChange, parentStepDraftTaskId]);
-  useEffect(() => () => onDraftEditingChange?.(false), [onDraftEditingChange]);
+  }, [activeQuickPanel, activeTaskContentFolderEdit, editingTaskTitleId, isTaskTableEditorOpen, nestedDraftTaskIds.size, parentStepDraftTaskId]);
+  useEffect(() => () => onDraftEditingChangeRef.current?.(false), []);
   const tasks = useMemo(
     () => sortListParentTasks(presentationTasks, listSortPreference, {
       taskDisplayStatusByTaskId: tableProps.rowContext.taskDisplayStatusByTaskId,

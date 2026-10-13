@@ -146,6 +146,13 @@ import { areHealthFoodEditingSessionDraftsEqual, type HealthFoodEditingSessionDr
 import { areHealthCustomFoodEditingSessionDraftsEqual, type HealthCustomFoodEditingSessionDraft } from "@/lib/health-custom-food-editing-session";
 import { areHealthRecipeEditingSessionDraftsEqual, areHealthSavedMealEditingSessionDraftsEqual, type HealthRecipeEditingSessionDraft, type HealthSavedMealEditingSessionDraft } from "@/lib/health-library-definition-editing-session";
 import { areHealthMealPlanEditingSessionDraftsEqual, type HealthMealPlanEditingSessionDraft } from "@/lib/health-meal-plan-editing-session";
+import {
+  getTaskPanelDraftSourceKey,
+  hasTaskPanelDraftForOwner,
+  hasTaskPanelDraftOutsideOwner,
+  updateTaskPanelDraftOwnerKeys,
+  type TaskPanelDraftSource,
+} from "@/lib/task-panel-draft-safety";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
@@ -1214,10 +1221,10 @@ function getTaskEditorOpenBlockMessage({
   )) {
     return "Close the open Task editor before opening another Task.";
   }
-  if (draftOwnerKeys.some((draftOwnerKey) => draftOwnerKey !== ownerKey)) {
+  if (hasTaskPanelDraftOutsideOwner(draftOwnerKeys, ownerKey)) {
     return "Finish the unsaved edit in the other Tasks panel before opening this Task editor.";
   }
-  if (draftOwnerKeys.includes(ownerKey)) {
+  if (hasTaskPanelDraftForOwner(draftOwnerKeys, ownerKey)) {
     return "Finish or cancel the unsaved edit in this Tasks tab before opening another Task editor.";
   }
   return null;
@@ -6036,12 +6043,53 @@ export function TaskApp() {
     masterTabId: masterWorkspace.activeTab.id,
     taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
   };
-  const reportTaskPanelDraft = (ownerKey: string, isEditing: boolean) => {
+  const leftTaskPanelOwnerKey = getTaskPanelOwnerKey(leftTaskPanelOwner);
+  const rightTaskPanelOwner: TaskPanelOwner | null = splitPanels.right && splitPanels.rightTab
+    ? {
+      panelId: splitPanels.right.id,
+      masterTabId: splitPanels.rightTab.id,
+      taskWorkspaceTabId: splitRightTaskWorkspaceTabsState.activeTabId,
+    }
+    : null;
+  const rightTaskPanelOwnerKey = rightTaskPanelOwner ? getTaskPanelOwnerKey(rightTaskPanelOwner) : null;
+  const reportTaskPanelDraft = useCallback((ownerKey: string, source: TaskPanelDraftSource, isEditing: boolean) => {
+    const ownerSourceKey = getTaskPanelDraftSourceKey(ownerKey, source);
     setTaskPanelDraftOwnerKeys((current) => {
-      if (isEditing) return current.includes(ownerKey) ? current : [...current, ownerKey];
-      return current.filter((candidate) => candidate !== ownerKey);
+      return updateTaskPanelDraftOwnerKeys(current, ownerSourceKey, isEditing);
     });
-  };
+  }, []);
+  const reportLeftWorkspaceDraft = useCallback((isEditing: boolean) => {
+    setIsTasksWorkspaceRenameDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "workspace", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportLeftSearchDraft = useCallback((isEditing: boolean) => {
+    setIsTasksSearchDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "search", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportLeftTableDraft = useCallback((isEditing: boolean) => {
+    setIsTasksTableDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "table", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportLeftListDraft = useCallback((isEditing: boolean) => {
+    setIsTasksListDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "list", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportRightWorkspaceDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "workspace", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
+  const reportRightSearchDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "search", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
+  const reportRightTableDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksTableDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "table", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
+  const reportRightListDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksListDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "list", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
   const updateRightPanelTasksUiState = masterWorkspace.updateTasksUiState;
   const updateSplitRightTaskUiState = useCallback((updater: TaskUiState | ((current: TaskUiState) => TaskUiState)) => {
     if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return false;
@@ -8934,7 +8982,6 @@ export function TaskApp() {
             userId={session?.user?.id ?? null}
           />
         ) : activePage === "Tasks" ? (() => {
-          const leftOwnerKey = getTaskPanelOwnerKey(leftTaskPanelOwner);
           const tasksWorkspace = (
             <TasksWorkspace
               activeTabId={taskWorkspaceTabsState.activeTabId}
@@ -8968,10 +9015,7 @@ export function TaskApp() {
               />
             )}
             onCloseTab={closeTaskWorkspaceTab}
-            onDraftEditingChange={(isEditing) => {
-              setIsTasksWorkspaceRenameDraftOpen(isEditing);
-              reportTaskPanelDraft(leftOwnerKey, isEditing);
-            }}
+            onDraftEditingChange={reportLeftWorkspaceDraft}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
                 behaviorProfiles={taskTypeBehaviorProfiles}
@@ -9005,10 +9049,7 @@ export function TaskApp() {
             onTabChange={setActiveTaskWorkspaceTab}
             operationsHeaderProps={{
               ...taskOperationsHeaderProps,
-              onSearchDraftEditingChange: (isEditing) => {
-                setIsTasksSearchDraftOpen(isEditing);
-                reportTaskPanelDraft(leftOwnerKey, isEditing);
-              },
+              onSearchDraftEditingChange: reportLeftSearchDraft,
             }}
             pathsWorkspacePanel={(
               <PathsWorkspace
@@ -9060,10 +9101,7 @@ export function TaskApp() {
                 />
               ) : (
                 <TasksTableAdapter
-                  onDraftEditingChange={(isEditing) => {
-                    setIsTasksTableDraftOpen(isEditing);
-                    reportTaskPanelDraft(leftOwnerKey, isEditing);
-                  }}
+                  onDraftEditingChange={reportLeftTableDraft}
                   tableProps={{
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
@@ -9245,10 +9283,7 @@ export function TaskApp() {
                 currentListLabel={selectedBucketLabel}
                 filterRowsNode={taskFilterRowsNode}
                 listSortPreference={activeListSortPreference}
-                onDraftEditingChange={(isEditing) => {
-                  setIsTasksListDraftOpen(isEditing);
-                  reportTaskPanelDraft(leftOwnerKey, isEditing);
-                }}
+                onDraftEditingChange={reportLeftListDraft}
               onToggleFocusToday={toggleFocusTodayForTask}
                 panelProps={listPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
@@ -9446,7 +9481,7 @@ export function TaskApp() {
             const getRightTaskTabDraftBlockMessage = (taskWorkspaceTabId: string) => {
               const owner = { ...rightOwner, taskWorkspaceTabId };
               const ownerKey = getTaskPanelOwnerKey(owner);
-              if (taskPanelDraftOwnerKeys.includes(ownerKey)) return "Finish or cancel the unsaved edit in this Tasks tab before navigating away.";
+              if (hasTaskPanelDraftForOwner(taskPanelDraftOwnerKeys, ownerKey)) return "Finish or cancel the unsaved edit in this Tasks tab before navigating away.";
               if (sharedTaskEditorOverlayTaskId && taskEditorOwnerRef.current && getTaskPanelOwnerKey(taskEditorOwnerRef.current) === ownerKey) {
                 return "Close the Task editor before navigating away from this Tasks tab.";
               }
@@ -9647,14 +9682,6 @@ export function TaskApp() {
               : null;
             if (!rightListElement) return null;
             const rightBaseTableProps = rightListElement.props.tableProps;
-            const reportRightTableDraft = (isEditing: boolean) => {
-              setIsSplitRightTasksTableDraftOpen(isEditing);
-              reportTaskPanelDraft(rightOwnerKey, isEditing);
-            };
-            const reportRightListDraft = (isEditing: boolean) => {
-              setIsSplitRightTasksListDraftOpen(isEditing);
-              reportTaskPanelDraft(rightOwnerKey, isEditing);
-            };
             const rightTaskTableProps = {
               ...rightBaseTableProps,
               allTasks: tasksForActiveStatusRead as Task[],
@@ -9845,10 +9872,7 @@ export function TaskApp() {
                 return { ...current, visibleColumnsByView: { ...current.visibleColumnsByView, table: columns } };
               }),
               onSearchChange: updateSplitRightSearch,
-              onSearchDraftEditingChange: (isEditing: boolean) => {
-                setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
-                reportTaskPanelDraft(rightOwnerKey, isEditing);
-              },
+              onSearchDraftEditingChange: reportRightSearchDraft,
               onSearchSubmit: updateSplitRightSearch,
               onSelectBucket: updateRightBucket,
               onSelectDirectoryEntry: (entry: typeof allTaskListDirectoryEntries[number]) => {
@@ -9928,10 +9952,7 @@ export function TaskApp() {
                 }
                 updateRightTaskWorkspace((current) => closeTaskWorkspaceTabState(current, tabId));
               },
-              onDraftEditingChange: (isEditing: boolean) => {
-                setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
-                reportTaskPanelDraft(rightOwnerKey, isEditing);
-              },
+              onDraftEditingChange: reportRightWorkspaceDraft,
               onReorderTab: (tabId: string, targetIndex: number) => updateRightTaskWorkspace((current) => reorderTaskWorkspaceTabToIndex(current, tabId, targetIndex)),
               onRenameTab: (tabId: string, nextLabel: string) => updateRightTaskWorkspace((current) => renameTaskWorkspaceTabState(current, tabId, nextLabel)),
               onSurfaceChange: (surface: TaskUiState["tasksSurface"]) => {

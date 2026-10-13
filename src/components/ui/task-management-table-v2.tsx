@@ -2948,6 +2948,10 @@ export function TaskManagementTableV2({
   onPersistedLayoutPreferencesChange,
   onUnsafeDraftChange,
 }: TaskManagementTableV2Props) {
+  const onUnsafeDraftChangeRef = useRef(onUnsafeDraftChange);
+  useEffect(() => {
+    onUnsafeDraftChangeRef.current = onUnsafeDraftChange;
+  }, [onUnsafeDraftChange]);
   const layoutPersistenceEnabled = !overlayOnly;
   const shouldReduceMotion = useReducedMotion();
   const [tasks, setTasks] = useState<PrototypeTaskRow[]>(rows);
@@ -2971,9 +2975,9 @@ export function TaskManagementTableV2({
   const [subtaskTitleDrafts, setSubtaskTitleDrafts] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    onUnsafeDraftChange?.(Boolean(selectedTaskId || editingTaskTitleId || editingSubtaskId || metadataTargetTaskId));
-  }, [editingSubtaskId, editingTaskTitleId, metadataTargetTaskId, onUnsafeDraftChange, selectedTaskId]);
-  useEffect(() => () => onUnsafeDraftChange?.(false), [onUnsafeDraftChange]);
+    onUnsafeDraftChangeRef.current?.(Boolean(selectedTaskId || editingTaskTitleId || editingSubtaskId || metadataTargetTaskId));
+  }, [editingSubtaskId, editingTaskTitleId, metadataTargetTaskId, selectedTaskId]);
+  useEffect(() => () => onUnsafeDraftChangeRef.current?.(false), []);
 
   function getPolicyFilteredStatuses(input: {
     dueOn: string | null;

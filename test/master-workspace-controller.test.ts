@@ -23,6 +23,12 @@ import {
   updateMasterTabTasksWorkspace,
 } from "../src/lib/master-workspace-state.ts";
 import { DEFAULT_TASK_WORKSPACE_TABS_STATE, updateActiveTaskUiState, type TaskUiState, type TaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
+import {
+  getTaskPanelDraftSourceKey,
+  hasTaskPanelDraftForOwner,
+  hasTaskPanelDraftOutsideOwner,
+  updateTaskPanelDraftOwnerKeys,
+} from "../src/lib/task-panel-draft-safety.ts";
 
 function memoryStorage() {
   const values = new Map<string, string>();
@@ -688,6 +694,43 @@ test("Close Split blocks either panel's unsafe edits and closes after save or ca
   }
 
   assert.equal(closeMasterSplitSafely(initial, "right-panel", false), initial);
+});
+
+test("panel draft sources update independently and keep Close Split blocked until both panels are clean", () => {
+  const initial = restoreMasterWorkspaceForUser(
+    memoryStorage(),
+    "split-panel-draft-sources-user",
+    "Tasks",
+    DEFAULT_TASK_WORKSPACE_TABS_STATE,
+  ).state;
+  const split = activateMasterPanel(
+    duplicateFocusedPageIntoRightPanel(initial, { panelId: "right-panel", tabId: "right-tab" }),
+    initial.focusedPanelId,
+  );
+  const leftOwnerKey = "left-panel:left-tab:left-workspace-tab";
+  const rightOwnerKey = "right-panel:right-tab:right-workspace-tab";
+  const leftTableDraft = getTaskPanelDraftSourceKey(leftOwnerKey, "table");
+  const rightListDraft = getTaskPanelDraftSourceKey(rightOwnerKey, "list");
+  let draftOwnerKeys: string[] = [];
+
+  draftOwnerKeys = updateTaskPanelDraftOwnerKeys(draftOwnerKeys, leftTableDraft, true);
+  draftOwnerKeys = updateTaskPanelDraftOwnerKeys(draftOwnerKeys, rightListDraft, true);
+  assert.strictEqual(updateTaskPanelDraftOwnerKeys(draftOwnerKeys, rightListDraft, true), draftOwnerKeys);
+  assert.equal(hasTaskPanelDraftForOwner(draftOwnerKeys, leftOwnerKey), true);
+  assert.equal(hasTaskPanelDraftForOwner(draftOwnerKeys, rightOwnerKey), true);
+  assert.equal(hasTaskPanelDraftOutsideOwner(draftOwnerKeys, leftOwnerKey), true);
+  assert.equal(canCloseMasterSplitSafely(split, draftOwnerKeys.length > 0), false);
+  assert.strictEqual(closeMasterSplitSafely(split, "right-panel", draftOwnerKeys.length > 0), split);
+
+  draftOwnerKeys = updateTaskPanelDraftOwnerKeys(draftOwnerKeys, rightListDraft, false);
+  assert.equal(hasTaskPanelDraftForOwner(draftOwnerKeys, rightOwnerKey), false);
+  assert.equal(hasTaskPanelDraftForOwner(draftOwnerKeys, leftOwnerKey), true);
+  assert.equal(canCloseMasterSplitSafely(split, draftOwnerKeys.length > 0), false);
+
+  const cleanOwners = updateTaskPanelDraftOwnerKeys(draftOwnerKeys, leftTableDraft, false);
+  assert.strictEqual(updateTaskPanelDraftOwnerKeys(cleanOwners, leftTableDraft, false), cleanOwners);
+  assert.equal(canCloseMasterSplitSafely(split, cleanOwners.length > 0), true);
+  assert.equal(closeMasterSplitSafely(split, "right-panel", cleanOwners.length > 0).panels.length, 1);
 });
 
 test("cross-page navigation allows clean or discarded drafts and reports dirty owners", () => {
