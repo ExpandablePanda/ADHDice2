@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.153`.
+- Current working app version: `7.16.154`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.154 Split Right Visible Prototype
+
+Split Right is available only while the development Master Workspace feature
+flag is enabled and the focused destination is Tasks. It snapshots the focused
+Tasks presentation, creates one right panel through the existing Master
+Workspace state helper, and leaves the left panel focused as the only live
+TaskApp and Tasks UI-state owner. Both panels read the same canonical Task data.
+The right panel derives rows from its stored Tasks presentation through the
+existing derivation, search-selection, and view read-model helpers; its search
+updates only that panel's stored presentation. The initial split is 50/50,
+both panels scroll independently, Close Split returns to the single-panel
+layout, and the global HUD remains one shared header above both panels. Saved
+split state restores through the existing user-scoped Master Workspace
+persistence path without creating additional panels.
+
+The right panel is read-only and currently displays the selected Tasks rows
+with search. Editing, Task mutations, separate right-side Tasks tabs or
+navigation, non-Tasks split destinations, and split resizing remain deferred.
+The normal single-panel Tasks layout remains in use when the split is closed or
+the development feature flag is disabled. Browser QA remains Andrew's manual
+check.
 
 ## 2026-10-13 7.16.153 T6.3a Panel-Targeted Navigation Foundation
 

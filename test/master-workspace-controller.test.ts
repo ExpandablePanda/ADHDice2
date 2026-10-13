@@ -265,6 +265,31 @@ test("inactive Tasks tabs update their own stored snapshot without changing the 
   assert.equal(routed.workspace.panels[0].tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.view, "list");
 });
 
+test("right-panel search updates only the inactive split snapshot while the left live Tasks owner stays unchanged", () => {
+  const leftTasks = taskWorkspace("left search");
+  const panels = twoTasksPanels(leftTasks, taskWorkspace(""));
+  const routed = routeTasksUpdate(
+    panels.state,
+    leftTasks,
+    panels.rightPanelId,
+    panels.rightTabId,
+    (current) => ({ ...current, search: "right search" }),
+  );
+
+  assert.deepEqual(routed.result, {
+    status: "queued",
+    route: "snapshot",
+    panelId: panels.rightPanelId,
+    tabId: panels.rightTabId,
+  });
+  assert.equal(routed.liveSetterCalls, 0);
+  assert.equal(routed.live.tabs[0].taskUiState.search, "left search");
+  assert.equal(
+    resolveMasterWorkspaceTasksUiState(routed.workspace, panels.rightPanelId, panels.rightTabId, routed.live.tabs[0].taskUiState)?.search,
+    "right search",
+  );
+});
+
 test("Tasks routing reads the latest workspace snapshot and active Tasks owner", () => {
   const panels = twoTasksPanels(taskWorkspace("left"), taskWorkspace("right"));
   const latestRightSnapshot = updateMasterTabTasksWorkspace(

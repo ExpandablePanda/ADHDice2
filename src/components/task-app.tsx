@@ -113,6 +113,7 @@ import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { MasterWorkspaceTabBar } from "@/components/task-app/master-workspace-tab-bar";
+import { ReadOnlyTasksPanel, TasksSplitLayout } from "@/components/task-app/tasks-split-right-panel";
 import { useMasterWorkspaceController } from "@/hooks/useMasterWorkspaceController";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
@@ -5758,6 +5759,105 @@ export function TaskApp() {
     draftProtection: masterWorkspaceDraftProtection,
   });
   masterWorkspaceControllerRef.current = masterWorkspace;
+  const splitPanels = useMemo(() => {
+    const left = masterWorkspace.workspace.panels.find((panel) => panel.side === "left");
+    const right = masterWorkspace.workspace.panels.find((panel) => panel.side === "right");
+    const leftTab = left?.tabs.find((tab) => tab.id === left.activeTabId);
+    const rightTab = right?.tabs.find((tab) => tab.id === right.activeTabId);
+    return { left, leftTab, right, rightTab };
+  }, [masterWorkspace.workspace]);
+  const isTasksSplit = masterWorkspace.isEnabled
+    && splitPanels.left?.id === masterWorkspace.workspace.focusedPanelId
+    && splitPanels.leftTab?.destination.page === "Tasks"
+    && splitPanels.rightTab?.destination.page === "Tasks";
+  const splitRightTasksUiState = isTasksSplit && splitPanels.right && splitPanels.rightTab
+    ? masterWorkspace.getTasksUiState(splitPanels.right.id, splitPanels.rightTab.id) ?? null
+    : null;
+  const splitRightDerivedPresentation = useMemo(
+    () => splitRightTasksUiState
+      ? prepareTaskAppDerivedPresentation(splitRightTasksUiState, { derivationSearchQuery: "" })
+      : null,
+    [splitRightTasksUiState],
+  );
+  const splitRightSearchScope = useMemo(
+    () => splitRightTasksUiState
+      ? buildTaskSearchPresentationScope(stableCanonicalTaskIndex, splitRightTasksUiState, navigatorTaskSearchEntities)
+      : null,
+    [navigatorTaskSearchEntities, splitRightTasksUiState, stableCanonicalTaskIndex],
+  );
+  const splitRightSearchSelection = useMemo(() => (
+    splitRightTasksUiState && splitRightSearchScope && splitRightDerivedPresentation
+      ? selectTaskSearchPresentation({
+        bucketContext,
+        index: stableCanonicalTaskIndex,
+        page: "Tasks",
+        presentation: splitRightTasksUiState,
+        scope: splitRightSearchScope,
+        search: splitRightDerivedPresentation.normalizedSearchQuery,
+      })
+      : null
+  ), [bucketContext, splitRightDerivedPresentation, splitRightSearchScope, splitRightTasksUiState, stableCanonicalTaskIndex]);
+  const splitRightTaskDerivationRevision = splitRightDerivedPresentation
+    ? createTaskDerivationRevisionKey({
+      historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision, quotaCurrentPeriodHistoryRevision),
+      listRevision: workspaceFactsRevision,
+      settingsRevision: splitRightDerivedPresentation.derivationSettingsRevision,
+      taskRevision: taskDomainRevision,
+      viewRevision: splitRightDerivedPresentation.derivationViewRevision,
+    })
+    : null;
+  const splitRightDerivedData = useMemo(() => {
+    if (!splitRightTaskDerivationRevision || !splitRightDerivedPresentation) return null;
+    return projectionCache.getOrCreate("complete-derived", splitRightTaskDerivationRevision, () => computeTaskAppDerivedData({
+      activePage: TASK_DERIVATION_SCOPE,
+      availableTaskLists,
+      availableTaskNotes,
+      bucketContext,
+      focusedTaskIds,
+      listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
+      milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
+      milestoneTaskIds: milestoneData.milestoneTaskIds,
+      taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
+      taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
+      taskContentFolders,
+      todayDateKey: todayKey,
+      taskListEvaluationContext,
+      taskSubtasksByTaskId,
+      presentation: splitRightDerivedPresentation,
+      taskDisplayStatusByTaskId,
+      tasks: tasksForActiveStatusRead as Task[],
+      structuralData: taskAppStructuralData,
+      stableCanonicalTaskIndex,
+      workspaceFacts: taskAppWorkspaceFacts,
+    }));
+    // The revision includes the shared Task, History, list, and right-panel presentation inputs.
+    // Search text is intentionally handled by the right-panel selector below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectionCache, splitRightTaskDerivationRevision]);
+  const splitRightTaskViewReadModel = useMemo(() => {
+    if (!splitRightDerivedData || !splitRightDerivedPresentation) return null;
+    return buildTaskAppViewReadModel({
+      calendarTasksForRead: tasksForCalendarRead as Task[],
+      canonicalTasks: tasks,
+      derived: {
+        canonicalVisibleRootTasksSorted: splitRightDerivedData.canonicalVisibleRootTasksSorted,
+        childTaskPreviewByParentTaskId: splitRightDerivedData.childTaskPreviewByParentTaskId,
+        searchMatchedChildTaskIds: splitRightDerivedData.searchMatchedChildTaskIds,
+        searchMatchedStepParentTaskIds: splitRightDerivedData.searchMatchedStepParentTaskIds,
+      },
+      presentation: splitRightDerivedPresentation,
+      searchSelection: splitRightSearchSelection,
+    });
+  }, [splitRightDerivedData, splitRightDerivedPresentation, splitRightSearchSelection, tasks, tasksForCalendarRead]);
+  const updateRightPanelTasksUiState = masterWorkspace.updateTasksUiState;
+  const updateSplitRightSearch = useCallback((search: string) => {
+    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return;
+    updateRightPanelTasksUiState(splitPanels.right.id, splitPanels.rightTab.id, (current) => (
+      current.search === search ? current : { ...current, search }
+    ));
+  }, [isTasksSplit, splitPanels.right, splitPanels.rightTab, updateRightPanelTasksUiState]);
   useEffect(() => {
     if (!masterWorkspace.featureEnabled || typeof window === "undefined") return;
     const protectUnsavedEditingSessions = (event: BeforeUnloadEvent) => {
@@ -8477,13 +8577,17 @@ export function TaskApp() {
         <MasterWorkspaceTabBar
           activeTabId={masterWorkspace.activeTab.id}
           canActivateTab={masterWorkspace.canActivateTab}
+          canCloseSplit={masterWorkspace.canCloseSplit}
           canCloseTab={masterWorkspace.canCloseTab}
           canOpenNewTab={masterWorkspace.canOpenNewTab}
           canNavigate={masterWorkspace.canNavigate}
+          canSplitRight={masterWorkspace.canSplitRight}
           transitionBlockedReason={masterWorkspace.transitionBlockedReason}
           onActivate={masterWorkspace.activateTab}
           onClose={masterWorkspace.closeTab}
+          onCloseSplit={masterWorkspace.closeSplit}
           onOpenPage={masterWorkspace.openPageTab}
+          onSplitRight={masterWorkspace.splitRight}
           tabs={masterWorkspace.currentPanel.tabs}
         />
       ) : null}
@@ -8583,9 +8687,12 @@ export function TaskApp() {
             userId={session?.user?.id ?? null}
           />
         ) : activePage === "Tasks" ? (
-          <>
-            {taskWorkspaceFlowLayer}
-            <TasksWorkspace
+          <TasksSplitLayout
+            active={isTasksSplit && Boolean(splitRightTaskViewReadModel && splitRightTasksUiState)}
+            left={(
+              <>
+                {taskWorkspaceFlowLayer}
+                <TasksWorkspace
               activeTabId={taskWorkspaceTabsState.activeTabId}
               activeMasterTabId={masterWorkspace.activeTab.id}
             onAddTab={() => createTaskWorkspaceTab({
@@ -9066,8 +9173,19 @@ export function TaskApp() {
                 view={taskUiState.view}
               />
             )}
-            />
-          </>
+                />
+              </>
+            )}
+            right={splitRightTasksUiState && splitRightTaskViewReadModel ? (
+              <ReadOnlyTasksPanel
+                displayStatusByTaskId={taskDisplayStatusByTaskId}
+                onSearchChange={updateSplitRightSearch}
+                search={splitRightTasksUiState.search}
+                tasks={splitRightTaskViewReadModel.selectedBucketTasks}
+              />
+            ) : null}
+            splitRatio={masterWorkspace.workspace.splitRatio}
+          />
         ) : activePage === "Focus" ? (
           <FocusPage
             activeSessions={activeSessions}

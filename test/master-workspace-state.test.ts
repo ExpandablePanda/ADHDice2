@@ -977,6 +977,37 @@ test("split duplication copies destination and settings, then closing split disc
   assert.equal(closed.focusedPanelId, "master-panel-1");
 });
 
+test("Split Right keeps an independent Tasks presentation and saved split restoration bounded to two panels", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const leftPanel = initial.panels[0];
+  const leftTab = leftPanel.tabs[0];
+  const split = duplicateFocusedPageIntoRightPanel(initial, { panelId: "right-panel", tabId: "right-tasks" });
+  const rightPanel = split.panels.find((panel) => panel.side === "right");
+  const rightTab = rightPanel?.tabs[0];
+
+  assert.ok(rightPanel);
+  assert.ok(rightTab);
+  assert.equal(split.panels.length, 2);
+  assert.equal(split.splitRatio, 0.5);
+  assert.equal(resolveMasterTabTasksUiState(split, leftPanel.id, leftTab.id)?.selectedBucket, "priority_3_4");
+  assert.equal(resolveMasterTabTasksUiState(split, rightPanel.id, rightTab.id)?.selectedBucket, "priority_3_4");
+
+  const rightSearch = updateMasterTabTasksUiState(split, rightPanel.id, rightTab.id, (current) => ({
+    ...current,
+    search: "right only",
+  }));
+  assert.equal(resolveMasterTabTasksUiState(rightSearch, rightPanel.id, rightTab.id)?.search, "right only");
+  assert.equal(resolveMasterTabTasksUiState(rightSearch, leftPanel.id, leftTab.id)?.search, "");
+
+  const restored = normalizeMasterWorkspaceState(JSON.parse(JSON.stringify(rightSearch)));
+  assert.equal(restored.panels.length, 2);
+  assert.equal(resolveMasterTabTasksUiState(restored, rightPanel.id, rightTab.id)?.search, "right only");
+  const resized = adjustMasterWorkspaceSplitRatio(restored, 0.7);
+  const closed = closeMasterSplit(resized);
+  assert.equal(closed.panels.length, 1);
+  assert.equal(duplicateFocusedPageIntoRightPanel(closed, { panelId: "right-panel-next", tabId: "right-tasks-next" }).splitRatio, 0.5);
+});
+
 test("Health section snapshots survive both saved workspace panels", () => {
   const storage = memoryStorage();
   const initial = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food");

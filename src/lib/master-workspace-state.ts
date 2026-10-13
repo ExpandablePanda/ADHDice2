@@ -917,7 +917,13 @@ export function duplicateFocusedPageIntoRightPanel(
       tabs: [duplicate],
       activeTabId: ids.tabId,
     };
-    return { ...state, panels: [...state.panels, panel], focusedPanelId: panel.id, visiblePanelId: panel.id };
+    return {
+      ...state,
+      panels: [...state.panels, panel],
+      focusedPanelId: panel.id,
+      splitRatio: 0.5,
+      visiblePanelId: panel.id,
+    };
   }
   return createMasterTab(state, rightPanel.id, duplicate, true);
 }

@@ -43,12 +43,16 @@ type MasterWorkspaceTabBarProps = {
   activeTabId: string;
   canActivateTab: (tabId: string) => boolean;
   canCloseTab: (tabId: string) => boolean;
+  canCloseSplit: boolean;
   canOpenNewTab: boolean;
   canNavigate: boolean;
+  canSplitRight: boolean;
   transitionBlockedReason: string | null;
   onActivate: (tabId: string) => void;
   onClose: (tabId: string) => void;
+  onCloseSplit: () => void;
   onOpenPage: (page: AppPage) => void;
+  onSplitRight: () => void;
   tabs: MasterWorkspaceTab[];
 };
 
@@ -56,12 +60,16 @@ export function MasterWorkspaceTabBar({
   activeTabId,
   canActivateTab,
   canCloseTab,
+  canCloseSplit,
   canOpenNewTab,
   canNavigate,
+  canSplitRight,
   transitionBlockedReason,
   onActivate,
   onClose,
+  onCloseSplit,
   onOpenPage,
+  onSplitRight,
   tabs,
 }: MasterWorkspaceTabBarProps) {
   const [isPageMenuOpen, setIsPageMenuOpen] = useState(false);
@@ -95,35 +103,50 @@ export function MasterWorkspaceTabBar({
             </div>
           ))}
         </div>
-        <div className="relative shrink-0">
+        <div className="flex shrink-0 items-center gap-1.5">
           <AdhdChip
-            aria-expanded={isPageMenuOpen}
-            aria-haspopup="menu"
-            disabled={!canNavigate || !canOpenNewTab}
-            onClick={() => setIsPageMenuOpen((open) => !open)}
-            title={!canNavigate ? "Wait for the workspace to finish loading before opening a tab." : transitionBlockedReason ?? "Open a new page tab"}
+            disabled={!canSplitRight}
+            onClick={onSplitRight}
+            title={canSplitRight ? "Open a read-only Tasks panel on the right" : "Split Right is available when the active destination is Tasks and no split is open."}
             type="button"
           >
-            <span className="inline-flex items-center gap-1"><Plus aria-hidden="true" className="h-3.5 w-3.5" /> New tab</span>
+            Split Right
           </AdhdChip>
-          {isPageMenuOpen && canNavigate ? (
-            <AdhdDropdownPanel className="right-0 left-auto grid max-h-[60vh] w-52 gap-1 overflow-y-auto" role="menu">
-              {TOP_LEVEL_PAGES.map((page) => (
-                <AdhdChip
-                  className="w-full justify-start"
-                  key={page}
-                  onClick={() => {
-                    onOpenPage(page);
-                    setIsPageMenuOpen(false);
-                  }}
-                  role="menuitem"
-                  type="button"
-                >
-                  {page}
-                </AdhdChip>
-              ))}
-            </AdhdDropdownPanel>
+          {canCloseSplit ? (
+            <AdhdChip onClick={onCloseSplit} type="button">
+              Close Split
+            </AdhdChip>
           ) : null}
+          <div className="relative">
+            <AdhdChip
+              aria-expanded={isPageMenuOpen}
+              aria-haspopup="menu"
+              disabled={!canNavigate || !canOpenNewTab}
+              onClick={() => setIsPageMenuOpen((open) => !open)}
+              title={!canNavigate ? "Wait for the workspace to finish loading before opening a tab." : transitionBlockedReason ?? "Open a new page tab"}
+              type="button"
+            >
+              <span className="inline-flex items-center gap-1"><Plus aria-hidden="true" className="h-3.5 w-3.5" /> New tab</span>
+            </AdhdChip>
+            {isPageMenuOpen && canNavigate ? (
+              <AdhdDropdownPanel className="right-0 left-auto grid max-h-[60vh] w-52 gap-1 overflow-y-auto" role="menu">
+                {TOP_LEVEL_PAGES.map((page) => (
+                  <AdhdChip
+                    className="w-full justify-start"
+                    key={page}
+                    onClick={() => {
+                      onOpenPage(page);
+                      setIsPageMenuOpen(false);
+                    }}
+                    role="menuitem"
+                    type="button"
+                  >
+                    {page}
+                  </AdhdChip>
+                ))}
+              </AdhdDropdownPanel>
+            ) : null}
+          </div>
         </div>
       </div>
       {transitionBlockedReason ? <p aria-live="polite" className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">{transitionBlockedReason}</p> : null}
