@@ -1875,6 +1875,7 @@ export function TaskApp() {
   const [showFocusPlanner, setShowFocusPlanner] = useState(false);
   const [focusPlannerStep, setFocusPlannerStep] = useState<FocusPlannerStep>(0);
   const [focusDraftIds, setFocusDraftIds] = useState<string[]>([]);
+  const [focusPlannerTaskCandidatesOverride, setFocusPlannerTaskCandidatesOverride] = useState<Task[] | null>(null);
   const [momentumView, setMomentumView] = useState<MomentumView>("urgent");
   const [isMomentumListOpen, setIsMomentumListOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -1928,6 +1929,14 @@ export function TaskApp() {
   const [isSplitRightTasksWorkspaceDraftOpen, setIsSplitRightTasksWorkspaceDraftOpen] = useState(false);
   const [isSplitRightTasksTableDraftOpen, setIsSplitRightTasksTableDraftOpen] = useState(false);
   const [isSplitRightTasksListDraftOpen, setIsSplitRightTasksListDraftOpen] = useState(false);
+  const [isSplitRightListColumnMenuOpen, setIsSplitRightListColumnMenuOpen] = useState(false);
+  const [isSplitRightKeyboardShortcutsMenuOpen, setIsSplitRightKeyboardShortcutsMenuOpen] = useState(false);
+  const [isSplitRightDailyPlanningCollapsed, setIsSplitRightDailyPlanningCollapsed] = useState(false);
+  const [splitRightExpandAllColumnsToken, setSplitRightExpandAllColumnsToken] = useState(0);
+  const [splitRightShrinkAllColumnsToken, setSplitRightShrinkAllColumnsToken] = useState(0);
+  const [splitRightDraggedListColumnId, setSplitRightDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
+  const splitRightListColumnMenuRef = useRef<HTMLDivElement | null>(null);
+  const splitRightKeyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
   const [isTasksSearchDraftOpen, setIsTasksSearchDraftOpen] = useState(false);
   const [isTasksWorkspaceRenameDraftOpen, setIsTasksWorkspaceRenameDraftOpen] = useState(false);
   const [isTasksListDraftOpen, setIsTasksListDraftOpen] = useState(false);
@@ -2566,6 +2575,24 @@ export function TaskApp() {
     document.addEventListener("mousedown", handlePointerDown);
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [isKeyboardShortcutsMenuOpen]);
+
+  useEffect(() => {
+    if (!isSplitRightListColumnMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!splitRightListColumnMenuRef.current?.contains(event.target as Node)) setIsSplitRightListColumnMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isSplitRightListColumnMenuOpen]);
+
+  useEffect(() => {
+    if (!isSplitRightKeyboardShortcutsMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!splitRightKeyboardShortcutsMenuRef.current?.contains(event.target as Node)) setIsSplitRightKeyboardShortcutsMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isSplitRightKeyboardShortcutsMenuOpen]);
 
   useEffect(() => {
     if (!session?.user?.id) {
@@ -5492,9 +5519,9 @@ export function TaskApp() {
     }
   }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, requestPageNavigation, setActivePage, setMessage, setTaskUiState]);
 
-  const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[]) => {
+  const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[], ownerOverride?: TaskPanelOwner) => {
     const controller = masterWorkspaceControllerRef.current;
-    const owner = {
+    const owner = ownerOverride ?? {
       panelId: controller?.currentPanel.id ?? "legacy-panel",
       masterTabId: controller?.activeTab.id ?? "legacy-tab",
       taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
@@ -5521,7 +5548,7 @@ export function TaskApp() {
 
   const createTaskAndOpenSharedEditor = useCallback(async (
     initialTaskValues: TaskDraft,
-    options?: { routeToCurrentBucket?: boolean },
+    options?: { owner?: TaskPanelOwner; routeToCurrentBucket?: boolean; selectedBucket?: string },
   ) => {
     const createdTask = await addTask(initialTaskValues);
     if (!createdTask) {
@@ -5529,7 +5556,7 @@ export function TaskApp() {
     }
 
     if (options?.routeToCurrentBucket) {
-      const selectedBucket = taskUiState.selectedBucket;
+      const selectedBucket = options.selectedBucket ?? taskUiState.selectedBucket;
       if (
         selectedBucket === "inbox"
         || selectedBucket === "today"
@@ -5541,25 +5568,25 @@ export function TaskApp() {
       }
     }
 
-    openExistingTaskEditor(createdTask);
+    openExistingTaskEditor(createdTask, undefined, options?.owner);
     return createdTask;
   }, [addTask, openExistingTaskEditor, routeTask, taskUiState.selectedBucket]);
 
-  const openCalendarDateTaskEditor = useCallback((dueOn: string) => (
+  const openCalendarDateTaskEditor = useCallback((dueOn: string, options?: { owner?: TaskPanelOwner; selectedBucket?: string }) => (
     createTaskAndOpenSharedEditor(
       buildNewTaskDraft("New Task", { dueOn }),
-      { routeToCurrentBucket: true },
+      { ...options, routeToCurrentBucket: true },
     )
   ), [createTaskAndOpenSharedEditor]);
 
-  const openInlineNewListTaskComposer = useCallback(() => {
+  const openInlineNewListTaskComposer = useCallback((options?: { owner?: TaskPanelOwner; selectedBucket?: string }) => {
     void createTaskAndOpenSharedEditor(
       buildNewTaskDraft("New Task"),
-      { routeToCurrentBucket: true },
+      { ...options, routeToCurrentBucket: true },
     );
   }, [createTaskAndOpenSharedEditor]);
 
-  const openTaskComposerForType = useCallback((selectionValue: string) => {
+  const openTaskComposerForType = useCallback((selectionValue: string, options?: { owner?: TaskPanelOwner; selectedBucket?: string }) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
@@ -5570,7 +5597,7 @@ export function TaskApp() {
       ...buildNewTaskDraft("New Task"),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
-    }, { routeToCurrentBucket: true });
+    }, { ...options, routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
 
   const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string, metadata: HomeTodoTaskMetadata) => {
@@ -5658,7 +5685,6 @@ export function TaskApp() {
   const {
     deferTask,
     focusTask,
-    openFocusPlanner,
     planTasksForToday,
     sendTaskToWaiting,
   } = useTaskPlannerActions({
@@ -5672,6 +5698,12 @@ export function TaskApp() {
     setTaskRouting,
     setTaskUiState,
   });
+  const openFocusPlanner = useCallback((taskIds?: string[], taskCandidates?: Task[]) => {
+    setFocusPlannerTaskCandidatesOverride(taskCandidates ?? null);
+    setFocusPlannerStep(0);
+    setFocusDraftIds(taskIds ?? focusedTaskIds);
+    setShowFocusPlanner(true);
+  }, [focusedTaskIds]);
   const { setTaskPriority } = useTaskPriorityRoutingController({
     focusedTaskIds,
     onOpenEditTaskEditor: openExistingTaskEditor,
@@ -5983,6 +6015,18 @@ export function TaskApp() {
     visibleListTaskIds: splitRightTaskViewReadModel?.visibleListTaskIds ?? [],
   });
   const [isSplitRightTaskFiltersOpen, setIsSplitRightTaskFiltersOpen] = useState(isTaskFiltersOpen);
+  const splitRightPresentationSeedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) {
+      splitRightPresentationSeedKeyRef.current = null;
+      return;
+    }
+    const seedKey = `${splitPanels.right.id}:${splitPanels.rightTab.id}`;
+    if (splitRightPresentationSeedKeyRef.current === seedKey) return;
+    splitRightPresentationSeedKeyRef.current = seedKey;
+    setIsSplitRightTaskFiltersOpen(isTaskFiltersOpen);
+    setIsSplitRightDailyPlanningCollapsed(isDailyPlanningCollapsed);
+  }, [isDailyPlanningCollapsed, isTaskFiltersOpen, isTasksSplit, splitPanels.right, splitPanels.rightTab]);
   const leftTaskPanelOwner: TaskPanelOwner = {
     panelId: masterWorkspace.workspace.focusedPanelId,
     masterTabId: masterWorkspace.activeTab.id,
@@ -6878,6 +6922,7 @@ export function TaskApp() {
   function handleFocusPlannerFinish() {
     void saveFocusSelection(focusDraftIds);
     setShowFocusPlanner(false);
+    setFocusPlannerTaskCandidatesOverride(null);
     setMessage({
       tone: "good",
       text: focusDraftIds.length === 0
@@ -7716,6 +7761,7 @@ export function TaskApp() {
 
   function closeFocusPlanner() {
     setShowFocusPlanner(false);
+    setFocusPlannerTaskCandidatesOverride(null);
   }
 
   function openMomentumDetails() {
@@ -7770,7 +7816,7 @@ export function TaskApp() {
     onSetDraftIds: setFocusDraftIds,
     onStepChange: setFocusPlannerStep,
     step: focusPlannerStep,
-    tasks: focusPlannerTasks.length > 0 ? focusPlannerTasks : activeTasks,
+    tasks: focusPlannerTaskCandidatesOverride ?? (focusPlannerTasks.length > 0 ? focusPlannerTasks : activeTasks),
     todayDateKey: todayKey,
   } : null;
 
@@ -9381,6 +9427,7 @@ export function TaskApp() {
               taskWorkspaceTabId: splitRightTaskWorkspaceTabsState.activeTabId,
             };
             const rightOwnerKey = getTaskPanelOwnerKey(rightOwner);
+            const rightDerivedCollections = splitRightDerivedData?.collections;
             const getRightTaskTabDraftBlockMessage = (taskWorkspaceTabId: string) => {
               const owner = { ...rightOwner, taskWorkspaceTabId };
               const ownerKey = getTaskPanelOwnerKey(owner);
@@ -9411,6 +9458,12 @@ export function TaskApp() {
             ));
             const rightSearch = splitRightDerivedPresentation?.normalizedSearchQuery ?? splitRightTasksUiState.search;
             const rightSelectedTasks = splitRightTaskViewReadModel.selectedBucketTasks;
+            const rightVisibleTaskIds = new Set(splitRightSearchSelection?.visibleTasks.map((task) => task.id) ?? []);
+            const rightFocusPlannerCandidates = (splitRightDerivedData?.focusPlannerTasks ?? [])
+              .filter((task) => rightVisibleTaskIds.has(task.id));
+            const rightFocusPlannerTaskChoices = rightFocusPlannerCandidates.length > 0
+              ? rightFocusPlannerCandidates
+              : (rightDerivedCollections?.filteredActiveTasks ?? []).filter((task) => rightVisibleTaskIds.has(task.id));
             const rightCurrentFolderId = splitRightActiveTaskWorkspaceTab.currentFolderId ?? null;
             const rightFolderBreadcrumbs = buildTaskListFolderBreadcrumbs(taskListFolderTree, rightCurrentFolderId);
             const rightTaskListFolderCounts = buildTaskListFolderCounts(
@@ -9617,8 +9670,21 @@ export function TaskApp() {
             };
             const rightPanelProps = {
               ...rightListElement.props.panelProps,
+              draggedListColumnId: splitRightDraggedListColumnId,
               filterRowsNode: rightFilterRowsNode,
+              onOpenComposer: () => openInlineNewListTaskComposer({ owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }),
               listSortPreference: rightListSortPreference,
+              isKeyboardShortcutsMenuOpen: isSplitRightKeyboardShortcutsMenuOpen,
+              isListColumnMenuOpen: isSplitRightListColumnMenuOpen,
+              keyboardShortcutsMenuRef: splitRightKeyboardShortcutsMenuRef,
+              listColumnMenuRef: splitRightListColumnMenuRef,
+              expandAllColumnsToken: splitRightExpandAllColumnsToken,
+              shrinkAllColumnsToken: splitRightShrinkAllColumnsToken,
+              onSetDraggedListColumnId: setSplitRightDraggedListColumnId,
+              onToggleKeyboardShortcutsMenu: () => setIsSplitRightKeyboardShortcutsMenuOpen((current) => !current),
+              onToggleListColumnMenu: () => setIsSplitRightListColumnMenuOpen((current) => !current),
+              onExpandAllColumns: () => setSplitRightExpandAllColumnsToken((current) => current + 1),
+              onShrinkAllColumns: () => setSplitRightShrinkAllColumnsToken((current) => current + 1),
               onOpenArchive: () => updateRightBucket("archive"),
               onOpenCompletedMilestones: () => updateRightUi((current) => ({ ...current, tasksSurface: "completed_milestones" })),
               onOpenTrash: () => updateRightBucket("trash"),
@@ -9670,6 +9736,7 @@ export function TaskApp() {
             const rightAlternateViewPanel = baseAlternatePanel ? cloneElement(baseAlternatePanel, {
               calendarNode: isValidElement(baseAlternatePanel.props.calendarNode)
                 ? cloneElement(baseAlternatePanel.props.calendarNode as ReactElement<ComponentProps<typeof TaskCalendarView>>, {
+                  onAddTask: (dueOn: string) => { void openCalendarDateTaskEditor(dueOn, { owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }); },
                   onOpenTask: (task: Task) => openSharedTaskEditor(task.id, { owner: rightOwner, navigationTaskIds: splitRightTaskViewReadModel.calendarTasks.map((entry) => entry.id), preserveActivePage: true }),
                   tasks: splitRightTaskViewReadModel.calendarTasks,
                 })
@@ -9681,7 +9748,21 @@ export function TaskApp() {
                 })
                 : baseAlternatePanel.props.cardsNode,
               dailyPlanningNode: isValidElement(baseAlternatePanel.props.dailyPlanningNode)
-                ? cloneElement(baseAlternatePanel.props.dailyPlanningNode as ReactElement<ComponentProps<typeof DailyPlanningPanel>>, { onSelectBucket: updateRightBucket })
+                ? cloneElement(baseAlternatePanel.props.dailyPlanningNode as ReactElement<ComponentProps<typeof DailyPlanningPanel>>, {
+                  focusCount: rightDerivedCollections?.filteredFocusTasks.length ?? 0,
+                  inboxCount: rightDerivedCollections?.inboxTasks.length ?? 0,
+                  isCollapsed: isSplitRightDailyPlanningCollapsed,
+                  missedCount: rightDerivedCollections?.missedTasks.length ?? 0,
+                  onOpenFocusPlanner: () => openFocusPlanner(undefined, rightFocusPlannerTaskChoices),
+                  onToggleCollapsed: () => setIsSplitRightDailyPlanningCollapsed((current) => !current),
+                  onSelectBucket: updateRightBucket,
+                  planningCandidates: (splitRightDerivedData?.planningCandidates ?? [])
+                    .filter((task) => rightVisibleTaskIds.has(task.id)),
+                  recurringCount: rightDerivedCollections?.recurringTasks.length ?? 0,
+                  routeTaskToToday: (taskId: string) => planTasksForToday([taskId], updateRightBucket),
+                  todayCount: rightDerivedCollections?.filteredTodayTasks.length ?? 0,
+                  waitingCount: rightDerivedCollections?.waitingTasks.length ?? 0,
+                })
                 : baseAlternatePanel.props.dailyPlanningNode,
               filterRowsNode: rightFilterRowsNode,
               matrixNode: isValidElement(baseAlternatePanel.props.matrixNode)
@@ -9694,15 +9775,28 @@ export function TaskApp() {
             }) : tasksWorkspace.props.alternateViewPanel;
             const rightOperationsHeaderProps = {
               ...tasksWorkspace.props.operationsHeaderProps,
+              draggedListColumnId: splitRightDraggedListColumnId,
               filterRowsNode: rightFilterRowsNode,
               hideSearch: splitRightTasksUiState.duplicateTitleMode,
+              isKeyboardShortcutsMenuOpen: isSplitRightKeyboardShortcutsMenuOpen,
               isRailHidden: splitRightActiveTaskWorkspaceTab.isRailHidden,
+              isListColumnMenuOpen: isSplitRightListColumnMenuOpen,
+              keyboardShortcutsMenuRef: splitRightKeyboardShortcutsMenuRef,
+              listColumnMenuRef: splitRightListColumnMenuRef,
               listVisibleColumns: splitRightTasksUiState.visibleColumnsByView[splitRightTasksUiState.view],
+              expandAllColumnsToken: splitRightExpandAllColumnsToken,
+              shrinkAllColumnsToken: splitRightShrinkAllColumnsToken,
+              onExpandAllColumns: () => setSplitRightExpandAllColumnsToken((current) => current + 1),
+              onShrinkAllColumns: () => setSplitRightShrinkAllColumnsToken((current) => current + 1),
+              onSetDraggedListColumnId: setSplitRightDraggedListColumnId,
+              onToggleKeyboardShortcutsMenu: () => setIsSplitRightKeyboardShortcutsMenuOpen((current) => !current),
+              onToggleListColumnMenu: () => setIsSplitRightListColumnMenuOpen((current) => !current),
               lists: rightTaskListRailStructureOptions.primaryRail,
               openFolderRails: rightTaskListRailStructureOptions.openFolderRails,
               currentFolderBreadcrumbs: rightFolderBreadcrumbs,
               currentFolderId: rightCurrentFolderId,
               onOpenArchive: () => updateRightBucket("archive"),
+              onOpenTaskComposerForType: (selectionValue: string) => openTaskComposerForType(selectionValue, { owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }),
               onOpenTrash: () => updateRightBucket("trash"),
               onEmptyTrash: () => { void emptyTrash(splitRightTasksUiState.selectedBucket); },
               onReorderListColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => updateRightUi((current) => {

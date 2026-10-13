@@ -847,6 +847,7 @@ export function useTaskUiState({
     setHudUiState,
     setTaskWorkspaceRailHidden,
     setTaskTableLayoutPreferences,
+    setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
     setTaskRouting,
     taskWorkspaceTabsState,

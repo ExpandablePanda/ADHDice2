@@ -30,13 +30,13 @@ export function useTaskPlannerActions({
   setTaskRouting,
   setTaskUiState,
 }: UseTaskPlannerActionsInput) {
-  function openFocusPlanner() {
+  function openFocusPlanner(taskIds: string[] = focusedTaskIds) {
     setFocusPlannerStep(0);
-    setFocusDraftIds(focusedTaskIds);
+    setFocusDraftIds(taskIds);
     setShowFocusPlanner(true);
   }
 
-  function planTasksForToday(taskIds: string[]) {
+  function planTasksForToday(taskIds: string[], selectBucket?: (bucket: string) => void) {
     if (taskIds.length === 0) {
       return;
     }
@@ -48,14 +48,16 @@ export function useTaskPlannerActions({
       }
       return next;
     });
-    setTaskUiState((prev) => ({ ...prev, selectedBucket: "today" }));
+    if (selectBucket) selectBucket("today");
+    else setTaskUiState((prev) => ({ ...prev, selectedBucket: "today" }));
     setMessage({ tone: "good", text: `${taskIds.length} task${taskIds.length === 1 ? "" : "s"} moved into Today.` });
   }
 
-  function focusTask(taskId: string) {
+  function focusTask(taskId: string, selectBucket?: (bucket: string) => void) {
     void saveFocusSelection(Array.from(new Set([...focusedTaskIds, taskId])));
     void routeTask(taskId, "today");
-    setTaskUiState((prev) => ({ ...prev, selectedBucket: "focus" }));
+    if (selectBucket) selectBucket("focus");
+    else setTaskUiState((prev) => ({ ...prev, selectedBucket: "focus" }));
     setMessage({ tone: "good", text: "Moved into Focus so it stays visible in today’s plan." });
   }
 
