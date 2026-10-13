@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.146`.
+- Current working app version: `7.16.147`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,31 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.147 T6.1c Tasks Derived Presentation Foundation
+
+`prepareTaskAppDerivedPresentation` now converts an explicit `TaskUiState` into
+a reusable descriptor with normalized search/operator state, the existing
+derived filter state, selected-view and Table column settings, and the view and
+settings revisions used by the complete-derivation cache key. The single-panel
+TaskApp passes this descriptor to the existing `computeTaskAppDerivedData`
+authority. Its live query remains on the canonical search selector, so
+search-only edits do not invalidate the canonical Task index or repeat the
+full-domain query. Structural data, canonical index, workspace facts, Task and
+History inputs remain shared inputs; the descriptor only scopes presentation
+results. This is a T6.1c foundation only. It does not add a second live panel or
+move rendering, navigation, editing, or mutation ownership.
+
+The descriptor and related search/projection selection passed (47/47); the
+search pipeline source-contract selection passed 11/12, with its unchanged
+List overlay assertion failure reproduced on the pre-change `HEAD`. The
+broader `test:taskapp-wave` run passed 62 tests and retained 11 failures; the
+same 62/11 result reproduces on `HEAD`, including existing assertions and Node
+module-loader failures. Targeted ESLint passes with the existing
+`react-hooks/set-state-in-effect` findings excluded; standard targeted lint
+retains those existing findings. Full typecheck remains red on existing
+workspace diagnostics; no diagnostic points to the new descriptor code.
+Browser QA and production build were not run.
 
 ## 2026-10-12 7.16.146 T6.1b Tasks Search Presentation Foundation
 

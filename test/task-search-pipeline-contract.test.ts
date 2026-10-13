@@ -14,11 +14,13 @@ test("search does not depend on a deferred React value or duplicate root input",
 test("inactive pages skip query-only search derivation", () => {
   assert.match(appSource, /selectTaskSearchPresentation\(\{[\s\S]*?page:\s*activePage,[\s\S]*?presentation:\s*taskUiState,[\s\S]*?scope:\s*stableTaskSearchScope,[\s\S]*?search:\s*effectiveSearchQuery/);
   assert.match(derivedSource, /if \(!shouldRunTaskSearch\(page\)\) return null/);
-  assert.match(appSource, /deferredSearchQuery: ""/);
+  assert.match(appSource, /prepareTaskAppDerivedPresentation\(taskUiState, \{ derivationSearchQuery: "" \}\)/);
+  assert.match(derivedSource, /presentation\?\.derivationSearchQuery/);
 });
 
-test("TaskApp keeps search operators on the explicit input parser", () => {
-  assert.match(appSource, /parseTaskSearchInput\(taskUiState\.search, taskUiState\.duplicateTitleMode\)/);
+test("TaskApp prepares normalized search and duplicate-title mode through the presentation helper", () => {
+  assert.match(appSource, /prepareTaskAppDerivedPresentation\(taskUiState, \{ derivationSearchQuery: "" \}\)/);
+  assert.match(derivedSource, /parseTaskSearchInput\(taskUiState\.search, taskUiState\.duplicateTitleMode\)/);
 });
 
 test("search scope stays separately memoized and excludes search text", () => {
@@ -53,6 +55,14 @@ test("search hierarchy IDs take precedence over status-only hierarchy IDs", () =
 test("search does not invalidate the stable complete-derivation revision", () => {
   const revisionBlock = appSource.slice(appSource.indexOf("const taskDerivationRevision"), appSource.indexOf("const derivedData"));
   assert.doesNotMatch(revisionBlock, /search|effectiveSearchQuery|taskUiState\.search/);
+});
+
+test("search-only presentation changes stay outside the canonical index revision", () => {
+  const revisionStart = appSource.indexOf("const canonicalIndexRevision =");
+  const revisionEnd = appSource.indexOf("const [structuralDiagnosticTracker", revisionStart);
+  assert.ok(revisionStart >= 0 && revisionEnd > revisionStart);
+  const canonicalRevisionSource = appSource.slice(revisionStart, revisionEnd);
+  assert.doesNotMatch(canonicalRevisionSource, /taskDerivedPresentation|effectiveSearchQuery|taskUiState\.search/);
 });
 
 test("derive-stage logging is gated by the explicit workspace diagnostics flag", () => {

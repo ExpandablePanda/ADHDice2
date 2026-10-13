@@ -301,6 +301,7 @@ import {
   buildTaskAppWorkspaceFacts,
   computeTaskAppDerivedData,
   getTaskContentFolderSearchMatchIds,
+  prepareTaskAppDerivedPresentation,
   selectTaskSearchPresentation,
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
@@ -333,7 +334,7 @@ import {
   getSelectableTaskStatusesForTask,
 } from "@/lib/task-complete";
 import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPromoteTaskToMilestone, formatMilestoneRpcError, getMilestoneEligibility, mergeAuthoritativeMilestoneTask, shouldReverseCompletedMilestoneForStatusChange } from "@/lib/milestones";
-import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
+import { DUPLICATE_TITLE_SEARCH_OPERATORS } from "@/lib/task-search";
 import { filterManualListTaskCandidates } from "@/lib/manual-list-task-search";
 import {
   buildTaskHistoryFacts,
@@ -4022,33 +4023,13 @@ export function TaskApp() {
     taskHistoryByTaskId,
     todayDateKey: todayKey,
   }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isFullTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.attentionEligibleTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
-  const parsedTaskSearch = useMemo(
-    () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
-    [taskUiState.duplicateTitleMode, taskUiState.search],
+  const taskDerivedPresentation = useMemo(
+    () => prepareTaskAppDerivedPresentation(taskUiState, { derivationSearchQuery: "" }),
+    [taskUiState],
   );
-  const effectiveSearchQuery = parsedTaskSearch.cleanedQuery;
-  const duplicateTitleModeActive = parsedTaskSearch.duplicateTitleMode;
-  const taskUiStateForDerivedData = useMemo(() => ({
-    duplicateTitleMode: duplicateTitleModeActive,
-    energyFilters: taskUiState.energyFilters,
-    includeStepsByView: taskUiState.includeStepsByView,
-    matchAny: taskUiState.matchAny,
-    quickFilters: taskUiState.quickFilters,
-    selectedBucket: taskUiState.selectedBucket,
-    statusFilters: taskUiState.statusFilters,
-    tableColumnFilters: taskUiState.tableColumnFilters,
-    view: taskUiState.view,
-  }), [
-    duplicateTitleModeActive,
-    taskUiState.energyFilters,
-    taskUiState.includeStepsByView,
-    taskUiState.matchAny,
-    taskUiState.quickFilters,
-    taskUiState.selectedBucket,
-    taskUiState.statusFilters,
-    taskUiState.tableColumnFilters,
-    taskUiState.view,
-  ]);
+  const effectiveSearchQuery = taskDerivedPresentation.normalizedSearchQuery;
+  const duplicateTitleModeActive = taskDerivedPresentation.duplicateTitleMode;
+  const taskUiStateForDerivedData = taskDerivedPresentation.taskUiState;
   const bucketContext = useMemo(() => ({
     focusedTaskIds: focusedTaskIdSet,
     routing: taskRouting,
@@ -4238,16 +4219,8 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectionCache, workspaceFactsRevision],
   );
-  const derivationViewRevision = useMemo(
-    () => createProjectionDomainRevision("view", taskUiStateForDerivedData),
-    [taskUiStateForDerivedData],
-  );
-  const derivationSettingsRevision = useMemo(
-    () => createProjectionDomainRevision("view-settings", {
-      listVisibleColumns: taskUiState.visibleColumnsByView.table,
-    }),
-    [taskUiState.visibleColumnsByView.table],
-  );
+  const derivationViewRevision = taskDerivedPresentation.derivationViewRevision;
+  const derivationSettingsRevision = taskDerivedPresentation.derivationSettingsRevision;
   const taskDerivationRevision = createTaskDerivationRevisionKey({
     historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision, quotaCurrentPeriodHistoryRevision),
     listRevision: workspaceFactsRevision,
@@ -4291,31 +4264,29 @@ export function TaskApp() {
         },
       }) : undefined;
       const result = computeTaskAppDerivedData({
-      activePage: TASK_DERIVATION_SCOPE,
-      availableTaskLists,
-      availableTaskNotes,
-      bucketContext,
-      deferredSearchQuery: "",
-      focusedTaskIds,
-      listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
-      listVisibleColumns: taskUiState.visibleColumnsByView.table,
-      milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
-      milestoneTaskIds: milestoneData.milestoneTaskIds,
-      taskHistoryByTaskId,
-      quotaCurrentPeriodHistoryByTaskId,
-      isQuotaCurrentPeriodHistoryReady,
-      taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
-      taskContentFolders,
-      todayDateKey: todayKey,
-      taskListEvaluationContext,
-      taskSubtasksByTaskId,
-      taskUiState: taskUiStateForDerivedData,
-      taskDisplayStatusByTaskId,
-      tasks: tasksForActiveStatusRead,
-      structuralData: taskAppStructuralData,
-      stableCanonicalTaskIndex,
-      workspaceFacts: taskAppWorkspaceFacts,
-      diagnosticDetails: diagnostic,
+        activePage: TASK_DERIVATION_SCOPE,
+        availableTaskLists,
+        availableTaskNotes,
+        bucketContext,
+        focusedTaskIds,
+        listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
+        milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
+        milestoneTaskIds: milestoneData.milestoneTaskIds,
+        taskHistoryByTaskId,
+        quotaCurrentPeriodHistoryByTaskId,
+        isQuotaCurrentPeriodHistoryReady,
+        taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
+        taskContentFolders,
+        todayDateKey: todayKey,
+        taskListEvaluationContext,
+        taskSubtasksByTaskId,
+        presentation: taskDerivedPresentation,
+        taskDisplayStatusByTaskId,
+        tasks: tasksForActiveStatusRead,
+        structuralData: taskAppStructuralData,
+        stableCanonicalTaskIndex,
+        workspaceFacts: taskAppWorkspaceFacts,
+        diagnosticDetails: diagnostic,
       });
       return result;
     }),
@@ -4584,7 +4555,7 @@ export function TaskApp() {
   const visibleRoutineTaskCount = taskSearchSelection
     ? activeListFacetCounts.routine ?? 0
     : visibleListCounts.routine ?? 0;
-  const listVisibleColumns = taskUiState.visibleColumnsByView.table;
+  const listVisibleColumns = taskDerivedPresentation.tableVisibleColumns;
   const listSelectionResetKey = JSON.stringify({
     duplicateTitleMode: duplicateTitleModeActive,
     energyFilters: taskUiState.energyFilters,
