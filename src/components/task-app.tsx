@@ -8823,6 +8823,8 @@ export function TaskApp() {
           activeTabId={masterWorkspace.activeTab.id}
           canActivateTab={masterWorkspace.canActivateTab}
           canCloseSplit={masterWorkspace.canCloseSplit}
+          hasSplit={masterWorkspace.hasSplit}
+          splitCloseBlockedReason={masterWorkspace.splitCloseBlockedReason}
           canCloseTab={masterWorkspace.canCloseTab}
           canOpenNewTab={masterWorkspace.canOpenNewTab}
           canNavigate={masterWorkspace.canNavigate}

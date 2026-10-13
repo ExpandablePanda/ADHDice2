@@ -5,14 +5,32 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.155`.
+- Current working app version: `7.16.156`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
-  - `src/lib/app-version.ts`
+- `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.156 Split Right Draft-Safety Hotfix
+
+Close Split now respects the aggregate Tasks draft-safety signal across both
+panels. The control stays visible but is disabled while an unsaved edit or the
+shared Task editor is open, and the tab bar explains that the edit must be
+saved or canceled. Closing after that signal clears returns to the existing
+single-panel workspace. Shared Task editor ownership and conflict checks are
+unchanged.
+
+Behavioral Master Workspace regressions cover right- and left-panel drafts, a
+shared editor opened from the right, rejection without changing left-panel
+state, and successful close after save, cancel, or a clean state. Focused tests
+passed (73/73). Targeted ESLint passed on the policy, tab bar, and test files;
+the controller hook and `task-app.tsx` still report the existing
+`react-hooks/set-state-in-effect` errors. Browser QA remains Andrew's manual
+check. The production build passed with Next.js 16.2.4; full typecheck was not
+run.
 
 ## 2026-10-13 7.16.155 Full Interactive Split Right MVP
 

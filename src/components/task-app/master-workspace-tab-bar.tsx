@@ -44,6 +44,8 @@ type MasterWorkspaceTabBarProps = {
   canActivateTab: (tabId: string) => boolean;
   canCloseTab: (tabId: string) => boolean;
   canCloseSplit: boolean;
+  hasSplit: boolean;
+  splitCloseBlockedReason: string | null;
   canOpenNewTab: boolean;
   canNavigate: boolean;
   canSplitRight: boolean;
@@ -61,6 +63,8 @@ export function MasterWorkspaceTabBar({
   canActivateTab,
   canCloseTab,
   canCloseSplit,
+  hasSplit,
+  splitCloseBlockedReason,
   canOpenNewTab,
   canNavigate,
   canSplitRight,
@@ -112,8 +116,13 @@ export function MasterWorkspaceTabBar({
           >
             Split Right
           </AdhdChip>
-          {canCloseSplit ? (
-            <AdhdChip onClick={onCloseSplit} type="button">
+          {hasSplit ? (
+            <AdhdChip
+              disabled={!canCloseSplit}
+              onClick={onCloseSplit}
+              title={splitCloseBlockedReason ?? "Close the right Tasks panel"}
+              type="button"
+            >
               Close Split
             </AdhdChip>
           ) : null}
@@ -149,7 +158,11 @@ export function MasterWorkspaceTabBar({
           </div>
         </div>
       </div>
-      {transitionBlockedReason ? <p aria-live="polite" className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">{transitionBlockedReason}</p> : null}
+      {splitCloseBlockedReason || transitionBlockedReason ? (
+        <p aria-live="polite" className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">
+          {splitCloseBlockedReason ?? transitionBlockedReason}
+        </p>
+      ) : null}
     </nav>
   );
 }

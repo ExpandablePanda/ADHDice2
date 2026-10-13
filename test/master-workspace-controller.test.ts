@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   activateMasterTabWithTaskWorkspace,
+  canCloseMasterSplitSafely,
   canPersistLegacyTaskWorkspace,
+  closeMasterSplitSafely,
   closeMasterTabWithTaskWorkspace,
   getMasterWorkspaceTransitionBlockReason,
   isMasterWorkspaceFeatureEnabled,
@@ -654,6 +656,38 @@ test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", false), false);
   assert.equal(isTasksMasterTabTransitionBlocked("Home", true), false);
+});
+
+test("Close Split blocks either panel's unsafe edits and closes after save or cancel", () => {
+  const initial = restoreMasterWorkspaceForUser(
+    memoryStorage(),
+    "split-close-user",
+    "Tasks",
+    DEFAULT_TASK_WORKSPACE_TABS_STATE,
+  ).state;
+  const split = activateMasterPanel(
+    duplicateFocusedPageIntoRightPanel(initial, { panelId: "right-panel", tabId: "right-tab" }),
+    initial.focusedPanelId,
+  );
+  const leftBefore = split.panels.find((panel) => panel.side === "left");
+  assert.ok(leftBefore);
+  assert.equal(split.focusedPanelId, leftBefore.id);
+
+  for (const unsafeCase of ["right-panel-edit", "left-panel-edit", "shared-editor-open-from-right"] as const) {
+    assert.equal(canCloseMasterSplitSafely(split, true), false, unsafeCase);
+    const rejected = closeMasterSplitSafely(split, "right-panel", true);
+    assert.strictEqual(rejected, split, unsafeCase);
+    assert.strictEqual(rejected.panels.find((panel) => panel.side === "left"), leftBefore, unsafeCase);
+  }
+
+  assert.equal(canCloseMasterSplitSafely(split, false), true);
+  for (const resolution of ["saved", "canceled"] as const) {
+    const closed = closeMasterSplitSafely(split, "right-panel", false);
+    assert.equal(closed.panels.length, 1, resolution);
+    assert.deepEqual(closed.panels[0], leftBefore, resolution);
+  }
+
+  assert.equal(closeMasterSplitSafely(initial, "right-panel", false), initial);
 });
 
 test("cross-page navigation allows clean or discarded drafts and reports dirty owners", () => {

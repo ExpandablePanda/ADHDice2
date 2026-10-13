@@ -1,6 +1,7 @@
 import {
   activateMasterTab,
   closeMasterTab,
+  closeMasterSplit,
   getMasterWorkspaceStorageKey,
   initializeMasterWorkspaceState,
   loadMasterWorkspaceState,
@@ -35,6 +36,21 @@ export type MasterWorkspaceStateUpdater = (update: (current: MasterWorkspaceStat
 export type MasterWorkspaceTaskUiStateUpdateResult =
   | { status: "queued"; route: "live" | "snapshot"; panelId: string; tabId: string }
   | { status: "rejected"; reason: "not-ready" | "invalid-target" | "live-state-unavailable" | "target-removed" };
+
+export const MASTER_SPLIT_UNSAVED_TASK_DRAFT_MESSAGE = "Save or cancel the unsaved edit in either Tasks panel before closing Split Right.";
+
+export function canCloseMasterSplitSafely(state: MasterWorkspaceState, hasUnsafeTasksDraft: boolean) {
+  return !hasUnsafeTasksDraft && state.panels.some((panel) => panel.side === "right");
+}
+
+export function closeMasterSplitSafely(
+  state: MasterWorkspaceState,
+  rightPanelId: string,
+  hasUnsafeTasksDraft: boolean,
+) {
+  if (!canCloseMasterSplitSafely(state, hasUnsafeTasksDraft)) return state;
+  return closeMasterSplit(state, rightPanelId);
+}
 
 export function resolveMasterWorkspaceTasksUiState(
   state: MasterWorkspaceState,

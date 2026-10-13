@@ -42,7 +42,8 @@ test("Master Workspace exposes Split Right only for a focused Tasks destination 
   assert.match(controllerSource, /activeTab\.destination\.page === "Tasks"/);
   assert.match(controllerSource, /duplicateFocusedPageIntoRightPanel\(withLiveTasksSnapshot/);
   assert.match(controllerSource, /return activateMasterPanel\(split, panel\.id\)/);
-  assert.match(controllerSource, /closeMasterSplit\(withLiveTasksSnapshot, rightPanel\.id\)/);
+  assert.match(controllerSource, /closeMasterSplitSafely\(withLiveTasksSnapshot, rightPanel\.id, hasUnsafeTasksDraft\)/);
+  assert.match(controllerSource, /canCloseMasterSplitSafely\(before, hasUnsafeTasksDraft\)/);
   assert.match(controllerSource, /updateMasterTabTasksWorkspace\([\s\S]*?liveTaskWorkspaceTabsState/);
   assert.match(controllerSource, /const updateTasksWorkspace = useCallback/);
 });

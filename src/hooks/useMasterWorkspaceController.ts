@@ -3,10 +3,13 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   activateMasterTabWithTaskWorkspace,
+  canCloseMasterSplitSafely,
   closeMasterTabWithTaskWorkspace,
+  closeMasterSplitSafely,
   getMasterWorkspaceTransitionBlockReason,
   isMasterWorkspaceFeatureEnabled,
   isHealthMasterTabTransitionBlocked,
+  MASTER_SPLIT_UNSAVED_TASK_DRAFT_MESSAGE,
   persistMasterWorkspaceForReadyUser,
   resolveMasterWorkspaceTasksUiState,
   restoreMasterWorkspaceForUser,
@@ -16,7 +19,6 @@ import {
 } from "@/lib/master-workspace-controller";
 import {
   closeMasterTab,
-  closeMasterSplit,
   createMasterTab,
   createDefaultMasterWorkspaceState,
   activateMasterPanel,
@@ -297,7 +299,11 @@ export function useMasterWorkspaceController({
     return didSplit;
   }, [canNavigate, commitWorkspace, getTaskWorkspaceTabsState]);
 
-  const canCloseSplit = canNavigate && workspace.panels.some((panel) => panel.side === "right");
+  const hasSplit = canNavigate && workspace.panels.some((panel) => panel.side === "right");
+  const canCloseSplit = canNavigate && canCloseMasterSplitSafely(workspace, hasUnsafeTasksDraft);
+  const splitCloseBlockedReason = hasSplit && hasUnsafeTasksDraft
+    ? MASTER_SPLIT_UNSAVED_TASK_DRAFT_MESSAGE
+    : null;
 
   const closeSplit = useCallback(() => {
     if (!canNavigate) return false;
@@ -306,13 +312,13 @@ export function useMasterWorkspaceController({
     const focusedTab = focusedPanel?.tabs.find((tab) => tab.id === focusedPanel.activeTabId);
     const rightPanel = before.panels.find((panel) => panel.side === "right");
     if (!focusedPanel || !focusedTab || !rightPanel) return false;
-    if (focusedTab.destination.page === "Tasks" && rightPanel.id === focusedPanel.id && hasUnsafeTasksDraft) return false;
+    if (!canCloseMasterSplitSafely(before, hasUnsafeTasksDraft)) return false;
 
     const liveTaskWorkspaceTabsState = getTaskWorkspaceTabsState();
     const withLiveTasksSnapshot = focusedTab.destination.page === "Tasks"
       ? updateMasterTabTasksWorkspace(before, focusedPanel.id, focusedTab.id, liveTaskWorkspaceTabsState)
       : before;
-    const next = closeMasterSplit(withLiveTasksSnapshot, rightPanel.id);
+    const next = closeMasterSplitSafely(withLiveTasksSnapshot, rightPanel.id, hasUnsafeTasksDraft);
     if (next === withLiveTasksSnapshot) return false;
 
     const leftPanel = next.panels.find((panel) => panel.side === "left") ?? next.panels[0];
@@ -533,6 +539,8 @@ export function useMasterWorkspaceController({
     canNavigate,
     canSplitRight,
     canCloseSplit,
+    hasSplit,
+    splitCloseBlockedReason,
     closeTab,
     closeSplit,
     currentPanel,
@@ -552,5 +560,5 @@ export function useMasterWorkspaceController({
     updateTasksUiState,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canCloseSplit, canNavigate, canOpenNewTab, canSplitRight, closeTab, closeSplit, currentPanel, currentTransitionBlockReason, getTasksUiState, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, splitRight, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, updateTasksWorkspace, updateTasksUiState, userId, workspace]);
+  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canCloseSplit, canNavigate, canOpenNewTab, canSplitRight, closeTab, closeSplit, currentPanel, currentTransitionBlockReason, getTasksUiState, hasSplit, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, splitCloseBlockedReason, splitRight, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, updateTasksWorkspace, updateTasksUiState, userId, workspace]);
 }
