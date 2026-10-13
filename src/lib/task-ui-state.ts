@@ -3,6 +3,7 @@ import type { TaskEnergy } from "@/lib/database.types";
 import type { TaskRepeatCategory } from "@/lib/task-repeat";
 import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
+import { normalizeStoredTaskTableLayoutPreferences, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 import { normalizeListSortBySurface, type ListSortBySurface } from "@/lib/task-list-sort";
 
@@ -46,10 +47,12 @@ export type TaskUiState = {
 };
 
 export type TaskWorkspaceTab = {
+  currentFolderId?: string | null;
   kind?: "report" | "tasks";
   id: string;
   isRailHidden: boolean;
   label: string;
+  taskTableLayoutPreferences?: TaskTableLayoutPreferences;
   taskUiState: TaskUiState;
 };
 
@@ -310,10 +313,16 @@ function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspace
     : `Tab ${index + 1}`;
 
   return {
+    ...(typeof candidate.currentFolderId === "string" || candidate.currentFolderId === null
+      ? { currentFolderId: candidate.currentFolderId }
+      : {}),
     id,
     isRailHidden: candidate.isRailHidden === true,
     kind: "tasks",
     label,
+    ...(candidate.taskTableLayoutPreferences !== undefined
+      ? { taskTableLayoutPreferences: normalizeStoredTaskTableLayoutPreferences(candidate.taskTableLayoutPreferences) }
+      : {}),
     taskUiState: migrateLegacyTaskUiState(candidate.taskUiState ?? {}),
   };
 }

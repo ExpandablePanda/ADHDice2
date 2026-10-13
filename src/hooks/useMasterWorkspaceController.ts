@@ -26,6 +26,7 @@ import {
   getMasterTabNotesView,
   getMasterTabScratchPaperView,
   masterTabTasksWorkspaceMatchesLiveState,
+  resolveMasterTabTasksWorkspace,
   replaceFocusedMasterTabDestination,
   updateMasterTabJournalView,
   updateMasterTabFoodView,
@@ -33,6 +34,7 @@ import {
   updateMasterTabScratchPaperView,
   updateMasterTabScrollPosition,
   updateMasterTabTasksWorkspace,
+  updateMasterTabTasksWorkspaceState,
   type MasterTabPresentationState,
   type MasterTabDestination,
   type MasterScratchPaperWorkspaceView,
@@ -489,6 +491,35 @@ export function useMasterWorkspaceController({
     commitWorkspace,
   ), [applyTaskUiStateUpdate, canNavigate, commitWorkspace]);
 
+  const updateTasksWorkspace = useCallback((
+    panelId: string,
+    tabId: string,
+    updater: TaskWorkspaceTabsState | ((current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState),
+  ) => {
+    if (!canNavigate) return false;
+    const before = workspaceRef.current;
+    const panel = before.panels.find((candidate) => candidate.id === panelId);
+    const isFocusedActiveTab = before.focusedPanelId === panelId && panel?.activeTabId === tabId;
+    if (!resolveMasterTabTasksWorkspace(before, panelId, tabId)) return false;
+
+    if (isFocusedActiveTab) {
+      const liveTaskWorkspaceTabsState = getTaskWorkspaceTabsState();
+      const next = typeof updater === "function" ? updater(liveTaskWorkspaceTabsState) : updater;
+      if (next === liveTaskWorkspaceTabsState || JSON.stringify(next) === JSON.stringify(liveTaskWorkspaceTabsState)) return true;
+      replaceTaskWorkspaceTabsState(next);
+      commitWorkspace((current) => updateMasterTabTasksWorkspace(current, panelId, tabId, next));
+      return true;
+    }
+
+    let changed = false;
+    commitWorkspace((current) => {
+      const next = updateMasterTabTasksWorkspaceState(current, panelId, tabId, updater);
+      changed = next !== current;
+      return next;
+    });
+    return changed;
+  }, [canNavigate, commitWorkspace, getTaskWorkspaceTabsState, replaceTaskWorkspaceTabsState]);
+
   return useMemo(() => ({
     activateTab,
     activeTab,
@@ -517,8 +548,9 @@ export function useMasterWorkspaceController({
     updateFoodView,
     updateNotesView,
     updateScratchPaperView,
+    updateTasksWorkspace,
     updateTasksUiState,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canCloseSplit, canNavigate, canOpenNewTab, canSplitRight, closeTab, closeSplit, currentPanel, currentTransitionBlockReason, getTasksUiState, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, splitRight, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, updateTasksUiState, userId, workspace]);
+  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canCloseSplit, canNavigate, canOpenNewTab, canSplitRight, closeTab, closeSplit, currentPanel, currentTransitionBlockReason, getTasksUiState, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, splitRight, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, updateTasksWorkspace, updateTasksUiState, userId, workspace]);
 }

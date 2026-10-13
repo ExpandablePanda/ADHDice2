@@ -200,6 +200,13 @@ function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
     uiStateVersion: normalized.uiStateVersion,
     tabs: normalized.tabs.map((tab) => ({
       ...tab,
+      ...(tab.taskTableLayoutPreferences
+        ? { taskTableLayoutPreferences: {
+          ...tab.taskTableLayoutPreferences,
+          ...(tab.taskTableLayoutPreferences.columnOrder ? { columnOrder: [...tab.taskTableLayoutPreferences.columnOrder] } : {}),
+          ...(tab.taskTableLayoutPreferences.sortState ? { sortState: { ...tab.taskTableLayoutPreferences.sortState } } : {}),
+        } }
+        : {}),
       taskUiState: {
         ...tab.taskUiState,
         includeStepsByView: { ...tab.taskUiState.includeStepsByView },
@@ -648,6 +655,19 @@ export function updateMasterTabTasksWorkspace(
       }),
     }),
   };
+}
+
+export function updateMasterTabTasksWorkspaceState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  updater: TaskWorkspaceTabsState | ((current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState),
+): MasterWorkspaceState {
+  const current = resolveMasterTabTasksWorkspace(state, panelId, tabId);
+  if (!current) return state;
+  const next = typeof updater === "function" ? updater(current) : updater;
+  if (next === current || JSON.stringify(next) === JSON.stringify(current)) return state;
+  return updateMasterTabTasksWorkspace(state, panelId, tabId, next);
 }
 
 export function masterTabTasksWorkspaceMatchesLiveState(

@@ -67,7 +67,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactElement, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
   BottomDockAdapter as BottomDock,
@@ -113,7 +113,7 @@ import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { MasterWorkspaceTabBar } from "@/components/task-app/master-workspace-tab-bar";
-import { ReadOnlyTasksPanel, TasksSplitLayout } from "@/components/task-app/tasks-split-right-panel";
+import { TasksSplitLayout } from "@/components/task-app/tasks-split-right-panel";
 import { useMasterWorkspaceController } from "@/hooks/useMasterWorkspaceController";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
@@ -310,6 +310,7 @@ import { buildTaskAppViewReadModel } from "@/lib/task-app-view-read-model";
 import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { executeTaskRolloverSweep } from "@/lib/task-rollover-sweep";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
+import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import {
   createTaskRolloverReplayIdentity,
   createTaskRolloverSettingsKey,
@@ -410,13 +411,19 @@ import {
 import type { TaskListRailMutationGeneration } from "@/lib/task-list-rail-order";
 import { DEFAULT_LIST_SORT_PREFERENCE, getListSortSurfaceId } from "@/lib/task-list-sort";
 import {
+  closeTaskWorkspaceTabState,
+  createTaskWorkspaceTabState,
   DEFAULT_TASK_UI_STATE,
   getUserScopedStorageKey,
   isReportTaskWorkspaceTab,
   parseStoredJson,
+  renameTaskWorkspaceTabState,
   TASK_FOCUS_STORAGE_KEY,
+  reorderTaskWorkspaceTabToIndex,
+  resolveActiveTaskWorkspaceTab,
   type AppPage,
   type TaskUiState,
+  type TaskWorkspaceTabsState,
 } from "@/lib/task-ui-state";
 
 import type {
@@ -1174,6 +1181,140 @@ function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocus
   )) ?? null;
 }
 
+type TaskPanelOwner = {
+  masterTabId: string;
+  panelId: string;
+  taskWorkspaceTabId: string;
+};
+
+function getTaskPanelOwnerKey(owner: TaskPanelOwner) {
+  return `${owner.panelId}:${owner.masterTabId}:${owner.taskWorkspaceTabId}`;
+}
+
+function getTaskEditorOpenBlockMessage({
+  currentEditorOwner,
+  currentEditorTaskId,
+  editorIsOpen,
+  draftOwnerKeys,
+  owner,
+  requestedTaskId,
+}: {
+  currentEditorOwner: TaskPanelOwner | null;
+  currentEditorTaskId: string | null;
+  draftOwnerKeys: string[];
+  editorIsOpen: boolean;
+  owner: TaskPanelOwner;
+  requestedTaskId: string;
+}) {
+  const ownerKey = getTaskPanelOwnerKey(owner);
+  if (editorIsOpen && (
+    !currentEditorOwner
+    || getTaskPanelOwnerKey(currentEditorOwner) !== ownerKey
+    || currentEditorTaskId !== requestedTaskId
+  )) {
+    return "Close the open Task editor before opening another Task.";
+  }
+  if (draftOwnerKeys.some((draftOwnerKey) => draftOwnerKey !== ownerKey)) {
+    return "Finish the unsaved edit in the other Tasks panel before opening this Task editor.";
+  }
+  if (draftOwnerKeys.includes(ownerKey)) {
+    return "Finish or cancel the unsaved edit in this Tasks tab before opening another Task editor.";
+  }
+  return null;
+}
+
+function buildTaskListRailStructureOptions({
+  activeListFacetCounts,
+  canonicalTaskListRailTree,
+  selectedBucket,
+  taskListContainers,
+  taskListFolderBreadcrumbs,
+  taskListFolderCounts,
+  taskListFolderTree,
+}: {
+  activeListFacetCounts: Readonly<Record<string, number>>;
+  canonicalTaskListRailTree: ReturnType<typeof buildCanonicalTaskListRailTree>;
+  selectedBucket: string;
+  taskListContainers: Parameters<typeof getTaskListContainerRevision>[0];
+  taskListFolderBreadcrumbs: ReturnType<typeof buildTaskListFolderBreadcrumbs>;
+  taskListFolderCounts: ReturnType<typeof buildTaskListFolderCounts>;
+  taskListFolderTree: ReturnType<typeof buildTaskListFolderTree>;
+}) {
+  const rootContainerRevision = getTaskListContainerRevision(taskListContainers, null);
+  const buildStructureOptions = (
+    folderId: string | null,
+    items = canonicalTaskListRailTree.mixedChildrenByFolderId.get(folderId) ?? [],
+  ) => (
+    items
+      .map((item, containerIndex) => ({ containerIndex, item }))
+      .filter(({ item }) => (
+        item.kind === "folder"
+        || item.entity.isVisible
+        || item.id === selectedBucket
+      ))
+      .map(({ containerIndex, item }) => {
+        if (item.kind === "folder") {
+          const counts = taskListFolderCounts.get(item.id) ?? {
+            containedListCount: 0,
+            dueTodayCount: 0,
+            overdueCount: 0,
+            visibleTaskCount: 0,
+          };
+          return {
+            containerId: folderId,
+            containerKey: getTaskListContainerKey(folderId),
+            containerIndex,
+            count: counts.visibleTaskCount,
+            description: taskListFolderTree.folderPathById.get(item.id) ?? item.entity.name,
+            draggableEligible: true,
+            expectedContainerRevision: folderId === null
+              ? rootContainerRevision
+              : getTaskListContainerRevision(taskListContainers, folderId),
+            folderCounts: counts,
+            id: item.id,
+            entityId: item.id,
+            entityType: "folder" as const,
+            isCustom: true,
+            label: item.entity.name,
+            destinationAppendIndex: canonicalTaskListRailTree.mixedChildrenByFolderId.get(item.id)?.length ?? 0,
+            persistedParentValue: item.placement.container_folder_id,
+            sortOrder: item.sortOrder,
+            structuralKey: item.itemKey,
+            structureKind: "folder" as const,
+          };
+        }
+        return {
+          containerId: folderId,
+          containerKey: getTaskListContainerKey(folderId),
+          containerIndex,
+          count: activeListFacetCounts[item.id] ?? 0,
+          description: taskListFolderTree.listPathById.get(item.id) ?? item.entity.name,
+          draggableEligible: true,
+          entityId: item.entityId ?? undefined,
+          entityType: "list" as const,
+          expectedContainerRevision: folderId === null
+            ? rootContainerRevision
+            : getTaskListContainerRevision(taskListContainers, folderId),
+          id: item.id,
+          isCustom: item.entity.type === "custom",
+          label: item.entity.name,
+          listSubtype: item.listSubtype,
+          persistedParentValue: item.placement.container_folder_id,
+          sortOrder: item.sortOrder,
+          structuralKey: item.itemKey,
+          structureKind: "list" as const,
+        };
+      })
+  );
+  return {
+    primaryRail: buildStructureOptions(null),
+    openFolderRails: taskListFolderBreadcrumbs.map((folder) => ({
+      folderId: folder.id,
+      lists: buildStructureOptions(folder.id),
+    })),
+  };
+}
+
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const isNativeIosPlatform = useNativeIosPlatform();
@@ -1772,6 +1913,7 @@ export function TaskApp() {
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
+  const [batchActionTaskIdsOverride, setBatchActionTaskIdsOverride] = useState<string[] | null>(null);
   const [pendingCompleteAction, setPendingCompleteAction] = useState<PendingCompleteAction | null>(null);
   const setTaskUpdateMessage = useCallback<typeof setMessage>((value) => {
     setMessage(value);
@@ -1781,6 +1923,11 @@ export function TaskApp() {
   const taskHistoryModalLoadGenerationRef = useRef(0);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
+  const taskEditorOwnerRef = useRef<TaskPanelOwner | null>(null);
+  const [taskPanelDraftOwnerKeys, setTaskPanelDraftOwnerKeys] = useState<string[]>([]);
+  const [isSplitRightTasksWorkspaceDraftOpen, setIsSplitRightTasksWorkspaceDraftOpen] = useState(false);
+  const [isSplitRightTasksTableDraftOpen, setIsSplitRightTasksTableDraftOpen] = useState(false);
+  const [isSplitRightTasksListDraftOpen, setIsSplitRightTasksListDraftOpen] = useState(false);
   const [isTasksSearchDraftOpen, setIsTasksSearchDraftOpen] = useState(false);
   const [isTasksWorkspaceRenameDraftOpen, setIsTasksWorkspaceRenameDraftOpen] = useState(false);
   const [isTasksListDraftOpen, setIsTasksListDraftOpen] = useState(false);
@@ -2463,6 +2610,12 @@ export function TaskApp() {
     setTaskEditorNavigationTaskIds(null);
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorFocusRequest(null);
+    const workspaceController = masterWorkspaceControllerRef.current;
+    taskEditorOwnerRef.current = {
+      panelId: workspaceController?.currentPanel.id ?? "legacy-panel",
+      masterTabId: workspaceController?.activeTab.id ?? "legacy-tab",
+      taskWorkspaceTabId: nextTaskWorkspaceTabId,
+    };
     setSharedTaskEditorOverlayTaskId(taskId);
   }, [requestPageNavigation, setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
 
@@ -4414,83 +4567,18 @@ export function TaskApp() {
     [activePrimaryFacetVisibleEntityIds, canonicalEntityProjection.entityFactsById, canonicalTaskListRailTree, todayKey],
   );
   const taskListRailStructureOptions = useMemo(() => {
-    const rootContainerRevision = getTaskListContainerRevision(taskListContainers, null);
-    const buildStructureOptions = (
-      folderId: string | null,
-      items = canonicalTaskListRailTree.mixedChildrenByFolderId.get(folderId) ?? [],
-    ) => (
-      items
-        .map((item, containerIndex) => ({ containerIndex, item }))
-        .filter(({ item }) => (
-          item.kind === "folder"
-          || item.entity.isVisible
-          || item.id === taskUiState.selectedBucket
-        ))
-        .map(({ containerIndex, item }) => {
-          if (item.kind === "folder") {
-            const counts = taskListFolderCounts.get(item.id) ?? {
-              containedListCount: 0,
-              dueTodayCount: 0,
-              overdueCount: 0,
-              visibleTaskCount: 0,
-            };
-            return {
-              containerId: folderId,
-              containerKey: getTaskListContainerKey(folderId),
-              containerIndex,
-              count: counts.visibleTaskCount,
-              description: taskListFolderTree.folderPathById.get(item.id) ?? item.entity.name,
-              draggableEligible: true,
-              expectedContainerRevision: folderId === null
-                ? rootContainerRevision
-                : getTaskListContainerRevision(taskListContainers, folderId),
-              folderCounts: counts,
-              id: item.id,
-              entityId: item.id,
-              entityType: "folder" as const,
-              isCustom: true,
-              label: item.entity.name,
-              destinationAppendIndex: canonicalTaskListRailTree.mixedChildrenByFolderId.get(item.id)?.length ?? 0,
-              persistedParentValue: item.placement.container_folder_id,
-              sortOrder: item.sortOrder,
-              structuralKey: item.itemKey,
-              structureKind: "folder" as const,
-            };
-          }
-          return {
-            containerId: folderId,
-            containerKey: getTaskListContainerKey(folderId),
-            containerIndex,
-            count: activeListFacetCounts[item.id] ?? 0,
-            description: taskListFolderTree.listPathById.get(item.id) ?? item.entity.name,
-            draggableEligible: true,
-            entityId: item.entityId ?? undefined,
-            entityType: "list" as const,
-            expectedContainerRevision: folderId === null
-              ? rootContainerRevision
-              : getTaskListContainerRevision(taskListContainers, folderId),
-            id: item.id,
-            isCustom: item.entity.type === "custom",
-            label: item.entity.name,
-            listSubtype: item.listSubtype,
-            persistedParentValue: item.placement.container_folder_id,
-            sortOrder: item.sortOrder,
-            structuralKey: item.itemKey,
-            structureKind: "list" as const,
-          };
-        })
-    );
-    return {
-      primaryRail: buildStructureOptions(null),
-      openFolderRails: taskListFolderBreadcrumbs.map((folder) => ({
-        folderId: folder.id,
-        lists: buildStructureOptions(folder.id),
-      })),
-    };
+    return buildTaskListRailStructureOptions({
+      activeListFacetCounts,
+      canonicalTaskListRailTree,
+      selectedBucket: taskUiState.selectedBucket,
+      taskListContainers,
+      taskListFolderBreadcrumbs,
+      taskListFolderCounts,
+      taskListFolderTree,
+    });
   }, [
     activeListFacetCounts,
     canonicalTaskListRailTree,
-    currentFolderId,
     taskListFolderBreadcrumbs,
     taskListFolderCounts,
     taskListContainers,
@@ -5405,11 +5493,31 @@ export function TaskApp() {
   }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, requestPageNavigation, setActivePage, setMessage, setTaskUiState]);
 
   const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[]) => {
+    const controller = masterWorkspaceControllerRef.current;
+    const owner = {
+      panelId: controller?.currentPanel.id ?? "legacy-panel",
+      masterTabId: controller?.activeTab.id ?? "legacy-tab",
+      taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
+    };
+    const blockMessage = getTaskEditorOpenBlockMessage({
+      currentEditorOwner: taskEditorOwnerRef.current,
+      currentEditorTaskId: sharedTaskEditorOverlayTaskId,
+      draftOwnerKeys: taskPanelDraftOwnerKeys,
+      editorIsOpen: Boolean(sharedTaskEditorOverlayTaskId),
+      owner,
+      requestedTaskId: task.id,
+    });
+    if (blockMessage) {
+      setMessage({ tone: "warn", text: blockMessage });
+      return false;
+    }
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
+    taskEditorOwnerRef.current = owner;
     setSharedTaskEditorOverlayTaskId(task.id);
     setTaskEditorFocusRequest(null);
-  }, [selectedBucketTasks]);
+    return true;
+  }, [selectedBucketTasks, setMessage, sharedTaskEditorOverlayTaskId, taskPanelDraftOwnerKeys, taskWorkspaceTabsState.activeTabId]);
 
   const createTaskAndOpenSharedEditor = useCallback(async (
     initialTaskValues: TaskDraft,
@@ -5743,16 +5851,27 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isInitialTaskStateProjectionReady = isCurrentTaskProjectionReadReady && isBehaviorAuthorityReady;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
+  const getTaskWorkspaceSnapshotForMasterWorkspace = useCallback(() => {
+    const current = getTaskWorkspaceTabsState();
+    return {
+      ...current,
+      tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? {
+        ...tab,
+        currentFolderId,
+        taskTableLayoutPreferences,
+      } : tab),
+    };
+  }, [currentFolderId, getTaskWorkspaceTabsState, taskTableLayoutPreferences]);
   const masterWorkspace = useMasterWorkspaceController({
     activePage,
     healthDraftSafetyBySection,
     hasUnsafeNotesDraft,
-    hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen,
+    hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen || isSplitRightTasksWorkspaceDraftOpen || isSplitRightTasksListDraftOpen || isSplitRightTasksTableDraftOpen || taskPanelDraftOwnerKeys.length > 0,
     initialHealthSection: legacyHealthTabPreference,
     isReady: isAuthenticatedAppBootReady,
     replaceTaskWorkspaceTabsState,
     applyTaskUiStateUpdate,
-    getTaskWorkspaceTabsState,
+    getTaskWorkspaceTabsState: getTaskWorkspaceSnapshotForMasterWorkspace,
     setActivePage,
     taskWorkspaceTabsState,
     userId: session?.user?.id,
@@ -5851,13 +5970,43 @@ export function TaskApp() {
       searchSelection: splitRightSearchSelection,
     });
   }, [splitRightDerivedData, splitRightDerivedPresentation, splitRightSearchSelection, tasks, tasksForCalendarRead]);
+  const splitRightTaskWorkspaceTabsState = splitPanels.rightTab?.presentation.tasksWorkspace ?? taskWorkspaceTabsState;
+  const splitRightActiveTaskWorkspaceTab = resolveActiveTaskWorkspaceTab(splitRightTaskWorkspaceTabsState);
+  const {
+    clearListTaskSelection: clearSplitRightListTaskSelection,
+    selectAllVisibleListTasks: selectAllSplitRightVisibleListTasks,
+    selectedListTaskIds: splitRightSelectedTaskIds,
+    toggleListTaskSelection: toggleSplitRightListTaskSelection,
+  } = useTaskListSelection({
+    resetKey: `${splitRightActiveTaskWorkspaceTab.id}:${splitRightTaskViewReadModel?.listSelectionResetKey ?? "inactive"}`,
+    tasks,
+    visibleListTaskIds: splitRightTaskViewReadModel?.visibleListTaskIds ?? [],
+  });
+  const [isSplitRightTaskFiltersOpen, setIsSplitRightTaskFiltersOpen] = useState(isTaskFiltersOpen);
+  const leftTaskPanelOwner: TaskPanelOwner = {
+    panelId: masterWorkspace.workspace.focusedPanelId,
+    masterTabId: masterWorkspace.activeTab.id,
+    taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
+  };
+  const reportTaskPanelDraft = (ownerKey: string, isEditing: boolean) => {
+    setTaskPanelDraftOwnerKeys((current) => {
+      if (isEditing) return current.includes(ownerKey) ? current : [...current, ownerKey];
+      return current.filter((candidate) => candidate !== ownerKey);
+    });
+  };
   const updateRightPanelTasksUiState = masterWorkspace.updateTasksUiState;
-  const updateSplitRightSearch = useCallback((search: string) => {
-    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return;
-    updateRightPanelTasksUiState(splitPanels.right.id, splitPanels.rightTab.id, (current) => (
-      current.search === search ? current : { ...current, search }
-    ));
+  const updateSplitRightTaskUiState = useCallback((updater: TaskUiState | ((current: TaskUiState) => TaskUiState)) => {
+    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return false;
+    return updateRightPanelTasksUiState(splitPanels.right.id, splitPanels.rightTab.id, updater).status === "queued";
   }, [isTasksSplit, splitPanels.right, splitPanels.rightTab, updateRightPanelTasksUiState]);
+  const updateSplitRightTasksWorkspace = masterWorkspace.updateTasksWorkspace;
+  const updateSplitRightWorkspace = useCallback((updater: TaskWorkspaceTabsState | ((current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState)) => {
+    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return false;
+    return updateSplitRightTasksWorkspace(splitPanels.right.id, splitPanels.rightTab.id, updater);
+  }, [isTasksSplit, splitPanels.right, splitPanels.rightTab, updateSplitRightTasksWorkspace]);
+  const updateSplitRightSearch = useCallback((search: string) => {
+    updateSplitRightTaskUiState((current) => current.search === search ? current : { ...current, search });
+  }, [updateSplitRightTaskUiState]);
   useEffect(() => {
     if (!masterWorkspace.featureEnabled || typeof window === "undefined") return;
     const protectUnsavedEditingSessions = (event: BeforeUnloadEvent) => {
@@ -6533,9 +6682,26 @@ export function TaskApp() {
     setIsActiveTimersTrayOpen(true);
   }
 
-  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; navigationTaskIds?: string[]; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
+  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; navigationTaskIds?: string[]; owner?: TaskPanelOwner; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
     const task = tasks.find((entry) => entry.id === taskId) ?? null;
     const timer = options?.timer ?? null;
+    const owner = options?.owner ?? {
+      panelId: masterWorkspace.currentPanel.id,
+      masterTabId: masterWorkspace.activeTab.id,
+      taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
+    };
+    const blockMessage = getTaskEditorOpenBlockMessage({
+      currentEditorOwner: taskEditorOwnerRef.current,
+      currentEditorTaskId: sharedTaskEditorOverlayTaskId,
+      draftOwnerKeys: taskPanelDraftOwnerKeys,
+      editorIsOpen: Boolean(sharedTaskEditorOverlayTaskId),
+      owner,
+      requestedTaskId: taskId,
+    });
+    if (blockMessage) {
+      setMessage({ tone: "warn", text: blockMessage });
+      return false;
+    }
     const taskOccurrence = task ? buildTaskOccurrenceIdentity(task) : null;
     const occurrenceIsClearlyStale = Boolean(timer?.occurrenceKey && taskOccurrence?.occurrenceKey
       && !occurrenceIdentityMatches(timer, taskOccurrence));
@@ -6546,6 +6712,7 @@ export function TaskApp() {
 
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(options?.navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
+    taskEditorOwnerRef.current = owner;
     setSharedTaskEditorOverlayTaskId(taskId);
     setTaskEditorFocusRequest(options?.initialField
       ? { field: options.initialField, taskId, token: ++taskEditorFocusTokenRef.current }
@@ -6736,12 +6903,13 @@ export function TaskApp() {
     });
   }
 
-  function openBatchDeleteModal() {
+  function openBatchDeleteModal(taskIds?: string[]) {
+    setBatchActionTaskIdsOverride(taskIds ? [...taskIds] : null);
     setIsBatchDeleteModalOpen(true);
   }
 
-  async function emptyTrash() {
-    if (taskUiState.selectedBucket !== "trash") {
+  async function emptyTrash(selectedBucket = taskUiState.selectedBucket) {
+    if (selectedBucket !== "trash") {
       return;
     }
 
@@ -7520,18 +7688,30 @@ export function TaskApp() {
 
   function closeBatchDeleteModal() {
     setIsBatchDeleteModalOpen(false);
+    setBatchActionTaskIdsOverride(null);
   }
 
   function confirmBatchDelete() {
+    if (batchActionTaskIdsOverride) {
+      if (batchActionTaskIdsOverride.length === 0) return;
+      void deleteTasks(batchActionTaskIdsOverride).then((deleted) => {
+        if (!deleted) return;
+        clearSplitRightListTaskSelection();
+        closeBatchDeleteModal();
+      });
+      return;
+    }
     void deleteSelectedListTasks();
   }
 
-  function openBatchEditModal() {
+  function openBatchEditModal(taskIds?: string[]) {
+    setBatchActionTaskIdsOverride(taskIds ? [...taskIds] : null);
     setIsBatchEditModalOpen(true);
   }
 
   function closeBatchEditModal() {
     setIsBatchEditModalOpen(false);
+    setBatchActionTaskIdsOverride(null);
   }
 
   function closeFocusPlanner() {
@@ -7552,24 +7732,29 @@ export function TaskApp() {
     setTaskHistoryModalLoadingTaskId(null);
   }
 
+  const batchModalTasks = batchActionTaskIdsOverride
+    ? tasks.filter((task) => batchActionTaskIdsOverride.includes(task.id))
+    : selectedListTasks;
   const batchDeleteFlow = isBatchDeleteModalOpen ? {
-    count: selectedListTaskIds.length,
+    count: batchModalTasks.length,
     onClose: closeBatchDeleteModal,
     onConfirm: confirmBatchDelete,
-    previewTasks: selectedListTasks.map((task) => ({ id: task.id, title: task.title })),
+    previewTasks: batchModalTasks.map((task) => ({ id: task.id, title: task.title })),
   } : null;
 
   const batchEditFlow = isBatchEditModalOpen ? {
     allTags: allTaskTags,
-    count: selectedListTaskIds.length,
+    count: batchModalTasks.length,
     customBehaviorRulesets,
     energyOptions,
     onClose: closeBatchEditModal,
-    onSave: applyBatchTaskEdit,
+    onSave: batchActionTaskIdsOverride
+      ? (draft: Parameters<typeof applyBatchTaskEdit>[0]) => applyBatchTaskEdit(draft, { clearSelection: false, selectedTasks: batchModalTasks })
+      : applyBatchTaskEdit,
     priorityOptions,
     repeatFrequencyOptions,
     repeatWeekdayOptions,
-    selectedTasks: selectedListTasks,
+    selectedTasks: batchModalTasks,
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
@@ -8024,6 +8209,7 @@ export function TaskApp() {
     openSharedTaskEditor(taskId, { initialField: "estimated_time" });
   };
   const closeSharedTaskEditorOverlay = () => {
+    taskEditorOwnerRef.current = null;
     setSharedTaskEditorOverlayTaskId(null);
     setTaskEditorNavigationTaskIds(null);
     setTaskEditorFocusRequest(null);
@@ -8686,13 +8872,10 @@ export function TaskApp() {
             timezone={userTimeZone}
             userId={session?.user?.id ?? null}
           />
-        ) : activePage === "Tasks" ? (
-          <TasksSplitLayout
-            active={isTasksSplit && Boolean(splitRightTaskViewReadModel && splitRightTasksUiState)}
-            left={(
-              <>
-                {taskWorkspaceFlowLayer}
-                <TasksWorkspace
+        ) : activePage === "Tasks" ? (() => {
+          const leftOwnerKey = getTaskPanelOwnerKey(leftTaskPanelOwner);
+          const tasksWorkspace = (
+            <TasksWorkspace
               activeTabId={taskWorkspaceTabsState.activeTabId}
               activeMasterTabId={masterWorkspace.activeTab.id}
             onAddTab={() => createTaskWorkspaceTab({
@@ -8724,7 +8907,10 @@ export function TaskApp() {
               />
             )}
             onCloseTab={closeTaskWorkspaceTab}
-            onDraftEditingChange={setIsTasksWorkspaceRenameDraftOpen}
+            onDraftEditingChange={(isEditing) => {
+              setIsTasksWorkspaceRenameDraftOpen(isEditing);
+              reportTaskPanelDraft(leftOwnerKey, isEditing);
+            }}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
                 behaviorProfiles={taskTypeBehaviorProfiles}
@@ -8756,7 +8942,13 @@ export function TaskApp() {
             onRenameTab={handleRenameTaskWorkspaceTab}
             onSurfaceChange={handleTaskWorkspaceSurfaceChange}
             onTabChange={setActiveTaskWorkspaceTab}
-            operationsHeaderProps={taskOperationsHeaderProps}
+            operationsHeaderProps={{
+              ...taskOperationsHeaderProps,
+              onSearchDraftEditingChange: (isEditing) => {
+                setIsTasksSearchDraftOpen(isEditing);
+                reportTaskPanelDraft(leftOwnerKey, isEditing);
+              },
+            }}
             pathsWorkspacePanel={(
               <PathsWorkspace
                 availableTaskLists={availableTaskLists}
@@ -8807,7 +8999,10 @@ export function TaskApp() {
                 />
               ) : (
                 <TasksTableAdapter
-                  onDraftEditingChange={setIsTasksTableDraftOpen}
+                  onDraftEditingChange={(isEditing) => {
+                    setIsTasksTableDraftOpen(isEditing);
+                    reportTaskPanelDraft(leftOwnerKey, isEditing);
+                  }}
                   tableProps={{
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
@@ -8989,7 +9184,10 @@ export function TaskApp() {
                 currentListLabel={selectedBucketLabel}
                 filterRowsNode={taskFilterRowsNode}
                 listSortPreference={activeListSortPreference}
-                onDraftEditingChange={setIsTasksListDraftOpen}
+                onDraftEditingChange={(isEditing) => {
+                  setIsTasksListDraftOpen(isEditing);
+                  reportTaskPanelDraft(leftOwnerKey, isEditing);
+                }}
               onToggleFocusToday={toggleFocusTodayForTask}
                 panelProps={listPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
@@ -9173,20 +9371,479 @@ export function TaskApp() {
                 view={taskUiState.view}
               />
             )}
+            />
+          );
+          const rightWorkspace = (() => {
+            if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab || !splitRightTasksUiState || !splitRightTaskViewReadModel) return null;
+            const rightOwner = {
+              panelId: splitPanels.right.id,
+              masterTabId: splitPanels.rightTab.id,
+              taskWorkspaceTabId: splitRightTaskWorkspaceTabsState.activeTabId,
+            };
+            const rightOwnerKey = getTaskPanelOwnerKey(rightOwner);
+            const getRightTaskTabDraftBlockMessage = (taskWorkspaceTabId: string) => {
+              const owner = { ...rightOwner, taskWorkspaceTabId };
+              const ownerKey = getTaskPanelOwnerKey(owner);
+              if (taskPanelDraftOwnerKeys.includes(ownerKey)) return "Finish or cancel the unsaved edit in this Tasks tab before navigating away.";
+              if (sharedTaskEditorOverlayTaskId && taskEditorOwnerRef.current && getTaskPanelOwnerKey(taskEditorOwnerRef.current) === ownerKey) {
+                return "Close the Task editor before navigating away from this Tasks tab.";
+              }
+              return null;
+            };
+            const updateRightUi = (updater: TaskUiState | ((current: TaskUiState) => TaskUiState)) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return false;
+              }
+              return updateSplitRightTaskUiState(updater);
+            };
+            const changeRightView = (view: TaskUiState["view"]) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              updateRightUi((current) => current.view === view ? current : { ...current, view });
+            };
+            const updateRightBucket = (selectedBucket: string) => updateRightUi((current) => (
+              current.selectedBucket === selectedBucket ? current : { ...current, selectedBucket }
+            ));
+            const rightSearch = splitRightDerivedPresentation?.normalizedSearchQuery ?? splitRightTasksUiState.search;
+            const rightSelectedTasks = splitRightTaskViewReadModel.selectedBucketTasks;
+            const rightCurrentFolderId = splitRightActiveTaskWorkspaceTab.currentFolderId ?? null;
+            const rightFolderBreadcrumbs = buildTaskListFolderBreadcrumbs(taskListFolderTree, rightCurrentFolderId);
+            const rightTaskListFolderCounts = buildTaskListFolderCounts(
+              canonicalTaskListRailTree,
+              Array.from(canonicalEntityProjection.entityFactsById.values())
+                .filter((fact) => isTaskOpen(fact.task))
+                .map((fact) => ({ id: fact.id, listMemberships: fact.listMemberships, task: fact.task })),
+              splitRightSearchSelection?.primaryFacetVisibleEntityIds ?? canonicalEntityProjection.primaryFacetVisibleEntityIds,
+              todayKey,
+            );
+            const rightTaskListRailStructureOptions = buildTaskListRailStructureOptions({
+              activeListFacetCounts: splitRightSearchSelection?.listFacetCounts ?? canonicalEntityProjection.listFacetCounts,
+              canonicalTaskListRailTree,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              taskListContainers,
+              taskListFolderBreadcrumbs: rightFolderBreadcrumbs,
+              taskListFolderCounts: rightTaskListFolderCounts,
+              taskListFolderTree,
+            });
+            const updateRightCurrentFolder = (currentFolderId: string | null) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return false;
+              }
+              return updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? { ...tab, currentFolderId } : tab),
+              }));
+            };
+            const rightSelectedBucketLabel = splitRightTasksUiState.selectedBucket === "pinned"
+              ? "Pinned"
+              : splitRightTasksUiState.selectedBucket in TASK_BUCKET_LABELS
+                ? TASK_BUCKET_LABELS[splitRightTasksUiState.selectedBucket as TaskBucket]
+                : availableTaskLists.find((list) => list.id === splitRightTasksUiState.selectedBucket)?.name ?? splitRightTasksUiState.selectedBucket;
+            const rightListSortSurfaceId = getListSortSurfaceId(splitRightTasksUiState.tasksSurface, splitRightTasksUiState.selectedBucket);
+            const rightListSortPreference = splitRightTasksUiState.listSortBySurface[rightListSortSurfaceId] ?? DEFAULT_LIST_SORT_PREFERENCE;
+            const rightTableLayoutPreferences = splitRightActiveTaskWorkspaceTab.taskTableLayoutPreferences ?? taskTableLayoutPreferences;
+            const rightStatusCounts = splitRightDerivedData?.tableStatusCounts ?? tableStatusCounts;
+            const rightVisiblePinnedCount = splitRightSearchSelection
+              ? splitRightSearchSelection.listFacetCounts["pinned"] ?? 0
+              : (splitRightDerivedData?.visibleListCounts as Readonly<Record<string, number>> | undefined)?.["pinned"] ?? 0;
+            const rightVisibleRoutineCount = splitRightSearchSelection
+              ? splitRightSearchSelection.listFacetCounts["routine"] ?? 0
+              : (splitRightDerivedData?.visibleListCounts as Readonly<Record<string, number>> | undefined)?.["routine"] ?? 0;
+            const updateRightDuplicateTitleMode = () => updateRightUi((current) => {
+              if (!current.duplicateTitleMode) return { ...current, duplicateTitleMode: true };
+              const cleanedSearch = current.search
+                .split(/\s+/)
+                .filter((token) => !DUPLICATE_TITLE_SEARCH_OPERATORS.includes(token.toLowerCase() as (typeof DUPLICATE_TITLE_SEARCH_OPERATORS)[number]))
+                .join(" ")
+                .trim();
+              return { ...current, duplicateTitleMode: false, search: cleanedSearch };
+            });
+            const openTaskInRightWorkspaceTab = (taskId: string) => {
+              const id = `workspace-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+              const owner = { ...rightOwner, taskWorkspaceTabId: id };
+              const blockMessage = getTaskEditorOpenBlockMessage({
+                currentEditorOwner: taskEditorOwnerRef.current,
+                currentEditorTaskId: sharedTaskEditorOverlayTaskId,
+                draftOwnerKeys: taskPanelDraftOwnerKeys,
+                editorIsOpen: Boolean(sharedTaskEditorOverlayTaskId),
+                owner,
+                requestedTaskId: taskId,
+              });
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              const destination = getFollowTaskDestination(taskId);
+              const created = updateSplitRightWorkspace((current) => createTaskWorkspaceTabState(current, {
+                currentFolderId: rightCurrentFolderId,
+                id,
+                isRailHidden: false,
+                kind: "tasks",
+                label: `Tab ${current.tabs.length + 1}`,
+                taskTableLayoutPreferences: splitRightActiveTaskWorkspaceTab.taskTableLayoutPreferences,
+                taskUiState: {
+                  ...splitRightTasksUiState,
+                  search: "",
+                  ...(destination ? { selectedBucket: destination.id } : {}),
+                  tasksSurface: "tasks",
+                },
+              }));
+              if (created) openSharedTaskEditor(taskId, { owner, navigationTaskIds: [taskId], preserveActivePage: true });
+            };
+            const clearRightTableColumnFilter = (dimension: "priority" | "repeat" | "taskType" | "title" | "lists" | "tags" | "link" | "notes") => updateRightUi((current) => {
+              if (dimension === "priority" || dimension === "repeat" || dimension === "taskType") {
+                return { ...current, tableColumnFilters: { ...current.tableColumnFilters, [dimension]: [] } };
+              }
+              const textFilters = { ...current.tableColumnFilters.text };
+              delete textFilters[dimension];
+              return { ...current, tableColumnFilters: { ...current.tableColumnFilters, text: textFilters } };
+            });
+            const rightFilterRowsNode = (
+              <div className="space-y-2">
+                <FilterRows
+                  compact
+                  duplicateTitleMode={splitRightTasksUiState.duplicateTitleMode}
+                  includeSteps={splitRightTasksUiState.includeStepsByView[splitRightTasksUiState.view]}
+                  hasActiveFilters={hasActiveTaskFilters(splitRightTasksUiState)}
+                  isOpen={isSplitRightTaskFiltersOpen}
+                  matchAny={splitRightTasksUiState.matchAny}
+                  pinnedCount={rightVisiblePinnedCount}
+                  pinnedFilterActive={splitRightTasksUiState.selectedBucket === "pinned"}
+                  routineCount={rightVisibleRoutineCount}
+                  routineFilterActive={splitRightTasksUiState.selectedBucket === "routine"}
+                  onReset={() => updateRightUi((current) => resetTaskFiltersPreservingView(current))}
+                  onTogglePinnedFilter={() => updateRightBucket(splitRightTasksUiState.selectedBucket === "pinned" ? "today" : "pinned")}
+                  onToggleRoutineFilter={() => updateRightBucket(splitRightTasksUiState.selectedBucket === "routine" ? "today" : "routine")}
+                  onToggleDuplicateTitleMode={updateRightDuplicateTitleMode}
+                  onToggleIncludeSteps={() => updateRightUi((current) => ({
+                    ...current,
+                    includeStepsByView: { ...current.includeStepsByView, [current.view]: !current.includeStepsByView[current.view] },
+                  }))}
+                  onToggleEnergy={(energy) => updateRightUi((current) => ({
+                    ...current,
+                    energyFilters: current.energyFilters.includes(energy)
+                      ? current.energyFilters.filter((value) => value !== energy)
+                      : [...current.energyFilters, energy],
+                  }))}
+                  onToggleMatchMode={() => updateRightUi((current) => ({ ...current, matchAny: !current.matchAny }))}
+                  onToggleOpen={() => setIsSplitRightTaskFiltersOpen((current) => !current)}
+                  onToggleStatusFilter={(status) => updateRightUi((current) => ({
+                    ...current,
+                    statusFilters: current.statusFilters.includes(status)
+                      ? current.statusFilters.filter((value) => value !== status)
+                      : [...current.statusFilters, status],
+                  }))}
+                  statusCounts={rightStatusCounts}
+                  selectedStatuses={splitRightTasksUiState.statusFilters}
+                  selectedEnergies={splitRightTasksUiState.energyFilters}
+                  tableColumnFilters={splitRightTasksUiState.tableColumnFilters}
+                  customBehaviorRulesets={customBehaviorRulesets}
+                  onClearTableColumnFilter={clearRightTableColumnFilter}
+                  listSortPreference={splitRightTasksUiState.view === "list" && !splitRightTasksUiState.duplicateTitleMode ? rightListSortPreference : undefined}
+                  onListSortPreferenceChange={splitRightTasksUiState.view === "list" && !splitRightTasksUiState.duplicateTitleMode
+                    ? (preference) => updateRightUi((current) => ({
+                      ...current,
+                      listSortBySurface: { ...current.listSortBySurface, [rightListSortSurfaceId]: preference },
+                    }))
+                    : undefined}
                 />
-              </>
-            )}
-            right={splitRightTasksUiState && splitRightTaskViewReadModel ? (
-              <ReadOnlyTasksPanel
-                displayStatusByTaskId={taskDisplayStatusByTaskId}
-                onSearchChange={updateSplitRightSearch}
-                search={splitRightTasksUiState.search}
-                tasks={splitRightTaskViewReadModel.selectedBucketTasks}
-              />
-            ) : null}
-            splitRatio={masterWorkspace.workspace.splitRatio}
-          />
-        ) : activePage === "Focus" ? (
+              </div>
+            );
+            const rightListElement = isValidElement(tasksWorkspace.props.listViewPanel)
+              ? tasksWorkspace.props.listViewPanel as ReactElement<ComponentProps<typeof TasksListAdapter>>
+              : null;
+            if (!rightListElement) return null;
+            const rightBaseTableProps = rightListElement.props.tableProps;
+            const reportRightTableDraft = (isEditing: boolean) => {
+              setIsSplitRightTasksTableDraftOpen(isEditing);
+              reportTaskPanelDraft(rightOwnerKey, isEditing);
+            };
+            const reportRightListDraft = (isEditing: boolean) => {
+              setIsSplitRightTasksListDraftOpen(isEditing);
+              reportTaskPanelDraft(rightOwnerKey, isEditing);
+            };
+            const rightTaskTableProps = {
+              ...rightBaseTableProps,
+              allTasks: tasksForActiveStatusRead as Task[],
+              columnFilters: splitRightTasksUiState.tableColumnFilters,
+              currentListId: splitRightTasksUiState.selectedBucket,
+              currentListLabel: rightSelectedBucketLabel,
+              energyColumnFilters: splitRightTasksUiState.energyFilters,
+              emptyStateMessage: splitRightTasksUiState.selectedBucket === "pinned" ? "No pinned tasks match this view right now." : "No tasks match this view right now.",
+              highlightedActiveTaskId: null,
+              highlightedRevealShouldFocus: false,
+              highlightedScrollToken: null,
+              highlightedTaskIds: [],
+              matchedTaskContentFolderIds: getTaskContentFolderSearchMatchIds(stableCanonicalTaskIndex, rightSearch),
+              onClearSelection: clearSplitRightListTaskSelection,
+              onColumnFiltersChange: (tableColumnFilters: TaskUiState["tableColumnFilters"]) => updateRightUi((current) => ({ ...current, tableColumnFilters })),
+              onEnergyColumnFiltersChange: (energyFilters: TaskUiState["energyFilters"]) => updateRightUi((current) => ({ ...current, energyFilters })),
+              onOpenBatchDelete: () => openBatchDeleteModal(splitRightSelectedTaskIds),
+              onOpenBatchEdit: () => openBatchEditModal(splitRightSelectedTaskIds),
+              onOpenChildTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((task) => task.id), preserveActivePage: true }),
+              onOpenTaskEditor: (taskId: string, navigationTaskIds?: string[]) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds, preserveActivePage: true }),
+              onOpenTaskInNewTab: openTaskInRightWorkspaceTab,
+              onRequestedEditorFocusHandled: () => undefined,
+              onRequestedOpenTaskHandled: () => undefined,
+              onRequestedOpenTaskOverlayClose: closeSharedTaskEditorOverlay,
+              onSelectAllVisible: selectAllSplitRightVisibleListTasks,
+              onStatusColumnFiltersChange: (statusFilters: TaskUiState["statusFilters"]) => updateRightUi((current) => ({ ...current, statusFilters })),
+              onTaskTableLayoutPreferencesChange: (preferences: TaskTableLayoutPreferences) => updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? { ...tab, taskTableLayoutPreferences: preferences } : tab),
+              })),
+              onToggleTaskSelection: toggleSplitRightListTaskSelection,
+              onVisibleSearchMatchIdsChange: () => undefined,
+              requestedEditorFocus: null,
+              requestedOpenTask: null,
+              requestedOpenTaskId: null,
+              searchActive: rightSearch.length > 0,
+              searchMatchedChildTaskIds: Array.from(splitRightTaskViewReadModel.searchMatchedChildTaskIds),
+              searchMatchedStepParentTaskIds: Array.from(splitRightTaskViewReadModel.searchMatchedStepParentTaskIds),
+              selectedTaskIds: splitRightSelectedTaskIds,
+              statusColumnFilters: splitRightTasksUiState.statusFilters,
+              statusMatchedChildTaskIds: Array.from(splitRightDerivedData?.statusMatchedChildTaskIds ?? []),
+              statusMatchedStepParentTaskIds: Array.from(splitRightDerivedData?.statusMatchedStepParentTaskIds ?? []),
+              statusFilterActive: splitRightTaskViewReadModel.hierarchyStatusFilterActive,
+              taskTableLayoutPreferences: rightTableLayoutPreferences,
+              tasks: rightSelectedTasks as Task[],
+            };
+            const rightPanelProps = {
+              ...rightListElement.props.panelProps,
+              filterRowsNode: rightFilterRowsNode,
+              listSortPreference: rightListSortPreference,
+              onOpenArchive: () => updateRightBucket("archive"),
+              onOpenCompletedMilestones: () => updateRightUi((current) => ({ ...current, tasksSurface: "completed_milestones" })),
+              onOpenTrash: () => updateRightBucket("trash"),
+              onSelectBucket: updateRightBucket,
+              onSetView: changeRightView,
+              onUpdateSearch: updateSplitRightSearch,
+              search: splitRightTasksUiState.search,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              view: splitRightTasksUiState.view,
+            };
+            const rightListViewPanel = cloneElement(rightListElement, {
+              currentListLabel: rightSelectedBucketLabel,
+              filterRowsNode: rightFilterRowsNode,
+              listSortPreference: rightListSortPreference,
+              onDraftEditingChange: reportRightListDraft,
+              panelProps: rightPanelProps,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              tableProps: rightTaskTableProps,
+            });
+            const rightTableViewPanel = splitRightTasksUiState.duplicateTitleMode
+              ? (
+                <DuplicateTaskGroupsAdapter
+                  duplicateGroups={splitRightDerivedData?.duplicateTitleGroups ?? []}
+                  filterRowsNode={rightFilterRowsNode}
+                  listDefinitions={availableTaskLists}
+                  listMembershipsByTaskId={taskListMembershipsByTaskId}
+                  onClearSelection={clearSplitRightListTaskSelection}
+                  onOpenBatchDelete={() => openBatchDeleteModal(splitRightSelectedTaskIds)}
+                  onOpenBatchEdit={() => openBatchEditModal(splitRightSelectedTaskIds)}
+                  onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
+                  onOpenTaskEditor={(taskId) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((task) => task.id), preserveActivePage: true })}
+                  onSelectTaskIds={selectAllSplitRightVisibleListTasks}
+                  onToggleTaskSelection={toggleSplitRightListTaskSelection}
+                  panelProps={rightPanelProps}
+                  selectedTaskIds={splitRightSelectedTaskIds}
+                />
+              )
+              : (
+                <TasksTableAdapter
+                  filterRowsNode={rightFilterRowsNode}
+                  onDraftEditingChange={reportRightTableDraft}
+                  panelProps={rightPanelProps}
+                  tableProps={rightTaskTableProps}
+                />
+              );
+            const baseAlternatePanel = isValidElement(tasksWorkspace.props.alternateViewPanel)
+              ? tasksWorkspace.props.alternateViewPanel as ReactElement<ComponentProps<typeof TasksNonListShell>>
+              : null;
+            const rightAlternateViewPanel = baseAlternatePanel ? cloneElement(baseAlternatePanel, {
+              calendarNode: isValidElement(baseAlternatePanel.props.calendarNode)
+                ? cloneElement(baseAlternatePanel.props.calendarNode as ReactElement<ComponentProps<typeof TaskCalendarView>>, {
+                  onOpenTask: (task: Task) => openSharedTaskEditor(task.id, { owner: rightOwner, navigationTaskIds: splitRightTaskViewReadModel.calendarTasks.map((entry) => entry.id), preserveActivePage: true }),
+                  tasks: splitRightTaskViewReadModel.calendarTasks,
+                })
+                : baseAlternatePanel.props.calendarNode,
+              cardsNode: isValidElement(baseAlternatePanel.props.cardsNode)
+                ? cloneElement(baseAlternatePanel.props.cardsNode as ReactElement<ComponentProps<typeof TaskCardGallery>>, {
+                  onEditTask: (task: Task) => openSharedTaskEditor(task.id, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((entry) => entry.id), preserveActivePage: true }),
+                  tasks: rightSelectedTasks,
+                })
+                : baseAlternatePanel.props.cardsNode,
+              dailyPlanningNode: isValidElement(baseAlternatePanel.props.dailyPlanningNode)
+                ? cloneElement(baseAlternatePanel.props.dailyPlanningNode as ReactElement<ComponentProps<typeof DailyPlanningPanel>>, { onSelectBucket: updateRightBucket })
+                : baseAlternatePanel.props.dailyPlanningNode,
+              filterRowsNode: rightFilterRowsNode,
+              matrixNode: isValidElement(baseAlternatePanel.props.matrixNode)
+                ? cloneElement(baseAlternatePanel.props.matrixNode as ReactElement<ComponentProps<typeof TaskMatrixView>>, {
+                  onEditTask: (task: Task) => openSharedTaskEditor(task.id, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.filter(isTaskOpen).map((entry) => entry.id), preserveActivePage: true }),
+                  tasks: rightSelectedTasks.filter(isTaskOpen),
+                })
+                : baseAlternatePanel.props.matrixNode,
+              view: splitRightTasksUiState.view,
+            }) : tasksWorkspace.props.alternateViewPanel;
+            const rightOperationsHeaderProps = {
+              ...tasksWorkspace.props.operationsHeaderProps,
+              filterRowsNode: rightFilterRowsNode,
+              hideSearch: splitRightTasksUiState.duplicateTitleMode,
+              isRailHidden: splitRightActiveTaskWorkspaceTab.isRailHidden,
+              listVisibleColumns: splitRightTasksUiState.visibleColumnsByView[splitRightTasksUiState.view],
+              lists: rightTaskListRailStructureOptions.primaryRail,
+              openFolderRails: rightTaskListRailStructureOptions.openFolderRails,
+              currentFolderBreadcrumbs: rightFolderBreadcrumbs,
+              currentFolderId: rightCurrentFolderId,
+              onOpenArchive: () => updateRightBucket("archive"),
+              onOpenTrash: () => updateRightBucket("trash"),
+              onEmptyTrash: () => { void emptyTrash(splitRightTasksUiState.selectedBucket); },
+              onReorderListColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => updateRightUi((current) => {
+                const columns = [...current.visibleColumnsByView.table];
+                const fromIndex = columns.indexOf(columnId);
+                const toIndex = columns.indexOf(targetColumnId);
+                if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return current;
+                const [moved] = columns.splice(fromIndex, 1);
+                if (!moved) return current;
+                columns.splice(toIndex, 0, moved);
+                return { ...current, visibleColumnsByView: { ...current.visibleColumnsByView, table: columns } };
+              }),
+              onSearchChange: updateSplitRightSearch,
+              onSearchDraftEditingChange: (isEditing: boolean) => {
+                setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
+                reportTaskPanelDraft(rightOwnerKey, isEditing);
+              },
+              onSearchSubmit: updateSplitRightSearch,
+              onSelectBucket: updateRightBucket,
+              onSelectDirectoryEntry: (entry: typeof allTaskListDirectoryEntries[number]) => {
+                if (entry.kind === "folder") {
+                  updateRightCurrentFolder(entry.id);
+                  return;
+                }
+                updateRightCurrentFolder(entry.kind === "list" ? entry.folderId : null);
+                updateRightBucket(entry.id);
+              },
+              onToggleListColumn: (columnId: AgentPlanColumnId) => updateRightUi((current) => {
+                const columns = current.visibleColumnsByView.table;
+                const nextColumns = columns.includes(columnId) ? columns.filter((column) => column !== columnId) : [...columns, columnId];
+                return { ...current, visibleColumnsByView: { ...current.visibleColumnsByView, table: nextColumns } };
+              }),
+              onNavigateFolder: updateRightCurrentFolder,
+              onToggleRail: () => updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? { ...tab, isRailHidden: !tab.isRailHidden } : tab),
+              })),
+              onViewChange: changeRightView,
+              search: splitRightTasksUiState.search,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              view: splitRightTasksUiState.view,
+            };
+            const createRightWorkspaceTab = () => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              updateSplitRightWorkspace((current) => {
+              const active = resolveActiveTaskWorkspaceTab(current);
+              const id = `workspace-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+              return createTaskWorkspaceTabState(current, {
+                currentFolderId: rightCurrentFolderId,
+                id,
+                isRailHidden: false,
+                kind: "tasks",
+                label: `Tab ${current.tabs.length + 1}`,
+                taskTableLayoutPreferences: splitRightActiveTaskWorkspaceTab.taskTableLayoutPreferences,
+                taskUiState: { ...active.taskUiState, tasksSurface: "tasks" },
+              });
+              });
+            };
+            const updateRightTaskWorkspace = (updater: (current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState) => updateSplitRightWorkspace(updater);
+            const rightPathsWorkspacePanel = isValidElement(tasksWorkspace.props.pathsWorkspacePanel)
+              ? cloneElement(tasksWorkspace.props.pathsWorkspacePanel as ReactElement<ComponentProps<typeof PathsWorkspace>>, {
+                onOpenTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, preserveActivePage: true }),
+              })
+              : tasksWorkspace.props.pathsWorkspacePanel;
+            const rightOnTimeWorkspacePanel = isValidElement(tasksWorkspace.props.onTimeWorkspacePanel)
+              ? cloneElement(tasksWorkspace.props.onTimeWorkspacePanel as ReactElement<ComponentProps<typeof OnTimePlannerWorkspace>>, {
+                onOpenTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, initialField: "estimated_time" }),
+              })
+              : tasksWorkspace.props.onTimeWorkspacePanel;
+            const rightMilestonesWorkspacePanel = isValidElement(tasksWorkspace.props.completedMilestonesWorkspacePanel)
+              ? cloneElement(tasksWorkspace.props.completedMilestonesWorkspacePanel as ReactElement<ComponentProps<typeof CompletedMilestonesWorkspace>>, {
+                onOpenTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, preserveActivePage: true }),
+              })
+              : tasksWorkspace.props.completedMilestonesWorkspacePanel;
+            return cloneElement(tasksWorkspace, {
+              key: `right-${splitPanels.rightTab.id}`,
+              activeMasterTabId: splitPanels.rightTab.id,
+              activeTabId: splitRightTaskWorkspaceTabsState.activeTabId,
+              alternateViewPanel: rightAlternateViewPanel,
+              brainstormWorkspacePanel: tasksWorkspace.props.brainstormWorkspacePanel,
+              completedMilestonesWorkspacePanel: rightMilestonesWorkspacePanel,
+              listViewPanel: rightListViewPanel,
+              onAddTab: createRightWorkspaceTab,
+              onCloseTab: (tabId: string) => {
+                const blockMessage = getRightTaskTabDraftBlockMessage(tabId);
+                if (blockMessage) {
+                  setMessage({ tone: "warn", text: blockMessage });
+                  return;
+                }
+                updateRightTaskWorkspace((current) => closeTaskWorkspaceTabState(current, tabId));
+              },
+              onDraftEditingChange: (isEditing: boolean) => {
+                setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
+                reportTaskPanelDraft(rightOwnerKey, isEditing);
+              },
+              onReorderTab: (tabId: string, targetIndex: number) => updateRightTaskWorkspace((current) => reorderTaskWorkspaceTabToIndex(current, tabId, targetIndex)),
+              onRenameTab: (tabId: string, nextLabel: string) => updateRightTaskWorkspace((current) => renameTaskWorkspaceTabState(current, tabId, nextLabel)),
+              onSurfaceChange: (surface: TaskUiState["tasksSurface"]) => {
+                const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+                if (blockMessage) {
+                  setMessage({ tone: "warn", text: blockMessage });
+                  return;
+                }
+                updateRightUi((current) => ({ ...current, tasksSurface: surface }));
+              },
+              onTabChange: (tabId: string) => {
+                if (tabId !== splitRightTaskWorkspaceTabsState.activeTabId) {
+                  const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+                  if (blockMessage) {
+                    setMessage({ tone: "warn", text: blockMessage });
+                    return;
+                  }
+                }
+                updateRightTaskWorkspace((current) => current.tabs.some((tab) => tab.id === tabId) ? { ...current, activeTabId: tabId } : current);
+              },
+              onTimeWorkspacePanel: rightOnTimeWorkspacePanel,
+              operationsHeaderProps: rightOperationsHeaderProps,
+              pathsWorkspacePanel: rightPathsWorkspacePanel,
+              reportWorkspacePanel: tasksWorkspace.props.reportWorkspacePanel,
+              showSharedTaskEditorOverlay: false,
+              surface: splitRightTasksUiState.tasksSurface,
+              tableViewPanel: rightTableViewPanel,
+              tabs: splitRightTaskWorkspaceTabsState.tabs,
+              view: splitRightTasksUiState.duplicateTitleMode ? "table" : splitRightTasksUiState.view,
+              archiveCount: splitRightDerivedData?.archiveFilteredTasksSorted.length ?? 0,
+              trashCount: splitRightDerivedData?.trashFilteredTasksSorted.length ?? 0,
+            });
+          })();
+          return (
+            <TasksSplitLayout
+              active={isTasksSplit && Boolean(rightWorkspace)}
+              left={<>{taskWorkspaceFlowLayer}{tasksWorkspace}</>}
+              right={rightWorkspace}
+              splitRatio={masterWorkspace.workspace.splitRatio}
+            />
+          );
+        })() : activePage === "Focus" ? (
           <FocusPage
             activeSessions={activeSessions}
             adjustments={focusDailyGoalAdjustments}

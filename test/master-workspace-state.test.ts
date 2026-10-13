@@ -26,6 +26,7 @@ import {
   selectJournalHistoryEntryForEdit,
   updateMasterTabTasksUiState,
   updateMasterTabTasksWorkspace,
+  updateMasterTabTasksWorkspaceState,
   updateMasterTabJournalView,
   updateMasterTabFoodView,
   updateMasterTabNotesView,
@@ -516,6 +517,39 @@ test("each Tasks master tab gets its own normalized workspace snapshot", () => {
   assert.equal(masterTabTasksWorkspaceMatchesLiveState(updated, panelId, "master-tab-1", tasksState()), false);
 });
 
+test("panel-targeted workspace updates change only the requested Tasks tab snapshot", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const panelId = initial.panels[0].id;
+  const split = duplicateFocusedPageIntoRightPanel(initial, { panelId: "right-panel", tabId: "right-task-tab" });
+  const rightPanel = split.panels.find((panel) => panel.side === "right");
+  assert.ok(rightPanel);
+  const currentRight = resolveMasterTabTasksWorkspace(split, rightPanel.id, "right-task-tab");
+  assert.ok(currentRight);
+  const nextRight = {
+    ...currentRight,
+    activeTabId: "workspace-right",
+    tabs: [...currentRight.tabs, {
+      ...currentRight.tabs[0],
+      currentFolderId: "folder-right",
+      id: "workspace-right",
+      label: "Right Tab",
+      taskTableLayoutPreferences: { columnOrder: ["title", "status"], sortState: { columnId: "title", optionId: "a-z" } },
+      taskUiState: { ...currentRight.tabs[0].taskUiState, search: "right query" },
+    }],
+  };
+
+  const updated = updateMasterTabTasksWorkspaceState(split, rightPanel.id, "right-task-tab", nextRight);
+  assert.equal(resolveMasterTabTasksWorkspace(updated, rightPanel.id, "right-task-tab")?.activeTabId, "workspace-right");
+  assert.equal(resolveMasterTabTasksWorkspace(updated, panelId, "master-tab-1")?.activeTabId, currentRight.activeTabId);
+  assert.equal(resolveMasterTabTasksWorkspace(updated, rightPanel.id, "right-task-tab")?.tabs.at(-1)?.taskUiState.search, "right query");
+  assert.deepEqual(resolveMasterTabTasksWorkspace(updated, rightPanel.id, "right-task-tab")?.tabs.at(-1)?.taskTableLayoutPreferences, {
+    columnOrder: ["title", "status"],
+    sortState: { columnId: "title", optionId: "a-z" },
+  });
+  assert.equal(resolveMasterTabTasksWorkspace(updated, rightPanel.id, "right-task-tab")?.tabs.at(-1)?.currentFolderId, "folder-right");
+  assert.equal(updateMasterTabTasksWorkspaceState(updated, "missing-panel", "right-task-tab", nextRight), updated);
+});
+
 test("panel-targeted Tasks updates keep left and right presentations independent while left stays focused", () => {
   const initial = initializeMasterWorkspaceState("Tasks", tasksState());
   const leftPanel = initial.panels[0];
@@ -978,7 +1012,18 @@ test("split duplication copies destination and settings, then closing split disc
 });
 
 test("Split Right keeps an independent Tasks presentation and saved split restoration bounded to two panels", () => {
-  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const sourceTasksState = tasksState();
+  const initial = initializeMasterWorkspaceState("Tasks", {
+    ...sourceTasksState,
+    tabs: sourceTasksState.tabs.map((tab) => ({
+      ...tab,
+      currentFolderId: "folder-left",
+      taskTableLayoutPreferences: {
+        columnOrder: ["title", "status"],
+        sortState: { columnId: "title", optionId: "a-z" },
+      },
+    })),
+  });
   const leftPanel = initial.panels[0];
   const leftTab = leftPanel.tabs[0];
   const split = duplicateFocusedPageIntoRightPanel(initial, { panelId: "right-panel", tabId: "right-tasks" });
@@ -991,6 +1036,11 @@ test("Split Right keeps an independent Tasks presentation and saved split restor
   assert.equal(split.splitRatio, 0.5);
   assert.equal(resolveMasterTabTasksUiState(split, leftPanel.id, leftTab.id)?.selectedBucket, "priority_3_4");
   assert.equal(resolveMasterTabTasksUiState(split, rightPanel.id, rightTab.id)?.selectedBucket, "priority_3_4");
+  assert.equal(resolveMasterTabTasksWorkspace(split, rightPanel.id, rightTab.id)?.tabs[0].currentFolderId, "folder-left");
+  assert.deepEqual(resolveMasterTabTasksWorkspace(split, rightPanel.id, rightTab.id)?.tabs[0].taskTableLayoutPreferences, {
+    columnOrder: ["title", "status"],
+    sortState: { columnId: "title", optionId: "a-z" },
+  });
 
   const rightSearch = updateMasterTabTasksUiState(split, rightPanel.id, rightTab.id, (current) => ({
     ...current,

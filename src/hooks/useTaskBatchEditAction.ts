@@ -115,8 +115,12 @@ export function useTaskBatchEditAction({
   timezone = "UTC",
   updateTaskRowWithLegacyEnergyFallback,
 }: UseTaskBatchEditActionOptions) {
-  async function applyBatchTaskEdit(draft: BatchTaskEditDraft) {
-    if (selectedListTasks.length === 0) {
+  async function applyBatchTaskEdit(
+    draft: BatchTaskEditDraft,
+    options?: { clearSelection?: boolean; selectedTasks?: Task[] },
+  ) {
+    const tasksToEdit = options?.selectedTasks ?? selectedListTasks;
+    if (tasksToEdit.length === 0) {
       return;
     }
 
@@ -147,7 +151,7 @@ export function useTaskBatchEditAction({
     let behaviorSelectionMutationCommitted = false;
 
     // Preflight every selected task before persisting any part of the batch.
-    for (const task of selectedListTasks) {
+    for (const task of tasksToEdit) {
       const updateValues: TaskUpdate = {};
       const taskTypeSkipped = Boolean(
         requestedTaskTypeSelection
@@ -488,7 +492,7 @@ export function useTaskBatchEditAction({
             await saveFocusSelection([...nextFocusedTaskIds], new Set(nextTasks.map((task) => task.id)));
           }
         }
-        clearListTaskSelection();
+        if (options?.clearSelection !== false) clearListTaskSelection();
       }
       if (behaviorSelectionMutationCommitted && refreshCustomBehaviorRulesets && !(await refreshCustomBehaviorRulesets())) {
         throw new Error("The committed Task behavior selections could not be refreshed in the browser.");

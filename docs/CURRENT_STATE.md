@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.154`.
+- Current working app version: `7.16.155`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,26 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.155 Full Interactive Split Right MVP
+
+Split Right renders the same `TasksWorkspace` in both panels while keeping one
+TaskApp, one `useTaskUiState` owner, one workspace-data runtime, one HUD, and
+one set of data subscriptions. The right panel has its own saved Tasks view,
+surface, search and filter state, list and table sorting, nested workspace tabs,
+folder navigation, selected rows, and scroll container. Both panels use the
+shared TaskApp mutation handlers and live Task data, so successful edits are
+shared. The shared Task editor records its panel/tab owner and blocks opening a
+competing editor while another panel owns an unsaved edit. Right-panel batch
+edit and delete actions pass the right panel's selected IDs to the existing
+shared mutation handlers.
+
+Split Right remains behind the development-only Master Workspace feature gate.
+Closing the split returns to the normal single-panel Tasks workspace. No SQL
+or Supabase changes were made. Focused Master Workspace and Task UI state tests,
+targeted ESLint, `git diff --check`, and the production build passed. The
+repository typecheck remains blocked by existing diagnostics outside this
+change; browser QA is still Andrew's manual check.
 
 ## 2026-10-13 7.16.154 Split Right Visible Prototype
 
