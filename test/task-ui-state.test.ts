@@ -80,6 +80,21 @@ test("legacy task workspace tabs preserve existing state while adding calendar d
   assert.equal(normalized.tabs[1]?.taskUiState.includeStepsByView.calendar, true);
 });
 
+test("task workspace tabs preserve independent collapsed content folder presentation", () => {
+  const normalized = normalizeTaskWorkspaceTabsState({
+    activeTabId: "workspace-right",
+    tabs: [{
+      collapsedTaskContentFolderIds: ["folder-a", "folder-b"],
+      id: "workspace-right",
+      isRailHidden: false,
+      label: "Right Tasks",
+      taskUiState: { ...DEFAULT_TASK_UI_STATE },
+    }],
+  });
+
+  assert.deepEqual(normalized.tabs[0]?.collapsedTaskContentFolderIds, ["folder-a", "folder-b"]);
+});
+
 test("task ui state migration drops invalid columns and repairs bucket/view/status filters", () => {
   const migrated = migrateLegacyTaskUiState({
     ...DEFAULT_TASK_UI_STATE,

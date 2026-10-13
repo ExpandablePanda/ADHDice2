@@ -200,6 +200,9 @@ function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
     uiStateVersion: normalized.uiStateVersion,
     tabs: normalized.tabs.map((tab) => ({
       ...tab,
+      ...(tab.collapsedTaskContentFolderIds
+        ? { collapsedTaskContentFolderIds: [...tab.collapsedTaskContentFolderIds] }
+        : {}),
       ...(tab.taskTableLayoutPreferences
         ? { taskTableLayoutPreferences: {
           ...tab.taskTableLayoutPreferences,

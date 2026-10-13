@@ -47,6 +47,7 @@ export type TaskUiState = {
 };
 
 export type TaskWorkspaceTab = {
+  collapsedTaskContentFolderIds?: string[];
   currentFolderId?: string | null;
   kind?: "report" | "tasks";
   id: string;
@@ -313,6 +314,9 @@ function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspace
     : `Tab ${index + 1}`;
 
   return {
+    ...(Array.isArray(candidate.collapsedTaskContentFolderIds)
+      ? { collapsedTaskContentFolderIds: candidate.collapsedTaskContentFolderIds.filter((id): id is string => typeof id === "string") }
+      : {}),
     ...(typeof candidate.currentFolderId === "string" || candidate.currentFolderId === null
       ? { currentFolderId: candidate.currentFolderId }
       : {}),

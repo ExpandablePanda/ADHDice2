@@ -5889,11 +5889,12 @@ export function TaskApp() {
       ...current,
       tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? {
         ...tab,
+        collapsedTaskContentFolderIds: Array.from(collapsedTaskContentFolderIds),
         currentFolderId,
         taskTableLayoutPreferences,
       } : tab),
     };
-  }, [currentFolderId, getTaskWorkspaceTabsState, taskTableLayoutPreferences]);
+  }, [collapsedTaskContentFolderIds, currentFolderId, getTaskWorkspaceTabsState, taskTableLayoutPreferences]);
   const masterWorkspace = useMasterWorkspaceController({
     activePage,
     healthDraftSafetyBySection,
@@ -6004,6 +6005,9 @@ export function TaskApp() {
   }, [splitRightDerivedData, splitRightDerivedPresentation, splitRightSearchSelection, tasks, tasksForCalendarRead]);
   const splitRightTaskWorkspaceTabsState = splitPanels.rightTab?.presentation.tasksWorkspace ?? taskWorkspaceTabsState;
   const splitRightActiveTaskWorkspaceTab = resolveActiveTaskWorkspaceTab(splitRightTaskWorkspaceTabsState);
+  const splitRightCollapsedTaskContentFolderIds = useMemo(() => new Set(
+    splitRightActiveTaskWorkspaceTab.collapsedTaskContentFolderIds ?? Array.from(collapsedTaskContentFolderIds),
+  ), [collapsedTaskContentFolderIds, splitRightActiveTaskWorkspaceTab]);
   const {
     clearListTaskSelection: clearSplitRightListTaskSelection,
     selectAllVisibleListTasks: selectAllSplitRightVisibleListTasks,
@@ -6048,6 +6052,15 @@ export function TaskApp() {
     if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return false;
     return updateSplitRightTasksWorkspace(splitPanels.right.id, splitPanels.rightTab.id, updater);
   }, [isTasksSplit, splitPanels.right, splitPanels.rightTab, updateSplitRightTasksWorkspace]);
+  useEffect(() => {
+    if (!isTasksSplit || splitRightActiveTaskWorkspaceTab.collapsedTaskContentFolderIds) return;
+    updateSplitRightWorkspace((current) => ({
+      ...current,
+      tabs: current.tabs.map((tab) => tab.id === current.activeTabId
+        ? { ...tab, collapsedTaskContentFolderIds: Array.from(collapsedTaskContentFolderIds) }
+        : tab),
+    }));
+  }, [collapsedTaskContentFolderIds, isTasksSplit, splitRightActiveTaskWorkspaceTab, updateSplitRightWorkspace]);
   const updateSplitRightSearch = useCallback((search: string) => {
     updateSplitRightTaskUiState((current) => current.search === search ? current : { ...current, search });
   }, [updateSplitRightTaskUiState]);
@@ -9502,6 +9515,23 @@ export function TaskApp() {
             const rightListSortSurfaceId = getListSortSurfaceId(splitRightTasksUiState.tasksSurface, splitRightTasksUiState.selectedBucket);
             const rightListSortPreference = splitRightTasksUiState.listSortBySurface[rightListSortSurfaceId] ?? DEFAULT_LIST_SORT_PREFERENCE;
             const rightTableLayoutPreferences = splitRightActiveTaskWorkspaceTab.taskTableLayoutPreferences ?? taskTableLayoutPreferences;
+            const toggleRightTaskContentFolderCollapsed = (folderId: string) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => {
+                  if (tab.id !== current.activeTabId) return tab;
+                  const collapsedIds = new Set(tab.collapsedTaskContentFolderIds ?? Array.from(splitRightCollapsedTaskContentFolderIds));
+                  if (collapsedIds.has(folderId)) collapsedIds.delete(folderId);
+                  else collapsedIds.add(folderId);
+                  return { ...tab, collapsedTaskContentFolderIds: Array.from(collapsedIds) };
+                }),
+              }));
+            };
             const rightStatusCounts = splitRightDerivedData?.tableStatusCounts ?? tableStatusCounts;
             const rightVisiblePinnedCount = splitRightSearchSelection
               ? splitRightSearchSelection.listFacetCounts["pinned"] ?? 0
@@ -9535,6 +9565,7 @@ export function TaskApp() {
               }
               const destination = getFollowTaskDestination(taskId);
               const created = updateSplitRightWorkspace((current) => createTaskWorkspaceTabState(current, {
+                collapsedTaskContentFolderIds: Array.from(splitRightCollapsedTaskContentFolderIds),
                 currentFolderId: rightCurrentFolderId,
                 id,
                 isRailHidden: false,
@@ -9626,6 +9657,7 @@ export function TaskApp() {
               ...rightBaseTableProps,
               allTasks: tasksForActiveStatusRead as Task[],
               columnFilters: splitRightTasksUiState.tableColumnFilters,
+              collapsedTaskContentFolderIds: splitRightCollapsedTaskContentFolderIds,
               currentListId: splitRightTasksUiState.selectedBucket,
               currentListLabel: rightSelectedBucketLabel,
               energyColumnFilters: splitRightTasksUiState.energyFilters,
@@ -9653,6 +9685,7 @@ export function TaskApp() {
                 tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? { ...tab, taskTableLayoutPreferences: preferences } : tab),
               })),
               onToggleTaskSelection: toggleSplitRightListTaskSelection,
+              onToggleTaskContentFolderCollapsed: toggleRightTaskContentFolderCollapsed,
               onVisibleSearchMatchIdsChange: () => undefined,
               requestedEditorFocus: null,
               requestedOpenTask: null,
@@ -9849,6 +9882,7 @@ export function TaskApp() {
               const active = resolveActiveTaskWorkspaceTab(current);
               const id = `workspace-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
               return createTaskWorkspaceTabState(current, {
+                collapsedTaskContentFolderIds: Array.from(splitRightCollapsedTaskContentFolderIds),
                 currentFolderId: rightCurrentFolderId,
                 id,
                 isRailHidden: false,

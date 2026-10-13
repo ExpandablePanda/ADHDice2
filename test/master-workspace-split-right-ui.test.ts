@@ -20,6 +20,8 @@ test("Split Right reuses the Tasks workspace with panel-scoped presentation and 
   assert.match(taskAppSource, /<TasksListAdapter/);
   assert.match(taskAppSource, /onOpenBatchDelete: \(\) => openBatchDeleteModal\(splitRightSelectedTaskIds\)/);
   assert.match(taskAppSource, /onOpenBatchEdit: \(\) => openBatchEditModal\(splitRightSelectedTaskIds\)/);
+  assert.match(taskAppSource, /collapsedTaskContentFolderIds: splitRightCollapsedTaskContentFolderIds/);
+  assert.match(taskAppSource, /collapsedTaskContentFolderIds: Array\.from\(collapsedIds\)/);
   assert.match(taskAppSource, /selectedTasks: batchModalTasks/);
   assert.match(taskAppSource, /deleteTasks\(batchActionTaskIdsOverride\)/);
   assert.match(taskAppSource, /tabs:\s*splitRightTaskWorkspaceTabsState\.tabs/);
