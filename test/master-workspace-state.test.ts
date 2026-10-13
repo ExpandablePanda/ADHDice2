@@ -19,6 +19,7 @@ import {
   loadMasterWorkspaceState,
   normalizeMasterWorkspaceState,
   replaceFocusedMasterTabDestination,
+  replaceMasterTabDestination,
   resolveMasterTabTasksUiState,
   resolveMasterTabTasksWorkspace,
   saveMasterWorkspaceState,
@@ -304,6 +305,170 @@ test("deep cross-page navigation keeps the existing Tasks tab snapshot isolated"
   assert.deepEqual(health.panels[0].tabs[0].presentation.tasksWorkspace, customTasks);
   assert.equal(health.panels[0].tabs[0].presentation.healthSection, "Food");
   assert.deepEqual(returnedToTasks.panels[0].tabs[0].presentation.tasksWorkspace, customTasks);
+});
+
+test("explicit destination updates keep left and right panel pages independent", () => {
+  const split = duplicateFocusedPageIntoRightPanel(createDefaultMasterWorkspaceState(), {
+    panelId: "right-panel",
+    tabId: "right-tab",
+  });
+  const leftPanel = split.panels[0];
+  const rightPanel = split.panels[1];
+
+  const rightTasks = replaceMasterTabDestination(split, rightPanel.id, rightPanel.activeTabId, {
+    kind: "tasks-surface",
+    page: "Tasks",
+    surface: "brainstorm",
+  });
+  assert.deepEqual(rightTasks.panels[0].tabs[0].destination, { kind: "page", page: "Home" });
+  assert.deepEqual(rightTasks.panels[1].tabs[0].destination, {
+    kind: "tasks-surface",
+    page: "Tasks",
+    surface: "brainstorm",
+  });
+
+  const leftHealth = replaceMasterTabDestination(rightTasks, leftPanel.id, leftPanel.activeTabId, {
+    kind: "health-tab",
+    page: "Health",
+    tab: "Journal",
+  });
+  assert.deepEqual(leftHealth.panels[0].tabs[0].destination, {
+    kind: "health-tab",
+    page: "Health",
+    tab: "Journal",
+  });
+  assert.deepEqual(leftHealth.panels[1].tabs[0].destination, {
+    kind: "tasks-surface",
+    page: "Tasks",
+    surface: "brainstorm",
+  });
+  assert.equal(leftHealth.focusedPanelId, split.focusedPanelId);
+  assert.equal(leftHealth.visiblePanelId, split.visiblePanelId);
+});
+
+test("explicit destination updates target inactive tabs without changing focus, presentation, or draft identity", () => {
+  const split = duplicateFocusedPageIntoRightPanel(createDefaultMasterWorkspaceState(), {
+    panelId: "right-panel",
+    tabId: "right-tab",
+  });
+  const leftPanel = split.panels[0];
+  const rightPanel = split.panels[1];
+  const withInactiveTab = createMasterTab(split, leftPanel.id, {
+    id: "left-inactive-tab",
+    destination: { kind: "page", page: "Health" },
+    presentation: {
+      healthSection: "Food",
+      scrollTop: 38,
+      journalView: { selectedEntryId: "entry-1", newDraftId: "journal-draft-1", workspaceMode: "history" },
+      notesView: { selection: { kind: "new", draftId: "notes-draft-1" }, search: "meal", activeTag: "work" },
+      tasksWorkspace: tasksState(),
+    },
+  }, false);
+  const targetBefore = withInactiveTab.panels[0].tabs.find((tab) => tab.id === "left-inactive-tab");
+  assert.ok(targetBefore);
+  const rightBefore = withInactiveTab.panels.find((panel) => panel.id === rightPanel.id);
+  const workspace = { ...withInactiveTab, visiblePanelId: leftPanel.id };
+  const beforeFoodView = getMasterTabFoodView(targetBefore);
+  const beforeScratchPaperView = getMasterTabScratchPaperView(targetBefore);
+
+  const updated = replaceMasterTabDestination(workspace, leftPanel.id, targetBefore.id, {
+    kind: "health-tab",
+    page: "Health",
+    tab: "Journal",
+  });
+  const updatedLeft = updated.panels.find((panel) => panel.id === leftPanel.id);
+  const updatedTarget = updatedLeft?.tabs.find((tab) => tab.id === targetBefore.id);
+
+  assert.ok(updatedTarget);
+  assert.equal(updated.focusedPanelId, workspace.focusedPanelId);
+  assert.equal(updated.visiblePanelId, workspace.visiblePanelId);
+  assert.equal(updated.splitRatio, workspace.splitRatio);
+  assert.equal(updatedLeft?.activeTabId, leftPanel.activeTabId);
+  assert.equal(updated.panels.find((panel) => panel.id === rightPanel.id)?.activeTabId, rightPanel.activeTabId);
+  assert.strictEqual(updated.panels.find((panel) => panel.id === rightPanel.id), rightBefore);
+  assert.strictEqual(updatedLeft?.tabs.find((tab) => tab.id === leftPanel.activeTabId), leftPanel.tabs[0]);
+  assert.deepEqual(updatedTarget.destination, { kind: "health-tab", page: "Health", tab: "Journal" });
+  assert.equal(updatedTarget.presentation.healthSection, "Journal");
+  assert.equal(updatedTarget.presentation.scrollTop, 38);
+  assert.deepEqual(updatedTarget.presentation.journalView, targetBefore.presentation.journalView);
+  assert.deepEqual(updatedTarget.presentation.notesView, targetBefore.presentation.notesView);
+  assert.deepEqual(updatedTarget.presentation.tasksWorkspace, targetBefore.presentation.tasksWorkspace);
+  assert.deepEqual(updatedTarget.presentation.foodView, targetBefore.presentation.foodView);
+  assert.deepEqual(updatedTarget.presentation.scratchPaperView, targetBefore.presentation.scratchPaperView);
+  assert.equal(getMasterTabFoodView(updatedTarget).newMealDraftId, beforeFoodView.newMealDraftId);
+  assert.equal(getMasterTabFoodView(updatedTarget).newPlannedMealDraftId, beforeFoodView.newPlannedMealDraftId);
+  assert.equal(getMasterTabFoodView(updatedTarget).newCustomFoodDraftId, beforeFoodView.newCustomFoodDraftId);
+  assert.equal(getMasterTabFoodView(updatedTarget).newRecipeDraftId, beforeFoodView.newRecipeDraftId);
+  assert.equal(getMasterTabFoodView(updatedTarget).newSavedMealDraftId, beforeFoodView.newSavedMealDraftId);
+  assert.equal(getMasterTabScratchPaperView(updatedTarget).newDraftId, beforeScratchPaperView.newDraftId);
+});
+
+test("explicit destination updates normalize page, Tasks, Health, and registered shell actions", () => {
+  const base = createDefaultMasterWorkspaceState();
+  const panelId = base.panels[0].id;
+  const tabId = base.panels[0].activeTabId;
+  const cases = [
+    { kind: "page", page: "Notes" },
+    { kind: "task", page: "Tasks", taskId: " task-1 " },
+    { kind: "tasks-surface", page: "Tasks", surface: "brainstorm" },
+    { kind: "tasks-view", page: "Tasks", surface: "tasks", view: "calendar" },
+    { kind: "health-tab", page: "Health", tab: "Food" },
+    { kind: "page-shell", page: "Health", pageKey: "health:food", shellId: "food-library", healthTab: "Food" },
+  ] as const;
+  const expected = [
+    { kind: "page", page: "Notes" },
+    { kind: "task", page: "Tasks", taskId: "task-1" },
+    { kind: "tasks-surface", page: "Tasks", surface: "brainstorm" },
+    { kind: "tasks-view", page: "Tasks", surface: "tasks", view: "calendar" },
+    { kind: "health-tab", page: "Health", tab: "Food" },
+    { kind: "page-shell", page: "Health", pageKey: "health:food", shellId: "food-library", healthTab: "Food" },
+  ];
+
+  let state = base;
+  for (const [index, destination] of cases.entries()) {
+    state = replaceMasterTabDestination(state, panelId, tabId, destination);
+    assert.deepEqual(state.panels[0].tabs[0].destination, expected[index]);
+  }
+  assert.equal(state.panels[0].tabs[0].presentation.healthSection, "Food");
+  assert.equal(state.panels[0].tabs[0].presentation.tasksWorkspace?.activeTabId, DEFAULT_TASK_WORKSPACE_TABS_STATE.activeTabId);
+});
+
+test("explicit destination helper preserves focused navigation parity and no-op identity", () => {
+  const state = initializeMasterWorkspaceState("Tasks", tasksState());
+  const panel = state.panels[0];
+  const destination = { kind: "tasks-view", page: "Tasks", surface: "tasks", view: "calendar" } as const;
+  const focused = replaceFocusedMasterTabDestination(state, destination);
+  const targeted = replaceMasterTabDestination(state, panel.id, panel.activeTabId, destination);
+  assert.deepEqual(focused, targeted);
+  assert.deepEqual(focused.panels[0].tabs[0].presentation.tasksWorkspace, state.panels[0].tabs[0].presentation.tasksWorkspace);
+  assert.strictEqual(replaceMasterTabDestination(state, panel.id, panel.activeTabId, state.panels[0].tabs[0].destination), state);
+  assert.strictEqual(replaceMasterTabDestination(state, "missing-panel", panel.activeTabId, destination), state);
+  assert.strictEqual(replaceMasterTabDestination(state, panel.id, "missing-tab", destination), state);
+});
+
+test("persistence round-trip retains independent left and right destinations", () => {
+  const storage = memoryStorage();
+  const split = duplicateFocusedPageIntoRightPanel(createDefaultMasterWorkspaceState(), {
+    panelId: "right-panel",
+    tabId: "right-tab",
+  });
+  const withLeftNotes = replaceMasterTabDestination(split, split.panels[0].id, split.panels[0].activeTabId, {
+    kind: "page",
+    page: "Notes",
+  });
+  const withRightJournal = replaceMasterTabDestination(withLeftNotes, split.panels[1].id, split.panels[1].activeTabId, {
+    kind: "health-tab",
+    page: "Health",
+    tab: "Journal",
+  });
+
+  assert.equal(saveMasterWorkspaceState(storage, "independent-destinations", withRightJournal), true);
+  const restored = loadMasterWorkspaceState(storage, "independent-destinations");
+  assert.deepEqual(restored.panels[0].tabs[0].destination, { kind: "page", page: "Notes" });
+  assert.deepEqual(restored.panels[1].tabs[0].destination, { kind: "health-tab", page: "Health", tab: "Journal" });
+  assert.equal(restored.panels[1].tabs[0].presentation.healthSection, "Journal");
+  assert.equal(restored.focusedPanelId, withRightJournal.focusedPanelId);
+  assert.equal(restored.visiblePanelId, withRightJournal.visiblePanelId);
 });
 
 test("first-use Tasks migration preserves normalized nested tabs and settings as an independent copy", () => {

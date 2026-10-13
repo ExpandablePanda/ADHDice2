@@ -786,29 +786,58 @@ export function activateMasterTab(state: MasterWorkspaceState, panelId: string, 
   };
 }
 
-export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, destination: MasterTabDestination): MasterWorkspaceState {
+function areNormalizedMasterValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => areNormalizedMasterValuesEqual(value, right[index]));
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
+      && areNormalizedMasterValuesEqual(leftRecord[key], rightRecord[key]));
+}
+
+export function replaceMasterTabDestination(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  destination: MasterTabDestination,
+): MasterWorkspaceState {
   const destinationCopy = normalizeDestination(destination);
-  const focusedPanel = state.panels.find((panel) => panel.id === state.focusedPanelId);
-  const focusedTab = focusedPanel?.tabs.find((tab) => tab.id === focusedPanel.activeTabId);
-  if (!focusedPanel || !focusedTab) return state;
-  const presentation = normalizePresentation(focusedTab.presentation, destinationCopy, focusedTab.id);
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const presentation = normalizePresentation(tab.presentation, destinationCopy, tab.id);
   if (
-    JSON.stringify(focusedTab.destination) === JSON.stringify(destinationCopy)
-    && JSON.stringify(focusedTab.presentation) === JSON.stringify(presentation)
+    areNormalizedMasterValuesEqual(tab.destination, destinationCopy)
+    && areNormalizedMasterValuesEqual(tab.presentation, presentation)
   ) return state;
   return {
     ...state,
-    panels: state.panels.map((panel) => panel.id !== state.focusedPanelId ? panel : {
-      ...panel,
-      tabs: panel.tabs.map((tab) => tab.id === panel.activeTabId
-        ? {
-          ...tab,
+    panels: state.panels.map((candidatePanel) => candidatePanel.id !== panelId ? candidatePanel : {
+      ...candidatePanel,
+      tabs: candidatePanel.tabs.map((candidateTab) => candidateTab.id !== tabId
+        ? candidateTab
+        : {
+          ...candidateTab,
           destination: destinationCopy,
           presentation,
-        }
-        : tab),
+        }),
     }),
   };
+}
+
+export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, destination: MasterTabDestination): MasterWorkspaceState {
+  const focusedPanel = state.panels.find((panel) => panel.id === state.focusedPanelId);
+  if (!focusedPanel) return state;
+  return replaceMasterTabDestination(state, focusedPanel.id, focusedPanel.activeTabId, destination);
 }
 
 export function createMasterTab(

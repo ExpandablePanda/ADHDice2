@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-12
+Last reviewed: 2026-10-13
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.152`.
+- Current working app version: `7.16.153`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.153 T6.3a Panel-Targeted Navigation Foundation
+
+Added a pure Master Workspace destination update by explicit panel and tab IDs.
+It reuses the existing destination and presentation normalization, targets
+inactive tabs in either panel, and preserves focus, active tabs, visibility,
+other presentation settings, and draft identities. Focused destination updates
+delegate to the same helper. This is foundation only: it does not change live
+routing, TaskApp rendering, or add Split Right UI.
+
+Focused Master Workspace state and controller tests passed (67/67). Targeted
+ESLint and `git diff --check` passed. Browser QA, full typecheck, and production
+build were not run.
 
 ## 2026-10-13 7.16.152 T6.2c.1 State Updater Replay Correction
 
