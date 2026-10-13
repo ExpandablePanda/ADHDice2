@@ -19,8 +19,11 @@ import {
   loadMasterWorkspaceState,
   normalizeMasterWorkspaceState,
   replaceFocusedMasterTabDestination,
+  resolveMasterTabTasksUiState,
+  resolveMasterTabTasksWorkspace,
   saveMasterWorkspaceState,
   selectJournalHistoryEntryForEdit,
+  updateMasterTabTasksUiState,
   updateMasterTabTasksWorkspace,
   updateMasterTabJournalView,
   updateMasterTabFoodView,
@@ -346,6 +349,208 @@ test("each Tasks master tab gets its own normalized workspace snapshot", () => {
   assert.equal(updateMasterTabTasksWorkspace(updated, panelId, "master-tab-1", changedFirstState), updated);
   assert.equal(masterTabTasksWorkspaceMatchesLiveState(updated, panelId, "master-tab-1", changedFirstState), true);
   assert.equal(masterTabTasksWorkspaceMatchesLiveState(updated, panelId, "master-tab-1", tasksState()), false);
+});
+
+test("panel-targeted Tasks updates keep left and right presentations independent while left stays focused", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const leftPanel = initial.panels[0];
+  const split = duplicateFocusedPageIntoRightPanel(initial, { panelId: "right-panel", tabId: "right-task-tab" });
+  const rightPanel = split.panels.find((panel) => panel.side === "right");
+  assert.ok(rightPanel);
+
+  const withLeftSettings = updateMasterTabTasksUiState(
+    split,
+    leftPanel.id,
+    leftPanel.activeTabId,
+    (current) => ({
+      ...current,
+      search: "left panel",
+      selectedBucket: "priority_3_4",
+      quickFilters: ["today"],
+      statusFilters: ["pending"],
+      view: "list",
+      listSortBySurface: { "tasks:home": { field: "title", direction: "asc" } },
+    }),
+  );
+  const leftFocused = activateMasterPanel(withLeftSettings, leftPanel.id);
+  const leftBefore = resolveMasterTabTasksUiState(leftFocused, leftPanel.id, leftPanel.activeTabId);
+  const leftPanelBeforeTargetUpdate = leftFocused.panels.find((panel) => panel.id === leftPanel.id);
+  assert.ok(leftBefore);
+
+  const rightUpdated = updateMasterTabTasksUiState(
+    leftFocused,
+    rightPanel.id,
+    rightPanel.activeTabId,
+    (current) => ({
+      ...current,
+      search: "right panel",
+      selectedBucket: "attention",
+      quickFilters: ["urgent"],
+      statusFilters: ["not_due"],
+      view: "calendar",
+      listSortBySurface: { "tasks:home": { field: "priority", direction: "desc" } },
+    }),
+  );
+
+  assert.equal(rightUpdated.focusedPanelId, leftPanel.id);
+  assert.strictEqual(rightUpdated.panels.find((panel) => panel.id === leftPanel.id), leftPanelBeforeTargetUpdate);
+  assert.equal(resolveMasterTabTasksUiState(rightUpdated, leftPanel.id, leftPanel.activeTabId)?.search, "left panel");
+  assert.equal(resolveMasterTabTasksUiState(rightUpdated, leftPanel.id, leftPanel.activeTabId)?.selectedBucket, "priority_3_4");
+  assert.deepEqual(resolveMasterTabTasksUiState(rightUpdated, leftPanel.id, leftPanel.activeTabId)?.quickFilters, ["today"]);
+  assert.deepEqual(resolveMasterTabTasksUiState(rightUpdated, leftPanel.id, leftPanel.activeTabId)?.statusFilters, ["pending"]);
+  assert.equal(resolveMasterTabTasksUiState(rightUpdated, leftPanel.id, leftPanel.activeTabId)?.view, "list");
+  assert.deepEqual(
+    resolveMasterTabTasksUiState(rightUpdated, leftPanel.id, leftPanel.activeTabId)?.listSortBySurface["tasks:home"],
+    { field: "title", direction: "asc" },
+  );
+  assert.equal(resolveMasterTabTasksUiState(rightUpdated, rightPanel.id, rightPanel.activeTabId)?.search, "right panel");
+  assert.equal(resolveMasterTabTasksUiState(rightUpdated, rightPanel.id, rightPanel.activeTabId)?.view, "calendar");
+  assert.deepEqual(
+    resolveMasterTabTasksUiState(rightUpdated, rightPanel.id, rightPanel.activeTabId)?.listSortBySurface["tasks:home"],
+    { field: "priority", direction: "desc" },
+  );
+  assert.deepEqual(leftBefore.quickFilters, ["today"]);
+});
+
+test("panel-targeted Tasks functional updates use the latest supplied state", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const { id: panelId, activeTabId: tabId } = initial.panels[0];
+  const first = updateMasterTabTasksUiState(initial, panelId, tabId, (current) => ({
+    ...current,
+    search: `${current.search} latest`,
+  }));
+  const second = updateMasterTabTasksUiState(first, panelId, tabId, (current) => ({
+    ...current,
+    selectedBucket: current.search === " latest" ? "attention" : "today",
+  }));
+
+  assert.equal(resolveMasterTabTasksUiState(second, panelId, tabId)?.search, " latest");
+  assert.equal(resolveMasterTabTasksUiState(second, panelId, tabId)?.selectedBucket, "attention");
+});
+
+test("panel-targeted Tasks updates can address an inactive Master tab", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const panelId = initial.panels[0].id;
+  const inactive = createMasterTab(initial, panelId, {
+    id: "inactive-tasks-tab",
+    destination: { kind: "page", page: "Tasks" },
+    presentation: { tasksWorkspace: tasksState() },
+  }, false);
+  const activeTabId = inactive.panels[0].activeTabId;
+  const updated = updateMasterTabTasksUiState(inactive, panelId, "inactive-tasks-tab", (current) => ({
+    ...current,
+    search: "inactive target",
+    view: "matrix",
+  }));
+
+  assert.equal(updated.panels[0].activeTabId, activeTabId);
+  assert.equal(resolveMasterTabTasksUiState(updated, panelId, activeTabId)?.search, "");
+  assert.equal(resolveMasterTabTasksUiState(updated, panelId, "inactive-tasks-tab")?.search, "inactive target");
+  assert.equal(resolveMasterTabTasksUiState(updated, panelId, "inactive-tasks-tab")?.view, "matrix");
+});
+
+test("panel-targeted Tasks reads and writes reject invalid identities and non-Tasks tabs", () => {
+  const initial = createDefaultMasterWorkspaceState();
+  const panelId = initial.panels[0].id;
+  const tabId = initial.panels[0].activeTabId;
+
+  assert.equal(resolveMasterTabTasksWorkspace(initial, "", tabId), undefined);
+  assert.equal(resolveMasterTabTasksWorkspace(initial, panelId, " missing "), undefined);
+  assert.equal(resolveMasterTabTasksUiState(initial, "missing-panel", tabId), undefined);
+  assert.strictEqual(updateMasterTabTasksUiState(initial, "missing-panel", tabId, (current) => current), initial);
+  assert.strictEqual(updateMasterTabTasksUiState(initial, panelId, "missing-tab", (current) => current), initial);
+  assert.strictEqual(updateMasterTabTasksUiState(initial, panelId, tabId, (current) => ({ ...current, search: "ignored" })), initial);
+});
+
+test("legacy Tasks tabs without snapshots resolve defaults and accept targeted updates", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const panelId = initial.panels[0].id;
+  const tabId = initial.panels[0].activeTabId;
+  const legacyState = {
+    ...initial,
+    panels: initial.panels.map((panel) => panel.id !== panelId ? panel : {
+      ...panel,
+      tabs: panel.tabs.map((tab) => tab.id !== tabId ? tab : {
+        ...tab,
+        presentation: { ...tab.presentation, tasksWorkspace: undefined },
+      }),
+    }),
+  };
+
+  assert.equal(resolveMasterTabTasksUiState(legacyState, panelId, tabId)?.view, "table");
+  assert.equal(resolveMasterTabTasksUiState(legacyState, panelId, tabId)?.search, "");
+  assert.strictEqual(updateMasterTabTasksUiState(legacyState, panelId, tabId, (current) => current), legacyState);
+
+  const updated = updateMasterTabTasksUiState(legacyState, panelId, tabId, (current) => ({
+    ...current,
+    search: "recovered legacy Tasks tab",
+  }));
+  assert.equal(resolveMasterTabTasksUiState(updated, panelId, tabId)?.search, "recovered legacy Tasks tab");
+  assert.ok(updated.panels[0].tabs[0].presentation.tasksWorkspace);
+});
+
+test("panel-targeted Tasks no-op updates preserve the original state reference", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const { id: panelId, activeTabId: tabId } = initial.panels[0];
+
+  assert.strictEqual(updateMasterTabTasksUiState(initial, panelId, tabId, (current) => current), initial);
+  assert.strictEqual(updateMasterTabTasksUiState(initial, panelId, tabId, (current) => ({ ...current })), initial);
+});
+
+test("panel-targeted Tasks updates preserve other tabs and unrelated presentation fields", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const panelId = initial.panels[0].id;
+  const targetTabId = initial.panels[0].activeTabId;
+  const withOtherTab = createMasterTab(initial, panelId, {
+    id: "other-master-tab",
+    destination: { kind: "page", page: "Notes" },
+    presentation: { scrollTop: 22 },
+  }, false);
+  const withUnrelatedFields = {
+    ...withOtherTab,
+    panels: withOtherTab.panels.map((panel) => panel.id !== panelId ? panel : {
+      ...panel,
+      tabs: panel.tabs.map((tab) => tab.id !== targetTabId ? tab : {
+        ...tab,
+        presentation: { ...tab.presentation, scrollTop: 88, healthSection: "Food" as const },
+      }),
+    }),
+  };
+  const otherPanelTab = withUnrelatedFields.panels[0].tabs.find((tab) => tab.id === "other-master-tab");
+  const updated = updateMasterTabTasksUiState(withUnrelatedFields, panelId, targetTabId, (current) => ({
+    ...current,
+    search: "changed target only",
+  }));
+  const target = updated.panels[0].tabs.find((tab) => tab.id === targetTabId);
+  const preservedOtherTab = updated.panels[0].tabs.find((tab) => tab.id === "other-master-tab");
+
+  assert.equal(target?.presentation.scrollTop, 88);
+  assert.equal(target?.presentation.healthSection, "Food");
+  assert.strictEqual(preservedOtherTab, otherPanelTab);
+  assert.equal(preservedOtherTab?.presentation.scrollTop, 22);
+});
+
+test("panel-targeted Tasks updates retain existing normalization and single-panel behavior", () => {
+  const initial = initializeMasterWorkspaceState("Tasks", tasksState());
+  const { id: panelId, activeTabId: tabId } = initial.panels[0];
+  const normalized = updateMasterTabTasksUiState(initial, panelId, tabId, (current) => ({
+    ...current,
+    selectedBucket: "urgent",
+    // @ts-expect-error exercise persisted legacy values through the normalizer
+    view: "unsupported-view",
+    // @ts-expect-error exercise persisted legacy values through the normalizer
+    statusFilters: ["upcoming", "not_due", "pending", "trashed"],
+    listSortBySurface: { "tasks:home": { field: "unsupported-sort", direction: "desc" } as never },
+  }));
+  const uiState = resolveMasterTabTasksUiState(normalized, panelId, tabId);
+
+  assert.equal(uiState?.selectedBucket, "priority_5");
+  assert.equal(uiState?.view, "table");
+  assert.deepEqual(uiState?.statusFilters, ["not_due", "pending"]);
+  assert.deepEqual(uiState?.listSortBySurface["tasks:home"], { field: "manual", direction: "asc" });
+  assert.equal(normalized.panels.length, 1);
+  assert.equal(normalized.focusedPanelId, panelId);
+  assert.equal(resolveMasterTabTasksUiState(normalized, panelId, tabId)?.search, "");
 });
 
 test("Tasks destinations without saved snapshots normalize to a default nested workspace", () => {

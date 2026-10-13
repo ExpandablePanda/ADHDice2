@@ -11,8 +11,11 @@ import {
   DEFAULT_TASK_WORKSPACE_TABS_STATE,
   isAppPage,
   normalizeTaskWorkspaceTabsState,
+  resolveActiveTaskUiState,
+  updateActiveTaskUiState,
   type AppPage,
   type TasksSurface,
+  type TaskUiState,
   type TaskViewMode,
   type TaskWorkspaceTabsState,
 } from "@/lib/task-ui-state";
@@ -564,6 +567,62 @@ export function updateMasterTabScrollPosition(
       }),
     }),
   };
+}
+
+function findMasterTabByIdentity(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+): MasterWorkspaceTab | undefined {
+  if (
+    typeof panelId !== "string"
+    || panelId.length === 0
+    || panelId.trim() !== panelId
+    || typeof tabId !== "string"
+    || tabId.length === 0
+    || tabId.trim() !== tabId
+  ) return undefined;
+
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  return panel?.tabs.find((candidate) => candidate.id === tabId);
+}
+
+export function resolveMasterTabTasksWorkspace(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+): TaskWorkspaceTabsState | undefined {
+  const tab = findMasterTabByIdentity(state, panelId, tabId);
+  if (!tab || tab.destination.page !== "Tasks") return undefined;
+  return cloneTaskWorkspaceState(tab.presentation.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE);
+}
+
+export function resolveMasterTabTasksUiState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+): TaskUiState | undefined {
+  const tasksWorkspace = resolveMasterTabTasksWorkspace(state, panelId, tabId);
+  return tasksWorkspace ? resolveActiveTaskUiState(tasksWorkspace) : undefined;
+}
+
+export function updateMasterTabTasksUiState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  updater: TaskUiState | ((current: TaskUiState) => TaskUiState),
+): MasterWorkspaceState {
+  const tab = findMasterTabByIdentity(state, panelId, tabId);
+  if (!tab || tab.destination.page !== "Tasks") return state;
+
+  const currentWorkspace = cloneTaskWorkspaceState(tab.presentation.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  const nextWorkspace = updateActiveTaskUiState(currentWorkspace, updater);
+  if (
+    nextWorkspace === currentWorkspace
+    || JSON.stringify(nextWorkspace) === JSON.stringify(currentWorkspace)
+  ) return state;
+
+  return updateMasterTabTasksWorkspace(state, panelId, tabId, nextWorkspace);
 }
 
 export function updateMasterTabTasksWorkspace(

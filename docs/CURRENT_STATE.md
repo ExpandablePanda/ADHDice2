@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.148`.
+- Current working app version: `7.16.149`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,27 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.149 T6.2a Panel-Targeted Tasks State Foundation
+
+Added pure Master Workspace helpers that resolve the Tasks workspace and active
+Tasks UI presentation by explicit panel and tab IDs, and functionally update the
+target tab against the supplied latest state. Updates reuse the existing active
+Tasks UI adapter and workspace normalization, preserve other panels, tabs, and
+presentation fields, and leave state unchanged for invalid/non-Tasks targets or
+no-op updates. A legacy Tasks tab with no snapshot reads from defaults and only
+materializes a snapshot when an update changes its presentation.
+
+This is a state transaction foundation only. It does not render a second panel
+or connect panel-targeted writes to the focused live `useTaskUiState` mirror.
+
+Focused Master Workspace state/controller and Task UI-state tests passed
+(73/73). The broader Master Workspace Health contract suite passed 83/85; its
+two failures assert source patterns in unchanged TaskApp and Notes components.
+The broader `test:taskapp-wave` result was 62/73, matching the 7.16.148
+baseline, including its existing Node `.tsx` loader failure and unrelated Task
+assertions. Targeted ESLint and `git diff --check` passed. Browser QA was not
+run.
 
 ## 2026-10-12 7.16.148 T6.1d Tasks View Read-Model Foundation
 
