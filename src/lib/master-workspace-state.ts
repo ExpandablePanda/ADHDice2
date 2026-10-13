@@ -809,6 +809,18 @@ export function activateMasterTab(state: MasterWorkspaceState, panelId: string, 
   };
 }
 
+export function activateMasterTabInPanel(state: MasterWorkspaceState, panelId: string, tabId: string): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  if (!panel || !panel.tabs.some((tab) => tab.id === tabId)) return state;
+  if (panel.activeTabId === tabId) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id === panelId
+      ? { ...candidate, activeTabId: tabId }
+      : candidate),
+  };
+}
+
 function areNormalizedMasterValuesEqual(left: unknown, right: unknown): boolean {
   if (left === right) return true;
   if (Array.isArray(left) || Array.isArray(right)) {
@@ -857,6 +869,29 @@ export function replaceMasterTabDestination(
   };
 }
 
+export function updateMasterTabPresentation(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  updater: MasterTabPresentationState | ((current: MasterTabPresentationState) => MasterTabPresentationState),
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const candidate = typeof updater === "function" ? updater(tab.presentation) : updater;
+  const presentation = normalizePresentation(candidate, tab.destination, tab.id);
+  if (areNormalizedMasterValuesEqual(tab.presentation, presentation)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidatePanel) => candidatePanel.id !== panelId ? candidatePanel : {
+      ...candidatePanel,
+      tabs: candidatePanel.tabs.map((candidateTab) => candidateTab.id !== tabId
+        ? candidateTab
+        : { ...candidateTab, presentation }),
+    }),
+  };
+}
+
 export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, destination: MasterTabDestination): MasterWorkspaceState {
   const focusedPanel = state.panels.find((panel) => panel.id === state.focusedPanelId);
   if (!focusedPanel) return state;
@@ -868,6 +903,7 @@ export function createMasterTab(
   panelId: string,
   tab: MasterWorkspaceTab,
   activate = true,
+  focusPanel = activate,
 ): MasterWorkspaceState {
   const panel = state.panels.find((candidate) => candidate.id === panelId);
   if (!panel || state.panels.some((candidate) => candidate.tabs.some((existing) => existing.id === tab.id))) return state;
@@ -875,14 +911,26 @@ export function createMasterTab(
   const nextTab = { id: tab.id, destination, presentation: normalizePresentation(tab.presentation, destination, tab.id) };
   return {
     ...state,
-    focusedPanelId: activate ? panelId : state.focusedPanelId,
-    visiblePanelId: activate ? panelId : state.visiblePanelId,
+    focusedPanelId: activate && focusPanel ? panelId : state.focusedPanelId,
+    visiblePanelId: activate && focusPanel ? panelId : state.visiblePanelId,
     panels: state.panels.map((candidate) => candidate.id === panelId ? {
       ...candidate,
       tabs: [...candidate.tabs, nextTab],
       activeTabId: activate ? tab.id : candidate.activeTabId,
     } : candidate),
   };
+}
+
+export function closeMasterTabInPanel(state: MasterWorkspaceState, panelId: string, tabId: string): MasterWorkspaceState {
+  const next = closeMasterTab(state, panelId, tabId);
+  if (next === state) return state;
+  const focusedPanelId = next.panels.some((panel) => panel.id === state.focusedPanelId)
+    ? state.focusedPanelId
+    : next.panels[0]?.id ?? state.focusedPanelId;
+  const visiblePanelId = next.panels.some((panel) => panel.id === state.visiblePanelId)
+    ? state.visiblePanelId
+    : focusedPanelId;
+  return { ...next, focusedPanelId, visiblePanelId };
 }
 
 export function closeMasterTab(state: MasterWorkspaceState, panelId: string, tabId: string): MasterWorkspaceState {

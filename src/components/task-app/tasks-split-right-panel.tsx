@@ -1,15 +1,26 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { MasterWorkspacePanel } from "@/components/task-app/master-workspace-panel";
+
+type SplitPanelInfo = {
+  activeTabId: string;
+  id: string;
+  navigation: ReactNode;
+  scrollTop: number;
+};
 
 type TasksSplitLayoutProps = {
   active: boolean;
   left: ReactNode;
   right: ReactNode;
+  leftPanel?: SplitPanelInfo;
+  rightPanel?: SplitPanelInfo;
+  onOverlayHostChange?: (panelId: string, element: HTMLDivElement | null, tabId: string) => void;
   splitRatio: number;
 };
 
-export function TasksSplitLayout({ active, left, right, splitRatio }: TasksSplitLayoutProps) {
+export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, onOverlayHostChange, splitRatio }: TasksSplitLayoutProps) {
   if (!active) return <>{left}</>;
 
   return (
@@ -18,20 +29,30 @@ export function TasksSplitLayout({ active, left, right, splitRatio }: TasksSplit
       data-master-workspace-split="tasks"
       style={{ gridTemplateColumns: `minmax(0, ${splitRatio}fr) minmax(0, ${1 - splitRatio}fr)` }}
     >
-      <section
-        aria-label="Left Tasks panel"
-        data-master-workspace-panel="left"
-        className="adhdice-scrollbar max-h-[calc(100dvh-18rem)] min-h-64 min-w-0 overflow-y-auto overscroll-contain"
-      >
-        {left}
-      </section>
-      <section
-        aria-label="Right Tasks panel"
-        data-master-workspace-panel="right"
-        className="adhdice-scrollbar max-h-[calc(100dvh-18rem)] min-h-64 min-w-0 overflow-y-auto overscroll-contain rounded-[1.5rem] border border-[#ece8f8] bg-white/55 p-3 dark:border-white/10 dark:bg-white/[0.025]"
-      >
-        {right}
-      </section>
+      {leftPanel ? (
+        <MasterWorkspacePanel
+          activeTabId={leftPanel.activeTabId}
+          id={leftPanel.id}
+          navigation={leftPanel.navigation}
+          onOverlayHostChange={onOverlayHostChange}
+          scrollTop={leftPanel.scrollTop}
+          side="left"
+        >
+          {left}
+        </MasterWorkspacePanel>
+      ) : <section data-master-workspace-panel="left">{left}</section>}
+      {rightPanel ? (
+        <MasterWorkspacePanel
+          activeTabId={rightPanel.activeTabId}
+          id={rightPanel.id}
+          navigation={rightPanel.navigation}
+          onOverlayHostChange={onOverlayHostChange}
+          scrollTop={rightPanel.scrollTop}
+          side="right"
+        >
+          {right}
+        </MasterWorkspacePanel>
+      ) : <section data-master-workspace-panel="right">{right}</section>}
     </div>
   );
 }

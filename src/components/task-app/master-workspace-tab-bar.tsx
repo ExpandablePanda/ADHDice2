@@ -55,6 +55,7 @@ type MasterWorkspaceTabBarProps = {
   onCloseSplit: () => void;
   onOpenPage: (page: AppPage) => void;
   onSplitRight: () => void;
+  showSplitActions?: boolean;
   tabs: MasterWorkspaceTab[];
 };
 
@@ -74,6 +75,7 @@ export function MasterWorkspaceTabBar({
   onCloseSplit,
   onOpenPage,
   onSplitRight,
+  showSplitActions = true,
   tabs,
 }: MasterWorkspaceTabBarProps) {
   const [isPageMenuOpen, setIsPageMenuOpen] = useState(false);
@@ -108,15 +110,15 @@ export function MasterWorkspaceTabBar({
           ))}
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
-          <AdhdChip
+          {showSplitActions ? <AdhdChip
             disabled={!canSplitRight}
             onClick={onSplitRight}
-            title={canSplitRight ? "Open a read-only Tasks panel on the right" : "Split Right is available when the active destination is Tasks and no split is open."}
+            title={canSplitRight ? "Open a second window with this destination" : "Split Right is unavailable while another split is open."}
             type="button"
           >
             Split Right
-          </AdhdChip>
-          {hasSplit ? (
+          </AdhdChip> : null}
+          {showSplitActions && hasSplit ? (
             <AdhdChip
               disabled={!canCloseSplit}
               onClick={onCloseSplit}

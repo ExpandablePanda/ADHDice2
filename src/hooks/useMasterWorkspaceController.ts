@@ -19,9 +19,11 @@ import {
 } from "@/lib/master-workspace-controller";
 import {
   closeMasterTab,
+  closeMasterTabInPanel,
   createMasterTab,
   createDefaultMasterWorkspaceState,
   activateMasterPanel,
+  activateMasterTabInPanel,
   duplicateFocusedPageIntoRightPanel,
   getMasterTabFoodView,
   getMasterTabJournalView,
@@ -30,6 +32,8 @@ import {
   masterTabTasksWorkspaceMatchesLiveState,
   resolveMasterTabTasksWorkspace,
   replaceFocusedMasterTabDestination,
+  replaceMasterTabDestination,
+  updateMasterTabPresentation,
   updateMasterTabJournalView,
   updateMasterTabFoodView,
   updateMasterTabNotesView,
@@ -51,6 +55,8 @@ type UseMasterWorkspaceControllerOptions = {
   activePage: AppPage;
   healthDraftSafetyBySection: Partial<Record<HealthTab, boolean>>;
   hasUnsafeTasksDraft: boolean;
+  hasUnsafeTasksDraftForPanel?: (panelId: string, tabId: string, includeInlineRename?: boolean) => boolean;
+  hasUnsafeTasksDraftForSplit?: (workspace: MasterWorkspaceState) => boolean;
   hasUnsafeNotesDraft: boolean;
   initialHealthSection: HealthTab;
   isReady: boolean;
@@ -75,15 +81,30 @@ function createPanelId() {
 }
 
 function snapshotTabScrollPosition(state: MasterWorkspaceState, panelId: string, tabId: string) {
-  return typeof window === "undefined"
-    ? state
-    : updateMasterTabScrollPosition(state, panelId, tabId, window.scrollY);
+  if (typeof window === "undefined") return state;
+  const panelScroller = document.querySelector<HTMLElement>(`[data-master-workspace-scroll-container="${panelId}"]`);
+  return updateMasterTabScrollPosition(state, panelId, tabId, panelScroller?.scrollTop ?? window.scrollY);
+}
+
+function alignFocusedPanelForTaskWorkspace(state: MasterWorkspaceState, preferredPanelId: string): MasterWorkspaceState {
+  const taskPanels = state.panels.filter((panel) => {
+    const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+    return tab?.destination.page === "Tasks";
+  });
+  const panelToFocus = taskPanels.length === 1
+    ? taskPanels[0]
+    : taskPanels.length > 1
+      ? taskPanels.find((panel) => panel.side === "left") ?? taskPanels[0]
+      : state.panels.find((panel) => panel.id === preferredPanelId);
+  return panelToFocus ? activateMasterPanel(state, panelToFocus.id) : state;
 }
 
 export function useMasterWorkspaceController({
   activePage,
   healthDraftSafetyBySection,
   hasUnsafeTasksDraft,
+  hasUnsafeTasksDraftForPanel,
+  hasUnsafeTasksDraftForSplit = () => hasUnsafeTasksDraft,
   hasUnsafeNotesDraft,
   initialHealthSection,
   isReady,
@@ -131,14 +152,30 @@ export function useMasterWorkspaceController({
     healthDraftSafetyBySection,
     hasUnsafeNotesDraft,
   );
+  const getPanelTabTransitionBlockReason = useCallback((currentWorkspace: MasterWorkspaceState, panelId: string, tabId: string, includeInlineRename = true) => {
+    const panel = currentWorkspace.panels.find((candidate) => candidate.id === panelId);
+    const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+    if (!panel || !tab) return "The selected workspace is no longer available.";
+    if (draftProtection && !draftProtection.canCloseView(tabId)) return "Save or cancel the unfinished form before leaving this workspace.";
+    const isFocusedSource = panelId === currentWorkspace.focusedPanelId && panel.activeTabId === tabId;
+    const unsafeTasksDraft = hasUnsafeTasksDraftForPanel?.(panelId, tabId, includeInlineRename) ?? (isFocusedSource && hasUnsafeTasksDraft);
+    return getMasterWorkspaceTransitionBlockReason(
+      tab.destination.page,
+      tab.presentation.healthSection ?? initialHealthSection,
+      unsafeTasksDraft,
+      healthDraftSafetyBySection,
+      tab.destination.page === "Notes" && hasUnsafeNotesDraft,
+    );
+  }, [draftProtection, hasUnsafeNotesDraft, hasUnsafeTasksDraft, hasUnsafeTasksDraftForPanel, healthDraftSafetyBySection, initialHealthSection]);
   const isTabTransitionBlocked = useCallback((targetTab: typeof activeTab) => {
     if (targetTab.id === activeTab.id) return false;
-    if (activeMasterPage === "Tasks" && hasUnsafeTasksDraft) return true;
+    const unsafeTasksDraft = hasUnsafeTasksDraftForPanel?.(currentPanel.id, activeTab.id) ?? hasUnsafeTasksDraft;
+    if (activeMasterPage === "Tasks" && unsafeTasksDraft) return true;
     if (targetTab.destination.page !== activeMasterPage && currentTransitionBlockReason) return true;
     return activeMasterPage === "Health"
       && targetTab.destination.page === "Health"
       && isHealthSectionTransitionBlocked(targetTab.presentation.healthSection ?? "Today");
-  }, [activeMasterPage, activeTab.id, currentTransitionBlockReason, hasUnsafeTasksDraft, isHealthSectionTransitionBlocked]);
+  }, [activeMasterPage, activeTab.id, currentPanel.id, currentTransitionBlockReason, hasUnsafeTasksDraft, hasUnsafeTasksDraftForPanel, isHealthSectionTransitionBlocked]);
   const pendingRouteRef = useRef<{ from: AppPage; to: AppPage } | null>(null);
   const lastLegacyRoutePageRef = useRef(activePage);
   const lastScrollRestoreRef = useRef({ tabId: activeTab.id, scrollTop: activeTab.presentation.scrollTop ?? 0 });
@@ -146,11 +183,11 @@ export function useMasterWorkspaceController({
   useLayoutEffect(() => {
     const nextScrollTop = activeTab.presentation.scrollTop ?? 0;
     const previous = lastScrollRestoreRef.current;
-    if (typeof window !== "undefined" && (previous.tabId !== activeTab.id || previous.scrollTop !== nextScrollTop)) {
+    if (typeof window !== "undefined" && workspace.panels.length === 1 && (previous.tabId !== activeTab.id || previous.scrollTop !== nextScrollTop)) {
       window.scrollTo(0, nextScrollTop);
     }
     lastScrollRestoreRef.current = { tabId: activeTab.id, scrollTop: nextScrollTop };
-  }, [activeTab.id, activeTab.presentation.scrollTop]);
+  }, [activeTab.id, activeTab.presentation.scrollTop, workspace.panels.length]);
 
   useLayoutEffect(() => {
     if (!isEnabled || !isReady || !userId || restoredUserId === userId || typeof window === "undefined") return;
@@ -267,7 +304,6 @@ export function useMasterWorkspaceController({
   const canOpenNewTab = canNavigate && !currentTransitionBlockReason;
   const canSplitRight = canNavigate
     && currentPanel.side === "left"
-    && activeTab.destination.page === "Tasks"
     && !workspace.panels.some((panel) => panel.side === "right");
 
   const splitRight = useCallback(() => {
@@ -279,7 +315,7 @@ export function useMasterWorkspaceController({
     commitWorkspace((current) => {
       const panel = current.panels.find((candidate) => candidate.id === current.focusedPanelId);
       const tab = panel?.tabs.find((candidate) => candidate.id === panel.activeTabId);
-      if (!panel || panel.side !== "left" || tab?.destination.page !== "Tasks") return current;
+      if (!panel || panel.side !== "left" || !tab) return current;
       if (current.panels.some((candidate) => candidate.side === "right")) return current;
 
       const withLiveTasksSnapshot = updateMasterTabTasksWorkspace(
@@ -300,9 +336,18 @@ export function useMasterWorkspaceController({
   }, [canNavigate, commitWorkspace, getTaskWorkspaceTabsState]);
 
   const hasSplit = canNavigate && workspace.panels.some((panel) => panel.side === "right");
-  const canCloseSplit = canNavigate && canCloseMasterSplitSafely(workspace, hasUnsafeTasksDraft);
-  const splitCloseBlockedReason = hasSplit && hasUnsafeTasksDraft
-    ? MASTER_SPLIT_UNSAVED_TASK_DRAFT_MESSAGE
+  const rightPanelForClose = workspace.panels.find((panel) => panel.side === "right");
+  const hasUnsafeTasksDraftInSplit = hasUnsafeTasksDraftForSplit(workspace);
+  const rightPanelCloseBlockReason = rightPanelForClose?.tabs
+    .map((tab) => getPanelTabTransitionBlockReason(workspace, rightPanelForClose.id, tab.id, false))
+    .find((reason) => reason !== null) ?? null;
+  const canCloseSplit = canNavigate
+    && canCloseMasterSplitSafely(workspace, hasUnsafeTasksDraftInSplit, (panelId, tabId) => getPanelTabTransitionBlockReason(workspace, panelId, tabId, false) === null)
+    && rightPanelCloseBlockReason === null;
+  const splitCloseBlockedReason = hasSplit
+    ? hasUnsafeTasksDraftInSplit
+      ? MASTER_SPLIT_UNSAVED_TASK_DRAFT_MESSAGE
+      : rightPanelCloseBlockReason
     : null;
 
   const closeSplit = useCallback(() => {
@@ -312,13 +357,15 @@ export function useMasterWorkspaceController({
     const focusedTab = focusedPanel?.tabs.find((tab) => tab.id === focusedPanel.activeTabId);
     const rightPanel = before.panels.find((panel) => panel.side === "right");
     if (!focusedPanel || !focusedTab || !rightPanel) return false;
-    if (!canCloseMasterSplitSafely(before, hasUnsafeTasksDraft)) return false;
+    const canCloseTargetPanelTab = (panelId: string, tabId: string) => getPanelTabTransitionBlockReason(before, panelId, tabId, false) === null;
+    const hasUnsafeTasksDraftInCurrentSplit = hasUnsafeTasksDraftForSplit(before);
+    if (!canCloseSplit || !canCloseMasterSplitSafely(before, hasUnsafeTasksDraftInCurrentSplit, canCloseTargetPanelTab)) return false;
 
     const liveTaskWorkspaceTabsState = getTaskWorkspaceTabsState();
     const withLiveTasksSnapshot = focusedTab.destination.page === "Tasks"
       ? updateMasterTabTasksWorkspace(before, focusedPanel.id, focusedTab.id, liveTaskWorkspaceTabsState)
       : before;
-    const next = closeMasterSplitSafely(withLiveTasksSnapshot, rightPanel.id, hasUnsafeTasksDraft);
+    const next = closeMasterSplitSafely(withLiveTasksSnapshot, rightPanel.id, hasUnsafeTasksDraftForSplit(withLiveTasksSnapshot), canCloseTargetPanelTab);
     if (next === withLiveTasksSnapshot) return false;
 
     const leftPanel = next.panels.find((panel) => panel.side === "left") ?? next.panels[0];
@@ -334,7 +381,7 @@ export function useMasterWorkspaceController({
       setActivePage(leftTab.destination.page);
     }
     return true;
-  }, [activeMasterPage, canNavigate, commitWorkspace, currentTransitionBlockReason, getTaskWorkspaceTabsState, hasUnsafeTasksDraft, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage]);
+  }, [activeMasterPage, canCloseSplit, canNavigate, commitWorkspace, currentTransitionBlockReason, getPanelTabTransitionBlockReason, getTaskWorkspaceTabsState, hasUnsafeTasksDraftForSplit, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage]);
 
   const navigateToPage = useCallback((page: AppPage) => {
     if (!canNavigate) {
@@ -352,14 +399,22 @@ export function useMasterWorkspaceController({
     if (currentTransitionBlockReason) return false;
     const liveTaskWorkspaceTabsState = getTaskWorkspaceTabsState();
     const withScroll = snapshotTabScrollPosition(snapshotFocusedTasksWorkspace(currentWorkspace, liveTaskWorkspaceTabsState), panel.id, currentTab.id);
-    markPendingRoute(page);
-    commitWorkspace((current) => replaceFocusedMasterTabDestination(
-      current === currentWorkspace ? withScroll : snapshotFocusedTasksWorkspace(current, liveTaskWorkspaceTabsState),
+    const updated = replaceFocusedMasterTabDestination(
+      currentWorkspace === workspaceRef.current ? withScroll : snapshotFocusedTasksWorkspace(workspaceRef.current, liveTaskWorkspaceTabsState),
       { kind: "page", page },
-    ));
-    setActivePage(page);
+    );
+    const next = alignFocusedPanelForTaskWorkspace(updated, panel.id);
+    const nextPanel = next.panels.find((candidate) => candidate.id === next.focusedPanelId);
+    const nextTab = nextPanel?.tabs.find((candidate) => candidate.id === nextPanel.activeTabId);
+    if (!nextPanel || !nextTab) return false;
+    if (nextTab.destination.page === "Tasks" && nextTab.presentation.tasksWorkspace) {
+      replaceTaskWorkspaceTabsState(nextTab.presentation.tasksWorkspace);
+    }
+    markPendingRoute(nextTab.destination.page);
+    commitWorkspace(() => next);
+    setActivePage(nextTab.destination.page);
     return true;
-  }, [canNavigate, commitWorkspace, currentTransitionBlockReason, getTaskWorkspaceTabsState, markPendingRoute, setActivePage, snapshotFocusedTasksWorkspace]);
+  }, [canNavigate, commitWorkspace, currentTransitionBlockReason, getTaskWorkspaceTabsState, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage, snapshotFocusedTasksWorkspace]);
 
   const canCloseTab = useCallback((tabId: string) => {
     if (!canNavigate) return false;
@@ -402,6 +457,219 @@ export function useMasterWorkspaceController({
     const targetTab = currentPanel.tabs.find((tab) => tab.id === tabId);
     return canNavigate && Boolean(targetTab) && (!targetTab || !isTabTransitionBlocked(targetTab));
   }, [canNavigate, currentPanel.tabs, isTabTransitionBlocked]);
+
+  const canLeavePanelTab = useCallback((panelId: string, sourceTabId: string, targetTab?: typeof activeTab) => {
+    const currentWorkspace = workspaceRef.current;
+    const panel = currentWorkspace.panels.find((candidate) => candidate.id === panelId);
+    const sourceTab = panel?.tabs.find((tab) => tab.id === sourceTabId);
+    if (!panel || !sourceTab) return false;
+    if (targetTab?.id === sourceTab.id) return true;
+    if (getPanelTabTransitionBlockReason(currentWorkspace, panelId, sourceTabId)) return false;
+    const healthSection = sourceTab.presentation.healthSection ?? initialHealthSection;
+    if (sourceTab.destination.page === "Health" && targetTab?.destination.page === "Health") {
+      const targetHealthSection = targetTab.presentation.healthSection ?? initialHealthSection;
+      if (isHealthMasterTabTransitionBlocked(healthSection, targetHealthSection, Boolean(healthDraftSafetyBySection[healthSection]))) return false;
+    }
+    return true;
+  }, [getPanelTabTransitionBlockReason, healthDraftSafetyBySection, initialHealthSection]);
+
+  const canActivateTabInPanel = useCallback((panelId: string, tabId: string) => {
+    if (!canNavigate) return false;
+    const panel = workspace.panels.find((candidate) => candidate.id === panelId);
+    const sourceTab = panel?.tabs.find((tab) => tab.id === panel.activeTabId);
+    const targetTab = panel?.tabs.find((tab) => tab.id === tabId);
+    return Boolean(panel && sourceTab && targetTab)
+      && (sourceTab?.id === targetTab?.id || canLeavePanelTab(panelId, sourceTab?.id ?? "", targetTab));
+  }, [canLeavePanelTab, canNavigate, workspace]);
+
+  const activateTabInPanel = useCallback((panelId: string, tabId: string) => {
+    if (!canActivateTabInPanel(panelId, tabId)) return;
+    const currentWorkspace = workspaceRef.current;
+    const panel = currentWorkspace.panels.find((candidate) => candidate.id === panelId);
+    if (!panel || panel.activeTabId === tabId) return;
+    const withScroll = snapshotTabScrollPosition(currentWorkspace, panelId, panel.activeTabId);
+    const activeSourceTab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+    const withTasksSnapshot = currentWorkspace.focusedPanelId === panelId && activeSourceTab?.destination.page === "Tasks"
+      ? updateMasterTabTasksWorkspace(withScroll, panelId, activeSourceTab.id, getTaskWorkspaceTabsState())
+      : withScroll;
+    const activated = panelId === currentWorkspace.focusedPanelId
+      ? activateMasterTabWithTaskWorkspace(withTasksSnapshot, panelId, tabId, getTaskWorkspaceTabsState()).state
+      : activateMasterTabInPanel(withTasksSnapshot, panelId, tabId);
+    const next = alignFocusedPanelForTaskWorkspace(activated, panelId);
+    const focusedPanel = next.panels.find((candidate) => candidate.id === next.focusedPanelId);
+    const focusedTab = focusedPanel?.tabs.find((candidate) => candidate.id === focusedPanel.activeTabId);
+    if (!focusedPanel || !focusedTab) return;
+    if (focusedTab.destination.page === "Tasks" && focusedTab.presentation.tasksWorkspace) {
+      replaceTaskWorkspaceTabsState(focusedTab.presentation.tasksWorkspace);
+    }
+    markPendingRoute(focusedTab.destination.page);
+    commitWorkspace(() => next);
+    setActivePage(focusedTab.destination.page);
+  }, [canActivateTabInPanel, commitWorkspace, getTaskWorkspaceTabsState, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage]);
+
+  const canOpenNewTabInPanel = useCallback((panelId: string) => {
+    if (!canNavigate) return false;
+    const panel = workspace.panels.find((candidate) => candidate.id === panelId);
+    const sourceTab = panel?.tabs.find((tab) => tab.id === panel.activeTabId);
+    return Boolean(sourceTab && canLeavePanelTab(panelId, sourceTab.id));
+  }, [canLeavePanelTab, canNavigate, workspace]);
+
+  const openPageTabInPanel = useCallback((panelId: string, page: AppPage) => {
+    if (!canOpenNewTabInPanel(panelId)) return false;
+    const currentWorkspace = workspaceRef.current;
+    const panel = currentWorkspace.panels.find((candidate) => candidate.id === panelId);
+    const currentTab = panel?.tabs.find((candidate) => candidate.id === panel.activeTabId);
+    if (!panel || !currentTab) return false;
+    const withScroll = snapshotTabScrollPosition(currentWorkspace, panelId, currentTab.id);
+    const id = createTabId();
+    const healthSection = currentTab.destination.page === "Health"
+      ? currentTab.presentation.healthSection ?? initialHealthSection
+      : initialHealthSection;
+    const tasksWorkspace = page === "Tasks"
+      ? currentTab.destination.page === "Tasks" && currentTab.presentation.tasksWorkspace
+        ? currentTab.presentation.tasksWorkspace
+        : getTaskWorkspaceTabsState()
+      : undefined;
+    const next = createMasterTab(withScroll, panelId, {
+      id,
+      destination: { kind: "page", page },
+      presentation: {
+        ...(tasksWorkspace ? { tasksWorkspace } : {}),
+        ...(page === "Health" ? { healthSection } : {}),
+      },
+    }, true, true);
+    if (next === withScroll) return false;
+    const aligned = alignFocusedPanelForTaskWorkspace(next, panelId);
+    const focusedPanel = aligned.panels.find((candidate) => candidate.id === aligned.focusedPanelId);
+    const focusedTab = focusedPanel?.tabs.find((candidate) => candidate.id === focusedPanel.activeTabId);
+    if (focusedTab?.destination.page === "Tasks" && focusedTab.presentation.tasksWorkspace) {
+      replaceTaskWorkspaceTabsState(focusedTab.presentation.tasksWorkspace);
+    }
+    if (focusedTab) {
+      markPendingRoute(focusedTab.destination.page);
+      setActivePage(focusedTab.destination.page);
+    }
+    commitWorkspace(() => aligned);
+    return true;
+  }, [canOpenNewTabInPanel, commitWorkspace, getTaskWorkspaceTabsState, initialHealthSection, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage]);
+
+  const canCloseTabInPanel = useCallback((panelId: string, tabId: string) => {
+    if (!canNavigate) return false;
+    if (draftProtection && !draftProtection.canCloseView(tabId)) return false;
+    const panel = workspace.panels.find((candidate) => candidate.id === panelId);
+    const targetTab = panel?.tabs.find((tab) => tab.id === tabId);
+    if (!panel || !targetTab) return false;
+    if (panel.activeTabId !== tabId) return panel.tabs.length > 1;
+    if (panel.tabs.length === 1) return canLeavePanelTab(panelId, tabId);
+    const next = panel.tabs[Math.max(0, panel.tabs.findIndex((tab) => tab.id === tabId) - 1)];
+    return Boolean(next && canLeavePanelTab(panelId, tabId, next));
+  }, [canLeavePanelTab, canNavigate, draftProtection, workspace]);
+
+  const closeTabInPanel = useCallback((panelId: string, tabId: string) => {
+    if (!canCloseTabInPanel(panelId, tabId)) return;
+    const currentWorkspace = workspaceRef.current;
+    const panel = currentWorkspace.panels.find((candidate) => candidate.id === panelId);
+    let withScroll = panel?.activeTabId
+      ? snapshotTabScrollPosition(currentWorkspace, panelId, panel.activeTabId)
+      : currentWorkspace;
+    const activeTab = panel?.tabs.find((candidate) => candidate.id === panel.activeTabId);
+    if (panelId === currentWorkspace.focusedPanelId && activeTab?.destination.page === "Tasks") {
+      withScroll = updateMasterTabTasksWorkspace(withScroll, panelId, activeTab.id, getTaskWorkspaceTabsState());
+    }
+    const closed = closeMasterTabInPanel(withScroll, panelId, tabId);
+    if (closed === withScroll) return;
+    const next = alignFocusedPanelForTaskWorkspace(closed, panelId);
+    draftProtection?.detachView(tabId);
+    const focusedPanel = next.panels.find((candidate) => candidate.id === next.focusedPanelId);
+    const focusedTab = focusedPanel?.tabs.find((candidate) => candidate.id === focusedPanel.activeTabId);
+    if (focusedTab?.destination.page === "Tasks" && focusedTab.presentation.tasksWorkspace) {
+      replaceTaskWorkspaceTabsState(focusedTab.presentation.tasksWorkspace);
+    }
+    if (focusedTab) {
+      markPendingRoute(focusedTab.destination.page);
+      setActivePage(focusedTab.destination.page);
+    }
+    commitWorkspace(() => next);
+  }, [canCloseTabInPanel, commitWorkspace, draftProtection, getTaskWorkspaceTabsState, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage]);
+
+  const updatePanelDestination = useCallback((panelId: string, tabId: string, destination: MasterTabDestination) => {
+    if (!canNavigate) return false;
+    const currentWorkspace = workspaceRef.current;
+    const panel = currentWorkspace.panels.find((candidate) => candidate.id === panelId);
+    const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+    if (!panel || !tab) return false;
+    const targetTab = { ...tab, destination };
+    if (!canLeavePanelTab(panelId, tabId, targetTab)) return false;
+    const targetHealthSection = destination.kind === "health-tab"
+      ? destination.tab
+      : destination.kind === "page-shell" ? destination.healthTab : undefined;
+    const currentHealthSection = tab.presentation.healthSection ?? initialHealthSection;
+    if (destination.page === "Health" && targetHealthSection
+      && isHealthMasterTabTransitionBlocked(currentHealthSection, targetHealthSection, Boolean(healthDraftSafetyBySection[currentHealthSection]))) return false;
+    let withScroll = snapshotTabScrollPosition(currentWorkspace, panelId, tabId);
+    if (panelId === currentWorkspace.focusedPanelId && tabId === panel.activeTabId && tab.destination.page === "Tasks") {
+      withScroll = updateMasterTabTasksWorkspace(withScroll, panelId, tabId, getTaskWorkspaceTabsState());
+    }
+    const updated = replaceMasterTabDestination(withScroll, panelId, tabId, destination);
+    if (updated === withScroll) return true;
+    const next = alignFocusedPanelForTaskWorkspace(updated, panelId);
+    const focusedPanel = next.panels.find((candidate) => candidate.id === next.focusedPanelId);
+    const focusedTab = focusedPanel?.tabs.find((candidate) => candidate.id === focusedPanel.activeTabId);
+    if (focusedTab?.destination.page === "Tasks" && focusedTab.presentation.tasksWorkspace) {
+      replaceTaskWorkspaceTabsState(focusedTab.presentation.tasksWorkspace);
+    }
+    if (focusedTab) {
+      markPendingRoute(focusedTab.destination.page);
+      setActivePage(focusedTab.destination.page);
+    }
+    commitWorkspace(() => next);
+    return true;
+  }, [canLeavePanelTab, canNavigate, commitWorkspace, getTaskWorkspaceTabsState, healthDraftSafetyBySection, initialHealthSection, markPendingRoute, replaceTaskWorkspaceTabsState, setActivePage]);
+
+  const navigatePanelToPage = useCallback((panelId: string, page: AppPage) => {
+    const panel = workspace.panels.find((candidate) => candidate.id === panelId);
+    const tab = panel?.tabs.find((candidate) => candidate.id === panel.activeTabId);
+    return Boolean(tab && updatePanelDestination(panelId, tab.id, { kind: "page", page }));
+  }, [updatePanelDestination, workspace]);
+
+  const updatePanelPresentation = useCallback((panelId: string, tabId: string, updater: MasterTabPresentationState | ((current: MasterTabPresentationState) => MasterTabPresentationState)) => {
+    if (!canNavigate) return false;
+    let didUpdate = false;
+    commitWorkspace((current) => {
+      const next = updateMasterTabPresentation(current, panelId, tabId, updater);
+      didUpdate = next !== current;
+      return next;
+    });
+    return didUpdate;
+  }, [canNavigate, commitWorkspace]);
+
+  const selectHealthSectionInPanel = useCallback((panelId: string, tabId: string, healthSection: HealthTab) => (
+    updatePanelDestination(panelId, tabId, { kind: "health-tab", page: "Health", tab: healthSection })
+  ), [updatePanelDestination]);
+
+  const updateJournalViewInPanel = useCallback((panelId: string, tabId: string, journalView: MasterTabPresentationState["journalView"]) => {
+    if (!canNavigate || !journalView) return false;
+    commitWorkspace((current) => updateMasterTabJournalView(current, panelId, tabId, journalView));
+    return true;
+  }, [canNavigate, commitWorkspace]);
+
+  const updateNotesViewInPanel = useCallback((panelId: string, tabId: string, notesView: NonNullable<MasterTabPresentationState["notesView"]>) => {
+    if (!canNavigate) return false;
+    commitWorkspace((current) => updateMasterTabNotesView(current, panelId, tabId, notesView));
+    return true;
+  }, [canNavigate, commitWorkspace]);
+
+  const updateScratchPaperViewInPanel = useCallback((panelId: string, tabId: string, scratchPaperView: MasterScratchPaperWorkspaceView) => {
+    if (!canNavigate) return false;
+    commitWorkspace((current) => updateMasterTabScratchPaperView(current, panelId, tabId, scratchPaperView));
+    return true;
+  }, [canNavigate, commitWorkspace]);
+
+  const updateFoodViewInPanel = useCallback((panelId: string, tabId: string, foodView: MasterFoodWorkspaceViewUpdate) => {
+    if (!canNavigate) return false;
+    commitWorkspace((current) => updateMasterTabFoodView(current, panelId, tabId, foodView));
+    return true;
+  }, [canNavigate, commitWorkspace]);
 
   const updateFocusedDestination = useCallback((destination: MasterTabDestination) => {
     if (!canNavigate) return true;
@@ -528,37 +796,51 @@ export function useMasterWorkspaceController({
 
   return useMemo(() => ({
     activateTab,
+    activateTabInPanel,
     activeTab,
     activeJournalView,
     activeFoodView,
     activeNotesView,
     activeScratchPaperView,
     canActivateTab,
+    canActivateTabInPanel,
     canCloseTab,
+    canCloseTabInPanel,
     canOpenNewTab,
+    canOpenNewTabInPanel,
     canNavigate,
     canSplitRight,
     canCloseSplit,
     hasSplit,
     splitCloseBlockedReason,
     closeTab,
+    closeTabInPanel,
     closeSplit,
     currentPanel,
     featureEnabled: isEnabled,
     getTasksUiState,
     isEnabled: isEnabled && isReady && Boolean(userId) && restoredUserId === userId,
     openPageTab,
+    openPageTabInPanel,
     splitRight,
     navigateToPage,
+    navigatePanelToPage,
     selectHealthSection,
+    selectHealthSectionInPanel,
     updateFocusedDestination,
+    updatePanelDestination,
+    updatePanelPresentation,
     updateJournalView,
     updateFoodView,
     updateNotesView,
+    updateNotesViewInPanel,
+    updateJournalViewInPanel,
+    updateFoodViewInPanel,
+    updateScratchPaperViewInPanel,
     updateScratchPaperView,
     updateTasksWorkspace,
     updateTasksUiState,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canCloseSplit, canNavigate, canOpenNewTab, canSplitRight, closeTab, closeSplit, currentPanel, currentTransitionBlockReason, getTasksUiState, hasSplit, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, splitCloseBlockedReason, splitRight, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, updateTasksWorkspace, updateTasksUiState, userId, workspace]);
+  }), [activateTab, activateTabInPanel, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canActivateTabInPanel, canCloseTab, canCloseTabInPanel, canCloseSplit, canNavigate, canOpenNewTab, canOpenNewTabInPanel, canSplitRight, closeTab, closeTabInPanel, closeSplit, currentPanel, currentTransitionBlockReason, getTasksUiState, hasSplit, isEnabled, isReady, navigatePanelToPage, navigateToPage, openPageTab, openPageTabInPanel, restoredUserId, selectHealthSection, selectHealthSectionInPanel, splitCloseBlockedReason, splitRight, updateFocusedDestination, updatePanelDestination, updatePanelPresentation, updateJournalView, updateJournalViewInPanel, updateFoodView, updateFoodViewInPanel, updateNotesView, updateNotesViewInPanel, updateScratchPaperView, updateScratchPaperViewInPanel, updateTasksWorkspace, updateTasksUiState, userId, workspace]);
 }

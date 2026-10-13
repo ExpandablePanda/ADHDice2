@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useWorkspaceOverlayHost } from "@/components/task-app/master-workspace-panel";
 
 export function ModalShell({
   children,
@@ -18,6 +19,7 @@ export function ModalShell({
 }) {
   const dialogRef = useRef<HTMLDivElement>(null);
   const latestOnCloseRef = useRef(onClose);
+  const overlayHost = useWorkspaceOverlayHost();
 
   useEffect(() => {
     latestOnCloseRef.current = onClose;
@@ -64,12 +66,15 @@ export function ModalShell({
     return () => document.removeEventListener("keydown", handleKeyDown);
   }, []);
 
-  if (typeof document === "undefined") {
+  if (typeof document === "undefined" || overlayHost === null) {
     return null;
   }
 
+  const container = overlayHost?.element ?? document.body;
+  const isPanelScoped = Boolean(overlayHost);
+
   return createPortal(
-    <div className="adhdice-modal-viewport fixed inset-0 z-[140] flex justify-center">
+    <div className={`adhdice-modal-viewport pointer-events-auto ${isPanelScoped ? "absolute" : "fixed"} inset-0 z-[140] flex justify-center`} data-overlay-owner-panel={overlayHost?.panelId} data-overlay-owner-tab={overlayHost?.tabId}>
       {onClose && (
         <div
           aria-hidden="true"
@@ -80,14 +85,15 @@ export function ModalShell({
       <div
         aria-label={label}
         aria-modal="true"
-        className={`adhdice-modal-dialog relative ${className ?? ""}`}
+        className={`adhdice-modal-dialog relative ${isPanelScoped ? "max-h-full" : ""} ${className ?? ""}`}
         ref={dialogRef}
+        style={isPanelScoped ? { maxHeight: "100%" } : undefined}
         role="dialog"
         tabIndex={-1}
       >
         {children}
       </div>
     </div>,
-    document.body,
+    container,
   );
 }

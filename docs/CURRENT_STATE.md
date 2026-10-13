@@ -5,14 +5,37 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.156`.
+- Current working app version: `7.16.158`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
   - `package-lock.json`
   - `public/app-version.json`
-- `src/lib/app-version.ts`
+  - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.158 Independent Master Workspace Panels
+
+Master Workspace Split Right now renders independent panel navigation, active
+tabs, destinations, and page presentation through one `TaskApp` runtime. Both
+panels can show any supported application page. Page data hooks activate for
+the union of both active destinations, while Tasks data and canonical mutation
+handlers remain shared; each Tasks tab keeps its own view, search, sort,
+filters, row selection, workspace tab, folder, and scroll snapshot.
+
+Each split panel owns its scroll container and workspace overlay host. The
+shared Task editor and workspace-level Task flows retain their original panel
+and tab owner and render inside that panel. Home and Records page-owned
+fullscreen dialogs use the same host. Ordinary unsplit overlays keep the
+existing viewport behavior; global account dialogs and alerts remain global.
+The Master Workspace feature remains development-only.
+
+The focused Master Workspace regression group passed (90/90), and the Next.js
+16.2.4 production build passed. Targeted ESLint reported TaskApp React ref
+findings and large-file warnings, plus existing table and controller warnings;
+the new panel/navigation/state helpers were clean. `git diff --check` passed.
+Browser QA remains Andrew's manual check. No Task State semantics, database
+schema, or subscription owners changed.
 
 ## 2026-10-13 7.16.156 Split Right Draft-Safety Hotfix
 

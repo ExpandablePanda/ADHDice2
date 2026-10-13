@@ -26,17 +26,18 @@ test("legacy Health preference remains the gate-off authority with one preferenc
   assert.equal((taskAppSource.match(/useSyncExternalStore\(subscribeToHealthTabPreference/g) ?? []).length, 1);
   assert.match(taskAppSource, /masterWorkspace\.isEnabled && activePage === "Health"[\s\S]*?legacyHealthTabPreference/);
   assert.match(taskAppSource, /if \(isMasterTabsFeatureEnabled\) \{[\s\S]*?selectMasterHealthSection\(tab\)[\s\S]*?else persistHealthTabPreference\(tab\)/);
-  assert.match(taskAppSource, /activeTab=\{activeHealthTab\}/);
-  assert.doesNotMatch(healthPageSource, /subscribeToHealthTabPreference|readHealthTabPreference|useSyncExternalStore/);
+  assert.match(taskAppSource, /activeTab=\{panelHealthTab\}/);
+  assert.doesNotMatch(healthPageSource, /subscribeToHealthTabPreference|readHealthTabPreference/);
   assert.match(healthPageSource, /onClick=\{\(\) => onSelectTab\(tab\)\}/);
 });
 
-test("Fitness hooks follow the selected master Health section without duplicate hooks", () => {
-  assert.match(taskAppSource, /activePage === "Health" && activeHealthTab === "Fitness"/);
+test("Fitness hooks follow the selected Health section in either panel without duplicate hooks", () => {
+  assert.match(taskAppSource, /masterPanelHealthSections\.includes\(section\)/);
+  assert.match(taskAppSource, /useFitnessGoals\(supabase, session\?\.user\?\.id \?\? null, setMessage, isMasterPanelHealthSectionActive\("Fitness"\)\)/);
   assert.equal((taskAppSource.match(/useFitnessGoals\(/g) ?? []).length, 1);
   assert.equal((taskAppSource.match(/useFitnessPlans\(/g) ?? []).length, 1);
   assert.equal((taskAppSource.match(/useFitnessSessionDetails\(/g) ?? []).length, 1);
-  assert.match(taskAppSource, /<TaskHealthPage\s+activeTab=\{activeHealthTab\}[\s\S]*?onSelectTab=\{handleHealthTabSelection\}/);
+  assert.match(taskAppSource, /<TaskHealthPage\s+activeTab=\{panelHealthTab\}[\s\S]*?selectHealthSectionInPanel\(panel\.id, panelTab\.id, tab\)/);
 });
 
 test("Food and Journal editor owners report draft safety before Health tab activation", () => {
@@ -157,7 +158,8 @@ test("Navigator deep destinations update the focused tab and restore shell or Se
 
 test("cross-page Master Tabs activate immediately and protect Tasks snapshots from stale route sync", () => {
   assert.match(controllerHookSource, /const activeMasterPage = activeTab\.destination\.page/);
-  assert.match(controllerHookSource, /const withScroll = snapshotTabScrollPosition\(workspace, currentPanel\.id, activeTab\.id\)[\s\S]*?activateMasterTabWithTaskWorkspace\(withScroll, currentPanel\.id, tabId, taskWorkspaceTabsState\)/);
+  assert.match(controllerHookSource, /const withScroll = snapshotTabScrollPosition\(currentWorkspace, panel\.id, panel\.activeTabId\)[\s\S]*?activateMasterTabWithTaskWorkspace\(withScroll, panel\.id, tabId, getTaskWorkspaceTabsState\(\)\)/);
+  assert.match(controllerHookSource, /const activateTabInPanel = useCallback/);
   assert.match(controllerHookSource, /setActivePage\(targetTab\.destination\.page\)/);
   assert.match(controllerHookSource, /const pendingRouteRef = useRef/);
   assert.match(controllerHookSource, /const lastLegacyRoutePageRef = useRef\(activePage\)/);
@@ -179,13 +181,13 @@ test("Notes and Scratch Paper pending edits are reported without one editor clea
   assert.match(notesPageSource, /const reportNoteEditorDraftSafety = useCallback\(\(isUnsafe: boolean\) => \{\s*reportDraftSafety\("note-editor", isUnsafe\);\s*\}, \[reportDraftSafety\]\)/);
   assert.match(notesPageSource, /onDraftSafetyChange=\{reportNoteEditorDraftSafety\}/);
   assert.match(notesPageSource, /if \(error \|\| !data\)[\s\S]*?return false/);
-  assert.match(notesPageSource, /onDraftSafetyChange=\{reportDraftSafety\}/);
+  assert.match(notesPageSource, /onDraftSafetyChange=\{sharedScratchPaperSessionsEnabled \? undefined : reportDraftSafety\}/);
   assert.match(noteEditorSource, /disabled=\{isSavingNow\}/);
   assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\("scratch-current", isSaving \|\| isDirty\)/);
   assert.match(scratchPaperSource, /onDraftSafetyChange\?\.\(`scratch-card:\$\{note\.id\}`, isDraftUnsafe\)/);
   assert.match(scratchPaperSource, /unsafeCardIds\.has\(note\.id\)/);
-  assert.match(scratchPaperSource, /if \(saved\) \{[\s\S]*?setDraftBaseline\(cardDraft\);\s*setIsEditing\(false\)/);
-  assert.match(scratchPaperSource, /function discardDraft\(\)[\s\S]*?setLinkedTaskIds\(\[\.\.\.draftBaseline\.linkedTaskIds\]\)/);
+  assert.match(scratchPaperSource, /if \(saved\) \{\s*if \(!sessionDraftId\) setLocalDraftBaseline\(cardDraft\);\s*setIsEditing\(false\)/);
+  assert.match(scratchPaperSource, /function discardDraft\(\)[\s\S]*?else setLocalDraft\(draftBaseline\)/);
 });
 
 test("uncovered Health editors report section safety and preserve parallel child guards", () => {

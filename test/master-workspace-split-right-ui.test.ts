@@ -8,6 +8,10 @@ const splitPanelSource = readFileSync(new URL("../src/components/task-app/tasks-
 const controllerSource = readFileSync(new URL("../src/hooks/useMasterWorkspaceController.ts", import.meta.url), "utf8");
 const taskListAdapterSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const taskTableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
+const panelSource = readFileSync(new URL("../src/components/task-app/master-workspace-panel.tsx", import.meta.url), "utf8");
+const modalShellSource = readFileSync(new URL("../src/components/modal-shell.tsx", import.meta.url), "utf8");
+const homePageSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+const recordsTabSource = readFileSync(new URL("../src/components/task-app/records-tab.tsx", import.meta.url), "utf8");
 
 test("Split Right reuses the Tasks workspace with panel-scoped presentation and selection", () => {
   assert.equal((taskAppSource.match(/useWorkspaceData\(/g) ?? []).length, 1);
@@ -26,8 +30,8 @@ test("Split Right reuses the Tasks workspace with panel-scoped presentation and 
   assert.match(taskAppSource, /onDraftEditingChange: reportRightWorkspaceDraft/);
   assert.match(taskAppSource, /onDraftEditingChange=\{reportRightTableDraft\}/);
   assert.match(taskAppSource, /onDraftEditingChange: reportRightListDraft/);
-  assert.match(taskAppSource, /onOpenBatchDelete: \(\) => openBatchDeleteModal\(splitRightSelectedTaskIds\)/);
-  assert.match(taskAppSource, /onOpenBatchEdit: \(\) => openBatchEditModal\(splitRightSelectedTaskIds\)/);
+  assert.match(taskAppSource, /onOpenBatchDelete: \(\) => openBatchDeleteModal\(splitRightSelectedTaskIds, rightOwner\)/);
+  assert.match(taskAppSource, /onOpenBatchEdit: \(\) => openBatchEditModal\(splitRightSelectedTaskIds, rightOwner\)/);
   assert.match(taskAppSource, /collapsedTaskContentFolderIds: splitRightCollapsedTaskContentFolderIds/);
   assert.match(taskAppSource, /collapsedTaskContentFolderIds: Array\.from\(collapsedIds\)/);
   assert.match(taskAppSource, /selectedTasks: batchModalTasks/);
@@ -37,8 +41,9 @@ test("Split Right reuses the Tasks workspace with panel-scoped presentation and 
   assert.match(taskAppSource, /function getTaskEditorOpenBlockMessage\([\s\S]*?hasTaskPanelDraftOutsideOwner\(draftOwnerKeys, ownerKey\)[\s\S]*?other Tasks panel/);
   assert.match(taskAppSource, /updateRightPanelTasksUiState\(splitPanels\.right\.id, splitPanels\.rightTab\.id/);
   assert.match(taskAppSource, /masterWorkspace\.isEnabled\s*\?/);
-  assert.match(splitPanelSource, /aria-label="Left Tasks panel"[\s\S]*?overflow-y-auto/);
-  assert.match(splitPanelSource, /aria-label="Right Tasks panel"[\s\S]*?overflow-y-auto/);
+  assert.match(splitPanelSource, /<MasterWorkspacePanel[\s\S]*?side="left"/);
+  assert.match(splitPanelSource, /<MasterWorkspacePanel[\s\S]*?side="right"/);
+  assert.match(panelSource, /aria-label=\{`\$\{side === "left" \? "Window 1" : "Window 2"\} workspace`\}/);
   assert.doesNotMatch(taskAppSource, /ReadOnlyTasksPanel/);
   assert.doesNotMatch(splitPanelSource, /read.only|ReadOnlyTasksPanel/);
   assert.doesNotMatch(splitPanelSource, /TaskApp|useWorkspaceData|useTaskUiState/);
@@ -63,14 +68,48 @@ test("Task draft reporters stay stable across rerenders and clear on state chang
   assert.doesNotMatch(tableDraftEffectDependencies, /onUnsafeDraftChange/);
 });
 
-test("Master Workspace exposes Split Right only for a focused Tasks destination and closes saved splits", () => {
+test("Master Workspace exposes split navigation in both panels and duplicates any selected page", () => {
   assert.match(tabBarSource, /Split Right/);
   assert.match(tabBarSource, /Close Split/);
-  assert.match(controllerSource, /activeTab\.destination\.page === "Tasks"/);
+  assert.match(taskAppSource, /renderWorkspacePage\(splitPanels\.leftTab\.destination\.page, splitPanels\.left, splitPanels\.leftTab\)/);
+  assert.match(taskAppSource, /renderWorkspacePage\(splitPanels\.rightTab\.destination\.page, splitPanels\.right, splitPanels\.rightTab\)/);
+  assert.match(taskAppSource, /canActivateTabInPanel\(panel\.id, tabId\)/);
+  assert.match(taskAppSource, /openPageTabInPanel\(panel\.id, page\)/);
+  assert.match(controllerSource, /const canSplitRight = canNavigate[\s\S]*?currentPanel\.side === "left"[\s\S]*?!workspace\.panels\.some/);
   assert.match(controllerSource, /duplicateFocusedPageIntoRightPanel\(withLiveTasksSnapshot/);
   assert.match(controllerSource, /return activateMasterPanel\(split, panel\.id\)/);
-  assert.match(controllerSource, /closeMasterSplitSafely\(withLiveTasksSnapshot, rightPanel\.id, hasUnsafeTasksDraft\)/);
-  assert.match(controllerSource, /canCloseMasterSplitSafely\(before, hasUnsafeTasksDraft\)/);
+  assert.match(controllerSource, /closeMasterSplitSafely\(withLiveTasksSnapshot, rightPanel\.id, hasUnsafeTasksDraftForSplit\(withLiveTasksSnapshot\), canCloseTargetPanelTab\)/);
+  assert.match(controllerSource, /canCloseMasterSplitSafely\(before, hasUnsafeTasksDraftInCurrentSplit, canCloseTargetPanelTab\)/);
   assert.match(controllerSource, /updateMasterTabTasksWorkspace\([\s\S]*?liveTaskWorkspaceTabsState/);
   assert.match(controllerSource, /const updateTasksWorkspace = useCallback/);
+});
+
+test("mixed pages stay in one TaskApp runtime and activate shared page data for either panel", () => {
+  assert.equal((taskAppSource.match(/useWorkspaceData\(/g) ?? []).length, 1);
+  assert.equal((taskAppSource.match(/useTaskUiState\(/g) ?? []).length, 1);
+  assert.match(taskAppSource, /const isMasterPanelPageActive = useCallback/);
+  assert.match(taskAppSource, /masterPanelPages\.includes\(page\)/);
+  assert.match(taskAppSource, /setMasterPanelPages\(\(current\).*?nextPages/s);
+  assert.match(taskAppSource, /masterWorkspace\.hasSplit && !isTasksSplit/);
+  assert.doesNotMatch(taskAppSource, /<TaskApp\b/);
+});
+
+test("workspace fullscreen overlays are owned by one panel and leave the neighboring panel outside the host", () => {
+  assert.match(panelSource, /data-master-workspace-overlay-host=\{id\}/);
+  assert.match(panelSource, /className="pointer-events-none absolute inset-0 z-\[130\]"/);
+  assert.match(panelSource, /overlayHost \? "absolute" : "fixed"/);
+  assert.match(panelSource, /createPortal\(frame, overlayHost\.element\)/);
+  assert.match(modalShellSource, /overlayHost\?\.element \?\? document\.body/);
+  assert.match(modalShellSource, /\$\{isPanelScoped \? "absolute" : "fixed"\} inset-0/);
+  assert.match(modalShellSource, /style=\{isPanelScoped \? \{ maxHeight: "100%" \} : undefined\}/);
+  assert.match(modalShellSource, /data-overlay-owner-panel=\{overlayHost\?\.panelId\}/);
+  assert.match(taskTableSource, /isPanelScopedTaskOverlay \? "pointer-events-auto absolute inset-0 h-full w-full"/);
+  assert.match(taskTableSource, /createPortal\(taskEditorContent, workspaceOverlayHost\.element\)/);
+  assert.match(taskAppSource, /taskEditorPanelOwner\?\.panelId/);
+  assert.match(taskAppSource, /value=\{workspaceModalOverlayHost\}/);
+  assert.match(homePageSource, /<WorkspaceOverlayFrame className="z-\[100\]/);
+  assert.doesNotMatch(homePageSource, /fixed inset-0/);
+  assert.equal((recordsTabSource.match(/<WorkspaceOverlayFrame/g) ?? []).length, 3);
+  assert.doesNotMatch(recordsTabSource, /fixed inset-0/);
+  assert.match(recordsTabSource, /panelScoped \? "max-h-full"/);
 });

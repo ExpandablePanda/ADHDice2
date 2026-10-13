@@ -37,18 +37,24 @@ export type MasterWorkspaceTaskUiStateUpdateResult =
   | { status: "queued"; route: "live" | "snapshot"; panelId: string; tabId: string }
   | { status: "rejected"; reason: "not-ready" | "invalid-target" | "live-state-unavailable" | "target-removed" };
 
-export const MASTER_SPLIT_UNSAVED_TASK_DRAFT_MESSAGE = "Save or cancel the unsaved edit in either Tasks panel before closing Split Right.";
+export const MASTER_SPLIT_UNSAVED_TASK_DRAFT_MESSAGE = "Save or cancel the unsaved edit in Window 2 before closing Split Right.";
 
-export function canCloseMasterSplitSafely(state: MasterWorkspaceState, hasUnsafeTasksDraft: boolean) {
-  return !hasUnsafeTasksDraft && state.panels.some((panel) => panel.side === "right");
+export function canCloseMasterSplitSafely(
+  state: MasterWorkspaceState,
+  hasUnsafeTasksDraft: boolean,
+  canClosePanelTab: (panelId: string, tabId: string) => boolean = () => true,
+) {
+  const rightPanel = state.panels.find((panel) => panel.side === "right");
+  return !hasUnsafeTasksDraft && Boolean(rightPanel?.tabs.every((tab) => canClosePanelTab(rightPanel.id, tab.id)));
 }
 
 export function closeMasterSplitSafely(
   state: MasterWorkspaceState,
   rightPanelId: string,
   hasUnsafeTasksDraft: boolean,
+  canClosePanelTab?: (panelId: string, tabId: string) => boolean,
 ) {
-  if (!canCloseMasterSplitSafely(state, hasUnsafeTasksDraft)) return state;
+  if (!canCloseMasterSplitSafely(state, hasUnsafeTasksDraft, canClosePanelTab)) return state;
   return closeMasterSplit(state, rightPanelId);
 }
 

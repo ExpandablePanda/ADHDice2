@@ -1,6 +1,6 @@
 # TaskApp Source Map
 
-Last reviewed: 2026-08-03
+Last reviewed: 2026-10-13
 Role: active implementation lookup
 
 This map supports [`TASKAPP_ARCHITECTURE.md`](TASKAPP_ARCHITECTURE.md). It lists
@@ -12,6 +12,10 @@ Use it to locate the production seam before editing.
 | --- | --- | --- | --- |
 | Root composition | `src/components/task-app.tsx` — `TaskApp` | Authenticated root composition, route selection, hook wiring, overlays, callbacks, rollover triggers | Upstream of page modules and domain hooks; not the implementation owner of every child behavior |
 | Page loading | `src/components/task-app.tsx` — dynamic page declarations | Lazy page boundaries and route loading fallbacks | Keeps page modules outside the initial static graph |
+| Split page routing | `src/components/task-app.tsx` — `renderWorkspacePage`, `MasterWorkspacePanelContent` | Renders each selected panel destination through one shared page route | Two page surfaces share one TaskApp runtime and its canonical domain hooks |
+| Panel navigation and overlay host | `src/components/task-app/master-workspace-panel.tsx` — `MasterWorkspacePanel` | Per-panel navigation frame, scroll restoration, and panel overlay host | Panel presentation boundary; not a second application or data owner |
+| Workspace overlay placement | `src/components/modal-shell.tsx`, `src/components/task-app/master-workspace-panel.tsx` — `WorkspaceOverlayFrame`, `TaskManagementTableV2` | Portals split workspace overlays into the initiating panel host | Unsplit overlays retain viewport placement; application-wide dialogs remain global |
+| Master Workspace state | `src/hooks/useMasterWorkspaceController.ts`, `src/lib/master-workspace-state.ts` | Panel and tab navigation, destination/presentation snapshots, split lifecycle | Task domain records remain outside persisted Master Workspace presentation |
 | Tasks workspace | `src/components/task-app/tasks-page-orchestrator.tsx` — `TasksWorkspace` | Tasks tabs, tab interactions, surface shell, supplied panel composition | Receives data/panels from `TaskApp`; delegates surface selection to `TaskPage` |
 | Tasks page | `src/components/task-app/task-page.tsx` — `TaskPage` | Surface and Table/List/alternate view selection | Presentation router; does not own task data or persistence |
 | Surface switch | `src/components/task-app/tasks-surface-switch.tsx` — `TasksSurfaceSwitch` | Tasks/Paths surface control | Local control; state and callbacks come from the Tasks shell |

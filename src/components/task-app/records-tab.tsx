@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AdhdCard } from "@/components/ui-system/adhd-card";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
 import { AdhdPanel } from "@/components/ui-system/adhd-panel";
+import { useWorkspaceOverlayHost, WorkspaceOverlayFrame } from "@/components/task-app/master-workspace-panel";
 import { TASK_TABLE_CHIP_BASE_CLASS, TASK_TABLE_LIST_CHIP_CLASS, TaskTableChipButton } from "@/components/ui/task-table-primitives";
 import { useRecords } from "@/hooks/useRecords";
 import type { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -443,6 +444,7 @@ export function RecordsTab(props: RecordsTabProps) {
 
 function RecordDetailOverlay({ availableTaskIds, onClearSelection, onClose, onOpenTask, onRequestBulkTrackingExclusion, onSelectAll, onToggleTaskSelection, record, selectableTaskIds, selectedTaskIds, taskById }: { availableTaskIds: ReadonlySet<string>; onClearSelection: () => void; onClose: () => void; onOpenTask: (taskId: string) => void; onRequestBulkTrackingExclusion: (taskIds: string[]) => void; onSelectAll: () => void; onToggleTaskSelection: (taskId: string) => void; record: RecordCardModel; selectableTaskIds: ReadonlySet<string>; selectedTaskIds: ReadonlySet<string>; taskById: ReadonlyMap<string, Task> }) {
   const evidenceCount = record.taskEvidence ? getRecordTaskEvidenceCount(record.numericValue, record.taskEvidence) : null;
+  const panelScoped = Boolean(useWorkspaceOverlayHost());
 
   useEffect(() => {
     function handleKeyDown(event: globalThis.KeyboardEvent) {
@@ -453,8 +455,8 @@ function RecordDetailOverlay({ availableTaskIds, onClearSelection, onClose, onOp
   }, [onClose]);
 
   return (
-    <div aria-labelledby="record-detail-title" aria-modal="true" className="fixed inset-0 z-[150] flex items-center justify-center bg-[#f7f3ff]/82 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/84" onClick={onClose} role="dialog">
-      <AdhdPanel className="max-h-[calc(100vh-2rem)] w-full max-w-md overflow-hidden" header={<div className="flex items-start justify-between gap-3"><div className="flex items-center gap-2"><span className="h-5 w-5 text-[#7561dc] dark:text-[#c9beff] [&>svg]:h-full [&>svg]:w-full">{record.icon}</span><span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS}`}>{record.category}</span></div><AdhdIconButton aria-label="Close Record details" onClick={onClose} size="sm" tone="ghost"><X /></AdhdIconButton></div>} onClick={(event) => event.stopPropagation()} padding="md" variant="floating">
+    <WorkspaceOverlayFrame aria-labelledby="record-detail-title" aria-modal="true" className="z-[150] flex items-center justify-center bg-[#f7f3ff]/82 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/84" onClick={onClose} role="dialog">
+      <AdhdPanel className={`${panelScoped ? "max-h-full" : "max-h-[calc(100vh-2rem)]"} w-full max-w-md overflow-hidden`} header={<div className="flex items-start justify-between gap-3"><div className="flex items-center gap-2"><span className="h-5 w-5 text-[#7561dc] dark:text-[#c9beff] [&>svg]:h-full [&>svg]:w-full">{record.icon}</span><span className={`${TASK_TABLE_CHIP_BASE_CLASS} ${TASK_TABLE_LIST_CHIP_CLASS}`}>{record.category}</span></div><AdhdIconButton aria-label="Close Record details" onClick={onClose} size="sm" tone="ghost"><X /></AdhdIconButton></div>} onClick={(event) => event.stopPropagation()} padding="md" variant="floating">
         <h2 className="mt-4 text-lg font-semibold leading-6 text-[#30294d] dark:text-white" id="record-detail-title">{record.title}</h2>
         <p className="mt-2 text-2xl font-semibold text-[#30294d] dark:text-white">{record.value}</p>
         <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
@@ -496,19 +498,19 @@ function RecordDetailOverlay({ availableTaskIds, onClearSelection, onClose, onOp
           </div>
         </section> : null}
       </AdhdPanel>
-    </div>
+    </WorkspaceOverlayFrame>
   );
 }
 
 function RecordBulkTrackingExclusionConfirmation({ hasDescendants, onCancel, onConfirm, taskCount }: { hasDescendants: boolean; onCancel: () => void; onConfirm: () => void; taskCount: number }) {
-  return <div aria-labelledby="record-bulk-tracking-exclusion-title" aria-modal="true" className="fixed inset-0 z-[170] flex items-center justify-center bg-[#f7f3ff]/82 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/84" role="dialog">
+  return <WorkspaceOverlayFrame aria-labelledby="record-bulk-tracking-exclusion-title" aria-modal="true" className="z-[170] flex items-center justify-center bg-[#f7f3ff]/82 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/84" role="dialog">
     <AdhdPanel className="w-full max-w-md" header={<div className="flex items-center justify-between gap-3"><h2 className="text-base font-semibold text-[#30294d] dark:text-white" id="record-bulk-tracking-exclusion-title">Exclude {taskCount} Tasks from tracking?</h2><AdhdIconButton aria-label="Cancel" onClick={onCancel} size="sm" tone="ghost"><X /></AdhdIconButton></div>} padding="md" variant="floating">
       <p className="mt-3 text-sm leading-6 text-[#625b78] dark:text-white/65">These Tasks will stop contributing to Records, Stats, Reports, streaks, Achievement progress, and future Task rewards. Their History remains intact.</p>
       <p className="mt-2 text-sm leading-6 text-[#625b78] dark:text-white/65">Already-earned rewards and permanent Achievement awards will not be removed.</p>
       {hasDescendants ? <p className="mt-2 text-sm leading-6 text-[#625b78] dark:text-white/65">At least one selected Task has descendants; its Steps/Substeps inherit the exclusion.</p> : null}
       <div className="mt-5 flex justify-end gap-2"><TaskTableChipButton onClick={onCancel}>Cancel</TaskTableChipButton><TaskTableChipButton onClick={onConfirm} toneClassName="border-[#7d6cf5] bg-[#7d6cf5] text-white">Exclude {taskCount} Tasks</TaskTableChipButton></div>
     </AdhdPanel>
-  </div>;
+  </WorkspaceOverlayFrame>;
 }
 
 function RecordBulkTrackingExclusionProgress({ error, excluded, onDismiss, phase, progress, taskCount }: { error?: string; excluded?: boolean; onDismiss: () => void; phase: BulkTrackingExclusionProgress["phase"]; progress: string | null; taskCount: number }) {
@@ -527,7 +529,7 @@ function RecordBulkTrackingExclusionProgress({ error, excluded, onDismiss, phase
       : excluded
         ? `${error ?? "Records could not refresh."} Use Refresh Records to try again.`
         : `${error ?? "The bulk mutation failed."} Nothing was excluded; your selections remain.`;
-  return <div aria-busy={running} aria-labelledby="record-bulk-tracking-progress-title" aria-modal="true" className="fixed inset-0 z-[200] flex items-center justify-center bg-[#f7f3ff]/88 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/90" role="dialog">
+  return <WorkspaceOverlayFrame aria-busy={running} aria-labelledby="record-bulk-tracking-progress-title" aria-modal="true" className="z-[200] flex items-center justify-center bg-[#f7f3ff]/88 p-4 backdrop-blur-[10px] dark:bg-[#100b1d]/90" role="dialog">
     <AdhdPanel className="w-full max-w-md" padding="md" variant="floating">
       <div className="flex items-start gap-3">
         {running ? <LoaderCircle aria-hidden="true" className="mt-0.5 h-5 w-5 shrink-0 animate-spin text-[#7d6cf5]" /> : null}
@@ -538,7 +540,7 @@ function RecordBulkTrackingExclusionProgress({ error, excluded, onDismiss, phase
       </div>
       {!running ? <div className="mt-5 flex justify-end"><TaskTableChipButton onClick={onDismiss}>Close</TaskTableChipButton></div> : null}
     </AdhdPanel>
-  </div>;
+  </WorkspaceOverlayFrame>;
 }
 
 function HistoryItem({ event }: { event: PersistedRecordEvent }) {

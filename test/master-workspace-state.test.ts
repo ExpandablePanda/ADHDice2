@@ -4,8 +4,10 @@ import {
   activateMasterPanel,
   activateMasterTab,
   adjustMasterWorkspaceSplitRatio,
+  activateMasterTabInPanel,
   closeMasterSplit,
   closeMasterTab,
+  closeMasterTabInPanel,
   createDefaultMasterWorkspaceState,
   createMasterTab,
   duplicateFocusedPageIntoRightPanel,
@@ -345,6 +347,30 @@ test("explicit destination updates keep left and right panel pages independent",
   });
   assert.equal(leftHealth.focusedPanelId, split.focusedPanelId);
   assert.equal(leftHealth.visiblePanelId, split.visiblePanelId);
+});
+
+test("panel tab activation and closing preserve the neighboring panel identity", () => {
+  const split = duplicateFocusedPageIntoRightPanel(createDefaultMasterWorkspaceState(), {
+    panelId: "right-panel",
+    tabId: "right-home",
+  });
+  const withRightTab = createMasterTab(split, "right-panel", {
+    id: "right-notes",
+    destination: { kind: "page", page: "Notes" },
+    presentation: { notesView: { selection: { kind: "new", draftId: "right-note-draft" }, search: "right", activeTag: null } },
+  }, false);
+  const activated = activateMasterTabInPanel(withRightTab, "right-panel", "right-notes");
+
+  assert.equal(activated.panels.find((panel) => panel.id === "right-panel")?.activeTabId, "right-notes");
+  assert.equal(activated.panels.find((panel) => panel.id === "master-panel-1")?.activeTabId, "master-tab-1");
+  assert.equal(activated.focusedPanelId, withRightTab.focusedPanelId);
+  assert.equal(activated.panels[0].tabs[0].destination.page, "Home");
+  assert.equal(activated.panels[1].tabs.find((tab) => tab.id === "right-notes")?.presentation.notesView?.search, "right");
+
+  const closedBackgroundTab = closeMasterTabInPanel(activated, "right-panel", "right-home");
+  assert.equal(closedBackgroundTab.panels.find((panel) => panel.id === "right-panel")?.activeTabId, "right-notes");
+  assert.equal(closedBackgroundTab.focusedPanelId, activated.focusedPanelId);
+  assert.equal(closedBackgroundTab.panels.find((panel) => panel.id === "master-panel-1")?.activeTabId, "master-tab-1");
 });
 
 test("explicit destination updates target inactive tabs without changing focus, presentation, or draft identity", () => {

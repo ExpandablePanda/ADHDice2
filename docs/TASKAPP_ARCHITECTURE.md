@@ -1,6 +1,6 @@
 # TaskApp Architecture
 
-Last reviewed: 2026-09-23
+Last reviewed: 2026-10-13
 Role: canonical production routing and ownership contract
 
 ## Purpose
@@ -50,6 +50,34 @@ The production Tasks route remains layered:
 hierarchy adapters, and child previews may own presentation and local
 interaction. None may become a second status, recurrence, Calendar, History, or
 streak authority.
+
+## Master Workspace panel rendering and overlays
+
+Split Master Workspace keeps one `TaskApp`, one `useTaskUiState` owner, one
+`useWorkspaceData` owner, and the existing canonical mutation handlers. The
+shared `renderWorkspacePage` route receives the active destination, panel, and
+tab explicitly; split panels may render different page components while
+sharing app-level data hooks. Page-gated hooks activate from the set of active
+panel destinations so a page in either panel can load its shared data. Tasks
+presentation remains stored per Master Workspace tab, while successful Task
+mutations update the shared canonical Task projection used by every Tasks
+surface.
+
+`MasterWorkspacePanel` owns each panel's navigation frame, scroll restoration,
+and overlay host. In split mode, `ModalShell` and the shared
+`TaskManagementTableV2` editor plus `WorkspaceOverlayFrame` page dialogs portal
+workspace overlays into the originating panel host, with the originating
+panel and tab identity retained for the overlay lifetime. Home and Records
+fullscreen dialogs use that shared frame. The Task editor remains a single
+editor and keeps its existing canonical save path. Without a split panel
+context, these overlays use their existing viewport-level presentation.
+Account dialogs and system alerts remain global where their ownership is
+application wide.
+
+`MasterWorkspacePanelContent` invokes the shared page renderer through a
+separate component boundary. This preserves one route implementation while
+keeping render-time page construction isolated from TaskApp's direct ref
+accesses.
 
 ## Mutation routing
 

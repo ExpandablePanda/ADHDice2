@@ -664,7 +664,7 @@ test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
   assert.equal(isTasksMasterTabTransitionBlocked("Home", true), false);
 });
 
-test("Close Split blocks either panel's unsafe edits and closes after save or cancel", () => {
+test("Close Split protects drafts in the removed panel and retains the left panel unchanged", () => {
   const initial = restoreMasterWorkspaceForUser(
     memoryStorage(),
     "split-close-user",
@@ -679,14 +679,20 @@ test("Close Split blocks either panel's unsafe edits and closes after save or ca
   assert.ok(leftBefore);
   assert.equal(split.focusedPanelId, leftBefore.id);
 
-  for (const unsafeCase of ["right-panel-edit", "left-panel-edit", "shared-editor-open-from-right"] as const) {
+  for (const unsafeCase of ["right-panel-edit", "shared-editor-open-from-right"] as const) {
     assert.equal(canCloseMasterSplitSafely(split, true), false, unsafeCase);
     const rejected = closeMasterSplitSafely(split, "right-panel", true);
     assert.strictEqual(rejected, split, unsafeCase);
-    assert.strictEqual(rejected.panels.find((panel) => panel.side === "left"), leftBefore, unsafeCase);
   }
 
-  assert.equal(canCloseMasterSplitSafely(split, false), true);
+  // Edits in Window 1 remain mounted after closing Window 2.
+  assert.equal(canCloseMasterSplitSafely(split, false), true, "left-panel-edit");
+  assert.equal(closeMasterSplitSafely(split, "right-panel", false).panels.length, 1, "left-panel-edit");
+  assert.deepEqual(closeMasterSplitSafely(split, "right-panel", false).panels[0], leftBefore);
+  const blockRightNotesDraft = (_panelId: string, tabId: string) => tabId !== "right-tab";
+  assert.equal(canCloseMasterSplitSafely(split, false, blockRightNotesDraft), false, "right-panel-form-draft");
+  assert.strictEqual(closeMasterSplitSafely(split, "right-panel", false, blockRightNotesDraft), split, "right-panel-form-draft");
+
   for (const resolution of ["saved", "canceled"] as const) {
     const closed = closeMasterSplitSafely(split, "right-panel", false);
     assert.equal(closed.panels.length, 1, resolution);

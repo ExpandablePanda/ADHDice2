@@ -20,6 +20,7 @@ import { TaskAttentionChip } from "./task-attention-chip";
 import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
+import { WorkspaceOverlayFrame } from "@/components/task-app/master-workspace-panel";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
@@ -2338,7 +2339,7 @@ export function HomePage({
           state.routineSectionIdByTaskId[taskId] === routineSectionDeleteConfirmation.id
         )).length;
         return (
-          <div className="fixed inset-0 z-[100] grid place-items-center bg-[#17142a]/45 p-4" role="presentation">
+          <WorkspaceOverlayFrame className="z-[100] grid place-items-center bg-[#17142a]/45 p-4" role="presentation">
             <div
               aria-labelledby="home-routine-delete-section-title"
               aria-modal="true"
@@ -2370,7 +2371,7 @@ export function HomePage({
                 </AdhdChip>
               </div>
             </div>
-          </div>
+          </WorkspaceOverlayFrame>
         );
       })() : null}
     </section>

@@ -67,7 +67,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { cloneElement, isValidElement, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactElement, type ReactNode, type SetStateAction } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactElement, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
   BottomDockAdapter as BottomDock,
@@ -114,7 +114,9 @@ import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { MasterWorkspaceTabBar } from "@/components/task-app/master-workspace-tab-bar";
 import { TasksSplitLayout } from "@/components/task-app/tasks-split-right-panel";
+import { MasterWorkspacePanel as MasterWorkspacePanelFrame, MasterWorkspacePanelContent, WorkspaceOverlayHostContext, type WorkspaceOverlayHost } from "@/components/task-app/master-workspace-panel";
 import { useMasterWorkspaceController } from "@/hooks/useMasterWorkspaceController";
+import type { MasterWorkspaceState } from "@/lib/master-workspace-state";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
@@ -1388,6 +1390,23 @@ export function TaskApp() {
     supabase,
     userId: session?.user?.id,
   });
+  const [masterPanelPages, setMasterPanelPages] = useState<AppPage[]>([]);
+  const [masterPanelTaskSurfaces, setMasterPanelTaskSurfaces] = useState<TaskUiState["tasksSurface"][]>([]);
+  const [masterPanelOverlayHosts, setMasterPanelOverlayHosts] = useState<Map<string, WorkspaceOverlayHost>>(new Map());
+  const handleMasterPanelOverlayHostChange = useCallback((panelId: string, element: HTMLDivElement | null, tabId: string) => {
+    setMasterPanelOverlayHosts((current) => {
+      const next = new Map(current);
+      if (element) next.set(panelId, { element, panelId, tabId });
+      else next.delete(panelId);
+      return next;
+    });
+  }, []);
+  const isMasterPanelPageActive = useCallback((page: AppPage) => (
+    activePage === page || masterPanelPages.includes(page)
+  ), [activePage, masterPanelPages]);
+  const isMasterPanelTaskSurfaceActive = useCallback((surface: TaskUiState["tasksSurface"]) => (
+    (activePage === "Tasks" && taskUiState.tasksSurface === surface) || masterPanelTaskSurfaces.includes(surface)
+  ), [activePage, masterPanelTaskSurfaces, taskUiState.tasksSurface]);
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const [batchIntakeHealthActive, setBatchIntakeHealthActive] = useState(false);
   const [batchIntakeFocusActive, setBatchIntakeFocusActive] = useState(false);
@@ -1440,7 +1459,7 @@ export function TaskApp() {
     supabase,
     session?.user?.id ?? null,
     setMessage,
-    activePage === "Focus" || activePage === "Stats" || activePage === "Health" || batchIntakeFocusActive,
+    isMasterPanelPageActive("Focus") || isMasterPanelPageActive("Stats") || isMasterPanelPageActive("Health") || batchIntakeFocusActive,
     invalidateFocusDomainGeneration,
   );
   const {
@@ -1507,7 +1526,7 @@ export function TaskApp() {
     weightEntries: healthWeightEntries,
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
-  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health" || batchIntakeHealthActive);
+  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, isMasterPanelPageActive("Health") || batchIntakeHealthActive);
   const legacyHealthTabPreference = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const currentUserId = session?.user?.id ?? null;
   const journalDraftSessionStore = useMemo(
@@ -1564,7 +1583,7 @@ export function TaskApp() {
   useEffect(() => {
     if (
       !supabase
-      || activePage !== "Notes"
+      || !isMasterPanelPageActive("Notes")
       || !currentUserId
       || notesLoadedOwnerRef.current === currentUserId
       || notesLoadingOwnerRef.current === currentUserId
@@ -1588,7 +1607,7 @@ export function TaskApp() {
         notesLoadingOwnerRef.current = null;
         setNotesCollectionState({ ownerId: currentUserId, notes: [] });
       });
-  }, [activePage, currentUserId, supabase]);
+  }, [currentUserId, isMasterPanelPageActive, supabase]);
   const updateNotesCollection = useCallback((update: (current: Note[]) => Note[]) => {
     const ownerId = currentUserId;
     if (!ownerId) return;
@@ -1625,7 +1644,7 @@ export function TaskApp() {
   }), [healthCustomFoodDraftSessionStore, healthFoodDraftSessionStore, healthMealPlanDraftSessionStore, healthRecipeDraftSessionStore, healthSavedMealDraftSessionStore, journalDraftSessionStore, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
-  const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
+  const voiceMemos = useVoiceMemos(supabase, currentUserId, isMasterPanelPageActive("Home") || isMasterPanelPageActive("Notes"));
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
     [focusCategories],
@@ -1914,6 +1933,7 @@ export function TaskApp() {
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
+  const [taskListSettingsPanelContext, setTaskListSettingsPanelContext] = useState<{ panelId: string; tabId: string; folderId: string | null } | null>(null);
   const [isImportWidgetMenuOpen, setIsImportWidgetMenuOpen] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>("idle");
   const [draggedListColumnId, setDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
@@ -1932,6 +1952,8 @@ export function TaskApp() {
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
   const taskEditorOwnerRef = useRef<TaskPanelOwner | null>(null);
+  const [taskEditorPanelOwner, setTaskEditorPanelOwner] = useState<TaskPanelOwner | null>(null);
+  const [workspaceOverlayOwner, setWorkspaceOverlayOwner] = useState<{ panelId: string; tabId: string } | null>(null);
   const [taskPanelDraftOwnerKeys, setTaskPanelDraftOwnerKeys] = useState<string[]>([]);
   const [isSplitRightTasksWorkspaceDraftOpen, setIsSplitRightTasksWorkspaceDraftOpen] = useState(false);
   const [isSplitRightTasksTableDraftOpen, setIsSplitRightTasksTableDraftOpen] = useState(false);
@@ -1958,6 +1980,14 @@ export function TaskApp() {
   const milestoneOperationIdsRef = useRef(new Map<string, string>());
   const [taskEditorFocusRequest, setTaskEditorFocusRequest] = useState<TaskEditorFocusRequest | null>(null);
   const taskEditorFocusTokenRef = useRef(0);
+
+  const setWorkspaceOverlayOwnerForTaskPanel = useCallback((owner?: TaskPanelOwner) => {
+    const current = masterWorkspaceControllerRef.current;
+    const selectedOwner = owner ?? taskEditorOwnerRef.current ?? undefined;
+    const panelId = selectedOwner?.panelId ?? current?.currentPanel.id;
+    const tabId = selectedOwner?.masterTabId ?? current?.activeTab.id;
+    if (panelId && tabId) setWorkspaceOverlayOwner({ panelId, tabId });
+  }, []);
   const [suppressDetachedListNoticeTaskId, setSuppressDetachedListNoticeTaskId] = useState<string | null>(null);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
   const [isActiveTimersTrayOpen, setIsActiveTimersTrayOpen] = useState(false);
@@ -1976,7 +2006,7 @@ export function TaskApp() {
   const achievementProgress = useAchievementProgress(
     supabase,
     session?.user?.id ?? null,
-    activePage === "Achievements" || (activePage === "Tasks" && taskUiState.tasksSurface === "report"),
+    isMasterPanelPageActive("Achievements") || isMasterPanelTaskSurfaceActive("report"),
   );
   const achievementNotifications = useAchievementNotifications({
     client: supabase,
@@ -1994,14 +2024,14 @@ export function TaskApp() {
   const onTimePlan = useOnTimePlan(
     currentUserId,
     userTimeZone,
-    activePage === "Tasks" && taskUiState.tasksSurface === "on_time",
+    isMasterPanelTaskSurfaceActive("on_time"),
   );
   useEffect(() => {
     onTimePlan.updatePlanFromCurrent((current) => reconcileOnTimeManualDurationsFromTasks(current, tasks));
   }, [onTimePlan.updatePlanFromCurrent, tasks]);
   const brainstormState = useBrainstormState(
     currentUserId,
-    activePage === "Tasks" && taskUiState.tasksSurface === "brainstorm",
+    isMasterPanelTaskSurfaceActive("brainstorm"),
   );
   const [focusAlarmAudioBlocked, setFocusAlarmAudioBlocked] = useState(false);
   const focusAlarmAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -2139,7 +2169,7 @@ export function TaskApp() {
     [dayStartTime, logicalDayNow, userTimeZone],
   );
   const homeRecordTargets = useHomeRecordTargets({
-    active: activePage === "Home",
+    active: isMasterPanelPageActive("Home"),
     client: supabase,
     logicalDayStart: dayStartTime,
     timezone: userTimeZone,
@@ -2645,11 +2675,14 @@ export function TaskApp() {
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorFocusRequest(null);
     const workspaceController = masterWorkspaceControllerRef.current;
-    taskEditorOwnerRef.current = {
+    const owner = {
       panelId: workspaceController?.currentPanel.id ?? "legacy-panel",
       masterTabId: workspaceController?.activeTab.id ?? "legacy-tab",
       taskWorkspaceTabId: nextTaskWorkspaceTabId,
     };
+    taskEditorOwnerRef.current = owner;
+    setTaskEditorPanelOwner(owner);
+    setWorkspaceOverlayOwner({ panelId: owner.panelId, tabId: owner.masterTabId });
     setSharedTaskEditorOverlayTaskId(taskId);
   }, [requestPageNavigation, setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
 
@@ -5548,6 +5581,8 @@ export function TaskApp() {
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
     taskEditorOwnerRef.current = owner;
+    setTaskEditorPanelOwner(owner);
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setSharedTaskEditorOverlayTaskId(task.id);
     setTaskEditorFocusRequest(null);
     return true;
@@ -5685,8 +5720,8 @@ export function TaskApp() {
     });
   }, [createTaskAndOpenSharedEditor, todayKey]);
 
-  const openScratchLinkedTaskTemplate = useCallback((title: string) => (
-    createTaskAndOpenSharedEditor(buildNewTaskDraft(title))
+  const openScratchLinkedTaskTemplate = useCallback((title: string, owner?: TaskPanelOwner) => (
+    createTaskAndOpenSharedEditor(buildNewTaskDraft(title), { owner })
   ), [createTaskAndOpenSharedEditor]);
 
   const {
@@ -5705,12 +5740,13 @@ export function TaskApp() {
     setTaskRouting,
     setTaskUiState,
   });
-  const openFocusPlanner = useCallback((taskIds?: string[], taskCandidates?: Task[]) => {
+  const openFocusPlanner = useCallback((taskIds?: string[], taskCandidates?: Task[], owner?: TaskPanelOwner) => {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setFocusPlannerTaskCandidatesOverride(taskCandidates ?? null);
     setFocusPlannerStep(0);
     setFocusDraftIds(taskIds ?? focusedTaskIds);
     setShowFocusPlanner(true);
-  }, [focusedTaskIds]);
+  }, [focusedTaskIds, setWorkspaceOverlayOwnerForTaskPanel]);
   const { setTaskPriority } = useTaskPriorityRoutingController({
     focusedTaskIds,
     onOpenEditTaskEditor: openExistingTaskEditor,
@@ -5722,7 +5758,7 @@ export function TaskApp() {
     },
   });
   useEffect(() => {
-    if (typeof window === "undefined" || activePage !== "Tasks") {
+    if (typeof window === "undefined" || !isMasterPanelPageActive("Tasks")) {
       return;
     }
 
@@ -5899,14 +5935,32 @@ export function TaskApp() {
         collapsedTaskContentFolderIds: Array.from(collapsedTaskContentFolderIds),
         currentFolderId,
         taskTableLayoutPreferences,
-      } : tab),
-    };
+    } : tab),
+  };
   }, [collapsedTaskContentFolderIds, currentFolderId, getTaskWorkspaceTabsState, taskTableLayoutPreferences]);
+  const hasUnsafeTasksDraftForPanel = useCallback((panelId: string, masterTabId: string, includeInlineRename = true) => {
+    const ownerPrefix = `${panelId}:${masterTabId}:`;
+    const ownsSharedEditor = Boolean(sharedTaskEditorOverlayTaskId
+      && taskEditorPanelOwner?.panelId === panelId
+      && taskEditorPanelOwner.masterTabId === masterTabId);
+    const ownsPanelDraft = taskPanelDraftOwnerKeys.some((key) => {
+      const [ownerKey, source] = key.split("::");
+      return Boolean(ownerKey?.startsWith(ownerPrefix) && (includeInlineRename || source !== "workspace"));
+    });
+    return ownsSharedEditor || ownsPanelDraft;
+  }, [sharedTaskEditorOverlayTaskId, taskEditorPanelOwner, taskPanelDraftOwnerKeys]);
+  const hasUnsafeTasksDraftForSplit = useCallback((workspace: MasterWorkspaceState) => {
+    const rightPanel = workspace.panels.find((panel) => panel.side === "right");
+    return Boolean(rightPanel?.tabs.some((tab) => tab.destination.page === "Tasks"
+      && hasUnsafeTasksDraftForPanel(rightPanel.id, tab.id, false)));
+  }, [hasUnsafeTasksDraftForPanel]);
   const masterWorkspace = useMasterWorkspaceController({
     activePage,
     healthDraftSafetyBySection,
     hasUnsafeNotesDraft,
     hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen || isSplitRightTasksWorkspaceDraftOpen || isSplitRightTasksListDraftOpen || isSplitRightTasksTableDraftOpen || taskPanelDraftOwnerKeys.length > 0,
+    hasUnsafeTasksDraftForPanel,
+    hasUnsafeTasksDraftForSplit,
     initialHealthSection: legacyHealthTabPreference,
     isReady: isAuthenticatedAppBootReady,
     replaceTaskWorkspaceTabsState,
@@ -5918,6 +5972,45 @@ export function TaskApp() {
     draftProtection: masterWorkspaceDraftProtection,
   });
   masterWorkspaceControllerRef.current = masterWorkspace;
+  const activeWorkspaceOverlayOwner = workspaceOverlayOwner ?? {
+    panelId: masterWorkspace.currentPanel.id,
+    tabId: masterWorkspace.activeTab.id,
+  };
+  const workspaceModalOverlayHost = masterWorkspace.hasSplit
+    ? (() => {
+      const host = masterPanelOverlayHosts.get(activeWorkspaceOverlayOwner.panelId);
+      return host ? { ...host, tabId: activeWorkspaceOverlayOwner.tabId } : null;
+    })()
+    : undefined;
+  const sharedTaskEditorOverlayHost = masterWorkspace.hasSplit && sharedTaskEditorOverlayTaskId && workspaceOverlayOwner
+    ? (() => {
+      const host = masterPanelOverlayHosts.get(workspaceOverlayOwner.panelId);
+      return host ? { ...host, tabId: workspaceOverlayOwner.tabId } : null;
+    })()
+    : undefined;
+  const { isEnabled: masterWorkspaceIsEnabled, workspace: masterWorkspaceState, getTasksUiState: getMasterWorkspaceTasksUiState } = masterWorkspace;
+  useLayoutEffect(() => {
+    const nextPages = masterWorkspaceIsEnabled
+      ? Array.from(new Set(masterWorkspaceState.panels.flatMap((panel) => {
+        const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+        return tab ? [tab.destination.page] : [];
+      })))
+      : [];
+    const nextTaskSurfaces = masterWorkspaceIsEnabled
+      ? masterWorkspaceState.panels.flatMap((panel) => {
+        const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+        if (tab?.destination.page !== "Tasks") return [];
+        const panelTaskUiState = getMasterWorkspaceTasksUiState(panel.id, tab.id);
+        return panelTaskUiState ? [panelTaskUiState.tasksSurface] : [];
+      })
+      : [];
+    setMasterPanelPages((current) => current.length === nextPages.length && current.every((page, index) => page === nextPages[index])
+      ? current
+      : nextPages);
+    setMasterPanelTaskSurfaces((current) => current.length === nextTaskSurfaces.length && current.every((surface, index) => surface === nextTaskSurfaces[index])
+      ? current
+      : nextTaskSurfaces);
+  }, [getMasterWorkspaceTasksUiState, masterWorkspace, masterWorkspaceIsEnabled, masterWorkspaceState]);
   const splitPanels = useMemo(() => {
     const left = masterWorkspace.workspace.panels.find((panel) => panel.side === "left");
     const right = masterWorkspace.workspace.panels.find((panel) => panel.side === "right");
@@ -5925,11 +6018,10 @@ export function TaskApp() {
     const rightTab = right?.tabs.find((tab) => tab.id === right.activeTabId);
     return { left, leftTab, right, rightTab };
   }, [masterWorkspace.workspace]);
-  const isTasksSplit = masterWorkspace.isEnabled
-    && splitPanels.left?.id === masterWorkspace.workspace.focusedPanelId
-    && splitPanels.leftTab?.destination.page === "Tasks"
-    && splitPanels.rightTab?.destination.page === "Tasks";
-  const splitRightTasksUiState = isTasksSplit && splitPanels.right && splitPanels.rightTab
+  const isSplitRightTaskPanel = masterWorkspace.isEnabled
+    && Boolean(splitPanels.right && splitPanels.rightTab?.destination.page === "Tasks");
+  const isTasksSplit = isSplitRightTaskPanel && splitPanels.leftTab?.destination.page === "Tasks";
+  const splitRightTasksUiState = isSplitRightTaskPanel && splitPanels.right && splitPanels.rightTab
     ? masterWorkspace.getTasksUiState(splitPanels.right.id, splitPanels.rightTab.id) ?? null
     : null;
   const splitRightDerivedPresentation = useMemo(
@@ -6132,6 +6224,17 @@ export function TaskApp() {
   const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
     ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
     : legacyHealthTabPreference;
+  const masterPanelHealthSections = masterWorkspace.isEnabled
+    ? masterWorkspace.workspace.panels.flatMap((panel) => {
+      const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+      return tab?.destination.page === "Health"
+        ? [tab.presentation.healthSection ?? legacyHealthTabPreference]
+        : [];
+    })
+    : [];
+  const isMasterPanelHealthSectionActive = (section: HealthTab) => (
+    (activePage === "Health" && activeHealthTab === section) || masterPanelHealthSections.includes(section)
+  );
   const isMasterTabsFeatureEnabled = masterWorkspace.featureEnabled;
   const selectMasterHealthSection = masterWorkspace.selectHealthSection;
   const handleHealthTabSelection = useCallback((tab: HealthTab) => {
@@ -6153,7 +6256,7 @@ export function TaskApp() {
     restoreGoal: restoreFitnessGoal,
     updateGoal: updateFitnessGoal,
     updateLevel: updateFitnessGoalLevel,
-  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, activePage === "Health" && activeHealthTab === "Fitness");
+  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, isMasterPanelHealthSectionActive("Fitness"));
   const {
     archivePlan: archiveFitnessPlan,
     archivePlanItem: archiveFitnessPlanItem,
@@ -6167,7 +6270,7 @@ export function TaskApp() {
     updatePlan: updateFitnessPlan,
     updatePlanItem: updateFitnessPlanItem,
     workoutPlanItemLinks,
-  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, activePage === "Health" && activeHealthTab === "Fitness");
+  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, isMasterPanelHealthSectionActive("Fitness"));
   const {
     archiveExercise,
     createExercise,
@@ -6182,7 +6285,7 @@ export function TaskApp() {
     updateExercise,
     workoutExercises,
     workoutSets,
-  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, activePage === "Health" && activeHealthTab === "Fitness");
+  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, isMasterPanelHealthSectionActive("Fitness"));
   async function deleteHealthWorkoutWithStructuredDetails(workoutId: string) {
     const deleted = await deleteHealthWorkout(workoutId);
     if (deleted) removeLocalWorkoutSessionDetails(workoutId);
@@ -6437,22 +6540,24 @@ export function TaskApp() {
     });
     return true;
   }, [persistTaskHierarchyRow, setMessage, tasks]);
-  const openMilestoneSetup = useCallback((taskId: string) => {
+  const openMilestoneSetup = useCallback((taskId: string, owner?: TaskPanelOwner) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !canPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
       setMessage({ tone: "warn", text: "This task is no longer eligible for Milestone promotion." });
       return;
     }
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setMilestoneSetupTaskId(taskId);
-  }, [milestoneData.milestoneByTaskId, setMessage, tasks]);
-  const requestDetachAndPromoteMilestone = useCallback((taskId: string) => {
+  }, [milestoneData.milestoneByTaskId, setMessage, setWorkspaceOverlayOwnerForTaskPanel, tasks]);
+  const requestDetachAndPromoteMilestone = useCallback((taskId: string, owner?: TaskPanelOwner) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !canDetachAndPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
       setMessage({ tone: "warn", text: "This Step or Substep can no longer be detached for Milestone promotion." });
       return;
     }
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setPendingDetachMilestoneTaskId(taskId);
-  }, [milestoneData.milestoneByTaskId, setMessage, tasks]);
+  }, [milestoneData.milestoneByTaskId, setMessage, setWorkspaceOverlayOwnerForTaskPanel, tasks]);
   const confirmDetachAndPromoteMilestone = useCallback(async () => {
     const taskId = pendingDetachMilestoneTaskId;
     if (!taskId || isDetachingMilestoneTask) return;
@@ -6818,6 +6923,8 @@ export function TaskApp() {
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(options?.navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
     taskEditorOwnerRef.current = owner;
+    setTaskEditorPanelOwner(owner);
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setSharedTaskEditorOverlayTaskId(taskId);
     setTaskEditorFocusRequest(options?.initialField
       ? { field: options.initialField, taskId, token: ++taskEditorFocusTokenRef.current }
@@ -6994,7 +7101,8 @@ export function TaskApp() {
     });
   }
 
-  function openTaskHistoryForTask(taskId: string) {
+  function openTaskHistoryForTask(taskId: string, owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     const loadGeneration = ++taskHistoryModalLoadGenerationRef.current;
     setTaskHistoryModalTaskId(taskId);
     setTaskHistoryModalLoadingTaskId(taskId);
@@ -7009,7 +7117,8 @@ export function TaskApp() {
     });
   }
 
-  function openBatchDeleteModal(taskIds?: string[]) {
+  function openBatchDeleteModal(taskIds?: string[], owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setBatchActionTaskIdsOverride(taskIds ? [...taskIds] : null);
     setIsBatchDeleteModalOpen(true);
   }
@@ -7104,6 +7213,7 @@ export function TaskApp() {
     options?: {
       logicalDate?: string;
       onTimeOrigin?: OnTimeLinkedItemOrigin;
+      owner?: TaskPanelOwner;
     },
   ) {
     if (options?.logicalDate && options.logicalDate > todayKey) return false;
@@ -7126,6 +7236,7 @@ export function TaskApp() {
       return false;
     }
 
+    setWorkspaceOverlayOwnerForTaskPanel(options?.owner);
     setPendingCompleteAction({
       logicalDate: options?.logicalDate,
       onTimeOrigin: options?.onTimeOrigin,
@@ -7795,6 +7906,7 @@ export function TaskApp() {
   function closeBatchDeleteModal() {
     setIsBatchDeleteModalOpen(false);
     setBatchActionTaskIdsOverride(null);
+    setWorkspaceOverlayOwner(null);
   }
 
   function confirmBatchDelete() {
@@ -7810,7 +7922,8 @@ export function TaskApp() {
     void deleteSelectedListTasks();
   }
 
-  function openBatchEditModal(taskIds?: string[]) {
+  function openBatchEditModal(taskIds?: string[], owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setBatchActionTaskIdsOverride(taskIds ? [...taskIds] : null);
     setIsBatchEditModalOpen(true);
   }
@@ -7818,25 +7931,30 @@ export function TaskApp() {
   function closeBatchEditModal() {
     setIsBatchEditModalOpen(false);
     setBatchActionTaskIdsOverride(null);
+    setWorkspaceOverlayOwner(null);
   }
 
   function closeFocusPlanner() {
     setShowFocusPlanner(false);
     setFocusPlannerTaskCandidatesOverride(null);
+    setWorkspaceOverlayOwner(null);
   }
 
-  function openMomentumDetails() {
+  function openMomentumDetails(owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setIsMomentumListOpen(true);
   }
 
   function closeMomentumDetails() {
     setIsMomentumListOpen(false);
+    setWorkspaceOverlayOwner(null);
   }
 
   function closeTaskHistoryModal() {
     taskHistoryModalLoadGenerationRef.current += 1;
     setTaskHistoryModalTaskId(null);
     setTaskHistoryModalLoadingTaskId(null);
+    setWorkspaceOverlayOwner(null);
   }
 
   const batchModalTasks = batchActionTaskIdsOverride
@@ -8016,10 +8134,18 @@ export function TaskApp() {
     }
   }
 
+  const workspaceOverlayTaskOwner: TaskPanelOwner | undefined = workspaceOverlayOwner ? {
+    panelId: workspaceOverlayOwner.panelId,
+    masterTabId: workspaceOverlayOwner.tabId,
+    taskWorkspaceTabId: masterWorkspace.workspace.panels
+      .find((panel) => panel.id === workspaceOverlayOwner.panelId)?.tabs
+      .find((tab) => tab.id === workspaceOverlayOwner.tabId)?.presentation.tasksWorkspace?.activeTabId
+      ?? taskWorkspaceTabsState.activeTabId,
+  } : undefined;
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
-    onRequestComplete: (logicalDate: string) => requestTaskComplete(taskHistoryModalTask, { logicalDate }),
-    onSelectTask: openTaskHistoryForTask,
+    onRequestComplete: (logicalDate: string) => requestTaskComplete(taskHistoryModalTask, { logicalDate, owner: workspaceOverlayTaskOwner }),
+    onSelectTask: (taskId: string) => openTaskHistoryForTask(taskId, workspaceOverlayTaskOwner),
     onRefreshTaskAuthority: async () => {
       if (!taskHistoryModalTaskId) return false;
       await reconcileTaskEntity(taskHistoryModalTaskId);
@@ -8272,6 +8398,11 @@ export function TaskApp() {
       ) : null}
     </div>
   );
+  const openTaskListSettingsForPanel = (panelId: string, tabId: string, folderId: string | null) => {
+    setWorkspaceOverlayOwner({ panelId, tabId });
+    setTaskListSettingsPanelContext({ folderId, panelId, tabId });
+    setIsTaskListSettingsOpen(true);
+  };
   const listPanelProps = {
     draggedListColumnId,
     isKeyboardShortcutsMenuOpen,
@@ -8283,7 +8414,7 @@ export function TaskApp() {
     listVisibleColumns,
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
-    onOpenListSettings: () => setIsTaskListSettingsOpen(true),
+    onOpenListSettings: () => openTaskListSettingsForPanel(masterWorkspace.currentPanel.id, masterWorkspace.activeTab.id, currentFolderId),
     onOpenCompletedMilestones: () => {
       setTaskUiState((prev) => ({ ...prev, tasksSurface: "completed_milestones" }));
     },
@@ -8317,6 +8448,8 @@ export function TaskApp() {
   };
   const closeSharedTaskEditorOverlay = () => {
     taskEditorOwnerRef.current = null;
+    setTaskEditorPanelOwner(null);
+    setWorkspaceOverlayOwner(null);
     setSharedTaskEditorOverlayTaskId(null);
     setTaskEditorNavigationTaskIds(null);
     setTaskEditorFocusRequest(null);
@@ -8375,7 +8508,7 @@ export function TaskApp() {
     onOpenTaskComposerForType: openTaskComposerForType,
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
-    onOpenListSettings: () => setIsTaskListSettingsOpen(true),
+    onOpenListSettings: () => openTaskListSettingsForPanel(masterWorkspace.currentPanel.id, masterWorkspace.activeTab.id, currentFolderId),
     onOpenMomentumDetails: openMomentumDetails,
     canMoveStructureInto: (sourceItemKey: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => (
       sourceEntityType === "list"
@@ -8511,7 +8644,10 @@ export function TaskApp() {
       modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
         ? "Mark step complete"
         : "Mark task permanently complete",
-      onClose: () => setPendingCompleteAction(null),
+      onClose: () => {
+        setPendingCompleteAction(null);
+        setWorkspaceOverlayOwner(null);
+      },
       onConfirm: () => { void confirmPendingTaskComplete(); },
       pending: isMilestoneComplete && isMilestoneLifecyclePending,
       taskTitle: pendingCompleteTask?.title ?? "Task",
@@ -8524,24 +8660,26 @@ export function TaskApp() {
   })();
 
   const taskWorkspaceFlowLayer = (
-    <>
-      <TaskEditFlows
-        batchDeleteFlow={batchDeleteFlow}
-        batchEditFlow={batchEditFlow}
-        completeFlow={null}
-        focusPlannerFlow={focusPlannerFlow}
-        momentumFlow={momentumFlow}
-        taskHistoryFlow={null}
-      />
+    <WorkspaceOverlayHostContext.Provider value={workspaceModalOverlayHost}>
+      <>
+        <TaskEditFlows
+          batchDeleteFlow={batchDeleteFlow}
+          batchEditFlow={batchEditFlow}
+          completeFlow={null}
+          focusPlannerFlow={focusPlannerFlow}
+          momentumFlow={momentumFlow}
+          taskHistoryFlow={null}
+        />
       {milestoneSetupTask ? (
         <MilestoneSetupModal
           localDate={milestoneLocalDate}
-          onClose={() => setMilestoneSetupTaskId(null)}
+          onClose={() => { setMilestoneSetupTaskId(null); setWorkspaceOverlayOwner(null); }}
           onLock={milestoneData.lockMilestone}
           onSuccess={(milestone) => {
             setMilestoneSetupTaskId(null);
+            setWorkspaceOverlayOwner(null);
             setMessage({ tone: "good", text: `“${milestone.task_title_snapshot}” is now a Milestone.` });
-            if (milestone.task_id) openSharedTaskEditor(milestone.task_id);
+            if (milestone.task_id) openSharedTaskEditor(milestone.task_id, { owner: workspaceOverlayTaskOwner });
           }}
           task={milestoneSetupTask}
           timezone={userTimeZone}
@@ -8550,17 +8688,18 @@ export function TaskApp() {
       {milestoneCorrection ? (
         <MilestoneCorrectionModal
           milestone={milestoneCorrection}
-          onClose={() => setMilestoneCorrectionId(null)}
+          onClose={() => { setMilestoneCorrectionId(null); setWorkspaceOverlayOwner(null); }}
           onCorrect={milestoneData.correctMilestone}
           onSuccess={() => {
             setMilestoneCorrectionId(null);
+            setWorkspaceOverlayOwner(null);
             setMessage({ tone: "good", text: "Milestone setup corrected." });
           }}
         />
       ) : null}
       {pendingDetachMilestoneTask ? (
         <DetachAndPromoteMilestoneModal
-          onCancel={() => setPendingDetachMilestoneTaskId(null)}
+          onCancel={() => { setPendingDetachMilestoneTaskId(null); setWorkspaceOverlayOwner(null); }}
           onConfirm={() => { void confirmDetachAndPromoteMilestone(); }}
           pending={isDetachingMilestoneTask}
           task={pendingDetachMilestoneTask}
@@ -8570,336 +8709,69 @@ export function TaskApp() {
         <MilestoneLifecycleModal
           action={pendingMilestoneLifecycle.action}
           milestone={pendingMilestoneLifecycleRecord}
-          onCancel={() => setPendingMilestoneLifecycle(null)}
+          onCancel={() => { setPendingMilestoneLifecycle(null); setWorkspaceOverlayOwner(null); }}
           onConfirm={(reason) => { void confirmMilestoneLifecycle(reason); }}
           pending={isMilestoneLifecyclePending}
         />
       ) : null}
-    </>
+      </>
+    </WorkspaceOverlayHostContext.Provider>
   );
 
-  return (
-    <main
-      data-theme={theme}
-      data-lowstim={lowStim ? "" : undefined}
-      className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
-    >
-      <TaskEditFlows
-        batchDeleteFlow={null}
-        batchEditFlow={null}
-        completeFlow={completeFlow}
-        focusPlannerFlow={null}
-        momentumFlow={null}
-        taskHistoryFlow={taskHistoryFlow}
-      />
-      {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
-        <TaskManagementTableV2
-          allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
-          allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
-          allRows={sharedTaskEditorRows}
-          allTagOptions={allTaskTags}
-          userId={currentUserId}
-          todayDateKey={todayKey}
-          taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
-          attentionReasonByTaskId={taskAttentionReasonByTaskId}
-          childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
-          childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
-          className="m-0 max-w-none p-0"
-          enableInspector
-          editorNavigationTaskIds={taskEditorNavigationTaskIds ?? undefined}
-          getFollowTaskDestination={getFollowTaskDestination}
-          milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
-          milestonePromotionTaskIds={milestonePromotionTaskIds}
-          onCreateChildTask={createChildTaskFromPreview}
-          onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
-          onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
-          onDiscardTaskTimer={requestTaskTimerDiscard}
-          onDuplicateTask={(taskId) => {
-            const task = tasks.find((entry) => entry.id === taskId);
-            if (task) void duplicateTaskInPlace(task);
-          }}
-          onFollowDetachedTask={followDetachedTask}
-          onInspectorClose={closeSharedTaskEditorOverlay}
-          onTaskEditorNavigate={(taskId) => setSharedTaskEditorOverlayTaskId(taskId)}
-          onMoveTaskIntoParent={moveTaskIntoParent}
-          onNextTaskTimer={() => cycleHudTaskTimer("next")}
-          onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
-          onOpenNote={(noteId) => {
-            if (!requestPageNavigation("Notes")) return;
-            closeSharedTaskEditorOverlay();
-            setNotePageOpenNoteId(noteId);
-          }}
-          onOpenTaskHistory={openTaskHistoryForTask}
-          onPauseTaskTimer={pauseHudTaskTimer}
-          onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
-          onPromoteTaskToMilestone={openMilestoneSetup}
-          onReorderChildTask={(taskId, direction) => { void reorderChildTask(taskId, direction); }}
-          onRequestedEditorFocusHandled={(token) => {
-            setTaskEditorFocusRequest((current) => current?.token === token ? null : current);
-          }}
-          onRestoreTask={(taskId) => { void restoreTaskFromTrash(taskId); }}
-          onResumeTaskTimer={resumeHudTaskTimer}
-          onStartTaskTimer={startHudTaskTimer}
-          onStopTaskTimer={stopHudTaskTimer}
-          onTaskActualSecondsChange={(taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); }}
-          onTaskDueChange={(taskId, schedule, options) => {
-            const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
-            let didPersist = false;
-            const didFullyReconcile = updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, {
-              ...(manualAction ? { manualAction } : {}),
-              onCanonicalMutationPersisted: () => {
-                didPersist = true;
-              },
-            });
-            return didFullyReconcile.then((didReconcile) => didPersist || didReconcile);
-          }}
-          onTaskEnergyChange={(taskId, energy) => { void updateTask(taskId, { energy }); }}
-          onTaskEstimatedMinutesChange={(taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); }}
-          onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
-          onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
-          onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
-          onTaskTypeChange={(taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); }}
-          onTaskBehaviorProfileChange={updateTaskBehaviorProfile}
-          onCustomRulesetBehaviorProfileChange={updateCustomBehaviorRulesetProfile}
-          onResetTaskBehaviorProfile={resetTaskBehaviorProfile}
-          taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
-          behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
-          namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
-          behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
-          behaviorPolicyLogicalDate={todayKey}
-          behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
-          customBehaviorRulesets={customBehaviorRulesets}
-          customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
-          onCreateCustomRuleset={createCustomRuleset}
-          onDeleteCustomRuleset={deleteCustomRuleset}
-          onShowCustomRulesetTasks={showCustomRulesetTasks}
-          onMoveCustomRulesetTasksToTaskAndDelete={moveCustomRulesetTasksToTaskAndDelete}
-          onRenameCustomRuleset={renameCustomRuleset}
-          onUpdateCustomRulesetPresentation={updateCustomRulesetPresentation}
-          onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
-          onTaskPriorityChange={applyTaskPriorityChange}
-          onTaskRepeatChange={handleSharedTaskRepeatChange}
-          onTaskQuotaBalanceClear={handleClearTaskQuotaBalance}
-          onTaskStatusChange={(taskId, status) => {
-            const task = tasks.find((entry) => entry.id === taskId);
-            if (task) void updateTaskStatus(task, status);
-          }}
-          onTaskSubtaskAdd={addTaskSubtask}
-          onTaskSubtaskAddChild={addChildTaskSubtask}
-          onTaskSubtaskDelete={(subtaskId) => { void deleteTaskSubtask(subtaskId); }}
-          onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
-          onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
-          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
-          onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
-          onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
-          onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
-          onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
-          onUnlinkTask={unlinkSameTableTask}
-          overlayOnly
-          renderFullInspectorExtension={renderMilestoneInspectorExtension}
-          requestedEditorFocus={taskEditorFocusRequest}
-          requestedOpenTask={requestedSharedTaskRow}
-          requestedOpenTaskId={sharedTaskEditorOverlayTaskId}
-          rows={sharedTaskEditorRows}
-          runningTaskTimers={runningTaskTimers}
-          selectedTaskIds={[]}
-          showHeader={false}
-        />
-      ) : null}
-      {isAccountOpen ? (
-        <AccountModal
-          onClose={() => setIsAccountOpen(false)}
-          onSave={handleSaveProfile}
-          onSignOut={() => void client.auth.signOut()}
-          profile={profile}
-        />
-      ) : null}
-      {isTaskListSettingsOpen ? (
-        <TaskListSettingsModal
-          currentFolderId={currentFolderId}
-          energyOptions={energyOptions}
-          fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
-          folders={taskListFolders}
-          listCounts={visibleListCounts}
-          lists={availableTaskLists.filter(isTaskListSettingsEligible)}
-          onClose={() => setIsTaskListSettingsOpen(false)}
-          onCreateCustomList={createCustomTaskList}
-          onCreateFolder={taskListFolderActions.createFolder}
-          onDeleteFolder={taskListFolderActions.deleteFolder}
-          onDeleteList={deleteTaskList}
-          onRenameFolder={taskListFolderActions.renameFolder}
-          onSaveList={saveTaskListDefinition}
-          operatorOptionsByField={TASK_LIST_RULE_OPERATOR_OPTIONS}
-          taskStatusOptions={taskStatusOptions}
-        />
-      ) : null}
-      {isImportWidgetMenuOpen ? (
-        <ModalShell className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Import list" onClose={() => setIsImportWidgetMenuOpen(false)}>
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex shrink-0 items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Import</p>
-                <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">Import list</h2>
-                <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/55">
-                  Paste a rough list and turn it into calm, structured tasks without leaving list view.
-                </p>
-              </div>
-              <button
-                aria-label="Close"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white"
-                onClick={() => setIsImportWidgetMenuOpen(false)}
-                type="button"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-              <ImportWidgetCard
-                embeddedInModal
-                message={message}
-                onImport={async (lines, options) => {
-                  const result = await importTasks(lines, { ...options, todayDateKey: todayKey });
-                  if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
-                    setIsImportWidgetMenuOpen(false);
-                  }
-                }}
-              />
-            </div>
-          </div>
-        </ModalShell>
-      ) : null}
-      {activeRewardBankSession ? (
-        <TaskRewardModal
-          isDark={theme === "dark"}
-          onClaim={claimPendingRewardBank}
-          onClose={() => setActiveRewardBankSession(null)}
-          onReset={handleResetPendingRewardBank}
-          pendingBankSnapshot={activeRewardBankSession}
-          pendingRewards={activeRewardBankSession.pendingRewards}
-        />
-      ) : null}
-      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
-        <div className="w-full">
-          <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
-              <HudRuntimeClock active>
-                {(hudNow) => {
-                  const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
-                  const notificationInboxItems = [
-                    ...hudNotificationBaseItems,
-                    ...(focusAlarmRemainingMs !== null
-                      ? [{
-                          detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
-                          id: "focus-alarm",
-                          title: "Focus alarm armed",
-                          tone: "neutral" as const,
-                        }]
-                      : []),
-                    ...hudNotificationEvents,
-                  ].slice(0, 8);
-
-                  return (
-                    <CommandCenterHeader
-                      activeHudTaskTimer={activeHudTaskTimer}
-                      activeSessions={activeSessions}
-                      activeTaskCount={filteredActiveTasks.length}
-                      currentHudPageId={hudUiState.activeHudPageId}
-                      economy={economy}
-                      focusCategories={focusCategories}
-                      hudUiState={hudUiState}
-                      urgentTaskCount={filteredUrgentTasks.length}
-                      onOpenAccount={() => setIsAccountOpen(true)}
-                      onOpenComposer={openInlineNewListTaskComposer}
-                      onOpenFocusPlanner={openFocusPlanner}
-                      onOpenQuickCapture={() => { void openTaskImportPanel(); }}
-                      onViewScratchPaper={() => { requestPageNavigation("Notes"); }}
-                      onNextTaskTimer={() => cycleHudTaskTimer("next")}
-                      onPauseTaskTimer={pauseHudTaskTimer}
-                      onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
-                      onResumeTaskTimer={resumeHudTaskTimer}
-                      onStopTaskTimer={stopHudTaskTimer}
-                      onToggleFocusTimer={(categoryId) => {
-                        void handleToggleTimer(categoryId);
-                      }}
-                      profile={profile}
-                      runningTaskTimers={runningTaskTimers}
-                      setHudUiState={setHudUiState}
-                      hudNow={hudNow}
-                      taskTimerNow={hudNow}
-                      theme={theme}
-                      todayTaskCount={filteredTodayTasks.length}
-                      onThemeChange={setTheme}
-                      lowStim={lowStim}
-                      onLowStimChange={setLowStim}
-                      currentStreak={taskActivitySummary?.tracked.current_streak ?? 0}
-                      notificationInboxItems={notificationInboxItems}
-                      isNativeIosPlatform={isNativeIosPlatform}
-                      focusAlarmEnabled={focusAlarmEnabled}
-                      focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
-                      focusAlarmRemainingMs={focusAlarmRemainingMs}
-                      onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-                      onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-                      onToggleFocusAlarmEnabled={() => {
-                        if (focusAlarmAudioBlocked && focusAlarmEnabled) {
-                          void playFocusAlarmSound({ rearmOnly: true });
-                          return;
-                        }
-
-                        setFocusAlarmEnabled((current) => !current);
-                        if (focusAlarmEnabled) {
-                          setFocusAlarmAudioBlocked(false);
-                        }
-                      }}
-                      mobileZoom={mobileZoom}
-                      onRefreshWorkspace={() => { void handleHudRefresh(); }}
-                      onDecreaseMobileZoom={decreaseMobileZoom}
-                      onIncreaseMobileZoom={increaseMobileZoom}
-                      refreshStatus={refreshStatus === "updating" ? "updating" : (isSoftWorkspaceRefreshing || refreshStatus === "syncing") ? "syncing" : "idle"}
-                      canDecreaseMobileZoom={canDecreaseMobileZoom}
-                      canIncreaseMobileZoom={canIncreaseMobileZoom}
-                      onOpenPendingRewardBank={openPendingRewardBank}
-                      pendingRewardDiceCount={pendingRewardDiceCount}
-                      scratchPaper={scratchPaperData}
-                    />
-                  );
-                }}
-              </HudRuntimeClock>
-          </div>
-        </div>
-      </div>
-      {masterWorkspace.isEnabled ? (
-        <MasterWorkspaceTabBar
-          activeTabId={masterWorkspace.activeTab.id}
-          canActivateTab={masterWorkspace.canActivateTab}
-          canCloseSplit={masterWorkspace.canCloseSplit}
-          hasSplit={masterWorkspace.hasSplit}
-          splitCloseBlockedReason={masterWorkspace.splitCloseBlockedReason}
-          canCloseTab={masterWorkspace.canCloseTab}
-          canOpenNewTab={masterWorkspace.canOpenNewTab}
-          canNavigate={masterWorkspace.canNavigate}
-          canSplitRight={masterWorkspace.canSplitRight}
-          transitionBlockedReason={masterWorkspace.transitionBlockedReason}
-          onActivate={masterWorkspace.activateTab}
-          onClose={masterWorkspace.closeTab}
-          onCloseSplit={masterWorkspace.closeSplit}
-          onOpenPage={masterWorkspace.openPageTab}
-          onSplitRight={masterWorkspace.splitRight}
-          tabs={masterWorkspace.currentPanel.tabs}
-        />
-      ) : null}
-      <div className="mx-auto w-full" style={shellZoomStyle}>
-        <section className="w-full pb-28">
-
-        {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
-
+  const renderWorkspacePage = (panelPage: AppPage, panel: typeof masterWorkspace.workspace.panels[number], panelTab: typeof masterWorkspace.activeTab) => {
+    const panelHealthTab = panelPage === "Health"
+      ? panelTab.presentation.healthSection ?? legacyHealthTabPreference
+      : legacyHealthTabPreference;
+    const panelTasksWorkspace = panelTab.presentation.tasksWorkspace ?? getTaskWorkspaceSnapshotForMasterWorkspace();
+    const panelTaskOwner: TaskPanelOwner = {
+      panelId: panel.id,
+      masterTabId: panelTab.id,
+      taskWorkspaceTabId: panelTasksWorkspace.activeTabId,
+    };
+    const openPanelTaskEditor = (taskId: string) => openSharedTaskEditor(taskId, { owner: panelTaskOwner, preserveActivePage: true });
+    const openPanelTaskEditorWithTime = (taskId: string) => openSharedTaskEditor(taskId, { owner: panelTaskOwner, initialField: "estimated_time" });
+    const openPanelBatchDelete = (taskIds?: string[]) => openBatchDeleteModal(taskIds, panelTaskOwner);
+    const openPanelBatchEdit = (taskIds?: string[]) => openBatchEditModal(taskIds, panelTaskOwner);
+    const openPanelTaskHistory = (taskId: string) => openTaskHistoryForTask(taskId, panelTaskOwner);
+    const openPanelFocusPlanner = (taskIds?: string[], candidates?: Task[]) => openFocusPlanner(taskIds, candidates, panelTaskOwner);
+    const openPanelMomentumDetails = () => openMomentumDetails(panelTaskOwner);
+    const openPanelMilestoneSetup = (taskId: string) => openMilestoneSetup(taskId, panelTaskOwner);
+    const requestPanelDetachAndPromoteMilestone = (taskId: string) => requestDetachAndPromoteMilestone(taskId, panelTaskOwner);
+    const panelScratchPaperData: ScratchPaperData = {
+      ...scratchPaperData,
+      editingViewId: panelTab.id,
+      onCreateTask: (title) => openScratchLinkedTaskTemplate(title, panelTaskOwner),
+      onOpenTask: openPanelTaskEditor,
+      scratchPaperView: panelTab.presentation.scratchPaperView ?? masterWorkspace.activeScratchPaperView,
+      onScratchPaperViewChange: (view) => masterWorkspace.updateScratchPaperViewInPanel(panel.id, panelTab.id, view),
+    };
+    const panelListPanelProps = {
+      ...listPanelProps,
+      onOpenComposer: () => openInlineNewListTaskComposer({ owner: panelTaskOwner, selectedBucket: taskUiState.selectedBucket }),
+      onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(panelTaskOwner); void openTaskImportPanel(); },
+      onOpenListSettings: () => openTaskListSettingsForPanel(panel.id, panelTab.id, currentFolderId),
+    };
+    const panelTaskOperationsHeaderProps = {
+      ...taskOperationsHeaderProps,
+      onOpenFocusPlanner: () => openPanelFocusPlanner(),
+      onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(panelTaskOwner); void openTaskImportPanel(); },
+      onOpenListSettings: () => openTaskListSettingsForPanel(panel.id, panelTab.id, currentFolderId),
+      onOpenMomentumDetails: openPanelMomentumDetails,
+      onOpenTaskComposerForType: (selectionValue: string) => openTaskComposerForType(selectionValue, { owner: panelTaskOwner, selectedBucket: taskUiState.selectedBucket }),
+    };
+    const panelNavigate = masterWorkspace.isEnabled
+      ? (page: AppPage) => masterWorkspace.navigatePanelToPage(panel.id, page)
+      : requestPageNavigation;
+    return (
         <ErrorBoundary
-          key={shouldDeferPageRender ? "restoring-page" : activePage}
+          key={shouldDeferPageRender ? "restoring-page" : panelPage}
           fallback={<div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">This workspace could not load. Switch pages and try again.</div>}
         >
         {shouldDeferPageRender ? (
           <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">
             Restoring your last page...
           </div>
-        ) : activePage === "Home" ? (
+        ) : panelPage === "Home" ? (
           <TaskHomePage
             allTags={allTaskTags}
             listMembershipsByTaskId={taskListMembershipsByTaskId}
@@ -8908,7 +8780,7 @@ export function TaskApp() {
             onSetTaskPriority={(taskId, priority) => setTaskPriority(taskId, priority)}
             onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
-            onOpenTask={openTaskEditorFromId}
+            onOpenTask={openPanelTaskEditor}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
             dailyProgress={homeDailyProgress}
@@ -8950,7 +8822,7 @@ export function TaskApp() {
             onBatchIntakeFocusActivationChange={setBatchIntakeFocusActive}
             syncTaskHistoryEntries={syncTaskHistoryEntries}
           />
-        ) : activePage === "Achievements" ? (
+        ) : panelPage === "Achievements" ? (
           <AchievementsPage
             achievementError={achievementProgress.error}
             achievementLoading={achievementProgress.isLoading}
@@ -8965,27 +8837,27 @@ export function TaskApp() {
             initialRecordMetricKey={pendingProgressRecordMetricKey}
             onRecordRequestHandled={clearPendingProgressRecordMetricKey}
             onExcludeTasksFromTracking={excludeTasksFromTracking}
-            onOpenTask={openTaskEditorFromId}
+            onOpenTask={openPanelTaskEditor}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
-              if (!requestPageNavigation("Tasks")) return;
+              if (!panelNavigate("Tasks")) return;
               handleTaskWorkspaceSurfaceChange("tasks");
               setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
             }}
             onOpenMilestoneTask={(taskId) => {
-              if (!requestPageNavigation("Tasks")) return;
-              openTaskInSharedTasksEditorFromPaths(taskId);
+              if (!panelNavigate("Tasks")) return;
+              openPanelTaskEditor(taskId);
             }}
             tasks={tasks}
             recordsClient={supabase}
             timezone={userTimeZone}
             userId={session?.user?.id ?? null}
           />
-        ) : activePage === "Tasks" ? (() => {
+        ) : panelPage === "Tasks" ? (() => {
           const tasksWorkspace = (
             <TasksWorkspace
               activeTabId={taskWorkspaceTabsState.activeTabId}
-              activeMasterTabId={masterWorkspace.activeTab.id}
+              activeMasterTabId={panelTab.id}
             onAddTab={() => createTaskWorkspaceTab({
               isRailHidden: false,
               taskUiState: {
@@ -9009,7 +8881,7 @@ export function TaskApp() {
                 loading={milestoneData.isLoading}
                 lowStimulation={lowStim}
                 milestones={milestoneData.milestones}
-                onOpenTask={openTaskInSharedTasksEditorFromPaths}
+                onOpenTask={openPanelTaskEditor}
                 tasks={tasks}
                 userId={session?.user?.id ?? null}
               />
@@ -9025,7 +8897,7 @@ export function TaskApp() {
                 behaviorPolicyLogicalDate={todayKey}
                 behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
                 error={onTimePlan.error}
-                onOpenTask={openTaskInSharedTasksEditorFromOnTime}
+                onOpenTask={openPanelTaskEditorWithTime}
                 onSetTaskStatus={(task, status, origin) => { void updateTaskStatus(task, status, false, origin); }}
                 onPauseTimer={pauseHudTaskTimer}
                 onResumeTimer={resumeHudTaskTimer}
@@ -9048,7 +8920,7 @@ export function TaskApp() {
             onSurfaceChange={handleTaskWorkspaceSurfaceChange}
             onTabChange={setActiveTaskWorkspaceTab}
             operationsHeaderProps={{
-              ...taskOperationsHeaderProps,
+              ...panelTaskOperationsHeaderProps,
               onSearchDraftEditingChange: reportLeftSearchDraft,
             }}
             pathsWorkspacePanel={(
@@ -9057,7 +8929,7 @@ export function TaskApp() {
                 customBehaviorRulesets={customBehaviorRulesets}
                 getTaskStatusOptions={resolveCurrentTaskStatusOptions}
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
-                onOpenTask={openTaskInSharedTasksEditorFromPaths}
+                onOpenTask={openPanelTaskEditor}
                 onSetTaskStatus={(taskId, status) => {
                   const task = tasks.find((entry) => entry.id === taskId);
                   if (!task) {
@@ -9090,13 +8962,13 @@ export function TaskApp() {
                   listDefinitions={availableTaskLists}
                   listMembershipsByTaskId={taskListMembershipsByTaskId}
                   onClearSelection={clearListTaskSelection}
-                  onOpenBatchDelete={openBatchDeleteModal}
-                  onOpenBatchEdit={openBatchEditModal}
+                  onOpenBatchDelete={openPanelBatchDelete}
+                  onOpenBatchEdit={openPanelBatchEdit}
                   onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
-                  onOpenTaskEditor={openTaskEditorFromId}
+                  onOpenTaskEditor={openPanelTaskEditor}
                   onSelectTaskIds={selectAllVisibleListTasks}
                   onToggleTaskSelection={toggleListTaskSelection}
-                  panelProps={listPanelProps}
+                  panelProps={panelListPanelProps}
                   selectedTaskIds={selectedListTaskIds}
                 />
               ) : (
@@ -9138,11 +9010,11 @@ export function TaskApp() {
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
-                  onOpenBatchDelete: openBatchDeleteModal,
-                  onOpenBatchEdit: openBatchEditModal,
+                  onOpenBatchDelete: openPanelBatchDelete,
+                  onOpenBatchEdit: openPanelBatchEdit,
                   onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
                   onRestoreTask: (taskId) => { void restoreTaskFromTrash(taskId); },
-                  onOpenTaskHistory: openTaskHistoryForTask,
+                  onOpenTaskHistory: openPanelTaskHistory,
                   onPauseTaskTimer: pauseHudTaskTimer,
                   onPreviousTaskTimer: () => cycleHudTaskTimer("previous"),
                   onResumeTaskTimer: resumeHudTaskTimer,
@@ -9151,7 +9023,7 @@ export function TaskApp() {
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenNote: (noteId) => {
-                    if (!requestPageNavigation("Notes")) return;
+                    if (!panelNavigate("Notes")) return;
                     setNotePageOpenNoteId(noteId);
                   },
                   onSetDue: (taskId, schedule, options) => {
@@ -9244,8 +9116,8 @@ export function TaskApp() {
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
                   onUnlinkTasks: unlinkSameTableTasks,
-                  onPromoteTaskToMilestone: openMilestoneSetup,
-                  onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
+                  onPromoteTaskToMilestone: openPanelMilestoneSetup,
+                  onDetachAndPromoteTaskToMilestone: requestPanelDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,
                   milestoneDetachPromotionTaskIds,
                   renderFullInspectorExtension: renderMilestoneInspectorExtension,
@@ -9274,7 +9146,7 @@ export function TaskApp() {
                   emptyStateMessage: pinnedEmptyStateMessage,
                 }}
                 filterRowsNode={taskFilterRowsNode}
-                panelProps={listPanelProps}
+                panelProps={panelListPanelProps}
               />
               )
             )}
@@ -9285,7 +9157,7 @@ export function TaskApp() {
                 listSortPreference={activeListSortPreference}
                 onDraftEditingChange={reportLeftListDraft}
               onToggleFocusToday={toggleFocusTodayForTask}
-                panelProps={listPanelProps}
+                panelProps={panelListPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
                 tableProps={{
                   currentListId: taskUiState.selectedBucket,
@@ -9322,11 +9194,11 @@ export function TaskApp() {
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
-                  onOpenBatchDelete: openBatchDeleteModal,
-                  onOpenBatchEdit: openBatchEditModal,
+                  onOpenBatchDelete: openPanelBatchDelete,
+                  onOpenBatchEdit: openPanelBatchEdit,
                   onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
                   onRestoreTask: (taskId) => { void restoreTaskFromTrash(taskId); },
-                  onOpenTaskHistory: openTaskHistoryForTask,
+                  onOpenTaskHistory: openPanelTaskHistory,
                   onPauseTaskTimer: pauseHudTaskTimer,
                   onPreviousTaskTimer: () => cycleHudTaskTimer("previous"),
                   onResumeTaskTimer: resumeHudTaskTimer,
@@ -9335,7 +9207,7 @@ export function TaskApp() {
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenNote: (noteId) => {
-                    if (!requestPageNavigation("Notes")) return;
+                    if (!panelNavigate("Notes")) return;
                     setNotePageOpenNoteId(noteId);
                   },
                   onSetDue: (taskId, schedule, options) => {
@@ -9421,8 +9293,8 @@ export function TaskApp() {
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
                   onUnlinkTasks: unlinkSameTableTasks,
-                  onPromoteTaskToMilestone: openMilestoneSetup,
-                  onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
+                  onPromoteTaskToMilestone: openPanelMilestoneSetup,
+                  onDetachAndPromoteTaskToMilestone: requestPanelDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,
                   milestoneDetachPromotionTaskIds,
                   renderFullInspectorExtension: renderMilestoneInspectorExtension,
@@ -9699,8 +9571,8 @@ export function TaskApp() {
               onClearSelection: clearSplitRightListTaskSelection,
               onColumnFiltersChange: (tableColumnFilters: TaskUiState["tableColumnFilters"]) => updateRightUi((current) => ({ ...current, tableColumnFilters })),
               onEnergyColumnFiltersChange: (energyFilters: TaskUiState["energyFilters"]) => updateRightUi((current) => ({ ...current, energyFilters })),
-              onOpenBatchDelete: () => openBatchDeleteModal(splitRightSelectedTaskIds),
-              onOpenBatchEdit: () => openBatchEditModal(splitRightSelectedTaskIds),
+              onOpenBatchDelete: () => openBatchDeleteModal(splitRightSelectedTaskIds, rightOwner),
+              onOpenBatchEdit: () => openBatchEditModal(splitRightSelectedTaskIds, rightOwner),
               onOpenChildTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((task) => task.id), preserveActivePage: true }),
               onOpenTaskEditor: (taskId: string, navigationTaskIds?: string[]) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds, preserveActivePage: true }),
               onOpenTaskInNewTab: openTaskInRightWorkspaceTab,
@@ -9734,6 +9606,7 @@ export function TaskApp() {
               ...rightListElement.props.panelProps,
               draggedListColumnId: splitRightDraggedListColumnId,
               filterRowsNode: rightFilterRowsNode,
+              onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(rightOwner); void openTaskImportPanel(); },
               onOpenComposer: () => openInlineNewListTaskComposer({ owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }),
               listSortPreference: rightListSortPreference,
               isKeyboardShortcutsMenuOpen: isSplitRightKeyboardShortcutsMenuOpen,
@@ -9774,8 +9647,8 @@ export function TaskApp() {
                   listDefinitions={availableTaskLists}
                   listMembershipsByTaskId={taskListMembershipsByTaskId}
                   onClearSelection={clearSplitRightListTaskSelection}
-                  onOpenBatchDelete={() => openBatchDeleteModal(splitRightSelectedTaskIds)}
-                  onOpenBatchEdit={() => openBatchEditModal(splitRightSelectedTaskIds)}
+                  onOpenBatchDelete={() => openBatchDeleteModal(splitRightSelectedTaskIds, rightOwner)}
+                  onOpenBatchEdit={() => openBatchEditModal(splitRightSelectedTaskIds, rightOwner)}
                   onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
                   onOpenTaskEditor={(taskId) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((task) => task.id), preserveActivePage: true })}
                   onSelectTaskIds={selectAllSplitRightVisibleListTasks}
@@ -9815,7 +9688,7 @@ export function TaskApp() {
                   inboxCount: rightDerivedCollections?.inboxTasks.length ?? 0,
                   isCollapsed: isSplitRightDailyPlanningCollapsed,
                   missedCount: rightDerivedCollections?.missedTasks.length ?? 0,
-                  onOpenFocusPlanner: () => openFocusPlanner(undefined, rightFocusPlannerTaskChoices),
+                  onOpenFocusPlanner: () => openFocusPlanner(undefined, rightFocusPlannerTaskChoices, rightOwner),
                   onToggleCollapsed: () => setIsSplitRightDailyPlanningCollapsed((current) => !current),
                   onSelectBucket: updateRightBucket,
                   planningCandidates: (splitRightDerivedData?.planningCandidates ?? [])
@@ -9839,6 +9712,7 @@ export function TaskApp() {
               ...tasksWorkspace.props.operationsHeaderProps,
               draggedListColumnId: splitRightDraggedListColumnId,
               filterRowsNode: rightFilterRowsNode,
+              onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(rightOwner); void openTaskImportPanel(); },
               hideSearch: splitRightTasksUiState.duplicateTitleMode,
               isKeyboardShortcutsMenuOpen: isSplitRightKeyboardShortcutsMenuOpen,
               isRailHidden: splitRightActiveTaskWorkspaceTab.isRailHidden,
@@ -9857,6 +9731,7 @@ export function TaskApp() {
               openFolderRails: rightTaskListRailStructureOptions.openFolderRails,
               currentFolderBreadcrumbs: rightFolderBreadcrumbs,
               currentFolderId: rightCurrentFolderId,
+              onOpenListSettings: () => openTaskListSettingsForPanel(rightOwner.panelId, rightOwner.masterTabId, rightCurrentFolderId),
               onOpenArchive: () => updateRightBucket("archive"),
               onOpenTaskComposerForType: (selectionValue: string) => openTaskComposerForType(selectionValue, { owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }),
               onOpenTrash: () => updateRightBucket("trash"),
@@ -9909,7 +9784,8 @@ export function TaskApp() {
               const id = `workspace-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
               return createTaskWorkspaceTabState(current, {
                 collapsedTaskContentFolderIds: Array.from(splitRightCollapsedTaskContentFolderIds),
-                currentFolderId: rightCurrentFolderId,
+              currentFolderId: rightCurrentFolderId,
+              onOpenListSettings: () => openTaskListSettingsForPanel(rightOwner.panelId, rightOwner.masterTabId, rightCurrentFolderId),
                 id,
                 isRailHidden: false,
                 kind: "tasks",
@@ -9990,11 +9866,24 @@ export function TaskApp() {
             <TasksSplitLayout
               active={isTasksSplit && Boolean(rightWorkspace)}
               left={<>{taskWorkspaceFlowLayer}{tasksWorkspace}</>}
+              leftPanel={isTasksSplit && splitPanels.left && splitPanels.leftTab ? {
+                activeTabId: splitPanels.leftTab.id,
+                id: splitPanels.left.id,
+                navigation: renderMasterWorkspaceNavigation(splitPanels.left),
+                scrollTop: splitPanels.leftTab.presentation.scrollTop ?? 0,
+              } : undefined}
+              onOverlayHostChange={handleMasterPanelOverlayHostChange}
               right={rightWorkspace}
+              rightPanel={isTasksSplit && splitPanels.right && splitPanels.rightTab ? {
+                activeTabId: splitPanels.rightTab.id,
+                id: splitPanels.right.id,
+                navigation: renderMasterWorkspaceNavigation(splitPanels.right),
+                scrollTop: splitPanels.rightTab.presentation.scrollTop ?? 0,
+              } : undefined}
               splitRatio={masterWorkspace.workspace.splitRatio}
             />
           );
-        })() : activePage === "Focus" ? (
+        })() : panelPage === "Focus" ? (
           <FocusPage
             activeSessions={activeSessions}
             adjustments={focusDailyGoalAdjustments}
@@ -10038,17 +9927,19 @@ export function TaskApp() {
             onSetFocusReallocationMode={setFocusReallocationMode}
             userId={currentUserId}
           />
-        ) : activePage === "Health" ? (
+        ) : panelPage === "Health" ? (
           <TaskHealthPage
-            activeTab={activeHealthTab}
-            onSelectTab={handleHealthTabSelection}
+            activeTab={panelHealthTab}
+            onSelectTab={masterWorkspace.isEnabled
+              ? (tab) => { if (!masterWorkspace.selectHealthSectionInPanel(panel.id, panelTab.id, tab)) setMessage({ tone: "warn", text: masterWorkspace.transitionBlockedReason ?? "Save or cancel the current edit before switching Health sections." }); }
+              : handleHealthTabSelection}
             onDraftSafetyChange={updateHealthDraftSafety}
-            activeMasterTabId={masterWorkspace.isEnabled ? masterWorkspace.activeTab.id : undefined}
-            journalView={masterWorkspace.isEnabled ? masterWorkspace.activeJournalView : undefined}
-            onJournalViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateJournalView : undefined}
+            activeMasterTabId={masterWorkspace.isEnabled ? panelTab.id : undefined}
+            journalView={masterWorkspace.isEnabled ? panelTab.presentation.journalView : undefined}
+            onJournalViewChange={masterWorkspace.isEnabled ? (journalView) => masterWorkspace.updateJournalViewInPanel(panel.id, panelTab.id, journalView) : undefined}
             journalSessionStore={masterWorkspace.isEnabled ? journalDraftSessionStore : null}
-            foodView={masterWorkspace.isEnabled ? masterWorkspace.activeFoodView : undefined}
-            onFoodViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateFoodView : undefined}
+            foodView={masterWorkspace.isEnabled ? panelTab.presentation.foodView : undefined}
+            onFoodViewChange={masterWorkspace.isEnabled ? (foodView) => masterWorkspace.updateFoodViewInPanel(panel.id, panelTab.id, foodView) : undefined}
             foodSessionStore={masterWorkspace.isEnabled ? healthFoodDraftSessionStore : null}
             customFoodSessionStore={masterWorkspace.isEnabled ? healthCustomFoodDraftSessionStore : null}
             recipeSessionStore={masterWorkspace.isEnabled ? healthRecipeDraftSessionStore : null}
@@ -10159,13 +10050,13 @@ export function TaskApp() {
             workouts={healthWorkouts}
             workoutPlanItemLinks={workoutPlanItemLinks}
           />
-        ) : activePage === "Roll" ? (
+        ) : panelPage === "Roll" ? (
           <RollPage
             client={client}
             currentUser={currentUser}
             isDark={theme === "dark"}
           />
-        ) : activePage === "Stats" ? (
+        ) : panelPage === "Stats" ? (
           <TaskStatsPage
             achievementSummary={achievementSummaryPresentation}
             economy={economy}
@@ -10176,7 +10067,7 @@ export function TaskApp() {
             todayDateKey={todayKey}
             userId={currentUserId}
           />
-        ) : activePage === "Notes" ? (
+        ) : panelPage === "Notes" ? (
           areNotesLoadedForCurrentUser ? (
             <NotesPage
               client={client}
@@ -10187,15 +10078,15 @@ export function TaskApp() {
               onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
               openNoteId={notePageOpenNoteId}
               notesSessionStore={masterWorkspace.isEnabled ? notesDraftSessionStore : null}
-              activeMasterTabId={masterWorkspace.isEnabled ? masterWorkspace.activeTab.id : undefined}
-              notesView={masterWorkspace.isEnabled ? masterWorkspace.activeNotesView : undefined}
-              onNotesViewChange={masterWorkspace.isEnabled ? masterWorkspace.updateNotesView : undefined}
-              scratchPaper={scratchPaperData}
+              activeMasterTabId={masterWorkspace.isEnabled ? panelTab.id : undefined}
+              notesView={masterWorkspace.isEnabled ? panelTab.presentation.notesView : undefined}
+              onNotesViewChange={masterWorkspace.isEnabled ? (notesView) => masterWorkspace.updateNotesViewInPanel(panel.id, panelTab.id, notesView) : undefined}
+              scratchPaper={panelScratchPaperData}
               tasks={tasks}
               voiceMemos={voiceMemos}
             />
           ) : <PageLoadingFallback />
-        ) : activePage === "Settings" ? (
+        ) : panelPage === "Settings" ? (
           <TaskSettingsPage
             accentColor={accentColor}
             client={supabase}
@@ -10215,7 +10106,7 @@ export function TaskApp() {
             lowStim={lowStim}
             onLowStimChange={setLowStim}
           />
-        ) : activePage === "Games" ? (
+        ) : panelPage === "Games" ? (
           <GamesPage
             todayCompletedCount={taskActivitySummary?.unfiltered_today_completed_count ?? null}
             onAwardXP={(xp, reason) =>
@@ -10226,27 +10117,402 @@ export function TaskApp() {
           <PagePlaceholder
             count={activeTasks.length}
             isDark={theme === "dark"}
-            page={activePage}
-            setActivePage={requestPageNavigation}
+            page={panelPage}
+            setActivePage={panelNavigate}
             userId={currentUser.id}
           />
         )}
         </ErrorBoundary>
+    );
+  };
+
+  const renderMasterWorkspaceNavigation = (panel: typeof masterWorkspace.workspace.panels[number]) => (
+    <MasterWorkspaceTabBar
+      activeTabId={panel.activeTabId}
+      canActivateTab={(tabId) => masterWorkspace.canActivateTabInPanel(panel.id, tabId)}
+      canCloseSplit={masterWorkspace.canCloseSplit}
+      hasSplit={masterWorkspace.hasSplit}
+      splitCloseBlockedReason={masterWorkspace.splitCloseBlockedReason}
+      canCloseTab={(tabId) => masterWorkspace.canCloseTabInPanel(panel.id, tabId)}
+      canOpenNewTab={masterWorkspace.canOpenNewTabInPanel(panel.id)}
+      canNavigate={masterWorkspace.canNavigate}
+      canSplitRight={panel.side === "left" && masterWorkspace.canSplitRight}
+      transitionBlockedReason={panel.id === masterWorkspace.workspace.focusedPanelId ? masterWorkspace.transitionBlockedReason : null}
+      onActivate={(tabId) => masterWorkspace.activateTabInPanel(panel.id, tabId)}
+      onClose={(tabId) => masterWorkspace.closeTabInPanel(panel.id, tabId)}
+      onCloseSplit={masterWorkspace.closeSplit}
+      onOpenPage={(page) => { masterWorkspace.openPageTabInPanel(panel.id, page); }}
+      onSplitRight={masterWorkspace.splitRight}
+      showSplitActions={panel.side === "left"}
+      tabs={panel.tabs}
+    />
+  );
+
+  return (
+    <main
+      data-theme={theme}
+      data-lowstim={lowStim ? "" : undefined}
+      className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
+    >
+      <WorkspaceOverlayHostContext.Provider value={workspaceModalOverlayHost}>
+        <TaskEditFlows
+          batchDeleteFlow={null}
+          batchEditFlow={null}
+          completeFlow={completeFlow}
+          focusPlannerFlow={null}
+          momentumFlow={null}
+          taskHistoryFlow={taskHistoryFlow}
+        />
+      </WorkspaceOverlayHostContext.Provider>
+      {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
+        <WorkspaceOverlayHostContext.Provider value={sharedTaskEditorOverlayHost}>
+        <TaskManagementTableV2
+          allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
+          allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
+          allRows={sharedTaskEditorRows}
+          allTagOptions={allTaskTags}
+          userId={currentUserId}
+          todayDateKey={todayKey}
+          taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+          attentionReasonByTaskId={taskAttentionReasonByTaskId}
+          childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
+          childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
+          className="m-0 max-w-none p-0"
+          enableInspector
+          editorNavigationTaskIds={taskEditorNavigationTaskIds ?? undefined}
+          getFollowTaskDestination={getFollowTaskDestination}
+          milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
+          milestonePromotionTaskIds={milestonePromotionTaskIds}
+          onCreateChildTask={createChildTaskFromPreview}
+          onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
+          onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
+          onDiscardTaskTimer={requestTaskTimerDiscard}
+          onDuplicateTask={(taskId) => {
+            const task = tasks.find((entry) => entry.id === taskId);
+            if (task) void duplicateTaskInPlace(task);
+          }}
+          onFollowDetachedTask={followDetachedTask}
+          onInspectorClose={closeSharedTaskEditorOverlay}
+          onTaskEditorNavigate={(taskId) => setSharedTaskEditorOverlayTaskId(taskId)}
+          onMoveTaskIntoParent={moveTaskIntoParent}
+          onNextTaskTimer={() => cycleHudTaskTimer("next")}
+          onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
+          onOpenNote={(noteId) => {
+            if (!requestPageNavigation("Notes")) return;
+            closeSharedTaskEditorOverlay();
+            setNotePageOpenNoteId(noteId);
+          }}
+          onOpenTaskHistory={openTaskHistoryForTask}
+          onPauseTaskTimer={pauseHudTaskTimer}
+          onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
+          onPromoteTaskToMilestone={openMilestoneSetup}
+          onReorderChildTask={(taskId, direction) => { void reorderChildTask(taskId, direction); }}
+          onRequestedEditorFocusHandled={(token) => {
+            setTaskEditorFocusRequest((current) => current?.token === token ? null : current);
+          }}
+          onRestoreTask={(taskId) => { void restoreTaskFromTrash(taskId); }}
+          onResumeTaskTimer={resumeHudTaskTimer}
+          onStartTaskTimer={startHudTaskTimer}
+          onStopTaskTimer={stopHudTaskTimer}
+          onTaskActualSecondsChange={(taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); }}
+          onTaskDueChange={(taskId, schedule, options) => {
+            const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
+            let didPersist = false;
+            const didFullyReconcile = updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, {
+              ...(manualAction ? { manualAction } : {}),
+              onCanonicalMutationPersisted: () => {
+                didPersist = true;
+              },
+            });
+            return didFullyReconcile.then((didReconcile) => didPersist || didReconcile);
+          }}
+          onTaskEnergyChange={(taskId, energy) => { void updateTask(taskId, { energy }); }}
+          onTaskEstimatedMinutesChange={(taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); }}
+          onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
+          onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
+          onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
+          onTaskTypeChange={(taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); }}
+          onTaskBehaviorProfileChange={updateTaskBehaviorProfile}
+          onCustomRulesetBehaviorProfileChange={updateCustomBehaviorRulesetProfile}
+          onResetTaskBehaviorProfile={resetTaskBehaviorProfile}
+          taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
+          behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+          namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+          behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+          behaviorPolicyLogicalDate={todayKey}
+          behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
+          customBehaviorRulesets={customBehaviorRulesets}
+          customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
+          onCreateCustomRuleset={createCustomRuleset}
+          onDeleteCustomRuleset={deleteCustomRuleset}
+          onShowCustomRulesetTasks={showCustomRulesetTasks}
+          onMoveCustomRulesetTasksToTaskAndDelete={moveCustomRulesetTasksToTaskAndDelete}
+          onRenameCustomRuleset={renameCustomRuleset}
+          onUpdateCustomRulesetPresentation={updateCustomRulesetPresentation}
+          onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
+          onTaskPriorityChange={applyTaskPriorityChange}
+          onTaskRepeatChange={handleSharedTaskRepeatChange}
+          onTaskQuotaBalanceClear={handleClearTaskQuotaBalance}
+          onTaskStatusChange={(taskId, status) => {
+            const task = tasks.find((entry) => entry.id === taskId);
+            if (task) void updateTaskStatus(task, status);
+          }}
+          onTaskSubtaskAdd={addTaskSubtask}
+          onTaskSubtaskAddChild={addChildTaskSubtask}
+          onTaskSubtaskDelete={(subtaskId) => { void deleteTaskSubtask(subtaskId); }}
+          onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
+          onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
+          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
+          onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
+          onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
+          onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
+          onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
+          onUnlinkTask={unlinkSameTableTask}
+          overlayOnly
+          renderFullInspectorExtension={renderMilestoneInspectorExtension}
+          requestedEditorFocus={taskEditorFocusRequest}
+          requestedOpenTask={requestedSharedTaskRow}
+          requestedOpenTaskId={sharedTaskEditorOverlayTaskId}
+          rows={sharedTaskEditorRows}
+          runningTaskTimers={runningTaskTimers}
+          selectedTaskIds={[]}
+          showHeader={false}
+        />
+        </WorkspaceOverlayHostContext.Provider>
+      ) : null}
+      {isAccountOpen ? (
+        <AccountModal
+          onClose={() => setIsAccountOpen(false)}
+          onSave={handleSaveProfile}
+          onSignOut={() => void client.auth.signOut()}
+          profile={profile}
+        />
+      ) : null}
+      {isTaskListSettingsOpen ? (
+        <WorkspaceOverlayHostContext.Provider value={masterWorkspace.hasSplit && taskListSettingsPanelContext
+          ? (() => {
+            const host = masterPanelOverlayHosts.get(taskListSettingsPanelContext.panelId);
+            return host ? { ...host, tabId: taskListSettingsPanelContext.tabId } : null;
+          })()
+          : undefined}
+        >
+          <TaskListSettingsModal
+            currentFolderId={taskListSettingsPanelContext ? taskListSettingsPanelContext.folderId : currentFolderId}
+            energyOptions={energyOptions}
+            fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
+            folders={taskListFolders}
+            listCounts={visibleListCounts}
+            lists={availableTaskLists.filter(isTaskListSettingsEligible)}
+            onClose={() => {
+              setIsTaskListSettingsOpen(false);
+              setTaskListSettingsPanelContext(null);
+              setWorkspaceOverlayOwner(null);
+            }}
+            onCreateCustomList={createCustomTaskList}
+            onCreateFolder={taskListFolderActions.createFolder}
+            onDeleteFolder={taskListFolderActions.deleteFolder}
+            onDeleteList={deleteTaskList}
+            onRenameFolder={taskListFolderActions.renameFolder}
+            onSaveList={saveTaskListDefinition}
+            operatorOptionsByField={TASK_LIST_RULE_OPERATOR_OPTIONS}
+            taskStatusOptions={taskStatusOptions}
+          />
+        </WorkspaceOverlayHostContext.Provider>
+      ) : null}
+      {isImportWidgetMenuOpen ? (
+        <WorkspaceOverlayHostContext.Provider value={workspaceModalOverlayHost}>
+        <ModalShell className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Import list" onClose={() => { setIsImportWidgetMenuOpen(false); setWorkspaceOverlayOwner(null); }}>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Import</p>
+                <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">Import list</h2>
+                <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/55">
+                  Paste a rough list and turn it into calm, structured tasks without leaving list view.
+                </p>
+              </div>
+              <button
+                aria-label="Close"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white"
+                onClick={() => setIsImportWidgetMenuOpen(false)}
+                type="button"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+              <ImportWidgetCard
+                embeddedInModal
+                message={message}
+                onImport={async (lines, options) => {
+                  const result = await importTasks(lines, { ...options, todayDateKey: todayKey });
+                  if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
+                    setIsImportWidgetMenuOpen(false);
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </ModalShell>
+        </WorkspaceOverlayHostContext.Provider>
+      ) : null}
+      {activeRewardBankSession ? (
+        <TaskRewardModal
+          isDark={theme === "dark"}
+          onClaim={claimPendingRewardBank}
+          onClose={() => setActiveRewardBankSession(null)}
+          onReset={handleResetPendingRewardBank}
+          pendingBankSnapshot={activeRewardBankSession}
+          pendingRewards={activeRewardBankSession.pendingRewards}
+        />
+      ) : null}
+      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
+        <div className="w-full">
+          <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
+              <HudRuntimeClock active>
+                {(hudNow) => {
+                  const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
+                  const notificationInboxItems = [
+                    ...hudNotificationBaseItems,
+                    ...(focusAlarmRemainingMs !== null
+                      ? [{
+                          detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
+                          id: "focus-alarm",
+                          title: "Focus alarm armed",
+                          tone: "neutral" as const,
+                        }]
+                      : []),
+                    ...hudNotificationEvents,
+                  ].slice(0, 8);
+
+                  return (
+                    <CommandCenterHeader
+                      activeHudTaskTimer={activeHudTaskTimer}
+                      activeSessions={activeSessions}
+                      activeTaskCount={filteredActiveTasks.length}
+                      currentHudPageId={hudUiState.activeHudPageId}
+                      economy={economy}
+                      focusCategories={focusCategories}
+                      hudUiState={hudUiState}
+                      urgentTaskCount={filteredUrgentTasks.length}
+                      onOpenAccount={() => setIsAccountOpen(true)}
+                      onOpenComposer={openInlineNewListTaskComposer}
+                      onOpenFocusPlanner={openFocusPlanner}
+                      onOpenQuickCapture={() => { void openTaskImportPanel(); }}
+                      onViewScratchPaper={() => { requestPageNavigation("Notes"); }}
+                      onNextTaskTimer={() => cycleHudTaskTimer("next")}
+                      onPauseTaskTimer={pauseHudTaskTimer}
+                      onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
+                      onResumeTaskTimer={resumeHudTaskTimer}
+                      onStopTaskTimer={stopHudTaskTimer}
+                      onToggleFocusTimer={(categoryId) => {
+                        void handleToggleTimer(categoryId);
+                      }}
+                      profile={profile}
+                      runningTaskTimers={runningTaskTimers}
+                      setHudUiState={setHudUiState}
+                      hudNow={hudNow}
+                      taskTimerNow={hudNow}
+                      theme={theme}
+                      todayTaskCount={filteredTodayTasks.length}
+                      onThemeChange={setTheme}
+                      lowStim={lowStim}
+                      onLowStimChange={setLowStim}
+                      currentStreak={taskActivitySummary?.tracked.current_streak ?? 0}
+                      notificationInboxItems={notificationInboxItems}
+                      isNativeIosPlatform={isNativeIosPlatform}
+                      focusAlarmEnabled={focusAlarmEnabled}
+                      focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
+                      focusAlarmRemainingMs={focusAlarmRemainingMs}
+                      onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                      onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                      onToggleFocusAlarmEnabled={() => {
+                        if (focusAlarmAudioBlocked && focusAlarmEnabled) {
+                          void playFocusAlarmSound({ rearmOnly: true });
+                          return;
+                        }
+
+                        setFocusAlarmEnabled((current) => !current);
+                        if (focusAlarmEnabled) {
+                          setFocusAlarmAudioBlocked(false);
+                        }
+                      }}
+                      mobileZoom={mobileZoom}
+                      onRefreshWorkspace={() => { void handleHudRefresh(); }}
+                      onDecreaseMobileZoom={decreaseMobileZoom}
+                      onIncreaseMobileZoom={increaseMobileZoom}
+                      refreshStatus={refreshStatus === "updating" ? "updating" : (isSoftWorkspaceRefreshing || refreshStatus === "syncing") ? "syncing" : "idle"}
+                      canDecreaseMobileZoom={canDecreaseMobileZoom}
+                      canIncreaseMobileZoom={canIncreaseMobileZoom}
+                      onOpenPendingRewardBank={openPendingRewardBank}
+                      pendingRewardDiceCount={pendingRewardDiceCount}
+                      scratchPaper={scratchPaperData}
+                    />
+                  );
+                }}
+              </HudRuntimeClock>
+          </div>
+        </div>
+      </div>
+      {masterWorkspace.isEnabled && !masterWorkspace.hasSplit
+        ? renderMasterWorkspaceNavigation(masterWorkspace.currentPanel)
+        : null}
+      <div className="mx-auto w-full" style={shellZoomStyle}>
+        <section className="w-full pb-28">
+
+        {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
+
+        {masterWorkspace.isEnabled && masterWorkspace.hasSplit && !isTasksSplit && splitPanels.left && splitPanels.leftTab && splitPanels.right && splitPanels.rightTab ? (
+          <div
+            className="grid min-w-0 items-start gap-3"
+            data-master-workspace-split="pages"
+            style={{ gridTemplateColumns: `minmax(0, ${masterWorkspace.workspace.splitRatio}fr) minmax(0, ${1 - masterWorkspace.workspace.splitRatio}fr)` }}
+          >
+            <MasterWorkspacePanelFrame
+              activeTabId={splitPanels.leftTab.id}
+              id={splitPanels.left.id}
+              navigation={renderMasterWorkspaceNavigation(splitPanels.left)}
+              onOverlayHostChange={handleMasterPanelOverlayHostChange}
+              scrollTop={splitPanels.leftTab.presentation.scrollTop ?? 0}
+              side="left"
+            >
+              <MasterWorkspacePanelContent render={() => renderWorkspacePage(splitPanels.leftTab.destination.page, splitPanels.left, splitPanels.leftTab)} />
+            </MasterWorkspacePanelFrame>
+            <MasterWorkspacePanelFrame
+              activeTabId={splitPanels.rightTab.id}
+              id={splitPanels.right.id}
+              navigation={renderMasterWorkspaceNavigation(splitPanels.right)}
+              onOverlayHostChange={handleMasterPanelOverlayHostChange}
+              scrollTop={splitPanels.rightTab.presentation.scrollTop ?? 0}
+              side="right"
+            >
+              <MasterWorkspacePanelContent render={() => renderWorkspacePage(splitPanels.rightTab.destination.page, splitPanels.right, splitPanels.rightTab)} />
+            </MasterWorkspacePanelFrame>
+          </div>
+        ) : (
+          <MasterWorkspacePanelContent render={() => renderWorkspacePage(
+            masterWorkspace.isEnabled ? masterWorkspace.activeTab.destination.page : activePage,
+            masterWorkspace.currentPanel,
+            masterWorkspace.activeTab,
+          )} />
+        )}
         </section>
       </div>
 
-      <div style={mobileChromeZoomStyle}>
-        <BottomDock
-          activePage={activePage}
-          dockIcons={dockIcons}
-          dockItems={dockItems}
-          onNavigate={requestPageNavigation}
-          onNavigateSearchTarget={handleNavigatorSearchTarget}
-          renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
-          searchTargets={navigatorSearchTargets}
-          taskSearchEntities={navigatorTaskSearchEntities}
-        />
-      </div>
+      {!masterWorkspace.hasSplit ? (
+        <div style={mobileChromeZoomStyle}>
+          <BottomDock
+            activePage={activePage}
+            dockIcons={dockIcons}
+            dockItems={dockItems}
+            onNavigate={requestPageNavigation}
+            onNavigateSearchTarget={handleNavigatorSearchTarget}
+            renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
+            searchTargets={navigatorSearchTargets}
+            taskSearchEntities={navigatorTaskSearchEntities}
+          />
+        </div>
+      ) : null}
       <TaskActiveTimersTray
         isOpen={isActiveTimersTrayOpen}
         onDiscard={(taskId) => { void persistDiscardedTaskTimer(taskId); }}
