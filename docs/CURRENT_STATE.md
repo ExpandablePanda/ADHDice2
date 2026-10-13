@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.158`.
+- Current working app version: `7.16.159`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.159 Restore Split Window Navigation
+
+Each Split Right panel retains its Master Workspace tab strip and now includes
+the existing application navigation dock within the panel. Each dock uses
+panel-targeted page and search routing; its search menu stays within the panel,
+and task search opens the shared editor with that panel and tab as owner. The
+normal unsplit viewport dock keeps its existing layout and routing.
+
+The focused Split Right and Navigator regression group passed (96/96), and the
+Next.js 16.2.4 production build passed. Normal targeted ESLint reported 11
+`react-hooks/set-state-in-effect` errors and 73 warnings in the selected files;
+with that known rule disabled, the same scoped lint reported 0 errors and 75
+warnings. `git diff --check` passed. Next.js build skipped type validation.
+Andrew's manual browser QA remains outstanding.
 
 ## 2026-10-13 7.16.158 Independent Master Workspace Panels
 

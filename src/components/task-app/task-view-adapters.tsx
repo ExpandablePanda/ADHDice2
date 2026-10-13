@@ -1324,6 +1324,7 @@ export function BottomDockAdapter({
   activePage,
   dockIcons,
   dockItems,
+  layoutMode,
   onNavigate,
   onNavigateSearchTarget,
   renderIcon,
@@ -1333,6 +1334,7 @@ export function BottomDockAdapter({
   activePage: AppPage;
   dockIcons: Record<AppPage, string>;
   dockItems: AppPage[];
+  layoutMode?: "viewport" | "panel";
   onNavigate: (page: AppPage) => void;
   onNavigateSearchTarget: (target: NavigatorSearchTarget) => void;
   renderIcon: (name: string) => ReactNode;
@@ -1344,6 +1346,7 @@ export function BottomDockAdapter({
       activePage={activePage}
       dockIcons={dockIcons}
       dockItems={dockItems}
+      layoutMode={layoutMode}
       onNavigate={onNavigate}
       onNavigateSearchTarget={onNavigateSearchTarget}
       renderIcon={renderIcon}

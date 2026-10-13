@@ -12,6 +12,7 @@ type BottomDockProps<TPage extends string> = {
   activePage: TPage;
   dockIcons: Record<TPage, string>;
   dockItems: TPage[];
+  layoutMode?: "viewport" | "panel";
   onNavigate: (page: TPage) => void;
   onNavigateSearchTarget: (target: NavigatorSearchTarget) => void;
   renderIcon: (name: string) => ReactNode;
@@ -23,12 +24,14 @@ export function BottomDockComponent<TPage extends string>({
   activePage,
   dockIcons,
   dockItems,
+  layoutMode = "viewport",
   onNavigate,
   onNavigateSearchTarget,
   renderIcon,
   searchTargets,
   taskSearchEntities,
 }: BottomDockProps<TPage>) {
+  const isPanelScoped = layoutMode === "panel";
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [isDockCollapsing, setIsDockCollapsing] = useState(false);
@@ -212,7 +215,7 @@ export function BottomDockComponent<TPage extends string>({
     window.addEventListener("pointerup", cancelDragReady);
   };
 
-  if (isCollapsed) {
+  if (isCollapsed && !isPanelScoped) {
     return (
       <div
         className={`fixed z-20 select-none ${isBubbleWhooshing ? "transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]" : ""}`}
@@ -231,17 +234,23 @@ export function BottomDockComponent<TPage extends string>({
     );
   }
 
-  const isVertical = renderedDockPlacement !== "bottom";
+  const isVertical = !isPanelScoped && renderedDockPlacement !== "bottom";
   const dockZIndexClass = isSearchMode ? "z-40" : "z-10";
-  const dockPositionClass = renderedDockPlacement === "bottom"
+  const dockPositionClass = isPanelScoped
+    ? "relative z-20 w-full min-w-0 px-2"
+    : renderedDockPlacement === "bottom"
     ? `fixed inset-x-0 ${dockZIndexClass} min-w-0 px-4`
     : renderedDockPlacement === "left"
       ? `fixed left-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`
       : `fixed right-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`;
-  const dockPositionStyle = renderedDockPlacement === "bottom"
+  const dockPositionStyle = !isPanelScoped && renderedDockPlacement === "bottom"
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
     : undefined;
-  const dockShapeClass = isSearchMode
+  const dockShapeClass = isPanelScoped
+    ? isSearchMode
+      ? "mx-auto flex w-full min-w-0 max-w-full items-center gap-[3px] rounded-[1.25rem] px-[3px] py-1"
+      : "adhdice-scrollbar adhdice-horizontal-scroll mx-auto flex w-full min-w-0 max-w-full items-center gap-[3px] overflow-x-auto rounded-[1.25rem] px-[3px] py-1 touch-pan-x"
+    : isSearchMode
     ? renderedDockPlacement === "bottom"
       ? "mx-auto flex min-w-0 w-[min(28rem,calc(100vw-2rem))] max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1"
       : "adhdice-scrollbar flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-visible rounded-[2rem] px-2 py-3 sm:w-[18rem] sm:flex-row sm:gap-[3px] sm:rounded-[1.75rem] sm:px-[3px] sm:py-1"
@@ -255,12 +264,13 @@ export function BottomDockComponent<TPage extends string>({
     : undefined;
 
   return (
-    <div className={`${dockPositionClass} select-none`} style={{ userSelect: "none", WebkitUserSelect: "none", ...dockPositionStyle }}>
+    <div className={`${dockPositionClass} select-none`} data-navigation-layout={layoutMode} style={{ userSelect: "none", WebkitUserSelect: "none", ...dockPositionStyle }}>
       <div className={`relative ${isDockCollapsing ? "overflow-hidden" : "overflow-visible"} border shadow-[0_25px_45px_rgba(60,44,140,0.18)] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${dockShapeClass} border-[#ece8f8] bg-white/92 backdrop-blur dark:border-white/10 dark:bg-[#171328]/92 dark:backdrop-blur`} style={collapsingStyle}>
         {isSearchMode ? (
           <NavigatorSearchInline
             onClose={() => setIsSearchMode(false)}
             onNavigate={onNavigateSearchTarget}
+            panelScoped={isPanelScoped}
             placement={renderedDockPlacement}
             renderIcon={renderIcon}
             targets={searchTargets}
@@ -284,12 +294,14 @@ export function BottomDockComponent<TPage extends string>({
                 className={`flex ${isVertical ? "w-full" : "h-10 w-10 shrink-0"} flex-col items-center justify-center rounded-[1rem] px-1 py-2 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${activePage === item ? "text-[#6f57f6] dark:text-[#cabfff]" : "text-[#8d94ac] dark:text-white/50"}`}
                 key={item}
                 onClick={() => onNavigate(item)}
+                aria-label={item}
+                title={item}
                 type="button"
               >
                 {renderIcon(dockIcons[item])}
               </button>
             ))}
-            <button
+            {!isPanelScoped ? <button
               aria-label="Collapse navigation"
               className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition duration-300 hover:scale-105 ${isVertical ? "" : "ml-[3px]"} ${isDockCollapsing ? "scale-90 rounded-full" : ""} text-[#8d94ac] hover:bg-[#f7f5ff] hover:text-[#6f57f6] dark:text-white/50 dark:hover:bg-white/8 dark:hover:text-[#cabfff]`}
               onClick={() => {
@@ -325,10 +337,10 @@ export function BottomDockComponent<TPage extends string>({
               <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2.4" viewBox="0 0 24 24">
                 <path d="M6 9l6 6 6-6" strokeLinecap="round" strokeLinejoin="round" />
               </svg>
-            </button>
+            </button> : null}
           </>
         )}
-        {!isSearchMode && showPlacementMenu && placementMenuPos ? (
+        {!isPanelScoped && !isSearchMode && showPlacementMenu && placementMenuPos ? (
           <div className="fixed z-30 w-44 rounded-2xl border p-2 shadow-xl border-[#ece8f8] bg-white text-[#1f2746] dark:border-white/10 dark:bg-[#1b1730] dark:text-white" ref={placementMenuRef} style={{ left: placementMenuPos.left, top: placementMenuPos.top }}>
             <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/45">Dock Position</p>
             {([

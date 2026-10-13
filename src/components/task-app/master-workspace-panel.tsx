@@ -43,12 +43,13 @@ type MasterWorkspacePanelProps = {
   activeTabId: string;
   id: string;
   navigation: ReactNode;
+  bottomNavigation?: ReactNode;
   onOverlayHostChange?: (panelId: string, element: HTMLDivElement | null, tabId: string) => void;
   scrollTop?: number;
   side: MasterPanelSide;
 };
 
-export function MasterWorkspacePanel({ activeTabId, children, id, navigation, onOverlayHostChange, scrollTop = 0, side }: MasterWorkspacePanelProps) {
+export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, id, navigation, onOverlayHostChange, scrollTop = 0, side }: MasterWorkspacePanelProps) {
   const [overlayElement, setOverlayElement] = useState<HTMLDivElement | null>(null);
   const scrollElementRef = useRef<HTMLDivElement | null>(null);
   const activeTabIdRef = useRef(activeTabId);
@@ -91,6 +92,7 @@ export function MasterWorkspacePanel({ activeTabId, children, id, navigation, on
           />
         </WorkspaceOverlayHostContext.Provider>
       </div>
+      {bottomNavigation ? <div className="z-20 shrink-0 border-t border-[#ece8f8] bg-white/80 py-1 dark:border-white/10 dark:bg-[#171328]/80">{bottomNavigation}</div> : null}
     </section>
   );
 }

@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 
 const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+const bottomDockSource = readFileSync(new URL("../src/components/task-app/bottom-dock.tsx", import.meta.url), "utf8");
 const tabBarSource = readFileSync(new URL("../src/components/task-app/master-workspace-tab-bar.tsx", import.meta.url), "utf8");
 const splitPanelSource = readFileSync(new URL("../src/components/task-app/tasks-split-right-panel.tsx", import.meta.url), "utf8");
 const controllerSource = readFileSync(new URL("../src/hooks/useMasterWorkspaceController.ts", import.meta.url), "utf8");
@@ -82,6 +83,38 @@ test("Master Workspace exposes split navigation in both panels and duplicates an
   assert.match(controllerSource, /canCloseMasterSplitSafely\(before, hasUnsafeTasksDraftInCurrentSplit, canCloseTargetPanelTab\)/);
   assert.match(controllerSource, /updateMasterTabTasksWorkspace\([\s\S]*?liveTaskWorkspaceTabsState/);
   assert.match(controllerSource, /const updateTasksWorkspace = useCallback/);
+});
+
+test("split panels render independent application docks alongside the existing tab bars", () => {
+  assert.match(taskAppSource, /renderMasterWorkspaceApplicationNavigation\(splitPanels\.left, splitPanels\.leftTab\)/);
+  assert.match(taskAppSource, /renderMasterWorkspaceApplicationNavigation\(splitPanels\.right, splitPanels\.rightTab\)/);
+  assert.match(taskAppSource, /bottomNavigation: renderMasterWorkspaceApplicationNavigation\(splitPanels\.left, splitPanels\.leftTab\)/);
+  assert.match(taskAppSource, /bottomNavigation: renderMasterWorkspaceApplicationNavigation\(splitPanels\.right, splitPanels\.rightTab\)/);
+  assert.match(taskAppSource, /layoutMode="panel"/);
+  assert.match(taskAppSource, /navigation=\{renderMasterWorkspaceNavigation\(splitPanels\.left\)\}/);
+  assert.match(taskAppSource, /navigation=\{renderMasterWorkspaceNavigation\(splitPanels\.right\)\}/);
+  assert.match(panelSource, /<div className="shrink-0">\{navigation\}<\/div>/);
+  assert.match(panelSource, /bottomNavigation \? <div className="z-20 shrink-0/);
+  assert.match(splitPanelSource, /bottomNavigation=\{leftPanel\.bottomNavigation\}/);
+  assert.match(splitPanelSource, /bottomNavigation=\{rightPanel\.bottomNavigation\}/);
+  assert.match(tabBarSource, /aria-label="Master workspace tabs"/);
+
+  assert.match(taskAppSource, /\{!masterWorkspace\.hasSplit \? \([\s\S]*?<BottomDock[\s\S]*?onNavigate=\{requestPageNavigation\}/);
+  assert.match(bottomDockSource, /layoutMode = "viewport"/);
+  assert.match(bottomDockSource, /isPanelScoped\s*\?\s*"relative z-20 w-full min-w-0 px-2"/);
+  assert.match(bottomDockSource, /fixed inset-x-0/);
+  assert.match(bottomDockSource, /!isPanelScoped \? <button[\s\S]*?aria-label="Collapse navigation"/);
+  assert.equal((taskAppSource.match(/useWorkspaceData\(/g) ?? []).length, 1);
+});
+
+test("split application and search navigation route through their owning panel and tab", () => {
+  assert.match(taskAppSource, /onNavigate=\{\(page\) => \{ masterWorkspace\.navigatePanelToPage\(panel\.id, page\); \}\}/);
+  assert.match(taskAppSource, /onNavigateSearchTarget=\{\(target\) => handleMasterPanelNavigatorSearchTarget\(panel\.id, panelTab\.id, target\)\}/);
+  assert.match(taskAppSource, /controller\.updatePanelDestination\(panelId, tabId, action\)/);
+  assert.match(taskAppSource, /controller\.updateTasksUiState\(panelId, tabId/);
+  assert.match(taskAppSource, /owner:\s*\{\s*masterTabId: tabId,\s*panelId,/);
+  assert.match(taskAppSource, /data-master-workspace-panel-id/);
+  assert.match(taskAppSource, /scrollElement\.scrollTo\([\s\S]*?shellRect\.top - scrollRect\.top/);
 });
 
 test("mixed pages stay in one TaskApp runtime and activate shared page data for either panel", () => {

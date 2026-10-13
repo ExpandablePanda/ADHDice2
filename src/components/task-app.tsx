@@ -1909,6 +1909,11 @@ export function TaskApp() {
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
   const [requestedPageShell, setRequestedPageShell] = useState<Extract<NavigatorSearchAction, { kind: "page-shell" }> | null>(null);
+  const [panelShellNavigationRequest, setPanelShellNavigationRequest] = useState<{
+    panelId: string;
+    request: Extract<NavigatorSearchAction, { kind: "page-shell" }>;
+    tabId: string;
+  } | null>(null);
   const pageShellNavigationHighlightRef = useRef<HTMLElement | null>(null);
   const pageShellNavigationHighlightTimerRef = useRef<number | null>(null);
   const clearPageShellNavigationHighlight = useCallback(() => {
@@ -1927,7 +1932,10 @@ export function TaskApp() {
   }, [clearPageShellNavigationHighlight]);
   const requestedPageShellLayoutReady = useSyncExternalStore(
     subscribeToPageShellLayoutReadiness,
-    () => requestedPageShell ? isPageShellLayoutReady(requestedPageShell.pageKey) : false,
+    () => {
+      const request = panelShellNavigationRequest?.request ?? requestedPageShell;
+      return request ? isPageShellLayoutReady(request.pageKey) : false;
+    },
     () => false,
   );
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
@@ -5972,6 +5980,42 @@ export function TaskApp() {
     draftProtection: masterWorkspaceDraftProtection,
   });
   masterWorkspaceControllerRef.current = masterWorkspace;
+  const handleMasterPanelNavigatorSearchTarget = useCallback((panelId: string, tabId: string, target: NavigatorSearchTarget) => {
+    const controller = masterWorkspaceControllerRef.current;
+    if (!controller?.isEnabled) return;
+    const action = target.action;
+    if (!controller.updatePanelDestination(panelId, tabId, action)) {
+      if (controller.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: controller.transitionBlockedReason });
+      }
+      return;
+    }
+
+    setPanelShellNavigationRequest((current) => action.kind === "page-shell"
+      ? { panelId, request: action, tabId }
+      : current?.panelId === panelId && current.tabId === tabId ? null : current);
+
+    if (action.kind === "tasks-surface") {
+      controller.updateTasksUiState(panelId, tabId, (current) => current.tasksSurface === action.surface
+        ? current
+        : { ...current, tasksSurface: action.surface });
+    } else if (action.kind === "tasks-view") {
+      controller.updateTasksUiState(panelId, tabId, (current) => current.tasksSurface === "tasks" && current.view === action.view
+        ? current
+        : { ...current, tasksSurface: "tasks", view: action.view });
+    } else if (action.kind === "task") {
+      const targetPanel = controller.workspace.panels.find((panel) => panel.id === panelId);
+      const targetTab = targetPanel?.tabs.find((tab) => tab.id === tabId);
+      openSharedTaskEditor(action.taskId, {
+        owner: {
+          masterTabId: tabId,
+          panelId,
+          taskWorkspaceTabId: targetTab?.presentation.tasksWorkspace?.activeTabId ?? taskWorkspaceTabsState.activeTabId,
+        },
+        preserveActivePage: true,
+      });
+    }
+  }, [setMessage, taskWorkspaceTabsState.activeTabId]);
   const activeWorkspaceOverlayOwner = workspaceOverlayOwner ?? {
     panelId: masterWorkspace.currentPanel.id,
     tabId: masterWorkspace.activeTab.id,
@@ -6300,9 +6344,20 @@ export function TaskApp() {
   useEffect(() => {
     if (!masterWorkspace.isEnabled) return;
     const destination = masterWorkspace.activeTab.destination;
+    if (masterWorkspace.hasSplit) {
+      // This effect mirrors the focused route into navigation request state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRequestedPageShell(null);
+      setRequestedSettingsSection(null);
+      setPanelShellNavigationRequest((current) => destination.kind === "page-shell"
+        ? { panelId: masterWorkspace.currentPanel.id, request: destination, tabId: masterWorkspace.activeTab.id }
+        : current?.panelId === masterWorkspace.currentPanel.id && current.tabId === masterWorkspace.activeTab.id ? null : current);
+      return;
+    }
+    setPanelShellNavigationRequest(null);
     setRequestedPageShell(destination.kind === "page-shell" ? destination : null);
     setRequestedSettingsSection(destination.kind === "settings-section" ? destination.section : null);
-  }, [masterWorkspace.activeTab.destination, masterWorkspace.activeTab.id, masterWorkspace.isEnabled]);
+  }, [masterWorkspace.activeTab.destination, masterWorkspace.activeTab.id, masterWorkspace.currentPanel.id, masterWorkspace.hasSplit, masterWorkspace.isEnabled]);
 
   useEffect(() => {
     if (!session?.user || !isAuthenticatedAppBootReady || !isSharedTaskEditorOpen) {
@@ -6313,7 +6368,7 @@ export function TaskApp() {
 
   useEffect(() => {
     const requestedNavigation = requestedPageShell;
-    if (!requestedNavigation) return;
+    if (!requestedNavigation || masterWorkspace.hasSplit) return;
     if (!requestedPageShellLayoutReady || !isAuthenticatedAppBootReady || activePage !== requestedNavigation.page || (requestedNavigation.healthTab && activeHealthTab !== requestedNavigation.healthTab)) {
       return;
     }
@@ -6447,7 +6502,54 @@ export function TaskApp() {
       if (frame !== null) window.cancelAnimationFrame(frame);
       restoreOverflowAnchor();
     };
-  }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
+  }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, masterWorkspace.hasSplit, requestedPageShell, requestedPageShellLayoutReady]);
+  useEffect(() => {
+    const pending = panelShellNavigationRequest;
+    if (!pending || !masterWorkspace.hasSplit || !isAuthenticatedAppBootReady || !requestedPageShellLayoutReady) return;
+    const panel = masterWorkspace.workspace.panels.find((candidate) => candidate.id === pending.panelId);
+    const tab = panel?.tabs.find((candidate) => candidate.id === pending.tabId);
+    if (panel?.activeTabId !== pending.tabId || tab?.destination.kind !== "page-shell" || tab.destination.shellId !== pending.request.shellId) {
+      // The request belongs to a tab that is no longer active in this panel.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPanelShellNavigationRequest((current) => current === pending ? null : current);
+      return;
+    }
+
+    let frame: number | null = null;
+    let attempts = 0;
+    const retry = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(revealPanelShell);
+    };
+    const revealPanelShell = () => {
+      frame = null;
+      attempts += 1;
+      const panelElement = Array.from(document.querySelectorAll<HTMLElement>("[data-master-workspace-panel-id]"))
+        .find((element) => element.dataset.masterWorkspacePanelId === pending.panelId);
+      const scrollElement = panelElement?.querySelector<HTMLElement>("[data-master-workspace-scroll-container]");
+      const shell = Array.from(panelElement?.querySelectorAll<HTMLElement>("[data-page-shell-id]") ?? [])
+        .find((element) => element.dataset.pageShellId === pending.request.shellId);
+      if (!scrollElement || !shell || !shell.isConnected || shell.getBoundingClientRect().height <= 0) {
+        if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) retry();
+        else setPanelShellNavigationRequest((current) => current === pending ? null : current);
+        return;
+      }
+      const shellBody = shell.querySelector<HTMLElement>(".page-shell-body");
+      if (shellBody) shellBody.scrollTop = 0;
+      const shellRect = shell.getBoundingClientRect();
+      const scrollRect = scrollElement.getBoundingClientRect();
+      scrollElement.scrollTo({
+        behavior: "smooth",
+        top: Math.max(0, scrollElement.scrollTop + shellRect.top - scrollRect.top - 12),
+      });
+      highlightPageShellNavigationTarget(shell);
+      setPanelShellNavigationRequest((current) => current === pending ? null : current);
+    };
+    retry();
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, masterWorkspace.hasSplit, masterWorkspace.workspace, panelShellNavigationRequest, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
   const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task", metadata?: TaskCreationMetadata) => {
@@ -9868,6 +9970,7 @@ export function TaskApp() {
               left={<>{taskWorkspaceFlowLayer}{tasksWorkspace}</>}
               leftPanel={isTasksSplit && splitPanels.left && splitPanels.leftTab ? {
                 activeTabId: splitPanels.leftTab.id,
+                bottomNavigation: renderMasterWorkspaceApplicationNavigation(splitPanels.left, splitPanels.leftTab),
                 id: splitPanels.left.id,
                 navigation: renderMasterWorkspaceNavigation(splitPanels.left),
                 scrollTop: splitPanels.leftTab.presentation.scrollTop ?? 0,
@@ -9876,6 +9979,7 @@ export function TaskApp() {
               right={rightWorkspace}
               rightPanel={isTasksSplit && splitPanels.right && splitPanels.rightTab ? {
                 activeTabId: splitPanels.rightTab.id,
+                bottomNavigation: renderMasterWorkspaceApplicationNavigation(splitPanels.right, splitPanels.rightTab),
                 id: splitPanels.right.id,
                 navigation: renderMasterWorkspaceNavigation(splitPanels.right),
                 scrollTop: splitPanels.rightTab.presentation.scrollTop ?? 0,
@@ -10096,10 +10200,18 @@ export function TaskApp() {
             onDayStartTimeChange={setDayStartTime}
             onTimeZoneChange={setUserTimeZone}
             onResetEconomy={resetEconomy}
-            onSectionRequestHandled={(section) => setRequestedSettingsSection((current) => (current === section ? null : current))}
+            onSectionRequestHandled={(section) => {
+              if (masterWorkspace.hasSplit && panelTab.destination.kind === "settings-section" && panelTab.destination.section === section) {
+                masterWorkspace.updatePanelDestination(panel.id, panelTab.id, { kind: "page", page: "Settings" });
+                return;
+              }
+              setRequestedSettingsSection((current) => (current === section ? null : current));
+            }}
             onWorkspaceRefresh={softRefreshWorkspace}
             onThemeChange={setTheme}
-            requestedSection={requestedSettingsSection}
+            requestedSection={masterWorkspace.hasSplit
+              ? panelTab.destination.kind === "settings-section" ? panelTab.destination.section : null
+              : requestedSettingsSection}
             tasks={tasks}
             theme={theme}
             userId={currentUser.id}
@@ -10145,6 +10257,22 @@ export function TaskApp() {
       onSplitRight={masterWorkspace.splitRight}
       showSplitActions={panel.side === "left"}
       tabs={panel.tabs}
+    />
+  );
+  const renderMasterWorkspaceApplicationNavigation = (
+    panel: typeof masterWorkspace.workspace.panels[number],
+    panelTab: typeof masterWorkspace.activeTab,
+  ) => (
+    <BottomDock
+      activePage={panelTab.destination.page}
+      dockIcons={dockIcons}
+      dockItems={dockItems}
+      layoutMode="panel"
+      onNavigate={(page) => { masterWorkspace.navigatePanelToPage(panel.id, page); }}
+      onNavigateSearchTarget={(target) => handleMasterPanelNavigatorSearchTarget(panel.id, panelTab.id, target)}
+      renderIcon={(name) => <CategoryIcon className="h-5 w-5" name={name} />}
+      searchTargets={navigatorSearchTargets}
+      taskSearchEntities={navigatorTaskSearchEntities}
     />
   );
 
@@ -10470,6 +10598,7 @@ export function TaskApp() {
           >
             <MasterWorkspacePanelFrame
               activeTabId={splitPanels.leftTab.id}
+              bottomNavigation={renderMasterWorkspaceApplicationNavigation(splitPanels.left, splitPanels.leftTab)}
               id={splitPanels.left.id}
               navigation={renderMasterWorkspaceNavigation(splitPanels.left)}
               onOverlayHostChange={handleMasterPanelOverlayHostChange}
@@ -10480,6 +10609,7 @@ export function TaskApp() {
             </MasterWorkspacePanelFrame>
             <MasterWorkspacePanelFrame
               activeTabId={splitPanels.rightTab.id}
+              bottomNavigation={renderMasterWorkspaceApplicationNavigation(splitPanels.right, splitPanels.rightTab)}
               id={splitPanels.right.id}
               navigation={renderMasterWorkspaceNavigation(splitPanels.right)}
               onOverlayHostChange={handleMasterPanelOverlayHostChange}

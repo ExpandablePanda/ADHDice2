@@ -5,6 +5,7 @@ import { MasterWorkspacePanel } from "@/components/task-app/master-workspace-pan
 
 type SplitPanelInfo = {
   activeTabId: string;
+  bottomNavigation?: ReactNode;
   id: string;
   navigation: ReactNode;
   scrollTop: number;
@@ -32,6 +33,7 @@ export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, o
       {leftPanel ? (
         <MasterWorkspacePanel
           activeTabId={leftPanel.activeTabId}
+          bottomNavigation={leftPanel.bottomNavigation}
           id={leftPanel.id}
           navigation={leftPanel.navigation}
           onOverlayHostChange={onOverlayHostChange}
@@ -44,6 +46,7 @@ export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, o
       {rightPanel ? (
         <MasterWorkspacePanel
           activeTabId={rightPanel.activeTabId}
+          bottomNavigation={rightPanel.bottomNavigation}
           id={rightPanel.id}
           navigation={rightPanel.navigation}
           onOverlayHostChange={onOverlayHostChange}
