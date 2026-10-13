@@ -8,7 +8,9 @@ import {
   isMasterWorkspaceFeatureEnabled,
   isHealthMasterTabTransitionBlocked,
   persistMasterWorkspaceForReadyUser,
+  resolveMasterWorkspaceTasksUiState,
   restoreMasterWorkspaceForUser,
+  updateMasterWorkspaceTasksUiState,
   type MasterWorkspaceDraftProtection,
 } from "@/lib/master-workspace-controller";
 import {
@@ -33,7 +35,7 @@ import {
   type MasterFoodWorkspaceViewUpdate,
   type MasterWorkspaceState,
 } from "@/lib/master-workspace-state";
-import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
+import type { AppPage, TaskUiState, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
 import type { HealthTab } from "@/lib/health-utils";
 
 type UseMasterWorkspaceControllerOptions = {
@@ -44,7 +46,9 @@ type UseMasterWorkspaceControllerOptions = {
   initialHealthSection: HealthTab;
   isReady: boolean;
   replaceTaskWorkspaceTabsState: (state: TaskWorkspaceTabsState) => void;
+  setTaskUiState: (updater: TaskUiState | ((current: TaskUiState) => TaskUiState)) => void;
   setActivePage: (page: AppPage) => void;
+  taskUiState: TaskUiState;
   taskWorkspaceTabsState: TaskWorkspaceTabsState;
   userId: string | null | undefined;
   draftProtection?: MasterWorkspaceDraftProtection;
@@ -68,7 +72,9 @@ export function useMasterWorkspaceController({
   initialHealthSection,
   isReady,
   replaceTaskWorkspaceTabsState,
+  setTaskUiState,
   setActivePage,
+  taskUiState,
   taskWorkspaceTabsState,
   userId,
   draftProtection,
@@ -342,6 +348,24 @@ export function useMasterWorkspaceController({
     return true;
   }, [activeTab.id, canNavigate, currentPanel.id]);
 
+  const getTasksUiState = useCallback((panelId: string, tabId: string) => (
+    resolveMasterWorkspaceTasksUiState(workspace, panelId, tabId, taskUiState)
+  ), [taskUiState, workspace]);
+
+  const updateTasksUiState = useCallback((
+    panelId: string,
+    tabId: string,
+    updater: TaskUiState | ((current: TaskUiState) => TaskUiState),
+  ) => updateMasterWorkspaceTasksUiState(
+    workspace,
+    panelId,
+    tabId,
+    updater,
+    canNavigate,
+    setTaskUiState,
+    setWorkspace,
+  ), [canNavigate, setTaskUiState, workspace]);
+
   return useMemo(() => ({
     activateTab,
     activeTab,
@@ -356,6 +380,7 @@ export function useMasterWorkspaceController({
     closeTab,
     currentPanel,
     featureEnabled: isEnabled,
+    getTasksUiState,
     isEnabled: isEnabled && isReady && Boolean(userId) && restoredUserId === userId,
     openPageTab,
     navigateToPage,
@@ -365,7 +390,8 @@ export function useMasterWorkspaceController({
     updateFoodView,
     updateNotesView,
     updateScratchPaperView,
+    updateTasksUiState,
     workspace,
     transitionBlockedReason: currentTransitionBlockReason,
-  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, userId, workspace]);
+  }), [activateTab, activeJournalView, activeFoodView, activeNotesView, activeScratchPaperView, activeTab, canActivateTab, canCloseTab, canNavigate, canOpenNewTab, closeTab, currentPanel, currentTransitionBlockReason, getTasksUiState, isEnabled, isReady, navigateToPage, openPageTab, restoredUserId, selectHealthSection, updateFocusedDestination, updateJournalView, updateFoodView, updateNotesView, updateScratchPaperView, updateTasksUiState, userId, workspace]);
 }

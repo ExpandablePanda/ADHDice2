@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.149`.
+- Current working app version: `7.16.150`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,35 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.150 T6.2b Panel-Targeted Tasks Controller Bridge Foundation
+
+The Master Workspace controller now exposes explicit Tasks presentation reads
+and updates by Master panel ID and tab ID. Reads use the live `taskUiState` for
+the exact focused active Tasks tab and stored snapshots for other Tasks tabs.
+Writes use the existing live `setTaskUiState` authority for that focused active
+tab; inactive or non-focused targets update their stored snapshot through a
+functional workspace update. The stored route rechecks the latest workspace
+and does not write if the target became the focused active tab while the update
+was queued. Readiness and exact Tasks identity guard every write.
+
+This is a T6 controller foundation only. It adds no second panel renderer,
+second Tasks owner, or Split Right UI. Existing single-panel navigation,
+restore, persistence, and the focused live Tasks snapshot mirror remain the
+authorities.
+
+Focused Master Workspace controller/state and Task UI-state tests passed
+(80/80). The Master Workspace Health contract suite passed 10/12; its two
+failures are the existing source assertions against unchanged TaskApp and Notes
+components, matching the 7.16.149 baseline. The broader `test:taskapp-wave` run
+passed 62/73, matching the documented 7.16.148 baseline, including its current
+Node loader failure and unrelated Task assertions. Changed controller, hook,
+and test lint passed; TaskApp lint passed with the existing
+`react-hooks/set-state-in-effect` rule excluded. Standard TaskApp lint retains
+its existing effect-rule errors. Full typecheck remains red on existing
+workspace diagnostics; no diagnostics point to the new controller API or hook
+options. `git diff --check` passed. Browser QA and production build were not
+run.
 
 ## 2026-10-12 7.16.149 T6.2a Panel-Targeted Tasks State Foundation
 

@@ -5,12 +5,14 @@ import {
   initializeMasterWorkspaceState,
   loadMasterWorkspaceState,
   normalizeMasterWorkspaceState,
+  resolveMasterTabTasksUiState,
   saveMasterWorkspaceState,
+  updateMasterTabTasksUiState,
   updateMasterTabTasksWorkspace,
   type MasterWorkspaceState,
   type MasterWorkspaceStorage,
 } from "@/lib/master-workspace-state";
-import type { AppPage, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
+import type { AppPage, TaskUiState, TaskWorkspaceTabsState } from "@/lib/task-ui-state";
 import type { HealthTab } from "@/lib/health-utils";
 
 export type MasterWorkspaceDraftProtection = {
@@ -22,6 +24,55 @@ export type MasterWorkspaceTaskTransition = {
   state: MasterWorkspaceState;
   taskWorkspaceTabsState?: TaskWorkspaceTabsState;
 };
+
+export type MasterWorkspaceTaskUiStateUpdate = TaskUiState | ((current: TaskUiState) => TaskUiState);
+export type MasterWorkspaceTaskUiStateSetter = (update: MasterWorkspaceTaskUiStateUpdate) => void;
+export type MasterWorkspaceStateUpdater = (update: (current: MasterWorkspaceState) => MasterWorkspaceState) => void;
+
+export function resolveMasterWorkspaceTasksUiState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  liveTaskUiState: TaskUiState,
+): TaskUiState | undefined {
+  const storedTaskUiState = resolveMasterTabTasksUiState(state, panelId, tabId);
+  if (!storedTaskUiState) return undefined;
+
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  return state.focusedPanelId === panelId && panel?.activeTabId === tabId
+    ? liveTaskUiState
+    : storedTaskUiState;
+}
+
+export function updateMasterWorkspaceTasksUiState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  updater: MasterWorkspaceTaskUiStateUpdate,
+  isReady: boolean,
+  setTaskUiState: MasterWorkspaceTaskUiStateSetter,
+  setWorkspace: MasterWorkspaceStateUpdater,
+): boolean {
+  if (!isReady || !resolveMasterTabTasksUiState(state, panelId, tabId)) return false;
+
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const targetsFocusedActiveTab = state.focusedPanelId === panelId && panel?.activeTabId === tabId;
+  if (targetsFocusedActiveTab) {
+    setTaskUiState(updater);
+    return true;
+  }
+
+  setWorkspace((current) => {
+    const currentTasksUiState = resolveMasterTabTasksUiState(current, panelId, tabId);
+    if (!currentTasksUiState) return current;
+
+    const currentPanel = current.panels.find((candidate) => candidate.id === panelId);
+    if (current.focusedPanelId === panelId && currentPanel?.activeTabId === tabId) return current;
+
+    return updateMasterTabTasksUiState(current, panelId, tabId, updater);
+  });
+  return true;
+}
 
 function getActiveTaskWorkspaceTabsState(state: MasterWorkspaceState, panelId: string): TaskWorkspaceTabsState | undefined {
   const panel = state.panels.find((candidate) => candidate.id === panelId);
