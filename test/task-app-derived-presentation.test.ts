@@ -9,6 +9,7 @@ import {
   prepareTaskAppDerivedPresentation,
   type TaskAppDerivedPresentation,
 } from "../src/lib/task-app-derived.ts";
+import { buildTaskAppViewReadModel } from "../src/lib/task-app-view-read-model.ts";
 import { getBuiltInTaskLists } from "../src/lib/task-lists.ts";
 import { createTaskDerivationRevisionKey } from "../src/lib/stable-task-projection.ts";
 import { DEFAULT_TASK_UI_STATE, type TaskUiState } from "../src/lib/task-ui-state.ts";
@@ -198,6 +199,78 @@ test("the prepared single-panel descriptor has exact parity with the existing de
 
   assert.deepEqual(descriptorResult, existingSinglePanelResult);
   assert.equal(prepared.normalizedSearchQuery, "alpha");
+});
+
+test("view read-model selects distinct rows from shared canonical Tasks for separate presentations", () => {
+  const pending = createTask({ id: "read-model-pending", sort_order: 1, status: "pending", title: "Pending task" });
+  const done = createTask({ id: "read-model-done", sort_order: 2, status: "done", title: "Done task" });
+  const fixture = createFixture([pending, done]);
+  const pendingPresentation = presentation({ selectedBucket: "all", statusFilters: ["pending"] });
+  const donePresentation = presentation({ selectedBucket: "all", statusFilters: ["done"] });
+  const pendingDerived = deriveWithPresentation(fixture, pendingPresentation);
+  const doneDerived = deriveWithPresentation(fixture, donePresentation);
+  const toReadModel = (prepared: TaskAppDerivedPresentation, derived: ReturnType<typeof deriveWithPresentation>) => buildTaskAppViewReadModel({
+    canonicalTasks: fixture.tasks,
+    calendarTasksForRead: fixture.tasks,
+    derived: {
+      canonicalVisibleRootTasksSorted: derived.canonicalVisibleRootTasksSorted,
+      childTaskPreviewByParentTaskId: derived.childTaskPreviewByParentTaskId,
+      searchMatchedChildTaskIds: derived.searchMatchedChildTaskIds,
+      searchMatchedStepParentTaskIds: derived.searchMatchedStepParentTaskIds,
+    },
+    presentation: prepared,
+    searchSelection: null,
+  });
+  const pendingReadModel = toReadModel(pendingPresentation, pendingDerived);
+  const doneReadModel = toReadModel(donePresentation, doneDerived);
+
+  assert.deepEqual(pendingReadModel.selectedBucketTasks.map((task) => task.id), [pending.id]);
+  assert.deepEqual(doneReadModel.selectedBucketTasks.map((task) => task.id), [done.id]);
+  assert.deepEqual(pendingReadModel.visibleListTaskIds, [pending.id]);
+  assert.deepEqual(doneReadModel.visibleListTaskIds, [done.id]);
+  assert.equal(pendingDerived.canonicalEntityProjection.entityFactsById, fixture.stableCanonicalTaskIndex.entityFactsById);
+  assert.equal(doneDerived.canonicalEntityProjection.entityFactsById, fixture.stableCanonicalTaskIndex.entityFactsById);
+});
+
+test("view read-model preserves single-panel selection and Calendar output parity", () => {
+  const parent = createTask({ id: "read-model-parent", sort_order: 1, status: "pending", title: "Parent" });
+  const step = createTask({ id: "read-model-step", parent_task_id: parent.id, sort_order: 1, status: "pending", title: "Step" });
+  const fixture = createFixture([step, parent]);
+  const prepared = presentation({ search: "parent", selectedBucket: "all", view: "calendar" });
+  const derived = deriveWithPresentation(fixture, prepared);
+  const selectionIds = new Set(derived.canonicalVisibleRootTasksSorted.map((task) => task.id));
+  const oldSelectedBucketTasks = derived.canonicalVisibleRootTasksSorted;
+  const oldCalendarSelectedTasks = fixture.tasks.filter((task) => selectionIds.has(task.id));
+  const expectedCalendarTasks = oldCalendarSelectedTasks;
+  const readModel = buildTaskAppViewReadModel({
+    canonicalTasks: fixture.tasks,
+    calendarTasksForRead: fixture.tasks,
+    derived: {
+      canonicalVisibleRootTasksSorted: derived.canonicalVisibleRootTasksSorted,
+      childTaskPreviewByParentTaskId: derived.childTaskPreviewByParentTaskId,
+      searchMatchedChildTaskIds: derived.searchMatchedChildTaskIds,
+      searchMatchedStepParentTaskIds: derived.searchMatchedStepParentTaskIds,
+    },
+    presentation: prepared,
+    searchSelection: null,
+  });
+
+  assert.equal(readModel.selectedBucketTasks, oldSelectedBucketTasks);
+  assert.deepEqual(readModel.calendarTasks, expectedCalendarTasks);
+  assert.deepEqual(readModel.visibleListTaskIds, oldSelectedBucketTasks.map((task) => task.id));
+  assert.deepEqual(readModel.searchMatchedChildTaskIds, derived.searchMatchedChildTaskIds);
+  assert.equal(readModel.searchMatchedChildTaskIds, derived.searchMatchedChildTaskIds);
+  assert.equal(readModel.searchMatchedStepParentTaskIds, derived.searchMatchedStepParentTaskIds);
+  assert.equal(readModel.listSelectionResetKey, JSON.stringify({
+    duplicateTitleMode: prepared.duplicateTitleMode,
+    energyFilters: prepared.taskUiState.energyFilters,
+    matchAny: prepared.taskUiState.matchAny,
+    quickFilters: prepared.taskUiState.quickFilters,
+    search: prepared.normalizedSearchQuery,
+    selectedBucket: prepared.taskUiState.selectedBucket,
+    statusFilters: prepared.taskUiState.statusFilters,
+    view: prepared.taskUiState.view,
+  }));
 });
 
 test("search operators, view-specific Steps, and presentation cache revisions are preserved", () => {

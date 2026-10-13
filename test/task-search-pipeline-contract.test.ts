@@ -6,6 +6,7 @@ const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const derivedSource = readFileSync(new URL("../src/lib/task-app-derived.ts", import.meta.url), "utf8");
+const viewReadModelSource = readFileSync(new URL("../src/lib/task-app-view-read-model.ts", import.meta.url), "utf8");
 
 test("search does not depend on a deferred React value or duplicate root input", () => {
   assert.doesNotMatch(appSource, /useDeferredValue|taskSearchInput/);
@@ -41,15 +42,17 @@ test("search scope stays separately memoized and excludes search text", () => {
 test("search rows and rail totals share one committed selection result", () => {
   assert.match(appSource, /const activeListFacetCounts = taskSearchSelection\?\.listFacetCounts/);
   assert.match(appSource, /const activePrimaryFacetVisibleEntityIds = taskSearchSelection\?\.primaryFacetVisibleEntityIds/);
-  assert.match(appSource, /const selectedBucketTasks = taskSearchSelection\?\.visibleTasks/);
+  assert.match(appSource, /buildTaskAppViewReadModel\(/);
+  assert.match(viewReadModelSource, /const selectedBucketTasks = searchSelection\?\.visibleTasks \?\? derived\.canonicalVisibleRootTasksSorted/);
   assert.match(appSource, /count: activeListFacetCounts\[item\.id\]/);
   assert.match(appSource, /activePrimaryFacetVisibleEntityIds,\n      todayKey,\n    \),/);
 });
 
 test("search hierarchy IDs take precedence over status-only hierarchy IDs", () => {
-  assert.match(appSource, /const hierarchyStatusFilterActive = effectiveSearchQuery\.length === 0/);
+  assert.match(appSource, /hierarchyStatusFilterActive,/);
+  assert.match(viewReadModelSource, /const hierarchyStatusFilterActive = !searchIsActive/);
   assert.match(appSource, /statusFilterActive: hierarchyStatusFilterActive/);
-  assert.match(appSource, /matchingDescendantIdsByRootParentId\.values\(\)/);
+  assert.match(viewReadModelSource, /matchingDescendantIdsByRootParentId\.values\(\)/);
 });
 
 test("search does not invalidate the stable complete-derivation revision", () => {

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.147`.
+- Current working app version: `7.16.148`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,31 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-12 7.16.148 T6.1d Tasks View Read-Model Foundation
+
+`buildTaskAppViewReadModel` extracts selected bucket tasks, Calendar selection,
+search-matched hierarchy IDs, filter-active detection, List selection reset
+identity, and visible List IDs from `TaskApp`. It consumes the existing
+presentation descriptor, derived selection results, canonical Task inputs,
+Calendar's existing active-status projection, and canonical search selection.
+The single-panel `TaskApp` uses this pure read model at a separate memoization
+boundary; canonical status projections and Task/History derivation remain
+shared. This is a T6 foundation only and does not add a second panel or move
+rendering, navigation, editing, or mutation ownership.
+
+Focused read-model, derivation-presentation, and search-selector tests passed
+(38/38). The changed search-pipeline contracts passed (2/2), and focused
+hierarchy regressions passed (7/7). Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` rule excluded; standard targeted ESLint keeps
+the known TaskApp effect-rule findings. The broader `test:taskapp-wave` run
+passed 62 tests and retained 11 failures, matching the documented 7.16.147
+baseline, including existing Node loader errors and unrelated assertions.
+`git diff --check` passed. Full typecheck remains red on existing workspace
+diagnostics; none point into the new read-model module. The existing Calendar
+active-status projection type mismatch remains at the TaskApp read-model input,
+alongside unrelated TaskApp and workspace diagnostics. Browser QA and
+production build were not run.
 
 ## 2026-10-12 7.16.147 T6.1c Tasks Derived Presentation Foundation
 

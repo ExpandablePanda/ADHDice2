@@ -305,7 +305,7 @@ import {
   selectTaskSearchPresentation,
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
-import { selectCalendarTasks } from "@/lib/task-calendar-selection";
+import { buildTaskAppViewReadModel } from "@/lib/task-app-view-read-model";
 import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { executeTaskRolloverSweep } from "@/lib/task-rollover-sweep";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
@@ -4506,45 +4506,43 @@ export function TaskApp() {
     todayTasks,
     urgentTasks,
   }, momentumView);
-  const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
-  const calendarSelectedTaskIds = useMemo(() => new Set(selectedBucketTasks.map((task) => task.id)), [selectedBucketTasks]);
-  const calendarSelectedTasks = useMemo(
-    () => tasks.filter((task) => calendarSelectedTaskIds.has(task.id)),
-    [calendarSelectedTaskIds, tasks],
-  );
   const tasksForCalendarRead = useMemo(
     () => projectTasksForActiveStatusRead(tasks, calendarTaskDisplayStatusByTaskId, calendarTaskDueOnByTaskId),
     [calendarTaskDisplayStatusByTaskId, calendarTaskDueOnByTaskId, tasks],
   );
-  const calendarSearchMatchingEntityIds = effectiveSearchQuery.length > 0
-    ? taskSearchSelection?.matchingEntityIds
-    : null;
-  const calendarTasks = useMemo(() => {
-    return selectCalendarTasks({
-      childTaskIds: Object.values(childTaskPreviewByParentTaskId).flatMap((group) => group.items.map((item) => item.id)),
-      includeSteps: taskUiState.includeStepsByView.calendar,
-      matchingSearchEntityIds: calendarSearchMatchingEntityIds,
-      searchIsActive: effectiveSearchQuery.length > 0,
-      selectedTasks: calendarSelectedTasks,
-      tasks: tasksForCalendarRead,
-    });
-  }, [calendarSearchMatchingEntityIds, calendarSelectedTasks, childTaskPreviewByParentTaskId, effectiveSearchQuery, taskUiState.includeStepsByView.calendar, tasksForCalendarRead]);
-  const searchMatchedChildTaskIds = taskSearchSelection
-    ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
-      .flatMap((descendantIds) => Array.from(descendantIds))
-    : derivedSearchMatchedChildTaskIds;
-  const searchMatchedStepParentTaskIds = taskSearchSelection
-    ? taskSearchSelection.visibleRootTaskIds
-    : derivedSearchMatchedStepParentTaskIds;
-  const hierarchyStatusFilterActive = effectiveSearchQuery.length === 0 && (
-    taskUiState.statusFilters.length > 0
-    || taskUiState.energyFilters.length > 0
-    || taskUiState.quickFilters.length > 0
-    || taskUiState.tableColumnFilters.priority.length > 0
-    || taskUiState.tableColumnFilters.repeat.length > 0
-    || (taskUiState.tableColumnFilters.taskType?.length ?? 0) > 0
-    || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()))
+  const taskAppViewReadModel = useMemo(
+    () => buildTaskAppViewReadModel({
+      calendarTasksForRead: tasksForCalendarRead,
+      canonicalTasks: tasks,
+      derived: {
+        canonicalVisibleRootTasksSorted,
+        childTaskPreviewByParentTaskId,
+        searchMatchedChildTaskIds: derivedSearchMatchedChildTaskIds,
+        searchMatchedStepParentTaskIds: derivedSearchMatchedStepParentTaskIds,
+      },
+      presentation: taskDerivedPresentation,
+      searchSelection: taskSearchSelection,
+    }),
+    [
+      canonicalVisibleRootTasksSorted,
+      childTaskPreviewByParentTaskId,
+      derivedSearchMatchedChildTaskIds,
+      derivedSearchMatchedStepParentTaskIds,
+      taskDerivedPresentation,
+      taskSearchSelection,
+      tasks,
+      tasksForCalendarRead,
+    ],
   );
+  const {
+    calendarTasks,
+    hierarchyStatusFilterActive,
+    listSelectionResetKey,
+    searchMatchedChildTaskIds,
+    searchMatchedStepParentTaskIds,
+    selectedBucketTasks,
+    visibleListTaskIds,
+  } = taskAppViewReadModel;
   const visiblePinnedTaskCount = taskSearchSelection
     ? activeListFacetCounts.pinned ?? 0
     : visibleListCounts.pinned ?? 0;
@@ -4556,20 +4554,6 @@ export function TaskApp() {
     ? activeListFacetCounts.routine ?? 0
     : visibleListCounts.routine ?? 0;
   const listVisibleColumns = taskDerivedPresentation.tableVisibleColumns;
-  const listSelectionResetKey = JSON.stringify({
-    duplicateTitleMode: duplicateTitleModeActive,
-    energyFilters: taskUiState.energyFilters,
-    matchAny: taskUiState.matchAny,
-    quickFilters: taskUiState.quickFilters,
-    search: effectiveSearchQuery,
-    selectedBucket: taskUiState.selectedBucket,
-    statusFilters: taskUiState.statusFilters,
-    view: taskUiState.view,
-  });
-  const visibleListTaskIds = useMemo(
-    () => selectedBucketTasks.map((task) => task.id),
-    [selectedBucketTasks],
-  );
   const taskRowContext = useMemo(() => ({
     focusedTaskIdSet,
     linkedNotesByTaskId: taskLinkedNotesByTaskId,
