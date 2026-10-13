@@ -38,6 +38,7 @@ import {
 } from "@/lib/master-workspace-state";
 import { resolveActiveTaskUiState, type AppPage, type TaskUiState, type TaskWorkspaceTabsState } from "@/lib/task-ui-state";
 import type { HealthTab } from "@/lib/health-utils";
+import { updateSynchronousState } from "@/lib/synchronous-state-update";
 
 type UseMasterWorkspaceControllerOptions = {
   activePage: AppPage;
@@ -89,15 +90,9 @@ export function useMasterWorkspaceController({
   );
   const [workspace, setWorkspace] = useState<MasterWorkspaceState>(() => createDefaultMasterWorkspaceState());
   const workspaceRef = useRef(workspace);
-  const commitWorkspace = useCallback<MasterWorkspaceStateUpdater>((update) => {
-    const current = workspaceRef.current;
-    const next = update(current);
-    if (next !== current) {
-      workspaceRef.current = next;
-      setWorkspace(update);
-    }
-    return next;
-  }, []);
+  const commitWorkspace = useCallback<MasterWorkspaceStateUpdater>((update) => (
+    updateSynchronousState(workspaceRef, update, setWorkspace)
+  ), []);
   const [restoredUserId, setRestoredUserId] = useState<string | null>(null);
   const currentPanel = workspace.panels.find((panel) => panel.id === workspace.focusedPanelId) ?? workspace.panels[0];
   const activeTab = currentPanel.tabs.find((tab) => tab.id === currentPanel.activeTabId) ?? currentPanel.tabs[0];

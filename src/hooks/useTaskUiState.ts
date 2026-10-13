@@ -46,6 +46,7 @@ import {
 } from "@/lib/task-ui-state";
 import { createDefaultHudUiState, DEFAULT_HUD_UI_STATE } from "@/lib/task-hud-layout";
 import { canPersistLegacyTaskWorkspace, isMasterWorkspaceFeatureEnabled } from "@/lib/master-workspace-controller";
+import { updateSynchronousState } from "@/lib/synchronous-state-update";
 import {
   createAdhdiceRealtimeChannelDebugId,
   describeAdhdiceRealtimeSubscriptionError,
@@ -154,15 +155,7 @@ export function useTaskUiState({
   const taskWorkspaceTabsStateRef = useRef(taskWorkspaceTabsState);
   const updateTaskWorkspaceTabsState = useCallback((
     updater: TaskWorkspaceTabsState | ((current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState),
-  ) => {
-    const current = taskWorkspaceTabsStateRef.current;
-    const next = typeof updater === "function" ? updater(current) : updater;
-    if (next !== current) {
-      taskWorkspaceTabsStateRef.current = next;
-      setTaskWorkspaceTabsState(typeof updater === "function" ? updater : next);
-    }
-    return next;
-  }, []);
+  ) => updateSynchronousState(taskWorkspaceTabsStateRef, updater, setTaskWorkspaceTabsState), []);
   const [taskRouting, setTaskRouting] = useState<Record<string, TaskRoutingBucket>>({});
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
   const [hudUiState, setHudUiStateState] = useState<HudUiState>(() => (userId ? readStoredHudState(userId) : createDefaultHudState()));

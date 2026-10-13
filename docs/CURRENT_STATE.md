@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.151`.
+- Current working app version: `7.16.152`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,26 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-13 7.16.152 T6.2c.1 State Updater Replay Correction
+
+The Master Workspace and live Tasks state owners now calculate functional
+updates once against their latest synchronous references, update those
+references, and publish the precomputed snapshots to React. Identity-preserving
+no-op updates still skip publication. Both owners use the same focused
+coordinator, with no competing direct setter writes.
+
+The focused updater, Task UI-state, Master Workspace controller, and
+Master Workspace state tests passed (89/89). They cover one-time updater
+execution, rapid ordering, stable generated draft identity, synchronized
+reference/publication state, no-op identity, stale callbacks, focused-to-inactive
+snapshots, single-panel behavior, and persistence. Targeted ESLint passed with
+one existing `react-hooks/exhaustive-deps` warning in
+`useMasterWorkspaceController.ts`; `git diff --check` passed. The repository has
+no React hook test renderer or DOM test library installed, so hook integration
+was checked at the source wiring points and through the existing controller
+regressions rather than a mounted React hook. Browser QA, full typecheck, and
+production build were not run.
 
 ## 2026-10-13 7.16.151 T6.2c Tasks Routing Race Correction
 
