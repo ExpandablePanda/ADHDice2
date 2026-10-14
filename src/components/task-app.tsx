@@ -8928,6 +8928,7 @@ export function TaskApp() {
             calendarTimeZone={userTimeZone}
             taskContentFolders={taskContentFolders}
             tasks={tasks}
+            taskDataReady={Boolean(currentUserId && !isWorkspaceLoading && isCurrentTaskProjectionReadReady && isTaskListMembershipDataReady)}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
             onTranscribeScratchAudio={onTranscribeScratchAudio}

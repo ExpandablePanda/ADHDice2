@@ -14,6 +14,8 @@ import {
   createHomeScratchpadItem,
   createHomeScratchpadItems,
   createHomeTodoTask,
+  canReconcileHomeTodoMemberships,
+  canSyncHomeTodoStateToRemote,
   deleteHomeRoutineSection,
   formatHomeRoutineDueLabel,
   formatHomeTodoDateLabel,
@@ -24,6 +26,7 @@ import {
   hasMeaningfulHomeTodoState,
   HOME_ROUTINE_UNSECTIONED_ID,
   isHomeTodoTaskEligible,
+  isHomeTodoHydratedForUser,
   mergeHomeTodoVisibleTaskIds,
   moveHomeScratchpadTextToItems,
   moveHomeRoutineTaskIdToSection,
@@ -42,7 +45,6 @@ import {
   reconcileHomeTodoTaskIds,
   reconcileHomeUrgentTaskIds,
   reorderHomeScratchpadItems,
-  shouldPersistHomeRoutineReconciliation,
   sortHomeTodoSearchResults,
   type HomeFolderTaskHierarchyNode,
   type HomeTodoTaskMetadata,
@@ -692,11 +694,113 @@ test("Home Routine persistence reconciliation uses the saved order and does not 
   assert.deepEqual(reconcileHomeRoutineTaskIds(["anchor-b", "anchor-a", "anchor-c"], sourceOrder), ["anchor-b", "anchor-a", "anchor-c"]);
 });
 
-test("Home Routine persistence reconciliation waits for Home hydration", () => {
-  assert.equal(shouldPersistHomeRoutineReconciliation("loading"), false);
-  assert.equal(shouldPersistHomeRoutineReconciliation("local"), true);
-  assert.equal(shouldPersistHomeRoutineReconciliation("synced"), true);
-  assert.equal(shouldPersistHomeRoutineReconciliation("saving"), true);
+test("Home hydration blocks null-to-user reconciliation before cached Todo and Urgent arrays hydrate", () => {
+  const cached = normalizeHomeTodoState({
+    routineTaskIds: ["routine-kept"],
+    schemaVersion: 8,
+    taskIds: ["todo-kept"],
+    urgentTaskIds: ["urgent-kept"],
+  });
+  const uninitialized = {
+    generation: 0,
+    ownerId: null,
+    remoteReady: false,
+    status: "inactive" as const,
+  };
+  const nextUserId = "user-1";
+  const staleSyncStatus = "local";
+
+  assert.equal(staleSyncStatus, "local");
+  assert.equal(isHomeTodoHydratedForUser(uninitialized, nextUserId), false);
+  const mayReconcile = canReconcileHomeTodoMemberships({
+    homeHydration: uninitialized,
+    taskDataOwnerId: nextUserId,
+    taskDataReady: true,
+    userId: nextUserId,
+  });
+  const taskIdsAfterReconciliation = mayReconcile
+    ? reconcileHomeTodoTaskIds(cached.taskIds, [])
+    : cached.taskIds;
+  const urgentTaskIdsAfterReconciliation = mayReconcile
+    ? reconcileHomeUrgentTaskIds(cached.urgentTaskIds, [])
+    : cached.urgentTaskIds;
+
+  assert.equal(mayReconcile, false);
+  assert.deepEqual(taskIdsAfterReconciliation, ["todo-kept"]);
+  assert.deepEqual(urgentTaskIdsAfterReconciliation, ["urgent-kept"]);
+
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  assert.match(hookSource, /const hydrationReady = isHomeTodoHydratedForUser\(hydrationState, userId\)/);
+  assert.match(hookSource, /const persistCache = useCallback\([\s\S]*?if \(!canMutateForOwner\(ownerId\)\) return;/);
+  assert.match(hookSource, /const commitState = useCallback\([\s\S]*?if \(!canMutateForOwner\(userId\)\) return false;/);
+  assert.match(hookSource, /const flush = useCallback\([\s\S]*?if \(!canSyncForOwner\(ownerId, generation\)/);
+  assert.match(homeSource, /if \(!hydrationReady \|\| !canReconcileMemberships\) return;/);
+  assert.match(homeSource, /if \(!hydrationReady \|\| \(creationTab === "routine" && !canReconcileMemberships\)\) return null;/);
+  assert.match(homeSource, /if \(!hydrationReady \|\| \(activeHomeTab === "routine" && !canReconcileMemberships\)\) return;/);
+  assert.doesNotMatch(homeSource, /shouldPersistHomeRoutineReconciliation\(syncStatus\)/);
+});
+
+test("offline Home hydration allows local edits but never authorizes remote writes before a remote read", () => {
+  const offlineHydration = {
+    generation: 4,
+    ownerId: "user-1",
+    remoteReady: false,
+    status: "ready-local" as const,
+  };
+
+  assert.equal(isHomeTodoHydratedForUser(offlineHydration, "user-1"), true);
+  assert.equal(canSyncHomeTodoStateToRemote(offlineHydration, "user-1", 4), false);
+  assert.equal(canSyncHomeTodoStateToRemote({ ...offlineHydration, status: "ready-remote", remoteReady: true }, "user-1", 4), true);
+});
+
+test("Home reconciliation waits for complete Task and membership reads owned by the same user", () => {
+  const readyHome = {
+    generation: 9,
+    ownerId: "user-1",
+    remoteReady: true,
+    status: "ready-remote" as const,
+  };
+  const context = { homeHydration: readyHome, taskDataOwnerId: "user-1", taskDataReady: false, userId: "user-1" };
+
+  assert.equal(canReconcileHomeTodoMemberships(context), false);
+  assert.equal(canReconcileHomeTodoMemberships({ ...context, taskDataReady: true, taskDataOwnerId: "user-2" }), false);
+  assert.equal(canReconcileHomeTodoMemberships({ ...context, taskDataReady: true }), true);
+});
+
+test("stale auth and Strict Mode generations cannot authorize Home writes", () => {
+  const oldOwnerHydration = {
+    generation: 11,
+    ownerId: "user-1",
+    remoteReady: true,
+    status: "ready-remote" as const,
+  };
+
+  assert.equal(isHomeTodoHydratedForUser(oldOwnerHydration, "user-2"), false);
+  assert.equal(canSyncHomeTodoStateToRemote(oldOwnerHydration, "user-1", 12), false);
+  assert.equal(canSyncHomeTodoStateToRemote(oldOwnerHydration, "user-1", 11), true);
+});
+
+test("ready Home state keeps intentional membership removals and provider synchronization", () => {
+  const readyHome = {
+    generation: 15,
+    ownerId: "user-1",
+    remoteReady: false,
+    status: "ready-local" as const,
+  };
+  assert.equal(canReconcileHomeTodoMemberships({
+    homeHydration: readyHome,
+    taskDataOwnerId: "user-1",
+    taskDataReady: true,
+    userId: "user-1",
+  }), true);
+  assert.deepEqual(reconcileHomeRoutineTaskIds([], []), []);
+  assert.deepEqual(reconcileHomeUrgentTaskIds([], [task("still-valid")]), []);
+
+  const providerSource = readFileSync(new URL("../src/components/task-app/home-todo-state-provider.tsx", import.meta.url), "utf8");
+  const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  assert.equal((appSource.match(/<HomeTodoStateProvider\b/g) ?? []).length, 1);
+  assert.equal((providerSource.match(/useHomeTodoState\(userId\)/g) ?? []).length, 1);
 });
 
 test("Home V8 bootstrap recognizes meaningful state outside To-do taskIds", () => {
@@ -1498,7 +1602,9 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /routineSectionIdByTaskId/);
   assert.match(source, /items=\{sectionRoutineGroups\}/);
   assert.match(source, /mergeHomeTodoVisibleTaskIds\([\s\S]*section\.groupIds[\s\S]*nextGroups\.map/);
-  assert.match(source, /shouldPersistHomeRoutineReconciliation\(syncStatus\)/);
+  assert.match(source, /canReconcileHomeTodoMemberships\(/);
+  assert.match(source, /taskDataReady/);
+  assert.match(source, /if \(!hydrationReady \|\| !canReconcileMemberships\) return;/);
   assert.match(source, /updateRoutineTaskIds\(\(currentRoutineTaskIds\) => reconcileHomeRoutineTaskIds\(currentRoutineTaskIds, routineTaskIds\)/);
   assert.match(source, /createRoutineSection/);
   assert.match(source, /New section/);
@@ -1544,7 +1650,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(hookSource, /hasMeaningfulHomeTodoState\(cached\)/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
-  assert.match(hookSource, /state: outgoing,\s*user_id: userId/);
+  assert.match(hookSource, /state: outgoing,\s*user_id: ownerId/);
   assert.match(logicalDaySource, /export function getCalendarDayKey/);
   assert.match(logicalDaySource, /export function getLogicalDayKey/);
   assert.match(taskAppSource, /calendarNowMs=\{logicalDayNow\}/);
@@ -1697,7 +1803,7 @@ test("useHomeTodoState exposes V8 Urgent and Scratchpad mutations through shared
   assert.match(hookSource, /const reorderScratchpadItems = useCallback/);
   assert.match(hookSource, /schemaVersion: 8/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
-  assert.match(hookSource, /scheduleWrite\(\)/);
+  assert.match(hookSource, /scheduleWrite\(userId\)/);
 });
 
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {

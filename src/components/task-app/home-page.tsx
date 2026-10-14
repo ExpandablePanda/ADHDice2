@@ -65,12 +65,12 @@ import {
   getHomeTasksByCanonicalMembership,
   getHomeTodoSearchText,
   reconcileHomeUrgentTaskIds,
-  shouldPersistHomeRoutineReconciliation,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskIdToEdge,
   reconcileHomeTodoTaskIds,
   reconcileHomeRoutineTaskIds,
+  canReconcileHomeTodoMemberships,
   sortHomeTodoSearchResults,
   type HomeRoutineGroup,
   type HomeFolderTaskHierarchyGroup,
@@ -379,6 +379,7 @@ export function HomePage({
   calendarNowMs,
   calendarTimeZone,
   tasks,
+  taskDataReady,
   taskContentFolders,
   userId,
   onTranscribeScratchAudio,
@@ -428,6 +429,7 @@ export function HomePage({
   calendarNowMs: number;
   calendarTimeZone: string;
   tasks: Task[];
+  taskDataReady: boolean;
   taskContentFolders: readonly TaskContentFolderRow[];
   userId: string | null;
   onTranscribeScratchAudio: (audio: Blob) => Promise<string>;
@@ -463,7 +465,8 @@ export function HomePage({
     moveScratchpadTextToItems,
     saveScratchpadText,
     state,
-    syncStatus,
+    hydration,
+    hydrationReady,
     updateRoutineSectionName,
     updateRoutineTaskIds,
     updateRoutineTaskSection,
@@ -637,16 +640,22 @@ export function HomePage({
   const dayTasks = dayTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
   const doLaterTasks = laterTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
   const visibleTasks = isDoLaterOpen ? [...dayTasks, ...doLaterTasks] : dayTasks;
+  const canReconcileMemberships = canReconcileHomeTodoMemberships({
+    homeHydration: hydration,
+    taskDataOwnerId: userId,
+    taskDataReady,
+    userId,
+  });
 
   useEffect(() => {
-    if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
+    if (!hydrationReady || !canReconcileMemberships) return;
     updateRoutineTaskIds((currentRoutineTaskIds) => reconcileHomeRoutineTaskIds(currentRoutineTaskIds, routineTaskIds));
-  }, [routineTaskIds, syncStatus, tasks.length, updateRoutineTaskIds]);
+  }, [canReconcileMemberships, hydrationReady, routineTaskIds, updateRoutineTaskIds]);
 
   useEffect(() => {
-    if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
+    if (!hydrationReady || !canReconcileMemberships) return;
     updateUrgentTaskIds((currentUrgentTaskIds) => reconcileHomeUrgentTaskIds(currentUrgentTaskIds, tasks));
-  }, [syncStatus, tasks, updateUrgentTaskIds]);
+  }, [canReconcileMemberships, hydrationReady, tasks, updateUrgentTaskIds]);
 
   useEffect(() => {
     if (!scratchpadDraftDirtyRef.current) setScratchpadDraft(state.scratchpadText);
@@ -783,6 +792,7 @@ export function HomePage({
   async function handleCreateTask(draft: TaskCreationDraft) {
     const creationTab = activeHomeTab;
     if (creationTab === "attention" || creationTab === "missed") return null;
+    if (!hydrationReady || (creationTab === "routine" && !canReconcileMemberships)) return null;
     const conversionItemId = convertingScratchpadItemId;
     const metadata = creationTab === "urgent"
       ? { ...draft.metadata, priority_level: 5 as const }
@@ -815,6 +825,7 @@ export function HomePage({
 
   async function addSearchResult(taskId: string) {
     if (activeHomeTab === "attention" || activeHomeTab === "missed") return;
+    if (!hydrationReady || (activeHomeTab === "routine" && !canReconcileMemberships)) return;
     if (activeHomeTab === "urgent") {
       const promoted = await promoteHomeSearchResultToUrgent({
         moveTodoTaskToUrgent,
@@ -1573,7 +1584,7 @@ export function HomePage({
                   onClick={() => {
                     setRowActionMenu(null);
                     if (isRoutine) {
-                      void onSetRoutineMembership(task.id, false);
+                      if (canReconcileMemberships) void onSetRoutineMembership(task.id, false);
                     } else if (isUrgent) {
                       updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                     } else {
@@ -1817,7 +1828,7 @@ export function HomePage({
                       onClick={() => {
                         setRowActionMenu(null);
                         if (isRoutine) {
-                          void onSetRoutineMembership(task.id, false);
+                          if (canReconcileMemberships) void onSetRoutineMembership(task.id, false);
                         } else if (isUrgent) {
                           updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                         } else {

@@ -309,7 +309,8 @@ test("Home owner source wiring gives both panels one state writer and live conte
   assert.match(hookSource, /createChannel: \(\) => client\.channel\(`adhdice_home_todo_state:\$\{userId\}:\$\{createBrowserUuidV4\(\)\}`\)/);
   assert.match(hookSource, /ownerGenerationRef\.current !== ownerGeneration/);
   assert.match(hookSource, /table: "adhdice_home_todo_state"/);
-  assert.match(hookSource, /if \(dirtyRef\.current\) void flush\(ownerGeneration\);/);
+  assert.match(hookSource, /if \(dirtyRef\.current && ownerGenerationRef\.current === ownerGeneration\) void flush\(userId, ownerGeneration\);/);
+  assert.match(hookSource, /canSyncHomeTodoStateToRemote\(hydrationRef\.current, ownerId, generation\)/);
 });
 
 test("On-Time and Home hooks retain fixed topics, filters, handlers, flush, and status behavior", () => {
@@ -332,7 +333,7 @@ test("On-Time and Home hooks retain fixed topics, filters, handlers, flush, and 
   assert.match(homeSource, /table: "adhdice_home_todo_state"/);
   assert.match(homeSource, /filter: `user_id=eq\.\$\{userId\}`/);
   assert.match(homeSource, /if \(row\.state\) applyRemote/);
-  assert.match(homeSource, /if \(dirtyRef\.current\) void flush\(ownerGeneration\);\s*ownerGenerationRef\.current \+= 1;\s*stopRealtimeChannel\(\);/);
+  assert.match(homeSource, /if \(dirtyRef\.current && ownerGenerationRef\.current === ownerGeneration\) void flush\(userId, ownerGeneration\);[\s\S]*?ownerGenerationRef\.current \+= 1;\s*stopRealtimeChannel\(\);/);
   assert.match(homeSource, /schemaVersion: 8/);
   assert.doesNotMatch(homeSource, /removeChannel\(channelRef\.current\)/);
 

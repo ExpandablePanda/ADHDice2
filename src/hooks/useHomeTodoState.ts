@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 import {
@@ -10,6 +10,8 @@ import {
   getHomeRoutineSectionDefaultName,
   HOME_ROUTINE_UNSECTIONED_ID,
   hasMeaningfulHomeTodoState,
+  canSyncHomeTodoStateToRemote,
+  isHomeTodoHydratedForUser,
   moveHomeScratchpadTextToItems,
   normalizeHomeTodoTasksPerDay,
   normalizeHomeTodoState,
@@ -19,6 +21,7 @@ import {
   reorderHomeScratchpadItems,
   reconcileHomeRoutineSectionAssignments,
   type HomeTodoState,
+  type HomeTodoHydrationReadiness,
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
@@ -45,70 +48,114 @@ function isMissingTableError(error: { code?: string; message?: string } | null) 
 
 export function useHomeTodoState(userId: string | null) {
   const [state, setState] = useState<HomeTodoState>({ ...EMPTY_HOME_TODO_STATE });
-  const [syncStatus, setSyncStatus] = useState<HomeTodoSyncStatus>(userId ? "loading" : "local");
+  const [syncStatusState, setSyncStatusState] = useState<{ ownerId: string | null; status: HomeTodoSyncStatus }>({ ownerId: userId, status: userId ? "loading" : "local" });
+  const [hydrationState, setHydrationState] = useState<HomeTodoHydrationReadiness>({
+    generation: 0,
+    ownerId: null,
+    remoteReady: false,
+    status: "inactive",
+  });
+  const [stateOwnerId, setStateOwnerId] = useState<string | null>(null);
   const stateRef = useRef(state);
+  const stateOwnerRef = useRef<string | null>(null);
   const dirtyRef = useRef(false);
   const remoteSupportedRef = useRef(true);
   const writeTimerRef = useRef<number | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const channelRemovalPromiseRef = useRef<Promise<void> | null>(null);
   const ownerGenerationRef = useRef(0);
+  const renderedUserIdRef = useRef(userId);
+  const hydrationRef = useRef<HomeTodoHydrationReadiness>(hydrationState);
+  const pendingRemoteRef = useRef<{ ownerId: string; generation: number; state: unknown; updatedAt: string | null } | null>(null);
 
-  useEffect(() => {
-    stateRef.current = state;
-  }, [state]);
+  const canMutateForOwner = useCallback((ownerId: string | null) => Boolean(
+    ownerId
+    && renderedUserIdRef.current === ownerId
+    && stateOwnerRef.current === ownerId
+    && isHomeTodoHydratedForUser(hydrationRef.current, ownerId),
+  ), []);
+
+  const canSyncForOwner = useCallback((ownerId: string, generation: number) => Boolean(
+    canMutateForOwner(ownerId)
+    && ownerGenerationRef.current === generation
+    && canSyncHomeTodoStateToRemote(hydrationRef.current, ownerId, generation)
+    && remoteSupportedRef.current
+    && dirtyRef.current
+  ), [canMutateForOwner]);
+
+  const visibleState = stateOwnerId === userId ? state : { ...EMPTY_HOME_TODO_STATE };
+  const syncStatus = syncStatusState.ownerId === userId
+    ? syncStatusState.status
+    : userId ? "loading" : "local";
+  const hydrationReady = isHomeTodoHydratedForUser(hydrationState, userId);
+
+  useLayoutEffect(() => {
+    if (renderedUserIdRef.current === userId) return;
+    renderedUserIdRef.current = userId;
+    ownerGenerationRef.current += 1;
+    if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
+    writeTimerRef.current = null;
+    dirtyRef.current = false;
+    pendingRemoteRef.current = null;
+    hydrationRef.current = {
+      generation: ownerGenerationRef.current,
+      ownerId: userId,
+      remoteReady: false,
+      status: userId ? "loading" : "inactive",
+    };
+  }, [userId]);
 
   const persistCache = useCallback((next: HomeTodoState, ownerId: string) => {
+    if (!canMutateForOwner(ownerId)) return;
     try {
       window.localStorage.setItem(cacheKey(ownerId), JSON.stringify(next));
     } catch {
       // Cache is best effort.
     }
+  }, [canMutateForOwner]);
+
+  const setOwnerSyncStatus = useCallback((ownerId: string | null, status: HomeTodoSyncStatus) => {
+    setSyncStatusState({ ownerId, status });
   }, []);
 
-  const flush = useCallback(async (expectedGeneration?: number) => {
-    const generation = ownerGenerationRef.current;
-    if (
-      !userId
-      || !dirtyRef.current
-      || (expectedGeneration !== undefined && expectedGeneration !== generation)
-    ) return;
+  const flush = useCallback(async (ownerId: string, generation: number) => {
+    if (!canSyncForOwner(ownerId, generation) || stateOwnerRef.current !== ownerId) return;
     const client = createBrowserSupabaseClient();
-    if (!client || !remoteSupportedRef.current) {
-      setSyncStatus("local");
+    if (!client) {
+      setOwnerSyncStatus(ownerId, "local");
       return;
     }
     const outgoing = stateRef.current;
-    setSyncStatus("saving");
+    setOwnerSyncStatus(ownerId, "saving");
     const { error } = await client.from("adhdice_home_todo_state").upsert({
       client_updated_at: outgoing.clientUpdatedAt,
       state: outgoing,
-      user_id: userId,
+      user_id: ownerId,
     });
-    if (ownerGenerationRef.current !== generation) return;
+    if (ownerGenerationRef.current !== generation || renderedUserIdRef.current !== ownerId) return;
     if (error) {
       if (isMissingTableError(error)) remoteSupportedRef.current = false;
-      setSyncStatus("local");
+      setOwnerSyncStatus(ownerId, "local");
       return;
     }
-    if (stateRef.current.clientUpdatedAt === outgoing.clientUpdatedAt) {
+    if (stateOwnerRef.current === ownerId && stateRef.current.clientUpdatedAt === outgoing.clientUpdatedAt) {
       dirtyRef.current = false;
-      setSyncStatus("synced");
+      setOwnerSyncStatus(ownerId, "synced");
     }
-  }, [userId]);
+  }, [canSyncForOwner, setOwnerSyncStatus]);
 
-  const scheduleWrite = useCallback(() => {
+  const scheduleWrite = useCallback((ownerId: string) => {
     const generation = ownerGenerationRef.current;
+    if (!canSyncForOwner(ownerId, generation)) return;
     if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
     writeTimerRef.current = window.setTimeout(() => {
       writeTimerRef.current = null;
-      if (ownerGenerationRef.current !== generation) return;
-      void flush(generation);
+      void flush(ownerId, generation);
     }, WRITE_DELAY_MS);
-  }, [flush]);
+  }, [canSyncForOwner, flush]);
 
   const commitState = useCallback((value: unknown) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return false;
     const current = stateRef.current;
     const normalized = normalizeHomeTodoState(value);
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
@@ -117,37 +164,68 @@ export function useHomeTodoState(userId: string | null) {
       clientUpdatedAt: nextTimestamp,
       schemaVersion: 8,
     });
-    dirtyRef.current = true;
+    dirtyRef.current = hydrationRef.current.remoteReady;
     stateRef.current = next;
+    stateOwnerRef.current = userId;
     setState(next);
+    setStateOwnerId(userId);
     persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    setOwnerSyncStatus(userId, hydrationRef.current.remoteReady && remoteSupportedRef.current ? "saving" : "local");
+    scheduleWrite(userId);
+    return true;
+  }, [canMutateForOwner, persistCache, scheduleWrite, setOwnerSyncStatus, userId]);
 
-  const applyRemote = useCallback((value: unknown, remoteClientUpdatedAt?: string | null) => {
-    if (!userId) return;
+  const applyRemote = useCallback((value: unknown, remoteClientUpdatedAt: string | null, ownerId: string, generation: number) => {
+    if (ownerGenerationRef.current !== generation || renderedUserIdRef.current !== ownerId) return;
+    if (!isHomeTodoHydratedForUser(hydrationRef.current, ownerId)) {
+      pendingRemoteRef.current = { generation, ownerId, state: value, updatedAt: remoteClientUpdatedAt };
+      return;
+    }
     const remote = normalizeHomeTodoState(value);
     if (remoteClientUpdatedAt && timestamp(remoteClientUpdatedAt) > timestamp(remote.clientUpdatedAt)) {
       remote.clientUpdatedAt = new Date(remoteClientUpdatedAt).toISOString();
     }
-    if (timestamp(remote.clientUpdatedAt) <= timestamp(stateRef.current.clientUpdatedAt)) return;
+    if (stateOwnerRef.current !== ownerId) return;
+    if (timestamp(remote.clientUpdatedAt) <= timestamp(stateRef.current.clientUpdatedAt)) {
+      hydrationRef.current = { ...hydrationRef.current, remoteReady: true, status: "ready-remote" };
+      setHydrationState(hydrationRef.current);
+      if (timestamp(stateRef.current.clientUpdatedAt) > timestamp(remote.clientUpdatedAt) && hasMeaningfulHomeTodoState(stateRef.current)) {
+        dirtyRef.current = true;
+        setOwnerSyncStatus(ownerId, "saving");
+        scheduleWrite(ownerId);
+      }
+      return;
+    }
+    hydrationRef.current = { ...hydrationRef.current, remoteReady: true, status: "ready-remote" };
+    setHydrationState(hydrationRef.current);
     dirtyRef.current = false;
     stateRef.current = remote;
+    stateOwnerRef.current = ownerId;
     setState(remote);
-    persistCache(remote, userId);
-    setSyncStatus("synced");
-  }, [persistCache, userId]);
+    setStateOwnerId(ownerId);
+    persistCache(remote, ownerId);
+    setOwnerSyncStatus(ownerId, "synced");
+  }, [persistCache, scheduleWrite, setOwnerSyncStatus]);
 
   useEffect(() => {
     const ownerGeneration = ownerGenerationRef.current + 1;
     ownerGenerationRef.current = ownerGeneration;
+    hydrationRef.current = {
+      generation: ownerGeneration,
+      ownerId: userId,
+      remoteReady: false,
+      status: userId ? "loading" : "inactive",
+    };
+    setHydrationState(hydrationRef.current);
+    pendingRemoteRef.current = null;
     if (!userId) {
       stateRef.current = { ...EMPTY_HOME_TODO_STATE };
+      stateOwnerRef.current = null;
       window.queueMicrotask(() => {
-        if (ownerGenerationRef.current !== ownerGeneration) return;
-        setState({ ...EMPTY_HOME_TODO_STATE });
-        setSyncStatus("local");
+          if (ownerGenerationRef.current !== ownerGeneration) return;
+          setState({ ...EMPTY_HOME_TODO_STATE });
+          setStateOwnerId(null);
+        setOwnerSyncStatus(null, "local");
       });
       return;
     }
@@ -160,46 +238,88 @@ export function useHomeTodoState(userId: string | null) {
       // Invalid cache normalizes to empty.
     }
     stateRef.current = cached;
+    stateOwnerRef.current = userId;
 
     const client = createBrowserSupabaseClient();
     window.queueMicrotask(() => {
-      if (ownerGenerationRef.current !== ownerGeneration) return;
+      if (ownerGenerationRef.current !== ownerGeneration || renderedUserIdRef.current !== userId) return;
       setState(cached);
-      setSyncStatus(client ? "loading" : "local");
+      setStateOwnerId(userId);
+      setOwnerSyncStatus(userId, client ? "loading" : "local");
     });
     if (!client) {
-      return;
+      hydrationRef.current = { ...hydrationRef.current, status: "ready-local" };
+      setHydrationState(hydrationRef.current);
+      return () => {
+        if (ownerGenerationRef.current === ownerGeneration) {
+          hydrationRef.current = { ...hydrationRef.current, status: "loading" };
+          ownerGenerationRef.current += 1;
+        }
+      };
     }
     let alive = true;
+    const isCurrentOwnerGeneration = () => alive
+      && ownerGenerationRef.current === ownerGeneration
+      && renderedUserIdRef.current === userId;
+    const finishRemoteRead = (status: "local" | "synced" | "saving", dirty: boolean) => {
+      if (!isCurrentOwnerGeneration()) return;
+      dirtyRef.current = dirty;
+      hydrationRef.current = { ...hydrationRef.current, remoteReady: true, status: "ready-remote" };
+      setHydrationState(hydrationRef.current);
+      setOwnerSyncStatus(userId, status);
+      if (dirty) scheduleWrite(userId);
+      const pending = pendingRemoteRef.current;
+      pendingRemoteRef.current = null;
+      if (pending?.ownerId === userId && pending.generation === ownerGeneration) {
+        applyRemote(pending.state, pending.updatedAt, userId, ownerGeneration);
+      }
+    };
     void client
       .from("adhdice_home_todo_state")
       .select("state,client_updated_at")
       .eq("user_id", userId)
       .maybeSingle()
       .then(({ data, error }) => {
-        if (!alive || ownerGenerationRef.current !== ownerGeneration) return;
+        if (!isCurrentOwnerGeneration()) return;
         if (error) {
           if (isMissingTableError(error)) remoteSupportedRef.current = false;
-          setSyncStatus("local");
+          hydrationRef.current = { ...hydrationRef.current, status: "ready-local" };
+          setHydrationState(hydrationRef.current);
+          setOwnerSyncStatus(userId, "local");
+          const pending = pendingRemoteRef.current;
+          pendingRemoteRef.current = null;
+          if (pending?.ownerId === userId && pending.generation === ownerGeneration) {
+            applyRemote(pending.state, pending.updatedAt, userId, ownerGeneration);
+          }
           return;
         }
+        let hydratedState = cached;
+        let syncStatusAfterRead: "synced" | "saving" = "synced";
+        let isDirty = false;
+        let shouldPersistHydratedState = false;
         if (data) {
           const remote = normalizeHomeTodoState(data.state);
           const remoteTimestamp = timestamp(data.client_updated_at ?? remote.clientUpdatedAt);
           if (remoteTimestamp > timestamp(cached.clientUpdatedAt)) {
-            applyRemote(data.state, data.client_updated_at);
+            if (data.client_updated_at && timestamp(data.client_updated_at) > timestamp(remote.clientUpdatedAt)) {
+              remote.clientUpdatedAt = new Date(data.client_updated_at).toISOString();
+            }
+            hydratedState = remote;
+            shouldPersistHydratedState = true;
           } else if (timestamp(cached.clientUpdatedAt) > remoteTimestamp) {
-            dirtyRef.current = true;
-            scheduleWrite();
-          } else {
-            setSyncStatus("synced");
+            syncStatusAfterRead = "saving";
+            isDirty = true;
           }
         } else if (hasMeaningfulHomeTodoState(cached)) {
-          dirtyRef.current = true;
-          scheduleWrite();
-        } else {
-          setSyncStatus("synced");
+          syncStatusAfterRead = "saving";
+          isDirty = true;
         }
+        stateRef.current = hydratedState;
+        stateOwnerRef.current = userId;
+        setState(hydratedState);
+        setStateOwnerId(userId);
+        finishRemoteRead(syncStatusAfterRead, isDirty);
+        if (shouldPersistHydratedState) persistCache(stateRef.current, userId);
       });
 
     const stopRealtimeChannel = startSerializedRealtimeChannel({
@@ -219,7 +339,7 @@ export function useHomeTodoState(userId: string | null) {
           }, (payload) => {
             if (!isCurrentChannel()) return;
             const row = payload.new as { client_updated_at?: string; state?: unknown };
-            if (row.state) applyRemote(row.state, row.client_updated_at);
+            if (row.state) applyRemote(row.state, row.client_updated_at ?? null, userId, ownerGeneration);
           })
           .subscribe();
       },
@@ -229,74 +349,46 @@ export function useHomeTodoState(userId: string | null) {
     return () => {
       alive = false;
       if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
-      if (dirtyRef.current) void flush(ownerGeneration);
+      if (dirtyRef.current && ownerGenerationRef.current === ownerGeneration) void flush(userId, ownerGeneration);
+      if (hydrationRef.current.generation === ownerGeneration) {
+        hydrationRef.current = { ...hydrationRef.current, remoteReady: false, status: "loading" };
+      }
       ownerGenerationRef.current += 1;
       stopRealtimeChannel();
     };
-  }, [applyRemote, flush, scheduleWrite, userId]);
+  }, [applyRemote, flush, persistCache, scheduleWrite, setOwnerSyncStatus, userId]);
 
   const updateTaskIds = useCallback((updater: (taskIds: string[]) => string[]) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const taskIds = normalizeHomeTodoState({ ...current, taskIds: updater(current.taskIds) }).taskIds;
     if (taskIds.length === current.taskIds.length && taskIds.every((taskId, index) => taskId === current.taskIds[index])) {
       return;
     }
-    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({ ...current, clientUpdatedAt: nextTimestamp, schemaVersion: 8, taskIds });
-    dirtyRef.current = true;
-    stateRef.current = next;
-    setState(next);
-    persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    commitState({ ...current, taskIds });
+  }, [canMutateForOwner, commitState, userId]);
 
   const updateTasksPerDay = useCallback((tasksPerDay: unknown) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const nextTasksPerDay = normalizeHomeTodoTasksPerDay(tasksPerDay);
     if (nextTasksPerDay === current.tasksPerDay) return;
-    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({
-      ...current,
-      clientUpdatedAt: nextTimestamp,
-      schemaVersion: 8,
-      tasksPerDay: nextTasksPerDay,
-    });
-    dirtyRef.current = true;
-    stateRef.current = next;
-    setState(next);
-    persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    commitState({ ...current, tasksPerDay: nextTasksPerDay });
+  }, [canMutateForOwner, commitState, userId]);
 
   const updateTaskDayOffset = useCallback((taskId: string, dayOffset: number | null) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const taskDayOffsets = { ...current.taskDayOffsets };
     if (dayOffset === null) delete taskDayOffsets[taskId];
     else taskDayOffsets[taskId] = dayOffset;
     const currentTaskDayOffset = current.taskDayOffsets[taskId] ?? null;
     if (currentTaskDayOffset === dayOffset) return;
-    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({
-      ...current,
-      clientUpdatedAt: nextTimestamp,
-      schemaVersion: 8,
-      taskDayOffsets,
-    });
-    dirtyRef.current = true;
-    stateRef.current = next;
-    setState(next);
-    persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    commitState({ ...current, taskDayOffsets });
+  }, [canMutateForOwner, commitState, userId]);
 
   const updateRoutineTaskIds = useCallback((updater: (taskIds: string[]) => string[]) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const routineTaskIds = updater(current.routineTaskIds);
     const routineSectionState = reconcileHomeRoutineSectionAssignments(
@@ -317,44 +409,21 @@ export function useHomeTodoState(userId: string | null) {
     ) {
       return;
     }
-    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({
-      ...normalized,
-      clientUpdatedAt: nextTimestamp,
-      schemaVersion: 8,
-    });
-    dirtyRef.current = true;
-    stateRef.current = next;
-    setState(next);
-    persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    commitState(normalized);
+  }, [canMutateForOwner, commitState, userId]);
 
   const createRoutineSection = useCallback(() => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const section = {
       id: createHomeRoutineSectionId(current.routineSections.map((entry) => entry.id)),
       name: getHomeRoutineSectionDefaultName(current.routineSections),
     };
-    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({
-      ...current,
-      clientUpdatedAt: nextTimestamp,
-      schemaVersion: 8,
-      routineSections: [...current.routineSections, section],
-    });
-    dirtyRef.current = true;
-    stateRef.current = next;
-    setState(next);
-    persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    commitState({ ...current, routineSections: [...current.routineSections, section] });
+  }, [canMutateForOwner, commitState, userId]);
 
   const deleteRoutineSection = useCallback((sectionId: string) => {
-    if (!userId) return false;
+    if (!canMutateForOwner(userId)) return false;
     const current = stateRef.current;
     const nextRoutineState = deleteHomeRoutineSection(
       current.routineSections,
@@ -365,10 +434,10 @@ export function useHomeTodoState(userId: string | null) {
     if (!nextRoutineState) return false;
     commitState({ ...current, ...nextRoutineState });
     return true;
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const updateRoutineSectionName = useCallback((sectionId: string, name: string) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const sectionIndex = current.routineSections.findIndex((section) => section.id === sectionId);
     if (sectionIndex < 0) return;
@@ -376,23 +445,11 @@ export function useHomeTodoState(userId: string | null) {
       ? { ...section, name: name.trim() || `Section ${index + 1}` }
       : section);
     if (JSON.stringify(routineSections) === JSON.stringify(current.routineSections)) return;
-    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({
-      ...current,
-      clientUpdatedAt: nextTimestamp,
-      schemaVersion: 8,
-      routineSections,
-    });
-    dirtyRef.current = true;
-    stateRef.current = next;
-    setState(next);
-    persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    commitState({ ...current, routineSections });
+  }, [canMutateForOwner, commitState, userId]);
 
   const updateRoutineTaskSection = useCallback((taskId: string, sectionId: string) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     if (sectionId !== HOME_ROUTINE_UNSECTIONED_ID && !current.routineSections.some((section) => section.id === sectionId)) return;
     const currentRoutineState = reconcileHomeRoutineSectionAssignments(
@@ -410,31 +467,19 @@ export function useHomeTodoState(userId: string | null) {
       JSON.stringify(nextRoutineState.routineTaskIds) === JSON.stringify(current.routineTaskIds)
       && JSON.stringify(nextRoutineState.routineSectionIdByTaskId) === JSON.stringify(currentRoutineState.routineSectionIdByTaskId)
     ) return;
-    const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
-    const next = normalizeHomeTodoState({
-      ...current,
-      ...nextRoutineState,
-      clientUpdatedAt: nextTimestamp,
-      schemaVersion: 8,
-    });
-    dirtyRef.current = true;
-    stateRef.current = next;
-    setState(next);
-    persistCache(next, userId);
-    setSyncStatus(remoteSupportedRef.current ? "saving" : "local");
-    scheduleWrite();
-  }, [persistCache, scheduleWrite, userId]);
+    commitState({ ...current, ...nextRoutineState });
+  }, [canMutateForOwner, commitState, userId]);
 
   const updateUrgentTaskIds = useCallback((updater: (taskIds: string[]) => string[]) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const urgentTaskIds = normalizeHomeTodoState({ ...current, urgentTaskIds: updater(current.urgentTaskIds) }).urgentTaskIds;
     if (urgentTaskIds.length === current.urgentTaskIds.length && urgentTaskIds.every((taskId, index) => taskId === current.urgentTaskIds[index])) return;
     commitState({ ...current, urgentTaskIds });
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const moveUrgentTaskToTodo = useCallback((taskId: string, dayOffset: number) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const nextMembership = moveHomeUrgentTaskIdToTodo(current, taskId, dayOffset);
     if (
@@ -443,10 +488,10 @@ export function useHomeTodoState(userId: string | null) {
       && JSON.stringify(nextMembership.taskDayOffsets) === JSON.stringify(current.taskDayOffsets)
     ) return;
     commitState({ ...current, ...nextMembership });
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const moveTodoTaskToUrgent = useCallback((taskId: string) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const nextMembership = moveHomeTodoTaskIdToUrgent(current, taskId);
     if (
@@ -455,27 +500,27 @@ export function useHomeTodoState(userId: string | null) {
       && JSON.stringify(nextMembership.taskDayOffsets) === JSON.stringify(current.taskDayOffsets)
     ) return;
     commitState({ ...current, ...nextMembership });
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const saveScratchpadText = useCallback((text: string) => {
-    if (!userId) return false;
+    if (!canMutateForOwner(userId)) return false;
     const current = stateRef.current;
     if (current.scratchpadText === text) return true;
     commitState({ ...current, scratchpadText: text });
     return true;
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const moveScratchpadTextToItems = useCallback((text: string) => {
-    if (!userId) return false;
+    if (!canMutateForOwner(userId)) return false;
     const current = stateRef.current;
     const nextScratchpadState = moveHomeScratchpadTextToItems(current, text);
     if (!nextScratchpadState) return false;
     commitState({ ...current, ...nextScratchpadState });
     return true;
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const updateScratchpadItem = useCallback((itemId: string, text: string) => {
-    if (!userId) return false;
+    if (!canMutateForOwner(userId)) return false;
     const normalizedText = text.trim();
     if (!normalizedText) return false;
     const current = stateRef.current;
@@ -485,23 +530,30 @@ export function useHomeTodoState(userId: string | null) {
     const scratchpadItems = current.scratchpadItems.map((item, index) => index === itemIndex ? { ...item, text: normalizedText } : item);
     commitState({ ...current, scratchpadItems });
     return true;
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const deleteScratchpadItem = useCallback((itemId: string) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const scratchpadItems = current.scratchpadItems.filter((item) => item.id !== itemId);
     if (scratchpadItems.length === current.scratchpadItems.length) return;
     commitState({ ...current, scratchpadItems });
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
 
   const reorderScratchpadItems = useCallback((orderedIds: readonly string[]) => {
-    if (!userId) return;
+    if (!canMutateForOwner(userId)) return;
     const current = stateRef.current;
     const scratchpadItems = reorderHomeScratchpadItems(current.scratchpadItems, orderedIds);
     if (JSON.stringify(scratchpadItems) === JSON.stringify(current.scratchpadItems)) return;
     commitState({ ...current, scratchpadItems });
-  }, [commitState, userId]);
+  }, [canMutateForOwner, commitState, userId]);
+
+  const hydration: HomeTodoHydrationReadiness = hydrationState.ownerId === userId ? hydrationState : {
+    generation: hydrationState.generation,
+    ownerId: userId,
+    remoteReady: false,
+    status: userId ? "loading" : "inactive",
+  };
 
   return {
     createRoutineSection,
@@ -512,7 +564,9 @@ export function useHomeTodoState(userId: string | null) {
     reorderScratchpadItems,
     moveScratchpadTextToItems,
     saveScratchpadText,
-    state,
+    hydrationReady,
+    hydration,
+    state: visibleState,
     syncStatus,
     updateRoutineSectionName,
     updateRoutineTaskIds,

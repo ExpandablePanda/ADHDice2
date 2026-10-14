@@ -111,6 +111,53 @@ export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTION
 export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
 export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
+export type HomeTodoHydrationStatus = "inactive" | "loading" | "ready-local" | "ready-remote";
+
+export type HomeTodoHydrationReadiness = {
+  generation: number;
+  ownerId: string | null;
+  remoteReady: boolean;
+  status: HomeTodoHydrationStatus;
+};
+
+export function isHomeTodoHydratedForUser(
+  readiness: HomeTodoHydrationReadiness,
+  userId: string | null,
+) {
+  return Boolean(
+    userId
+    && readiness.ownerId === userId
+    && (readiness.status === "ready-local" || readiness.status === "ready-remote"),
+  );
+}
+
+export function canSyncHomeTodoStateToRemote(
+  readiness: HomeTodoHydrationReadiness,
+  userId: string | null,
+  currentGeneration: number,
+) {
+  return isHomeTodoHydratedForUser(readiness, userId)
+    && readiness.status === "ready-remote"
+    && readiness.remoteReady
+    && readiness.generation === currentGeneration;
+}
+
+export function canReconcileHomeTodoMemberships({
+  homeHydration,
+  taskDataOwnerId,
+  taskDataReady,
+  userId,
+}: {
+  homeHydration: HomeTodoHydrationReadiness;
+  taskDataOwnerId: string | null;
+  taskDataReady: boolean;
+  userId: string | null;
+}) {
+  return isHomeTodoHydratedForUser(homeHydration, userId)
+    && taskDataReady
+    && taskDataOwnerId === userId;
+}
+
 export const EMPTY_HOME_TODO_STATE: HomeTodoStateV8 = {
   clientUpdatedAt: new Date(0).toISOString(),
   schemaVersion: 8,
@@ -341,10 +388,6 @@ export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
     || state.urgentTaskIds.length > 0
     || state.scratchpadText.trim().length > 0
     || state.scratchpadItems.length > 0;
-}
-
-export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
-  return syncStatus !== "loading";
 }
 
 function formatOrdinalDay(day: number) {

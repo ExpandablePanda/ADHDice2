@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.163`.
+- Current working app version: `7.16.164`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.164 Home Todo hydration and data-loss protection
+
+Home Todo membership reconciliation now waits until the authenticated Home
+snapshot and current Task data are ready for the same user. Home edits and cache
+writes are gated by the hydrated owner, while remote writes wait for that
+owner's remote snapshot read to finish. Owner generations fence stale auth,
+Realtime, and delayed write work so an earlier session cannot overwrite the
+current user's Home state.
+
+Focused Home state and Realtime lifecycle checks passed (108/108). Targeted
+ESLint completed with 0 errors and 74 warnings, with the documented
+`react-hooks/set-state-in-effect` baseline rule disabled.
+Browser QA, build, typecheck, and the full test suite were not run; Andrew's
+manual browser QA remains outstanding. No SQL, schema, or persistence format
+changed.
 
 ## 2026-10-14 7.16.163 Home Folder-first alphabetical hierarchy
 
