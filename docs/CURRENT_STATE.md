@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.128`.
+- Current working app version: `7.16.129`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.129 Batch Intake Custom Food partial suggestions
+
+Meal Batch Intake now ranks strong ordered multiword matches that contain one
+small token spelling difference and extra words in the saved food name. Short
+numeric identifiers still match exactly. These partial candidates remain
+suggestions for explicit review; only existing exact and normalized matches
+can auto-resolve. Exact-name precedence, correction protection, product
+varieties and modifiers, quantity/unit review, nutrition, library loading,
+draft identity, and Apply behavior are unchanged. No SQL, Supabase, nutrition,
+or meal persistence changes were made.
+
+The focused Batch Intake and Health wiring suites passed (71 tests), targeted
+ESLint passed for the matcher and Batch Intake tests, and `git diff --check`
+passed. Browser/manual QA, build, full typecheck, and full-suite tests were not
+run; browser QA remains with Andrew.
 
 ## 2026-10-14 7.16.128 Custom Food matching for Batch Intake Meals
 

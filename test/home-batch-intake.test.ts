@@ -478,6 +478,51 @@ test("Meal food suggestions rank partial, brand-fragment, reordered, and one-cha
   assert.equal(brandFragment.candidates[0]?.matchKind, "brand");
 });
 
+test("Meal food suggestions rank ice/iced variants with saved descriptors for explicit review", () => {
+  const icedTeaMix = customFood("4c-iced-tea-mix", "4C Iced Tea Mix");
+  const lemonIcedTea = customFood("4c-lemon-iced-tea", "4C Lemon Iced Tea Mix");
+  const peachIcedTea = customFood("4c-peach-iced-tea", "4C Peach Iced Tea Mix");
+  const fourDIcedTea = customFood("4d-iced-tea", "4D Iced Tea Mix");
+  const varieties = [icedTeaMix, lemonIcedTea, peachIcedTea, fourDIcedTea];
+
+  for (const query of ["4c ice tea", "4c iced tea"]) {
+    const result = getBatchIntakeMealFoodMatch(query, varieties);
+    assert.equal(result.state, "no_exact", query);
+    assert.equal(result.selectedFoodId, null, query);
+    assert.equal(result.candidates[0]?.food.id, icedTeaMix.id, query);
+    assert.equal(result.candidates[0]?.matchKind, "partial", query);
+    assert.ok((result.candidates[0]?.score ?? 0) >= 90, query);
+    assert.deepEqual(
+      new Set(result.candidates.map(({ food }) => food.id)),
+      new Set([icedTeaMix.id, lemonIcedTea.id, peachIcedTea.id]),
+      query,
+    );
+  }
+
+  const exactName = getBatchIntakeMealFoodMatch("4C Iced Tea Mix", varieties);
+  assert.equal(exactName.state, "unique_exact");
+  assert.equal(exactName.selectedFoodId, icedTeaMix.id);
+
+  const shortIdentifierMismatch = getBatchIntakeMealFoodMatch("4c ice tea", [fourDIcedTea]);
+  assert.equal(shortIdentifierMismatch.candidates.length, 0);
+  assert.equal(shortIdentifierMismatch.selectedFoodId, null);
+
+  const unrelated = getBatchIntakeMealFoodMatch("4c ice tea", [customFood("orange-juice", "Orange Juice")]);
+  assert.equal(unrelated.selectedFoodId, null);
+});
+
+test("Meal reconciliation keeps partial Custom Food suggestions in explicit review", () => {
+  const parsed = parseBatchIntake("10/3\nb: 4c ice tea", { referenceDate: "2026-10-03" });
+  const icedTeaMix = customFood("4c-iced-tea-mix", "4C Iced Tea Mix");
+  const reconciled = reconcileBatchIntakeMealFoodProposals(parsed, [icedTeaMix]);
+  const proposal = reconciled.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+
+  assert.ok(proposal);
+  assert.equal(proposal.proposedFoodName, "4c ice tea");
+  assert.ok(proposal.issues.includes("Suggested Custom Food matches require explicit review"));
+  assert.equal(reconciled.some((draft) => draft.kind === "meal" && draft.entryMode === "food"), false);
+});
+
 test("custom food selection preserves canonical identity and parsed Meal derivation stays one row per food", () => {
   const selection = mealFoodSelectionFromLibraryItem(libraryFood);
   assert.deepEqual({ sourceFoodId: selection.sourceFoodId, provider: selection.provider, providerItemId: selection.providerItemId, calories: selection.calories, protein: selection.protein, carbs: selection.carbs, fat: selection.fat, servingLabel: selection.servingLabel }, { sourceFoodId: "food-turkey-bacon", provider: "custom", providerItemId: "provider-turkey-bacon", calories: 60, protein: 5, carbs: 1, fat: 4, servingLabel: "3 slices" });

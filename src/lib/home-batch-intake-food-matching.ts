@@ -80,11 +80,11 @@ function getFoodNameForms(food: HealthFoodLibraryItem) {
   return [...forms].filter(Boolean);
 }
 
-function editDistanceAtMostOne(left: string, right: string) {
+function editDistanceAtMostOne(left: string, right: string, minimumTokenLength = 5) {
   if (!left || !right || Math.abs(left.length - right.length) > 1) return false;
   if (left === right) return true;
   if (/\d/u.test(left) || /\d/u.test(right)) return false;
-  if (Math.min(left.length, right.length) < 5) return false;
+  if (Math.min(left.length, right.length) < minimumTokenLength) return false;
   let leftIndex = 0;
   let rightIndex = 0;
   let edits = 0;
@@ -105,6 +105,35 @@ function editDistanceAtMostOne(left: string, right: string) {
   }
   if (leftIndex < left.length || rightIndex < right.length) edits += 1;
   return edits === 1;
+}
+
+function includesStrongOrderedTokenSequence(haystack: readonly string[], needle: readonly string[]) {
+  if (needle.length < 2 || needle.length > haystack.length) return false;
+
+  const memo = new Map<string, boolean>();
+  const canMatchFrom = (savedIndex: number, queryIndex: number, variationUsed: boolean): boolean => {
+    if (queryIndex === needle.length) return true;
+    if (savedIndex === haystack.length || haystack.length - savedIndex < needle.length - queryIndex) return false;
+
+    const key = `${savedIndex}:${queryIndex}:${variationUsed ? 1 : 0}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) return cached;
+
+    const queryToken = needle[queryIndex];
+    const savedToken = haystack[savedIndex];
+    let matched = false;
+    if (queryToken === savedToken) {
+      matched = canMatchFrom(savedIndex + 1, queryIndex + 1, variationUsed);
+    } else if (!variationUsed && editDistanceAtMostOne(queryToken, savedToken, 3)) {
+      matched = canMatchFrom(savedIndex + 1, queryIndex + 1, true);
+    }
+    if (!matched) matched = canMatchFrom(savedIndex + 1, queryIndex, variationUsed);
+
+    memo.set(key, matched);
+    return matched;
+  };
+
+  return canMatchFrom(0, 0, false);
 }
 
 function scoreFoodSuggestion(query: string, food: HealthFoodLibraryItem): BatchIntakeMealFoodCandidate | null {
@@ -153,6 +182,13 @@ function scoreFoodSuggestion(query: string, food: HealthFoodLibraryItem): BatchI
       ));
       if (hasOneMinorTypo) take(82, "typo");
     }
+
+  }
+
+  if ((nameTokens.length > queryTokens.length || queryTokens.some((token) => token.length < 5))
+    && includesStrongOrderedTokenSequence(nameTokens, queryTokens)) {
+    const coverage = queryTokens.length / nameTokens.length;
+    take(88 + Math.round(coverage * 7), "partial");
   }
 
   // Keep brand fragments as suggestions even when the user has not typed the food name yet.
