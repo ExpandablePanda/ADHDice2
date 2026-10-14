@@ -6,6 +6,7 @@ import type { Task } from "../src/lib/database.types.ts";
 import type { TaskContentFolderRow } from "../src/lib/task-content-folders.ts";
 import {
   buildHomeTaskRowHierarchy,
+  buildHomeFolderTaskHierarchyProjection,
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
   buildHomeTodoDaySections,
@@ -43,6 +44,7 @@ import {
   reorderHomeScratchpadItems,
   shouldPersistHomeRoutineReconciliation,
   sortHomeTodoSearchResults,
+  type HomeFolderTaskHierarchyNode,
   type HomeTodoTaskMetadata,
 } from "../src/lib/home-todo-state.ts";
 import { getCalendarDayKey, getLogicalDayKey } from "../src/lib/logical-day.ts";
@@ -57,6 +59,14 @@ function task(id: string, overrides: Partial<Task> = {}) {
     trashed_at: null,
     ...overrides,
   } as Task;
+}
+
+function contentFolder(id: string, name: string, parent_folder_id: string | null = null) {
+  return { id, name, parent_folder_id } as TaskContentFolderRow;
+}
+
+function flattenFolderTaskNodes(nodes: readonly HomeFolderTaskHierarchyNode[]): HomeFolderTaskHierarchyNode[] {
+  return nodes.flatMap((node) => [node, ...flattenFolderTaskNodes(node.children)]);
 }
 
 const homeTaskMetadata: HomeTodoTaskMetadata = {
@@ -489,6 +499,145 @@ test("Home Routine groups inherit nested descendants without duplicating direct 
     [substep.id, 2, false],
   ]);
   assert.deepEqual(groups[1]?.taskIds, [standaloneChild.id]);
+});
+
+test("Home Folder hierarchy sorts Folder siblings alphabetically and keeps nested ancestry", () => {
+  const folders = [
+    contentFolder("folder-z", "Zulu"),
+    contentFolder("folder-alpha-10", "Folder 10", "folder-alpha"),
+    contentFolder("folder-alpha", "Alpha"),
+    contentFolder("folder-alpha-2", "Folder 2", "folder-alpha"),
+  ];
+  const tasks = [
+    task("task-z", { task_content_folder_id: "folder-z" }),
+    task("task-alpha-10", { task_content_folder_id: "folder-alpha-10" }),
+    task("task-alpha-2", { task_content_folder_id: "folder-alpha-2" }),
+  ];
+  const groups = buildHomeFolderTaskHierarchyProjection(tasks, tasks, folders);
+
+  assert.deepEqual(groups.map((group) => group.folder?.name), ["Alpha", "Zulu"]);
+  assert.deepEqual(groups[0]?.childFolders.map((group) => group.folder?.name), ["Folder 2", "Folder 10"]);
+  assert.equal(groups[0]?.childFolders[0]?.taskRoots[0]?.task.id, "task-alpha-2");
+});
+
+test("Home Folder hierarchy sorts Parent Tasks, Steps, and Substeps recursively", () => {
+  const folder = contentFolder("folder", "Projects");
+  const parentZ = task("parent-z", { title: "Zulu", task_content_folder_id: folder.id });
+  const parentA = task("parent-a", { title: "alpha", task_content_folder_id: folder.id });
+  const stepZ = task("step-z", { parent_task_id: parentA.id, title: "zebra" });
+  const stepA = task("step-a", { parent_task_id: parentA.id, title: "Apple" });
+  const substepZ = task("substep-z", { parent_task_id: stepA.id, title: "zinc" });
+  const substepA = task("substep-a", { parent_task_id: stepA.id, title: "almond" });
+  const tasks = [parentZ, stepZ, substepZ, parentA, stepA, substepA];
+  const groups = buildHomeFolderTaskHierarchyProjection(tasks, tasks, [folder]);
+  const parents = groups[0]?.taskRoots ?? [];
+
+  assert.deepEqual(parents.map((node) => node.task.id), [parentA.id, parentZ.id]);
+  assert.deepEqual(parents[0]?.children.map((node) => node.task.id), [stepA.id, stepZ.id]);
+  assert.deepEqual(parents[0]?.children[0]?.children.map((node) => node.task.id), [substepA.id, substepZ.id]);
+});
+
+test("Home Folder hierarchy puts missing and unfiled Tasks after named Folders", () => {
+  const folder = contentFolder("folder", "Alpha");
+  const named = task("named", { task_content_folder_id: folder.id });
+  const dangling = task("dangling-folder", { task_content_folder_id: "deleted-folder" });
+  const unfiled = task("unfiled", { task_content_folder_id: null });
+  const missingParent = task("missing-parent-child", { parent_task_id: "deleted-parent" });
+  const tasks = [unfiled, missingParent, dangling, named];
+  const groups = buildHomeFolderTaskHierarchyProjection(tasks, tasks, [folder]);
+
+  assert.deepEqual(groups.map((group) => group.isUnfiled), [false, true]);
+  assert.deepEqual(groups[1]?.taskRoots.map((node) => node.task.id), ["dangling-folder", "missing-parent-child", "unfiled"]);
+});
+
+test("Missed child stays under a context-only Parent without nonqualifying siblings", () => {
+  const parent = task("parent", { title: "Parent" });
+  const missedChild = task("missed-child", { parent_task_id: parent.id, title: "Missed child" });
+  const sibling = task("sibling", { parent_task_id: parent.id, title: "Sibling" });
+  const groups = buildHomeFolderTaskHierarchyProjection([missedChild], [parent, missedChild, sibling], []);
+  const root = groups[0]?.taskRoots[0];
+
+  assert.equal(root?.task.id, parent.id);
+  assert.equal(root?.isQualifying, false);
+  assert.deepEqual(root?.children.map((node) => [node.task.id, node.isQualifying]), [[missedChild.id, true]]);
+  assert.equal(groups[0]?.qualifyingTaskCount, 1);
+});
+
+test("Attention Substep keeps Parent and Step context and excludes nonqualifying siblings", () => {
+  const parent = task("parent", { title: "Parent" });
+  const step = task("step", { parent_task_id: parent.id, title: "Step" });
+  const attentionSubstep = task("attention-substep", { parent_task_id: step.id, title: "Attention" });
+  const siblingStep = task("sibling-step", { parent_task_id: parent.id, title: "Sibling step" });
+  const siblingSubstep = task("sibling-substep", { parent_task_id: step.id, title: "Sibling substep" });
+  const tasks = [parent, step, attentionSubstep, siblingStep, siblingSubstep];
+  const groups = buildHomeFolderTaskHierarchyProjection([attentionSubstep], tasks, []);
+  const root = groups[0]?.taskRoots[0];
+  const projectedStep = root?.children[0];
+
+  assert.deepEqual([root?.task.id, projectedStep?.task.id, projectedStep?.children[0]?.task.id], [parent.id, step.id, attentionSubstep.id]);
+  assert.equal(root?.isQualifying, false);
+  assert.equal(projectedStep?.isQualifying, false);
+  assert.equal(projectedStep?.children[0]?.isQualifying, true);
+  assert.deepEqual(root?.children.map((node) => node.task.id), [step.id]);
+  assert.deepEqual(projectedStep?.children.map((node) => node.task.id), [attentionSubstep.id]);
+  assert.equal(groups[0]?.qualifyingTaskCount, 1);
+});
+
+test("Qualifying Parent remains qualifying and does not become context-only", () => {
+  const parent = task("parent", { title: "Parent" });
+  const child = task("child", { parent_task_id: parent.id, title: "Child" });
+  const groups = buildHomeFolderTaskHierarchyProjection([parent, child], [parent, child], []);
+
+  assert.equal(groups[0]?.taskRoots[0]?.isQualifying, true);
+  assert.equal(groups[0]?.taskRoots[0]?.children[0]?.isQualifying, true);
+  assert.equal(groups[0]?.qualifyingTaskCount, 2);
+});
+
+test("Routine Folder projection preserves member descendants and adds context for a child anchor", () => {
+  const parent = task("routine-parent", { title: "Routine parent" });
+  const child = task("routine-child", { parent_task_id: parent.id, title: "Routine child" });
+  const descendant = task("routine-descendant", { parent_task_id: child.id, title: "Routine descendant" });
+  const sibling = task("routine-sibling", { parent_task_id: parent.id, title: "Unrelated sibling" });
+  const parentMembershipGroups = buildHomeRoutineGroups([parent.id], [parent, child, descendant, sibling]);
+  const parentProjection = buildHomeFolderTaskHierarchyProjection(
+    parentMembershipGroups.flatMap((group) => group.tasks.map((entry) => entry.task)),
+    [parent, child, descendant, sibling],
+    [],
+  );
+  const parentRows = flattenFolderTaskNodes(parentProjection[0]?.taskRoots ?? []);
+  assert.deepEqual(parentRows.map((node) => node.task.id), [parent.id, child.id, descendant.id, sibling.id]);
+
+  const childAnchorGroups = buildHomeRoutineGroups([child.id], [parent, child, descendant, sibling]);
+  const childProjection = buildHomeFolderTaskHierarchyProjection(
+    childAnchorGroups.flatMap((group) => group.tasks.map((entry) => entry.task)),
+    [parent, child, descendant, sibling],
+    [],
+  );
+  const contextRoot = childProjection[0]?.taskRoots[0];
+  assert.deepEqual(contextRoot?.children.map((node) => node.task.id), [child.id]);
+  assert.equal(contextRoot?.isQualifying, false);
+  assert.deepEqual(contextRoot?.children[0]?.children.map((node) => node.task.id), [descendant.id]);
+  assert.equal(new Set(flattenFolderTaskNodes(childProjection[0]?.taskRoots ?? []).map((node) => node.task.id)).size, 3);
+});
+
+test("Home Folder hierarchy safely retains missing-parent and cyclic Tasks without duplicates", () => {
+  const cycleA = task("cycle-a", { parent_task_id: "cycle-b", title: "Same" });
+  const cycleB = task("cycle-b", { parent_task_id: "cycle-a", title: "Same" });
+  const selfParent = task("self-parent", { parent_task_id: "self-parent", title: "Solo" });
+  const orphan = task("orphan", { parent_task_id: "missing", title: "Orphan" });
+  const tasks = [cycleB, selfParent, orphan, cycleA];
+  const folderA = contentFolder("folder-a", "Folder A", "folder-b");
+  const folderB = contentFolder("folder-b", "Folder B", "folder-a");
+  cycleA.task_content_folder_id = folderA.id;
+  cycleB.task_content_folder_id = folderA.id;
+  const groups = buildHomeFolderTaskHierarchyProjection([cycleA, cycleA, cycleB, selfParent, orphan], tasks, [folderA, folderB]);
+  const rows = groups.flatMap((group) => flattenFolderTaskNodes(group.taskRoots));
+  const ids = rows.map((node) => node.task.id);
+
+  assert.equal(ids.length, 4);
+  assert.deepEqual([...ids].sort(), [cycleA.id, cycleB.id, orphan.id, selfParent.id].sort());
+  assert.equal(new Set(ids).size, ids.length);
+  assert.deepEqual(groups.find((group) => group.folderId === folderA.id)?.taskRoots.map((node) => node.task.id), [cycleA.id, cycleB.id]);
 });
 
 test("Home Routine uses direct membership as the anchor authority", () => {
@@ -1213,15 +1362,15 @@ test("Home derived tabs use canonical membership, retain task controls, and avoi
   assert.match(source, /<AdhdChip[\s\S]*>\s*Urgent\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*To-do\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Attention\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Missed\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Routine\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Scratchpad\s*<\/AdhdChip>/);
   assert.match(source, /No tasks need Attention right now\./);
   assert.match(source, /No missed tasks right now\./);
-  assert.match(source, /const isDerived = mode === "attention" \|\| mode === "missed"/);
+  assert.match(source, /const isDerived = mode === "attention" \|\| mode === "missed" \|\| isContextOnly/);
   assert.match(renderSource, /const hierarchy = buildHomeTaskRowHierarchy\(task, tasks, taskContentFolders, taskById, taskHierarchy\)/);
   assert.doesNotMatch(renderSource, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
   assert.match(source, /renderHomeTask\(task, index, handle, "urgent"\)/);
   assert.match(source, /renderHomeTask\(task, index, handle, "todo"\)/);
   assert.match(source, /renderHomeTask\([\s\S]*"routine"[\s\S]*\)/);
-  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
-  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
-  assert.match(renderSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(attentionFolderGroups, "attention"\)/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(missedFolderGroups, "missed"\)/);
+  assert.match(renderSource, /!isRoutineChild && !isDerived && !isAlphabeticalFolderView \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
   assert.match(renderSource, /!isRoutineChild && !isDerived \? \(/);
   assert.match(renderSource, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
   assert.match(renderSource, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
@@ -1241,8 +1390,8 @@ test("Home derived task rows use canonical Task-ID keys and preserve Routine row
 
   assert.match(renderSource, /key=\{rowKey \?\? task\.id\}/);
   assert.doesNotMatch(renderSource, /key=\{index\}/);
-  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
-  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(attentionFolderGroups, "attention"\)/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(missedFolderGroups, "missed"\)/);
   assert.match(source, /renderHomeTask\(\s*task,\s*reconciledRoutineTaskIds\.indexOf\(group\.anchorId\),\s*isAnchor \? handle : null,\s*"routine",\s*`\$\{group\.anchorId\}-\$\{task\.id\}`,/);
 });
 
@@ -1403,7 +1552,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(taskAppSource, /taskHistoryStreakSummaries=\{effectiveTaskHistoryStreakSummaries\}/);
   assert.match(taskAppSource, /manualMembershipsByTaskId=\{manualMembershipsByTaskId\}/);
   assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
-  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 5);
+  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 7);
   assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
   assert.match(source, /const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2"/);
   assert.match(source, /max-sm:-ml-3 sm:-ml-2 shrink-0/);
@@ -1431,7 +1580,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /<ArrowDownToLine aria-hidden="true"/);
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)\)/);
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)\)/);
-  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
+  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor && !isContextOnly/);
   assert.match(source, /!isRoutineChild && !isDerived \? \(/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
@@ -1605,7 +1754,7 @@ test("Home Routine child drag reuses TaskApp sibling reorder without changing Ho
   assert.match(taskAppSource, /<TaskHomePage[\s\S]*onReorderChildTask=\{\(taskId, instruction\) => \{ void reorderChildTask\(taskId, instruction\); \}\}/);
   assert.match(homeSource, /items=\{sectionRoutineGroups\}/);
   assert.match(homeSource, /mergeHomeTodoVisibleTaskIds\([\s\S]*section\.groupIds[\s\S]*nextGroups\.map/);
-  assert.match(homeSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(homeSource, /!isRoutineChild && !isDerived && !isAlphabeticalFolderView \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
 });
 
 test("Home row gear menus and long-press fast actions preserve Home behavior", () => {
@@ -1666,16 +1815,16 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   const fastActionControlsSource = fastActionSource.slice(0, fastActionSource.indexOf("aria-label={`Collapse actions"));
   assert.doesNotMatch(fastActionControlsSource, /setIsFastActionMode\(false\)/);
   assert.match(actionsSource, /Move to day/);
-  assert.match(actionsSource, /\{isRoutine && isRoutineGroupAnchor \?[\s\S]*Move to section/);
+  assert.match(actionsSource, /\{isRoutine && isRoutineGroupAnchor && !isAlphabeticalFolderView \?[\s\S]*Move to section/);
   assert.doesNotMatch(actionsSource, /\{isRoutine \?[\s\S]*Move to section/);
-  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
+  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor && !isContextOnly/);
   assert.match(actionsSource, /Move to Top/);
   assert.match(actionsSource, /Move to Bottom/);
   assert.match(actionsSource, /Remove from Home To-do/);
   assert.match(actionsSource, /Remove from Routine/);
   assert.match(actionsSource, /\{!isRoutine \?/);
-  assert.match(actionsSource, /\{isRoutine && !isAtRoutineTop \?/);
-  assert.match(actionsSource, /\{isRoutine && !isAtRoutineBottom \?/);
+  assert.match(actionsSource, /\{isRoutine && !isAlphabeticalFolderView && !isAtRoutineTop \?/);
+  assert.match(actionsSource, /\{isRoutine && !isAlphabeticalFolderView && !isAtRoutineBottom \?/);
   assert.match(renderSource, /dayOffset: section\.dayIndex/);
   assert.match(renderSource, /label: section\.label/);
   assert.match(renderSource, /\{ dayOffset: 7, isFull: false, label: "Later" \}/);
@@ -1716,9 +1865,7 @@ test("Home To-do consumes canonical streak and Attention projections without cha
   const renderSource = source.slice(renderStart, renderEnd);
   const routineTitleStart = renderSource.indexOf("{isRoutine ? (");
   const normalTitleStart = renderSource.indexOf("          ) : (", routineTitleStart);
-  const normalTitleEnd = renderSource.indexOf("          )}", normalTitleStart);
   const routineTitleSource = renderSource.slice(routineTitleStart, normalTitleStart);
-  const normalTitleSource = renderSource.slice(normalTitleStart, normalTitleEnd);
 
   assert.match(source, /function HomeTodoTaskSignals/);
   assert.match(source, /taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>/);
@@ -1729,9 +1876,55 @@ test("Home To-do consumes canonical streak and Attention projections without cha
   assert.match(source, /<TaskCurrentStreakChip className="px-1\.5 py-0 text-\[11px\]" currentStreak=\{currentStreak\} \/>/);
   assert.match(source, /<TaskAttentionChip dueOn=\{task\.due_on\} reason=\{attentionReason\} taskId=\{task\.id\} \/>/);
   assert.match(taskAppSource, /<TaskHomePage[\s\S]*taskAttentionReasonByTaskId=\{taskAttentionReasonByTaskId\}/);
-  assert.match(normalTitleSource, /HomeTodoTaskSignals/);
+  assert.match(renderSource, /!isContextOnly \? <HomeTodoTaskSignals/);
   assert.doesNotMatch(routineTitleSource, /HomeTodoTaskSignals|TaskAttentionChip|taskAttentionReasonByTaskId/);
   assert.doesNotMatch(source, /buildTaskAttentionReasonMap|evaluateTaskListMemberships|matchesTaskListRules|resolveEffectiveTaskListRules/);
+});
+
+test("Home Routine defaults to Folders and keeps Sections presentation-only", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const toggleStart = source.indexOf('<div aria-label="Routine view"');
+  const toggleEnd = source.indexOf("</div>", toggleStart);
+  const toggleSource = source.slice(toggleStart, toggleEnd);
+  const folderViewStart = source.indexOf('{routineView === "folders" ? (');
+  const sectionViewStart = source.indexOf(") : (", folderViewStart);
+  const folderViewSource = source.slice(folderViewStart, sectionViewStart);
+  const routineViewStart = source.indexOf(') : activeHomeTab === "routine" ? (');
+  const routineViewEnd = source.indexOf(') : activeHomeTab === "attention" ?', routineViewStart);
+  const routineSource = source.slice(routineViewStart, routineViewEnd);
+  const renderStart = source.indexOf("function renderHomeTask");
+  const renderSource = source.slice(renderStart, source.indexOf("\n  function renderHomeFolderTaskNode", renderStart));
+
+  assert.match(source, /useState<HomeRoutineView>\("folders"\)/);
+  assert.match(toggleSource, /onClick=\{\(\) => setRoutineView\("folders"\)\}[\s\S]*Folders[\s\S]*onClick=\{\(\) => setRoutineView\("sections"\)\}[\s\S]*Sections/);
+  assert.doesNotMatch(toggleSource, /updateRoutineTaskIds|updateRoutineTaskSection|createRoutineSection|deleteRoutineSection|updateRoutineSectionName/);
+  assert.match(folderViewSource, /renderHomeFolderGroups\(routineFolderGroups, "routine"\)/);
+  assert.doesNotMatch(folderViewSource, /SortableList|updateRoutineTaskIds|updateRoutineTaskSection|moveHomeTodoTaskIdToEdge/);
+  assert.match(routineSource, /routineSections\.map/);
+  assert.match(routineSource, /items=\{sectionRoutineGroups\}/);
+  assert.match(source, /New section/);
+  assert.match(source, /Rename \$\{section\.label\}/);
+  assert.match(source, /Delete \$\{section\.label\}/);
+  assert.match(source, /updateRoutineTaskSection\(task\.id, section\.id\)/);
+  assert.match(routineSource, /onReorder=\{\(nextGroups\) => updateRoutineTaskIds/);
+  assert.match(source, /onReorderChildTask\(dragState\.taskId/);
+  assert.match(renderSource, /isRoutine && !isAlphabeticalFolderView && !isAtRoutineTop/);
+  assert.match(renderSource, /isRoutine && isRoutineGroupAnchor && !isAlphabeticalFolderView/);
+  assert.match(source, /isContextOnly \? \([\s\S]*Context[\s\S]*\) : \([\s\S]*aria-label=\{`Change status:/);
+  assert.match(source, /!node\.isQualifying/);
+  assert.match(source, /group\.qualifyingTaskCount/);
+});
+
+test("Home Folder hierarchy leaves Urgent, To-do day order, and Scratchpad paths intact", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /items=\{urgentTasks\}[\s\S]*renderHomeTask\(task, index, handle, "urgent"\)/);
+  assert.match(source, /items=\{visibleTasks\}/);
+  assert.match(source, /buildHomeTodoDaySections\(todoTasks\.map/);
+  assert.match(source, /updateTaskDayOffset\(sourceTask\.id, Number\.isInteger\(targetDayOffset\) \? targetDayOffset : null\)/);
+  assert.match(source, /items=\{state\.scratchpadItems\}[\s\S]*reorderScratchpadItems\(nextItems\.map\(\(item\) => item\.id\)\)/);
+  assert.match(source, /activeHomeTab === "attention" \? \([\s\S]*renderHomeFolderGroups\(attentionFolderGroups, "attention"\)/);
+  assert.match(source, /activeHomeTab === "missed" \? \([\s\S]*renderHomeFolderGroups\(missedFolderGroups, "missed"\)/);
 });
 
 test("Home todo migration and schema provide owner-scoped realtime state", () => {

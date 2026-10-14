@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.162`.
+- Current working app version: `7.16.163`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,23 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.163 Home Folder-first alphabetical hierarchy
+
+Home Attention, Missed, and Routine Folders views now group qualifying Tasks
+under their canonical Task Content Folders and sort Folder, Parent, Step, and
+Substep siblings alphabetically. Required ancestors for qualifying child Tasks
+appear as muted context rows without status, Attention/Missed, editor, or list
+actions; Folder counts include qualifying Tasks only. Missing Folder IDs go to
+Unfiled, and malformed or cyclic ancestry is projected safely without duplicate
+rows. Routine now opens in Folders view and keeps the existing saved Sections
+view available. The view switch changes presentation only; Routine section
+assignments and manual order remain untouched.
+
+Focused Home/Routine and hierarchy tests passed. Targeted ESLint passed for the
+Home page, hierarchy projection, and focused tests. Browser QA, build,
+typecheck, and the full test suite were not run; Andrew's manual browser QA
+remains outstanding. No persistence format, SQL, or Supabase behavior changed.
 
 ## 2026-10-14 7.16.162 Home Todo Realtime Subscription Collision
 
