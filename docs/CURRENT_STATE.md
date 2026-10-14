@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.161`.
+- Current working app version: `7.16.162`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,33 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.162 Home Todo Realtime Subscription Collision
+
+`TaskApp` now provides one authenticated Home Todo owner to the shared panel
+region. Both Home panels read the same state, mutation callbacks, cache, save
+pipeline, and Realtime subscription. The owner receives a user ID only while
+Home is active in at least one panel, so other pages do not fetch or subscribe.
+Home tab, search, menu, and draft presentation state remains local to each
+rendered panel. Moving from Home/Home to Home/Tasks keeps the same owner active.
+
+The installed Supabase Realtime client reuses an already registered channel for
+the same topic, and its `on("postgres_changes", ...)` rejects registration once
+that channel starts joining. Home now uses a fresh browser UUID in each channel
+topic while retaining serialized setup and teardown. User-generation guards
+fence delayed reads, channel events, and writes from an earlier auth session or
+effect lifecycle.
+
+The focused Home state and Realtime lifecycle suites passed (94/94), including
+a topic registry mock that reproduces the SDK's post-subscribe registration
+error, deferred removal, canceled setup, repeated mounts, and auth changes. The
+shared-owner source contract passed (1/1). Targeted ESLint reports 11 existing
+`react-hooks/set-state-in-effect` errors in `task-app.tsx`; with that rule
+disabled, the selected files report 0 errors and 75 warnings. The Next.js
+16.2.4 production build passed and skipped type validation. A broader existing
+`task-creation-composer.test.ts` run still has two failures in unchanged
+Table/List creation source assertions. Browser QA remains Andrew's manual
+check. No SQL or Supabase schema changes were made.
 
 ## 2026-10-14 7.16.161 Collapsible Sticky Tabs and Shortcut Mode
 

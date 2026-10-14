@@ -115,6 +115,7 @@ import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { MasterWorkspaceTabBar } from "@/components/task-app/master-workspace-tab-bar";
 import { MasterWorkspaceShortcutGuide } from "@/components/task-app/master-workspace-shortcut-guide";
+import { HomeTodoStateProvider } from "@/components/task-app/home-todo-state-provider";
 import { TasksSplitLayout } from "@/components/task-app/tasks-split-right-panel";
 import { MasterWorkspacePanel as MasterWorkspacePanelFrame, MasterWorkspacePanelContent, WorkspaceOverlayHostContext, type WorkspaceOverlayHost } from "@/components/task-app/master-workspace-panel";
 import { useMasterWorkspaceController } from "@/hooks/useMasterWorkspaceController";
@@ -10641,7 +10642,8 @@ export function TaskApp() {
         ) : null}
       </div>
       <div className={`mx-auto w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : ""}`} style={shellZoomStyle}>
-        <section className={`w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : "pb-28"}`}>
+        <HomeTodoStateProvider userId={isMasterPanelPageActive("Home") ? currentUserId : null}>
+          <section className={`w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : "pb-28"}`}>
 
         {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
 
@@ -10685,7 +10687,8 @@ export function TaskApp() {
             masterWorkspace.activeTab,
           )} />
         )}
-        </section>
+          </section>
+        </HomeTodoStateProvider>
       </div>
 
       {!masterWorkspace.hasSplit ? (

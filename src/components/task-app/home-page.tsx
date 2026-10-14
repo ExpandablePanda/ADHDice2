@@ -14,7 +14,7 @@ import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, Re
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { SortableList } from "@/components/ui/sortable-list";
-import { useHomeTodoState } from "@/hooks/useHomeTodoState";
+import { useHomeTodoStateController } from "@/components/task-app/home-todo-state-provider";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { TaskAttentionChip } from "./task-attention-chip";
 import { PageShellHeader } from "./page-shell-header";
@@ -468,7 +468,7 @@ export function HomePage({
     updateTaskIds,
     updateTasksPerDay,
     updateUrgentTaskIds,
-  } = useHomeTodoState(userId);
+  } = useHomeTodoStateController();
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("urgent");

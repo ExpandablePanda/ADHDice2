@@ -23,6 +23,7 @@ import {
 } from "@/lib/home-todo-state";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { startSerializedRealtimeChannel } from "@/lib/realtime-channel-lifecycle";
+import { createBrowserUuidV4 } from "@/lib/browser-uuid";
 
 const CACHE_PREFIX = "adhdice-home-todo";
 const WRITE_DELAY_MS = 650;
@@ -51,6 +52,7 @@ export function useHomeTodoState(userId: string | null) {
   const writeTimerRef = useRef<number | null>(null);
   const channelRef = useRef<RealtimeChannel | null>(null);
   const channelRemovalPromiseRef = useRef<Promise<void> | null>(null);
+  const ownerGenerationRef = useRef(0);
 
   useEffect(() => {
     stateRef.current = state;
@@ -64,8 +66,13 @@ export function useHomeTodoState(userId: string | null) {
     }
   }, []);
 
-  const flush = useCallback(async () => {
-    if (!userId || !dirtyRef.current) return;
+  const flush = useCallback(async (expectedGeneration?: number) => {
+    const generation = ownerGenerationRef.current;
+    if (
+      !userId
+      || !dirtyRef.current
+      || (expectedGeneration !== undefined && expectedGeneration !== generation)
+    ) return;
     const client = createBrowserSupabaseClient();
     if (!client || !remoteSupportedRef.current) {
       setSyncStatus("local");
@@ -78,6 +85,7 @@ export function useHomeTodoState(userId: string | null) {
       state: outgoing,
       user_id: userId,
     });
+    if (ownerGenerationRef.current !== generation) return;
     if (error) {
       if (isMissingTableError(error)) remoteSupportedRef.current = false;
       setSyncStatus("local");
@@ -90,10 +98,12 @@ export function useHomeTodoState(userId: string | null) {
   }, [userId]);
 
   const scheduleWrite = useCallback(() => {
+    const generation = ownerGenerationRef.current;
     if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
     writeTimerRef.current = window.setTimeout(() => {
       writeTimerRef.current = null;
-      void flush();
+      if (ownerGenerationRef.current !== generation) return;
+      void flush(generation);
     }, WRITE_DELAY_MS);
   }, [flush]);
 
@@ -130,9 +140,12 @@ export function useHomeTodoState(userId: string | null) {
   }, [persistCache, userId]);
 
   useEffect(() => {
+    const ownerGeneration = ownerGenerationRef.current + 1;
+    ownerGenerationRef.current = ownerGeneration;
     if (!userId) {
       stateRef.current = { ...EMPTY_HOME_TODO_STATE };
       window.queueMicrotask(() => {
+        if (ownerGenerationRef.current !== ownerGeneration) return;
         setState({ ...EMPTY_HOME_TODO_STATE });
         setSyncStatus("local");
       });
@@ -150,6 +163,7 @@ export function useHomeTodoState(userId: string | null) {
 
     const client = createBrowserSupabaseClient();
     window.queueMicrotask(() => {
+      if (ownerGenerationRef.current !== ownerGeneration) return;
       setState(cached);
       setSyncStatus(client ? "loading" : "local");
     });
@@ -163,7 +177,7 @@ export function useHomeTodoState(userId: string | null) {
       .eq("user_id", userId)
       .maybeSingle()
       .then(({ data, error }) => {
-        if (!alive) return;
+        if (!alive || ownerGenerationRef.current !== ownerGeneration) return;
         if (error) {
           if (isMissingTableError(error)) remoteSupportedRef.current = false;
           setSyncStatus("local");
@@ -191,9 +205,11 @@ export function useHomeTodoState(userId: string | null) {
     const stopRealtimeChannel = startSerializedRealtimeChannel({
       channelRef,
       channelRemovalPromiseRef,
-      createChannel: () => client.channel(`adhdice_home_todo_state:${userId}`),
+      createChannel: () => client.channel(`adhdice_home_todo_state:${userId}:${createBrowserUuidV4()}`),
       subscribe: (thisChannel) => {
-        const isCurrentChannel = () => alive && channelRef.current === thisChannel;
+        const isCurrentChannel = () => alive
+          && ownerGenerationRef.current === ownerGeneration
+          && channelRef.current === thisChannel;
         thisChannel
           .on("postgres_changes", {
             event: "*",
@@ -213,7 +229,8 @@ export function useHomeTodoState(userId: string | null) {
     return () => {
       alive = false;
       if (writeTimerRef.current !== null) window.clearTimeout(writeTimerRef.current);
-      if (dirtyRef.current) void flush();
+      if (dirtyRef.current) void flush(ownerGeneration);
+      ownerGenerationRef.current += 1;
       stopRealtimeChannel();
     };
   }, [applyRemote, flush, scheduleWrite, userId]);
