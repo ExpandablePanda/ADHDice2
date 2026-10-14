@@ -4,6 +4,7 @@ import { displayWeightToKilograms } from "@/lib/health-utils";
 import { mealFoodSelectionFromLibraryItem } from "@/lib/health-meal-draft";
 import { waterAmountToMilliliters } from "@/lib/health-library";
 import { calculateHealthFoodNutrition, getHealthFoodMeasurementOptions } from "@/lib/health-nutrition";
+import { getBatchIntakeMealFoodMatch } from "@/lib/home-batch-intake-food-matching";
 import {
   extractTrailingShorthandTime,
   normalizeShorthandMealUnit,
@@ -14,6 +15,7 @@ import {
   tokenizeShorthandCsvTokens,
   type ScratchpadShorthandPrefix,
 } from "@/lib/scratchpad-shorthand";
+export { normalizeBatchIntakeFoodName } from "@/lib/home-batch-intake-food-matching";
 
 export type BatchIntakeKind = "task" | "water" | "weight" | "meal" | "focus" | "unsupported";
 export type BatchIntakeManualKind = Exclude<BatchIntakeKind, "unsupported">;
@@ -165,6 +167,7 @@ export type BatchIntakeMealFoodProposalDraft = BatchIntakeDraftBase & {
   proposedFoodName: string;
   proposedQuantity: number | null;
   proposedUnit: string | null;
+  userCorrected?: boolean;
   writeId?: string;
 };
 
@@ -684,6 +687,7 @@ function createShorthandMealDrafts(
       proposedFoodName: parsed.proposedFoodName,
       proposedQuantity: parsed.proposedQuantity,
       proposedUnit: parsed.proposedUnit,
+      userCorrected: false,
       writeId: undefined,
       groupId: occurrence.id,
     };
@@ -1261,10 +1265,6 @@ export function addMealFromParsedFood(
   return addMealFromLibraryFood(parsedMeal, food, options);
 }
 
-export function normalizeBatchIntakeFoodName(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
-}
-
 function findBatchIntakeMealMeasurementOption(value: string, options: ReturnType<typeof getHealthFoodMeasurementOptions>) {
   const normalizedValue = normalizeShorthandMealUnit(value);
   return normalizedValue ? options.find((option) => normalizeShorthandMealUnit(option.value) === normalizedValue) ?? null : null;
@@ -1338,11 +1338,23 @@ export function reconcileBatchIntakeMealFoodProposals(
   return drafts.flatMap((draft) => {
     if (draft.kind !== "meal" || draft.entryMode !== "food_proposal") return [draft];
     const occurrence = occurrences.get(draft.mealOccurrenceId);
-    const matches = foods.filter((food) => normalizeBatchIntakeFoodName(food.food_name) === normalizeBatchIntakeFoodName(draft.proposedFoodName));
-    if (!occurrence || matches.length !== 1) {
-      return [proposalIssue(draft, matches.length > 1 ? "Multiple exact Custom Food matches require review" : "No exact Custom Food match; choose a Custom Food or use manual food")];
+    const match = getBatchIntakeMealFoodMatch(draft.proposedFoodName, foods);
+    if (draft.userCorrected) {
+      return [proposalIssue(draft, "Corrected food name requires explicit Custom Food selection")];
     }
-    return [resolveBatchIntakeMealFoodProposal(draft, occurrence, matches[0], {
+    if (!occurrence || !match.selectedFoodId) {
+      const issue = match.state === "multiple_exact"
+        ? "Multiple exact Custom Food matches require review"
+        : match.state === "multiple_normalized"
+          ? "Multiple normalized Custom Food matches require review"
+          : match.candidates.length > 0
+            ? "Suggested Custom Food matches require explicit review"
+            : "No exact Custom Food match; choose a Custom Food or use manual food";
+      return [proposalIssue(draft, issue)];
+    }
+    const food = foods.find((candidate) => candidate.id === match.selectedFoodId);
+    if (!food) return [proposalIssue(draft, "No exact Custom Food match; choose a Custom Food or use manual food")];
+    return [resolveBatchIntakeMealFoodProposal(draft, occurrence, food, {
       writeId: draft.writeId ?? options.createWriteId?.(draft) ?? draft.id,
     })];
   });

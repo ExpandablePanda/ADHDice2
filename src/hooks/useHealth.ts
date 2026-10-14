@@ -562,6 +562,7 @@ export function useHealth(
   const [importAudits, setImportAudits] = useState<HealthImportAudit[]>([]);
   const [awards, setAwards] = useState<HealthAchievementAward[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const foodLibraryLoadedUserIdRef = useRef<string | null>(null);
   const [storageMode, setStorageMode] = useState<"local" | "remote">("local");
   const healthSnapshotRef = useRef<HealthStateSnapshot | null>(null);
   const healthRemoteAuthorityRef = useRef<HealthRemoteAuthority | null>(null);
@@ -998,6 +999,7 @@ export function useHealth(
       healthRemoteAuthorityRef.current = null;
       healthHydrationInFlightRef.current = null;
       healthForceRemoteHydrationRef.current = false;
+      foodLibraryLoadedUserIdRef.current = null;
       setProfile(null);
       setCheckIns([]);
       setJournalSignals([]);
@@ -1069,6 +1071,7 @@ export function useHealth(
 
     if (!client) {
       setStorageMode("local");
+      foodLibraryLoadedUserIdRef.current = userId;
       return;
     }
 
@@ -1079,6 +1082,7 @@ export function useHealth(
       setStorageMode("remote");
       setJournalStatisticsDataError(null);
       applySnapshot(cachedRemoteAuthority.snapshot, { persistenceMode: "remote" });
+      foodLibraryLoadedUserIdRef.current = userId;
       setIsLoading(false);
       return;
     }
@@ -1178,6 +1182,7 @@ export function useHealth(
         } else if (firstError) {
           setMessage({ tone: "warn", text: firstError.message });
         }
+        foodLibraryLoadedUserIdRef.current = userId;
         setIsLoading(false);
         return;
       }
@@ -1587,6 +1592,7 @@ export function useHealth(
         console.info(`[health] hydrated pages=${healthPageCount} user=${userId}`);
       }
       if (journalStatisticsDataErrors.length === 0) setJournalStatisticsDataError(null);
+      foodLibraryLoadedUserIdRef.current = userId;
       setIsLoading(false);
     })();
 
@@ -4942,6 +4948,7 @@ export function useHealth(
     deleteWaterEntry,
     deleteWeightEntry,
     favorites,
+    hasLoadedFoodLibrary: Boolean(userId && foodLibraryLoadedUserIdRef.current === userId && healthSnapshotRef.current?.profile.user_id === userId),
     importAudits,
     isLoading,
     importAppleHealthData,

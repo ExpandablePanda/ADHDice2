@@ -388,6 +388,7 @@ export function HomePage({
   healthProfile,
   healthFoods,
   healthLoading,
+  healthFoodLibraryReady,
   addWaterEntries,
   addWeightEntries,
   addMealEntries,
@@ -438,6 +439,7 @@ export function HomePage({
   healthProfile: HealthProfile | null;
   healthFoods: HealthFoodLibraryItem[];
   healthLoading: boolean;
+  healthFoodLibraryReady: boolean;
   addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   addMealEntries: (inputs: Array<Omit<HealthMealEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
@@ -519,9 +521,9 @@ export function HomePage({
   }, [batchIntakeDrafts, batchIntakeHasFocusRows, onBatchIntakeFocusActivationChange]);
 
   const effectiveBatchIntakeDrafts = useMemo(() => {
-    if (!batchIntakeDrafts || healthLoading || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
+    if (!batchIntakeDrafts || !healthFoodLibraryReady || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
     return reconcileBatchIntakeMealFoodProposals(batchIntakeDrafts, healthFoods, { createWriteId: (proposal) => proposal.writeId ?? createBrowserUuidV4() });
-  }, [batchIntakeDrafts, healthFoods, healthLoading]);
+  }, [batchIntakeDrafts, healthFoods, healthFoodLibraryReady]);
 
   useEffect(() => () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -1987,6 +1989,7 @@ export function HomePage({
                 executionResult={batchIntakeExecutionResult}
                 healthLoading={healthLoading}
                 healthFoods={healthFoods}
+                healthFoodLibraryReady={healthFoodLibraryReady}
                 healthProfile={healthProfile}
                 isApplying={batchIntakeApplying}
                 focusCategories={focusCategories}

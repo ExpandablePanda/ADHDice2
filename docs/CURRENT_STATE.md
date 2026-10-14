@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-12
+Last reviewed: 2026-10-14
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.127`.
+- Current working app version: `7.16.128`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,32 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.128 Custom Food matching for Batch Intake Meals
+
+Batch Intake Meal proposals now share one pure matcher between automatic
+reconciliation and review suggestions. Unique case/whitespace exact food names
+keep precedence. Safe normalized exact matching also recognizes benign
+punctuation differences and explicit or metadata-confirmed embedded brands,
+while preserving percentages, varieties, diet/sugar-free, fat, flavor, and
+product-number distinctions. Matching considers every saved per-user Custom
+Food record regardless of favorite status and auto-resolves only one
+unambiguous saved record. Equivalent duplicate records remain in review.
+
+Partial, brand-fragment, reordered-word, and one-character typo candidates are
+ranked suggestions only. Corrected proposals stay reviewable until explicit
+selection. Reconciliation waits for the lazy-loaded Custom Food Library, and
+review labels continue to show saved brand and food names. Proposal IDs, write
+IDs, quantity/unit review, manual-food fallback, Applied locking, and the
+existing Health nutrition and meal-write authorities remain unchanged. No
+Custom Food data, SQL, Supabase schema, or live Health data was changed.
+
+The focused Batch Intake and shorthand suites passed (84 tests), targeted lint
+passed for the matching/review files, and the changed-file lint passed with
+`react-hooks/set-state-in-effect` disabled. Standard targeted ESLint still exits
+red on 11 existing instances of that rule in `task-app.tsx` and `useHealth.ts`;
+the flagged statements are outside this change. `git diff --check` passed.
+Browser/manual QA, build, full typecheck, and full-suite tests were not run.
 
 ## 2026-10-12 7.16.127 Scratchpad Task matching and shared outcomes
 

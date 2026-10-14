@@ -205,11 +205,26 @@ units include `g`, `gram`, `grams`, `oz`, `ounce`, `ounces`, `ml`, `milliliter`,
 `servings`, plus stored Custom Food units such as `slice`, `slices`, `piece`,
 and `pieces`.
 
-Meal proposals are ephemeral review state, not Health rows. Once the lazy Health
-Custom Nutrition Library is available, exact normalized food-name matching may
-resolve a unique match. Multiple exact matches and no exact match remain review
-items; the user can select a Custom Food or use the manual-food fallback. The
-raw source token, requested quantity, and requested unit remain visible.
+Meal proposals are ephemeral review state, not Health rows. Reconciliation waits
+until the lazy-loaded, per-user Custom Nutrition Library is available; an
+unloaded library is not treated as empty. It considers all saved Custom Food
+records, including foods that are not marked favorite.
+
+A unique case- and whitespace-normalized `food_name` match has highest priority.
+If that does not resolve uniquely, safe normalized exact matching also accepts
+benign punctuation differences, an explicit `brand_name + food_name`, and a
+brand embedded at the start or end of `food_name` when saved brand metadata
+identifies it. Percentages and other meaningful name tokens remain part of the
+match, including varieties, diet/sugar-free labels, fat content, flavors, and
+product numbers. Multiple saved records with equivalent matching names remain
+in review even when their brands differ.
+
+Partial-name, brand-fragment, reordered-word, and one-character typo matches
+may appear as ranked review suggestions only; they never auto-resolve. Unknown
+foods remain review items, and users can explicitly select a saved Custom Food
+or use the manual-food fallback. User-corrected proposals stay in review until
+explicit selection. The raw source token, requested quantity, and requested
+unit remain visible.
 
 Explicit quantity and unit become the consumed quantity/unit. A unitless
 quantity adopts the uniquely matched Custom Food's stored serving unit; if no

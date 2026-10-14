@@ -1286,6 +1286,7 @@ export function TaskApp() {
     deleteWorkout: deleteHealthWorkout,
     deleteWeightEntry,
     favorites: healthFavorites,
+    hasLoadedFoodLibrary: hasLoadedHealthFoodLibrary,
     importAudits: healthImportAudits,
     isLoading: isHealthLoading,
     refreshHealth: refreshHealthData,
@@ -8378,6 +8379,7 @@ export function TaskApp() {
             handleManualFocusEntries={handleManualFocusEntries}
             healthLoading={isHealthLoading}
             healthFoods={healthFavorites}
+            healthFoodLibraryReady={hasLoadedHealthFoodLibrary}
             healthProfile={healthProfile}
             onBatchIntakeHealthActivationChange={setBatchIntakeHealthActive}
             onBatchIntakeFocusActivationChange={setBatchIntakeFocusActive}
