@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.129`.
+- Current working app version: `7.16.130`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,23 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.130 Batch Intake split-brand suggestions
+
+Meal Batch Intake suggestions now combine an exact leading saved brand with a
+strong ordered food-name match. This supports short brand identifiers such as
+`4C` alongside one small food-name variation such as `ice` / `iced`, while
+keeping saved descriptors and competing flavors as distinct review choices.
+Brand identifiers are never fuzzy-matched, and partial matches remain
+suggestion-only. Existing exact and normalized match precedence, brand-fragment
+and typo scoring, correction protection, quantity/unit handling, nutrition,
+library loading, draft identity, and Apply behavior are unchanged. No SQL,
+Supabase, Health data, or meal persistence changes were made.
+
+The focused Batch Intake and Health wiring suites passed (73 tests), targeted
+ESLint passed for the matcher and Batch Intake tests, and `git diff --check`
+passed. Browser/manual QA, build, full typecheck, and full-suite tests were not
+run; browser QA remains with Andrew.
 
 ## 2026-10-14 7.16.129 Batch Intake Custom Food partial suggestions
 

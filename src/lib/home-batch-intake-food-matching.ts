@@ -191,6 +191,17 @@ function scoreFoodSuggestion(query: string, food: HealthFoodLibraryItem): BatchI
     take(88 + Math.round(coverage * 7), "partial");
   }
 
+  const hasExactBrandPrefix = brandTokens.length > 0
+    && brandTokens.length < queryTokens.length
+    && brandTokens.every((token, index) => queryTokens[index] === token);
+  if (hasExactBrandPrefix) {
+    const foodQueryTokens = queryTokens.slice(brandTokens.length);
+    if (includesStrongOrderedTokenSequence(nameTokens, foodQueryTokens)) {
+      const coverage = queryTokens.length / (brandTokens.length + nameTokens.length);
+      take(88 + Math.round(coverage * 7), "partial");
+    }
+  }
+
   // Keep brand fragments as suggestions even when the user has not typed the food name yet.
   if (brandMatched && allQueryTokensInSavedName) take(94, "brand");
   return best;

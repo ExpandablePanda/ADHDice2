@@ -511,6 +511,41 @@ test("Meal food suggestions rank ice/iced variants with saved descriptors for ex
   assert.equal(unrelated.selectedFoodId, null);
 });
 
+test("Meal food matcher suggests an exact short brand with an ice/iced food-name variation", () => {
+  const splitBrandFood = customFood("4c-brand-iced-tea", "Iced Tea Mix", "4C");
+
+  for (const query of ["4c ice tea", "4c iced tea"]) {
+    const result = getBatchIntakeMealFoodMatch(query, [splitBrandFood]);
+    assert.equal(result.state, "no_exact", query);
+    assert.equal(result.selectedFoodId, null, query);
+    assert.equal(result.candidates[0]?.food.id, splitBrandFood.id, query);
+    assert.equal(result.candidates[0]?.matchKind, "partial", query);
+    assert.ok((result.candidates[0]?.score ?? 0) >= 90, query);
+  }
+
+  const fullName = getBatchIntakeMealFoodMatch("4c iced tea mix", [splitBrandFood]);
+  assert.equal(fullName.state, "unique_normalized");
+  assert.equal(fullName.selectedFoodId, splitBrandFood.id);
+});
+
+test("split short brands keep tea flavors and varieties distinct and reject a different identifier", () => {
+  const mix = customFood("4c-split-mix", "Iced Tea Mix", "4C");
+  const diet = customFood("4c-split-diet", "Diet Iced Tea Mix", "4C");
+  const lemon = customFood("4c-split-lemon", "Lemon Iced Tea Mix", "4C");
+  const peach = customFood("4c-split-peach", "Peach Iced Tea Mix", "4C");
+  const fourD = customFood("4d-split-mix", "Iced Tea Mix", "4D");
+  const foods = [mix, diet, lemon, peach, fourD];
+
+  const result = getBatchIntakeMealFoodMatch("4c ice tea", foods);
+  assert.equal(result.state, "no_exact");
+  assert.equal(result.selectedFoodId, null);
+  assert.equal(result.candidates[0]?.food.id, mix.id);
+  assert.deepEqual(
+    new Set(result.candidates.map(({ food }) => food.id)),
+    new Set([mix.id, diet.id, lemon.id, peach.id]),
+  );
+});
+
 test("Meal reconciliation keeps partial Custom Food suggestions in explicit review", () => {
   const parsed = parseBatchIntake("10/3\nb: 4c ice tea", { referenceDate: "2026-10-03" });
   const icedTeaMix = customFood("4c-iced-tea-mix", "4C Iced Tea Mix");
