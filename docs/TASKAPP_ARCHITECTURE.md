@@ -74,6 +74,23 @@ context, these overlays use their existing viewport-level presentation.
 Account dialogs and system alerts remain global where their ownership is
 application wide.
 
+Master Workspace tab navigation stays with the shared HUD in unsplit mode: the
+tab strip sits in the same sticky header wrapper as `CommandCenterHeader`, so
+its position follows the actual expanded or collapsed HUD height. Split panels
+keep their own strip above their independent scroll regions. Each panel stores
+its tab-strip visibility in the existing user-scoped Master Workspace state;
+older states without that preference normalize to expanded, and closing Split
+Right preserves Window 1's setting.
+
+The shared HUD owns the unsplit Tabs toggle and the two Window Tabs toggles in
+split mode. `useMasterWorkspaceShortcutMode` resolves `Shift + S` followed by
+1–9 in each panel's current visual tab order. It tracks the last panel reached
+by pointer, focus, or scrolling and falls back to Window 1. Tab changes still go
+through `canActivateTabInPanel` and `activateTabInPanel`, so draft and navigation
+protection remain with the Master Workspace controller. Shortcut UI stays
+inside its target panel in split mode and does not introduce another TaskApp or
+HUD owner.
+
 `MasterWorkspacePanelContent` invokes the shared page renderer through a
 separate component boundary. This preserves one route implementation while
 keeping render-time page construction isolated from TaskApp's direct ref

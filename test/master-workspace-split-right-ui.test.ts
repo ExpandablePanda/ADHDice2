@@ -85,6 +85,23 @@ test("Master Workspace exposes split navigation in both panels and duplicates an
   assert.match(controllerSource, /const updateTasksWorkspace = useCallback/);
 });
 
+test("sticky tab controls and Shortcut Mode keep the shared HUD, overlays, and panel docks", () => {
+  assert.equal((taskAppSource.match(/<CommandCenterHeader\b/g) ?? []).length, 1);
+  assert.equal((taskAppSource.match(/useWorkspaceData\(/g) ?? []).length, 1);
+  assert.equal((taskAppSource.match(/useTaskUiState\(/g) ?? []).length, 1);
+  assert.match(taskAppSource, /data-app-fixed-header[\s\S]*?renderMasterWorkspaceNavigation\(masterWorkspace\.currentPanel\)/);
+  assert.match(taskAppSource, /workspaceTabToggles=\{masterWorkspaceHudTabToggles\}/);
+  assert.match(taskAppSource, /panel\.tabsCollapsed \? null :/);
+  assert.match(taskAppSource, /aria-expanded=\{expanded\}/);
+  assert.match(taskAppSource, /onPanelInteraction=\{masterWorkspaceShortcutMode\.recordPanelInteraction\}/);
+  assert.match(panelSource, /shortcutGuide \? \([\s\S]*?absolute inset-x-3 top-3/);
+  assert.match(panelSource, /data-master-workspace-overlay-host/);
+  assert.match(taskAppSource, /bottomNavigation=\{renderMasterWorkspaceApplicationNavigation\(splitPanels\.left, splitPanels\.leftTab\)\}/);
+  assert.match(taskAppSource, /bottomNavigation=\{renderMasterWorkspaceApplicationNavigation\(splitPanels\.right, splitPanels\.rightTab\)\}/);
+  assert.match(bottomDockSource, /layoutMode = "viewport"/);
+  assert.match(bottomDockSource, /if \(isCollapsed\)[\s\S]*?if \(isPanelScoped\)/);
+});
+
 test("split panels render independent application docks alongside the existing tab bars", () => {
   assert.match(taskAppSource, /renderMasterWorkspaceApplicationNavigation\(splitPanels\.left, splitPanels\.leftTab\)/);
   assert.match(taskAppSource, /renderMasterWorkspaceApplicationNavigation\(splitPanels\.right, splitPanels\.rightTab\)/);

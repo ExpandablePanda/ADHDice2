@@ -97,6 +97,8 @@ export type MasterWorkspacePanel = {
   side: MasterPanelSide;
   tabs: MasterWorkspaceTab[];
   activeTabId: string;
+  /** Missing in older saved states; tabs are expanded unless explicitly collapsed. */
+  tabsCollapsed?: true;
 };
 
 export type MasterWorkspaceState = {
@@ -746,7 +748,13 @@ export function normalizeMasterWorkspaceState(value: unknown): MasterWorkspaceSt
     const activeTabId = typeof panel.activeTabId === "string" && usableTabs.some((tab) => tab.id === panel.activeTabId)
       ? panel.activeTabId
       : usableTabs[0].id;
-    return { id, side, tabs: usableTabs, activeTabId };
+    return {
+      id,
+      side,
+      tabs: usableTabs,
+      activeTabId,
+      ...(panel.tabsCollapsed === true ? { tabsCollapsed: true as const } : {}),
+    };
   });
 
   const usablePanels = panels.length > 0 ? panels : createDefaultMasterWorkspaceState().panels;
@@ -963,6 +971,24 @@ export function closeMasterTab(state: MasterWorkspaceState, panelId: string, tab
 export function activateMasterPanel(state: MasterWorkspaceState, panelId: string): MasterWorkspaceState {
   if (!state.panels.some((panel) => panel.id === panelId)) return state;
   return { ...state, focusedPanelId: panelId, visiblePanelId: panelId };
+}
+
+export function setMasterWorkspacePanelTabsCollapsed(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabsCollapsed: boolean,
+): MasterWorkspaceState {
+  const panelIndex = state.panels.findIndex((candidate) => candidate.id === panelId);
+  if (panelIndex < 0) return state;
+  const panel = state.panels[panelIndex];
+  if (Boolean(panel.tabsCollapsed) === tabsCollapsed) return state;
+
+  const nextPanel = { ...panel };
+  if (tabsCollapsed) nextPanel.tabsCollapsed = true;
+  else delete nextPanel.tabsCollapsed;
+  const panels = [...state.panels];
+  panels[panelIndex] = nextPanel;
+  return { ...state, panels };
 }
 
 export function duplicateFocusedPageIntoRightPanel(

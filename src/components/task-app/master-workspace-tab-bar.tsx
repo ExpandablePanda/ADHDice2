@@ -20,7 +20,7 @@ const TOP_LEVEL_PAGES: AppPage[] = [
   "Test",
 ];
 
-function getMasterTabLabel(tab: MasterWorkspaceTab) {
+export function getMasterTabLabel(tab: MasterWorkspaceTab) {
   const destination = tab.destination;
   if (destination.kind === "page-shell") {
     return destination.shellId.split(/[-_]/).map((part) => part ? `${part[0].toUpperCase()}${part.slice(1)}` : "").join(" ");

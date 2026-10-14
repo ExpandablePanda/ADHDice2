@@ -44,12 +44,14 @@ type MasterWorkspacePanelProps = {
   id: string;
   navigation: ReactNode;
   bottomNavigation?: ReactNode;
+  shortcutGuide?: ReactNode;
+  onInteraction?: (panelId: string) => void;
   onOverlayHostChange?: (panelId: string, element: HTMLDivElement | null, tabId: string) => void;
   scrollTop?: number;
   side: MasterPanelSide;
 };
 
-export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, id, navigation, onOverlayHostChange, scrollTop = 0, side }: MasterWorkspacePanelProps) {
+export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, id, navigation, onInteraction, onOverlayHostChange, scrollTop = 0, shortcutGuide, side }: MasterWorkspacePanelProps) {
   const [overlayElement, setOverlayElement] = useState<HTMLDivElement | null>(null);
   const scrollElementRef = useRef<HTMLDivElement | null>(null);
   const activeTabIdRef = useRef(activeTabId);
@@ -57,6 +59,7 @@ export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, 
     setOverlayElement(element);
     onOverlayHostChange?.(id, element, activeTabIdRef.current);
   }, [id, onOverlayHostChange]);
+  const handleInteraction = useCallback(() => onInteraction?.(id), [id, onInteraction]);
 
   useLayoutEffect(() => {
     if (activeTabIdRef.current === activeTabId) return;
@@ -71,9 +74,12 @@ export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, 
   return (
     <section
       aria-label={`${side === "left" ? "Window 1" : "Window 2"} workspace`}
-      className="relative isolate flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[1.5rem] border border-[#ece8f8] bg-white/55 dark:border-white/10 dark:bg-white/[0.025]"
+      className="relative isolate flex h-full min-h-0 min-w-0 flex-col overflow-x-clip overflow-y-visible rounded-[1.5rem] border border-[#ece8f8] bg-white/55 dark:border-white/10 dark:bg-white/[0.025]"
       data-master-workspace-panel={side}
       data-master-workspace-panel-id={id}
+      onFocusCapture={handleInteraction}
+      onPointerDownCapture={handleInteraction}
+      onWheelCapture={handleInteraction}
     >
       <div className="shrink-0">{navigation}</div>
       <div className="relative min-h-0 flex-1 overflow-hidden">
@@ -85,6 +91,11 @@ export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, 
           >
             <div className={`min-w-0 p-3 ${bottomNavigation ? "pb-20" : ""}`}>{children}</div>
           </div>
+          {shortcutGuide ? (
+            <div className="pointer-events-none absolute inset-x-3 top-3 z-[125] flex justify-end">
+              <div className="pointer-events-auto max-h-full max-w-full">{shortcutGuide}</div>
+            </div>
+          ) : null}
           <div
             className="pointer-events-none absolute inset-0 z-[130]"
             data-master-workspace-overlay-host={id}

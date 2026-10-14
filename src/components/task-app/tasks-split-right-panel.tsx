@@ -8,6 +8,7 @@ type SplitPanelInfo = {
   bottomNavigation?: ReactNode;
   id: string;
   navigation: ReactNode;
+  shortcutGuide?: ReactNode;
   scrollTop: number;
 };
 
@@ -17,11 +18,12 @@ type TasksSplitLayoutProps = {
   right: ReactNode;
   leftPanel?: SplitPanelInfo;
   rightPanel?: SplitPanelInfo;
+  onPanelInteraction?: (panelId: string) => void;
   onOverlayHostChange?: (panelId: string, element: HTMLDivElement | null, tabId: string) => void;
   splitRatio: number;
 };
 
-export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, onOverlayHostChange, splitRatio }: TasksSplitLayoutProps) {
+export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, onOverlayHostChange, onPanelInteraction, splitRatio }: TasksSplitLayoutProps) {
   if (!active) return <>{left}</>;
 
   return (
@@ -36,8 +38,10 @@ export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, o
           bottomNavigation={leftPanel.bottomNavigation}
           id={leftPanel.id}
           navigation={leftPanel.navigation}
+          onInteraction={onPanelInteraction}
           onOverlayHostChange={onOverlayHostChange}
           scrollTop={leftPanel.scrollTop}
+          shortcutGuide={leftPanel.shortcutGuide}
           side="left"
         >
           {left}
@@ -49,8 +53,10 @@ export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, o
           bottomNavigation={rightPanel.bottomNavigation}
           id={rightPanel.id}
           navigation={rightPanel.navigation}
+          onInteraction={onPanelInteraction}
           onOverlayHostChange={onOverlayHostChange}
           scrollTop={rightPanel.scrollTop}
+          shortcutGuide={rightPanel.shortcutGuide}
           side="right"
         >
           {right}

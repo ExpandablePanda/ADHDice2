@@ -26,6 +26,7 @@ import {
   resolveMasterTabTasksWorkspace,
   saveMasterWorkspaceState,
   selectJournalHistoryEntryForEdit,
+  setMasterWorkspacePanelTabsCollapsed,
   updateMasterTabTasksUiState,
   updateMasterTabTasksWorkspace,
   updateMasterTabTasksWorkspaceState,
@@ -1111,6 +1112,53 @@ test("closing the last master tab leaves Home open", () => {
   const closed = closeMasterTab(initial, "master-panel-1", "master-tab-1");
   assert.equal(closed.panels[0].tabs.length, 1);
   assert.deepEqual(closed.panels[0].tabs[0].destination, { kind: "page", page: "Home" });
+});
+
+test("master tab bars default expanded, persist per panel, and keep the left preference after closing split", () => {
+  const initial = createDefaultMasterWorkspaceState();
+  const left = initial.panels[0];
+  assert.equal(left.tabsCollapsed, undefined);
+
+  const split = duplicateFocusedPageIntoRightPanel(initial, { panelId: "right-panel", tabId: "right-tab" });
+  const right = split.panels.find((panel) => panel.side === "right");
+  assert.ok(right);
+  assert.equal(right.tabsCollapsed, undefined);
+
+  const leftCollapsed = setMasterWorkspacePanelTabsCollapsed(split, left.id, true);
+  const bothPreferences = setMasterWorkspacePanelTabsCollapsed(leftCollapsed, right.id, true);
+  const rightExpanded = setMasterWorkspacePanelTabsCollapsed(bothPreferences, right.id, false);
+  assert.equal(rightExpanded.panels.find((panel) => panel.id === left.id)?.tabsCollapsed, true);
+  assert.equal(rightExpanded.panels.find((panel) => panel.id === right.id)?.tabsCollapsed, undefined);
+
+  const rightSecondTab = createMasterTab(rightExpanded, right.id, {
+    id: "right-second-tab",
+    destination: { kind: "page", page: "Notes" },
+    presentation: {},
+  }, true);
+  assert.equal(rightSecondTab.panels.find((panel) => panel.id === left.id)?.tabsCollapsed, true);
+  assert.equal(rightSecondTab.panels.find((panel) => panel.id === right.id)?.tabsCollapsed, undefined);
+
+  const storage = memoryStorage();
+  assert.equal(saveMasterWorkspaceState(storage, "tab-visibility-user", rightSecondTab), true);
+  const restored = loadMasterWorkspaceState(storage, "tab-visibility-user");
+  assert.equal(restored.panels.find((panel) => panel.id === left.id)?.tabsCollapsed, true);
+  assert.equal(restored.panels.find((panel) => panel.id === right.id)?.tabsCollapsed, undefined);
+
+  const closed = closeMasterSplit(restored);
+  assert.equal(closed.panels.length, 1);
+  assert.equal(closed.panels[0].tabsCollapsed, true);
+});
+
+test("stored Master Workspace panels without tab visibility remain expanded", () => {
+  const base = createDefaultMasterWorkspaceState();
+  const restored = normalizeMasterWorkspaceState({
+    ...base,
+    panels: [{
+      ...base.panels[0],
+      tabs: [{ id: "legacy-tab", destination: { kind: "page", page: "Home" }, presentation: {} }],
+    }],
+  });
+  assert.equal(restored.panels[0].tabsCollapsed, undefined);
 });
 
 test("persisted state strips drafts and canonical domain records", () => {

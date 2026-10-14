@@ -19,6 +19,7 @@ import {
   CalendarDays,
   Camera,
   ChartPie,
+  ChevronDown,
   ChevronUp,
   Clock,
   CirclePause,
@@ -113,9 +114,11 @@ import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
 import { MasterWorkspaceTabBar } from "@/components/task-app/master-workspace-tab-bar";
+import { MasterWorkspaceShortcutGuide } from "@/components/task-app/master-workspace-shortcut-guide";
 import { TasksSplitLayout } from "@/components/task-app/tasks-split-right-panel";
 import { MasterWorkspacePanel as MasterWorkspacePanelFrame, MasterWorkspacePanelContent, WorkspaceOverlayHostContext, type WorkspaceOverlayHost } from "@/components/task-app/master-workspace-panel";
 import { useMasterWorkspaceController } from "@/hooks/useMasterWorkspaceController";
+import { useMasterWorkspaceShortcutMode } from "@/hooks/useMasterWorkspaceShortcutMode";
 import type { MasterWorkspaceState } from "@/lib/master-workspace-state";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
@@ -1333,6 +1336,7 @@ export function TaskApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const canonicalTasksRef = useRef<Task[]>([]);
   const taskStatusMutationInFlightRef = useRef(new Map<string, Promise<boolean | undefined>>());
+  const masterWorkspaceShortcutModeOpenRef = useRef(false);
   useEffect(() => {
     canonicalTasksRef.current = tasks;
   }, [tasks]);
@@ -5788,6 +5792,10 @@ export function TaskApp() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented
+        || masterWorkspaceShortcutModeOpenRef.current
+        || event.metaKey
+        || event.ctrlKey
+        || event.altKey
         || isKeyboardEventFromEditableTarget(event.target)
         || isInsideDialog(event.target)
       ) {
@@ -5980,6 +5988,18 @@ export function TaskApp() {
     draftProtection: masterWorkspaceDraftProtection,
   });
   masterWorkspaceControllerRef.current = masterWorkspace;
+  const reportMasterWorkspaceShortcutBlock = useCallback((reason: string) => {
+    setMessage({ tone: "warn", text: reason });
+  }, []);
+  const masterWorkspaceShortcutMode = useMasterWorkspaceShortcutMode({
+    activateTabInPanel: masterWorkspace.activateTabInPanel,
+    canActivateTabInPanel: masterWorkspace.canActivateTabInPanel,
+    enabled: masterWorkspace.isEnabled,
+    getTabTransitionBlockReasonInPanel: masterWorkspace.getTabTransitionBlockReasonInPanel,
+    isOpenRef: masterWorkspaceShortcutModeOpenRef,
+    onBlocked: reportMasterWorkspaceShortcutBlock,
+    workspace: masterWorkspace.workspace,
+  });
   const handleMasterPanelNavigatorSearchTarget = useCallback((panelId: string, tabId: string, target: NavigatorSearchTarget) => {
     const controller = masterWorkspaceControllerRef.current;
     if (!controller?.isEnabled) return;
@@ -9973,8 +9993,10 @@ export function TaskApp() {
                 bottomNavigation: renderMasterWorkspaceApplicationNavigation(splitPanels.left, splitPanels.leftTab),
                 id: splitPanels.left.id,
                 navigation: renderMasterWorkspaceNavigation(splitPanels.left),
+                shortcutGuide: renderMasterWorkspaceShortcutGuide(splitPanels.left),
                 scrollTop: splitPanels.leftTab.presentation.scrollTop ?? 0,
               } : undefined}
+              onPanelInteraction={masterWorkspaceShortcutMode.recordPanelInteraction}
               onOverlayHostChange={handleMasterPanelOverlayHostChange}
               right={rightWorkspace}
               rightPanel={isTasksSplit && splitPanels.right && splitPanels.rightTab ? {
@@ -9982,6 +10004,7 @@ export function TaskApp() {
                 bottomNavigation: renderMasterWorkspaceApplicationNavigation(splitPanels.right, splitPanels.rightTab),
                 id: splitPanels.right.id,
                 navigation: renderMasterWorkspaceNavigation(splitPanels.right),
+                shortcutGuide: renderMasterWorkspaceShortcutGuide(splitPanels.right),
                 scrollTop: splitPanels.rightTab.presentation.scrollTop ?? 0,
               } : undefined}
               splitRatio={masterWorkspace.workspace.splitRatio}
@@ -10238,7 +10261,7 @@ export function TaskApp() {
     );
   };
 
-  const renderMasterWorkspaceNavigation = (panel: typeof masterWorkspace.workspace.panels[number]) => (
+  const renderMasterWorkspaceNavigation = (panel: typeof masterWorkspace.workspace.panels[number]) => panel.tabsCollapsed ? null : (
     <MasterWorkspaceTabBar
       activeTabId={panel.activeTabId}
       canActivateTab={(tabId) => masterWorkspace.canActivateTabInPanel(panel.id, tabId)}
@@ -10259,6 +10282,30 @@ export function TaskApp() {
       tabs={panel.tabs}
     />
   );
+  const renderMasterWorkspaceShortcutGuide = (panel: typeof masterWorkspace.workspace.panels[number]) => (
+    masterWorkspaceShortcutMode.targetPanelId === panel.id
+      ? <MasterWorkspaceShortcutGuide panel={panel} />
+      : null
+  );
+  const masterWorkspaceHudTabToggles = masterWorkspace.isEnabled
+    ? masterWorkspace.hasSplit
+      ? masterWorkspace.workspace.panels.map((panel) => ({
+        expanded: panel.tabsCollapsed !== true,
+        label: panel.side === "left" ? "Window 1 Tabs" : "Window 2 Tabs",
+        onToggle: () => {
+          masterWorkspaceShortcutMode.recordPanelInteraction(panel.id);
+          masterWorkspace.setPanelTabsCollapsed(panel.id, panel.tabsCollapsed !== true);
+        },
+      }))
+      : [{
+        expanded: masterWorkspace.currentPanel.tabsCollapsed !== true,
+        label: "Tabs",
+        onToggle: () => {
+          masterWorkspaceShortcutMode.recordPanelInteraction(masterWorkspace.currentPanel.id);
+          masterWorkspace.setPanelTabsCollapsed(masterWorkspace.currentPanel.id, masterWorkspace.currentPanel.tabsCollapsed !== true);
+        },
+      }]
+    : [];
   const renderMasterWorkspaceApplicationNavigation = (
     panel: typeof masterWorkspace.workspace.panels[number],
     panelTab: typeof masterWorkspace.activeTab,
@@ -10522,6 +10569,7 @@ export function TaskApp() {
                       economy={economy}
                       focusCategories={focusCategories}
                       hudUiState={hudUiState}
+                      workspaceTabToggles={masterWorkspaceHudTabToggles}
                       urgentTaskCount={filteredUrgentTasks.length}
                       onOpenAccount={() => setIsAccountOpen(true)}
                       onOpenComposer={openInlineNewListTaskComposer}
@@ -10581,10 +10629,17 @@ export function TaskApp() {
               </HudRuntimeClock>
           </div>
         </div>
+        {masterWorkspace.isEnabled && !masterWorkspace.hasSplit
+          ? renderMasterWorkspaceNavigation(masterWorkspace.currentPanel)
+          : null}
+        {!masterWorkspace.hasSplit && masterWorkspaceShortcutMode.targetPanelId === masterWorkspace.currentPanel.id ? (
+          <div className="pointer-events-none absolute inset-x-0 top-full z-[125] flex justify-center px-3">
+            <div className="pointer-events-auto flex w-full max-w-[1680px] justify-end">
+              {renderMasterWorkspaceShortcutGuide(masterWorkspace.currentPanel)}
+            </div>
+          </div>
+        ) : null}
       </div>
-      {masterWorkspace.isEnabled && !masterWorkspace.hasSplit
-        ? renderMasterWorkspaceNavigation(masterWorkspace.currentPanel)
-        : null}
       <div className={`mx-auto w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : ""}`} style={shellZoomStyle}>
         <section className={`w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : "pb-28"}`}>
 
@@ -10601,8 +10656,10 @@ export function TaskApp() {
               bottomNavigation={renderMasterWorkspaceApplicationNavigation(splitPanels.left, splitPanels.leftTab)}
               id={splitPanels.left.id}
               navigation={renderMasterWorkspaceNavigation(splitPanels.left)}
+              onInteraction={masterWorkspaceShortcutMode.recordPanelInteraction}
               onOverlayHostChange={handleMasterPanelOverlayHostChange}
               scrollTop={splitPanels.leftTab.presentation.scrollTop ?? 0}
+              shortcutGuide={renderMasterWorkspaceShortcutGuide(splitPanels.left)}
               side="left"
             >
               <MasterWorkspacePanelContent render={() => renderWorkspacePage(splitPanels.leftTab.destination.page, splitPanels.left, splitPanels.leftTab)} />
@@ -10612,8 +10669,10 @@ export function TaskApp() {
               bottomNavigation={renderMasterWorkspaceApplicationNavigation(splitPanels.right, splitPanels.rightTab)}
               id={splitPanels.right.id}
               navigation={renderMasterWorkspaceNavigation(splitPanels.right)}
+              onInteraction={masterWorkspaceShortcutMode.recordPanelInteraction}
               onOverlayHostChange={handleMasterPanelOverlayHostChange}
               scrollTop={splitPanels.rightTab.presentation.scrollTop ?? 0}
+              shortcutGuide={renderMasterWorkspaceShortcutGuide(splitPanels.right)}
               side="right"
             >
               <MasterWorkspacePanelContent render={() => renderWorkspacePage(splitPanels.rightTab.destination.page, splitPanels.right, splitPanels.rightTab)} />
@@ -11364,6 +11423,12 @@ function TopHeader({
   );
 }
 
+type MasterWorkspaceHudTabToggle = {
+  expanded: boolean;
+  label: string;
+  onToggle: () => void;
+};
+
 function CommandCenterHeader({
   activeHudTaskTimer,
   activeSessions,
@@ -11372,6 +11437,7 @@ function CommandCenterHeader({
   economy,
   focusCategories,
   hudUiState,
+  workspaceTabToggles,
   urgentTaskCount,
   onOpenAccount,
   onOpenComposer,
@@ -11421,6 +11487,7 @@ function CommandCenterHeader({
   economy: { level: number; xp: number; points: number; tokens: number };
   focusCategories: FocusCategory[];
   hudUiState: import("@/lib/task-hud-layout").HudUiState;
+  workspaceTabToggles: MasterWorkspaceHudTabToggle[];
   urgentTaskCount: number;
   onOpenAccount: () => void;
   onOpenComposer: () => void;
@@ -11477,6 +11544,24 @@ function CommandCenterHeader({
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
   const hudDateTime = isNativeIosPlatform ? null : formatHudDateTime(hudNow);
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
+
+  function renderWorkspaceTabToggles() {
+    return workspaceTabToggles.map(({ expanded, label, onToggle }) => (
+      <AdhdChip
+        aria-expanded={expanded}
+        aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+        className="shrink-0"
+        icon={expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        iconName={expanded ? "chevron-up" : "chevron-down"}
+        key={label}
+        onClick={onToggle}
+        title={`${expanded ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
+        type="button"
+      >
+        {label}
+      </AdhdChip>
+    ));
+  }
 
   function setHudCollapsed(isCollapsed: boolean) {
     setHudUiState((current) => ({
@@ -11761,6 +11846,7 @@ function CommandCenterHeader({
                 <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudTaskTimer.title}</span>
               </TaskTableChipButton>
             ) : null}
+            {renderWorkspaceTabToggles()}
             {currentHudPageId !== "overview" ? (
               <span className="hidden shrink-0 sm:inline">
                 <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`} data-style-component="HudCollapsedChip" data-style-role="hud.collapsed.chip">
@@ -11862,6 +11948,7 @@ function CommandCenterHeader({
           setHudUiState={setHudUiState}
         />
         <div className="flex items-center justify-end gap-2 lg:shrink-0">
+          {renderWorkspaceTabToggles()}
           {pendingRewardDiceCount > 0 ? (
             <TaskTableChipButton
               aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.160`.
+- Current working app version: `7.16.161`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,32 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.161 Collapsible Sticky Tabs and Shortcut Mode
+
+Unsplit Master Workspace tabs now stay within the shared sticky HUD wrapper,
+and split panels can independently collapse their own tab strips from labeled
+HUD chevrons. The user-scoped Master Workspace state stores a collapsed strip
+only when needed; older saved states remain expanded, and closing Split Right
+retains Window 1's preference.
+
+`Shift + S` opens a panel-targeted Shortcut Mode guide. Number keys follow the
+visible tab order and route through the existing panel navigation and draft
+protection checks. Target ownership follows panel pointer, focus, and scroll
+interaction, with Window 1 as the fallback. The shared HUD, TaskApp runtime,
+panel overlays, and floating navigation docks remain the existing owners.
+
+Focused Master Workspace state/controller, shortcut, and split UI tests passed
+(87/87). New shortcut/helper files pass targeted ESLint. Standard targeted
+ESLint retains 12 existing `react-hooks/set-state-in-effect` errors (11 in
+`task-app.tsx`, one in `useMasterWorkspaceController.ts`); with that rule
+disabled, lint reports 0 errors and 76 warnings in the existing large TaskApp
+and controller files. The Next.js 16.2.4 production build passed and skipped
+type validation. Full typecheck remains red with 287 repository diagnostics;
+the new shortcut/state/panel files have no reported diagnostics, while the
+existing TaskApp errors include the same split-render closure expressions
+present at baseline. `git diff --check` passed. Browser QA remains Andrew's
+manual check. No SQL or Supabase changes were made.
 
 ## 2026-10-13 7.16.159 Restore Split Window Navigation
 
