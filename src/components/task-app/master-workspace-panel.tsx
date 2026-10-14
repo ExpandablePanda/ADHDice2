@@ -71,7 +71,7 @@ export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, 
   return (
     <section
       aria-label={`${side === "left" ? "Window 1" : "Window 2"} workspace`}
-      className="relative isolate flex h-[calc(100dvh-18rem)] min-h-64 min-w-0 flex-col overflow-hidden rounded-[1.5rem] border border-[#ece8f8] bg-white/55 dark:border-white/10 dark:bg-white/[0.025]"
+      className="relative isolate flex h-full min-h-0 min-w-0 flex-col overflow-hidden rounded-[1.5rem] border border-[#ece8f8] bg-white/55 dark:border-white/10 dark:bg-white/[0.025]"
       data-master-workspace-panel={side}
       data-master-workspace-panel-id={id}
     >
@@ -83,7 +83,7 @@ export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, 
             data-master-workspace-scroll-container={id}
             ref={scrollElementRef}
           >
-            <div className="min-w-0 p-3">{children}</div>
+            <div className={`min-w-0 p-3 ${bottomNavigation ? "pb-20" : ""}`}>{children}</div>
           </div>
           <div
             className="pointer-events-none absolute inset-0 z-[130]"
@@ -92,7 +92,7 @@ export function MasterWorkspacePanel({ activeTabId, bottomNavigation, children, 
           />
         </WorkspaceOverlayHostContext.Provider>
       </div>
-      {bottomNavigation ? <div className="z-20 shrink-0 border-t border-[#ece8f8] bg-white/80 py-1 dark:border-white/10 dark:bg-[#171328]/80">{bottomNavigation}</div> : null}
+      {bottomNavigation}
     </section>
   );
 }

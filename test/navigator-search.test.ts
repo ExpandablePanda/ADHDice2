@@ -309,7 +309,9 @@ test("expanded dock puts search first and swaps normal controls for inline searc
   assert.match(dockSource, /onClose=\{\(\) => setIsSearchMode\(false\)\}/);
   assert.match(dockSource, /!isSearchMode && showPlacementMenu/);
   assert.match(dockSource, /onClick=\{\(\) => onNavigate\(item\)\}/);
-  assert.match(dockSource, /if \(isCollapsed && !isPanelScoped\) \{/);
+  assert.match(dockSource, /if \(isCollapsed\) \{/);
+  assert.match(dockSource, /if \(isPanelScoped\) \{[\s\S]*?data-navigation-layout="panel"/);
+  assert.match(dockSource, /const dockPositionClass = isPanelScoped\s*\?\s*"absolute bottom-/);
   assert.match(dockSource, /onPointerDown=\{startBubbleDrag\}/);
   assert.match(dockSource, /const dockZIndexClass = isSearchMode \? "z-40" : "z-10";/);
   assert.match(dockSource, /fixed inset-x-0 \$\{dockZIndexClass\} min-w-0 px-4/);
@@ -344,7 +346,9 @@ test("top-level Settings shell destinations replace duplicate legacy section res
 
 test("inline results remain attached to each supported dock placement", () => {
   assert.match(inlineSource, /panelScoped \? "w-\[min\(28rem,100%\)\] max-w-full"/);
-  assert.match(inlineSource, /maxHeight: "min\(55vh, 22rem, max\(8rem, calc\(100dvh - 26\.5rem\)\)\)"/);
+  assert.match(inlineSource, /panelAvailableHeight === undefined \? "min\(55dvh, 22rem\)"/);
+  assert.match(inlineSource, /panelAvailableHeight - 92/);
+  assert.doesNotMatch(inlineSource, /26\.5rem/);
   assert.match(inlineSource, /placement === "bottom"/);
   assert.match(inlineSource, /bottom-full left-0 mb-3/);
   assert.match(inlineSource, /placement === "left"/);

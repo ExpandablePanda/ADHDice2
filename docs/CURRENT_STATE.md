@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-13
+Last reviewed: 2026-10-14
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.159`.
+- Current working app version: `7.16.160`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -28,6 +28,23 @@ Next.js 16.2.4 production build passed. Normal targeted ESLint reported 11
 with that known rule disabled, the same scoped lint reported 0 errors and 75
 warnings. `git diff --check` passed. Next.js build skipped type validation.
 Andrew's manual browser QA remains outstanding.
+
+## 2026-10-14 7.16.160 Restore Floating Split Navigation and Full-Height Panels
+
+Split panels reuse the shared navigation dock with independent expanded and
+collapsed state. Each dock floats at the bottom center of its owning panel;
+its draggable bubble is measured and clamped to that panel. Navigation search
+results use the panel's measured height. The permanent footer was removed, and
+panel scroll content retains enough bottom padding to scroll its last item
+above the dock. Split frames now flex into available height below the shared
+HUD, while unsplit page spacing and dock positioning remain unchanged.
+
+The focused Split Right, Navigator, and dock geometry checks passed (25/25).
+Targeted ESLint with the known `react-hooks/set-state-in-effect` rule disabled
+reported 0 errors and 75 warnings. Standard targeted ESLint retains the 11
+pre-existing effect-rule errors and 73 warnings recorded for 7.16.159. The
+Next.js 16.2.4 production build passed and skipped type validation.
+`git diff --check` passed. Andrew's manual browser QA remains outstanding.
 
 ## 2026-10-13 7.16.158 Independent Master Workspace Panels
 

@@ -12,6 +12,7 @@ export type NavigatorSearchPlacement = "bottom" | "left" | "right";
 type NavigatorSearchInlineProps = {
   onClose: () => void;
   onNavigate: (target: NavigatorSearchTarget) => void;
+  panelAvailableHeight?: number;
   panelScoped?: boolean;
   placement: NavigatorSearchPlacement;
   renderIcon: (name: string) => ReactNode;
@@ -19,7 +20,7 @@ type NavigatorSearchInlineProps = {
   taskSearchEntities: readonly TaskSearchEntity[];
 };
 
-export function NavigatorSearchInline({ onClose, onNavigate, panelScoped = false, placement, renderIcon, targets, taskSearchEntities }: NavigatorSearchInlineProps) {
+export function NavigatorSearchInline({ onClose, onNavigate, panelAvailableHeight, panelScoped = false, placement, renderIcon, targets, taskSearchEntities }: NavigatorSearchInlineProps) {
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -135,9 +136,11 @@ export function NavigatorSearchInline({ onClose, onNavigate, panelScoped = false
           <p className="px-3 py-5 text-center text-sm font-medium text-[#7d88a1] dark:text-white/55">{isTaskSearchMode ? (query.trim() ? "No tasks found." : "Type to search all tasks.") : "No destinations found."}</p>
         ) : (
           <div
-            className="adhdice-scrollbar max-h-[min(55vh,22rem)] overflow-y-auto"
+            className="adhdice-scrollbar max-h-[min(55dvh,22rem)] overflow-y-auto"
             ref={panelRef}
-            style={panelScoped ? { maxHeight: "min(55vh, 22rem, max(8rem, calc(100dvh - 26.5rem)))" } : undefined}
+            style={panelScoped
+              ? { maxHeight: panelAvailableHeight === undefined ? "min(55dvh, 22rem)" : `${Math.max(0, Math.min(352, panelAvailableHeight - 92))}px` }
+              : undefined}
           >
             {results.map((target, index) => (
               <button

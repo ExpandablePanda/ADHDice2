@@ -10280,7 +10280,7 @@ export function TaskApp() {
     <main
       data-theme={theme}
       data-lowstim={lowStim ? "" : undefined}
-      className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
+      className={`${masterWorkspace.hasSplit ? "flex min-h-dvh flex-col" : "min-h-screen"} px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}
     >
       <WorkspaceOverlayHostContext.Provider value={workspaceModalOverlayHost}>
         <TaskEditFlows
@@ -10585,14 +10585,14 @@ export function TaskApp() {
       {masterWorkspace.isEnabled && !masterWorkspace.hasSplit
         ? renderMasterWorkspaceNavigation(masterWorkspace.currentPanel)
         : null}
-      <div className="mx-auto w-full" style={shellZoomStyle}>
-        <section className="w-full pb-28">
+      <div className={`mx-auto w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : ""}`} style={shellZoomStyle}>
+        <section className={`w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : "pb-28"}`}>
 
         {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
 
         {masterWorkspace.isEnabled && masterWorkspace.hasSplit && !isTasksSplit && splitPanels.left && splitPanels.leftTab && splitPanels.right && splitPanels.rightTab ? (
           <div
-            className="grid min-w-0 items-start gap-3"
+            className="grid min-h-0 min-w-0 flex-1 items-stretch gap-3"
             data-master-workspace-split="pages"
             style={{ gridTemplateColumns: `minmax(0, ${masterWorkspace.workspace.splitRatio}fr) minmax(0, ${1 - masterWorkspace.workspace.splitRatio}fr)` }}
           >

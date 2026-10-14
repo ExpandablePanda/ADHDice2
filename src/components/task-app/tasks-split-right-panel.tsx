@@ -26,7 +26,7 @@ export function TasksSplitLayout({ active, left, right, leftPanel, rightPanel, o
 
   return (
     <div
-      className="grid min-w-0 items-start gap-3"
+      className="grid min-h-0 min-w-0 flex-1 items-stretch gap-3"
       data-master-workspace-split="tasks"
       style={{ gridTemplateColumns: `minmax(0, ${splitRatio}fr) minmax(0, ${1 - splitRatio}fr)` }}
     >
