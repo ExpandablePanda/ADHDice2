@@ -74,6 +74,18 @@ test("Home persistence is wired to the revision-guarded RPC and retains data on 
   assert.match(hookSource, /canSyncHomeTodoStateToRemote/);
 });
 
+test("successful restore reconciles active Home state and leaves inactive cache adoption to owner hydration", () => {
+  assert.match(hookSource, /window\.addEventListener\(HOME_TODO_RESTORED_EVENT, handleRestoredHomeState\)/);
+  assert.match(hookSource, /applyRemote\([\s\S]*?detail\.restoreGeneration[\s\S]*?detail\.stateRevision/);
+  const eventStart = hookSource.indexOf("const handleRestoredHomeState");
+  const eventEnd = hookSource.indexOf("window.addEventListener(HOME_TODO_RESTORED_EVENT", eventStart);
+  const eventHandler = hookSource.slice(eventStart, eventEnd);
+  assert.match(eventHandler, /if \(!userId \|\| !detail \|\| !detail\.userId \|\| detail\.userId !== userId/);
+  assert.doesNotMatch(eventHandler, /localStorage\.(?:setItem|removeItem)/);
+  assert.match(hookSource, /shouldPreferRemoteHomeTodoState/);
+  assert.match(hookSource, /preserveSupersededCache\(userId, cachedGeneration, remoteGeneration, cached\)/);
+});
+
 test("recovery SQL keeps payloads private, verifies before rotation, and leaves Cron opt-in", () => {
   assert.match(migration, /alter table public\.adhdice_recovery_points enable row level security/);
   assert.match(migration, /revoke all on public\.adhdice_recovery_settings, public\.adhdice_recovery_points, public\.adhdice_recovery_status/);
@@ -264,6 +276,15 @@ test("Home recovery database integration", {
     assert.equal(userCCreate.status, "unchanged");
     const userBPointId = userBCreate.recovery_point_id as string;
     const userCPointId = userCCreate.recovery_point_id as string;
+    const canceledRestorePreview = parseLastJson(runSql(database, userSql(userB,
+      "select public.preview_home_recovery_point('" + userBPointId + "');"
+    )));
+    const canceledRestoreBefore = homeRowSnapshot(database, userB);
+    const canceledRestore = parseLastJson(runSql(database, userSql(userB,
+      "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(canceledRestorePreview.current_state_revision) + ", " + Number(canceledRestorePreview.current_restore_generation) + ", false);"
+    )));
+    assert.equal(canceledRestore.status, "confirmation_required");
+    assert.deepEqual(homeRowSnapshot(database, userB), canceledRestoreBefore);
     assert.ok(!JSON.stringify(userAList).includes(userBPointId));
     assert.equal(parseLastJson(runSql(database, userSql(userA, "select public.preview_home_recovery_point('" + userBPointId + "');"))).status, "not_found");
     assert.doesNotMatch(JSON.stringify(userAList), /"payload":/);

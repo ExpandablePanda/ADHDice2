@@ -3,7 +3,9 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import {
   canCreateHomeRecoveryPoint,
+  checkHomeRecoveryRestoreService,
   compareHomeRecoveryLists,
+  compareHomeRecoveryStateDetails,
   createHomeOnlyBackupDocument,
   createManualHomeRecoveryPoint,
   HOME_RECOVERY_APP_VERSION,
@@ -12,14 +14,18 @@ import {
   getHomeRecoveryTaskTitleLookupIds,
   getNextHomeRecoveryEligibility,
   HOME_RECOVERY_TASK_TITLE_BATCH_SIZE,
+  loadAuthoritativeHomeTodoState,
   loadHomeRecoveryTaskTitles,
   loadHomeRecoveryPoints,
   loadHomeRecoveryPreview,
   loadHomeRecoveryStatus,
+  restoreHomeRecoveryPoint,
+  sameAuthoritativeHomeState,
   type HomeRecoveryPoint,
   type HomeRecoveryRpcClient,
   type HomeRecoveryStatus,
 } from "@/lib/home-recovery-dashboard";
+import { isHomeRecoveryRestoreEnabled } from "@/lib/home-recovery-restore-gate";
 import type { Database, Task } from "@/lib/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
@@ -139,6 +145,38 @@ function mockTaskTitleClient(handler: (userId: string, taskIds: string[]) => unk
   return { client, calls };
 }
 
+function mockCurrentHomeStateClient(
+  authenticatedUserId: string | null,
+  row: Record<string, unknown> | null,
+  rowError: unknown = null,
+) {
+  const calls: Array<{ table: string; columns: string; ownerColumn: string; userId: string }> = [];
+  const client = {
+    auth: {
+      async getUser() {
+        return { data: { user: authenticatedUserId ? { id: authenticatedUserId } : null }, error: null };
+      },
+    },
+    from(table: string) {
+      return {
+        select(columns: string) {
+          return {
+            eq(ownerColumn: string, userId: string) {
+              return {
+                async maybeSingle() {
+                  calls.push({ table, columns, ownerColumn, userId });
+                  return { data: row, error: rowError };
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as SupabaseClient<Database>;
+  return { client, calls };
+}
+
 test("an available empty point list is distinct from a missing recovery RPC", async () => {
   const empty = mockRpc(async (name) => name === "list_home_recovery_points" ? [] : null);
   assert.deepEqual(await loadHomeRecoveryPoints(empty.client), { kind: "available", value: [] });
@@ -208,6 +246,138 @@ test("preview retains ordered Home lists and reports missing Task references", a
 
   const mismatched = mockRpc(async () => successfulPreview("another-owner-point"));
   assert.equal((await loadHomeRecoveryPreview(mismatched.client, point.id)).kind, "error");
+});
+
+test("live Home comparison uses a fresh matching auth identity and an owner-scoped read", async () => {
+  const mock = mockCurrentHomeStateClient("owner-a", {
+    state,
+    client_updated_at: state.clientUpdatedAt,
+    state_revision: 4,
+    restore_generation: 2,
+  });
+  assert.deepEqual(await loadAuthoritativeHomeTodoState(mock.client, "owner-a"), {
+    kind: "available",
+    value: { state, stateRevision: 4, restoreGeneration: 2, clientUpdatedAt: state.clientUpdatedAt },
+  });
+  assert.deepEqual(mock.calls, [{
+    table: "adhdice_home_todo_state",
+    columns: "state,client_updated_at,state_revision,restore_generation",
+    ownerColumn: "user_id",
+    userId: "owner-a",
+  }]);
+
+  const wrongOwner = mockCurrentHomeStateClient("owner-b", {
+    state, client_updated_at: state.clientUpdatedAt, state_revision: 4, restore_generation: 2,
+  });
+  assert.equal((await loadAuthoritativeHomeTodoState(wrongOwner.client, "owner-a")).kind, "error");
+  assert.equal(wrongOwner.calls.length, 0);
+
+  const noSavedRow = mockCurrentHomeStateClient("owner-a", null);
+  assert.deepEqual(await loadAuthoritativeHomeTodoState(noSavedRow.client, "owner-a"), {
+    kind: "available",
+    value: { state: null, stateRevision: null, restoreGeneration: 0, clientUpdatedAt: null },
+  });
+});
+
+test("restore service readiness is a non-mutating confirmation-required RPC and unavailable RPCs fail closed", async () => {
+  const available = mockRpc(async () => ({ status: "confirmation_required" }));
+  assert.deepEqual(await checkHomeRecoveryRestoreService(available.client, point.id), { kind: "available" });
+  assert.deepEqual(available.calls, [{
+    name: "restore_home_recovery_point",
+    args: {
+      p_recovery_point_id: point.id,
+      p_expected_state_revision: null,
+      p_expected_restore_generation: 0,
+      p_confirm_restore: false,
+    },
+  }]);
+  const unavailable = mockRpc(async () => ({ data: null, error: { code: "PGRST202", message: "function missing" } }));
+  assert.equal((await checkHomeRecoveryRestoreService(unavailable.client, point.id)).kind, "unavailable");
+});
+
+test("restore sends the fresh revision fence and accepts only a complete success", async () => {
+  const restoredState = { ...state, taskIds: ["todo-b"] };
+  const success = mockRpc(async () => ({
+    status: "restored",
+    state: restoredState,
+    client_updated_at: "2026-10-15T13:00:00.000Z",
+    state_revision: 5,
+    restore_generation: 3,
+    pre_restore_checkpoint: { status: "created" },
+  }));
+  assert.deepEqual(await restoreHomeRecoveryPoint(success.client, point.id, 4, 2), {
+    kind: "restored",
+    state: restoredState,
+    clientUpdatedAt: "2026-10-15T13:00:00.000Z",
+    stateRevision: 5,
+    restoreGeneration: 3,
+  });
+  assert.deepEqual(success.calls, [{
+    name: "restore_home_recovery_point",
+    args: {
+      p_recovery_point_id: point.id,
+      p_expected_state_revision: 4,
+      p_expected_restore_generation: 2,
+      p_confirm_restore: true,
+    },
+  }]);
+
+  const conflict = mockRpc(async () => ({ status: "restore_conflict" }));
+  assert.equal((await restoreHomeRecoveryPoint(conflict.client, point.id, 4, 2)).kind, "conflict");
+  const checkpointFailure = mockRpc(async () => ({ status: "restore_failed", reason: "pre_restore_checkpoint_failed" }));
+  const checkpoint = await restoreHomeRecoveryPoint(checkpointFailure.client, point.id, 4, 2);
+  assert.equal(checkpoint.kind, "failed");
+  if (checkpoint.kind === "failed") assert.match(checkpoint.message, /pre-restore.*checkpoint.*Home was not changed/i);
+  const missingTask = mockRpc(async () => ({ status: "missing_task_references", missing_task_ids: ["gone"] }));
+  assert.equal((await restoreHomeRecoveryPoint(missingTask.client, point.id, 4, 2)).kind, "failed");
+  const unavailable = mockRpc(async () => ({ data: null, error: { code: "PGRST202", message: "function missing" } }));
+  assert.equal((await restoreHomeRecoveryPoint(unavailable.client, point.id, 4, 2)).kind, "unavailable");
+});
+
+test("live comparison covers lists, Routine assignments, offsets, Scratchpad, and other persisted fields", () => {
+  const current = {
+    ...state,
+    taskIds: ["todo-a"],
+    routineSections: [{ id: "section-b", name: "Evening" }],
+    routineSectionIdByTaskId: { "routine-b": "section-b" },
+    taskDayOffsets: { "todo-a": 1 },
+    scratchpadText: "current text",
+    scratchpadItems: [{ id: "scratch-b", text: "current item", createdAt: "2026-10-14T10:00:00.000Z" }],
+    tasksPerDay: 12,
+    extraHomeField: { enabled: true },
+  };
+  const details = compareHomeRecoveryStateDetails(state, current);
+  assert.equal(compareHomeRecoveryLists(state, current).todo.orderChanged, false);
+  assert.equal(details.routineDetailsChanged, true);
+  assert.equal(details.offsetsChanged, true);
+  assert.equal(details.scratchpadTextChanged, true);
+  assert.equal(details.scratchpadItemsChanged, true);
+  assert.equal(details.tasksPerDayChanged, true);
+  assert.deepEqual(details.otherFields, [{ key: "extraHomeField", snapshotValue: undefined, currentValue: { enabled: true } }]);
+  const currentRow = { state: current, stateRevision: 4, restoreGeneration: 2, clientUpdatedAt: state.clientUpdatedAt };
+  assert.equal(sameAuthoritativeHomeState(currentRow, { ...currentRow, state: { ...current } }), true);
+  assert.equal(sameAuthoritativeHomeState(currentRow, { ...currentRow, state }), false);
+});
+
+test("Restore gate defaults off and requires an explicit staging or development origin allowlist", () => {
+  assert.equal(isHomeRecoveryRestoreEnabled("https://staging.adhdice.example", { enabled: undefined, environment: undefined, allowedOrigins: undefined }), false);
+  assert.equal(isHomeRecoveryRestoreEnabled("https://app.adhdice.example", { enabled: "true", environment: "production", allowedOrigins: "https://app.adhdice.example" }), false);
+  assert.equal(isHomeRecoveryRestoreEnabled("https://other.adhdice.example", { enabled: "true", environment: "staging", allowedOrigins: "https://staging.adhdice.example" }), false);
+  assert.equal(isHomeRecoveryRestoreEnabled("https://staging.adhdice.example", { enabled: "true", environment: "staging", allowedOrigins: "https://staging.adhdice.example" }), true);
+});
+
+test("rapid point selection cannot commit a stale preview or submit a different selected point", () => {
+  const loadStart = settingsComponent.indexOf("const loadPointPreview = useCallback");
+  const loadEnd = settingsComponent.indexOf("const refresh = useCallback", loadStart);
+  const loader = settingsComponent.slice(loadStart, loadEnd);
+  const restoreStart = settingsComponent.indexOf("async function handleConfirmRestore");
+  const restoreEnd = settingsComponent.indexOf("function handleRefreshComparison", restoreStart);
+  const restoreHandler = settingsComponent.slice(restoreStart, restoreEnd);
+  assert.match(loader, /const generation = \+\+previewGeneration\.current/);
+  assert.match(loader, /generation !== previewGeneration\.current/);
+  assert.match(restoreHandler, /selectedPointIdRef\.current !== pointId \|\| selectionGeneration !== previewGeneration\.current/);
+  assert.match(settingsComponent, /function handleCancelRestoreConfirmation\(\)[\s\S]*?setIsRestoreConfirming\(false\)[\s\S]*?setRestoreAcknowledged\(false\)/);
+  assert.match(settingsComponent, /disabled=\{!restoreAcknowledged \|\| !restoreRequirementsMet \|\| isRestoring\}/);
 });
 
 test("partially loaded Task projections request only titles missing from the projection", () => {
@@ -294,17 +464,28 @@ test("checkpoint eligibility is derived only from a recorded scheduled attempt a
   assert.equal(canCreateHomeRecoveryPoint({ clientAvailable: true, userId: "user-a", statusAvailable: true, pointsAvailable: true }), true);
 });
 
-test("Settings uses authenticated recovery RPCs without table access or a Restore call", () => {
+test("Settings uses authenticated recovery RPCs, a live owner-scoped preview, and gated RPC restoration", () => {
   assert.match(settingsPage, /<SettingsHomeBackupRecovery client=\{client\} key=\{userId \?\? "no-authenticated-user"\} tasks=\{tasks\} userId=\{userId\}/);
   assert.match(settingsComponent, /loadHomeRecoveryStatus\(rpcClient\)/);
   assert.match(settingsComponent, /loadHomeRecoveryPoints\(rpcClient\)/);
   assert.match(settingsComponent, /loadHomeRecoveryPreview\(rpcClient, pointId\)/);
+  assert.match(settingsComponent, /loadAuthoritativeHomeTodoState\(client, userId\)/);
   assert.match(settingsComponent, /loadHomeRecoveryTaskTitles\(client, userId, titleLookupIds\)/);
   assert.match(recoveryModule, /\.from\("adhdice_clean_tasks"\)[\s\S]*?\.eq\("user_id", userId\)[\s\S]*?\.in\("id", batch\)/);
+  assert.match(recoveryModule, /\.from\("adhdice_home_todo_state"\)[\s\S]*?\.eq\("user_id", userId\)[\s\S]*?\.maybeSingle\(\)/);
+  assert.match(recoveryModule, /p_confirm_restore: false/);
+  assert.match(recoveryModule, /p_confirm_restore: true/);
   assert.match(settingsComponent, /createManualHomeRecoveryPoint\(rpcClient\)/);
-  assert.match(settingsComponent, /disabled[^>]*type="button">Restore/);
-  assert.doesNotMatch(settingsComponent, /restore_home_recovery_point|\.from\("adhdice_(?:recovery|home_todo_state)/);
-  assert.doesNotMatch(recoveryModule, /\.from\("adhdice_(?:recovery|home_todo_state)/);
+  assert.match(settingsComponent, /Restore Home/);
+  assert.match(settingsComponent, /I understand this will replace the entire saved Home state/);
+  assert.match(settingsComponent, /Restore the snapshot from \{formatHomeRecoveryDate\(selectedPoint\.created_at\)\}/);
+  assert.match(settingsComponent, /Refresh comparison/);
+  assert.match(settingsComponent, /isHomeRecoveryRestoreEnabled\(window\.location\.origin\)/);
+  assert.match(recoveryModule, /p_expected_state_revision: expectedStateRevision/);
+  assert.match(recoveryModule, /p_expected_restore_generation: expectedRestoreGeneration/);
+  assert.match(settingsComponent, /announceHomeTodoRestored/);
+  assert.doesNotMatch(recoveryModule, /\.from\("adhdice_recovery_points"\)/);
+  assert.doesNotMatch(recoveryModule, /\.from\("adhdice_home_todo_state"\)[\s\S]*?\.(?:insert|update|upsert|delete)\(/);
 });
 
 test("Settings width and recovery grids follow the rendered PageShell width", () => {

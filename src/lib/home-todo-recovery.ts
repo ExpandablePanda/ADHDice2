@@ -1,5 +1,20 @@
 import { normalizeHomeTodoState, type HomeTodoState } from "@/lib/home-todo-state";
 
+export const HOME_TODO_RESTORED_EVENT = "adhdice:home-todo-restored";
+
+export type HomeTodoRestoredEventDetail = {
+  userId: string;
+  state: unknown;
+  clientUpdatedAt: string;
+  stateRevision: number;
+  restoreGeneration: number;
+};
+
+export function announceHomeTodoRestored(detail: HomeTodoRestoredEventDetail) {
+  if (typeof window === "undefined") return;
+  window.dispatchEvent(new CustomEvent(HOME_TODO_RESTORED_EVENT, { detail }));
+}
+
 export type HomeTodoRecoveryCache = {
   state: HomeTodoState;
   restoreGeneration: number;

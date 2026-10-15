@@ -1,12 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Download, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import type { Database, Task } from "@/lib/database.types";
 import {
   canCreateHomeRecoveryPoint,
+  checkHomeRecoveryRestoreService,
   compareHomeRecoveryLists,
+  compareHomeRecoveryStateDetails,
   createHomeOnlyBackupDocument,
   createManualHomeRecoveryPoint,
   formatHomeRecoveryBytes,
@@ -16,16 +18,24 @@ import {
   getHomeRecoveryTaskLabel,
   getHomeRecoveryTaskTitleLookupIds,
   getNextHomeRecoveryEligibility,
+  loadAuthoritativeHomeTodoState,
   loadHomeRecoveryTaskTitles,
   loadHomeRecoveryPoints,
   loadHomeRecoveryPreview,
   loadHomeRecoveryStatus,
+  restoreHomeRecoveryPoint,
+  sameAuthoritativeHomeState,
+  type HomeRecoveryCurrentState,
+  type HomeRecoveryCurrentStateResult,
+  type HomeRecoveryRestoreServiceResult,
   type HomeRecoveryPoint,
   type HomeRecoveryPreview,
   type HomeRecoveryRequestResult,
   type HomeRecoveryRpcClient,
   type HomeRecoveryStatus,
 } from "@/lib/home-recovery-dashboard";
+import { isHomeRecoveryRestoreEnabled } from "@/lib/home-recovery-restore-gate";
+import { announceHomeTodoRestored } from "@/lib/home-todo-recovery";
 
 type SettingsHomeBackupRecoveryProps = {
   client: SupabaseClient<Database> | null;
@@ -142,8 +152,8 @@ function HomeRecoveryTaskList({
               <li className="min-w-0 rounded-lg bg-white/80 px-3 py-2 text-xs text-[#27304c] dark:bg-white/5 dark:text-white/85" key={`${taskId}-${index}`}>
                 <span className="mr-2 font-bold tabular-nums text-[#8d87a7] dark:text-white/45">{index + 1}.</span>
                 <span className="break-words">{getHomeRecoveryTaskLabel(taskId, tasks, missingTaskIds, titleById, titleLookupComplete)}</span>
-                {label === "Routine" && sectionLabel ? <span className="ml-2 text-[#7d88a1] dark:text-white/50">· {sectionLabel}</span> : null}
-                {label === "Home Todo" && typeof dayOffset === "number" && dayOffset !== 0 ? <span className="ml-2 text-[#7d88a1] dark:text-white/50">· Day offset {dayOffset}</span> : null}
+                {label.includes("Routine") && sectionLabel ? <span className="ml-2 text-[#7d88a1] dark:text-white/50">· {sectionLabel}</span> : null}
+                {label.includes("Home Todo") && typeof dayOffset === "number" && dayOffset !== 0 ? <span className="ml-2 text-[#7d88a1] dark:text-white/50">· Day offset {dayOffset}</span> : null}
               </li>
             );
           })}
@@ -153,29 +163,139 @@ function HomeRecoveryTaskList({
   );
 }
 
+function showJson(value: unknown) {
+  return value === undefined ? "Not set" : JSON.stringify(value);
+}
+
+function routineSectionLabel(state: Record<string, unknown> | null) {
+  const sections = Array.isArray(state?.routineSections) ? state.routineSections : [];
+  return sections.length
+    ? sections.map((value) => {
+      if (!value || typeof value !== "object") return showJson(value);
+      const section = value as Record<string, unknown>;
+      return `${String(section.name ?? "Unnamed section")} (${String(section.id ?? "no id")})`;
+    }).join(" · ")
+    : "No Routine sections";
+}
+
+function HomeRecoveryStateComparison({
+  current,
+  missingTaskIds,
+  snapshot,
+  tasks,
+  titleById,
+  titleLookupComplete,
+}: {
+  current: HomeRecoveryCurrentState;
+  missingTaskIds: readonly string[];
+  snapshot: Record<string, unknown>;
+  tasks: readonly Task[];
+  titleById: Readonly<Record<string, string>>;
+  titleLookupComplete: boolean;
+}) {
+  const currentState = current.state ?? {};
+  const snapshotIds = getHomeRecoveryListIds(snapshot);
+  const currentIds = getHomeRecoveryListIds(current.state);
+  const changes = compareHomeRecoveryLists(snapshot, current.state);
+  const details = compareHomeRecoveryStateDetails(snapshot, current.state);
+  const offsetRows = [...new Set([...Object.keys(details.snapshotOffsets), ...Object.keys(details.currentOffsets)])]
+    .sort()
+    .map((taskId) => ({ taskId, snapshot: details.snapshotOffsets[taskId] ?? 0, current: details.currentOffsets[taskId] ?? 0 }))
+    .filter((row) => row.snapshot !== row.current);
+
+  return (
+    <section aria-labelledby="home-recovery-live-comparison-title" className="grid min-w-0 gap-3 rounded-2xl border border-[#d8d1f2] bg-[#f7f5ff] p-3 dark:border-white/10 dark:bg-white/[0.04]">
+      <div>
+        <h4 className="text-sm font-bold text-[#27304c] dark:text-white" id="home-recovery-live-comparison-title">Selected snapshot compared with current saved Home</h4>
+        <p className="mt-1 text-xs text-[#68627d] dark:text-white/60">Current data came from a fresh authenticated, owner-scoped read of the authoritative Home row{current.stateRevision === null ? "; no saved row exists, so the current lists are empty" : ` at revision ${current.stateRevision} and restore generation ${current.restoreGeneration}`}.</p>
+      </div>
+      <div className="settings-recovery-preview-lists grid min-w-0 gap-2">
+        {([
+          ["Home Todo", snapshotIds.todo, currentIds.todo, changes.todo],
+          ["Urgent", snapshotIds.urgent, currentIds.urgent, changes.urgent],
+          ["Routine", snapshotIds.routine, currentIds.routine, changes.routine],
+        ] as const).map(([label, snapshotList, currentList, change]) => (
+          <section className="grid min-w-0 gap-2 rounded-xl bg-white/70 p-3 dark:bg-white/5" key={label}>
+            <div>
+              <h5 className="text-xs font-bold uppercase tracking-[0.08em] text-[#6f57f6] dark:text-[#d6ccff]">{label}</h5>
+              <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Snapshot: {snapshotList.length} · Current: {currentList.length} · {change.added.length} only in snapshot · {change.removed.length} only in current · {change.orderChanged ? "shared order differs" : "shared order matches"}</p>
+            </div>
+            <div className="grid min-w-0 gap-2">
+              <HomeRecoveryTaskList emptyLabel={`No ${label} Tasks in the snapshot.`} ids={snapshotList} label={`Snapshot · ${label}`} missingTaskIds={missingTaskIds} state={snapshot} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
+              <HomeRecoveryTaskList emptyLabel={`No ${label} Tasks in current saved Home.`} ids={currentList} label={`Current saved Home · ${label}`} missingTaskIds={[]} state={currentState} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
+            </div>
+          </section>
+        ))}
+      </div>
+      <dl className="grid min-w-0 gap-2 rounded-xl bg-white/70 p-3 text-xs dark:bg-white/5">
+        <div><dt className="font-bold text-[#27304c] dark:text-white">Routine sections and assignments</dt><dd className="mt-1 break-words text-[#7d88a1] dark:text-white/55">Snapshot sections: {routineSectionLabel(snapshot)}. Current sections: {routineSectionLabel(current.state)}. Section assignments: snapshot {showJson(details.snapshotAssignments)}; current {showJson(details.currentAssignments)}{details.routineDetailsChanged ? " · will change" : " · match"}.</dd></div>
+        <div><dt className="font-bold text-[#27304c] dark:text-white">Day offsets</dt><dd className="mt-1 break-words text-[#7d88a1] dark:text-white/55">Snapshot {showJson(details.snapshotOffsets)}; current {showJson(details.currentOffsets)}{details.offsetsChanged ? ` · ${offsetRows.length} Task offset${offsetRows.length === 1 ? "" : "s"} differ` : " · match"}.</dd></div>
+        <div><dt className="font-bold text-[#27304c] dark:text-white">Other Home settings</dt><dd className="mt-1 break-words text-[#7d88a1] dark:text-white/55">Tasks per day: snapshot {showJson(details.snapshotTasksPerDay)}, current {showJson(details.currentTasksPerDay)}. State schema: snapshot {showJson(details.snapshotSchemaVersion)}, current {showJson(details.currentSchemaVersion)}. Snapshot timestamp {showJson(snapshot.clientUpdatedAt)}; current timestamp {showJson(currentState.clientUpdatedAt)}. The server stamps a new timestamp when restoration succeeds.{details.otherFields.length ? ` Additional persisted fields that differ: ${details.otherFields.map((field) => `${field.key} (snapshot ${showJson(field.snapshotValue)}; current ${showJson(field.currentValue)})`).join(" · ")}.` : " No additional persisted fields differ."}</dd></div>
+      </dl>
+      <section className="grid min-w-0 gap-2 rounded-xl bg-white/70 p-3 dark:bg-white/5">
+        <h5 className="text-xs font-bold uppercase tracking-[0.08em] text-[#6f57f6] dark:text-[#d6ccff]">Scratchpad content and items</h5>
+        <div className="grid min-w-0 gap-2">
+          <div className="min-w-0"><p className="text-xs font-semibold text-[#27304c] dark:text-white">Snapshot text</p><p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white/80 p-2 text-xs text-[#5f6982] dark:bg-white/5 dark:text-white/65">{details.snapshotScratchpadText || "Empty"}</p></div>
+          <div className="min-w-0"><p className="text-xs font-semibold text-[#27304c] dark:text-white">Current text</p><p className="mt-1 max-h-40 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-white/80 p-2 text-xs text-[#5f6982] dark:bg-white/5 dark:text-white/65">{details.currentScratchpadText || "Empty"}</p></div>
+        </div>
+        <div className="grid min-w-0 gap-2">
+          {([
+            ["Snapshot items", details.snapshotScratchpadItems],
+            ["Current items", details.currentScratchpadItems],
+          ] as const).map(([label, items]) => (
+            <div className="min-w-0" key={label}>
+              <p className="text-xs font-semibold text-[#27304c] dark:text-white">{label} ({items.length})</p>
+              {items.length ? <ol className="mt-1 grid gap-1">{items.map((value, index) => {
+                const item = value && typeof value === "object" ? value as Record<string, unknown> : {};
+                return <li className="break-words rounded-lg bg-white/80 px-2 py-1 text-xs text-[#5f6982] dark:bg-white/5 dark:text-white/65" key={String(item.id ?? index)}>{index + 1}. {String(item.text ?? showJson(value))}</li>;
+              })}</ol> : <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">No Scratchpad items.</p>}
+            </div>
+          ))}
+        </div>
+        <p className="text-xs text-[#7d88a1] dark:text-white/55">Scratchpad text {details.scratchpadTextChanged ? "will change" : "matches"}; ordered items {details.scratchpadItemsChanged ? "will change" : "match"}.</p>
+      </section>
+    </section>
+  );
+}
+
 function downloadFilename(point: HomeRecoveryPoint | HomeRecoveryPreview) {
   const stamp = (point.created_at ?? new Date().toISOString()).replace(/[:.]/g, "-");
   return `ADHDice-Home-only-backup-${stamp}.json`;
 }
 
+const subscribeToNoExternalChanges = () => () => {};
+
 export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHomeBackupRecoveryProps) {
   const [statusResult, setStatusResult] = useState<HomeRecoveryRequestResult<HomeRecoveryStatus> | null>(null);
   const [pointsResult, setPointsResult] = useState<HomeRecoveryRequestResult<HomeRecoveryPoint[]> | null>(null);
   const [selectionPreview, setSelectionPreview] = useState<SelectionPreview | null>(null);
+  const [currentHomeStateResult, setCurrentHomeStateResult] = useState<HomeRecoveryCurrentStateResult | null>(null);
+  const [restoreServiceCheck, setRestoreServiceCheck] = useState<{ pointId: string; result: HomeRecoveryRestoreServiceResult } | null>(null);
   const [selectedPointId, setSelectedPointId] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [isCapturing, setIsCapturing] = useState(false);
+  const [isRestoreConfirming, setIsRestoreConfirming] = useState(false);
+  const [restoreAcknowledged, setRestoreAcknowledged] = useState(false);
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restorePreviewStale, setRestorePreviewStale] = useState(false);
+  const [restoreMessage, setRestoreMessage] = useState<string | null>(null);
   const [captureMessage, setCaptureMessage] = useState<string | null>(null);
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const refreshGeneration = useRef(0);
   const previewGeneration = useRef(0);
   const titleLookupGeneration = useRef(0);
   const mounted = useRef(false);
+  const restoreGateEnabled = useSyncExternalStore(
+    subscribeToNoExternalChanges,
+    () => typeof window !== "undefined" && isHomeRecoveryRestoreEnabled(window.location.origin),
+    () => false,
+  );
   const [taskTitleLookup, setTaskTitleLookup] = useState<TaskTitleLookupState>({ key: "", titleById: {} });
   const rpcClient = client as unknown as HomeRecoveryRpcClient | null;
   const status = statusResult?.kind === "available" ? statusResult.value : null;
   const points = pointsResult?.kind === "available" ? pointsResult.value : [];
   const selectedPoint = points.find((point) => point.id === selectedPointId) ?? null;
+  const selectedPointIdRef = useRef<string | null>(selectedPointId);
   const preview = selectionPreview?.selected.kind === "available" ? selectionPreview.selected.value : null;
   const previousPreview = selectionPreview?.previous?.kind === "available" ? selectionPreview.previous.value : null;
   const titleLookupIds = useMemo(() => {
@@ -187,12 +307,19 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
     };
     includePreviewLists(preview);
     includePreviewLists(previousPreview);
+    if (currentHomeStateResult?.kind === "available" && currentHomeStateResult.value.state) {
+      const ids = getHomeRecoveryListIds(currentHomeStateResult.value.state);
+      referencedIds.push(...ids.todo, ...ids.urgent, ...ids.routine);
+    }
     return getHomeRecoveryTaskTitleLookupIds(referencedIds, tasks);
-  }, [preview, previousPreview, tasks]);
+  }, [currentHomeStateResult, preview, previousPreview, tasks]);
   const titleLookupKey = JSON.stringify(titleLookupIds);
   const titleLookupMatchesPreview = taskTitleLookup.key === titleLookupKey;
   const titleById = titleLookupMatchesPreview ? taskTitleLookup.titleById : {};
   const titleLookupComplete = titleLookupMatchesPreview;
+  const restoreServiceResult = restoreGateEnabled && restoreServiceCheck?.pointId === selectedPointId
+    ? restoreServiceCheck.result
+    : null;
   const dashboardAvailable = statusResult?.kind === "available" && pointsResult?.kind === "available";
   const actionsAvailable = canCreateHomeRecoveryPoint({
     clientAvailable: Boolean(rpcClient),
@@ -200,19 +327,42 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
     statusAvailable: statusResult?.kind === "available" && !statusResult.value.database_capture_suspended && !statusResult.value.recovery_capacity_exhausted,
     pointsAvailable: pointsResult?.kind === "available",
   });
+  const currentHomeState = currentHomeStateResult?.kind === "available" ? currentHomeStateResult.value : null;
+  const previewMatchesCurrentState = Boolean(
+    preview && currentHomeState
+    && preview.current_state_revision === currentHomeState.stateRevision
+    && preview.current_restore_generation === currentHomeState.restoreGeneration,
+  );
+  const restoreRequirementsMet = Boolean(
+    restoreGateEnabled && restoreServiceResult?.kind === "available" && client && userId && rpcClient && preview
+    && preview.status === "preview" && preview.restorable === true
+    && preview.integrity_valid === true && preview.schema_compatible === true
+    && preview.verification_status === "verified" && preview.home_state
+    && preview.missing_task_ids?.length === 0
+    && currentHomeState && previewMatchesCurrentState && !restorePreviewStale,
+  );
 
   const loadPointPreview = useCallback(async (pointId: string, currentPoints: HomeRecoveryPoint[]) => {
     if (!rpcClient || !userId) return;
     const generation = ++previewGeneration.current;
     setPreviewMessage(null);
+    setCurrentHomeStateResult(null);
+    setRestorePreviewStale(false);
+    setRestoreMessage(null);
+    setIsRestoreConfirming(false);
+    setRestoreAcknowledged(false);
     setSelectionPreview({ selected: { kind: "error", message: "Loading preview…" }, previous: null });
     const index = currentPoints.findIndex((point) => point.id === pointId);
     const priorPoint = index >= 0 ? currentPoints[index + 1] ?? null : null;
-    const [selectedResult, previousResult] = await Promise.all([
+    const [selectedResult, previousResult, currentResult] = await Promise.all([
       loadHomeRecoveryPreview(rpcClient, pointId),
       priorPoint ? loadHomeRecoveryPreview(rpcClient, priorPoint.id) : Promise.resolve(null),
+      client
+        ? loadAuthoritativeHomeTodoState(client, userId)
+        : Promise.resolve({ kind: "error" as const, message: "An authenticated account is required to compare current Home state." }),
     ]);
     if (!mounted.current || generation !== previewGeneration.current) return;
+    setCurrentHomeStateResult(currentResult);
     setSelectionPreview({
       selected: selectedResult,
       previous: previousResult,
@@ -223,7 +373,7 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
     else if (!selectedResult.value.integrity_valid || !selectedResult.value.schema_compatible || !selectedResult.value.home_state) {
       setPreviewMessage("This recovery point failed integrity or schema checks and cannot be displayed or downloaded.");
     }
-  }, [rpcClient, userId]);
+  }, [client, rpcClient, userId]);
 
   const refresh = useCallback(async (preferredPointId?: string) => {
     if (!rpcClient || !userId) {
@@ -231,11 +381,14 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
       setPointsResult({ kind: "error", message: "An authenticated account is required to view Home recovery information." });
       setSelectionPreview(null);
       setSelectedPointId(null);
+      selectedPointIdRef.current = null;
       return;
     }
     const generation = ++refreshGeneration.current;
     setIsRefreshing(true);
     setCaptureMessage(null);
+    setIsRestoreConfirming(false);
+    setRestoreAcknowledged(false);
     try {
       const [nextStatusResult, nextPointsResult] = await Promise.all([
         loadHomeRecoveryStatus(rpcClient),
@@ -250,6 +403,7 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
         : selectedPointId && availablePoints.some((point) => point.id === selectedPointId)
           ? selectedPointId
           : availablePoints[0]?.id ?? null;
+      selectedPointIdRef.current = nextSelectedId;
       setSelectedPointId(nextSelectedId);
       setSelectionPreview(null);
       if (nextSelectedId) void loadPointPreview(nextSelectedId, availablePoints);
@@ -272,6 +426,17 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
       previewGeneration.current += 1;
     };
   }, [client, userId]);
+
+  useEffect(() => {
+    if (!restoreGateEnabled || !rpcClient || !selectedPointId) return;
+    const pointId = selectedPointId;
+    let active = true;
+    void checkHomeRecoveryRestoreService(rpcClient, pointId).then((result) => {
+      if (!active || selectedPointIdRef.current !== pointId) return;
+      setRestoreServiceCheck({ pointId, result });
+    });
+    return () => { active = false; };
+  }, [restoreGateEnabled, rpcClient, selectedPointId]);
 
   useEffect(() => {
     const generation = ++titleLookupGeneration.current;
@@ -305,6 +470,100 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
     if (mounted.current) setIsCapturing(false);
   }
 
+  function handleBeginRestoreConfirmation() {
+    if (!restoreRequirementsMet || !selectedPoint) return;
+    setRestoreMessage(null);
+    setRestoreAcknowledged(false);
+    setIsRestoreConfirming(true);
+  }
+
+  function handleCancelRestoreConfirmation() {
+    setIsRestoreConfirming(false);
+    setRestoreAcknowledged(false);
+    setRestoreMessage("Restore canceled. Current Home state was not changed.");
+  }
+
+  async function handleConfirmRestore() {
+    if (!restoreRequirementsMet || !restoreAcknowledged || !client || !rpcClient || !userId || !selectedPoint || !preview || !currentHomeState) return;
+    const pointId = selectedPoint.id;
+    const selectionGeneration = previewGeneration.current;
+    const previewState = currentHomeState;
+    setIsRestoring(true);
+    setRestoreMessage(null);
+    try {
+      const freshCurrentResult = await loadAuthoritativeHomeTodoState(client, userId);
+      if (!mounted.current) return;
+      if (selectedPointIdRef.current !== pointId || selectionGeneration !== previewGeneration.current) return;
+      if (freshCurrentResult.kind !== "available") {
+        setRestorePreviewStale(true);
+        setIsRestoreConfirming(false);
+        setRestoreAcknowledged(false);
+        setRestoreMessage(`${freshCurrentResult.message} Refresh the comparison before restoring.`);
+        return;
+      }
+      const freshCurrent = freshCurrentResult.value;
+      const previewRevisionsMatch = freshCurrent.stateRevision === previewState.stateRevision
+        && freshCurrent.restoreGeneration === previewState.restoreGeneration;
+      if (!previewRevisionsMatch || !sameAuthoritativeHomeState(freshCurrent, previewState)) {
+        setRestorePreviewStale(true);
+        setIsRestoreConfirming(false);
+        setRestoreAcknowledged(false);
+        setRestoreMessage("Home changed after this comparison. Nothing was restored. Refresh the comparison and review the new current state before confirming again.");
+        return;
+      }
+      const result = await restoreHomeRecoveryPoint(
+        rpcClient,
+        pointId,
+        freshCurrent.stateRevision,
+        freshCurrent.restoreGeneration,
+      );
+      if (!mounted.current) return;
+      if (selectedPointIdRef.current !== pointId || selectionGeneration !== previewGeneration.current) {
+        if (result.kind === "restored") {
+          announceHomeTodoRestored({
+            userId,
+            state: result.state,
+            clientUpdatedAt: result.clientUpdatedAt,
+            stateRevision: result.stateRevision,
+            restoreGeneration: result.restoreGeneration,
+          });
+          setRestoreMessage(`Home was restored from the ${formatHomeRecoveryDate(selectedPoint.created_at)} snapshot. The server advanced restore generation to ${result.restoreGeneration}; Home panels are reconciling with the restored data.`);
+          await refreshRef.current();
+        }
+        return;
+      }
+      setIsRestoreConfirming(false);
+      setRestoreAcknowledged(false);
+      if (result.kind !== "restored") {
+        if (result.kind === "conflict") setRestorePreviewStale(true);
+        setRestoreMessage(result.message);
+        return;
+      }
+      announceHomeTodoRestored({
+        userId,
+        state: result.state,
+        clientUpdatedAt: result.clientUpdatedAt,
+        stateRevision: result.stateRevision,
+        restoreGeneration: result.restoreGeneration,
+      });
+      setRestoreMessage(`Home was restored from the ${formatHomeRecoveryDate(selectedPoint.created_at)} snapshot. The database advanced restore generation to ${result.restoreGeneration}; open Home panels are reconciling with the restored server state.`);
+      await refresh(pointId);
+    } catch {
+      if (mounted.current) setRestoreMessage("Home restore could not be completed. The database preserved the current state; refresh recovery status before trying again.");
+    } finally {
+      if (mounted.current) setIsRestoring(false);
+    }
+  }
+
+  function handleRefreshComparison() {
+    if (!selectedPointId) return;
+    setRestoreMessage(null);
+    setRestorePreviewStale(false);
+    setIsRestoreConfirming(false);
+    setRestoreAcknowledged(false);
+    void loadPointPreview(selectedPointId, points);
+  }
+
   function handleDownload() {
     if (!preview || !preview.integrity_valid) return;
     const document = createHomeOnlyBackupDocument(preview);
@@ -321,8 +580,10 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
   }
 
   function selectPoint(pointId: string) {
+    selectedPointIdRef.current = pointId;
     setSelectedPointId(pointId);
     setPreviewMessage(null);
+    setRestoreMessage(null);
     const selected = points.find((point) => point.id === pointId);
     setSelectionPreview(selected ? { selected: { kind: "error", message: "Loading preview…" }, previous: null } : null);
     void loadPointPreview(pointId, points);
@@ -424,22 +685,22 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
             <div><h3 className="text-sm font-bold text-[#27304c] dark:text-white" id="home-recovery-preview-title">Home-only snapshot preview</h3>{selectedPoint ? <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">{formatHomeRecoveryDate(selectedPoint.created_at)} · {getHomeRecoveryPointType(selectedPoint)}</p> : null}</div>
             <button className="max-w-full whitespace-normal ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-55" disabled={!preview || !preview.integrity_valid || !preview.schema_compatible || preview.verification_status !== "verified" || !preview.home_state} onClick={handleDownload} type="button"><Download aria-hidden="true" className="h-4 w-4" />Download Home-only backup</button>
           </div>
-          <p className="rounded-xl bg-[#f7f5ff] px-3 py-2 text-xs text-[#68627d] dark:bg-white/5 dark:text-white/60">This read-only preview leaves your current Home state unchanged. Home snapshots store list memberships and Task IDs; visible Task titles come from current Task data. Change details compare this point with the preceding saved recovery point, when one exists, and cover membership and ordering in these three lists.</p>
+          <p className="rounded-xl bg-[#f7f5ff] px-3 py-2 text-xs text-[#68627d] dark:bg-white/5 dark:text-white/60">Previewing leaves Home unchanged. Restore replaces the entire saved Home state, including Todo, Urgent, and Routine membership and order, Routine sections, day offsets, Scratchpad text and items, and every other persisted Home field. It does not restore Task records or Task History.</p>
           {previewMessage ? <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">{previewMessage}</p> : null}
           {status?.latest_attempt_result === "failed" ? <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">{attemptResultLabel(status)} {captureFailureDetails(status.latest_failure_reason)}</p> : null}
           {preview?.status === "preview" && preview.integrity_valid && preview.schema_compatible && preview.home_state ? (
             <>
               {preview.missing_task_ids?.length ? <div role="alert" className="min-w-0 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"><p className="font-bold">Missing Task references ({preview.missing_task_ids.length})</p><p className="mt-1 break-words">{preview.missing_task_ids.map((id) => getHomeRecoveryTaskLabel(id, tasks, preview.missing_task_ids ?? [], titleById, titleLookupComplete)).join(" · ")}</p></div> : null}
-              <div className="settings-recovery-preview-lists grid min-w-0 gap-2">
-                {(() => {
-                  const ids = getHomeRecoveryListIds(preview.home_state);
-                  return <>
-                    <HomeRecoveryTaskList emptyLabel="No Home Todo Tasks in this snapshot." ids={ids.todo} label="Home Todo" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
-                    <HomeRecoveryTaskList emptyLabel="No Urgent Tasks in this snapshot." ids={ids.urgent} label="Urgent" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
-                    <HomeRecoveryTaskList emptyLabel="No Routine Tasks in this snapshot." ids={ids.routine} label="Routine" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
-                  </>;
-                })()}
-              </div>
+              {currentHomeState ? <HomeRecoveryStateComparison
+                current={currentHomeState}
+                missingTaskIds={preview.missing_task_ids ?? []}
+                snapshot={preview.home_state}
+                tasks={tasks}
+                titleById={titleById}
+                titleLookupComplete={titleLookupComplete}
+              /> : currentHomeStateResult?.kind === "error" || currentHomeStateResult?.kind === "unavailable"
+                ? <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">{currentHomeStateResult.message}</p>
+                : <p className="inline-flex items-center gap-2 text-sm text-[#7d88a1] dark:text-white/55"><LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />Reading current saved Home for a live comparison…</p>}
               {previousPreview?.status === "preview" && previousPreview.home_state ? (
                 <section aria-label="Changes since previous recovery point" className="rounded-2xl bg-[#f7f5ff] p-3 dark:bg-white/5">
                   <h4 className="text-xs font-bold uppercase tracking-[0.12em] text-[#6f57f6] dark:text-[#d6ccff]">List changes since preceding saved point</h4>
@@ -449,10 +710,33 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
                   })()}</ul>
                 </section>
               ) : hasPrecedingPoint ? <p className="text-xs text-[#7d88a1] dark:text-white/55">The preceding saved point could not be compared.</p> : <p className="text-xs text-[#7d88a1] dark:text-white/55">No preceding saved point is available for comparison.</p>}
-              <button aria-describedby="home-recovery-restore-note" className="max-w-full whitespace-normal ui-pill-button-strong-light w-fit cursor-not-allowed opacity-55" disabled type="button">Restore · available in a later release</button>
-              <p className="text-xs text-[#7d88a1] dark:text-white/55" id="home-recovery-restore-note">Safe restoration is not enabled in this release.</p>
+              <div className="grid min-w-0 gap-2 rounded-xl border border-[#e5e0f5] bg-white/65 p-3 dark:border-white/10 dark:bg-white/5">
+                <button aria-describedby="home-recovery-restore-note" className="max-w-full whitespace-normal ui-pill-button-strong-light w-fit disabled:cursor-not-allowed disabled:opacity-55" disabled={!restoreRequirementsMet || isRestoring || isRefreshing} onClick={handleBeginRestoreConfirmation} type="button">Restore Home</button>
+                <p className="text-xs text-[#7d88a1] dark:text-white/55" id="home-recovery-restore-note">
+                  {!restoreGateEnabled ? "Restore is disabled by default. It can run only when explicitly enabled on an exact allowlisted development or staging origin." : restoreServiceResult?.kind === "error" || restoreServiceResult?.kind === "unavailable" ? restoreServiceResult.message : restoreServiceResult === null ? "Checking the authenticated restore service…" : preview.missing_task_ids?.length ? "Restore is disabled because this snapshot has missing Task references." : !previewMatchesCurrentState || restorePreviewStale ? "The live comparison is stale. Refresh it before restoration." : "Restore is available only for a verified, compatible snapshot with a fresh current-state comparison."}
+                </p>
+                {restorePreviewStale ? <button className="max-w-full whitespace-normal ui-pill-button-strong-light w-fit" disabled={isRestoring} onClick={handleRefreshComparison} type="button">Refresh comparison</button> : null}
+                {isRestoreConfirming && selectedPoint ? (
+                  <section aria-labelledby="home-recovery-confirm-title" className="grid min-w-0 gap-3 rounded-xl border border-amber-300 bg-amber-50 p-3 dark:border-amber-400/25 dark:bg-amber-400/10">
+                    <div>
+                      <h4 className="text-sm font-bold text-amber-950 dark:text-amber-100" id="home-recovery-confirm-title">Confirm Restore Home</h4>
+                      <p className="mt-1 text-sm text-amber-900 dark:text-amber-100">Restore the snapshot from {formatHomeRecoveryDate(selectedPoint.created_at)}. This replaces the current saved Home state shown above in full, including all three ordered Task lists, Routine sections and assignments, day offsets, Scratchpad content and items, and other persisted Home fields.</p>
+                    </div>
+                    <label className="flex min-w-0 items-start gap-2 text-sm text-amber-950 dark:text-amber-100">
+                      <input checked={restoreAcknowledged} className="mt-1 shrink-0 accent-[#6f57f6]" onChange={(event) => setRestoreAcknowledged(event.target.checked)} type="checkbox" />
+                      <span>I understand this will replace the entire saved Home state with the selected snapshot.</span>
+                    </label>
+                    <div className="flex flex-wrap gap-2">
+                      <button className="max-w-full whitespace-normal ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-55" disabled={!restoreAcknowledged || !restoreRequirementsMet || isRestoring} onClick={() => { void handleConfirmRestore(); }} type="button">{isRestoring ? "Restoring…" : "Confirm Restore Home"}</button>
+                      <button className="max-w-full whitespace-normal ui-pill-button-strong-light" disabled={isRestoring} onClick={handleCancelRestoreConfirmation} type="button">Cancel</button>
+                    </div>
+                  </section>
+                ) : null}
+              </div>
+              {restoreMessage ? <p aria-live="polite" className="rounded-xl border border-[#e5e0f5] bg-white/65 px-3 py-2 text-sm text-[#5f6982] dark:border-white/10 dark:bg-white/5 dark:text-white/70" role="status">{restoreMessage}</p> : null}
             </>
-          ) : selectionPreview?.selected.kind === "error" && selectionPreview.selected.message === "Loading preview…" ? <p className="inline-flex items-center gap-2 text-sm text-[#7d88a1] dark:text-white/55"><LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />Loading Home snapshot preview…</p>
+          ) : preview?.status === "preview" ? <div role="alert" className="grid min-w-0 gap-2 rounded-xl border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"><p>This snapshot is invalid or incompatible. Restoration is disabled.</p><button className="max-w-full w-fit whitespace-normal ui-pill-button-strong-light cursor-not-allowed opacity-55" disabled type="button">Restore Home</button></div>
+            : selectionPreview?.selected.kind === "error" && selectionPreview.selected.message === "Loading preview…" ? <p className="inline-flex items-center gap-2 text-sm text-[#7d88a1] dark:text-white/55"><LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />Loading Home snapshot preview…</p>
             : selectionPreview ? null
               : <p className="text-sm text-[#7d88a1] dark:text-white/55">Select a recovery point to preview its saved Home contents.</p>}
         </section>

@@ -1,7 +1,7 @@
 import type { Database, Task } from "@/lib/database.types";
 import type { SupabaseClient } from "@supabase/supabase-js";
 
-export const HOME_RECOVERY_APP_VERSION = "7.16.169";
+export const HOME_RECOVERY_APP_VERSION = "7.16.170";
 export const HOME_RECOVERY_CHECKPOINT_INTERVAL_MS = 4 * 60 * 60 * 1000;
 export const HOME_RECOVERY_TASK_TITLE_BATCH_SIZE = 100;
 
@@ -111,11 +111,38 @@ export type HomeRecoveryPreview = {
   current_client_updated_at?: string | null;
 };
 
+export type HomeRecoveryCurrentState = {
+  state: Record<string, unknown> | null;
+  stateRevision: number | null;
+  restoreGeneration: number;
+  clientUpdatedAt: string | null;
+};
+
+export type HomeRecoveryCurrentStateResult =
+  | { kind: "available"; value: HomeRecoveryCurrentState }
+  | { kind: "unavailable" | "error"; message: string };
+
+export type HomeRecoveryRestoreResult =
+  | {
+      kind: "restored";
+      state: Record<string, unknown>;
+      clientUpdatedAt: string;
+      stateRevision: number;
+      restoreGeneration: number;
+    }
+  | { kind: "conflict"; message: string }
+  | { kind: "failed" | "unavailable" | "error"; message: string };
+
+export type HomeRecoveryRestoreServiceResult =
+  | { kind: "available" }
+  | { kind: "unavailable" | "error"; message: string };
+
 export type HomeRecoveryRpcName =
   | "home_recovery_status"
   | "list_home_recovery_points"
   | "preview_home_recovery_point"
-  | "create_home_recovery_point";
+  | "create_home_recovery_point"
+  | "restore_home_recovery_point";
 
 export type HomeRecoveryRpcResponse = {
   data: unknown;
@@ -332,6 +359,194 @@ export async function loadHomeRecoveryPreview(
   return value
     ? { kind: "available", value }
     : { kind: "error", message: "This recovery point returned an unexpected preview. Refresh the list and try again." };
+}
+
+export async function loadAuthoritativeHomeTodoState(
+  client: SupabaseClient<Database>,
+  userId: string,
+): Promise<HomeRecoveryCurrentStateResult> {
+  try {
+    const { data: authData, error: authError } = await client.auth.getUser();
+    if (authError || authData.user?.id !== userId) {
+      return { kind: "error", message: "A fresh authenticated session for this account is required to compare Home state." };
+    }
+    const { data, error } = await client
+      .from("adhdice_home_todo_state")
+      .select("state,client_updated_at,state_revision,restore_generation")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) {
+      const result = rpcErrorMessage(error);
+      return { kind: result.kind, message: "The current authoritative Home state could not be read. Restore is unavailable until it can be checked." };
+    }
+    if (!data) {
+      return {
+        kind: "available",
+        value: { state: null, stateRevision: null, restoreGeneration: 0, clientUpdatedAt: null },
+      };
+    }
+    if (!asRecord(data.state)
+      || !Number.isSafeInteger(data.state_revision) || data.state_revision < 1
+      || !Number.isSafeInteger(data.restore_generation) || data.restore_generation < 0
+      || typeof data.client_updated_at !== "string") {
+      return { kind: "error", message: "The current Home row returned unexpected revision or state data. Restore is unavailable." };
+    }
+    return {
+      kind: "available",
+      value: {
+        state: data.state,
+        stateRevision: data.state_revision,
+        restoreGeneration: data.restore_generation,
+        clientUpdatedAt: data.client_updated_at,
+      },
+    };
+  } catch {
+    return { kind: "error", message: "The current authoritative Home state could not be read. Restore is unavailable until it can be checked." };
+  }
+}
+
+export async function restoreHomeRecoveryPoint(
+  client: HomeRecoveryRpcClient,
+  recoveryPointId: string,
+  expectedStateRevision: number | null,
+  expectedRestoreGeneration: number,
+): Promise<HomeRecoveryRestoreResult> {
+  const response = await invokeRecoveryRpc(client, "restore_home_recovery_point", {
+    p_recovery_point_id: recoveryPointId,
+    p_expected_state_revision: expectedStateRevision,
+    p_expected_restore_generation: expectedRestoreGeneration,
+    p_confirm_restore: true,
+  });
+  if (response.error) {
+    const error = rpcErrorMessage(response.error);
+    return { kind: error.kind, message: "The Home restore service could not confirm the request. Current Home state was preserved." };
+  }
+  const result = asRecord(response.data);
+  if (!result || typeof result.status !== "string") {
+    return { kind: "error", message: "The Home restore service returned an unexpected result. No success was reported." };
+  }
+  if (result.status === "restored") {
+    const restoredState = asRecord(result.state);
+    if (!restoredState
+      || typeof result.client_updated_at !== "string"
+      || !Number.isSafeInteger(result.state_revision) || Number(result.state_revision) < 1
+      || !Number.isSafeInteger(result.restore_generation) || Number(result.restore_generation) < 1) {
+      return { kind: "error", message: "The Home restore result was incomplete. Refresh Home from the server before editing." };
+    }
+    return {
+      kind: "restored",
+      state: restoredState,
+      clientUpdatedAt: result.client_updated_at,
+      stateRevision: Number(result.state_revision),
+      restoreGeneration: Number(result.restore_generation),
+    };
+  }
+  if (result.status === "restore_conflict") {
+    return { kind: "conflict", message: "Home changed after this comparison. Nothing was restored. Refresh the comparison before trying again." };
+  }
+  if (result.status === "missing_task_references") {
+    return { kind: "failed", message: "This snapshot refers to Tasks that no longer exist. Home was not changed." };
+  }
+  if (result.status === "invalid_recovery_point") {
+    return { kind: "failed", message: "This recovery point failed database integrity checks. Home was not changed." };
+  }
+  if (result.status === "not_found") {
+    return { kind: "failed", message: "This recovery point is no longer available. Home was not changed." };
+  }
+  if (result.status === "confirmation_required") {
+    return { kind: "failed", message: "The database did not accept the explicit restore confirmation. Home was not changed." };
+  }
+  if (result.status === "restore_failed") {
+    return { kind: "failed", message: result.reason === "pre_restore_checkpoint_failed"
+      || result.reason === "pre_restore_checkpoint_verification_failed"
+      || result.reason === "pre_restore_checkpoint_owner_mismatch"
+      ? "The database could not protect a verified pre-restore Home checkpoint. Home was not changed."
+      : "The database could not safely restore Home. Current Home state was preserved." };
+  }
+  return { kind: "failed", message: "The database did not confirm a Home restore. Current Home state was preserved." };
+}
+
+export async function checkHomeRecoveryRestoreService(
+  client: HomeRecoveryRpcClient,
+  recoveryPointId: string,
+): Promise<HomeRecoveryRestoreServiceResult> {
+  const response = await invokeRecoveryRpc(client, "restore_home_recovery_point", {
+    p_recovery_point_id: recoveryPointId,
+    p_expected_state_revision: null,
+    p_expected_restore_generation: 0,
+    p_confirm_restore: false,
+  });
+  if (response.error) {
+    const error = rpcErrorMessage(response.error);
+    return { kind: error.kind, message: "The authenticated Home restore RPC is unavailable or could not be checked." };
+  }
+  const result = asRecord(response.data);
+  return result?.status === "confirmation_required"
+    ? { kind: "available" }
+    : { kind: "error", message: "The Home restore RPC did not confirm its non-mutating readiness check." };
+}
+
+function stableValue(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableValue).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>).sort(([a], [b]) => a.localeCompare(b)).map(([key, child]) => `${JSON.stringify(key)}:${stableValue(child)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "undefined";
+}
+
+export function sameAuthoritativeHomeState(left: HomeRecoveryCurrentState, right: HomeRecoveryCurrentState) {
+  return stableValue(left.state) === stableValue(right.state);
+}
+
+export function compareHomeRecoveryStateDetails(
+  snapshot: Record<string, unknown>,
+  current: Record<string, unknown> | null,
+) {
+  const currentState = current ?? {};
+  const snapshotSections = Array.isArray(snapshot.routineSections) ? snapshot.routineSections : [];
+  const currentSections = Array.isArray(currentState.routineSections) ? currentState.routineSections : [];
+  const snapshotAssignments = asRecord(snapshot.routineSectionIdByTaskId) ?? {};
+  const currentAssignments = asRecord(currentState.routineSectionIdByTaskId) ?? {};
+  const snapshotOffsets = asRecord(snapshot.taskDayOffsets) ?? {};
+  const currentOffsets = asRecord(currentState.taskDayOffsets) ?? {};
+  const routineDetailsChanged = stableValue(snapshotSections) !== stableValue(currentSections)
+    || stableValue(snapshotAssignments) !== stableValue(currentAssignments);
+  const offsetsChanged = stableValue(snapshotOffsets) !== stableValue(currentOffsets);
+  const scratchpadTextChanged = snapshot.scratchpadText !== currentState.scratchpadText;
+  const scratchpadItemsChanged = stableValue(snapshot.scratchpadItems ?? []) !== stableValue(currentState.scratchpadItems ?? []);
+  const tasksPerDayChanged = snapshot.tasksPerDay !== currentState.tasksPerDay;
+  const knownFields = new Set([
+    "taskIds", "urgentTaskIds", "routineTaskIds", "routineSections", "routineSectionIdByTaskId",
+    "taskDayOffsets", "scratchpadText", "scratchpadItems", "tasksPerDay", "schemaVersion", "clientUpdatedAt",
+  ]);
+  const otherFields = [...new Set([...Object.keys(snapshot), ...Object.keys(currentState)])]
+    .filter((key) => !knownFields.has(key))
+    .sort()
+    .filter((key) => stableValue(snapshot[key]) !== stableValue(currentState[key]))
+    .map((key) => ({ key, snapshotValue: snapshot[key], currentValue: currentState[key] }));
+  return {
+    routineDetailsChanged,
+    snapshotSections,
+    currentSections,
+    snapshotAssignments,
+    currentAssignments,
+    offsetsChanged,
+    snapshotOffsets,
+    currentOffsets,
+    scratchpadTextChanged,
+    scratchpadItemsChanged,
+    snapshotScratchpadText: typeof snapshot.scratchpadText === "string" ? snapshot.scratchpadText : "",
+    currentScratchpadText: typeof currentState.scratchpadText === "string" ? currentState.scratchpadText : "",
+    snapshotScratchpadItems: Array.isArray(snapshot.scratchpadItems) ? snapshot.scratchpadItems : [],
+    currentScratchpadItems: Array.isArray(currentState.scratchpadItems) ? currentState.scratchpadItems : [],
+    tasksPerDayChanged,
+    snapshotTasksPerDay: snapshot.tasksPerDay,
+    currentTasksPerDay: currentState.tasksPerDay,
+    schemaVersionChanged: snapshot.schemaVersion !== currentState.schemaVersion,
+    snapshotSchemaVersion: snapshot.schemaVersion,
+    currentSchemaVersion: currentState.schemaVersion,
+    otherFields,
+  };
 }
 
 function describeCaptureFailure(reason: unknown) {

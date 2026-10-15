@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.169`.
+- Current working app version: `7.16.170`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,34 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.170 Safe Home Recovery Restore Interface
+
+Settings now compares a verified Home recovery point against a fresh,
+authenticated owner-scoped read of the current authoritative Home row. The
+comparison includes Todo, Urgent, and Routine memberships and order, Routine
+sections and assignments, day offsets, Scratchpad content and items, and other
+persisted Home fields. A separate confirmation identifies the snapshot date
+and warns that the whole saved Home state will be replaced.
+
+Restore uses only the installed `restore_home_recovery_point` RPC with a
+freshly read state revision and restore generation. A conflict stops the
+attempt and requires a fresh comparison. Active Home panels reconcile through
+the shared generation-fenced owner. If Home is inactive, its cache stays
+untouched until the next owner-scoped hydration adopts the newer server
+generation and preserves the superseded cache. No SQL, Cron, Task, or Task
+History changes were made.
+
+The Restore control is default-off and requires explicit development/staging
+environment enablement plus an exact allowlisted origin. No production
+restoration was activated. Focused Settings/Home recovery and Home hydration
+tests passed (123 passed, one disposable-PostgreSQL case skipped in the
+combined run); the database integration suite separately passed against a
+temporary local PostgreSQL cluster. Targeted ESLint and the production build
+passed. The build skipped type validation. The full repository typecheck still
+reports existing errors outside the ticket; a filtered rerun found no
+diagnostics in the changed files. `git diff --check` passed. Browser QA remains
+Andrew's manual responsibility and must pass before enabling the gate.
 
 ## 2026-10-15 7.16.169 Backup Preview Task Titles
 

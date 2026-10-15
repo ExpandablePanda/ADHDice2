@@ -25,9 +25,11 @@ import {
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
 import {
+  HOME_TODO_RESTORED_EVENT,
   homeTodoRecoveryConflictCacheKey,
   parseHomeTodoRecoveryCache,
   shouldPreferRemoteHomeTodoState,
+  type HomeTodoRestoredEventDetail,
 } from "@/lib/home-todo-recovery";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { startSerializedRealtimeChannel } from "@/lib/realtime-channel-lifecycle";
@@ -344,6 +346,27 @@ export function useHomeTodoState(userId: string | null) {
     persistCache(remote, ownerId);
     setOwnerSyncStatus(ownerId, "synced");
   }, [persistCache, preserveSupersededCache, scheduleWrite, setOwnerSyncStatus]);
+
+  useEffect(() => {
+    const handleRestoredHomeState = (event: Event) => {
+      const detail = (event as CustomEvent<HomeTodoRestoredEventDetail>).detail;
+      if (!userId || !detail || !detail.userId || detail.userId !== userId
+        || !detail.state || typeof detail.state !== "object" || Array.isArray(detail.state)
+        || !Number.isSafeInteger(detail.stateRevision) || detail.stateRevision < 1
+        || !Number.isSafeInteger(detail.restoreGeneration) || detail.restoreGeneration < 1
+        || typeof detail.clientUpdatedAt !== "string") return;
+      applyRemote(
+        detail.state,
+        detail.clientUpdatedAt,
+        userId,
+        ownerGenerationRef.current,
+        detail.restoreGeneration,
+        detail.stateRevision,
+      );
+    };
+    window.addEventListener(HOME_TODO_RESTORED_EVENT, handleRestoredHomeState);
+    return () => window.removeEventListener(HOME_TODO_RESTORED_EVENT, handleRestoredHomeState);
+  }, [applyRemote, userId]);
 
   useEffect(() => {
     const ownerGeneration = ownerGenerationRef.current + 1;

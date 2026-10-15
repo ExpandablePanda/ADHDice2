@@ -66,7 +66,30 @@ authenticated owner-scoped RPCs above; manual capture also calls its existing
 RPC. It never reads or writes recovery tables directly. Preview list changes
 are compared with the preceding saved point, because the preview contract does
 not expose the live Home state. Preview and download do not activate Home
-hydration or modify Home state. Restore remains disabled in the interface.
+hydration or modify Home state.
+
+Version 7.16.170 adds a controlled Home restore interface. A verified snapshot
+is compared with a fresh, authenticated, owner-filtered read of the current
+Home row, including all three lists, Routine sections and assignments, day
+offsets, Scratchpad text and items, and other persisted Home fields. Restore
+requires a separate confirmation naming the snapshot date and the complete
+Home state being replaced. Before the RPC call, Settings rereads the current
+row and sends its fresh revision and restore generation. If either changes,
+the attempt stops and the user must refresh and review the comparison again.
+The app calls only `restore_home_recovery_point`; Settings never writes the
+Home row or browser cache directly. If a Home owner is active, it applies the
+authenticated RPC result through the normal generation-fenced reconciliation
+path. If Home is inactive, its cache is left untouched; the next owner-scoped
+hydration sees the newer server generation, preserves the superseded cache,
+and adopts the restored state before remote writes are allowed.
+
+The Restore control is default-off. It requires
+`NEXT_PUBLIC_HOME_RECOVERY_RESTORE_ENABLED=true`, an explicit
+`NEXT_PUBLIC_HOME_RECOVERY_RESTORE_ENV` value of `development` or `staging`,
+and an exact origin in `NEXT_PUBLIC_HOME_RECOVERY_RESTORE_ALLOWED_ORIGINS`.
+No production origin or environment flag is configured by this change. Keep
+the control disabled until end-to-end restoration QA passes. Database restore
+transactions must be tested only against a disposable PostgreSQL database.
 
 The owner status RPC does not expose the Cron catalog or configured interval.
 Settings shows the four-hour policy interval and any recorded scheduled
@@ -171,7 +194,9 @@ columns after a restore.
 
 ## Verification boundaries
 
-The SQL migration and activation script are source artifacts only. Production
-SQL, production Cron, live Home data, and browser behavior are not changed or
-verified by this ticket. The owner-scoped RPC contracts and generation fence
-must pass focused local database and Home hydration tests before release.
+The SQL migration and activation script remain source artifacts; this ticket
+does not apply production SQL, activate production Cron, or operate on live
+Home data. Version 7.16.170 ran the restore transaction suite against a
+temporary local PostgreSQL database and passed focused Home recovery and
+hydration checks. Browser end-to-end restoration QA remains required before
+enabling the feature gate.
