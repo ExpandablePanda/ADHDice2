@@ -20,6 +20,8 @@ import type {
   HealthJournalSignalOccurrenceInsert,
   HealthJournalSignalUpdate,
   HealthJournalSignalValue,
+  HealthJournalTrigger,
+  HealthJournalTriggerLink,
   HealthMealEntry,
   HealthMealEntryInsert,
   HealthMealEntryUpdate,
@@ -59,7 +61,6 @@ import {
   normalizeHealthSymptomNote,
   normalizeHealthProfile,
   normalizeHealthMealTime,
-  reconcileHealthSymptoms,
   sortHealthSymptomEntries,
   sortHealthSymptoms,
   todayHealthDate,
@@ -82,19 +83,70 @@ import {
 } from "@/lib/health-journal";
 import { getHealthJournalScaleDenominator, normalizeHealthJournalCustomQuestions, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
 import {
+  getHealthJournalOccurrenceOwnershipError,
+  readHealthJournalOccurrenceOwners,
+  type HealthJournalOccurrencePersistenceClient,
+} from "@/lib/health-journal-occurrence-persistence";
+import {
+  clearCompletedHealthJournalPendingMutations,
+  clearHealthJournalPendingMutation,
+  getHealthJournalPendingMutationKey,
+  normalizeHealthJournalPendingMutations,
+  quarantineHealthJournalPendingUpsert,
+  recordHealthJournalPendingDelete,
+  recordHealthJournalPendingUpsert,
+  replayHealthJournalPendingUpsertMutation,
+  replayHealthJournalPendingMutations,
+  type HealthJournalPendingEntity,
+  type HealthJournalPendingMutation,
+  type HealthJournalPendingMutationJournal,
+  type HealthJournalPendingReplayClient,
+  type HealthJournalPendingUpsert,
+} from "@/lib/health-journal-pending-mutations";
+import { deleteHealthJournalRecordWithTombstone } from "@/lib/health-journal-tombstones";
+import {
+  createHealthJournalTrigger,
+  getHealthJournalTriggerNameIdentity,
+  listHealthJournalTriggers,
+  readHealthJournalTriggerLinks,
+  replaceHealthJournalTriggerAssociations,
+  validateHealthJournalTriggerAssociationDrafts,
+  type HealthJournalTriggerOccurrenceReplacement,
+} from "@/lib/health-journal-triggers";
+import {
   getHealthFoodIdentityKey,
   normalizeHealthWaterEntry,
   normalizeHealthFoodLibraryInput,
   normalizeHealthFoodLibraryItem,
   setHealthFoodFavoriteStatus,
 } from "@/lib/health-library";
+import { healthCustomFoodWriteMatchesCanonicalRow } from "@/lib/health-custom-food-editing-session";
+import {
+  HEALTH_RECIPE_SAVE_FAILURE_MESSAGE,
+  HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE,
+  HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE,
+  HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE,
+  healthRecipeWriteMatchesCanonicalRow,
+  healthSavedMealWriteMatchesCanonicalRow,
+  reconcileHealthRecipeCollection,
+  reconcileHealthSavedMealCollection,
+  type HealthLibraryDefinitionSaveOptions,
+} from "@/lib/health-library-definition-editing-session";
 import {
   buildHealthFoodHistoryMealEntryUpdate,
   formatHealthFoodHistoryRepairResult,
+  healthMealEntryUpdateMatchesRow,
+  selectHealthFoodHistoryRepairRetryEntries,
   normalizeHealthMealStoredCalories,
   selectHealthFoodMealEntriesBySourceId,
   type HealthFoodHistoryRepairResult,
 } from "@/lib/health-meal-recalculation";
+import {
+  healthMealEntryInsertMatches,
+  healthMealPlanEntryInsertMatches,
+  reconcileHealthMealEntryInsert,
+  reconcileHealthMealPlanEntryInsert,
+} from "@/lib/health-meal-draft";
 import {
   reconcileHealthWorkouts,
   sortHealthWorkouts,
@@ -106,6 +158,7 @@ import {
   clearHealthMealPlanPendingMutation,
   isHealthMealPlanConfirmEligible,
   normalizeHealthMealPlanPendingMutations,
+  reconcileHealthMealPlanConfirmation,
   recordHealthMealPlanPendingDelete,
   recordHealthMealPlanPendingUpsert,
   replayHealthMealPlanPendingMutations,
@@ -126,6 +179,50 @@ import { isWorkspacePerformanceDiagnosticsEnabled } from "@/lib/workspace-perfor
 
 type SupabaseClient = ReturnType<typeof createBrowserSupabaseClient>;
 type SetMessage = (message: { tone: "neutral" | "good" | "warn"; text: string } | null) => void;
+type JournalPendingQueryResult = { data: { id: string; journal_entry_id?: string | null; user_id: string }[] | null; error: { message: string } | null };
+type JournalPendingFilter = PromiseLike<JournalPendingQueryResult> & {
+  eq(column: string, value: string): JournalPendingFilter;
+  select(columns: string): JournalPendingFilter;
+};
+type JournalPendingMutationTable = {
+  insert(values: Record<string, unknown>): { select(columns: string): JournalPendingFilter };
+  select(columns: string): JournalPendingFilter;
+  update(values: Record<string, unknown>): JournalPendingFilter;
+};
+type JournalPendingMutationClient = {
+  from(table: string): JournalPendingMutationTable;
+};
+
+const JOURNAL_PENDING_TABLE_BY_ENTITY: Record<HealthJournalPendingEntity, string> = {
+  checkin: "adhdice_health_checkins",
+  signal: "adhdice_health_journal_signals",
+  signal_value: "adhdice_health_journal_signal_values",
+  signal_occurrence: "adhdice_health_journal_signal_occurrences",
+  symptom: "adhdice_health_symptoms",
+  symptom_entry: "adhdice_health_symptom_entries",
+};
+
+function createHealthJournalPendingReplayClient(client: SupabaseClient): HealthJournalPendingReplayClient {
+  const remote = client as unknown as JournalPendingMutationClient;
+  const selectRemoteRow = "*";
+  return {
+    read: async (entity, id, userId) => remote.from(JOURNAL_PENDING_TABLE_BY_ENTITY[entity])
+      .select(selectRemoteRow)
+      .eq("id", id)
+      .eq("user_id", userId),
+    insert: async (entity, row) => remote.from(JOURNAL_PENDING_TABLE_BY_ENTITY[entity])
+      .insert(row)
+      .select(selectRemoteRow),
+    update: async ({ entity, id, journalEntryId, row, userId }) => {
+      let query = remote.from(JOURNAL_PENDING_TABLE_BY_ENTITY[entity])
+        .update(row)
+        .eq("id", id)
+        .eq("user_id", userId);
+      if (journalEntryId) query = query.eq("journal_entry_id", journalEntryId);
+      return query.select(selectRemoteRow);
+    },
+  };
+}
 export type HealthImportSaveProgress = {
   completed: number;
   message: string;
@@ -145,6 +242,12 @@ export type HealthJournalEntrySaveInput = {
   signalValues: HealthJournalDraftValue[];
   symptomOccurrences: Omit<HealthSymptomEntryInsert, "user_id" | "journal_entry_id">[];
   journalSignalOccurrences: Omit<HealthJournalSignalOccurrenceInsert, "user_id" | "journal_entry_id">[];
+  triggerAssociationReplacements?: HealthJournalTriggerOccurrenceReplacement[];
+};
+
+export type HealthJournalEntrySaveResult = {
+  entry: HealthCheckIn;
+  triggerAssociationError?: string;
 };
 
 type HealthStateSnapshot = {
@@ -188,14 +291,14 @@ async function loadHealthHydrationReads(client: HealthRemoteClient, userId: stri
     loadRows((from, to) => client.from("adhdice_health_checkins").select("id,user_id,entry_date,entry_time,mood_score,energy_score,stress_score,clarity_score,symptom_tags,reflection,entry_type,structured_answers,created_at,updated_at").eq("user_id", userId).order("entry_date", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_journal_signals").select("id,user_id,kind,symptom_id,name,color,low_label,high_label,scale_labels,in_template,template_sort_order,archived_at,created_at,updated_at").eq("user_id", userId).order("in_template", { ascending: false }).order("template_sort_order", { ascending: true, nullsFirst: false }).order("created_at", { ascending: true }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_journal_signal_values").select("id,user_id,journal_entry_id,signal_id,score,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
-    loadRows((from, to) => client.from("adhdice_health_journal_signal_occurrences").select("id,user_id,journal_entry_id,signal_id,entry_date,occurred_at,score,note,created_at,updated_at").eq("user_id", userId).order("occurred_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_journal_signal_occurrences").select("id,user_id,journal_entry_id,signal_id,entry_date,occurred_at,score,time_is_estimated,note,created_at,updated_at").eq("user_id", userId).order("occurred_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_meal_entries").select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_meal_plan_entries").select("id,user_id,planned_date,meal_slot,planned_time,planned_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,confirmed_at,confirmed_meal_entry_id,created_at,updated_at").eq("user_id", userId).order("planned_date", { ascending: true }).order("planned_time", { ascending: true }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_food_library").select("id,user_id,food_name,brand_name,category,food_category,serving_label,serving_size,serving_quantity,serving_unit,serving_measure_value,serving_measure_unit,serving_weight_amount,serving_weight_unit,calories,protein_g,carbs_g,fat_g,nutrition_details,barcode,provider,provider_item_id,attribution,is_favorite,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_recipes").select("id,user_id,name,notes,servings,ingredients,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_saved_meals").select("id,user_id,name,default_meal_slot,items,created_at,updated_at").eq("user_id", userId).order("updated_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_symptoms").select("id,user_id,name,color,archived_at,created_at,updated_at").eq("user_id", userId).order("archived_at", { ascending: true, nullsFirst: true }).order("name", { ascending: true }).order("id", { ascending: true }).range(from, to)),
-    loadRows((from, to) => client.from("adhdice_health_symptom_entries").select("id,user_id,symptom_id,journal_entry_id,entry_date,logged_at,severity,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
+    loadRows((from, to) => client.from("adhdice_health_symptom_entries").select("id,user_id,symptom_id,journal_entry_id,entry_date,logged_at,severity,time_is_estimated,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_water_entries").select("id,user_id,entry_date,logged_at,amount,unit,amount_ml,confirmed_at,created_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_weight_entries").select("id,user_id,entry_date,logged_at,weight_kg,source,note,created_at,updated_at").eq("user_id", userId).order("logged_at", { ascending: false }).order("id", { ascending: true }).range(from, to)),
     loadRows((from, to) => client.from("adhdice_health_metric_entries").select("id,user_id,metric_type,metric_date,metric_value,source,source_fingerprint,created_at,updated_at").eq("user_id", userId).order("metric_date", { ascending: false }).order("id", { ascending: true }).range(from, to)),
@@ -211,13 +314,14 @@ type HealthHydrationReads = Awaited<ReturnType<typeof loadHealthHydrationReads>>
 type LocalHealthState = {
   snapshot: HealthStateSnapshot;
   mealPlanPendingMutations: HealthMealPlanPendingMutationJournal;
+  journalPendingMutations: HealthJournalPendingMutationJournal;
 };
 
 type HealthPersistenceMode = "local" | "remote";
 type HealthLocalPersistenceFailure = {
   mode: HealthPersistenceMode;
   reason: "quota" | "storage";
-  source: "health-cache" | "meal-plan-pending";
+  source: "health-cache" | "meal-plan-pending" | "journal-pending";
 };
 
 function buildEmptyState(userId: string): HealthStateSnapshot {
@@ -296,7 +400,7 @@ function normalizeHealthCheckIn(checkIn: HealthCheckIn): HealthCheckIn {
 }
 
 function normalizeHealthSymptomEntry(entry: HealthSymptomEntry): HealthSymptomEntry | null {
-  return entry.journal_entry_id ? entry : null;
+  return entry.journal_entry_id ? { ...entry, time_is_estimated: entry.time_is_estimated === true } : null;
 }
 
 function normalizeHealthSymptomEntries(entries: readonly HealthSymptomEntry[]) {
@@ -340,12 +444,16 @@ function readLocalHealthState(userId: string): LocalHealthState {
   const mealPlanPendingMutations = normalizeHealthMealPlanPendingMutations(
     readStoredJson<unknown>(storageKey(userId, "meal-plan-pending-mutations"), {}),
   );
+  const journalPendingMutations = normalizeHealthJournalPendingMutations(
+    readStoredJson<unknown>(storageKey(userId, "journal-pending-mutations"), {}),
+  );
   return {
     snapshot: {
       ...snapshot,
       mealPlanEntries: replayHealthMealPlanPendingMutations(snapshot.mealPlanEntries, mealPlanPendingMutations, userId),
     },
     mealPlanPendingMutations,
+    journalPendingMutations,
   };
 }
 
@@ -417,6 +525,19 @@ function persistHealthMealPlanPendingMutations(userId: string, journal: HealthMe
   ]);
 }
 
+function persistHealthJournalPendingMutations(userId: string, journal: HealthJournalPendingMutationJournal): LocalStorageWriteResult {
+  if (typeof window === "undefined") return { ok: true };
+  let storage: Storage;
+  try {
+    storage = window.localStorage;
+  } catch {
+    return { ok: false, reason: "storage" };
+  }
+  return writeLocalStorageEntries(storage, [
+    [storageKey(userId, "journal-pending-mutations"), JSON.stringify(journal)],
+  ]);
+}
+
 function createLocalId(prefix: string) {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
     ? crypto.randomUUID()
@@ -436,9 +557,33 @@ export function useHealth(
   const [journalSignals, setJournalSignals] = useState<HealthJournalSignal[]>([]);
   const [journalSignalValues, setJournalSignalValues] = useState<HealthJournalSignalValue[]>([]);
   const [journalSignalOccurrences, setJournalSignalOccurrences] = useState<HealthJournalSignalOccurrence[]>([]);
+  const [journalTriggers, setJournalTriggers] = useState<HealthJournalTrigger[]>([]);
+  const [journalTriggerLinks, setJournalTriggerLinks] = useState<HealthJournalTriggerLink[]>([]);
+  const [journalTriggerDataError, setJournalTriggerDataError] = useState<string | null>(null);
+  const [journalStatisticsDataError, setJournalStatisticsDataError] = useState<string | null>(null);
+  const [isLoadingJournalTriggers, setIsLoadingJournalTriggers] = useState(false);
+  const [hasLoadedJournalTriggerData, setHasLoadedJournalTriggerData] = useState(false);
+  const [journalTriggerDataOwnerId, setJournalTriggerDataOwnerId] = useState<string | null>(null);
+  const [journalTriggerRequestOwnerId, setJournalTriggerRequestOwnerId] = useState<string | null>(null);
+  const journalTriggerOwnerRef = useRef<string | null>(null);
+  const journalTriggerLoadedOwnerRef = useRef<string | null>(null);
+  const journalTriggerLoadGenerationRef = useRef(0);
+  const journalTriggerLoadInFlightRef = useRef<{ client: SupabaseClient; promise: Promise<boolean>; userId: string } | null>(null);
   const [mealEntries, setMealEntries] = useState<HealthMealEntry[]>([]);
   const [mealPlanEntries, setMealPlanEntries] = useState<HealthMealPlanEntry[]>([]);
   const [favorites, setFavorites] = useState<HealthFoodLibraryItem[]>([]);
+  const [pendingFoodHistoryRepairState, setPendingFoodHistoryRepairState] = useState<{
+    generation: number;
+    ids: string[];
+    userId: string | null;
+  }>({ generation: 0, ids: [], userId });
+  const pendingFoodHistoryRepairOwnerGenerationRef = useRef(0);
+  const pendingFoodHistoryRepairIds = pendingFoodHistoryRepairState.userId === userId
+    && pendingFoodHistoryRepairState.generation === pendingFoodHistoryRepairOwnerGenerationRef.current
+    ? pendingFoodHistoryRepairState.ids
+    : [];
+  const pendingFoodHistoryRepairRowsRef = useRef(new Map<string, readonly string[] | null>());
+  const foodHistoryRepairInFlightRef = useRef(new Map<string, Promise<HealthFoodHistoryRepairResult>>());
   const [weightEntries, setWeightEntries] = useState<HealthWeightEntry[]>([]);
   const [metricEntries, setMetricEntries] = useState<HealthMetricEntry[]>([]);
   const [recipes, setRecipes] = useState<HealthRecipe[]>([]);
@@ -450,6 +595,7 @@ export function useHealth(
   const [importAudits, setImportAudits] = useState<HealthImportAudit[]>([]);
   const [awards, setAwards] = useState<HealthAchievementAward[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const foodLibraryLoadedUserIdRef = useRef<string | null>(null);
   const [storageMode, setStorageMode] = useState<"local" | "remote">("local");
   const healthSnapshotRef = useRef<HealthStateSnapshot | null>(null);
   const healthRemoteAuthorityRef = useRef<HealthRemoteAuthority | null>(null);
@@ -464,6 +610,7 @@ export function useHealth(
   const journalRemoteEnabledRef = useRef(true);
   const journalSignalOccurrencesRemoteEnabledRef = useRef(true);
   const mealPlanPendingMutationsRef = useRef<HealthMealPlanPendingMutationJournal>({});
+  const journalPendingMutationsRef = useRef<HealthJournalPendingMutationJournal>({});
   const healthLocalPersistenceFailureRef = useRef<HealthLocalPersistenceFailure | null>(null);
   const healthOperationGenerationRef = useRef(0);
   const healthOwnerRef = useRef<Pick<HealthOperationOwner, "active" | "userId">>({ active, userId });
@@ -479,10 +626,15 @@ export function useHealth(
       healthRemoteAuthorityRef.current = null;
     }
     healthOperationGenerationRef.current += 1;
+    pendingFoodHistoryRepairOwnerGenerationRef.current += 1;
+    journalTriggerLoadGenerationRef.current += 1;
     healthOwnerRef.current = { active, userId };
     healthFoodMutationRevisionRef.current = 0;
+    pendingFoodHistoryRepairRowsRef.current.clear();
+    foodHistoryRepairInFlightRef.current.clear();
     return () => {
       healthOperationGenerationRef.current += 1;
+      journalTriggerLoadGenerationRef.current += 1;
       healthOwnerRef.current = { active: false, userId: null };
     };
   }, [active, client, userId]);
@@ -518,6 +670,13 @@ export function useHealth(
       setMessage({
         tone: "warn",
         text: `Meal Plan remains visible, but its pending recovery record could not be saved because ${storageProblem}. This change may not survive a refresh; no Health data was deleted.`,
+      });
+      return;
+    }
+    if (failure.source === "journal-pending") {
+      setMessage({
+        tone: "warn",
+        text: `Journal remains visible, but its pending recovery record could not be saved because ${storageProblem}. This local-only change may not survive a refresh; no Health data was deleted.`,
       });
       return;
     }
@@ -557,6 +716,108 @@ export function useHealth(
         "meal-plan-pending",
       );
     }
+  }
+
+  function persistJournalPendingMutations(journal: HealthJournalPendingMutationJournal): LocalStorageWriteResult {
+    journalPendingMutationsRef.current = journal;
+    if (userId) {
+      const result = persistHealthJournalPendingMutations(userId, journal);
+      rememberHealthLocalPersistenceFailure(result, "local", "journal-pending");
+      return result;
+    }
+    return { ok: true };
+  }
+
+  function recordJournalPendingMutation(mutation: HealthJournalPendingMutation): LocalStorageWriteResult {
+    const nextJournal = mutation.operation === "upsert"
+      ? mutation.intent === "unknown"
+        ? { ...journalPendingMutationsRef.current, [getHealthJournalPendingMutationKey(mutation.entity, mutation.row)]: mutation }
+        : recordHealthJournalPendingUpsert(journalPendingMutationsRef.current, mutation)
+      : recordHealthJournalPendingDelete(journalPendingMutationsRef.current, mutation.entity, mutation.id, mutation.journalEntryId);
+    return persistJournalPendingMutations(nextJournal);
+  }
+
+  function clearJournalPendingMutation(entity: HealthJournalPendingEntity, rowOrId: { id: string; journal_entry_id?: string; signal_id?: string } | string) {
+    const nextJournal = clearHealthJournalPendingMutation(journalPendingMutationsRef.current, entity, rowOrId);
+    if (nextJournal !== journalPendingMutationsRef.current) persistJournalPendingMutations(nextJournal);
+  }
+
+  function prepareJournalPendingUpsertForSave(
+    entity: HealthJournalPendingEntity,
+    row: HealthJournalPendingUpsert["row"],
+    preferredIntent: "create" | "update",
+  ): { error?: string; intent: "create" | "update" | null } {
+    const key = getHealthJournalPendingMutationKey(entity, row);
+    const existing = journalPendingMutationsRef.current[key];
+    if (existing?.operation === "delete") {
+      return { error: "A pending Journal deletion takes precedence over this write.", intent: null };
+    }
+
+    let intent = preferredIntent;
+    if (existing?.operation === "upsert") {
+      if (existing.intent === "create" && existing.submissionState === "never_submitted") intent = "create";
+      else if (existing.intent === "update" || (existing.intent === "create" && existing.submissionState === "confirmed" && preferredIntent === "update")) intent = "update";
+      else return { error: "This Journal creation may already have reached Supabase and remains held locally.", intent: null };
+    }
+
+    const stored = recordJournalPendingMutation({ entity, intent, operation: "upsert", row } as HealthJournalPendingMutation);
+    if (!stored.ok) {
+      return { error: "The pending Journal write could not be saved locally, so no remote write was attempted.", intent: null };
+    }
+    return { intent };
+  }
+
+  async function saveJournalPendingUpsert(
+    entity: HealthJournalPendingEntity,
+    row: HealthJournalPendingUpsert["row"],
+    preferredIntent: "create" | "update",
+    remoteEnabled: boolean,
+  ): Promise<{ error?: string; row: HealthJournalPendingUpsert["row"] }> {
+    const activeUserId = userId;
+    if (!activeUserId) return { error: "The Journal owner could not be confirmed locally.", row };
+    const prepared = prepareJournalPendingUpsertForSave(entity, row, preferredIntent);
+    if (prepared.error || !prepared.intent) return { error: prepared.error, row };
+    const key = getHealthJournalPendingMutationKey(entity, row);
+    const mutation = journalPendingMutationsRef.current[key];
+    if (!mutation || mutation.operation !== "upsert") {
+      return { error: "The pending Journal write could not be confirmed locally.", row };
+    }
+    if (!remoteEnabled || !client || storageMode !== "remote") return { row };
+
+    const parentId = "journal_entry_id" in row ? row.journal_entry_id : undefined;
+    const confirmedParentEntryIds = new Set<string>();
+    if (typeof parentId === "string") {
+      if (journalPendingMutationsRef.current[getHealthJournalPendingMutationKey("checkin", parentId)]?.operation === "delete") {
+        return { error: "A pending Journal Entry deletion suppresses this Feeling write.", row };
+      }
+      const parentResult = await createHealthJournalPendingReplayClient(client).read("checkin", parentId, activeUserId);
+      if (parentResult.error || !parentResult.data?.some((candidate) => candidate.id === parentId && candidate.user_id === activeUserId)) {
+        return { error: parentResult.error?.message ?? "The parent Journal Entry is missing remotely; this Feeling write remains held locally.", row };
+      }
+      confirmedParentEntryIds.add(parentId);
+    }
+
+    const replay = await replayHealthJournalPendingUpsertMutation({
+      confirmedParentEntryIds,
+      journal: journalPendingMutationsRef.current,
+      key,
+      mutation: mutation as Extract<HealthJournalPendingMutation, { operation: "upsert" }>,
+      persist: (nextJournal) => persistJournalPendingMutations(nextJournal).ok,
+      remote: createHealthJournalPendingReplayClient(client),
+      userId: activeUserId,
+    });
+    journalPendingMutationsRef.current = replay.journal;
+    if (replay.status !== "completed" || !replay.row) {
+      return { error: replay.error?.message ?? "The Journal write remains held locally and was not confirmed remotely.", row };
+    }
+    if (replay.alreadyPresent) {
+      return { error: "The pending Journal creation already exists remotely; review and save it again to apply this edit.", row };
+    }
+    const cleared = clearHealthJournalPendingMutation(journalPendingMutationsRef.current, entity, row);
+    if (cleared !== journalPendingMutationsRef.current && !persistJournalPendingMutations(cleared).ok) {
+      return { error: "The Journal write succeeded remotely, but its pending state could not be cleared locally.", row };
+    }
+    return { row: replay.row as HealthJournalPendingUpsert["row"] };
   }
 
   function buildHealthSnapshot(
@@ -774,11 +1035,23 @@ export function useHealth(
       healthRemoteAuthorityRef.current = null;
       healthHydrationInFlightRef.current = null;
       healthForceRemoteHydrationRef.current = false;
+      foodLibraryLoadedUserIdRef.current = null;
       setProfile(null);
       setCheckIns([]);
       setJournalSignals([]);
       setJournalSignalValues([]);
       setJournalSignalOccurrences([]);
+      setJournalTriggers([]);
+      setJournalTriggerLinks([]);
+      setJournalTriggerDataError(null);
+      setJournalStatisticsDataError(null);
+      setIsLoadingJournalTriggers(false);
+      setHasLoadedJournalTriggerData(false);
+      setJournalTriggerDataOwnerId(null);
+      setJournalTriggerRequestOwnerId(null);
+      journalTriggerOwnerRef.current = null;
+      journalTriggerLoadedOwnerRef.current = null;
+      journalTriggerLoadInFlightRef.current = null;
       setMealEntries([]);
       setMealPlanEntries([]);
       setFavorites([]);
@@ -800,11 +1073,23 @@ export function useHealth(
       journalRemoteEnabledRef.current = true;
       journalSignalOccurrencesRemoteEnabledRef.current = true;
       mealPlanPendingMutationsRef.current = {};
+      journalPendingMutationsRef.current = {};
       healthLocalPersistenceFailureRef.current = null;
       return;
     }
 
     if (!active) return;
+
+    if (journalTriggerOwnerRef.current !== userId) {
+      journalTriggerOwnerRef.current = userId;
+      setJournalTriggers([]);
+      setJournalTriggerLinks([]);
+      setJournalTriggerDataError(null);
+      setHasLoadedJournalTriggerData(false);
+      setJournalTriggerDataOwnerId(null);
+      if (journalTriggerLoadInFlightRef.current?.userId !== userId) setIsLoadingJournalTriggers(false);
+      journalTriggerLoadedOwnerRef.current = null;
+    }
 
     healthOperationGenerationRef.current += 1;
     const hydrationOperation = captureOperation();
@@ -817,10 +1102,12 @@ export function useHealth(
     healthLocalPersistenceFailureRef.current = null;
     const localState = readLocalHealthState(userId);
     mealPlanPendingMutationsRef.current = localState.mealPlanPendingMutations;
+    journalPendingMutationsRef.current = localState.journalPendingMutations;
     applySnapshot(localState.snapshot, { persistenceMode: "local" });
 
     if (!client) {
       setStorageMode("local");
+      foodLibraryLoadedUserIdRef.current = userId;
       return;
     }
 
@@ -829,7 +1116,9 @@ export function useHealth(
     const cachedRemoteAuthority = healthRemoteAuthorityRef.current;
     if (!forceRemoteHydration && cachedRemoteAuthority?.client === client && cachedRemoteAuthority.userId === userId) {
       setStorageMode("remote");
+      setJournalStatisticsDataError(null);
       applySnapshot(cachedRemoteAuthority.snapshot, { persistenceMode: "remote" });
+      foodLibraryLoadedUserIdRef.current = userId;
       setIsLoading(false);
       return;
     }
@@ -894,6 +1183,19 @@ export function useHealth(
         awardsResult.error,
       ].filter(Boolean);
 
+      const journalStatisticsDataErrors = [
+        checkInsResult.error,
+        journalSignalsResult.error,
+        journalSignalOccurrencesResult.error,
+        symptomsResult.error,
+        symptomEntriesResult.error,
+      ].filter((error): error is { message: string } => error !== null);
+      if (journalStatisticsDataErrors.length > 0) {
+        setJournalStatisticsDataError(
+          `Could not load required Journal statistics data: ${journalStatisticsDataErrors.map((error) => error.message).join("; ")}`,
+        );
+      }
+
       const symptomPersistenceErrors = [symptomsResult.error, symptomEntriesResult.error].filter(Boolean);
       const journalPersistenceErrors = [journalSignalsResult.error, journalSignalValuesResult.error].filter(Boolean);
       const journalSignalOccurrencePersistenceError = journalSignalOccurrencesResult.error;
@@ -904,6 +1206,9 @@ export function useHealth(
 
       if (errors.length > 0) {
         const firstError = errors[0];
+        setJournalStatisticsDataError(
+          `Could not refresh required Journal statistics data: ${firstError?.message ?? "Health data loading failed."}`,
+        );
         if (firstError && isMissingHealthPersistence(firstError.message)) {
           setStorageMode("local");
           setMessage({
@@ -913,6 +1218,7 @@ export function useHealth(
         } else if (firstError) {
           setMessage({ tone: "warn", text: firstError.message });
         }
+        foodLibraryLoadedUserIdRef.current = userId;
         setIsLoading(false);
         return;
       }
@@ -940,7 +1246,7 @@ export function useHealth(
         const hasMissingSymptomPersistence = symptomPersistenceErrors.some((error) => error && isMissingHealthSymptomPersistence(error.message));
         setMessage({
           text: hasMissingSymptomPersistence
-            ? "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied. Existing Health data remains connected."
+            ? "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied. Existing Health data remains connected."
             : symptomPersistenceErrors[0]?.message ?? "Symptom tracking could not connect and is using local storage.",
           tone: hasMissingSymptomPersistence ? "neutral" : "warn",
         });
@@ -958,7 +1264,7 @@ export function useHealth(
       if (journalSignalOccurrencePersistenceError) {
         setMessage({
           text: isMissingHealthPersistence(journalSignalOccurrencePersistenceError.message)
-            ? "Feeling Occurrences are using local storage until the 7.12.41 Health Journal migration is applied."
+            ? "Feeling Occurrences are using local storage until the 7.12.41 and 7.16.112 Health Journal migrations are applied."
             : journalSignalOccurrencePersistenceError.message,
           tone: isMissingHealthPersistence(journalSignalOccurrencePersistenceError.message) ? "neutral" : "warn",
         });
@@ -966,238 +1272,207 @@ export function useHealth(
 
       const latestLocalSymptoms = healthSnapshotRef.current?.symptoms ?? localState.snapshot.symptoms;
       const latestLocalSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? localState.snapshot.symptomEntries;
-      let remoteSymptoms = symptomsResult.data ?? [];
-      let remoteSymptomEntries = normalizeHealthSymptomEntries(symptomEntriesResult.data ?? []);
-      let symptomRecovery = reconcileHealthSymptoms(
-        latestLocalSymptoms,
-        remoteSymptoms,
-        latestLocalSymptomEntries,
-        remoteSymptomEntries,
-      );
-      let symptomDefinitionRecoveryError: { message: string } | null = null;
-      let symptomEntryRecoveryError: { message: string } | null = null;
-
-      if (!isActive || !isCurrentOperation(hydrationOperation)) {
-        return;
-      }
-      if (!symptomsResult.error && symptomRecovery.unreconciledLocalSymptoms.length > 0) {
-        const { data, error } = await client
-          .from("adhdice_health_symptoms")
-          .upsert(
-            symptomRecovery.unreconciledLocalSymptoms.map((symptom) => ({
-              archived_at: symptom.archived_at,
-              color: symptom.color,
-              created_at: symptom.created_at,
-              id: symptom.id,
-              name: symptom.name,
-              updated_at: symptom.updated_at,
-              user_id: userId,
-            })),
-            { onConflict: "id" },
-          )
-          .select("*");
-        if (!isActive || !isCurrentOperation(hydrationOperation)) {
-          return;
-        }
-        if (error) {
-          symptomDefinitionRecoveryError = error;
-          symptomDefinitionsRemoteEnabledRef.current = false;
-          symptomEntriesRemoteEnabledRef.current = false;
-        } else {
-          remoteSymptoms = [...remoteSymptoms, ...(data && data.length > 0 ? data : symptomRecovery.unreconciledLocalSymptoms)];
-          symptomRecovery = reconcileHealthSymptoms(
-            latestLocalSymptoms,
-            remoteSymptoms,
-            latestLocalSymptomEntries,
-            remoteSymptomEntries,
-          );
-        }
-      }
-
-      if (!isActive || !isCurrentOperation(hydrationOperation)) {
-        return;
-      }
-      if (!symptomsResult.error && !symptomDefinitionRecoveryError && !symptomEntriesResult.error) {
-        if (symptomRecovery.unreconciledLocalEntries.length > 0) {
-          const { data, error } = await client
-            .from("adhdice_health_symptom_entries")
-            .upsert(
-              symptomRecovery.unreconciledLocalEntries.map((entry) => ({
-                created_at: entry.created_at,
-                entry_date: entry.entry_date,
-                id: entry.id,
-                journal_entry_id: entry.journal_entry_id,
-                logged_at: entry.logged_at,
-                note: entry.note,
-                severity: entry.severity,
-                symptom_id: entry.symptom_id,
-                updated_at: entry.updated_at,
-                user_id: userId,
-              })),
-              { onConflict: "id" },
-            )
-            .select("*");
-          if (!isActive || !isCurrentOperation(hydrationOperation)) {
-            return;
-          }
-          if (error) {
-            symptomEntryRecoveryError = error;
-            symptomEntriesRemoteEnabledRef.current = false;
-          } else {
-            remoteSymptomEntries = [...remoteSymptomEntries, ...normalizeHealthSymptomEntries(data && data.length > 0 ? data : symptomRecovery.unreconciledLocalEntries)];
-          }
-        }
-      }
-
-      if (symptomDefinitionRecoveryError) {
-        setMessage({
-          tone: "warn",
-          text: `Local symptom definitions remain visible; remote recovery will retry on the next Health hydration: ${symptomDefinitionRecoveryError.message}`,
-        });
-      } else if (symptomEntryRecoveryError) {
-        setMessage({
-          tone: "warn",
-          text: `Local symptom entries remain visible; remote recovery will retry on the next Health hydration: ${symptomEntryRecoveryError.message}`,
-        });
-      }
-
-      const currentLocalSymptoms = healthSnapshotRef.current?.symptoms ?? latestLocalSymptoms;
-      const currentLocalSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? latestLocalSymptomEntries;
-      symptomRecovery = reconcileHealthSymptoms(
-        currentLocalSymptoms,
-        remoteSymptoms,
-        currentLocalSymptomEntries,
-        remoteSymptomEntries,
-      );
-
-      if (!isActive || !isCurrentOperation(hydrationOperation)) {
-        return;
-      }
-
       const latestLocalJournalSignals = healthSnapshotRef.current?.journalSignals ?? localState.snapshot.journalSignals;
       const latestLocalJournalSignalValues = healthSnapshotRef.current?.journalSignalValues ?? localState.snapshot.journalSignalValues;
       const latestLocalJournalSignalOccurrences = healthSnapshotRef.current?.journalSignalOccurrences ?? localState.snapshot.journalSignalOccurrences;
       const latestLocalCheckIns = healthSnapshotRef.current?.checkIns ?? localState.snapshot.checkIns;
-      let remoteCheckIns = (checkInsResult.data ?? []).map(normalizeHealthCheckIn);
-      let checkInRecoveryError: { message: string } | null = null;
-      let remoteJournalSignals = (journalSignalsResult.data ?? []).map(normalizeHealthJournalSignal);
-      let remoteJournalSignalValues = journalSignalValuesResult.data ?? [];
-      let remoteJournalSignalOccurrences = (journalSignalOccurrencesResult.data ?? []).map(normalizeHealthJournalSignalOccurrence);
-      let journalRecoveryError: { message: string } | null = null;
-
+      const pendingMutationsAtHydrationStart = journalPendingMutationsRef.current;
+      let quarantinedJournal = pendingMutationsAtHydrationStart;
+      let quarantinedJournalRowCount = 0;
+      function quarantineMissingLocalJournalRows(localRows: readonly HealthJournalPendingUpsert[], remoteRows: readonly { id: string }[]) {
+        const remoteIds = new Set(remoteRows.map((row) => row.id));
+        for (const mutation of localRows) {
+          const next = quarantineHealthJournalPendingUpsert(quarantinedJournal, mutation, remoteIds);
+          if (next !== quarantinedJournal) {
+            quarantinedJournal = next;
+            quarantinedJournalRowCount += 1;
+          }
+        }
+      }
       if (!checkInsResult.error) {
-        const remoteCheckInsById = new Map(remoteCheckIns.map((entry) => [entry.id, entry] as const));
-        const localCheckInsToRecover = latestLocalCheckIns.filter((entry) => {
-          const remoteEntry = remoteCheckInsById.get(entry.id);
-          return !remoteEntry || entry.updated_at > remoteEntry.updated_at;
-        });
-        if (localCheckInsToRecover.length > 0) {
-          const { data, error } = await client
-            .from("adhdice_health_checkins")
-            .upsert(localCheckInsToRecover.map((entry) => ({ ...entry, user_id: userId })), { onConflict: "id" })
-            .select("*");
-          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
-          if (error) {
-            checkInRecoveryError = error;
-          } else {
-            remoteCheckIns = [
-              ...remoteCheckIns.filter((entry) => !localCheckInsToRecover.some((localEntry) => localEntry.id === entry.id)),
-              ...(data ?? localCheckInsToRecover).map(normalizeHealthCheckIn),
-            ].sort(sortHealthJournalEntries);
-          }
-        }
+        quarantineMissingLocalJournalRows(latestLocalCheckIns.map((row) => ({ entity: "checkin", row })), checkInsResult.data ?? []);
       }
-
-      if (checkInRecoveryError) {
+      if (!journalSignalsResult.error) {
+        quarantineMissingLocalJournalRows(latestLocalJournalSignals.map((row) => ({ entity: "signal", row })), journalSignalsResult.data ?? []);
+      }
+      if (!journalSignalValuesResult.error) {
+        quarantineMissingLocalJournalRows(latestLocalJournalSignalValues.map((row) => ({ entity: "signal_value", row })), journalSignalValuesResult.data ?? []);
+      }
+      if (!journalSignalOccurrencesResult.error) {
+        quarantineMissingLocalJournalRows(latestLocalJournalSignalOccurrences.map((row) => ({ entity: "signal_occurrence", row })), journalSignalOccurrencesResult.data ?? []);
+      }
+      if (!symptomsResult.error) {
+        quarantineMissingLocalJournalRows(latestLocalSymptoms.map((row) => ({ entity: "symptom", row })), symptomsResult.data ?? []);
+      }
+      if (!symptomEntriesResult.error) {
+        quarantineMissingLocalJournalRows(latestLocalSymptomEntries.map((row) => ({ entity: "symptom_entry", row })), symptomEntriesResult.data ?? []);
+      }
+      if (quarantinedJournal !== pendingMutationsAtHydrationStart) {
+        journalPendingMutationsRef.current = quarantinedJournal;
+        const pendingWriteResult = persistHealthJournalPendingMutations(userId, quarantinedJournal);
+        if (!pendingWriteResult.ok) {
+          healthLocalPersistenceFailureRef.current = {
+            mode: "local",
+            reason: pendingWriteResult.reason,
+            source: "journal-pending",
+          };
+          setMessage({
+            tone: "warn",
+            text: "Journal hydration stopped because ambiguous cached records could not be preserved locally. No recovery writes were made.",
+          });
+          return;
+        }
         setMessage({
           tone: "warn",
-          text: `Local Journal snapshots remain visible; remote snapshot recovery will retry on the next Health hydration: ${checkInRecoveryError.message}`,
+          text: `${quarantinedJournalRowCount} cached Journal ${quarantinedJournalRowCount === 1 ? "record was" : "records were"} held locally because remote data could not confirm them. They were not restored or uploaded.`,
         });
-        remoteCheckIns = [
-          ...remoteCheckIns,
-          ...latestLocalCheckIns.filter((localEntry) => !remoteCheckIns.some((remoteEntry) => remoteEntry.id === localEntry.id) || localEntry.updated_at > (remoteCheckIns.find((remoteEntry) => remoteEntry.id === localEntry.id)?.updated_at ?? "")),
-        ].sort(sortHealthJournalEntries);
+      }
+      const pendingMutationOrder: Record<HealthJournalPendingEntity, number> = {
+        checkin: 0,
+        symptom: 1,
+        signal: 2,
+        signal_value: 3,
+        signal_occurrence: 4,
+        symptom_entry: 5,
+      };
+      const pendingMutations = Object.entries(pendingMutationsAtHydrationStart).sort(([leftKey, left], [rightKey, right]) => {
+        const getOrder = (mutation: HealthJournalPendingMutation) => mutation.operation === "delete"
+          ? mutation.entity === "checkin" ? 0 : 1
+          : mutation.entity === "checkin" ? 2 : 3 + pendingMutationOrder[mutation.entity];
+        return getOrder(left) - getOrder(right) || leftKey.localeCompare(rightKey);
+      });
+      const completedPendingMutations: { key: string; mutation: HealthJournalPendingMutation }[] = [];
+      let journalRecoveryError: { message: string } | null = null;
+      let ambiguousPendingMutationCount = 0;
+      const blockedParentEntryIds = new Set(Object.values(pendingMutationsAtHydrationStart)
+        .filter((mutation) => mutation.entity === "checkin" && mutation.operation === "delete")
+        .map((mutation) => mutation.operation === "delete" ? mutation.id : ""));
+      const deletedParentEntryIds = new Set<string>();
+      const confirmedParentEntryIds = new Set((checkInsResult.data ?? []).map((entry) => entry.id));
+      const pendingReplayClient = createHealthJournalPendingReplayClient(client);
+
+      for (const [key] of pendingMutations) {
+        if (!isActive || !isCurrentOperation(hydrationOperation)) return;
+        const mutation = journalPendingMutationsRef.current[key];
+        if (!mutation) continue;
+        const parentEntryId = mutation.operation === "delete"
+          ? mutation.journalEntryId
+          : "journal_entry_id" in mutation.row && typeof mutation.row.journal_entry_id === "string"
+            ? mutation.row.journal_entry_id
+            : undefined;
+
+        if (parentEntryId && blockedParentEntryIds.has(parentEntryId)) {
+          if (deletedParentEntryIds.has(parentEntryId)) {
+            completedPendingMutations.push({ key, mutation });
+          } else {
+            ambiguousPendingMutationCount += 1;
+            journalRecoveryError ??= { message: "A pending Journal Entry deletion is still being retried; related Feeling writes remain held locally." };
+          }
+          continue;
+        }
+
+        if (mutation.operation === "delete") {
+          if (mutation.entity === "symptom") {
+            ambiguousPendingMutationCount += 1;
+            journalRecoveryError ??= { message: "Symptom definition deletion is not a supported Journal tombstone operation; the pending record remains held locally." };
+            continue;
+          }
+          try {
+            const tombstone = await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: mutation.entity,
+              id: mutation.id,
+              ...(mutation.journalEntryId ? { journalEntryId: mutation.journalEntryId } : {}),
+            });
+            if (!isActive || !isCurrentOperation(hydrationOperation)) return;
+            if (!tombstone.tombstoned) {
+              journalRecoveryError ??= { message: `Could not confirm the deletion tombstone for Journal ${mutation.entity.replaceAll("_", " ")} ${mutation.id}.` };
+            } else {
+              completedPendingMutations.push({ key, mutation });
+              if (mutation.entity === "checkin") {
+                deletedParentEntryIds.add(mutation.id);
+                confirmedParentEntryIds.delete(mutation.id);
+              }
+            }
+          } catch (error) {
+            if (!isActive || !isCurrentOperation(hydrationOperation)) return;
+            journalRecoveryError ??= { message: error instanceof Error ? error.message : "Could not persist a Journal deletion tombstone." };
+          }
+          continue;
+        }
+
+        const replayResult = await replayHealthJournalPendingUpsertMutation({
+          blockedParentEntryIds,
+          confirmedParentEntryIds,
+          journal: journalPendingMutationsRef.current,
+          key,
+          mutation,
+          persist: (nextJournal) => {
+            journalPendingMutationsRef.current = nextJournal;
+            const result = persistHealthJournalPendingMutations(userId, nextJournal);
+            if (!result.ok) {
+              healthLocalPersistenceFailureRef.current = {
+                mode: "local",
+                reason: result.reason,
+                source: "journal-pending",
+              };
+            }
+            return result.ok;
+          },
+          remote: pendingReplayClient,
+          userId,
+        });
+        journalPendingMutationsRef.current = replayResult.journal;
+        if (!isActive || !isCurrentOperation(hydrationOperation)) return;
+        if (replayResult.status === "completed") {
+          const confirmedMutation = replayResult.journal[key];
+          if (confirmedMutation) completedPendingMutations.push({ key, mutation: confirmedMutation });
+          if (mutation.entity === "checkin") confirmedParentEntryIds.add(mutation.row.id);
+        } else {
+          ambiguousPendingMutationCount += 1;
+          journalRecoveryError ??= replayResult.error ?? { message: `Journal ${mutation.entity.replaceAll("_", " ")} ${mutation.row.id} remains held locally.` };
+        }
       }
 
-      if (journalPersistenceErrors.length === 0) {
-        const remoteSignalIds = new Set(remoteJournalSignals.map((signal) => signal.id));
-        const localSignalsToRecover = latestLocalJournalSignals.filter((signal) => !remoteSignalIds.has(signal.id));
-        if (localSignalsToRecover.length > 0) {
-          const { data, error } = await client
-            .from("adhdice_health_journal_signals")
-            .upsert(localSignalsToRecover.map((signal) => ({
-              archived_at: signal.archived_at,
-              color: signal.color,
-              high_label: signal.high_label,
-              id: signal.id,
-              in_template: signal.in_template,
-              kind: signal.kind,
-              low_label: signal.low_label,
-              name: signal.name,
-              scale_labels: signal.scale_labels,
-              symptom_id: signal.symptom_id,
-              template_sort_order: signal.template_sort_order,
-              user_id: userId,
-            })), { onConflict: "id" })
-            .select("*");
-          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
-          if (error) {
-            journalRecoveryError = error;
-          } else {
-            remoteJournalSignals = [...remoteJournalSignals, ...(data ?? localSignalsToRecover).map(normalizeHealthJournalSignal)];
-          }
-        }
-
-        const remoteValueIds = new Set(remoteJournalSignalValues.map((value) => value.id));
-        const localValuesToRecover = latestLocalJournalSignalValues.filter((value) => !remoteValueIds.has(value.id));
-        if (!journalRecoveryError && localValuesToRecover.length > 0) {
-          const { data, error } = await client
-            .from("adhdice_health_journal_signal_values")
-            .upsert(localValuesToRecover.map((value) => ({ ...value, user_id: userId })), { onConflict: "id" })
-            .select("*");
-          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
-          if (error) {
-            journalRecoveryError = error;
-          } else {
-            remoteJournalSignalValues = [...remoteJournalSignalValues, ...(data ?? localValuesToRecover)];
-          }
-        }
-
-        const nativeSignalIds = new Set(
-          [...remoteJournalSignals, ...latestLocalJournalSignals]
-            .filter((signal) => signal.kind === "emotion" || signal.kind === "other")
-            .map((signal) => signal.id),
-        );
-        remoteJournalSignalOccurrences = remoteJournalSignalOccurrences.filter((occurrence) => nativeSignalIds.has(occurrence.signal_id));
-        const remoteOccurrenceIds = new Set(remoteJournalSignalOccurrences.map((occurrence) => occurrence.id));
-        const localOccurrencesToRecover = latestLocalJournalSignalOccurrences
-          .filter((occurrence) => nativeSignalIds.has(occurrence.signal_id) && !remoteOccurrenceIds.has(occurrence.id));
-        if (!journalRecoveryError && !journalSignalOccurrencePersistenceError && localOccurrencesToRecover.length > 0) {
-          const { data, error } = await client
-            .from("adhdice_health_journal_signal_occurrences")
-            .upsert(localOccurrencesToRecover.map((occurrence) => ({ ...occurrence, user_id: userId })), { onConflict: "id" })
-            .select("*");
-          if (!isActive || !isCurrentOperation(hydrationOperation)) return;
-          if (error) {
-            journalRecoveryError = error;
-            journalSignalOccurrencesRemoteEnabledRef.current = false;
-          } else {
-            remoteJournalSignalOccurrences = [...remoteJournalSignalOccurrences, ...(data ?? localOccurrencesToRecover).map(normalizeHealthJournalSignalOccurrence)];
-          }
+      const nextPendingJournalMutations = clearCompletedHealthJournalPendingMutations(
+        journalPendingMutationsRef.current,
+        completedPendingMutations,
+      );
+      if (nextPendingJournalMutations !== journalPendingMutationsRef.current) {
+        journalPendingMutationsRef.current = nextPendingJournalMutations;
+        const pendingWriteResult = persistHealthJournalPendingMutations(userId, nextPendingJournalMutations);
+        if (!pendingWriteResult.ok) {
+          healthLocalPersistenceFailureRef.current = {
+            mode: "local",
+            reason: pendingWriteResult.reason,
+            source: "journal-pending",
+          };
+          journalRecoveryError ??= { message: "Completed Journal recovery could not be cleared from local storage; it will be checked again safely." };
         }
       }
-
       if (journalRecoveryError) {
-        journalRemoteEnabledRef.current = false;
         setMessage({
           tone: "warn",
-          text: `Local Journal changes remain visible; remote recovery will retry on the next Health hydration: ${journalRecoveryError.message}`,
+          text: `Some explicitly pending Journal writes remain queued locally and will retry on a later Health hydration: ${journalRecoveryError.message}`,
+        });
+      }
+      if (ambiguousPendingMutationCount > 0) {
+        setMessage({
+          tone: "warn",
+          text: `${ambiguousPendingMutationCount} ambiguous cached Journal record${ambiguousPendingMutationCount === 1 ? " was" : "s were"} held locally. They were not restored or uploaded.`,
         });
       }
 
-      const currentLocalJournalSignals = healthSnapshotRef.current?.journalSignals ?? latestLocalJournalSignals;
-      const currentLocalJournalSignalValues = healthSnapshotRef.current?.journalSignalValues ?? latestLocalJournalSignalValues;
-      const currentLocalJournalSignalOccurrences = healthSnapshotRef.current?.journalSignalOccurrences ?? latestLocalJournalSignalOccurrences;
+      const pendingMutationsForProjection = {
+        ...pendingMutationsAtHydrationStart,
+        ...journalPendingMutationsRef.current,
+      };
+      const remoteCheckIns = (checkInsResult.data ?? []).map(normalizeHealthCheckIn);
+      const remoteJournalSignals = (journalSignalsResult.data ?? []).map(normalizeHealthJournalSignal);
+      const remoteJournalSignalValues = journalSignalValuesResult.data ?? [];
+      const remoteJournalSignalOccurrences = (journalSignalOccurrencesResult.data ?? []).map(normalizeHealthJournalSignalOccurrence);
+      const remoteSymptoms = symptomsResult.data ?? [];
+      const remoteSymptomEntries = normalizeHealthSymptomEntries(symptomEntriesResult.data ?? []);
 
       const remoteWorkouts = sortHealthWorkouts(workoutsResult.data ?? []);
       const latestLocalWorkouts = healthSnapshotRef.current?.workouts ?? localState.snapshot.workouts;
@@ -1290,10 +1565,18 @@ export function useHealth(
 
       const remoteSnapshot = buildHealthSnapshot({
         awards: awardsResult.data ?? [],
-        checkIns: remoteCheckIns,
-        journalSignals: journalSignalsResult.error ? currentLocalJournalSignals : remoteJournalSignals,
-        journalSignalValues: journalSignalValuesResult.error ? currentLocalJournalSignalValues : remoteJournalSignalValues,
-        journalSignalOccurrences: journalSignalOccurrencePersistenceError ? currentLocalJournalSignalOccurrences : remoteJournalSignalOccurrences,
+        checkIns: checkInsResult.error
+          ? latestLocalCheckIns
+          : replayHealthJournalPendingMutations("checkin", remoteCheckIns, pendingMutationsForProjection, userId).sort(sortHealthJournalEntries),
+        journalSignals: journalSignalsResult.error
+          ? latestLocalJournalSignals
+          : replayHealthJournalPendingMutations("signal", remoteJournalSignals, pendingMutationsForProjection, userId).map(normalizeHealthJournalSignal).sort(sortHealthJournalSignals),
+        journalSignalValues: journalSignalValuesResult.error
+          ? latestLocalJournalSignalValues
+          : replayHealthJournalPendingMutations("signal_value", remoteJournalSignalValues, pendingMutationsForProjection, userId),
+        journalSignalOccurrences: journalSignalOccurrencePersistenceError
+          ? latestLocalJournalSignalOccurrences
+          : replayHealthJournalPendingMutations("signal_occurrence", remoteJournalSignalOccurrences, pendingMutationsForProjection, userId).map(normalizeHealthJournalSignalOccurrence).sort(sortHealthJournalSignalOccurrences),
         favorites: (favoritesResult.data ?? []).map(normalizeHealthFoodLibraryItem),
         importAudits: importAuditsResult.data ?? [],
         mealEntries: mealEntriesResult.data ?? [],
@@ -1305,8 +1588,12 @@ export function useHealth(
         })(),
         recipes: recipesResult.data ?? [],
         savedMeals: savedMealsResult.data ?? [],
-        symptomEntries: symptomEntriesResult.error ? currentLocalSymptomEntries : normalizeHealthSymptomEntries(symptomRecovery.mergedEntries),
-        symptoms: symptomsResult.error ? currentLocalSymptoms : symptomRecovery.mergedSymptoms,
+        symptomEntries: symptomEntriesResult.error
+          ? latestLocalSymptomEntries
+          : sortHealthSymptomEntries(replayHealthJournalPendingMutations("symptom_entry", remoteSymptomEntries, pendingMutationsForProjection, userId)),
+        symptoms: symptomsResult.error
+          ? latestLocalSymptoms
+          : sortHealthSymptoms(replayHealthJournalPendingMutations("symptom", remoteSymptoms, pendingMutationsForProjection, userId).map(normalizeHealthSymptom)),
         waterEntries: (waterEntriesResult.data ?? []).map(normalizeHealthWaterEntry),
         workouts: workoutRecovery.mergedWorkouts,
         weightEntries: weightEntriesResult.data ?? [],
@@ -1340,6 +1627,8 @@ export function useHealth(
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[health] hydrated pages=${healthPageCount} user=${userId}`);
       }
+      if (journalStatisticsDataErrors.length === 0) setJournalStatisticsDataError(null);
+      foodLibraryLoadedUserIdRef.current = userId;
       setIsLoading(false);
     })();
 
@@ -1478,12 +1767,152 @@ export function useHealth(
     return true;
   }
 
-  async function saveJournalEntry(input: HealthJournalEntrySaveInput) {
-    if (!userId || !profile) {
+  const diagnoseNullJournalSave = (stage: string, entryId?: string, coreWriteState = "unknown") => {
+    if (!isWorkspacePerformanceDiagnosticsEnabled()) return;
+    console.warn(`[health:journal-save] result=null stage=${stage} entryId=${entryId ?? "unavailable"} coreWrite=${coreWriteState}`);
+  };
+
+  function loadJournalTriggerData() {
+    if (!userId) return Promise.resolve(false);
+    if (!active || !client) {
+      setJournalTriggerRequestOwnerId(userId);
+      setJournalTriggerDataError("Journal Triggers require an available remote connection. No remote Trigger data was loaded.");
+      setIsLoadingJournalTriggers(false);
+      return Promise.resolve(false);
+    }
+    if (journalTriggerLoadedOwnerRef.current === userId) return Promise.resolve(true);
+    const existingLoad = journalTriggerLoadInFlightRef.current;
+    if (existingLoad?.userId === userId && existingLoad.client === client) return existingLoad.promise;
+
+    const loadGeneration = journalTriggerLoadGenerationRef.current;
+    const isCurrentTriggerLoad = () => active
+      && healthOwnerRef.current.active
+      && healthOwnerRef.current.userId === userId
+      && journalTriggerLoadGenerationRef.current === loadGeneration;
+    setIsLoadingJournalTriggers(true);
+    setJournalTriggerDataError(null);
+    setJournalTriggerRequestOwnerId(userId);
+    const promise = (async () => {
+      try {
+        const [nextTriggers, nextLinks] = await Promise.all([
+          listHealthJournalTriggers(userId, client),
+          readHealthJournalTriggerLinks(userId, client),
+        ]);
+        if (!isCurrentTriggerLoad()) return false;
+        setJournalTriggers(nextTriggers);
+        setJournalTriggerLinks(nextLinks);
+        setHasLoadedJournalTriggerData(true);
+        setJournalTriggerDataOwnerId(userId);
+        journalTriggerLoadedOwnerRef.current = userId;
+        journalTriggerOwnerRef.current = userId;
+        return true;
+      } catch (error) {
+        if (!isCurrentTriggerLoad()) return false;
+        const message = error instanceof Error ? error.message : "Could not load Journal Triggers.";
+        setJournalTriggerDataError(message);
+        return false;
+      } finally {
+        if (isCurrentTriggerLoad()) setIsLoadingJournalTriggers(false);
+      }
+    })();
+    journalTriggerLoadInFlightRef.current = { client, promise, userId };
+    void promise.then(() => {
+      if (journalTriggerLoadInFlightRef.current?.promise === promise) journalTriggerLoadInFlightRef.current = null;
+    });
+    return promise;
+  }
+
+  async function createJournalTrigger(value: string) {
+    if (!userId || !client) {
+      setJournalTriggerDataError("Journal Triggers require an available remote connection. No local-only Trigger was created.");
       return null;
+    }
+    const identity = getHealthJournalTriggerNameIdentity(value);
+    if (!identity) {
+      setJournalTriggerDataError("Trigger name cannot be empty.");
+      return null;
+    }
+    const existing = journalTriggers.find((trigger) => getHealthJournalTriggerNameIdentity(trigger.name) === identity);
+    if (existing) {
+      if (existing.archived_at !== null) {
+        setJournalTriggerDataError("That Trigger name is archived. Restore it in the Trigger Library before using it again.");
+        return null;
+      }
+      setJournalTriggerDataError(null);
+      return existing;
     }
     const operation = captureOperation();
     if (!operation) return null;
+    try {
+      const created = await createHealthJournalTrigger(userId, value, client);
+      if (!isCurrentOperation(operation)) return null;
+      setJournalTriggers((current) => current.some((trigger) => trigger.id === created.id) ? current : [...current, created].sort((left, right) => left.name.localeCompare(right.name)));
+      setJournalTriggerDataError(null);
+      return created;
+    } catch (error) {
+      if (!isCurrentOperation(operation)) return null;
+      // A concurrent normalized-name insert may have won the unique constraint.
+      try {
+        const latest = await listHealthJournalTriggers(userId, client);
+        if (!isCurrentOperation(operation)) return null;
+        setJournalTriggers(latest);
+        const matching = latest.find((trigger) => getHealthJournalTriggerNameIdentity(trigger.name) === identity && trigger.archived_at === null);
+        if (matching) {
+          setJournalTriggerDataError(null);
+          return matching;
+        }
+      } catch {
+        // Keep the original remote create failure visible below.
+      }
+      const message = error instanceof Error ? error.message : "Could not create Journal Trigger.";
+      setJournalTriggerDataError(message);
+      return null;
+    }
+  }
+
+  async function saveJournalEntry(input: HealthJournalEntrySaveInput): Promise<HealthJournalEntrySaveResult | null> {
+    if (!userId || !profile) {
+      diagnoseNullJournalSave("owner-unavailable");
+      return null;
+    }
+    const operation = captureOperation();
+    if (!operation) {
+      diagnoseNullJournalSave("operation-unavailable");
+      return null;
+    }
+    const triggerReplacements = input.triggerAssociationReplacements ?? [];
+    if (triggerReplacements.length > 0) {
+      if (!client || storageMode !== "remote" || !journalRemoteEnabledRef.current) {
+        setMessage({ tone: "warn", text: "Journal Triggers need remote Journal persistence. No local-only Trigger save was made." });
+        return null;
+      }
+      if (triggerReplacements.some((replacement) => replacement.occurrence_kind === "symptom"
+        ? !symptomEntriesRemoteEnabledRef.current
+        : !journalSignalOccurrencesRemoteEnabledRef.current)) {
+        setMessage({ tone: "warn", text: "Journal Trigger associations need remotely saved Feeling occurrences. No Trigger replacement was made." });
+        return null;
+      }
+      const targets = new Set<string>();
+      for (const replacement of triggerReplacements) {
+        const occurrenceRows = replacement.occurrence_kind === "symptom" ? input.symptomOccurrences : input.journalSignalOccurrences;
+        if (!replacement.occurrence_id || !occurrenceRows.some((occurrence) => occurrence.id === replacement.occurrence_id)) {
+          setMessage({ tone: "warn", text: "A Trigger association must target an occurrence included in this Journal save." });
+          return null;
+        }
+        const key = `${replacement.occurrence_kind}:${replacement.occurrence_id}`;
+        if (targets.has(key)) {
+          setMessage({ tone: "warn", text: "A Journal occurrence can only be replaced once per save." });
+          return null;
+        }
+        targets.add(key);
+        const associations = validateHealthJournalTriggerAssociationDrafts(replacement.associations);
+        const expected = validateHealthJournalTriggerAssociationDrafts(replacement.expected_associations);
+        if (!associations.valid || !expected.valid) {
+          setMessage({ tone: "warn", text: !associations.valid ? associations.error : !expected.valid ? expected.error : "Journal Trigger association is invalid." });
+          return null;
+        }
+      }
+    }
 
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
       awards,
@@ -1542,55 +1971,31 @@ export function useHealth(
       user_id: userId,
     };
 
+    let coreWriteState = "not-applied";
     let nextRow = localRow;
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const remoteCheckInFields = {
-        clarity_score: input.checkIn.clarity_score !== undefined ? input.checkIn.clarity_score : existingRow?.clarity_score ?? null,
-        energy_score: input.checkIn.energy_score !== undefined ? input.checkIn.energy_score : existingRow?.energy_score ?? null,
-        entry_date: input.checkIn.entry_date,
-        entry_time: entryTime,
-        entry_type: localRow.entry_type,
-        mood_score: input.checkIn.mood_score !== undefined ? input.checkIn.mood_score : existingRow?.mood_score ?? null,
-        reflection: input.checkIn.reflection !== undefined ? input.checkIn.reflection : existingRow?.reflection ?? "",
-        stress_score: input.checkIn.stress_score !== undefined ? input.checkIn.stress_score : existingRow?.stress_score ?? null,
-        symptom_tags: input.checkIn.symptom_tags !== undefined ? input.checkIn.symptom_tags : existingRow?.symptom_tags ?? [],
-        structured_answers: localRow.structured_answers,
-      };
-      const result = requestedEntryId && existingRow
-        ? await client
-          .from("adhdice_health_checkins")
-          .update(remoteCheckInFields)
-          .eq("id", requestedEntryId)
-          .eq("user_id", userId)
-          .select("*")
-          .single()
-        : await client
-          .from("adhdice_health_checkins")
-          .insert({ ...(requestedEntryId ? { id: requestedEntryId } : {}), ...remoteCheckInFields, user_id: userId })
-          .select("*")
-          .single();
-      const { data, error } = result;
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) {
-          journalRemoteEnabledRef.current = false;
-          setMessage({ tone: "neutral", text: "Journal is using local storage until the 7.13.43 Journal migration is applied." });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return null;
-        }
-      } else {
-        nextRow = data ? normalizeHealthCheckIn(data) : localRow;
-      }
-    }
-
-    const currentValues = currentSnapshot.journalSignalValues.filter((value) => value.journal_entry_id === nextRow.id);
     if (input.signalValues.some((draft) => !currentSnapshot.journalSignals.some((signal) => signal.id === draft.signal_id))) {
       setMessage({ tone: "warn", text: "Choose valid template Feelings before saving the Journal Entry." });
+      diagnoseNullJournalSave("invalid-signal-value", nextRow.id, coreWriteState);
       return null;
     }
     if (input.signalValues.some((draft) => draft.score !== null && normalizeHealthJournalScore(draft.score) !== draft.score)) {
       setMessage({ tone: "warn", text: "Snapshot Feeling scores must be between 0 and 10." });
+      diagnoseNullJournalSave("invalid-signal-score", nextRow.id, coreWriteState);
+      return null;
+    }
+    const symptomOccurrenceOwnershipError = getHealthJournalOccurrenceOwnershipError(
+      input.symptomOccurrences,
+      currentSnapshot.symptomEntries,
+      nextRow.id,
+    );
+    const journalSignalOccurrenceOwnershipError = getHealthJournalOccurrenceOwnershipError(
+      input.journalSignalOccurrences,
+      currentSnapshot.journalSignalOccurrences,
+      nextRow.id,
+    );
+    const occurrenceOwnershipError = symptomOccurrenceOwnershipError ?? journalSignalOccurrenceOwnershipError;
+    if (occurrenceOwnershipError) {
+      setMessage({ tone: "warn", text: occurrenceOwnershipError });
       return null;
     }
     for (const occurrence of input.symptomOccurrences) {
@@ -1602,6 +2007,7 @@ export function useHealth(
         : false;
       if (occurrence.id && !isOwnedOccurrence) {
         setMessage({ tone: "warn", text: "That Feeling occurrence belongs to another Journal Entry." });
+        diagnoseNullJournalSave("foreign-symptom-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       const isExistingArchivedOccurrence = occurrence.id
@@ -1609,10 +2015,12 @@ export function useHealth(
         : false;
       if (!occurrenceSymptom || (occurrenceSymptom.archived_at !== null && !isExistingArchivedOccurrence)) {
         setMessage({ tone: "warn", text: "Choose an active symptom for each occurrence." });
+        diagnoseNullJournalSave("invalid-symptom-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       if (!Number.isInteger(occurrence.severity) || occurrence.severity < 1 || occurrence.severity > occurrenceDenominator) {
         setMessage({ tone: "warn", text: `Feeling occurrence severity must be between 1 and ${occurrenceDenominator}.` });
+        diagnoseNullJournalSave("invalid-symptom-occurrence-score", nextRow.id, coreWriteState);
         return null;
       }
     }
@@ -1624,17 +2032,80 @@ export function useHealth(
         : false;
       if (!isValidNativeJournalSignal(signal) || (signal?.archived_at !== null && !isExistingOccurrence)) {
         setMessage({ tone: "warn", text: "Choose an active Emotion or Other Feeling for each occurrence." });
+        diagnoseNullJournalSave("invalid-feeling-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       if (occurrence.id && !isExistingOccurrence) {
         setMessage({ tone: "warn", text: "That Feeling occurrence belongs to another Journal Entry." });
+        diagnoseNullJournalSave("foreign-feeling-occurrence", nextRow.id, coreWriteState);
         return null;
       }
       if (!Number.isInteger(occurrence.score) || occurrence.score < 1 || occurrence.score > occurrenceDenominator || !occurrence.occurred_at || !Number.isFinite(Date.parse(occurrence.occurred_at))) {
         setMessage({ tone: "warn", text: `Feeling occurrences need a score from 1 to ${occurrenceDenominator} and a valid time.` });
+        diagnoseNullJournalSave("invalid-feeling-occurrence-score-or-time", nextRow.id, coreWriteState);
         return null;
       }
     }
+    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
+      try {
+        const occurrenceClient = client as unknown as HealthJournalOccurrencePersistenceClient;
+        const [symptomRemoteOwners, signalRemoteOwners] = await Promise.all([
+          symptomEntriesRemoteEnabledRef.current
+            ? readHealthJournalOccurrenceOwners(
+            occurrenceClient,
+            "adhdice_health_symptom_entries",
+            userId,
+            input.symptomOccurrences.flatMap((occurrence) => occurrence.id ? [occurrence.id] : []),
+            )
+            : Promise.resolve([]),
+          journalSignalOccurrencesRemoteEnabledRef.current
+            ? readHealthJournalOccurrenceOwners(
+            occurrenceClient,
+            "adhdice_health_journal_signal_occurrences",
+            userId,
+            input.journalSignalOccurrences.flatMap((occurrence) => occurrence.id ? [occurrence.id] : []),
+            )
+            : Promise.resolve([]),
+        ]);
+        if (!isCurrentOperation(operation)) return null;
+        const remoteOwnershipError = getHealthJournalOccurrenceOwnershipError(input.symptomOccurrences, symptomRemoteOwners, nextRow.id)
+          ?? getHealthJournalOccurrenceOwnershipError(input.journalSignalOccurrences, signalRemoteOwners, nextRow.id);
+        if (remoteOwnershipError) {
+          setMessage({ tone: "warn", text: remoteOwnershipError });
+          return null;
+        }
+      } catch (error) {
+        if (!isCurrentOperation(operation)) return null;
+        setMessage({ tone: "warn", text: error instanceof Error ? error.message : "Could not confirm Feeling occurrence ownership." });
+        return null;
+      }
+    }
+    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
+      const pendingDelete = journalPendingMutationsRef.current[getHealthJournalPendingMutationKey("checkin", localRow.id)];
+      if (pendingDelete?.operation === "delete") {
+        setMessage({ tone: "warn", text: "This Journal Entry is pending deletion and cannot be recreated." });
+        return null;
+      }
+      const saveResult = await saveJournalPendingUpsert(
+        "checkin",
+        localRow,
+        existingRow ? "update" : "create",
+        journalRemoteEnabledRef.current,
+      );
+      if (!isCurrentOperation(operation)) {
+        diagnoseNullJournalSave("owner-changed-after-core-write", localRow.id, coreWriteState);
+        return null;
+      }
+      if (saveResult.error) {
+        setMessage({ tone: "warn", text: saveResult.error });
+        diagnoseNullJournalSave("core-write-error", localRow.id, coreWriteState);
+        return null;
+      }
+      nextRow = normalizeHealthCheckIn(saveResult.row as HealthCheckIn);
+      coreWriteState = "remote-confirmed";
+    }
+    if (!isCurrentOperation(operation)) return null;
+    const currentValues = currentSnapshot.journalSignalValues.filter((value) => value.journal_entry_id === nextRow.id);
     const scoredValues = input.signalValues
       .map((draft) => ({
         draft,
@@ -1668,6 +2139,7 @@ export function useHealth(
         note: occurrence.note ?? null,
         severity: occurrence.severity,
         symptom_id: occurrence.symptom_id,
+        time_is_estimated: occurrence.time_is_estimated === true,
         updated_at: now,
         user_id: userId,
       } satisfies HealthSymptomEntry;
@@ -1689,6 +2161,7 @@ export function useHealth(
         occurred_at: occurrence.occurred_at,
         score: occurrence.score,
         signal_id: occurrence.signal_id,
+        time_is_estimated: occurrence.time_is_estimated === true,
         updated_at: now,
         user_id: userId,
       } satisfies HealthJournalSignalOccurrence;
@@ -1697,76 +2170,184 @@ export function useHealth(
     const removedJournalSignalOccurrences = currentOwnedJournalSignalOccurrences.filter((entry) => !keptJournalSignalOccurrenceIds.has(entry.id));
 
     let childWriteError: { message: string } | null = null;
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      if (journalRemoteEnabledRef.current && scoredValues.length > 0) {
-        const { data, error } = await client
-          .from("adhdice_health_journal_signal_values")
-          .upsert(scoredValues, { onConflict: "user_id,journal_entry_id,signal_id" })
-          .select("*");
-        if (!isCurrentOperation(operation)) return null;
-        if (error) childWriteError = error;
-        else if (data) scoredValues.splice(0, scoredValues.length, ...data);
+    const saveChildRows = async <TRow extends HealthJournalPendingUpsert["row"]>(
+      entity: HealthJournalPendingEntity,
+      rows: TRow[],
+      currentRows: readonly TRow[],
+      enabled: boolean,
+    ) => {
+      for (let index = 0; index < rows.length; index += 1) {
+        const row = rows[index]!;
+        const existedLocally = currentRows.some((current) => current.id === row.id);
+        const result = await saveJournalPendingUpsert(
+          entity,
+          row,
+          existedLocally ? "update" : "create",
+          enabled,
+        );
+        if (!isCurrentOperation(operation)) {
+          diagnoseNullJournalSave(`owner-changed-after-${entity}-write`, nextRow.id, coreWriteState);
+          return false;
+        }
+        if (result.error) {
+          childWriteError = { message: result.error };
+          return false;
+        }
+        rows[index] = result.row as TRow;
       }
-      if (!childWriteError && journalRemoteEnabledRef.current) {
-        for (const value of removedValues) {
-          const { error } = await client
-            .from("adhdice_health_journal_signal_values")
-            .delete()
-            .eq("id", value.id)
-            .eq("user_id", userId);
-          if (!isCurrentOperation(operation)) return null;
-          if (error) {
-            childWriteError = error;
+      return true;
+    };
+    const journalRemoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
+    const symptomEntriesRemoteEnabled = Boolean(client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current);
+    const journalSignalOccurrencesRemoteEnabled = Boolean(client && storageMode === "remote" && journalSignalOccurrencesRemoteEnabledRef.current);
+
+    if (scoredValues.length > 0) {
+      await saveChildRows("signal_value", scoredValues, currentValues, journalRemoteEnabled);
+      if (!isCurrentOperation(operation)) return null;
+    }
+    if (!childWriteError) {
+      for (const value of removedValues) {
+        if (!recordJournalPendingMutation({ entity: "signal_value", id: value.id, journalEntryId: nextRow.id, operation: "delete" }).ok) {
+          childWriteError = { message: "The Feeling value deletion could not be saved locally; no remote deletion was attempted." };
+          break;
+        }
+        if (journalRemoteEnabled && client) {
+          try {
+            await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: "signal_value",
+              id: value.id,
+              journalEntryId: nextRow.id,
+            });
+            if (!isCurrentOperation(operation)) {
+              diagnoseNullJournalSave("owner-changed-after-signal-value-delete", nextRow.id, coreWriteState);
+              return null;
+            }
+            clearJournalPendingMutation("signal_value", value.id);
+          } catch (error) {
+            if (!isCurrentOperation(operation)) {
+              diagnoseNullJournalSave("owner-changed-after-signal-value-delete", nextRow.id, coreWriteState);
+              return null;
+            }
+            childWriteError = { message: error instanceof Error ? error.message : `Could not confirm removal of Journal Feeling value ${value.id}.` };
             break;
           }
         }
       }
-      if (!childWriteError && symptomEntriesRemoteEnabledRef.current && occurrenceRows.length > 0) {
-        const { data, error } = await client
-          .from("adhdice_health_symptom_entries")
-          .upsert(occurrenceRows, { onConflict: "id" })
-          .select("*");
-        if (!isCurrentOperation(operation)) return null;
-        if (error) childWriteError = error;
-        else if (data) occurrenceRows.splice(0, occurrenceRows.length, ...data);
-      }
-      if (!childWriteError && symptomEntriesRemoteEnabledRef.current) {
-        for (const entry of removedOccurrences) {
-          const { error } = await client
-            .from("adhdice_health_symptom_entries")
-            .delete()
-            .eq("id", entry.id)
-            .eq("user_id", userId)
-            .eq("journal_entry_id", nextRow.id);
-          if (!isCurrentOperation(operation)) return null;
-          if (error) {
-            childWriteError = error;
+    }
+    if (!childWriteError && occurrenceRows.length > 0) {
+      await saveChildRows("symptom_entry", occurrenceRows, currentOwnedOccurrences, symptomEntriesRemoteEnabled);
+      if (!isCurrentOperation(operation)) return null;
+    }
+    if (!childWriteError) {
+      for (const entry of removedOccurrences) {
+        if (!recordJournalPendingMutation({ entity: "symptom_entry", id: entry.id, journalEntryId: nextRow.id, operation: "delete" }).ok) {
+          childWriteError = { message: "The Symptom occurrence deletion could not be saved locally; no remote deletion was attempted." };
+          break;
+        }
+        if (symptomEntriesRemoteEnabled && client) {
+          try {
+            await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: "symptom_entry",
+              id: entry.id,
+              journalEntryId: nextRow.id,
+            });
+            if (!isCurrentOperation(operation)) {
+              diagnoseNullJournalSave("owner-changed-after-symptom-occurrence-delete", nextRow.id, coreWriteState);
+              return null;
+            }
+            clearJournalPendingMutation("symptom_entry", entry.id);
+          } catch (error) {
+            if (!isCurrentOperation(operation)) {
+              diagnoseNullJournalSave("owner-changed-after-symptom-occurrence-delete", nextRow.id, coreWriteState);
+              return null;
+            }
+            childWriteError = { message: error instanceof Error ? error.message : `Could not confirm removal of Journal symptom occurrence ${entry.id}.` };
             break;
           }
         }
       }
-      if (!childWriteError && journalSignalOccurrencesRemoteEnabledRef.current && journalSignalOccurrenceRows.length > 0) {
-        const { data, error } = await client
-          .from("adhdice_health_journal_signal_occurrences")
-          .upsert(journalSignalOccurrenceRows, { onConflict: "id" })
-          .select("*");
-        if (!isCurrentOperation(operation)) return null;
-        if (error) childWriteError = error;
-        else if (data) journalSignalOccurrenceRows.splice(0, journalSignalOccurrenceRows.length, ...data.map(normalizeHealthJournalSignalOccurrence));
+    }
+    if (!childWriteError && journalSignalOccurrenceRows.length > 0) {
+      await saveChildRows("signal_occurrence", journalSignalOccurrenceRows, currentOwnedJournalSignalOccurrences, journalSignalOccurrencesRemoteEnabled);
+      if (!isCurrentOperation(operation)) return null;
+      for (let index = 0; index < journalSignalOccurrenceRows.length; index += 1) {
+        journalSignalOccurrenceRows[index] = normalizeHealthJournalSignalOccurrence(journalSignalOccurrenceRows[index]!);
       }
-      if (!childWriteError && journalSignalOccurrencesRemoteEnabledRef.current) {
-        for (const occurrence of removedJournalSignalOccurrences) {
-          const { error } = await client
-            .from("adhdice_health_journal_signal_occurrences")
-            .delete()
-            .eq("id", occurrence.id)
-            .eq("user_id", userId)
-            .eq("journal_entry_id", nextRow.id);
-          if (!isCurrentOperation(operation)) return null;
-          if (error) {
-            childWriteError = error;
+    }
+    if (!childWriteError) {
+      for (const occurrence of removedJournalSignalOccurrences) {
+        if (!recordJournalPendingMutation({ entity: "signal_occurrence", id: occurrence.id, journalEntryId: nextRow.id, operation: "delete" }).ok) {
+          childWriteError = { message: "The Feeling occurrence deletion could not be saved locally; no remote deletion was attempted." };
+          break;
+        }
+        if (journalSignalOccurrencesRemoteEnabled && client) {
+          try {
+            await deleteHealthJournalRecordWithTombstone({
+              client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+              entity: "signal_occurrence",
+              id: occurrence.id,
+              journalEntryId: nextRow.id,
+            });
+            if (!isCurrentOperation(operation)) {
+              diagnoseNullJournalSave("owner-changed-after-feeling-occurrence-delete", nextRow.id, coreWriteState);
+              return null;
+            }
+            clearJournalPendingMutation("signal_occurrence", occurrence.id);
+          } catch (error) {
+            if (!isCurrentOperation(operation)) {
+              diagnoseNullJournalSave("owner-changed-after-feeling-occurrence-delete", nextRow.id, coreWriteState);
+              return null;
+            }
+            childWriteError = { message: error instanceof Error ? error.message : `Could not confirm removal of Journal Feeling occurrence ${occurrence.id}.` };
             break;
           }
+        }
+      }
+    }
+    if (!isCurrentOperation(operation)) return null;
+
+    let triggerAssociationSaveError: string | null = null;
+    if (triggerReplacements.length > 0 && !childWriteError) {
+      const symptomTargetIds = triggerReplacements.filter((replacement) => replacement.occurrence_kind === "symptom").map((replacement) => replacement.occurrence_id);
+      const signalTargetIds = triggerReplacements.filter((replacement) => replacement.occurrence_kind === "journal_signal").map((replacement) => replacement.occurrence_id);
+      let occurrenceWritesContainTargets = false;
+      if (client && symptomTargetIds.length > 0) {
+        const { data, error } = await client.from("adhdice_health_symptom_entries").select("id")
+          .eq("user_id", userId).eq("journal_entry_id", nextRow.id).in("id", symptomTargetIds);
+        if (!isCurrentOperation(operation)) return null;
+        occurrenceWritesContainTargets = !error && (data?.length ?? 0) === symptomTargetIds.length;
+        if (error) triggerAssociationSaveError = `Could not confirm saved Symptom occurrences: ${error.message}`;
+      } else {
+        occurrenceWritesContainTargets = true;
+      }
+      if (client && signalTargetIds.length > 0) {
+        const { data, error } = await client.from("adhdice_health_journal_signal_occurrences").select("id")
+          .eq("user_id", userId).eq("journal_entry_id", nextRow.id).in("id", signalTargetIds);
+        if (!isCurrentOperation(operation)) return null;
+        occurrenceWritesContainTargets = occurrenceWritesContainTargets && !error && (data?.length ?? 0) === signalTargetIds.length;
+        if (error) triggerAssociationSaveError = `Could not confirm saved Feeling occurrences: ${error.message}`;
+      }
+      if (!occurrenceWritesContainTargets) {
+        triggerAssociationSaveError ??= "The Event was saved, but remote Feeling occurrence IDs could not be confirmed for Trigger associations.";
+      } else if (!client || storageMode !== "remote") {
+        triggerAssociationSaveError = "The Event was saved, but Journal Triggers were not saved remotely. Reconnect and retry.";
+      } else {
+        try {
+          const replacementResult = await replaceHealthJournalTriggerAssociations(userId, nextRow.id, triggerReplacements, client);
+          if (!isCurrentOperation(operation)) return null;
+          if (!replacementResult || !Array.isArray(replacementResult.links)) {
+            throw new Error("Journal Trigger replacement returned no refreshed association data.");
+          }
+          const replacedOccurrenceKeys = new Set(triggerReplacements.map((replacement) => `${replacement.occurrence_kind}:${replacement.occurrence_id}`));
+          setJournalTriggerLinks((current) => [
+            ...current.filter((link) => !replacedOccurrenceKeys.has(link.symptom_occurrence_id ? `symptom:${link.symptom_occurrence_id}` : `journal_signal:${link.journal_signal_occurrence_id}`)),
+            ...replacementResult.links,
+          ]);
+        } catch (error) {
+          if (!isCurrentOperation(operation)) return null;
+          triggerAssociationSaveError = error instanceof Error ? error.message : "Could not save Journal Trigger associations.";
         }
       }
     }
@@ -1795,10 +2376,14 @@ export function useHealth(
       journalSignalOccurrences: nextJournalSignalOccurrences,
       symptomEntries: sortHealthSymptomEntries(nextSymptomEntries),
     });
-    if (!isCurrentOperation(operation)) return null;
+    if (!isCurrentOperation(operation)) {
+      diagnoseNullJournalSave("owner-changed-before-snapshot-apply", nextRow.id, coreWriteState);
+      return null;
+    }
     applySnapshot(nextSnapshot, {
       persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
     });
+    if (coreWriteState !== "remote-confirmed") coreWriteState = "local-applied";
     if (childWriteError) {
       if (isMissingHealthPersistence(childWriteError.message)) {
         journalRemoteEnabledRef.current = false;
@@ -1808,16 +2393,26 @@ export function useHealth(
         tone: "warn",
         text: `Journal Entry core fields were saved, but a Feeling value or occurrence update failed: ${childWriteError.message}`,
       });
+      diagnoseNullJournalSave("child-write-error", nextRow.id, coreWriteState);
       return null;
     }
     await claimEligibleAwards(nextSnapshot, operation, { persistRemotely: storageMode === "remote" });
-    if (!isCurrentOperation(operation)) return null;
+    if (!isCurrentOperation(operation)) {
+      diagnoseNullJournalSave("owner-changed-after-award-claim", nextRow.id, coreWriteState);
+      return null;
+    }
+    if (triggerAssociationSaveError) {
+      const partialMessage = `The Journal Event and Feeling occurrences were saved, but Trigger associations were not saved. Keep this draft and retry: ${triggerAssociationSaveError}`;
+      setMessage({ tone: "warn", text: partialMessage });
+      return { entry: nextRow, triggerAssociationError: partialMessage };
+    }
     setHealthSuccessMessage({ tone: "good", text: existingRow ? "Journal Entry updated." : "Journal Entry saved." });
-    return nextRow;
+    return { entry: nextRow };
   }
 
   async function saveCheckIn(input: Omit<HealthCheckInInsert, "user_id">) {
-    return saveJournalEntry({ checkIn: input, journalSignalOccurrences: [], signalValues: [], symptomOccurrences: [] });
+    const result = await saveJournalEntry({ checkIn: input, journalSignalOccurrences: [], signalValues: [], symptomOccurrences: [] });
+    return result?.entry ?? null;
   }
 
   async function createJournalSignal(input: Omit<HealthJournalSignalInsert, "user_id">) {
@@ -1887,25 +2482,15 @@ export function useHealth(
       updated_at: now,
       user_id: userId,
     });
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_journal_signals")
-        .insert({ ...localRow, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) {
-          journalRemoteEnabledRef.current = false;
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return null;
-        }
-      } else {
-        nextRow = normalizeHealthJournalSignal(data ?? localRow);
-      }
+    const remoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("signal", localRow, "create", remoteEnabled);
+    if (!isCurrentOperation(operation)) return null;
+    if (saveResult.error) {
+      if (isMissingHealthPersistence(saveResult.error)) journalRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return null;
     }
+    const nextRow = normalizeHealthJournalSignal(saveResult.row as HealthJournalSignal);
     if (!isCurrentOperation(operation)) return null;
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
@@ -1963,33 +2548,13 @@ export function useHealth(
       setMessage({ tone: "warn", text: "Enter a Journal feeling name." });
       return false;
     }
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_journal_signals")
-        .update({
-          archived_at: nextRow.archived_at,
-          color: nextRow.color,
-          high_label: nextRow.high_label,
-          in_template: nextRow.in_template,
-          low_label: nextRow.low_label,
-          name: nextRow.name,
-          scale_labels: nextRow.scale_labels,
-          template_sort_order: nextRow.template_sort_order,
-        })
-        .eq("id", signalId)
-        .eq("user_id", userId)
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) journalRemoteEnabledRef.current = false;
-        else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else if (data) {
-        Object.assign(nextRow, normalizeHealthJournalSignal(data));
-      }
+    const remoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("signal", nextRow, "update", remoteEnabled);
+    if (!isCurrentOperation(operation)) return false;
+    if (saveResult.error) {
+      if (isMissingHealthPersistence(saveResult.error)) journalRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
     }
     if (!isCurrentOperation(operation)) return false;
     applySnapshot(buildHealthSnapshot({
@@ -2044,19 +2609,28 @@ export function useHealth(
       setMessage({ tone: "warn", text: "This Feeling has history. Archive it instead of deleting it." });
       return false;
     }
+    const pendingMutationKey = getHealthJournalPendingMutationKey("signal", signalId);
+    const pendingSignalMutation = journalPendingMutationsRef.current[pendingMutationKey];
+    const hasPendingNewSignal = pendingSignalMutation?.operation === "upsert" && pendingSignalMutation.intent === "create";
+    if (!recordJournalPendingMutation({ entity: "signal", id: signalId, operation: "delete" }).ok) {
+      setMessage({ tone: "warn", text: "The Feeling deletion could not be saved locally, so no remote deletion was attempted." });
+      return false;
+    }
+    let deletedRemotely = false;
     if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      const { error } = await client
-        .from("adhdice_health_journal_signals")
-        .delete()
-        .eq("id", signalId)
-        .eq("user_id", userId);
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthPersistence(error.message)) journalRemoteEnabledRef.current = false;
-        else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
+      try {
+        await deleteHealthJournalRecordWithTombstone({
+          client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+          entity: "signal",
+          id: signalId,
+        });
+        deletedRemotely = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not confirm the Feeling deletion tombstone.";
+        if (isMissingHealthPersistence(message)) journalRemoteEnabledRef.current = false;
+        setMessage({ tone: "warn", text: message });
+        return false;
       }
     }
     if (!isCurrentOperation(operation)) return false;
@@ -2066,7 +2640,10 @@ export function useHealth(
     }), {
       persistenceMode: client && storageMode === "remote" && journalRemoteEnabledRef.current ? "remote" : "local",
     });
-    setHealthSuccessMessage({ tone: "good", text: "Feeling deleted." });
+    setHealthSuccessMessage({
+      tone: "good",
+      text: deletedRemotely ? "Feeling deleted." : hasPendingNewSignal ? "Unsynced Feeling removed." : "Feeling removed locally; deletion will sync.",
+    });
     return true;
   }
 
@@ -2093,18 +2670,13 @@ export function useHealth(
     const nextSignals = currentSnapshot.journalSignals.map((signal) => orderById.has(signal.id)
       ? { ...signal, in_template: true, template_sort_order: orderById.get(signal.id) ?? signal.template_sort_order, updated_at: new Date().toISOString() }
       : signal);
-    if (client && storageMode === "remote" && journalRemoteEnabledRef.current) {
-      for (const signal of nextSignals.filter((candidate) => orderById.has(candidate.id))) {
-        const { error } = await client
-          .from("adhdice_health_journal_signals")
-          .update({ in_template: true, template_sort_order: signal.template_sort_order })
-          .eq("id", signal.id)
-          .eq("user_id", userId);
-        if (!isCurrentOperation(operation)) return false;
-        if (error) {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
+    const remoteEnabled = Boolean(client && storageMode === "remote" && journalRemoteEnabledRef.current);
+    for (const signal of nextSignals.filter((candidate) => orderById.has(candidate.id))) {
+      const result = await saveJournalPendingUpsert("signal", signal, "update", remoteEnabled);
+      if (!isCurrentOperation(operation)) return false;
+      if (result.error) {
+        setMessage({ tone: "warn", text: result.error });
+        return false;
       }
     }
     if (!isCurrentOperation(operation)) return false;
@@ -2118,15 +2690,25 @@ export function useHealth(
     if (!userId || !profile) return false;
     const operation = captureOperation();
     if (!operation) return false;
+    const pendingEntryKey = getHealthJournalPendingMutationKey("checkin", entryId);
+    const pendingJournalEntryMutation = journalPendingMutationsRef.current[pendingEntryKey];
+    const hasPendingNewEntry = pendingJournalEntryMutation?.operation === "upsert" && pendingJournalEntryMutation.intent === "create";
+    if (!recordJournalPendingMutation({ entity: "checkin", id: entryId, operation: "delete" }).ok) {
+      setMessage({ tone: "warn", text: "The Journal Entry deletion could not be saved locally, so no remote deletion was attempted." });
+      return false;
+    }
+    let deletedRemotely = false;
     if (client && storageMode === "remote") {
-      const { error } = await client
-        .from("adhdice_health_checkins")
-        .delete()
-        .eq("id", entryId)
-        .eq("user_id", userId);
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
+      try {
+        await deleteHealthJournalRecordWithTombstone({
+          client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+          entity: "checkin",
+          id: entryId,
+        });
+        deletedRemotely = true;
+      } catch (error) {
+        setMessage({ tone: "warn", text: error instanceof Error ? error.message : "Could not confirm the Journal Entry deletion tombstone." });
         return false;
       }
     }
@@ -2146,6 +2728,10 @@ export function useHealth(
       weightEntries,
     });
     if (!isCurrentOperation(operation)) return false;
+    const removedOccurrenceIds = new Set([
+      ...currentSnapshot.symptomEntries.filter((entry) => entry.journal_entry_id === entryId).map((entry) => entry.id),
+      ...currentSnapshot.journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entryId).map((occurrence) => occurrence.id),
+    ]);
     applySnapshot(buildHealthSnapshot({
       ...currentSnapshot,
       checkIns: currentSnapshot.checkIns.filter((entry) => entry.id !== entryId),
@@ -2155,7 +2741,12 @@ export function useHealth(
     }), {
       persistenceMode: client && storageMode === "remote" ? "remote" : "local",
     });
-    setHealthSuccessMessage({ tone: "good", text: "Journal Entry deleted." });
+    setJournalTriggerLinks((current) => current.filter((link) => !removedOccurrenceIds.has(link.symptom_occurrence_id ?? "")
+      && !removedOccurrenceIds.has(link.journal_signal_occurrence_id ?? "")));
+    setHealthSuccessMessage({
+      tone: "good",
+      text: deletedRemotely ? "Journal Entry deleted." : hasPendingNewEntry ? "Unsynced Journal Entry removed." : "Journal Entry removed locally; deletion will sync.",
+    });
     return true;
   }
 
@@ -2203,33 +2794,15 @@ export function useHealth(
       color: normalizeHealthSymptomColor(normalizedInput.color ?? currentSymptom.color),
       updated_at: now,
     };
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptoms")
-        .update(normalizedInput)
-        .eq("id", symptomId)
-        .eq("user_id", userId)
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomDefinitionsRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else {
-        nextRow = data ? normalizeHealthSymptom(data) : localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom", localRow, "update", remoteEnabled);
     if (!isCurrentOperation(operation)) return false;
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomDefinitionsRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
+    }
+    const nextRow = saveResult.row as HealthSymptom;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2280,31 +2853,15 @@ export function useHealth(
       updated_at: now,
       user_id: userId,
     };
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptoms")
-        .insert({ ...input, archived_at: null, color: localRow.color, name, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomDefinitionsRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return null;
-        }
-      } else {
-        nextRow = data ? normalizeHealthSymptom(data) : localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomDefinitionsRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom", localRow, "create", remoteEnabled);
     if (!isCurrentOperation(operation)) return null;
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomDefinitionsRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return null;
+    }
+    const nextRow = saveResult.row as HealthSymptom;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2372,38 +2929,19 @@ export function useHealth(
       note: normalizeHealthSymptomNote(input.note),
       severity: input.severity,
       symptom_id: input.symptom_id,
+      time_is_estimated: input.time_is_estimated === true,
       updated_at: now,
       user_id: userId,
     };
-    let nextRow = localRow;
-    const normalizedInput: Omit<HealthSymptomEntryInsert, "user_id"> = {
-      ...input,
-      note: normalizeHealthSymptomNote(input.note),
-    };
-    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptom_entries")
-        .insert({ ...normalizedInput, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomEntriesRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else {
-        nextRow = data ?? localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom_entry", localRow, "create", remoteEnabled);
     if (!isCurrentOperation(operation)) return false;
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomEntriesRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
+    }
+    const nextRow = saveResult.row as HealthSymptomEntry;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2436,6 +2974,10 @@ export function useHealth(
       return false;
     }
     const nextJournalEntryId = input.journal_entry_id ?? currentEntry.journal_entry_id;
+    if (nextJournalEntryId !== currentEntry.journal_entry_id) {
+      setMessage({ tone: "warn", text: "A Feeling occurrence cannot be moved between Journal Entries." });
+      return false;
+    }
     const currentCheckIns = healthSnapshotRef.current?.checkIns ?? checkIns;
     if (!nextJournalEntryId || !currentCheckIns.some((entry) => entry.id === nextJournalEntryId && entry.user_id === userId)) {
       setMessage({ tone: "warn", text: "Feeling occurrences must belong to a Journal Entry." });
@@ -2467,33 +3009,15 @@ export function useHealth(
       symptom_id: nextSymptomId,
       updated_at: now,
     };
-    let nextRow = localRow;
-    if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      const { data, error } = await client
-        .from("adhdice_health_symptom_entries")
-        .update(normalizedInput)
-        .eq("id", entryId)
-        .eq("user_id", userId)
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
-          symptomEntriesRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
-        } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
-      } else {
-        nextRow = data ?? localRow;
-      }
-    }
-
+    const remoteEnabled = Boolean(client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current);
+    const saveResult = await saveJournalPendingUpsert("symptom_entry", localRow, "update", remoteEnabled);
     if (!isCurrentOperation(operation)) return false;
+    if (saveResult.error) {
+      if (isMissingHealthSymptomPersistence(saveResult.error)) symptomEntriesRemoteEnabledRef.current = false;
+      setMessage({ tone: "warn", text: saveResult.error });
+      return false;
+    }
+    const nextRow = saveResult.row as HealthSymptomEntry;
     applySnapshot(buildHealthSnapshot({
       awards,
       checkIns,
@@ -2521,24 +3045,37 @@ export function useHealth(
     }
     const operation = captureOperation();
     if (!operation) return false;
+    const pendingEntryKey = getHealthJournalPendingMutationKey("symptom_entry", entryId);
+    const pendingSymptomEntryMutation = journalPendingMutationsRef.current[pendingEntryKey];
+    const hasPendingNewEntry = pendingSymptomEntryMutation?.operation === "upsert" && pendingSymptomEntryMutation.intent === "create";
+    const currentSymptomEntry = (healthSnapshotRef.current?.symptomEntries ?? symptomEntries).find((entry) => entry.id === entryId);
+    const journalEntryId = currentSymptomEntry?.journal_entry_id
+      ?? (pendingSymptomEntryMutation?.operation === "upsert" && "journal_entry_id" in pendingSymptomEntryMutation.row ? pendingSymptomEntryMutation.row.journal_entry_id ?? undefined : undefined)
+      ?? (pendingSymptomEntryMutation?.operation === "delete" ? pendingSymptomEntryMutation.journalEntryId : undefined);
+    if (!recordJournalPendingMutation({ entity: "symptom_entry", id: entryId, journalEntryId, operation: "delete" }).ok) {
+      setMessage({ tone: "warn", text: "The Symptom occurrence deletion could not be saved locally, so no remote deletion was attempted." });
+      return false;
+    }
+    let deletedRemotely = false;
     if (client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current) {
-      const { error } = await client
-        .from("adhdice_health_symptom_entries")
-        .delete()
-        .eq("id", entryId)
-        .eq("user_id", userId);
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (isMissingHealthSymptomPersistence(error.message)) {
+      try {
+        await deleteHealthJournalRecordWithTombstone({
+          client: client as unknown as Parameters<typeof deleteHealthJournalRecordWithTombstone>[0]["client"],
+          entity: "symptom_entry",
+          id: entryId,
+          ...(journalEntryId ? { journalEntryId } : {}),
+        });
+        deletedRemotely = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "Could not confirm the Symptom occurrence deletion tombstone.";
+        if (isMissingHealthSymptomPersistence(message)) {
           symptomEntriesRemoteEnabledRef.current = false;
-          setMessage({
-            tone: "neutral",
-            text: "Symptom tracking is using local storage until the 7.12.7 and 7.12.21 Health Journal migrations are applied.",
-          });
+          setMessage({ tone: "neutral", text: "Symptom tracking is using local storage until the Health Journal tombstone migration is applied." });
         } else {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
+          setMessage({ tone: "warn", text: message });
         }
+        return false;
       }
     }
 
@@ -2560,7 +3097,10 @@ export function useHealth(
     }), {
       persistenceMode: client && storageMode === "remote" && symptomEntriesRemoteEnabledRef.current ? "remote" : "local",
     });
-    setHealthSuccessMessage({ tone: "good", text: "Symptom entry removed." });
+    setHealthSuccessMessage({
+      tone: "good",
+      text: deletedRemotely ? "Symptom entry removed." : hasPendingNewEntry ? "Unsynced Symptom occurrence removed." : "Symptom occurrence removed locally; deletion will sync.",
+    });
     return true;
   }
 
@@ -2578,6 +3118,7 @@ export function useHealth(
     }
 
     const now = new Date().toISOString();
+    const entryId = input.id ?? createLocalId("health-meal");
     const localRow: HealthMealEntry = {
       attribution: input.attribution ?? null,
       barcode: input.barcode ?? null,
@@ -2588,7 +3129,7 @@ export function useHealth(
       entry_date: input.entry_date,
       fat_g: input.fat_g ?? null,
       food_name: input.food_name,
-      id: input.id ?? createLocalId("health-meal"),
+      id: entryId,
       logged_at: input.logged_at ?? now,
       meal_slot: input.meal_slot,
       protein_g: input.protein_g ?? null,
@@ -2607,7 +3148,7 @@ export function useHealth(
 
     let nextRow = localRow;
     if (client && storageMode === "remote") {
-      const { data, error } = await client
+      const result = await client
         .from("adhdice_health_meal_entries")
         .insert({
           ...input,
@@ -2617,14 +3158,38 @@ export function useHealth(
         .select("*")
         .single();
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
+      const reconciled = await reconcileHealthMealEntryInsert({
+        input: { ...input, calories: storedCalories },
+        result,
+        lookupById: async (id) => {
+          const { data, error } = await client
+            .from("adhdice_health_meal_entries")
+            .select("*")
+            .eq("id", id)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (!isCurrentOperation(operation)) return { row: null, error: "Health operation is no longer active." };
+          return { row: data, error: error?.message ?? null };
+        },
+      });
+      if (!reconciled.row) {
+        setMessage({ tone: "warn", text: reconciled.error ?? "The meal save could not be confirmed." });
         return false;
       }
-      nextRow = data ?? localRow;
+      nextRow = reconciled.row;
+    } else {
+      const existingLocal = mealEntries.find((entry) => entry.id === entryId);
+      if (existingLocal) {
+        if (!healthMealEntryInsertMatches(existingLocal, { ...input, id: entryId, calories: storedCalories })) {
+          setMessage({ tone: "warn", text: "The meal ID is already in use by a different saved entry." });
+          return false;
+        }
+        nextRow = existingLocal;
+      }
     }
 
-    const nextMealEntries = [nextRow, ...mealEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at));
+    const nextMealEntries = [nextRow, ...mealEntries.filter((entry) => entry.id !== nextRow.id)]
+      .sort((left, right) => right.logged_at.localeCompare(left.logged_at));
     const nextSnapshot = buildHealthSnapshot({
       awards,
       checkIns,
@@ -2866,8 +3431,70 @@ export function useHealth(
     return true;
   }
 
-  async function updatePreviousFoodLogs(food: HealthFoodLibraryItem): Promise<HealthFoodHistoryRepairResult> {
+  function updatePendingFoodHistoryRepair(foodId: string, pendingEntryIds: readonly string[] | null | undefined) {
+    if (pendingEntryIds === undefined || (pendingEntryIds !== null && pendingEntryIds.length === 0)) {
+      pendingFoodHistoryRepairRowsRef.current.delete(foodId);
+    } else {
+      pendingFoodHistoryRepairRowsRef.current.set(foodId, pendingEntryIds ? [...pendingEntryIds] : null);
+    }
+    setPendingFoodHistoryRepairState({
+      generation: pendingFoodHistoryRepairOwnerGenerationRef.current,
+      ids: [...pendingFoodHistoryRepairRowsRef.current.keys()],
+      userId,
+    });
+  }
+
+  async function updatePreviousFoodLogs(
+    food: HealthFoodLibraryItem,
+    options: { mode?: "all" | "pending" } = {},
+  ): Promise<HealthFoodHistoryRepairResult> {
+    const existing = foodHistoryRepairInFlightRef.current.get(food.id);
+    if (existing) return existing;
+    const operationToken = captureOperation();
+    if (!operationToken) {
+      return {
+        failed: 1,
+        failureMessages: ["The Health operation could not be confirmed."],
+        pendingEntryIds: null,
+        requested: 0,
+        skipped: 0,
+        updated: 0,
+      };
+    }
+    const operation = Promise.resolve().then(() => performPreviousFoodLogUpdate(food, options.mode ?? "all", operationToken));
+    foodHistoryRepairInFlightRef.current.set(food.id, operation);
+    try {
+      return await operation;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "The previous logs could not be checked.";
+      if (isCurrentOperation(operationToken)) updatePendingFoodHistoryRepair(food.id, null);
+      return {
+        failed: 1,
+        failureMessages: [message],
+        pendingEntryIds: null,
+        requested: 0,
+        skipped: 0,
+        updated: 0,
+      };
+    } finally {
+      if (foodHistoryRepairInFlightRef.current.get(food.id) === operation) {
+        foodHistoryRepairInFlightRef.current.delete(food.id);
+      }
+    }
+  }
+
+  async function performPreviousFoodLogUpdate(
+    food: HealthFoodLibraryItem,
+    mode: "all" | "pending",
+    operation: HealthOperationToken,
+  ): Promise<HealthFoodHistoryRepairResult> {
+    const retryEntryIds = mode === "pending" ? pendingFoodHistoryRepairRowsRef.current.get(food.id) : undefined;
+    if (mode === "pending" && Array.isArray(retryEntryIds) && retryEntryIds.length === 0) {
+      updatePendingFoodHistoryRepair(food.id, undefined);
+      return { failed: 0, failureMessages: [], requested: 0, skipped: 0, updated: 0 };
+    }
     let entries = selectHealthFoodMealEntriesBySourceId(mealEntries, food.id);
+    if (Array.isArray(retryEntryIds)) entries = selectHealthFoodHistoryRepairRetryEntries(entries, retryEntryIds);
     const result: HealthFoodHistoryRepairResult = {
       failed: 0,
       failureMessages: [],
@@ -2876,39 +3503,53 @@ export function useHealth(
       updated: 0,
     };
     if (!userId || !profile) {
+      result.failed = 1;
+      result.failureMessages.push("The current Health account could not be confirmed.");
+      result.pendingEntryIds = null;
       return result;
     }
     if (entries.length === 0 && !(client && storageMode === "remote")) {
-      if (entries.length === 0) {
-        setMessage({ tone: "neutral", text: formatHealthFoodHistoryRepairResult(result) });
-      }
+      updatePendingFoodHistoryRepair(food.id, undefined);
+      setMessage({ tone: "neutral", text: formatHealthFoodHistoryRepairResult(result) });
       return result;
     }
-    const operation = captureOperation();
-    if (!operation) {
+    if (!isCurrentOperation(operation)) {
+      result.failed = 1;
+      result.failureMessages.push("The Health operation is no longer active.");
+      result.pendingEntryIds = null;
       return result;
     }
 
     healthFoodMutationRevisionRef.current += 1;
     if (client && storageMode === "remote") {
       const remoteEntries = await fetchAllPagedRows(
-        (from, to) => client
-          .from("adhdice_health_meal_entries")
-          .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
-          .eq("user_id", userId)
-          .eq("source_food_id", food.id)
-          .order("logged_at", { ascending: false })
-          .order("id", { ascending: true })
-          .range(from, to),
+        (from, to) => {
+          let query = client
+            .from("adhdice_health_meal_entries")
+            .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
+            .eq("user_id", userId)
+            .eq("source_food_id", food.id);
+          if (Array.isArray(retryEntryIds)) query = query.in("id", [...retryEntryIds]);
+          return query
+            .order("logged_at", { ascending: false })
+            .order("id", { ascending: true })
+            .range(from, to);
+        },
         SUPABASE_READ_PAGE_SIZE,
       );
       if (!isCurrentOperation(operation)) {
+        result.failed = 1;
+        result.failureMessages.push("Health data changed before previous logs could be checked.");
+        result.requested = 0;
+        result.pendingEntryIds = null;
         return result;
       }
       if (remoteEntries.error) {
         result.failed = 1;
         result.failureMessages.push(remoteEntries.error.message);
         result.requested = 0;
+        result.pendingEntryIds = null;
+        updatePendingFoodHistoryRepair(food.id, null);
         setMessage({ tone: "warn", text: formatHealthFoodHistoryRepairResult(result) });
         return result;
       }
@@ -2916,20 +3557,22 @@ export function useHealth(
       result.requested = entries.length;
     }
     const updatedRows = new Map<string, HealthMealEntry>();
+    const pendingEntryIds = new Set<string>();
     for (const entry of entries) {
       let update: HealthMealEntryUpdate;
       try {
         update = buildHealthFoodHistoryMealEntryUpdate(food, entry);
       } catch {
         result.skipped += 1;
+        pendingEntryIds.add(entry.id);
         continue;
       }
 
       const now = new Date().toISOString();
       let nextRow: HealthMealEntry = { ...entry, ...update, updated_at: now };
       if (client && storageMode === "remote") {
-        let data: HealthMealEntry | null = null;
-        let error: { message?: string } | null = null;
+        let confirmedRow: HealthMealEntry | null = null;
+        let failureMessage: string | null = null;
         try {
           const response = await client
             .from("adhdice_health_meal_entries")
@@ -2939,28 +3582,64 @@ export function useHealth(
             .eq("source_food_id", food.id)
             .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
             .single();
-          data = response.data;
-          error = response.error;
+          if (!response.error && response.data && healthMealEntryUpdateMatchesRow(response.data, update)) {
+            confirmedRow = response.data;
+          } else {
+            failureMessage = response.error?.message ?? "The previous log update could not be confirmed.";
+          }
         } catch (caughtError) {
-          error = { message: caughtError instanceof Error ? caughtError.message : String(caughtError) };
+          failureMessage = caughtError instanceof Error ? caughtError.message : String(caughtError);
         }
+
+        if (!confirmedRow && isCurrentOperation(operation)) {
+          try {
+            const verification = await client
+              .from("adhdice_health_meal_entries")
+              .select("id,user_id,entry_date,meal_slot,logged_at,food_name,brand_name,serving_label,calories,protein_g,carbs_g,fat_g,barcode,provider,provider_item_id,attribution,source_food_id,consumed_quantity,consumed_unit,serving_fraction,food_snapshot,nutrition_snapshot,created_at,updated_at")
+              .eq("id", entry.id)
+              .eq("user_id", userId)
+              .eq("source_food_id", food.id)
+              .maybeSingle();
+            if (!verification.error && verification.data && healthMealEntryUpdateMatchesRow(verification.data, update)) {
+              confirmedRow = verification.data;
+            } else if (verification.error) {
+              failureMessage = verification.error.message;
+            }
+          } catch (caughtError) {
+            failureMessage = caughtError instanceof Error ? caughtError.message : String(caughtError);
+          }
+        }
+
         if (!isCurrentOperation(operation)) {
+          if (confirmedRow) {
+            updatedRows.set(entry.id, confirmedRow);
+            result.updated += 1;
+          } else {
+            pendingEntryIds.add(entry.id);
+          }
+          const incompleteIds = entries.filter((candidate) => !updatedRows.has(candidate.id)).map((candidate) => candidate.id);
+          result.failed += 1;
+          result.failureMessages.push("Health data changed before previous log updates completed.");
+          result.pendingEntryIds = incompleteIds;
           return result;
         }
-        if (error || !data) {
+        if (!confirmedRow) {
           result.failed += 1;
-          if (error?.message) {
-            result.failureMessages.push(error.message);
-          }
+          pendingEntryIds.add(entry.id);
+          if (failureMessage) result.failureMessages.push(failureMessage);
           continue;
         }
-        nextRow = data;
+        nextRow = confirmedRow;
       }
       updatedRows.set(entry.id, nextRow);
       result.updated += 1;
     }
 
     if (!isCurrentOperation(operation)) {
+      const incompleteIds = entries.filter((candidate) => !updatedRows.has(candidate.id)).map((candidate) => candidate.id);
+      result.failed += 1;
+      result.failureMessages.push("Health data changed before previous log updates completed.");
+      result.pendingEntryIds = incompleteIds;
       return result;
     }
     if (updatedRows.size > 0) {
@@ -2987,6 +3666,12 @@ export function useHealth(
       }));
     }
 
+    result.pendingEntryIds = [...pendingEntryIds];
+    if (result.skipped > 0 || result.failed > 0) {
+      updatePendingFoodHistoryRepair(food.id, result.pendingEntryIds);
+    } else {
+      updatePendingFoodHistoryRepair(food.id, undefined);
+    }
     const message = formatHealthFoodHistoryRepairResult(result);
     if (result.skipped > 0 || result.failed > 0) {
       setMessage({ tone: "warn", text: message });
@@ -3004,32 +3689,34 @@ export function useHealth(
     if (!operation) return false;
 
     const now = new Date().toISOString();
+    const planId = input.id ?? createLocalId("health-meal-plan");
+    const normalizedInput = { ...input, id: planId };
     const localRow: HealthMealPlanEntry = {
-      attribution: input.attribution ?? null,
-      barcode: input.barcode ?? null,
-      brand_name: input.brand_name ?? null,
-      calories: input.calories,
-      carbs_g: input.carbs_g ?? null,
+      attribution: normalizedInput.attribution ?? null,
+      barcode: normalizedInput.barcode ?? null,
+      brand_name: normalizedInput.brand_name ?? null,
+      calories: normalizedInput.calories,
+      carbs_g: normalizedInput.carbs_g ?? null,
       confirmed_at: null,
       confirmed_meal_entry_id: null,
       created_at: now,
-      fat_g: input.fat_g ?? null,
-      food_name: input.food_name,
-      id: input.id ?? createLocalId("health-meal-plan"),
-      meal_slot: input.meal_slot,
-      nutrition_snapshot: input.nutrition_snapshot ?? null,
-      planned_at: input.planned_at,
-      planned_date: input.planned_date,
-      planned_time: input.planned_time,
-      protein_g: input.protein_g ?? null,
-      provider: input.provider ?? "manual",
-      provider_item_id: input.provider_item_id ?? null,
-      serving_fraction: input.serving_fraction ?? null,
-      serving_label: input.serving_label ?? null,
-      source_food_id: input.source_food_id ?? null,
-      consumed_quantity: input.consumed_quantity ?? null,
-      consumed_unit: input.consumed_unit ?? null,
-      food_snapshot: input.food_snapshot ?? null,
+      fat_g: normalizedInput.fat_g ?? null,
+      food_name: normalizedInput.food_name,
+      id: planId,
+      meal_slot: normalizedInput.meal_slot,
+      nutrition_snapshot: normalizedInput.nutrition_snapshot ?? null,
+      planned_at: normalizedInput.planned_at,
+      planned_date: normalizedInput.planned_date,
+      planned_time: normalizedInput.planned_time,
+      protein_g: normalizedInput.protein_g ?? null,
+      provider: normalizedInput.provider ?? "manual",
+      provider_item_id: normalizedInput.provider_item_id ?? null,
+      serving_fraction: normalizedInput.serving_fraction ?? null,
+      serving_label: normalizedInput.serving_label ?? null,
+      source_food_id: normalizedInput.source_food_id ?? null,
+      consumed_quantity: normalizedInput.consumed_quantity ?? null,
+      consumed_unit: normalizedInput.consumed_unit ?? null,
+      food_snapshot: normalizedInput.food_snapshot ?? null,
       updated_at: now,
       user_id: userId,
     };
@@ -3037,26 +3724,51 @@ export function useHealth(
     let nextRow = localRow;
     let persistedRemotely = false;
     if (client && storageMode === "remote" && mealPlanRemoteEnabledRef.current) {
-      const { data, error } = await client
+      const result = await client
         .from("adhdice_health_meal_plan_entries")
-        .insert({ ...input, user_id: userId })
+        .insert({ ...normalizedInput, user_id: userId })
         .select("*")
         .single();
       if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        if (!isMissingHealthPersistence(error.message)) {
-          setMessage({ tone: "warn", text: error.message });
-          return false;
-        }
+      if (result.error && isMissingHealthPersistence(result.error.message)) {
         mealPlanRemoteEnabledRef.current = false;
         setMessage({ tone: "neutral", text: "Meal planning is saved locally until the 7.11.61 migration is applied." });
       } else {
-        nextRow = data ?? localRow;
+        const reconciled = await reconcileHealthMealPlanEntryInsert({
+          input: normalizedInput,
+          result,
+          lookupById: async (id) => {
+            const { data, error } = await client
+              .from("adhdice_health_meal_plan_entries")
+              .select("*")
+              .eq("id", id)
+              .eq("user_id", userId)
+              .maybeSingle();
+            if (!isCurrentOperation(operation)) return { row: null, error: "Health operation is no longer active." };
+            return { row: data, error: error?.message ?? null };
+          },
+        });
+        if (!reconciled.row) {
+          setMessage({ tone: "warn", text: reconciled.error ?? "The planned meal save could not be confirmed." });
+          return false;
+        }
+        nextRow = reconciled.row;
         persistedRemotely = true;
       }
     }
 
     if (!isCurrentOperation(operation)) return false;
+    const currentMealPlans = healthSnapshotRef.current?.mealPlanEntries ?? mealPlanEntries;
+    if (!persistedRemotely) {
+      const existingLocal = currentMealPlans.find((entry) => entry.id === planId);
+      if (existingLocal) {
+        if (!healthMealPlanEntryInsertMatches(existingLocal, normalizedInput)) {
+          setMessage({ tone: "warn", text: "The plan ID is already in use by a different planned meal." });
+          return false;
+        }
+        nextRow = existingLocal;
+      }
+    }
     if (persistedRemotely) {
       clearMealPlanPendingMutation(nextRow.id);
     } else {
@@ -3069,7 +3781,7 @@ export function useHealth(
       favorites,
       importAudits,
       mealEntries,
-      mealPlanEntries: [nextRow, ...mealPlanEntries.filter((entry) => entry.id !== nextRow.id)].sort(sortHealthMealPlans),
+      mealPlanEntries: [nextRow, ...currentMealPlans.filter((entry) => entry.id !== nextRow.id)].sort(sortHealthMealPlans),
       metricEntries,
       profile,
       recipes,
@@ -3281,12 +3993,13 @@ export function useHealth(
       updated_at: confirmedAt,
       user_id: userId,
     };
-    const nextMealEntries = mealEntries.some((entry) => entry.id === actualMealEntryId)
-      ? mealEntries
-      : [actualRow, ...mealEntries].sort((left, right) => right.logged_at.localeCompare(left.logged_at));
-    const nextPlanEntries = mealPlanEntries.map((entry) => entry.id === planId
-      ? { ...entry, confirmed_at: confirmedAt, confirmed_meal_entry_id: actualMealEntryId, updated_at: confirmedAt }
-      : entry);
+    const { mealEntries: nextMealEntries, mealPlanEntries: nextPlanEntries } = reconcileHealthMealPlanConfirmation({
+      mealEntries,
+      mealPlanEntries,
+      planId,
+      actualEntry: actualRow,
+      confirmedAt,
+    });
     const nextSnapshot = buildHealthSnapshot({
       awards,
       checkIns,
@@ -3311,7 +4024,10 @@ export function useHealth(
     return true;
   }
 
-  async function saveFavoriteFood(input: Omit<HealthFoodLibraryItemInsert, "user_id">): Promise<HealthFoodLibraryItem | null> {
+  async function saveFavoriteFood(
+    input: Omit<HealthFoodLibraryItemInsert, "user_id">,
+    options: { createOnly?: boolean } = {},
+  ): Promise<HealthFoodLibraryItem | null> {
     if (!userId || !profile) {
       return null;
     }
@@ -3371,21 +4087,66 @@ export function useHealth(
     };
 
     let nextRow = localRow;
-    if (client && storageMode === "remote") {
-      const { data, error } = await client
-        .from("adhdice_health_food_library")
-        .upsert({
-          ...normalizedInput,
-          user_id: userId,
-        })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return null;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
+    const isRemoteSave = Boolean(client && storageMode === "remote");
+    if (options.createOnly && existingFood && !isRemoteSave) {
+      if (!healthCustomFoodWriteMatchesCanonicalRow(existingFood, localRow, userId)) {
+        setMessage({ tone: "warn", text: "This new food draft ID already belongs to a different library item. The existing food was left unchanged." });
         return null;
       }
-      nextRow = data ? normalizeHealthFoodLibraryItem(data) : localRow;
+      nextRow = existingFood;
+    }
+    if (client && storageMode === "remote") {
+      let data: HealthFoodLibraryItem | null = null;
+      let error: { message?: string } | null = null;
+      try {
+        const foodQuery = client.from("adhdice_health_food_library");
+        const response = options.createOnly
+          ? await foodQuery.insert({ ...normalizedInput, user_id: userId }).select("*").single()
+          : await foodQuery.upsert({ ...normalizedInput, user_id: userId }).select("*").single();
+        data = response.data;
+        error = response.error;
+      } catch (caughtError) {
+        error = { message: caughtError instanceof Error ? caughtError.message : String(caughtError) };
+      }
+      if (!isCurrentOperation(operation)) return null;
+      if (data) {
+        nextRow = normalizeHealthFoodLibraryItem(data);
+        if (normalizedInput.id && (nextRow.id !== normalizedInput.id
+          || !healthCustomFoodWriteMatchesCanonicalRow(nextRow, localRow, userId))) {
+          setMessage({ tone: "warn", text: "The saved food did not match the requested record and was not confirmed. Your draft is still available to retry." });
+          return null;
+        }
+      } else if (normalizedInput.id) {
+        let verifiedRow: HealthFoodLibraryItem | null = null;
+        let verificationError: string | null = null;
+        try {
+          const verification = await client
+            .from("adhdice_health_food_library")
+            .select("*")
+            .eq("id", normalizedInput.id)
+            .eq("user_id", userId)
+            .maybeSingle();
+          if (verification.error) verificationError = verification.error.message;
+          else if (verification.data) verifiedRow = normalizeHealthFoodLibraryItem(verification.data);
+        } catch (caughtError) {
+          verificationError = caughtError instanceof Error ? caughtError.message : String(caughtError);
+        }
+        if (!isCurrentOperation(operation)) return null;
+        if (verifiedRow && healthCustomFoodWriteMatchesCanonicalRow(verifiedRow, localRow, userId)) {
+          nextRow = verifiedRow;
+        } else {
+          const message = error?.message ?? verificationError ?? (options.createOnly
+            ? "This food draft ID already belongs to a different library item. Your draft is still available to retry."
+            : "The save could not be confirmed for this food record.");
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else if (error) {
+        setMessage({ tone: "warn", text: error.message ?? "The custom food could not be saved." });
+        return null;
+      } else {
+        nextRow = localRow;
+      }
     }
 
     const currentSnapshot = healthSnapshotRef.current ?? buildHealthSnapshot({
@@ -3495,168 +4256,334 @@ export function useHealth(
     return true;
   }
 
-  async function saveRecipe(input: Omit<HealthRecipeInsert, "user_id">) {
+  async function saveRecipe(input: Omit<HealthRecipeInsert, "user_id">, options: HealthLibraryDefinitionSaveOptions = {}) {
     if (!userId || !profile) {
-      return false;
+      return null;
     }
     const operation = captureOperation();
-    if (!operation) return false;
-
+    if (!operation) return null;
+    const mode = options.mode ?? "legacy-upsert";
+    const recordId = mode === "legacy-upsert" ? input.id : options.recordId;
+    if (mode !== "legacy-upsert" && !recordId) {
+      setMessage({ tone: "warn", text: "This recipe draft has no stable record ID. Keep the draft open and try again." });
+      return null;
+    }
+    if (mode === "update-only" && !options.expectedUpdatedAt) {
+      setMessage({ tone: "warn", text: "This recipe's saved version is unavailable. Reopen it before saving." });
+      return null;
+    }
     const now = new Date().toISOString();
-    const localRow: HealthRecipe = {
-      created_at: now,
-      id: input.id ?? createLocalId("health-recipe"),
-      ingredients: input.ingredients,
-      name: input.name,
-      notes: input.notes ?? "",
-      servings: input.servings,
-      updated_at: now,
-      user_id: userId,
-    };
-    let nextRow = localRow;
+    const expected: Pick<HealthRecipe, "id" | "user_id" | "name" | "notes" | "servings" | "ingredients"> | null = recordId
+      ? { id: recordId, user_id: userId, ingredients: input.ingredients, name: input.name, notes: input.notes ?? "", servings: input.servings }
+      : null;
+    let nextRow: HealthRecipe | null = null;
     if (client && storageMode === "remote") {
-      const { data, error } = await client
-        .from("adhdice_health_recipes")
-        .upsert({ ...input, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
-        return false;
+      if (mode === "create-only") {
+        let writeError: { code?: string; message: string } | null = null;
+        try {
+          const { error } = await client.from("adhdice_health_recipes").insert({
+            id: recordId!,
+            ingredients: input.ingredients,
+            name: input.name,
+            notes: input.notes ?? "",
+            servings: input.servings,
+            user_id: userId,
+          }).select("*").maybeSingle();
+          writeError = error;
+        } catch (error) {
+          writeError = { message: error instanceof Error ? error.message : HEALTH_RECIPE_SAVE_FAILURE_MESSAGE };
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_recipes").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthRecipeWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = data
+            ? HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE
+            : writeError?.code === "23505"
+              ? HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE
+              : writeError?.message ?? readError?.message ?? HEALTH_RECIPE_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else if (mode === "update-only") {
+        let writeErrorMessage = "";
+        try {
+          const { error } = await client.from("adhdice_health_recipes").update({
+            ingredients: input.ingredients,
+            name: input.name,
+            notes: input.notes ?? "",
+            servings: input.servings,
+          }).eq("id", recordId!).eq("user_id", userId).eq("updated_at", options.expectedUpdatedAt!).select("*").maybeSingle();
+          if (error) writeErrorMessage = error.message;
+        } catch (error) {
+          writeErrorMessage = error instanceof Error ? error.message : HEALTH_RECIPE_SAVE_FAILURE_MESSAGE;
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_recipes").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthRecipeWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = !data
+            ? "This recipe no longer exists. Your draft is preserved; choose New recipe to create a separate definition."
+            : data.updated_at !== options.expectedUpdatedAt
+              ? "This recipe changed elsewhere. Your draft is preserved; reopen the recipe and review the saved version."
+              : writeErrorMessage || HEALTH_RECIPE_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else {
+        const { data, error } = await client.from("adhdice_health_recipes").upsert({ ...input, user_id: userId }).select("*").single();
+        if (!isCurrentOperation(operation)) return null;
+        if (error || !data) {
+          setMessage({ tone: "warn", text: error?.message ?? HEALTH_RECIPE_SAVE_FAILURE_MESSAGE });
+          return null;
+        }
+        nextRow = data;
       }
-      nextRow = data ?? localRow;
+    } else {
+      const snapshot = healthSnapshotRef.current;
+      if (!snapshot || snapshot.profile.user_id !== userId) return null;
+      const existing = recordId ? snapshot.recipes.find((recipe) => recipe.id === recordId) ?? null : null;
+      if (mode === "create-only" && existing) {
+        if (!healthRecipeWriteMatchesCanonicalRow(existing, expected!)) {
+          setMessage({ tone: "warn", text: HEALTH_RECIPE_IDENTITY_CONFLICT_MESSAGE });
+          return null;
+        }
+        nextRow = existing;
+      } else if (mode === "update-only") {
+        if (!existing) {
+          setMessage({ tone: "warn", text: "This recipe no longer exists. Your draft is preserved; choose New recipe to create a separate definition." });
+          return null;
+        }
+        if (existing.updated_at !== options.expectedUpdatedAt) {
+          setMessage({ tone: "warn", text: "This recipe changed elsewhere. Your draft is preserved; reopen the recipe and review the saved version." });
+          return null;
+        }
+        nextRow = { ...existing, ...expected!, updated_at: now };
+      } else if (mode === "create-only") {
+        nextRow = {
+          created_at: now,
+          id: recordId!,
+          ingredients: input.ingredients,
+          name: input.name,
+          notes: input.notes ?? "",
+          servings: input.servings,
+          updated_at: now,
+          user_id: userId,
+        };
+      } else {
+        nextRow = {
+          created_at: now,
+          id: input.id ?? createLocalId("health-recipe"),
+          ingredients: input.ingredients,
+          name: input.name,
+          notes: input.notes ?? "",
+          servings: input.servings,
+          updated_at: now,
+          user_id: userId,
+          ...(existing ? { created_at: existing.created_at } : {}),
+        };
+      }
     }
 
-    if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes: [nextRow, ...recipes.filter((entry) => entry.id !== nextRow.id)]
-        .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
-      savedMeals,
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!isCurrentOperation(operation) || !latest || latest.profile.user_id !== userId || !nextRow) return null;
+    applySnapshot({ ...latest, recipes: reconcileHealthRecipeCollection(latest.recipes, nextRow) });
     setHealthSuccessMessage({ tone: "good", text: "Recipe saved." });
-    return true;
+    return nextRow;
   }
 
   async function deleteRecipe(recipeId: string) {
-    if (!profile) {
+    if (!profile || !userId) {
       return false;
     }
     const operation = captureOperation();
     if (!operation) return false;
     if (client && storageMode === "remote") {
-      const { error } = await client.from("adhdice_health_recipes").delete().eq("id", recipeId);
+      const { data, error } = await client.from("adhdice_health_recipes").delete().eq("id", recipeId).eq("user_id", userId).select("id").maybeSingle();
       if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
+      if (!data) {
+        const { data: existing, error: readError } = await client.from("adhdice_health_recipes").select("id").eq("id", recipeId).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return false;
+        if (readError || existing) {
+          setMessage({ tone: "warn", text: readError?.message ?? "This recipe could not be confirmed as removed." });
+          return false;
+        }
+      }
     }
     if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes: recipes.filter((entry) => entry.id !== recipeId),
-      savedMeals,
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!latest || latest.profile.user_id !== userId) return false;
+    applySnapshot({ ...latest, recipes: latest.recipes.filter((entry) => entry.id !== recipeId) });
     setHealthSuccessMessage({ tone: "good", text: "Recipe removed." });
     return true;
   }
 
-  async function saveSavedMeal(input: Omit<HealthSavedMealInsert, "user_id">) {
+  async function saveSavedMeal(input: Omit<HealthSavedMealInsert, "user_id">, options: HealthLibraryDefinitionSaveOptions = {}) {
     if (!userId || !profile) {
-      return false;
+      return null;
     }
     const operation = captureOperation();
-    if (!operation) return false;
+    if (!operation) return null;
+    const mode = options.mode ?? "legacy-upsert";
+    const recordId = mode === "legacy-upsert" ? input.id : options.recordId;
+    if (mode !== "legacy-upsert" && !recordId) {
+      setMessage({ tone: "warn", text: "This saved meal draft has no stable record ID. Keep the draft open and try again." });
+      return null;
+    }
+    if (mode === "update-only" && !options.expectedUpdatedAt) {
+      setMessage({ tone: "warn", text: "This saved meal's saved version is unavailable. Reopen it before saving." });
+      return null;
+    }
     const now = new Date().toISOString();
-    const localRow: HealthSavedMeal = {
-      created_at: now,
-      default_meal_slot: input.default_meal_slot,
-      id: input.id ?? createLocalId("health-saved-meal"),
-      items: input.items,
-      name: input.name,
-      updated_at: now,
-      user_id: userId,
-    };
-    let nextRow = localRow;
+    const expected: Pick<HealthSavedMeal, "id" | "user_id" | "name" | "default_meal_slot" | "items"> | null = recordId
+      ? { id: recordId, user_id: userId, items: input.items, name: input.name, default_meal_slot: input.default_meal_slot }
+      : null;
+    let nextRow: HealthSavedMeal | null = null;
     if (client && storageMode === "remote") {
-      const { data, error } = await client
-        .from("adhdice_health_saved_meals")
-        .upsert({ ...input, user_id: userId })
-        .select("*")
-        .single();
-      if (!isCurrentOperation(operation)) return false;
-      if (error) {
-        setMessage({ tone: "warn", text: error.message });
-        return false;
+      if (mode === "create-only") {
+        let writeError: { code?: string; message: string } | null = null;
+        try {
+          const { error } = await client.from("adhdice_health_saved_meals").insert({
+            id: recordId!,
+            default_meal_slot: input.default_meal_slot,
+            items: input.items,
+            name: input.name,
+            user_id: userId,
+          }).select("*").maybeSingle();
+          writeError = error;
+        } catch (error) {
+          writeError = { message: error instanceof Error ? error.message : HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE };
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_saved_meals").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthSavedMealWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = data
+            ? HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE
+            : writeError?.code === "23505"
+              ? HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE
+              : writeError?.message ?? readError?.message ?? HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else if (mode === "update-only") {
+        let writeErrorMessage = "";
+        try {
+          const { error } = await client.from("adhdice_health_saved_meals").update({
+            default_meal_slot: input.default_meal_slot,
+            items: input.items,
+            name: input.name,
+          }).eq("id", recordId!).eq("user_id", userId).eq("updated_at", options.expectedUpdatedAt!).select("*").maybeSingle();
+          if (error) writeErrorMessage = error.message;
+        } catch (error) {
+          writeErrorMessage = error instanceof Error ? error.message : HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE;
+        }
+        if (!isCurrentOperation(operation)) return null;
+        const { data, error: readError } = await client.from("adhdice_health_saved_meals").select("*").eq("id", recordId!).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return null;
+        if (!readError && healthSavedMealWriteMatchesCanonicalRow(data, expected!)) nextRow = data;
+        else {
+          const message = !data
+            ? "This saved meal no longer exists. Your draft is preserved; choose New saved meal to create a separate definition."
+            : data.updated_at !== options.expectedUpdatedAt
+              ? "This saved meal changed elsewhere. Your draft is preserved; reopen it and review the saved version."
+              : writeErrorMessage || HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE;
+          setMessage({ tone: "warn", text: message });
+          return null;
+        }
+      } else {
+        const { data, error } = await client.from("adhdice_health_saved_meals").upsert({ ...input, user_id: userId }).select("*").single();
+        if (!isCurrentOperation(operation)) return null;
+        if (error || !data) {
+          setMessage({ tone: "warn", text: error?.message ?? HEALTH_SAVED_MEAL_SAVE_FAILURE_MESSAGE });
+          return null;
+        }
+        nextRow = data;
       }
-      nextRow = data ?? localRow;
+    } else {
+      const snapshot = healthSnapshotRef.current;
+      if (!snapshot || snapshot.profile.user_id !== userId) return null;
+      const existing = recordId ? snapshot.savedMeals.find((meal) => meal.id === recordId) ?? null : null;
+      if (mode === "create-only" && existing) {
+        if (!healthSavedMealWriteMatchesCanonicalRow(existing, expected!)) {
+          setMessage({ tone: "warn", text: HEALTH_SAVED_MEAL_IDENTITY_CONFLICT_MESSAGE });
+          return null;
+        }
+        nextRow = existing;
+      } else if (mode === "update-only") {
+        if (!existing) {
+          setMessage({ tone: "warn", text: "This saved meal no longer exists. Your draft is preserved; choose New saved meal to create a separate definition." });
+          return null;
+        }
+        if (existing.updated_at !== options.expectedUpdatedAt) {
+          setMessage({ tone: "warn", text: "This saved meal changed elsewhere. Your draft is preserved; reopen it and review the saved version." });
+          return null;
+        }
+        nextRow = { ...existing, ...expected!, updated_at: now };
+      } else if (mode === "create-only") {
+        nextRow = {
+          created_at: now,
+          default_meal_slot: input.default_meal_slot,
+          id: recordId!,
+          items: input.items,
+          name: input.name,
+          updated_at: now,
+          user_id: userId,
+        };
+      } else {
+        nextRow = {
+          created_at: now,
+          default_meal_slot: input.default_meal_slot,
+          id: input.id ?? createLocalId("health-saved-meal"),
+          items: input.items,
+          name: input.name,
+          updated_at: now,
+          user_id: userId,
+          ...(existing ? { created_at: existing.created_at } : {}),
+        };
+      }
     }
 
-    if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes,
-      savedMeals: [nextRow, ...savedMeals.filter((entry) => entry.id !== nextRow.id)]
-        .sort((left, right) => right.updated_at.localeCompare(left.updated_at)),
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!isCurrentOperation(operation) || !latest || latest.profile.user_id !== userId || !nextRow) return null;
+    applySnapshot({ ...latest, savedMeals: reconcileHealthSavedMealCollection(latest.savedMeals, nextRow) });
     setHealthSuccessMessage({ tone: "good", text: "Custom meal saved." });
-    return true;
+    return nextRow;
   }
 
   async function deleteSavedMeal(mealId: string) {
-    if (!profile) {
+    if (!profile || !userId) {
       return false;
     }
     const operation = captureOperation();
     if (!operation) return false;
     if (client && storageMode === "remote") {
-      const { error } = await client.from("adhdice_health_saved_meals").delete().eq("id", mealId);
+      const { data, error } = await client.from("adhdice_health_saved_meals").delete().eq("id", mealId).eq("user_id", userId).select("id").maybeSingle();
       if (!isCurrentOperation(operation)) return false;
       if (error) {
         setMessage({ tone: "warn", text: error.message });
         return false;
       }
+      if (!data) {
+        const { data: existing, error: readError } = await client.from("adhdice_health_saved_meals").select("id").eq("id", mealId).eq("user_id", userId).maybeSingle();
+        if (!isCurrentOperation(operation)) return false;
+        if (readError || existing) {
+          setMessage({ tone: "warn", text: readError?.message ?? "This saved meal could not be confirmed as removed." });
+          return false;
+        }
+      }
     }
     if (!isCurrentOperation(operation)) return false;
-    applySnapshot(buildHealthSnapshot({
-      awards,
-      checkIns,
-      favorites,
-      importAudits,
-      mealEntries,
-      metricEntries,
-      profile,
-      recipes,
-      savedMeals: savedMeals.filter((entry) => entry.id !== mealId),
-      waterEntries,
-      weightEntries,
-    }));
+    const latest = healthSnapshotRef.current;
+    if (!latest || latest.profile.user_id !== userId) return false;
+    applySnapshot({ ...latest, savedMeals: latest.savedMeals.filter((entry) => entry.id !== mealId) });
     setHealthSuccessMessage({ tone: "good", text: "Custom meal removed." });
     return true;
   }
@@ -4486,9 +5413,20 @@ export function useHealth(
     return true;
   }
 
+  const hasCurrentJournalTriggerData = Boolean(userId && journalTriggerDataOwnerId === userId);
+  const hasCurrentJournalTriggerRequest = Boolean(userId && journalTriggerRequestOwnerId === userId);
+
   return {
     awards,
     checkIns,
+    journalTriggers: hasCurrentJournalTriggerData ? journalTriggers : [],
+    journalTriggerLinks: hasCurrentJournalTriggerData ? journalTriggerLinks : [],
+    journalTriggerDataError: hasCurrentJournalTriggerRequest ? journalTriggerDataError : null,
+    isLoadingJournalTriggers: hasCurrentJournalTriggerRequest && isLoadingJournalTriggers,
+    hasLoadedJournalTriggerData: hasCurrentJournalTriggerData && hasLoadedJournalTriggerData,
+    loadJournalTriggerData,
+    journalStatisticsDataError,
+    createJournalTrigger,
     journalSignals,
     journalSignalValues,
     journalSignalOccurrences,
@@ -4508,6 +5446,8 @@ export function useHealth(
     deleteWaterEntry,
     deleteWeightEntry,
     favorites,
+    pendingFoodHistoryRepairIds,
+    hasLoadedFoodLibrary: Boolean(userId && foodLibraryLoadedUserIdRef.current === userId && healthSnapshotRef.current?.profile.user_id === userId),
     importAudits,
     isLoading,
     importAppleHealthData,

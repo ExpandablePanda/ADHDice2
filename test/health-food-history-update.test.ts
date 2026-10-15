@@ -6,6 +6,7 @@ import type { HealthFoodLibraryItem, HealthMealEntry } from "../src/lib/database
 import {
   buildHealthFoodHistoryMealEntryUpdate,
   formatHealthFoodHistoryRepairResult,
+  healthMealEntryUpdateMatchesRow,
   selectHealthFoodMealEntriesBySourceId,
 } from "../src/lib/health-meal-recalculation.ts";
 
@@ -164,6 +165,22 @@ test("partial history repair is reported as incomplete and retryable", () => {
   );
 });
 
+test("ambiguous history update acknowledgments reconcile only the exact scoped row", () => {
+  const entry = meal();
+  const update = buildHealthFoodHistoryMealEntryUpdate(food, entry);
+  const persistedRow = {
+    ...entry,
+    ...update,
+    protein_g: update.protein_g === null ? null : Number(update.protein_g?.toFixed(2)),
+    updated_at: "2026-10-11T14:00:00.000Z",
+  };
+  assert.equal(healthMealEntryUpdateMatchesRow(persistedRow, update), true);
+  assert.equal(healthMealEntryUpdateMatchesRow({ ...persistedRow, protein_g: 1.24 }, { protein_g: 1.236 }), true);
+  assert.equal(healthMealEntryUpdateMatchesRow({ ...persistedRow, protein_g: 1.24 }, { protein_g: 1.234 }), false);
+  assert.equal(healthMealEntryUpdateMatchesRow({ ...persistedRow, food_name: "Different food" }, update), false);
+  assert.equal(healthMealEntryUpdateMatchesRow({ ...persistedRow, nutrition_snapshot: null }, update), false);
+});
+
 test("Custom Food save prompt and persistent repair action use the source-id history path", () => {
   const panel = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
   const hook = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
@@ -173,10 +190,11 @@ test("Custom Food save prompt and persistent repair action use the source-id his
   assert.match(panel, /Future entries only/);
   assert.match(panel, /Update Previous Logs ·/);
   assert.match(panel, /hasHealthFoodNutritionOrServingChanges/);
-  assert.match(panel, /updatePreviousFoodLogs\(saved\)/);
-  assert.match(panel, /updatePreviousFoodLogs\(food\)/);
+  assert.match(panel, /updatePreviousFoodLogs\(saved, \{ mode: "all" \}\)/);
+  assert.match(panel, /updatePreviousFoodLogs\(food, \{/);
   assert.match(hook, /selectHealthFoodMealEntriesBySourceId\(mealEntries, food\.id\)/);
   assert.match(hook, /\.eq\("source_food_id", food\.id\)/);
+  assert.match(hook, /healthMealEntryUpdateMatchesRow\(verification\.data, update\)/);
   assert.match(hook, /setMessage\(\{ tone: "warn", text: message \}\)/);
   assert.match(hook, /formatHealthFoodHistoryRepairResult/);
 });

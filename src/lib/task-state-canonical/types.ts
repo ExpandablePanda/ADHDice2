@@ -67,6 +67,7 @@ export type CanonicalCommandType =
   | "start_in_progress"
   | "clear_in_progress"
   | "reconcile_rollover"
+  | "recalculate_history"
   | "hierarchy_change";
 
 export type CanonicalCommandOperationState =
@@ -306,7 +307,7 @@ export type CanonicalTaskHistoryFact = {
   updated_at: string;
 };
 
-export type CanonicalCalendarOverrideState = "unscheduled" | "not_due" | "due_open";
+export type CanonicalCalendarOverrideState = "unscheduled" | "not_due" | "due_open" | "blank_due" | "in_progress";
 export type CanonicalTaskCalendarOverride = {
   id: string;
   user_id: string;

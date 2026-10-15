@@ -38,6 +38,18 @@ function notDueOverride(logicalDate: string, createdAt = "2026-08-14T23:20:00.00
   };
 }
 
+function blankDueOverride(logicalDate: string): TaskCalendarOverride {
+  return {
+    createdAt: `${logicalDate}T23:20:00.000Z`,
+    id: `blank-override-${logicalDate}`,
+    logicalDate,
+    overrideState: "blank_due",
+    provenance: "manual",
+    revision: 1,
+    source: "task_state_command",
+  };
+}
+
 test("supplied Missed dates become visible rows without timestamps", () => {
   const rows = buildTaskHistoryRowProjections([], {
     "2026-08-05": day("missed"),
@@ -79,6 +91,19 @@ test("manual Not Due overrides become visible rows with their audit timestamp", 
     logicalDate: "2026-08-10",
     status: "not_due",
   });
+});
+
+test("manual Blank and Due overrides remain visible without creating History facts", () => {
+  const rows = buildTaskHistoryRowProjections([], {}, new Set(), [
+    blankDueOverride("2026-08-10"),
+    { ...notDueOverride("2026-08-09"), overrideState: "due_open" },
+  ]);
+
+  assert.deepEqual(rows.map((row) => [row.logicalDate, row.status, row.entry]), [
+    ["2026-08-10", "blank", null],
+    ["2026-08-09", "due", null],
+  ]);
+  assert.equal(rows.every((row) => row.calendarOverride !== null), true);
 });
 
 test("calculated Not Due remains rowless and explicit History wins over a manual override", () => {

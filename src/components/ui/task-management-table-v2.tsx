@@ -2,6 +2,7 @@
 
 import { Children, Fragment, lazy, Suspense, startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type DragEvent as ReactDragEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 import { createPortal } from "react-dom";
+import { useWorkspaceOverlayHost } from "@/components/task-app/master-workspace-panel";
 import { AnimatePresence, motion, useReducedMotion, type Variants } from "framer-motion";
 import {
   ArrowLeft,
@@ -1432,6 +1433,7 @@ type TaskManagementTableV2Props = {
   enableInspector?: boolean;
   overlayNode?: ReactNode;
   onInspectorClose?: () => void;
+  onUnsafeDraftChange?: (isEditing: boolean) => void;
   shellClassName?: string;
   showHeader?: boolean;
   onClearSelection?: () => void;
@@ -2945,7 +2947,14 @@ export function TaskManagementTableV2({
   hasMoreRows = false,
   persistedLayoutPreferences,
   onPersistedLayoutPreferencesChange,
+  onUnsafeDraftChange,
 }: TaskManagementTableV2Props) {
+  const workspaceOverlayHost = useWorkspaceOverlayHost();
+  const isPanelScopedTaskOverlay = Boolean(workspaceOverlayHost);
+  const onUnsafeDraftChangeRef = useRef(onUnsafeDraftChange);
+  useEffect(() => {
+    onUnsafeDraftChangeRef.current = onUnsafeDraftChange;
+  }, [onUnsafeDraftChange]);
   const layoutPersistenceEnabled = !overlayOnly;
   const shouldReduceMotion = useReducedMotion();
   const [tasks, setTasks] = useState<PrototypeTaskRow[]>(rows);
@@ -2967,6 +2976,11 @@ export function TaskManagementTableV2({
   const titleDraftsRef = useRef<Record<string, string>>({});
   const pendingEditorChildTitleRenameRef = useRef<{ taskId: string; title: string } | null>(null);
   const [subtaskTitleDrafts, setSubtaskTitleDrafts] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    onUnsafeDraftChangeRef.current?.(Boolean(selectedTaskId || editingTaskTitleId || editingSubtaskId || metadataTargetTaskId));
+  }, [editingSubtaskId, editingTaskTitleId, metadataTargetTaskId, selectedTaskId]);
+  useEffect(() => () => onUnsafeDraftChangeRef.current?.(false), []);
 
   function getPolicyFilteredStatuses(input: {
     dueOn: string | null;
@@ -9396,11 +9410,13 @@ export function TaskManagementTableV2({
     );
   };
 
-  return (
+  const taskEditorContent = (
     <div
       className={overlayOnly
-        ? `fixed inset-0 z-50 m-0 h-screen w-screen max-w-none ${className}`
+        ? `${isPanelScopedTaskOverlay ? "pointer-events-auto absolute inset-0 h-full w-full" : "fixed inset-0 h-screen w-screen"} z-50 m-0 max-w-none ${className}`
         : `mx-auto mt-3 h-fit w-full max-w-[88rem] ${className}`}
+      data-overlay-owner-panel={overlayOnly && isPanelScopedTaskOverlay ? workspaceOverlayHost?.panelId : undefined}
+      data-overlay-owner-tab={overlayOnly && isPanelScopedTaskOverlay ? workspaceOverlayHost?.tabId : undefined}
       style={TABLE_FONT_STYLE}
     >
       <div
@@ -10040,7 +10056,7 @@ export function TaskManagementTableV2({
             <motion.div
               animate={{ opacity: 1 }}
               className={overlayMode === "full" && isCompactViewport
-                ? "fixed inset-0 z-[150] flex flex-col bg-[#f7f3ff]/82 backdrop-blur-[10px] dark:bg-[#100b1d]/84"
+                ? `${isPanelScopedTaskOverlay ? "absolute" : "fixed"} inset-0 z-[150] flex flex-col bg-[#f7f3ff]/82 backdrop-blur-[10px] dark:bg-[#100b1d]/84`
                 : overlayMode === "full"
                   ? "absolute inset-0 z-20 flex flex-col rounded-[2rem] bg-[linear-gradient(135deg,rgba(255,255,255,0.9),rgba(245,240,255,0.76)_48%,rgba(255,255,255,0.9))] backdrop-blur-[18px] dark:bg-[linear-gradient(135deg,rgba(20,15,38,0.94),rgba(31,23,55,0.9)_48%,rgba(20,15,38,0.94))]"
                 : "absolute inset-0 z-20 flex flex-col rounded-[2rem] bg-white/78 backdrop-blur-sm dark:bg-[#140f26]/92"}
@@ -10893,13 +10909,13 @@ export function TaskManagementTableV2({
 
                 const fullDesktopEditorNode = (
                   <div
-                    className="pointer-events-none grid min-w-0 w-full max-w-[calc(100vw-2rem)] grid-cols-[minmax(2.75rem,1fr)_minmax(0,80rem)_minmax(2.75rem,1fr)] items-center gap-3"
+                    className={`pointer-events-none grid min-w-0 w-full ${isPanelScopedTaskOverlay ? "max-w-full" : "max-w-[calc(100vw-2rem)]"} grid-cols-[minmax(2.75rem,1fr)_minmax(0,80rem)_minmax(2.75rem,1fr)] items-center gap-3`}
                     data-task-editor-interaction="true"
                   >
                     <div className="flex min-w-0 items-center justify-center" data-task-editor-navigation-gutter="previous">
                       {renderEditorNavigationControls("side", "previous")}
                     </div>
-                    <div className="pointer-events-auto relative min-w-0 w-full max-w-[80rem] min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)] overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent adhdice-scrollbar">
+                    <div className={`pointer-events-auto relative min-w-0 w-full max-w-[80rem] ${isPanelScopedTaskOverlay ? "min-h-full max-h-full" : "min-h-[calc(100dvh-4rem)] max-h-[calc(100dvh-2rem)]"} overflow-y-auto overscroll-contain rounded-[2rem] bg-transparent adhdice-scrollbar`}>
                       <div className="p-4">
                         {fullDesktopEditorContent}
                       </div>
@@ -10976,7 +10992,7 @@ export function TaskManagementTableV2({
               >
                 {isFocusedOverlay ? (
                   <div
-                    className={`absolute w-full ${overlayMode === "full" ? "left-1/2 max-w-[calc(100vw-2rem)] -translate-x-1/2" : "max-w-[32rem]"}`}
+                    className={`absolute w-full ${overlayMode === "full" ? `left-1/2 ${isPanelScopedTaskOverlay ? "max-w-[calc(100%-2rem)]" : "max-w-[calc(100vw-2rem)]"} -translate-x-1/2` : "max-w-[32rem]"}`}
                     onClick={(event) => event.stopPropagation()}
                     ref={overlayMode === "full"
                       ? (useMobileFullOverlay ? editorInteractionRef : undefined)
@@ -11015,7 +11031,7 @@ export function TaskManagementTableV2({
                     onClick={(event) => event.stopPropagation()}
                     ref={overlayMode === "full" ? editorInteractionRef : inspectorPanelRef}
                   >
-                    <div className="relative flex max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))] min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]">
+                    <div className={`relative flex ${isPanelScopedTaskOverlay ? "h-full max-h-full" : "max-h-[calc(100dvh-1.5rem-env(safe-area-inset-bottom))]"} min-h-0 flex-col overflow-hidden overscroll-contain rounded-[1.6rem] border border-[#e7defc] bg-white shadow-[0_26px_70px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]`}>
                       <div className="adhdice-scrollbar min-h-0 flex-1 overflow-x-hidden overflow-y-auto overscroll-contain">
                         <div className="px-0 pb-3">
                           {fullDesktopEditorContent}
@@ -11577,4 +11593,9 @@ export function TaskManagementTableV2({
       ) : null}
     </div>
   );
+
+  if (overlayOnly && workspaceOverlayHost === null) return null;
+  return overlayOnly && workspaceOverlayHost
+    ? createPortal(taskEditorContent, workspaceOverlayHost.element)
+    : taskEditorContent;
 }

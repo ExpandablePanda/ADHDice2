@@ -1,7 +1,7 @@
 "use client";
 
 import { Check, Pencil, Trash2, X } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { AdhdIconButton } from "@/components/ui-system/adhd-icon-button";
@@ -17,6 +17,7 @@ type HealthFitnessExerciseLibraryProps = {
   isLoading: boolean;
   reorderExercises: (orderedExerciseIds: readonly string[]) => Promise<boolean>;
   updateExercise: (exerciseId: string, input: HealthExerciseUpdate) => Promise<boolean>;
+  onDraftSafetyChange: (isUnsafe: boolean) => void;
 };
 
 export function HealthFitnessExerciseLibrary({
@@ -27,21 +28,29 @@ export function HealthFitnessExerciseLibrary({
   isLoading,
   reorderExercises,
   updateExercise,
+  onDraftSafetyChange,
 }: HealthFitnessExerciseLibraryProps) {
   const [nameDraft, setNameDraft] = useState("");
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingName, setEditingName] = useState("");
   const [isSaving, setIsSaving] = useState(false);
+  const isDraftUnsafe = Boolean(nameDraft || editingId || isSaving);
   const activeExercises = exerciseLibrary.filter((exercise) => exercise.archived_at === null);
   const archivedExercises = exerciseLibrary.filter((exercise) => exercise.archived_at !== null);
+
+  useEffect(() => {
+    onDraftSafetyChange(isDraftUnsafe);
+    return () => onDraftSafetyChange(false);
+  }, [isDraftUnsafe, onDraftSafetyChange]);
 
   async function handleAddExercise(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setIsSaving(true);
-    const created = await createExercise({ name: nameDraft });
-    setIsSaving(false);
-    if (created) {
-      setNameDraft("");
+    try {
+      const created = await createExercise({ name: nameDraft });
+      if (created) setNameDraft("");
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -52,11 +61,23 @@ export function HealthFitnessExerciseLibrary({
 
   async function handleSaveEdit(exerciseId: string) {
     setIsSaving(true);
-    const saved = await updateExercise(exerciseId, { name: editingName });
-    setIsSaving(false);
-    if (saved) {
-      setEditingId(null);
-      setEditingName("");
+    try {
+      const saved = await updateExercise(exerciseId, { name: editingName });
+      if (saved) {
+        setEditingId(null);
+        setEditingName("");
+      }
+    } finally {
+      setIsSaving(false);
+    }
+  }
+
+  async function handleReorderExercises(orderedExerciseIds: readonly string[]) {
+    setIsSaving(true);
+    try {
+      return await reorderExercises(orderedExerciseIds);
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -83,7 +104,7 @@ export function HealthFitnessExerciseLibrary({
             getItemLabel={(exercise) => exercise.name}
             items={activeExercises}
             label="exercise"
-            onSave={reorderExercises}
+            onSave={handleReorderExercises}
             renderItem={(exercise) => (
               <ExerciseLibraryRow
                 editing={editingId === exercise.id}
@@ -91,7 +112,7 @@ export function HealthFitnessExerciseLibrary({
                 editingName={editingName}
                 isSaving={isSaving}
                 onArchive={() => { void archiveExercise(exercise.id); }}
-                onCancel={() => setEditingId(null)}
+                onCancel={() => { setEditingId(null); setEditingName(""); }}
                 onEdit={() => beginEdit(exercise)}
                 onSave={() => { void handleSaveEdit(exercise.id); }}
                 setEditingName={setEditingName}

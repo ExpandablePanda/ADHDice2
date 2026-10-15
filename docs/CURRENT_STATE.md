@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-05
+Last reviewed: 2026-10-15
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.95`.
+- Current working app version: `7.16.171`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,1167 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.171 Side, Main, and iOS Integration
+
+The 7.16 line now includes the Side Journal and Batch Intake work: Trigger
+statistics and occurrence associations, owner-safe Journal deletion/tombstones,
+Journal Event timing and scored Feeling tags, Home Journal shortcuts, and
+improved partial, custom-food, and split-brand matching. Shared Journal draft
+sessions and panel-scoped Master Workspace state remain the active editing and
+navigation owners. The Home restore-generation, hydration, and recovery-point
+protections from 7.16.164–7.16.170 remain intact.
+
+The Side Journal schema and source migrations are included for reviewed
+deployment coordination; they were not executed against production. Browser
+QA remains Andrew's manual responsibility.
+
+## 2026-10-15 7.16.170 Safe Home Recovery Restore Interface
+
+Settings now compares a verified Home recovery point against a fresh,
+authenticated owner-scoped read of the current authoritative Home row. The
+comparison includes Todo, Urgent, and Routine memberships and order, Routine
+sections and assignments, day offsets, Scratchpad content and items, and other
+persisted Home fields. A separate confirmation identifies the snapshot date
+and warns that the whole saved Home state will be replaced.
+
+Restore uses only the installed `restore_home_recovery_point` RPC with a
+freshly read state revision and restore generation. A conflict stops the
+attempt and requires a fresh comparison. Active Home panels reconcile through
+the shared generation-fenced owner. If Home is inactive, its cache stays
+untouched until the next owner-scoped hydration adopts the newer server
+generation and preserves the superseded cache. No SQL, Cron, Task, or Task
+History changes were made.
+
+The Restore control is default-off and requires explicit development/staging
+environment enablement plus an exact allowlisted origin. No production
+restoration was activated. Focused Settings/Home recovery and Home hydration
+tests passed (123 passed, one disposable-PostgreSQL case skipped in the
+combined run); the database integration suite separately passed against a
+temporary local PostgreSQL cluster. Targeted ESLint and the production build
+passed. The build skipped type validation. The full repository typecheck still
+reports existing errors outside the ticket; a filtered rerun found no
+diagnostics in the changed files. `git diff --check` passed. Browser QA remains
+Andrew's manual responsibility and must pass before enabling the gate.
+
+## 2026-10-15 7.16.169 Backup Preview Task Titles
+
+Home backup previews now resolve titles for referenced Task IDs that are not
+present in the currently loaded Task projection. The Settings preview uses
+read-only, owner-filtered batches against the canonical `adhdice_clean_tasks`
+source. The recovery preview's `missing_task_ids` continues to identify
+confirmed missing references; unresolved title lookups are labeled separately.
+Saved list order, Routine assignments, day offsets, integrity checks, and the
+downloaded Home snapshot state and payload format are unchanged; its app-version
+metadata follows the 7.16.169 release. No Home persistence, recovery data,
+restore behavior, SQL, or Cron behavior changed.
+
+Focused recovery Settings tests, targeted ESLint, the production build, and
+`git diff --check` passed. Browser QA remains Andrew's manual check.
+
+## 2026-10-15 7.16.168 Settings Width and Responsive Recovery Layout
+
+The canonical Settings page now uses a centered 70rem maximum width. Recovery
+statistics, recovery-point cards, and snapshot previews switch columns from the
+rendered PageShell width, so mobile, split-window, and custom narrow shells
+remain stacked until their available width is sufficient. Settings controls
+wrap at narrow sizes, and shells below 16rem keep readable content through
+horizontal scrolling without changing saved layout preferences.
+
+No recovery RPC, business logic, stored layout, Home synchronization, SQL, or
+Cron behavior changed. Focused Settings recovery and layout checks passed
+(9/9), targeted ESLint passed, and the Next.js 16.2.4 production build passed
+while skipping type validation. `git diff --check` passed. Browser visual QA
+remains Andrew's manual check; the Settings checklist now covers desktop,
+mobile, split-window, and resized PageShell layouts.
+
+## 2026-10-15 7.16.167 Settings Home Backup & Recovery
+
+Settings now provides a reorderable Home-only recovery dashboard. It reads
+availability, owner-scoped point metadata, status, and previews through the
+existing authenticated RPCs. Manual capture uses the existing capture RPC;
+downloads include explicit Home-only scope and recovery schema/version
+metadata. Previews show ordered Home Todo, Urgent, and Routine memberships,
+missing Task references, and membership/order changes against the preceding
+saved recovery point. Preview browsing does not activate Home hydration or
+write Home state. Restore remains disabled.
+
+Settings distinguishes missing recovery RPCs from an available empty list.
+The database status contract does not reveal the Cron catalog or runtime
+interval setting, so automatic capture is never reported as active; any
+recorded scheduled attempt and the next eligibility threshold are shown with
+that limitation. The recovery migration and Cron activation remain
+production deployment work outside this interface ticket.
+
+Focused Settings recovery, existing Home recovery, Navigator, and Master
+Workspace checks passed (71 passed, one disposable-PostgreSQL integration
+case skipped because no local server was configured). Targeted ESLint and
+`git diff --check` passed. The Next.js 16.2.4 production build passed and
+skipped type validation. Browser QA remains Andrew's manual check; no
+production migration or Cron change was made.
+
+## 2026-10-15 7.16.166 Home Recovery Safety and Deployment Hardening
+
+Home restore now verifies its pre-restore point by owner, exact current state,
+payload integrity, verified status, and retention protection before it can
+change Home. Storage-limit or blocked-retention failures return an explicit
+restore failure and preserve Home state, revision, and generation. Unexpected
+database errors remain transactional. Home saves now compare the expected state
+revision as well as restore generation; same-generation stale clients receive
+the server state and preserve their local cache as a conflict.
+
+The recovery PostgreSQL integration suite passed (4/4) on a disposable local
+PostgreSQL 16 instance. Focused Home state and Realtime lifecycle checks passed
+(108/108), targeted ESLint passed, and the Next.js 16.2.4 production build
+passed while skipping type validation. An additional workspace domain contract
+test remains red on an existing table-name assertion in unchanged loader code.
+The full typecheck was not run. Browser QA remains Andrew's manual check.
+
+The source migration remains unapplied according to the ADHDice production
+migration ledger. Recovery remains unavailable in Settings and scheduled
+capture remains disabled. See
+`docs/architecture/home-backup-recovery.md` for deployment coordination and
+the recovery contract.
+
+## 2026-10-14 7.16.165 Home Backup and Recovery Foundation
+
+Home Todo is the first domain in a shared private recovery-point store. The
+PostgreSQL migration defines versioned payload validation, SHA-256 integrity
+checks, database-side snapshots, per-user retention, protected points, storage
+measurements, and owner-scoped preview and restore contracts. Home writes now
+use a restore-generation-guarded RPC so an older local cache cannot overwrite a
+restored server state. A separate opt-in SQL script prepares one four-hour
+pg_cron job; neither the migration nor the schedule has been applied or
+activated in production. Deployment prerequisites, capacity limits, and
+rollback are documented in `docs/architecture/home-backup-recovery.md`.
+
+Focused Home state, Realtime, and recovery checks passed; recovery SQL was also
+applied to a disposable local PostgreSQL 16 database for transaction, RLS,
+retention, storage, and restore-conflict coverage. Targeted ESLint passed. The
+Next.js 16.2.4 production build passed and skipped type validation. The full
+typecheck remains red with 287 repository diagnostics; the changed Home
+recovery files have no reported diagnostics. `git diff --check` passed.
+Browser QA remains Andrew's manual check. No production database or Cron state
+was changed.
+
+## 2026-10-14 7.16.164 Home Todo hydration and data-loss protection
+
+Home Todo membership reconciliation now waits until the authenticated Home
+snapshot and current Task data are ready for the same user. Home edits and cache
+writes are gated by the hydrated owner, while remote writes wait for that
+owner's remote snapshot read to finish. Owner generations fence stale auth,
+Realtime, and delayed write work so an earlier session cannot overwrite the
+current user's Home state.
+
+Focused Home state and Realtime lifecycle checks passed (108/108). Targeted
+ESLint completed with 0 errors and 74 warnings, with the documented
+`react-hooks/set-state-in-effect` baseline rule disabled.
+Browser QA, build, typecheck, and the full test suite were not run; Andrew's
+manual browser QA remains outstanding. No SQL, schema, or persistence format
+changed.
+
+## 2026-10-14 7.16.163 Home Folder-first alphabetical hierarchy
+
+Home Attention, Missed, and Routine Folders views now group qualifying Tasks
+under their canonical Task Content Folders and sort Folder, Parent, Step, and
+Substep siblings alphabetically. Required ancestors for qualifying child Tasks
+appear as muted context rows without status, Attention/Missed, editor, or list
+actions; Folder counts include qualifying Tasks only. Missing Folder IDs go to
+Unfiled, and malformed or cyclic ancestry is projected safely without duplicate
+rows. Routine now opens in Folders view and keeps the existing saved Sections
+view available. The view switch changes presentation only; Routine section
+assignments and manual order remain untouched.
+
+Focused Home/Routine and hierarchy tests passed. Targeted ESLint passed for the
+Home page, hierarchy projection, and focused tests. Browser QA, build,
+typecheck, and the full test suite were not run; Andrew's manual browser QA
+remains outstanding. No persistence format, SQL, or Supabase behavior changed.
+
+## 2026-10-14 7.16.162 Home Todo Realtime Subscription Collision
+
+`TaskApp` now provides one authenticated Home Todo owner to the shared panel
+region. Both Home panels read the same state, mutation callbacks, cache, save
+pipeline, and Realtime subscription. The owner receives a user ID only while
+Home is active in at least one panel, so other pages do not fetch or subscribe.
+Home tab, search, menu, and draft presentation state remains local to each
+rendered panel. Moving from Home/Home to Home/Tasks keeps the same owner active.
+
+The installed Supabase Realtime client reuses an already registered channel for
+the same topic, and its `on("postgres_changes", ...)` rejects registration once
+that channel starts joining. Home now uses a fresh browser UUID in each channel
+topic while retaining serialized setup and teardown. User-generation guards
+fence delayed reads, channel events, and writes from an earlier auth session or
+effect lifecycle.
+
+The focused Home state and Realtime lifecycle suites passed (94/94), including
+a topic registry mock that reproduces the SDK's post-subscribe registration
+error, deferred removal, canceled setup, repeated mounts, and auth changes. The
+shared-owner source contract passed (1/1). Targeted ESLint reports 11 existing
+`react-hooks/set-state-in-effect` errors in `task-app.tsx`; with that rule
+disabled, the selected files report 0 errors and 75 warnings. The Next.js
+16.2.4 production build passed and skipped type validation. A broader existing
+`task-creation-composer.test.ts` run still has two failures in unchanged
+Table/List creation source assertions. Browser QA remains Andrew's manual
+check. No SQL or Supabase schema changes were made.
+
+## 2026-10-14 7.16.161 Collapsible Sticky Tabs and Shortcut Mode
+
+Unsplit Master Workspace tabs now stay within the shared sticky HUD wrapper,
+and split panels can independently collapse their own tab strips from labeled
+HUD chevrons. The user-scoped Master Workspace state stores a collapsed strip
+only when needed; older saved states remain expanded, and closing Split Right
+retains Window 1's preference.
+
+`Shift + S` opens a panel-targeted Shortcut Mode guide. Number keys follow the
+visible tab order and route through the existing panel navigation and draft
+protection checks. Target ownership follows panel pointer, focus, and scroll
+interaction, with Window 1 as the fallback. The shared HUD, TaskApp runtime,
+panel overlays, and floating navigation docks remain the existing owners.
+
+Focused Master Workspace state/controller, shortcut, and split UI tests passed
+(87/87). New shortcut/helper files pass targeted ESLint. Standard targeted
+ESLint retains 12 existing `react-hooks/set-state-in-effect` errors (11 in
+`task-app.tsx`, one in `useMasterWorkspaceController.ts`); with that rule
+disabled, lint reports 0 errors and 76 warnings in the existing large TaskApp
+and controller files. The Next.js 16.2.4 production build passed and skipped
+type validation. Full typecheck remains red with 287 repository diagnostics;
+the new shortcut/state/panel files have no reported diagnostics, while the
+existing TaskApp errors include the same split-render closure expressions
+present at baseline. `git diff --check` passed. Browser QA remains Andrew's
+manual check. No SQL or Supabase changes were made.
+
+## 2026-10-13 7.16.159 Restore Split Window Navigation
+
+Each Split Right panel retains its Master Workspace tab strip and now includes
+the existing application navigation dock within the panel. Each dock uses
+panel-targeted page and search routing; its search menu stays within the panel,
+and task search opens the shared editor with that panel and tab as owner. The
+normal unsplit viewport dock keeps its existing layout and routing.
+
+The focused Split Right and Navigator regression group passed (96/96), and the
+Next.js 16.2.4 production build passed. Normal targeted ESLint reported 11
+`react-hooks/set-state-in-effect` errors and 73 warnings in the selected files;
+with that known rule disabled, the same scoped lint reported 0 errors and 75
+warnings. `git diff --check` passed. Next.js build skipped type validation.
+Andrew's manual browser QA remains outstanding.
+
+## 2026-10-14 7.16.160 Restore Floating Split Navigation and Full-Height Panels
+
+Split panels reuse the shared navigation dock with independent expanded and
+collapsed state. Each dock floats at the bottom center of its owning panel;
+its draggable bubble is measured and clamped to that panel. Navigation search
+results use the panel's measured height. The permanent footer was removed, and
+panel scroll content retains enough bottom padding to scroll its last item
+above the dock. Split frames now flex into available height below the shared
+HUD, while unsplit page spacing and dock positioning remain unchanged.
+
+The focused Split Right, Navigator, and dock geometry checks passed (25/25).
+Targeted ESLint with the known `react-hooks/set-state-in-effect` rule disabled
+reported 0 errors and 75 warnings. Standard targeted ESLint retains the 11
+pre-existing effect-rule errors and 73 warnings recorded for 7.16.159. The
+Next.js 16.2.4 production build passed and skipped type validation.
+`git diff --check` passed. Andrew's manual browser QA remains outstanding.
+
+## 2026-10-13 7.16.158 Independent Master Workspace Panels
+
+Master Workspace Split Right now renders independent panel navigation, active
+tabs, destinations, and page presentation through one `TaskApp` runtime. Both
+panels can show any supported application page. Page data hooks activate for
+the union of both active destinations, while Tasks data and canonical mutation
+handlers remain shared; each Tasks tab keeps its own view, search, sort,
+filters, row selection, workspace tab, folder, and scroll snapshot.
+
+Each split panel owns its scroll container and workspace overlay host. The
+shared Task editor and workspace-level Task flows retain their original panel
+and tab owner and render inside that panel. Home and Records page-owned
+fullscreen dialogs use the same host. Ordinary unsplit overlays keep the
+existing viewport behavior; global account dialogs and alerts remain global.
+The Master Workspace feature remains development-only.
+
+The focused Master Workspace regression group passed (90/90), and the Next.js
+16.2.4 production build passed. Targeted ESLint reported TaskApp React ref
+findings and large-file warnings, plus existing table and controller warnings;
+the new panel/navigation/state helpers were clean. `git diff --check` passed.
+Browser QA remains Andrew's manual check. No Task State semantics, database
+schema, or subscription owners changed.
+
+## 2026-10-13 7.16.156 Split Right Draft-Safety Hotfix
+
+Close Split now respects the aggregate Tasks draft-safety signal across both
+panels. The control stays visible but is disabled while an unsaved edit or the
+shared Task editor is open, and the tab bar explains that the edit must be
+saved or canceled. Closing after that signal clears returns to the existing
+single-panel workspace. Shared Task editor ownership and conflict checks are
+unchanged.
+
+Behavioral Master Workspace regressions cover right- and left-panel drafts, a
+shared editor opened from the right, rejection without changing left-panel
+state, and successful close after save, cancel, or a clean state. Focused tests
+passed (73/73). Targeted ESLint passed on the policy, tab bar, and test files;
+the controller hook and `task-app.tsx` still report the existing
+`react-hooks/set-state-in-effect` errors. Browser QA remains Andrew's manual
+check. The production build passed with Next.js 16.2.4; full typecheck was not
+run.
+
+## 2026-10-13 7.16.155 Full Interactive Split Right MVP
+
+Split Right renders the same `TasksWorkspace` in both panels while keeping one
+TaskApp, one `useTaskUiState` owner, one workspace-data runtime, one HUD, and
+one set of data subscriptions. The right panel has its own saved Tasks view,
+surface, search and filter state, list and table sorting, nested workspace tabs,
+folder navigation, selected rows, and scroll container. Both panels use the
+shared TaskApp mutation handlers and live Task data, so successful edits are
+shared. The shared Task editor records its panel/tab owner and blocks opening a
+competing editor while another panel owns an unsaved edit. Right-panel batch
+edit and delete actions pass the right panel's selected IDs to the existing
+shared mutation handlers.
+
+Split Right remains behind the development-only Master Workspace feature gate.
+Closing the split returns to the normal single-panel Tasks workspace. No SQL
+or Supabase changes were made. Focused Master Workspace and Task UI state tests,
+targeted ESLint, `git diff --check`, and the production build passed. The
+repository typecheck remains blocked by existing diagnostics outside this
+change; browser QA is still Andrew's manual check.
+
+## 2026-10-13 7.16.154 Split Right Visible Prototype
+
+Split Right is available only while the development Master Workspace feature
+flag is enabled and the focused destination is Tasks. It snapshots the focused
+Tasks presentation, creates one right panel through the existing Master
+Workspace state helper, and leaves the left panel focused as the only live
+TaskApp and Tasks UI-state owner. Both panels read the same canonical Task data.
+The right panel derives rows from its stored Tasks presentation through the
+existing derivation, search-selection, and view read-model helpers; its search
+updates only that panel's stored presentation. The initial split is 50/50,
+both panels scroll independently, Close Split returns to the single-panel
+layout, and the global HUD remains one shared header above both panels. Saved
+split state restores through the existing user-scoped Master Workspace
+persistence path without creating additional panels.
+
+The right panel is read-only and currently displays the selected Tasks rows
+with search. Editing, Task mutations, separate right-side Tasks tabs or
+navigation, non-Tasks split destinations, and split resizing remain deferred.
+The normal single-panel Tasks layout remains in use when the split is closed or
+the development feature flag is disabled. Browser QA remains Andrew's manual
+check.
+
+## 2026-10-13 7.16.153 T6.3a Panel-Targeted Navigation Foundation
+
+Added a pure Master Workspace destination update by explicit panel and tab IDs.
+It reuses the existing destination and presentation normalization, targets
+inactive tabs in either panel, and preserves focus, active tabs, visibility,
+other presentation settings, and draft identities. Focused destination updates
+delegate to the same helper. This is foundation only: it does not change live
+routing, TaskApp rendering, or add Split Right UI.
+
+Focused Master Workspace state and controller tests passed (67/67). Targeted
+ESLint and `git diff --check` passed. Browser QA, full typecheck, and production
+build were not run.
+
+## 2026-10-13 7.16.152 T6.2c.1 State Updater Replay Correction
+
+The Master Workspace and live Tasks state owners now calculate functional
+updates once against their latest synchronous references, update those
+references, and publish the precomputed snapshots to React. Identity-preserving
+no-op updates still skip publication. Both owners use the same focused
+coordinator, with no competing direct setter writes.
+
+The focused updater, Task UI-state, Master Workspace controller, and
+Master Workspace state tests passed (89/89). They cover one-time updater
+execution, rapid ordering, stable generated draft identity, synchronized
+reference/publication state, no-op identity, stale callbacks, focused-to-inactive
+snapshots, single-panel behavior, and persistence. Targeted ESLint passed with
+one existing `react-hooks/exhaustive-deps` warning in
+`useMasterWorkspaceController.ts`; `git diff --check` passed. The repository has
+no React hook test renderer or DOM test library installed, so hook integration
+was checked at the source wiring points and through the existing controller
+regressions rather than a mounted React hook. Browser QA, full typecheck, and
+production build were not run.
+
+## 2026-10-13 7.16.151 T6.2c Tasks Routing Race Correction
+
+Panel-targeted Tasks writes now read the latest Master Workspace state and the
+latest live `TaskWorkspaceTabsState`. The live Task UI hook remains the only
+active Tasks state owner; synchronous refs track its pending state and the
+Master Workspace state so a navigation transition can snapshot the latest
+value before React commits either update. Live writes carry the target nested
+Tasks tab ID and reject if that exact live tab is no longer active. Focused
+writes mirror the resulting live workspace into the exact Master panel/tab
+snapshot. Inactive writes update only that target snapshot. Results distinguish
+queued writes from explicit rejections.
+
+Focused Master Workspace controller/state and Task UI-state tests passed
+(85/85), including inactive-write/focus, focused-write/navigation, stale
+callback, rapid functional update, wrong-tab, single-panel, and persistence
+cases. Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` findings excluded; `git diff --check` passed.
+Full typecheck remains red on existing repository diagnostics, including the
+pre-existing missing `setIsDailyPlanningCollapsed` hook return. Browser QA and
+production build were not run.
+
+## 2026-10-12 7.16.150 T6.2b Panel-Targeted Tasks Controller Bridge Foundation
+
+The Master Workspace controller now exposes explicit Tasks presentation reads
+and updates by Master panel ID and tab ID. Reads use the live `taskUiState` for
+the exact focused active Tasks tab and stored snapshots for other Tasks tabs.
+Writes use the existing live `setTaskUiState` authority for that focused active
+tab; inactive or non-focused targets update their stored snapshot through a
+functional workspace update. The stored route rechecks the latest workspace
+and does not write if the target became the focused active tab while the update
+was queued. Readiness and exact Tasks identity guard every write.
+
+This is a T6 controller foundation only. It adds no second panel renderer,
+second Tasks owner, or Split Right UI. Existing single-panel navigation,
+restore, persistence, and the focused live Tasks snapshot mirror remain the
+authorities.
+
+Focused Master Workspace controller/state and Task UI-state tests passed
+(80/80). The Master Workspace Health contract suite passed 10/12; its two
+failures are the existing source assertions against unchanged TaskApp and Notes
+components, matching the 7.16.149 baseline. The broader `test:taskapp-wave` run
+passed 62/73, matching the documented 7.16.148 baseline, including its current
+Node loader failure and unrelated Task assertions. Changed controller, hook,
+and test lint passed; TaskApp lint passed with the existing
+`react-hooks/set-state-in-effect` rule excluded. Standard TaskApp lint retains
+its existing effect-rule errors. Full typecheck remains red on existing
+workspace diagnostics; no diagnostics point to the new controller API or hook
+options. `git diff --check` passed. Browser QA and production build were not
+run.
+
+## 2026-10-12 7.16.149 T6.2a Panel-Targeted Tasks State Foundation
+
+Added pure Master Workspace helpers that resolve the Tasks workspace and active
+Tasks UI presentation by explicit panel and tab IDs, and functionally update the
+target tab against the supplied latest state. Updates reuse the existing active
+Tasks UI adapter and workspace normalization, preserve other panels, tabs, and
+presentation fields, and leave state unchanged for invalid/non-Tasks targets or
+no-op updates. A legacy Tasks tab with no snapshot reads from defaults and only
+materializes a snapshot when an update changes its presentation.
+
+This is a state transaction foundation only. It does not render a second panel
+or connect panel-targeted writes to the focused live `useTaskUiState` mirror.
+
+Focused Master Workspace state/controller and Task UI-state tests passed
+(73/73). The broader Master Workspace Health contract suite passed 83/85; its
+two failures assert source patterns in unchanged TaskApp and Notes components.
+The broader `test:taskapp-wave` result was 62/73, matching the 7.16.148
+baseline, including its existing Node `.tsx` loader failure and unrelated Task
+assertions. Targeted ESLint and `git diff --check` passed. Browser QA was not
+run.
+
+## 2026-10-12 7.16.148 T6.1d Tasks View Read-Model Foundation
+
+`buildTaskAppViewReadModel` extracts selected bucket tasks, Calendar selection,
+search-matched hierarchy IDs, filter-active detection, List selection reset
+identity, and visible List IDs from `TaskApp`. It consumes the existing
+presentation descriptor, derived selection results, canonical Task inputs,
+Calendar's existing active-status projection, and canonical search selection.
+The single-panel `TaskApp` uses this pure read model at a separate memoization
+boundary; canonical status projections and Task/History derivation remain
+shared. This is a T6 foundation only and does not add a second panel or move
+rendering, navigation, editing, or mutation ownership.
+
+Focused read-model, derivation-presentation, and search-selector tests passed
+(38/38). The changed search-pipeline contracts passed (2/2), and focused
+hierarchy regressions passed (7/7). Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` rule excluded; standard targeted ESLint keeps
+the known TaskApp effect-rule findings. The broader `test:taskapp-wave` run
+passed 62 tests and retained 11 failures, matching the documented 7.16.147
+baseline, including existing Node loader errors and unrelated assertions.
+`git diff --check` passed. Full typecheck remains red on existing workspace
+diagnostics; none point into the new read-model module. The existing Calendar
+active-status projection type mismatch remains at the TaskApp read-model input,
+alongside unrelated TaskApp and workspace diagnostics. Browser QA and
+production build were not run.
+
+## 2026-10-12 7.16.147 T6.1c Tasks Derived Presentation Foundation
+
+`prepareTaskAppDerivedPresentation` now converts an explicit `TaskUiState` into
+a reusable descriptor with normalized search/operator state, the existing
+derived filter state, selected-view and Table column settings, and the view and
+settings revisions used by the complete-derivation cache key. The single-panel
+TaskApp passes this descriptor to the existing `computeTaskAppDerivedData`
+authority. Its live query remains on the canonical search selector, so
+search-only edits do not invalidate the canonical Task index or repeat the
+full-domain query. Structural data, canonical index, workspace facts, Task and
+History inputs remain shared inputs; the descriptor only scopes presentation
+results. This is a T6.1c foundation only. It does not add a second live panel or
+move rendering, navigation, editing, or mutation ownership.
+
+The descriptor and related search/projection selection passed (47/47); the
+search pipeline source-contract selection passed 11/12, with its unchanged
+List overlay assertion failure reproduced on the pre-change `HEAD`. The
+broader `test:taskapp-wave` run passed 62 tests and retained 11 failures; the
+same 62/11 result reproduces on `HEAD`, including existing assertions and Node
+module-loader failures. Targeted ESLint passes with the existing
+`react-hooks/set-state-in-effect` findings excluded; standard targeted lint
+retains those existing findings. Full typecheck remains red on existing
+workspace diagnostics; no diagnostic points to the new descriptor code.
+Browser QA and production build were not run.
+
+## 2026-10-12 7.16.146 T6.1b Tasks Search Presentation Foundation
+
+The active Tasks search path now builds its stable filter scope and visible
+selection through pure helpers with explicit presentation, page, query, scope,
+canonical index, and sorting context inputs. The normalized entity array stays
+shared with Navigator; the canonical index and its revision remain independent
+of search text, while search scope remains separately memoized by presentation
+filters. Existing search parsing, hierarchy/Steps selection, list facets, and
+cockpit sorting remain the authorities. `computeTaskAppDerivedData` and
+TaskApp's broader rendering/state responsibilities remain in place; this is a
+T6 foundation and does not complete Split Right.
+
+Focused presentation, selector, and canonical-projection tests passed (41/41);
+the search-related pipeline-contract selection passed (10/10). The unfiltered
+pipeline-contract run retains one unrelated List overlay source assertion
+failure. Three `task-search-focus-regression` cases fail because its existing
+component materializer does not provide `React.useCallback`. Targeted lint
+passes for helpers/tests; TaskApp targeted lint passes with the existing
+`react-hooks/set-state-in-effect` rule excluded. `git diff --check` passed.
+Browser QA, production build, and full typecheck were not run.
+
+## 2026-10-12 7.16.145 T6.1a Invalid Active Tab Correction
+
+Task workspace reads retain the first-tab fallback when the active tab ID is
+invalid. Task UI state updates now require an exact active tab ID and return the
+original workspace state unchanged for an invalid ID or empty tab list. Valid
+active IDs continue to update only their matching tab, with the existing
+same-object updater remaining an identity-preserving no-op.
+
+Focused `test/task-ui-state.test.ts` passed (23/23), and targeted ESLint passed.
+`git diff --check` passed. Browser QA, production build, and full typecheck were
+not run for this pure state correction.
+
+## 2026-10-12 7.16.144 T6.1a Tasks Presentation Adapter Foundation
+
+Pure helpers now resolve the active nested Tasks workspace tab and its
+`TaskUiState` from an explicit `TaskWorkspaceTabsState` snapshot, and apply
+functional presentation updates to that snapshot without mutating it or its
+other tabs. `useTaskUiState` uses the helpers at its existing active-tab and
+setter seams; its public hook API and TaskApp callers are unchanged. Invalid
+active IDs retain first-tab fallback behavior, and an empty workspace resolves
+to the existing default tab. This is a state-adapter foundation only: TaskApp
+rendering, additional panel rendering, and cross-panel ownership remain
+deferred.
+
+Focused Task UI and Master Workspace tests passed (46/46). Targeted ESLint
+passes with the existing `react-hooks/set-state-in-effect` finding excluded;
+standard targeted ESLint reports that existing finding at the hook's user-reset
+effect. `git diff --check` passes. Browser QA, production build, and full
+typecheck were not run for this foundation.
+
+## 2026-10-11 7.16.143 T5b.4c.2 Shared Recipe and Saved Meal Definition Editing Sessions
+
+T5b.4a Actual Food passed browser QA on 7.16.140. T5b.4b Planned Meal core
+editing passed five browser checks on 7.16.141; three checks were skipped and
+Done/Remove lifecycle QA remains pending stabilization. T5b.4c.1 Custom Food
+definition editing passed browser QA on 7.16.142.
+
+Recipe and Saved Meal definitions now use separate owner-scoped editing-session
+stores. A saved definition is shared by its canonical record ID across Master
+Tabs. Each tab has separate stable new Recipe and Saved Meal draft IDs. Editor
+selection and mode remain per-tab presentation; draft content remains in the
+editing-session store across section changes, navigation, and remounts. Explicit
+Discard Draft restores a saved definition's latest confirmed canonical baseline
+or clears only the selected new draft. Dirty shared definitions block removal,
+and in-flight saves or deletes lock the session against conflicting edits.
+
+Recipe ingredients and Saved Meal items retain their stored source IDs, order,
+quantities, and nutrition snapshots. Existing source builders and nutrition
+preview helpers remain in use. Updating or removing a source definition does not
+propagate into Recipes or Saved Meals that already contain its snapshot.
+
+`useHealth.saveRecipe` and `useHealth.saveSavedMeal` remain the canonical
+persistence and collection authorities. New definitions use stable UUIDs and
+create-only writes; exact owner-scoped readback reconciles ambiguous
+acknowledgments and rejects conflicting ID collisions. Saved definitions update
+only the selected user-owned ID at its confirmed `updated_at` baseline. A
+successful save reconciles the returned record into the Health collection and
+shared session baseline. Failures keep the draft and ID for retry; missing or
+concurrently changed records remain explicit conflicts. No SQL or schema change
+was made. Legacy single-tab editing remains on its existing save path.
+
+Focused Recipe/Saved Meal, workspace, editing-store, and Custom Food session
+tests passed (61/61). Actual Food and Planned Meal regression selections passed
+(57/57). Broader typecheck still reports existing unrelated Task,
+Health, and UI type errors. Standard targeted ESLint reports existing
+`react-hooks/set-state-in-effect` errors; with that existing rule's findings
+excluded, targeted lint passes. One older Health Library source-text test still
+expects a pre-existing scroll class that differs from the current rendered
+source. `git diff --check` passes. Browser QA and production build are pending.
+Planned Meal Done/Remove lifecycle QA also remains pending. Recipe and Saved
+Meal browser QA is the remaining validation for this editing-session slice.
+
+## 2026-10-11 7.16.142 T5b.4c.1 Shared Custom Food Definition Editing Sessions
+
+T5b.4a Actual Food editing passed Andrew's six browser QA checks on 7.16.140.
+T5b.4b Planned Meal core editing passed five tested browser checks on 7.16.141;
+three checks were skipped, and Done/Remove lifecycle QA remains deferred to
+stabilization.
+
+Custom Food Library definitions now use shared editing sessions keyed by the
+canonical food-library record ID. New definitions have an independent stable
+draft and record ID per Master Tab. Draft contents live only in the existing
+owner-scoped editing-session store; search, selected definition, editor mode,
+and new draft identity remain per-tab presentation. Switching tabs, pages, or
+Health sections preserves unfinished definitions. Explicit Discard Draft
+restores the latest canonical baseline for saved foods or clears only the
+selected tab's new draft. A dirty shared definition blocks deletion, and the
+existing dedicated favorite mutation continues to preserve all food metadata.
+
+`useHealth.saveFavoriteFood` remains the canonical collection and persistence
+authority. New definitions use create-only writes with their stable IDs, so an
+ID collision cannot overwrite a different record. Ambiguous acknowledgments
+are checked against the exact user-scoped record and normalized nutrition,
+serving, and JSON fields before the session baseline and Health collection are
+reconciled. Failed saves retain the draft and ID. Existing validators and
+nutrition serialization are retained, including explicit clearing of
+micronutrients and provider/source metadata from barcode lookups.
+
+When nutrition or serving changes affect consumed-food history, the user must
+choose Update all previous logs or Future entries only. Cancel makes no write.
+Definition save and history repair are separate steps; incomplete repairs keep
+their exact pending entry IDs, retries update only those entries, and an
+ambiguous history-write acknowledgment is verified against its user-scoped
+source-food row before retrying. Retrying history repair does not save the food
+definition again. Food Import remains on its separate guarded editor. Recipe
+and Saved Meal definition sessions remain deferred to T5b.4c.2. No SQL or
+schema change was made.
+
+Focused verification: Custom Food session/history/Master Workspace tests
+passed (60/60); targeted library/import checks passed (3/3); Actual Food and
+Planned Meal regression tests passed (93/93). Earlier broader neighboring
+selections reported five source-text assertion mismatches in older library,
+meal-logger, and workspace checks; the focused behavioral selections above
+passed. Targeted ESLint reported 14 errors, all existing
+`react-hooks/set-state-in-effect` findings confirmed in the branch baseline,
+and 67 warnings. With that rule disabled, targeted ESLint passed with zero
+errors. `git diff --check` passed. Browser QA is pending; production build and
+full typecheck were not run.
+
+## 2026-10-08 7.16.121 Master Tabs T1 Workspace State Foundation
+
+Added a pure, versioned two-panel Master Workspace state model with typed
+Navigator destinations, immutable tab and panel transitions, safe normalization,
+user-scoped localStorage helpers, and first-use initialization from the prior
+active page. Tasks master tabs carry independent normalized copies of the
+existing nested Tasks workspace tabs and settings. Workspace persistence owns
+layout only; runtime integration and visible master tabs remain deferred to
+later stages.
+
+Focused verification for 7.16.121: `test/master-workspace-state.test.ts` and
+`test/task-ui-state.test.ts` passed; targeted ESLint and `git diff --check`
+passed. A targeted TypeScript check reported existing errors in imported
+components and task-state modules, with no diagnostic in the new workspace
+module. Browser QA, production build, full typecheck, and broad test suites were
+not run.
+
+## 2026-10-08 7.16.122 Master Tabs T1 Normalization Guard
+
+Master Workspace now repairs malformed nested Tasks `quickFilters` and
+`energyFilters` to empty arrays while cloning normalized Tasks workspace state.
+Other valid nested tab settings and master tabs survive malformed stored filter
+values, and copied filter arrays remain independent.
+
+Focused verification for 7.16.122: `test/master-workspace-state.test.ts` passed
+(12/12); targeted ESLint and `git diff --check` passed. Browser QA, production
+build, full typecheck, and broad test suites were not run.
+
+## 2026-10-08 7.16.123 Master Tabs T2 Single-Panel Shell
+
+Integrated the T1 user-scoped Master Workspace state with the authenticated
+TaskApp route boundary. The single-panel tab bar is available only in
+development when `NEXT_PUBLIC_ADHDICE_MASTER_TABS=true`; it restores after the
+authenticated workspace is ready, initializes from the legacy active page and
+Tasks workspace tabs on first use, and persists only after restoration. The
+existing Tasks nested-tab UI remains authoritative. Cross-page activation is
+paused until draft protection is available; page tabs can be created inactive,
+same-page tabs can be activated, and closing is limited to changes that keep the
+current page mounted. Split Right, independent page presentation, and draft
+protection remain deferred. Browser QA and production build were not run.
+
+## 2026-10-08 7.16.124 Master Tabs T2 Split-State Preservation
+
+T2 restoration now retains the complete normalized Master Workspace state,
+including right-panel tabs and focused-panel identity. The single-panel shell
+still renders only the focused panel through the existing TaskApp route
+boundary; hidden panel state survives local persistence and subsequent refreshes.
+Malformed stored-state recovery, authenticated readiness fencing, user
+isolation, and the development feature gate remain unchanged.
+
+## 2026-10-08 7.16.125 Master Tabs T3 Independent Tasks Workspace State
+
+Each Tasks master tab now owns a normalized, cloned `TasksWorkspaceTabsState`.
+The existing `useTaskUiState` remains the single live Tasks UI authority; master
+tab activation and eligible close save the current snapshot and restore the
+destination snapshot in the same transition. New Tasks master tabs copy the
+current presentation state, and changes sync back only to the active Tasks
+master tab. Shared Task records, projections, mutation callbacks, History,
+rewards, timers, and global table-layout/HUD/page-shell authorities are
+unchanged. The legacy `TASK_UI_STORAGE_KEY` remains the first-use migration
+source and is not overwritten while Master Tabs is enabled; legacy persistence
+continues when the feature is disabled. Master-tab transitions are blocked while
+the shared editor, debounced search draft, table/list edit surfaces, or nested
+tab rename draft is open.
+
+## 2026-10-08 7.16.126 Master Tabs T4 Health Sections and Deep Destinations
+
+Each Health master tab owns its selected Health section. Experimental mode
+reads that selection from the focused Master Workspace tab, while the legacy
+global Health preference remains active with the feature gate disabled. Health
+sections and Navigator destinations update the focused tab destination so its
+label follows the current section or registered page shell. Registered shells,
+Tasks surfaces/views, and Settings sections retain their existing routing and
+restore through user-scoped local workspace state.
+
+HealthPage remains the single rendered Health page and the existing Health data
+hooks remain singular. Food and Journal editors report local draft state to
+block Health master-tab transitions that would unmount those editors, including
+an open Journal Feeling occurrence overlay. Navigator Health-section targets
+use the same transition guard. Section changes away from Fitness and Water
+remain paused because their current editor state is held by child components
+that unmount; they need T5 draft protection. Cross-page Master Tab activation
+and split rendering remain gated. Deep route changes retain dormant Health and
+Tasks presentation snapshots on the focused tab.
+
+Focused verification for 7.16.126: Master Workspace, Navigator, Health Journal,
+and Tasks UI state tests passed (76/76). Targeted ESLint for affected source and
+tests passed with the existing `react-hooks/set-state-in-effect` rule disabled;
+the HealthPage findings under that rule also reproduce from `HEAD`. Version
+surfaces and `git diff --check` passed. Browser QA, production build, full
+typecheck, and broad test suites were not run.
+
+## 2026-10-08 7.16.127 Water Exit Draft Safety
+
+Water master-tab and Health-section exits now follow Water's reported draft
+safety. Custom entry/setup drafts, changed goal values, active existing-entry
+editors, and entry/goal saves in progress block unmounting. Pristine Water and
+the initially visible empty goal editor remain safe. Entry and goal editors
+provide explicit cancel actions that discard local edits; unsuccessful saves
+retain their drafts.
+
+Focused verification for 7.16.127: Master Workspace controller/Health and Water
+tests passed (38/38); targeted ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled and `git diff --check` passed.
+Browser QA, production build, full typecheck, and broad test suites were not run.
+
+## 2026-10-08 7.16.128 Fitness Exit Draft Safety
+
+Fitness section exits now use the existing Health draft-safety controller.
+Pristine Fitness can navigate to Water, Food, Journal, Today, or another Health
+section. Open Workout forms, Fitness Settings text/rename/alias drafts, Exercise
+Library drafts, Goal and Level editors, Plan editors, and their in-flight saves
+retain the guard until a successful save or explicit Cancel. Goal-Level reports
+are aggregated by Goal ID, so one safe editor cannot clear another editor's
+unsafe state. Goals and Plans panels stay open while their local editors are
+unsafe, and hiding Fitness Settings preserves its Exercise Library subtree.
+
+Active Workout exit remains gated until Finish or Discard. The gate also waits
+for the user-scoped local runtime to hydrate; the existing localStorage read and
+write path remains the runtime authority. Food, Journal, Water, independent
+Health master-tab sections, Navigator guards, and legacy gate-off routing keep
+their existing paths.
+
+Focused verification for 7.16.128: Master Workspace controller, Health and
+section-state contracts, Water history editing, Journal entry, Food history,
+and Active Workout tests passed (111/111); targeted ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled passed. Browser QA, production
+build, full typecheck, and broad tests were not run.
+
+## 2026-10-08 7.16.129 T5a Cross-Page Master Tab Navigation
+
+The focused Master Tab now owns experimental-mode page navigation while the
+existing single TaskApp remains the only rendered page and data authority.
+Safe cross-page activation, immediate New Tab activation, active-tab close, and
+last-tab Home fallback use the same focused workspace state. Task snapshots and
+Health section selections survive cross-page movement and refresh; dormant
+right-panel state remains persisted unchanged. Navigator deep destinations are
+written once before the rendered page follows them, preventing legacy route
+synchronization from replacing the selected destination.
+
+Tasks, Health, Water, Food, Journal, Fitness, Notes, Quick Capture, and Scratch
+Paper transition guards block unsafe exits and retain failed-save drafts.
+Uncovered Health Weight, Sleep, Settings, and Insights local editors now report
+section safety. Active Fitness workouts remain gated until Finish or Discard.
+Full session draft snapshot/restore remains deferred to T5b.
+
+Focused verification for 7.16.129: current Master Workspace, Tasks UI-state,
+Health Fitness Goals/Plans, Active Workout, Water, Journal, and meal-draft
+checks passed (189/189); targeted ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled reported no errors; and
+`git diff --check` passed. The older `health-fitness` source-contract tests
+still fail against pre-task 7.16.128 source/version assumptions, including a
+7.13.1 version expectation. Browser QA, production build, and full typecheck
+were not run.
+
+## 2026-10-08 7.16.130 T5a Draft Guard Release Corrections
+
+Journal form safety now compares current entry type, date, time, answers,
+Event state, and Feeling occurrences with the hydrated or reset baseline.
+Saved occurrences do not create a false guard; reverting values releases it.
+Journal discard restores the entry baseline and resets the Event/Feeling
+editor without a database mutation. Pending or failed saves retain protection.
+
+Quick Capture releases its guard when cleared or reduced to whitespace, and
+Notes editors compare title, body, tags, and links with their saved note.
+Scratch Paper editors compare title, body, and linked Task IDs with their
+current note, including each independently edited card. Explicit discard
+restores the persisted baseline; failed saves retain the editor and guard.
+
+No Tasks production path changed. The clarified inline rename auto-save and
+fullscreen editor coverage do not confirm a Tasks draft-guard defect; Tasks
+draft-guard browser QA remains inconclusive.
+
+Focused verification for 7.16.130: Journal check-in/entry/symptoms, Notes draft
+safety, Scratch Paper draft/task-link/dictation, Master Workspace
+controller/state, and Master Workspace Health tests passed (135/135). Targeted
+ESLint with the existing `react-hooks/set-state-in-effect` rule disabled and
+`git diff --check` passed. The unrelated Fitness source-contract baseline was
+not rerun. Browser QA, production build, full typecheck, and broad test suites
+were not run.
+
+## 2026-10-09 7.16.131 T5b.1 Shared Journal Editing Sessions
+
+TaskApp now owns one authenticated-user-scoped in-memory editing-session store.
+Master Tabs keep independent Journal selection, entry/history mode, and scroll
+position; each saved Journal entry resolves to one shared draft session, while
+each tab's unsaved entry has a distinct temporary identity. The active
+Start-of-Day, End-of-Day, and Event form edits the shared snapshot, which
+survives page unmounts, ignores incoming refreshes while dirty, reconciles on
+save, and retains content after a failed save. A linked Event uses its own
+canonical session shared with a directly opened Event view. Explicit discard
+restores the session baseline. Tab switching permits retained Journal drafts,
+while pending saves, transient occurrence editing, and closing the last view
+of dirty work remain protected. Saved Feeling occurrences no longer trigger
+the false local draft guard. Other Health editors, Food, Notes, Tasks, and
+Split Right do not use the shared session architecture.
+
+T5b.1 browser QA is complete. The tested Journal draft-navigation, same-entry
+two-way editing, shared discard, independent saved-entry editing, save-one and
+preserve-another behavior, History Edit, and Event persistence scenarios passed.
+Seven lower-frequency Journal scenarios remain deferred to a later regression
+pass:
+
+1. Create two independent new Journal entries.
+2. Save only one of two new entries.
+3. Close one of two views of the same entry.
+4. Protect the last view of a dirty entry when closing its tab.
+5. Save a check-in with a linked Event and Feeling.
+6. Start a new Journal entry immediately after saving.
+7. Verify unsaved-draft protection on browser refresh.
+
+Focused verification for 7.16.131: editing-session store, Master Workspace
+state/controller/Health, Journal entry/check-in/symptom tests passed (118/118).
+Targeted ESLint passed with the existing `react-hooks/set-state-in-effect`
+rule disabled; the normal targeted lint also reports existing synchronous
+effect updates in TaskApp and HealthPage. `git diff --check` passed. Browser QA,
+production build, full typecheck, and broad test suites were not run.
+
+## 2026-10-10 7.16.132 Journal History Edit and Event Save Diagnostics
+
+History Edit now updates the active Journal tab's workspace mode and selected
+entry in one presentation change, preserving its other state and leaving peer
+Master Tabs untouched. Existing split-history modes and feature-gate-off local
+state remain in place. The Event save path retains its record identity and
+user-visible persistence warning; opt-in development diagnostics identify a
+null-return stage and whether the core record write was confirmed. The reported
+browser failure's exact runtime cause remains unconfirmed pending those logs.
+
+## 2026-10-10 7.16.133 Journal Tombstone Trigger Repair
+
+The Journal tombstone trigger's child ownership check now reads
+`journal_entry_id` only after a separate child-entity guard, avoiding access to
+a field absent from `adhdice_health_checkins`. The additive corrective
+migration replaces only the existing trigger function and retains its
+security-definer settings, advisory lock, immutable identity checks, tombstone
+protections, account-deletion handling, and function permissions. Trigger
+bindings are not changed. The migration was applied to the database and its
+postcondition was verified on 2026-10-10. Focused SQL source regression tests
+passed (2/2), along with targeted ESLint and `git diff --check`.
+
+## 2026-10-10 7.16.134 T5b.2 Shared Notes Editing Sessions
+
+Notes Library now uses the authenticated-user-scoped editing-session store
+already established by T5b.1. Saved Notes share one draft by Note ID across
+Master Tabs; new Notes use unique generated IDs, and Quick Capture has its own
+per-tab session identity. Each tab retains its own Note selection, search, and
+tag filter in Master Workspace presentation state. Draft contents remain in
+memory only. The Notes collection is loaded once by TaskApp and shared across
+views. Save, retry, discard, and delete reconcile through the session store;
+the last dirty view cannot be closed, while closing a duplicate view preserves
+the remaining view's draft. Scratch Paper, Food, Tasks, and other Health
+editors are unchanged. The Master Tabs gate-off path retains the legacy local
+editor behavior.
+
+Focused verification for 7.16.134: editing-session store, Notes session,
+Master Workspace state/controller/Health, and Notes draft-safety tests passed
+(71/71). Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` rule disabled. `git diff --check` passed.
+T5b.2 Shared Notes Editing Sessions passed Andrew's browser QA on 7.16.135.
+Production build, full typecheck, and broad test suites were not run. A scoped
+TypeScript check was attempted and reported existing diagnostics across TaskApp
+and imported workspace modules; it reported no diagnostics in the changed
+Notes, editing session, or Master Workspace state/controller modules.
+
+## 2026-10-10 7.16.135 T5b.2 Notes Save Regression Diagnostics
+
+The reported browser save failure could not be attributed to a specific stage
+from the available source and report; no Supabase response or runtime trace was
+provided. The shared save operation now runs through a focused production
+helper with development-only diagnostics for the selected session/draft,
+Supabase write response, persisted-row reconciliation, session baseline, shared
+Notes collection update, and Note reopening. Diagnostics omit Note contents.
+Save-failure draft retention, user-scoped writes, fixed Note identity on retry,
+and success-after-persistence behavior are preserved. No SQL or policy changes
+were made.
+
+Focused verification for 7.16.135: Notes save pathway, editing-session, and
+draft-safety tests passed (16/16). Targeted ESLint passed with the existing
+`react-hooks/set-state-in-effect` rule disabled; the standard targeted command
+still reports the existing rule at the open-Note effect. `git diff --check`
+passed. Live Supabase behavior and browser QA remain unverified. Production
+build, full typecheck, and broad test suites were not run.
+
+## 2026-10-11 7.16.136 T5b.3 Shared Scratch Paper Sessions
+
+Scratch Paper now uses the authenticated-user-scoped editing-session store for
+saved records keyed by canonical Scratch Note ID. The Current Note editor,
+individual Note cards, the HUD widget, and different Master Tabs share the same
+draft authority. Per-tab Scratch Paper selection, new-draft identity, search,
+and status filter live in Master Workspace presentation state. The existing
+`useScratchNotes` collection remains the only loader. Dirty drafts survive
+unmounts and refreshes; shared Save and Discard propagate across views, failed
+saves retain their draft for retry, and dirty sessions protect the last Master
+Tab view and browser unload.
+
+The two-stage save verifies the Scratch Note row and reconciles task links by
+adding missing links before deleting stale ones. A link-stage failure remains
+visible as a failed save and leaves the draft retryable; a create retry uses the
+same generated Note ID. Master Tabs disabled continues to use the legacy local
+editor path. No Scratch Paper editing surface was intentionally deferred; SQL,
+Split Right, and other editor families remain outside this ticket.
+
+Focused verification for 7.16.136: shared-session, persistence-stage,
+Master Workspace presentation, editing-session store, and Scratch Paper draft
+tests passed (44/44); targeted ESLint passed with the repository's existing
+`react-hooks/set-state-in-effect` rule disabled; `git diff --check` passed.
+The standard targeted ESLint command still reports existing
+`react-hooks/set-state-in-effect` findings in TaskApp and NotesPage. Browser QA
+was pending at release and later reproduced the new-note failure recorded in
+7.16.137 below.
+
+## 2026-10-11 7.16.137 T5b.3 New Scratch Paper Save Correction
+
+Andrew reproduced a browser failure on 7.16.136 with Master Tabs enabled: text
+typed into a new Scratch Note appeared in the editor, but `Discard Draft` did
+not appear and `Save Note` did not create a record. The production `onInput`
+handler was wired. Its serializer recursively visited element children but
+returned no value for DOM Text nodes, including the text node the browser puts
+inside the editor's rendered span. The serialized body therefore stayed empty,
+the shared session stayed clean, and the empty new-note Save button remained
+disabled. The failure occurred before the Supabase create path; no Supabase
+error was observed.
+
+The serializer now reads Text node contents while retaining line-break, block,
+and Task-token serialization. Current Note and card editors use the same
+serializer. Their shared session field setter now has a direct production
+helper used by the regression integration. The test drives a contentEditable-
+shaped node tree through that serializer, per-tab session initialization and
+update, new-note save, staged row/link persistence, failed-link retry under the
+same Note ID, and reloaded persisted body/title/links. It verifies the other
+tab's new draft remains independent and a retry leaves one record.
+
+Focused verification for 7.16.137: `test/scratch-paper-editing-session.test.ts`,
+`test/scratch-paper-dictation.test.ts`, and
+`test/scratch-paper-draft-safety.test.ts` passed (26/26). Scoped ESLint for the
+changed Scratch Paper component, editor helper, and focused tests passed with
+the existing `react-hooks/set-state-in-effect` rule disabled. `git diff --check`
+passed. Andrew completed T5b.3 browser QA on 7.16.137; T5b.3 is closed. The
+production build, full typecheck, broad test suite, and live Supabase behavior
+were not run.
+
+## 2026-10-11 7.16.140 False Food Save Mismatch Correction
+
+Health Meal insert reconciliation now compares timestamps by instant, compares
+the three persisted macro columns at PostgreSQL `numeric(7,2)` precision, and
+compares food/nutrition JSONB snapshots structurally after normal JSON
+serialization. A mismatched insert response is checked by exact entry ID and
+authenticated user before the draft is rejected. Matching rows from a stable
+draft-ID retry reconcile into the existing Health collection once; conflicting
+rows retain the editable draft. The existing Add Food and Quick Entry save path
+still updates visible Food totals and evaluates normal awards. Read-only
+inspection of the QA-period insert confirmed the PostgREST timestamp
+representation used `+00:00` while the application emits a `Z` timestamp with
+milliseconds for the same instant; the inspected row's macros were exact
+integer values, so macro rounding was not its mismatch. Focused verification:
+`test/health-food-editing-session.test.ts` and
+`test/health-meal-logging.test.ts` passed (55/55); targeted ESLint and
+`git diff --check` passed. Browser QA, production build, full typecheck, and
+broad tests were not run. No SQL or schema change was made.
+
+## 2026-10-11 7.16.141 T5b.4b Shared Planned Meal Editing Sessions
+
+T5b.4a Actual Food Editing passed Andrew's six browser QA tests on 7.16.140.
+Planned Meal editing now uses a separate user-scoped editing-session store.
+Saved plan sessions are keyed by canonical `HealthMealPlanEntry` ID and shared
+across Master Tabs. Each tab has its own stable `newPlannedMealDraftId`,
+independent of actual Food's `newMealDraftId`. Plan draft contents, including
+planned date, meal slot, entered food values, and library-save choice, live in
+the shared session store. Quick Entry mode, selected Food history date, active
+slot, selected saved plan, and other editor presentation remain per-tab Master
+Workspace state.
+
+The existing `addMealPlanEntry` and `updateMealPlanEntry` paths remain the
+persistence authorities and retain local pending-mutation replay/fallback.
+New-plan retries reuse one stable plan ID. An ambiguous insert acknowledgment
+is reconciled by exact authenticated user and plan ID, then checked against
+PostgreSQL timestamp, numeric, and JSONB normalization before success is
+reported. Successful writes reconcile the session and Health collection;
+failed writes retain the draft with an actionable error. Planned entries remain
+outside consumed-food totals until the existing Done confirmation succeeds.
+Done and Remove are blocked with feedback while any tab has a dirty plan draft;
+the existing confirmation RPC, eligibility, rewards, and idempotent confirmed
+entry relationship are unchanged. Explicit Discard Draft is available.
+
+Custom Food definition, Recipe, and Saved Meal definition sessions remain
+deferred to T5b.4c. No SQL or schema change was made.
+
+Focused verification for 7.16.141: the Planned Meal session, Master Workspace,
+meal planning, actual Food session, and meal logging tests passed (118/118).
+Standard targeted ESLint reports 14 `react-hooks/set-state-in-effect` errors
+and 67 warnings in the selected files. With that existing rule disabled, it
+reports zero errors and 66 warnings. `git diff --check` passed. Browser QA is
+pending; production build and full typecheck were not run. Browser, build, and
+full-typecheck behavior remain unverified.
+
+## 2026-10-11 7.16.139 Food Add Editor Update Correction
+
+The Add Food failure with Master Tabs enabled came from HealthPage resolving
+functional Food view updates against its captured `foodView` prop. The Add
+Food handler makes sequential presentation updates; each could start from the
+same rendered snapshot and overwrite the selected meal slot. HealthPage now
+forwards updater functions to the Master Workspace controller, and the
+workspace reducer resolves each updater against the latest Food view in its
+functional `setWorkspace(current => ...)` update. Slot, editor mode, plan ID,
+and Quick Entry updates now compose within one event.
+
+Per-tab Food presentation, stable new-meal draft IDs, shared saved-entry draft
+sessions, date/slot draft protection, and existing persistence remain on their
+prior authorities. No nutrition calculations, schema, or SQL changed.
+
+Focused verification: Master Workspace state, Food logging, and Food editing
+session tests passed (73/73). Scoped ESLint with the existing
+`react-hooks/set-state-in-effect` rule disabled reported no errors and three
+existing unused-disable warnings in the controller. Standard scoped ESLint
+still reports two existing synchronous-effect findings in HealthPage. The
+adjacent `test/master-workspace-health.test.ts` remains baseline-red on its
+source assertion forbidding `useSyncExternalStore` in HealthPage, which was
+already used by the 7.16.138 Food session path. `git diff --check` passed.
+Browser recheck, production build, full typecheck, and broad suite were not
+run.
+
+## 2026-10-11 7.16.138 T5b.4 Food Editing Sessions, Focused First Slice
+
+T5b.3 closed after browser QA on 7.16.137. The active Food data authority is
+the existing `useHealth` collection: Add Food and Quick Entry call
+`addMealEntry`, logged-history edits call `updateMealEntry`, and the Health
+library keeps its existing `saveFavoriteFood`, `saveRecipe`, and `saveSavedMeal`
+mutations. Meal Plan create/edit/confirm remains on the separate planning and
+confirmation paths.
+
+Actual consumed-food entries now use the user-scoped TaskApp editing-session
+store. Saved entry drafts are keyed by canonical `HealthMealEntry` ID and are
+shared across Master Tabs. Each tab's new-entry draft uses its stable
+`newMealDraftId` as the session and persisted record ID. Food presentation is
+stored separately per tab: history date, active slot, selected history record,
+editor mode, Quick Entry state, food selection/category filters, library
+section, and library search filters. Draft contents remain in the session
+store. Actual food drafts survive page changes and HealthPage remounts; changing
+the history date or meal slot cannot reassign a dirty draft. Save errors retain
+the draft, retries reuse the same record ID, successful saves reconcile the
+shared baseline, and Discard restores the baseline without mutating persisted
+Health data.
+
+The existing `addMealEntry` mutation still owns local/remote behavior and
+awards. It checks duplicate local IDs and reconciles ambiguous remote insert
+acknowledgments against the exact user-scoped record and nutrition payload
+before reporting success. Serving quantities, source food references,
+snapshots, calculated macros, date, time, slot, and timestamps use the existing
+nutrition calculator and meal serialization path.
+
+This is a focused first slice, not completion of T5b.4. Planned Meal draft
+editing remains on its legacy guarded path. Custom Food definition editing,
+Recipe editing, and Saved Meal editing remain in `HealthLibraryPanel` with
+their existing draft guards and persistence APIs; their draft contents do not
+use shared sessions. These distinct editor models are deferred to the next
+T5b.4 slice.
+
+Focused verification for 7.16.138: Food session, meal draft/logging, Master
+Workspace state/controller tests passed (105/105). Standard targeted ESLint
+reports 14 `react-hooks/set-state-in-effect` errors and 67 existing warnings.
+With that existing rule disabled, the changed paths report no errors and 69
+warnings. The configured TypeScript check still fails with 282 diagnostics
+across 60 repository files; no diagnostics remain in the new Food session
+helper, Health library presentation wiring, or Master Workspace Food state.
+`git diff --check` passed. Browser QA remains pending for cross-tab sharing,
+date/slot changes, save/discard/retry, barcode, Favorites/Recent, measured
+Custom Food, planned Meal guards, local/remote fallback, and award behavior.
+Production build and broad tests were not run.
+
+Focused verification for 7.16.125: Master Workspace state, controller, and
+Tasks UI-state tests passed (42/42); focused ESLint for the state/controller
+modules and orchestrator passed. The broader changed-files ESLint run reports
+existing `react-hooks/set-state-in-effect` findings in surrounding TaskApp/UI
+code; disabling that existing rule produced no other findings on the changed
+paths. `git diff --check` passed. Browser QA, production build, full typecheck,
+and broad test suites were not run.
+
+## 2026-10-08 7.16.117 Home Routine Unsectioned Sections
+
+Home Routine named sections can be deleted with confirmation. Deletion removes
+only the section definition and assigns its Routine group anchors to the stable
+`__home-routine-unsectioned__` ID in `routineSectionIdByTaskId`; all Routine IDs
+and their global order remain intact. The virtual Unsectioned group renders
+after named sections, supports the existing Routine sorting and section-move
+controls, and persists through the existing Home local cache, Supabase row, and
+Realtime state reconstruction. Legacy missing or stale assignments keep their
+existing named-section fallback behavior.
+
+Focused verification for 7.16.117: `test/home-todo-state.test.ts` and targeted
+ESLint passed; `git diff --check` passed. Browser QA, production build, full
+typecheck, and broad test suites were not run.
+
+## 2026-10-06 7.16.104 Calendar In Progress QA Correction
+
+The explicit Calendar History action chooser now exposes `In Progress` for
+editable single historical and current dates. Historical dates retain Blank
+and Not Due without adding Due; today retains the existing Due behavior.
+Multi-select remains unchanged. Explicit In Progress routes through the
+canonical dated `calendar_override` state `in_progress`, with no History row
+or workflow `start_in_progress` mutation.
+
+## 2026-10-06 7.16.103 Calendar History Fast-Cycle Semantics
+
+Calendar History fast cycling now previews the exact manual order In Progress,
+Done, Did My Best, Delayed, Missed, Complete, Blank, Not Due, and Due, with a
+5-second idle confirmation window. Automatic remains an explicit selected-day
+reset action and is not a cycle position. Intermediate previews are local only;
+simple final states use their existing canonical History or Calendar override
+commands.
+
+In Progress is represented by the dated canonical Calendar override state
+`in_progress`, never by a History outcome or by mutating derived `Task.status`.
+It remains unhandled, recurrence-neutral, reward-free, and streak-neutral;
+historical dates remain overdue while the current logical date remains due and
+projects as In Progress. Delayed opens the existing TaskDelayPicker after the
+idle window, and Complete opens the shared completion confirmation before its
+canonical selected-date completion path.
+
+The source-only migration is
+`supabase/patch_task_calendar_override_in_progress_7_16_103.sql`. It has not
+been applied, and the `task-state-command` Edge Function validation update has
+not been deployed. Browser QA and live deployment remain separate follow-up
+steps.
 
 ## 2026-10-05 7.16.93 Voice Memo V1 + Memo Library
 

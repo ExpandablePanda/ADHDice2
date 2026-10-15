@@ -2,13 +2,40 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { buildManualTaskHistoryOverrideOccurrenceMetadata } from "../src/lib/task-history.ts";
-import { computeTaskEffectiveTimelineStreaks, resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/index.ts";
+import { buildTaskEffectiveTimeline, computeTaskEffectiveTimelineStreaks, resolveTaskHistoryCalendarRead } from "../src/lib/task-state-engine/index.ts";
 import { createTask } from "../src/lib/task-buckets.ts";
 
 const recurringTask = {
   id: "task-1",
   repeat_frequency: "daily" as const,
 };
+
+test("removing a Calendar override restores the calculated timeline state", () => {
+  const input = {
+    calendarEnd: "2026-08-10",
+    calendarStart: "2026-08-05",
+    history: [],
+    logicalDate: "2026-08-10",
+    task: {
+      activeOccurrenceDueOn: "2026-08-05",
+      activeStatus: "pending" as const,
+      dueOn: "2026-08-05",
+      id: "task-natural-state",
+      lifecycle: "active" as const,
+      recurrence: { intervalDays: 1, kind: "rolling" as const },
+    },
+  };
+  const overridden = buildTaskEffectiveTimeline({
+    ...input,
+    calendarOverrides: [{ id: "override-1", logicalDate: "2026-08-05", overrideState: "not_due" as const }],
+  });
+  const cleared = buildTaskEffectiveTimeline(input);
+
+  assert.equal(overridden.days["2026-08-05"]?.sourceKind, "calendar_override");
+  assert.equal(overridden.days["2026-08-05"]?.calendarOverrideId, "override-1");
+  assert.equal(cleared.days["2026-08-05"]?.sourceKind, "calculated");
+  assert.equal(cleared.days["2026-08-05"]?.calendarOverrideId, null);
+});
 
 test("new recurring calculated date gets selected-date occurrence metadata", () => {
   assert.deepEqual(

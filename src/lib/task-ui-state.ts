@@ -3,6 +3,7 @@ import type { TaskEnergy } from "@/lib/database.types";
 import type { TaskRepeatCategory } from "@/lib/task-repeat";
 import { normalizeTaskDisplayStatus, type TaskDisplayStatus } from "@/lib/task-display-status";
 import type { TaskPriorityLevelOption } from "@/lib/task-priority";
+import { normalizeStoredTaskTableLayoutPreferences, type TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import { DEFAULT_HUD_UI_STATE, normalizeHudUiState } from "@/lib/task-hud-layout";
 import { normalizeListSortBySurface, type ListSortBySurface } from "@/lib/task-list-sort";
 
@@ -46,10 +47,13 @@ export type TaskUiState = {
 };
 
 export type TaskWorkspaceTab = {
+  collapsedTaskContentFolderIds?: string[];
+  currentFolderId?: string | null;
   kind?: "report" | "tasks";
   id: string;
   isRailHidden: boolean;
   label: string;
+  taskTableLayoutPreferences?: TaskTableLayoutPreferences;
   taskUiState: TaskUiState;
 };
 
@@ -139,6 +143,34 @@ export const DEFAULT_TASK_WORKSPACE_TABS_STATE: TaskWorkspaceTabsState = {
   ],
   uiStateVersion: TASK_UI_SCHEMA_VERSION,
 };
+
+export function resolveActiveTaskWorkspaceTab(state: TaskWorkspaceTabsState): TaskWorkspaceTab {
+  return state.tabs.find((tab) => tab.id === state.activeTabId)
+    ?? state.tabs[0]
+    ?? DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0];
+}
+
+export function resolveActiveTaskUiState(state: TaskWorkspaceTabsState): TaskUiState {
+  return resolveActiveTaskWorkspaceTab(state).taskUiState;
+}
+
+export function updateActiveTaskUiState(
+  state: TaskWorkspaceTabsState,
+  updater: TaskUiState | ((current: TaskUiState) => TaskUiState),
+): TaskWorkspaceTabsState {
+  const activeTabIndex = state.tabs.findIndex((tab) => tab.id === state.activeTabId);
+  if (activeTabIndex < 0) return state;
+
+  const currentTab = state.tabs[activeTabIndex];
+  const nextTaskUiState = typeof updater === "function"
+    ? updater(currentTab.taskUiState)
+    : updater;
+  if (Object.is(nextTaskUiState, currentTab.taskUiState)) return state;
+
+  const tabs = [...state.tabs];
+  tabs[activeTabIndex] = { ...currentTab, taskUiState: nextTaskUiState };
+  return { ...state, tabs };
+}
 
 export { DEFAULT_HUD_UI_STATE, normalizeHudUiState };
 export type { HudPage, HudUiState, HudWidgetLayoutItem, HudWidgetSize, HudWidgetType } from "@/lib/task-hud-layout";
@@ -282,10 +314,19 @@ function normalizeTaskWorkspaceTab(value: unknown, index: number): TaskWorkspace
     : `Tab ${index + 1}`;
 
   return {
+    ...(Array.isArray(candidate.collapsedTaskContentFolderIds)
+      ? { collapsedTaskContentFolderIds: candidate.collapsedTaskContentFolderIds.filter((id): id is string => typeof id === "string") }
+      : {}),
+    ...(typeof candidate.currentFolderId === "string" || candidate.currentFolderId === null
+      ? { currentFolderId: candidate.currentFolderId }
+      : {}),
     id,
     isRailHidden: candidate.isRailHidden === true,
     kind: "tasks",
     label,
+    ...(candidate.taskTableLayoutPreferences !== undefined
+      ? { taskTableLayoutPreferences: normalizeStoredTaskTableLayoutPreferences(candidate.taskTableLayoutPreferences) }
+      : {}),
     taskUiState: migrateLegacyTaskUiState(candidate.taskUiState ?? {}),
   };
 }
@@ -358,6 +399,41 @@ export function normalizeTaskWorkspaceTabsState(value: unknown): TaskWorkspaceTa
     activeTabId,
     tabs,
     uiStateVersion: TASK_UI_SCHEMA_VERSION,
+  };
+}
+
+export function createTaskWorkspaceTabState(
+  state: TaskWorkspaceTabsState,
+  tab: TaskWorkspaceTab,
+): TaskWorkspaceTabsState {
+  return {
+    ...state,
+    activeTabId: tab.id,
+    tabs: [...state.tabs, tab],
+  };
+}
+
+export function closeTaskWorkspaceTabState(state: TaskWorkspaceTabsState, tabId: string): TaskWorkspaceTabsState {
+  const targetTab = state.tabs.find((tab) => tab.id === tabId);
+  if (state.tabs.length <= 1 || !targetTab) return state;
+
+  const tabs = state.tabs.filter((tab) => tab.id !== tabId);
+  const activeTabId = state.activeTabId === tabId
+    ? tabs[Math.max(0, state.tabs.findIndex((tab) => tab.id === tabId) - 1)]?.id ?? tabs[0].id
+    : state.activeTabId;
+  return { ...state, activeTabId, tabs };
+}
+
+export function renameTaskWorkspaceTabState(
+  state: TaskWorkspaceTabsState,
+  tabId: string,
+  label: string,
+): TaskWorkspaceTabsState {
+  const trimmedLabel = label.trim();
+  if (!trimmedLabel) return state;
+  return {
+    ...state,
+    tabs: state.tabs.map((tab) => tab.id === tabId ? { ...tab, label: trimmedLabel } : tab),
   };
 }
 

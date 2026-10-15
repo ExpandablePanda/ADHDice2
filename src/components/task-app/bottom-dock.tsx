@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { clampNavigationBubblePosition } from "@/lib/navigation-dock-layout";
 import type { NavigatorSearchTarget } from "@/lib/navigator-search";
 import type { TaskSearchEntity } from "@/lib/task-search-selector";
 import { NavigatorSearchInline, type NavigatorSearchPlacement } from "./navigator-search-inline";
@@ -12,6 +13,7 @@ type BottomDockProps<TPage extends string> = {
   activePage: TPage;
   dockIcons: Record<TPage, string>;
   dockItems: TPage[];
+  layoutMode?: "viewport" | "panel";
   onNavigate: (page: TPage) => void;
   onNavigateSearchTarget: (target: NavigatorSearchTarget) => void;
   renderIcon: (name: string) => ReactNode;
@@ -23,27 +25,32 @@ export function BottomDockComponent<TPage extends string>({
   activePage,
   dockIcons,
   dockItems,
+  layoutMode = "viewport",
   onNavigate,
   onNavigateSearchTarget,
   renderIcon,
   searchTargets,
   taskSearchEntities,
 }: BottomDockProps<TPage>) {
+  const isPanelScoped = layoutMode === "panel";
   const [isCollapsed, setIsCollapsed] = useState(false);
   const [isSearchMode, setIsSearchMode] = useState(false);
   const [isDockCollapsing, setIsDockCollapsing] = useState(false);
   const [dockPlacement, setDockPlacement] = useState<DockPlacement>("bottom");
   const [showPlacementMenu, setShowPlacementMenu] = useState(false);
   const [placementMenuPos, setPlacementMenuPos] = useState<{ left: number; top: number } | null>(null);
+  const [panelBounds, setPanelBounds] = useState<{ height: number; width: number } | null>(null);
   const [isBubbleWhooshing, setIsBubbleWhooshing] = useState(false);
   const [bubblePos, setBubblePos] = useState(() => {
-    if (typeof window === "undefined") {
+    if (isPanelScoped || typeof window === "undefined") {
       return { x: 24, y: 24 };
     }
     return { x: window.innerWidth - 96, y: window.innerHeight - 148 };
   });
   const [bubbleRenderPos, setBubbleRenderPos] = useState<{ x: number; y: number } | null>(null);
   const [isDragReady, setIsDragReady] = useState(false);
+  const panelBoundaryRef = useRef<HTMLDivElement | null>(null);
+  const panelBubblePositionInitializedRef = useRef(false);
   const dragRef = useRef<{
     moved: boolean;
     originX: number;
@@ -57,7 +64,11 @@ export function BottomDockComponent<TPage extends string>({
   const longPressTimerRef = useRef<number | null>(null);
   const longPressTriggeredRef = useRef(false);
 
-  const clampBubblePos = (x: number, y: number) => {
+  const clampBubblePos = useCallback((x: number, y: number) => {
+    if (isPanelScoped) {
+      const boundary = panelBoundaryRef.current;
+      return clampNavigationBubblePosition(x, y, boundary?.clientWidth ?? 0, boundary?.clientHeight ?? 0);
+    }
     if (typeof window === "undefined") {
       return { x, y };
     }
@@ -69,16 +80,43 @@ export function BottomDockComponent<TPage extends string>({
       x: Math.min(maxX, Math.max(minX, x)),
       y: Math.min(maxY, Math.max(minY, y)),
     };
-  };
+  }, [isPanelScoped]);
 
   useEffect(() => {
+    if (isPanelScoped) return;
     const handleResize = () => {
       setBubblePos((prev) => clampBubblePos(prev.x, prev.y));
       setBubbleRenderPos((prev) => (prev ? clampBubblePos(prev.x, prev.y) : prev));
     };
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
-  }, []);
+  }, [clampBubblePos, isPanelScoped]);
+
+  useEffect(() => {
+    if (!isPanelScoped) return;
+    const boundary = panelBoundaryRef.current;
+    if (!boundary) return;
+
+    const resizeObserver = new ResizeObserver(() => {
+      const width = boundary.clientWidth;
+      const height = boundary.clientHeight;
+      setPanelBounds((current) => current?.width === width && current.height === height ? current : { height, width });
+      setBubblePos((current) => {
+        const next = panelBubblePositionInitializedRef.current
+          ? clampBubblePos(current.x, current.y)
+          : clampBubblePos(width - 88, height - 88);
+        panelBubblePositionInitializedRef.current = true;
+        return next.x === current.x && next.y === current.y ? current : next;
+      });
+      setBubbleRenderPos((current) => {
+        if (!current) return current;
+        const next = clampBubblePos(current.x, current.y);
+        return next.x === current.x && next.y === current.y ? current : next;
+      });
+    });
+    resizeObserver.observe(boundary);
+    return () => resizeObserver.disconnect();
+  }, [clampBubblePos, isPanelScoped]);
 
   useEffect(() => {
     const clearPlacementMenu = (event: MouseEvent) => {
@@ -101,13 +139,25 @@ export function BottomDockComponent<TPage extends string>({
     const dockElement = collapseButtonRef.current?.parentElement;
     if (dockElement) {
       const rect = dockElement.getBoundingClientRect();
-      return clampBubblePos(rect.left + rect.width / 2 - 32, rect.top + rect.height / 2 - 32);
+      const boundaryRect = isPanelScoped ? panelBoundaryRef.current?.getBoundingClientRect() : null;
+      return clampBubblePos(
+        rect.left + rect.width / 2 - 32 - (boundaryRect?.left ?? 0),
+        rect.top + rect.height / 2 - 32 - (boundaryRect?.top ?? 0),
+      );
     }
     if (!collapseButtonRef.current) {
+      if (isPanelScoped) {
+        const boundary = panelBoundaryRef.current;
+        return clampBubblePos((boundary?.clientWidth ?? 0) - 88, (boundary?.clientHeight ?? 0) - 88);
+      }
       return clampBubblePos(window.innerWidth - 96, window.innerHeight - 148);
     }
     const rect = collapseButtonRef.current.getBoundingClientRect();
-    return clampBubblePos(rect.left + rect.width / 2 - 32, rect.top + rect.height / 2 - 32);
+    const boundaryRect = isPanelScoped ? panelBoundaryRef.current?.getBoundingClientRect() : null;
+    return clampBubblePos(
+      rect.left + rect.width / 2 - 32 - (boundaryRect?.left ?? 0),
+      rect.top + rect.height / 2 - 32 - (boundaryRect?.top ?? 0),
+    );
   };
 
   const renderedDockPlacement: DockPlacement = dockPlacement;
@@ -213,35 +263,60 @@ export function BottomDockComponent<TPage extends string>({
   };
 
   if (isCollapsed) {
+    const bubble = (
+      <button
+        aria-label="Open navigation"
+        className={`flex h-16 w-16 items-center justify-center rounded-full border shadow-[0_16px_36px_rgba(60,44,140,0.22)] transition-all duration-300 ${isDragReady ? "scale-110 ring-4 ring-[#6f57f6]/40" : "hover:scale-105"} ${isBubbleWhooshing ? "duration-500 ease-out" : ""} border-[#ece8f8] bg-white/95 text-[#6f57f6] dark:border-white/10 dark:bg-[#171328]/95 dark:text-[#cabfff]`}
+        onPointerDown={startBubbleDrag}
+        style={{ WebkitUserDrag: "none", touchAction: "none" } as React.CSSProperties}
+        type="button"
+      >
+        {renderIcon(dockIcons[activePage])}
+      </button>
+    );
+
+    if (isPanelScoped) {
+      return (
+        <div className="pointer-events-none absolute inset-0 z-[120] select-none" data-navigation-layout="panel" ref={panelBoundaryRef}>
+          <div
+            className={`pointer-events-auto absolute z-20 ${isBubbleWhooshing ? "transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]" : ""}`}
+            style={{ left: (bubbleRenderPos ?? bubblePos).x, top: (bubbleRenderPos ?? bubblePos).y, userSelect: "none", WebkitUserSelect: "none", touchAction: isDragReady ? "none" : "auto" }}
+          >
+            {bubble}
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div
         className={`fixed z-20 select-none ${isBubbleWhooshing ? "transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]" : ""}`}
         style={{ left: (bubbleRenderPos ?? bubblePos).x, top: (bubbleRenderPos ?? bubblePos).y, userSelect: "none", WebkitUserSelect: "none", touchAction: isDragReady ? "none" : "auto" }}
       >
-        <button
-          aria-label="Open navigation"
-          className={`flex h-16 w-16 items-center justify-center rounded-full border shadow-[0_16px_36px_rgba(60,44,140,0.22)] transition-all duration-300 ${isDragReady ? "scale-110 ring-4 ring-[#6f57f6]/40" : "hover:scale-105"} ${isBubbleWhooshing ? "duration-500 ease-out" : ""} border-[#ece8f8] bg-white/95 text-[#6f57f6] dark:border-white/10 dark:bg-[#171328]/95 dark:text-[#cabfff]`}
-          onPointerDown={startBubbleDrag}
-          style={{ WebkitUserDrag: "none", touchAction: "none" } as React.CSSProperties}
-          type="button"
-        >
-          {renderIcon(dockIcons[activePage])}
-        </button>
+        {bubble}
       </div>
     );
   }
 
-  const isVertical = renderedDockPlacement !== "bottom";
+  const isVertical = !isPanelScoped && renderedDockPlacement !== "bottom";
   const dockZIndexClass = isSearchMode ? "z-40" : "z-10";
-  const dockPositionClass = renderedDockPlacement === "bottom"
+  const dockPositionClass = isPanelScoped
+    ? "absolute bottom-[calc(1rem+env(safe-area-inset-bottom))] left-1/2 z-20 -translate-x-1/2"
+    : renderedDockPlacement === "bottom"
     ? `fixed inset-x-0 ${dockZIndexClass} min-w-0 px-4`
     : renderedDockPlacement === "left"
       ? `fixed left-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`
       : `fixed right-4 top-4 bottom-4 ${dockZIndexClass} flex items-center`;
-  const dockPositionStyle = renderedDockPlacement === "bottom"
+  const dockPositionStyle = !isPanelScoped && renderedDockPlacement === "bottom"
     ? { bottom: "calc(1.25rem + env(safe-area-inset-bottom))" }
-    : undefined;
-  const dockShapeClass = isSearchMode
+    : isPanelScoped
+      ? { width: isSearchMode ? "min(28rem, calc(100% - 1rem))" : "max-content", maxWidth: "calc(100% - 1rem)" }
+      : undefined;
+  const dockShapeClass = isPanelScoped
+    ? isSearchMode
+      ? "mx-auto flex w-full min-w-0 max-w-full items-center gap-[3px] rounded-[1.25rem] px-[3px] py-1"
+      : "adhdice-scrollbar adhdice-horizontal-scroll mx-auto flex w-fit min-w-0 max-w-full items-center gap-[3px] overflow-x-auto rounded-[1.25rem] px-[3px] py-1 touch-pan-x"
+    : isSearchMode
     ? renderedDockPlacement === "bottom"
       ? "mx-auto flex min-w-0 w-[min(28rem,calc(100vw-2rem))] max-w-full items-center gap-[3px] rounded-[1.75rem] px-[3px] py-1"
       : "adhdice-scrollbar flex max-h-full w-[5rem] flex-col items-center gap-1 overflow-visible rounded-[2rem] px-2 py-3 sm:w-[18rem] sm:flex-row sm:gap-[3px] sm:rounded-[1.75rem] sm:px-[3px] sm:py-1"
@@ -254,17 +329,19 @@ export function BottomDockComponent<TPage extends string>({
       : { width: "4rem", height: "4rem", borderRadius: "9999px", padding: "0" }
     : undefined;
 
-  return (
-    <div className={`${dockPositionClass} select-none`} style={{ userSelect: "none", WebkitUserSelect: "none", ...dockPositionStyle }}>
+  const expandedDock = (
+    <div className={`${dockPositionClass} pointer-events-auto select-none`} data-navigation-dock={layoutMode} style={{ userSelect: "none", WebkitUserSelect: "none", ...dockPositionStyle }}>
       <div className={`relative ${isDockCollapsing ? "overflow-hidden" : "overflow-visible"} border shadow-[0_25px_45px_rgba(60,44,140,0.18)] transition-all duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${dockShapeClass} border-[#ece8f8] bg-white/92 backdrop-blur dark:border-white/10 dark:bg-[#171328]/92 dark:backdrop-blur`} style={collapsingStyle}>
         {isSearchMode ? (
           <NavigatorSearchInline
             onClose={() => setIsSearchMode(false)}
             onNavigate={onNavigateSearchTarget}
+            panelScoped={isPanelScoped}
             placement={renderedDockPlacement}
             renderIcon={renderIcon}
             targets={searchTargets}
             taskSearchEntities={taskSearchEntities}
+            panelAvailableHeight={panelBounds?.height}
           />
         ) : (
           <>
@@ -284,6 +361,8 @@ export function BottomDockComponent<TPage extends string>({
                 className={`flex ${isVertical ? "w-full" : "h-10 w-10 shrink-0"} flex-col items-center justify-center rounded-[1rem] px-1 py-2 transition duration-300 ${isDockCollapsing ? "scale-75 opacity-0" : "scale-100 opacity-100"} ${activePage === item ? "text-[#6f57f6] dark:text-[#cabfff]" : "text-[#8d94ac] dark:text-white/50"}`}
                 key={item}
                 onClick={() => onNavigate(item)}
+                aria-label={item}
+                title={item}
                 type="button"
               >
                 {renderIcon(dockIcons[item])}
@@ -299,6 +378,7 @@ export function BottomDockComponent<TPage extends string>({
               }}
               onPointerDown={() => {
                 longPressTriggeredRef.current = false;
+                if (isPanelScoped) return;
                 if (longPressTimerRef.current) {
                   window.clearTimeout(longPressTimerRef.current);
                 }
@@ -328,7 +408,7 @@ export function BottomDockComponent<TPage extends string>({
             </button>
           </>
         )}
-        {!isSearchMode && showPlacementMenu && placementMenuPos ? (
+        {!isPanelScoped && !isSearchMode && showPlacementMenu && placementMenuPos ? (
           <div className="fixed z-30 w-44 rounded-2xl border p-2 shadow-xl border-[#ece8f8] bg-white text-[#1f2746] dark:border-white/10 dark:bg-[#1b1730] dark:text-white" ref={placementMenuRef} style={{ left: placementMenuPos.left, top: placementMenuPos.top }}>
             <p className="px-2 pb-1 text-[10px] font-bold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/45">Dock Position</p>
             {([
@@ -353,4 +433,14 @@ export function BottomDockComponent<TPage extends string>({
       </div>
     </div>
   );
+
+  if (isPanelScoped) {
+    return (
+      <div className="pointer-events-none absolute inset-0 z-[120] select-none" data-navigation-layout="panel" ref={panelBoundaryRef}>
+        {expandedDock}
+      </div>
+    );
+  }
+
+  return expandedDock;
 }

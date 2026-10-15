@@ -45,6 +45,73 @@ function history(status: TaskHistory["status"], entry_date = "2026-07-30"): Task
 
 const context = { logicalDayRollover: "06:00", now: "2026-07-31T14:00:00.000Z", timezone: "America/New_York" };
 
+test("refreshed History Calendar reconstructs calculated Missed continuity from the original occurrence", () => {
+  const sourceTask = task({
+    due_on: "2026-09-22",
+    repeat_frequency: "daily",
+    repeat_interval: 4,
+    status: "missed",
+  });
+  const historyRows = [
+    history("done", "2026-09-22"),
+    history("missed", "2026-09-26"),
+    history("done", "2026-09-28"),
+  ];
+  historyRows[1]!.occurrence_due_on = "2026-09-26";
+  historyRows[1]!.occurrence_key = "task-state:task-1:2026-09-26";
+  historyRows[2]!.occurrence_due_on = "2026-09-26";
+  historyRows[2]!.occurrence_key = "task-state:task-1:2026-09-26";
+
+  const read = resolveCanonicalTaskHistoryCalendarRead({
+    compatibilityOnly: true,
+    calendarStart: "2026-09-22",
+    calendarEnd: "2026-09-29",
+    history: historyRows,
+    logicalDayRollover: "00:00",
+    now: "2026-09-29T12:00:00.000Z",
+    task: sourceTask,
+    timezone: "UTC",
+  });
+
+  assert.deepEqual(read?.states && Object.entries(read.states).map(([date, state]) => [date, state]), [
+    ["2026-09-22", "done"],
+    ["2026-09-23", "not_due"],
+    ["2026-09-24", "not_due"],
+    ["2026-09-25", "not_due"],
+    ["2026-09-26", "missed"],
+    ["2026-09-27", "missed"],
+    ["2026-09-28", "done"],
+    ["2026-09-29", "not_due"],
+  ]);
+  const continuation = read?.timeline?.days["2026-09-27"];
+  assert.equal(continuation?.sourceKind, "calculated");
+  assert.equal(continuation?.historyRowId, null);
+  assert.equal(continuation?.occurrenceDueOn, "2026-09-26");
+  assert.equal(continuation?.occurrenceIdentity, "task:task-1:occurrence:2026-09-26");
+  assert.equal(read?.timeline?.currentMissedStreak, 0);
+  assert.equal(read?.timeline?.longestMissedStreak, 2);
+
+  const protectedOverride = resolveCanonicalTaskHistoryCalendarRead({
+    compatibilityOnly: true,
+    calendarOverrides: [{
+      id: "override-2026-09-27",
+      logicalDate: "2026-09-27",
+      overrideState: "not_due",
+      provenance: "manual",
+    }],
+    calendarStart: "2026-09-22",
+    calendarEnd: "2026-09-29",
+    history: historyRows,
+    logicalDayRollover: "00:00",
+    now: "2026-09-29T12:00:00.000Z",
+    task: sourceTask,
+    timezone: "UTC",
+  });
+  assert.equal(protectedOverride?.states["2026-09-27"], "not_due");
+  assert.equal(protectedOverride?.timeline?.days["2026-09-27"]?.sourceKind, "calendar_override");
+  assert.equal(protectedOverride?.timeline?.days["2026-09-27"]?.calendarOverrideId, "override-2026-09-27");
+});
+
 test("a concrete active Missed occurrence remains Missed through a schedule edit", () => {
   const activeTask = task({
     active_occurrence_due_on: "2026-08-04",

@@ -1,7 +1,7 @@
 "use client";
 
 import { Activity, Apple, BookOpen, CalendarDays, Check, ChevronDown, ChevronUp, Heart, HeartPulse, History, MoonStar, Pencil, RotateCcw, Salad, ScanBarcode, Scale, Sparkles, Target, Trophy, X } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent, type PointerEvent, type ReactNode, type Ref, type SetStateAction } from "react";
 
 import type {
   HealthAchievementAward,
@@ -28,6 +28,8 @@ import type {
   HealthJournalSignalKind,
   HealthJournalSignalOccurrence,
   HealthJournalSignalOccurrenceInsert,
+  HealthJournalTrigger,
+  HealthJournalTriggerLink,
   HealthJournalSignalValue,
   HealthMealEntry,
   HealthMealEntryInsert,
@@ -44,7 +46,6 @@ import type {
   HealthSavedMeal,
   HealthSavedMealItem,
   HealthServingMeasureUnit,
-  HealthServingWeightUnit,
   HealthSymptom,
   HealthSymptomEntry,
   HealthSymptomEntryInsert,
@@ -66,19 +67,28 @@ import {
   type AppleHealthImportParseProgress,
   type AppleHealthImportPreview,
 } from "@/lib/health-apple-import";
-import type { HealthImportSaveProgress, HealthJournalEntrySaveInput } from "@/hooks/useHealth";
+import type { HealthImportSaveProgress, HealthJournalEntrySaveInput, HealthJournalEntrySaveResult } from "@/hooks/useHealth";
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
+import type { HealthCustomFoodEditingSessionDraft, HealthCustomFoodSaveInput } from "@/lib/health-custom-food-editing-session";
+import type { HealthLibraryDefinitionSaveOptions, HealthRecipeEditingSessionDraft, HealthSavedMealEditingSessionDraft } from "@/lib/health-library-definition-editing-session";
 import {
   createDefaultMealDraft,
   hasMeaningfulMealDraft,
   mealFoodSelectionFromLibraryItem,
   prepareMealDraftForSelectedSlot,
   resetMealDraftForNextItem,
+  createHealthFoodDraftId,
+  createHealthFoodEditingSessionDraft,
+  healthMealEntrySessionId,
+  healthMealNewEntrySessionId,
+  prepareHealthMealEntryFromDraft,
+  saveHealthFoodEditingSession,
+  type HealthFoodEditingSessionDraft,
+  type MealEditDraft,
   type MealDraft,
   type MealFoodSelection,
 } from "@/lib/health-meal-draft";
-import { readHealthTabPreference, subscribeToHealthTabPreference, persistHealthTabPreference } from "@/lib/health-tab-preference";
 import {
   calculateHealthDailyCalorieBudget,
   calculateHealthProjectedCalories,
@@ -154,14 +164,16 @@ import {
   getHealthJournalSignalDisplayColor,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
+  getHealthJournalHistoryGroupsIncludingEntry,
   groupHealthJournalEntriesByDate,
   normalizeHealthJournalEntryTime,
   findHealthJournalReflectionTagMatches,
+  formatHealthJournalReflectionTagText,
   replaceHealthJournalReflectionTag,
   type HealthJournalDraftValue,
   updateHealthJournalDraftValue,
 } from "@/lib/health-journal";
-import { formatHealthJournalOccurrenceReference, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
+import { formatHealthJournalEventInterval, formatHealthJournalOccurrenceReference, getHealthJournalScaleDenominator, normalizeHealthJournalStructuredAnswers, sortHealthJournalOccurrenceRows } from "@/lib/health-journal-checkins";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
@@ -198,6 +210,19 @@ import {
   sumHealthMealPlanNutritionForDate,
 } from "@/lib/health-meal-planning";
 import {
+  createHealthMealPlanEditingSessionDraft,
+  createHealthMealPlanEditingSessionDraftFromEntry,
+  ensureHealthMealPlanNewSession,
+  ensureHealthMealPlanSavedSession,
+  healthMealPlanEntrySessionId,
+  healthMealPlanNewEntryCanonicalId,
+  healthMealPlanNewEntrySessionId,
+  openHealthMealPlanComposerForSlot,
+  runHealthMealPlanLifecycleAction,
+  saveHealthMealPlanEditingSession,
+  type HealthMealPlanEditingSessionDraft,
+} from "@/lib/health-meal-plan-editing-session";
+import {
   buildHealthMealFoodSnapshot,
   formatHealthConsumedMealLabel,
   type HealthFoodHistoryRepairResult,
@@ -223,15 +248,44 @@ import { HealthStandardTimeInput } from "./health-standard-time-input";
 import { HealthTodayTab } from "./health-today-tab";
 import { PageShellHeader } from "./page-shell-header";
 import { JournalCheckInForm } from "./journal-check-in-form";
+import type { JournalCheckInDraftSnapshot } from "./journal-check-in-form";
 import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
+import type { EditingSessionStore } from "@/lib/editing-session-store";
+import { createDefaultMasterFoodWorkspaceView, selectJournalHistoryEntryForEdit, type MasterFoodWorkspaceView, type MasterFoodWorkspaceViewUpdate, type MasterJournalWorkspaceMode, type MasterTabPresentationState } from "@/lib/master-workspace-state";
+import { JournalTriggerStatistics } from "./journal-trigger-statistics";
 
 type HealthPageProps = {
+  journalEntryRequest: { entryType: "start_of_day" | "end_of_day"; id: number } | null;
+  onConsumeJournalEntryRequest: (requestId: number) => void;
+  activeTab: HealthTab;
+  onSelectTab: (tab: HealthTab) => void;
+  onDraftSafetyChange: (section: HealthTab, isUnsafe: boolean) => void;
+  activeMasterTabId?: string;
+  journalView?: MasterTabPresentationState["journalView"];
+  onJournalViewChange?: (journalView: MasterTabPresentationState["journalView"]) => void;
+  journalSessionStore?: EditingSessionStore<JournalCheckInDraftSnapshot> | null;
+  foodView?: MasterFoodWorkspaceView;
+  onFoodViewChange?: (foodView: MasterFoodWorkspaceViewUpdate) => void;
+  foodSessionStore?: EditingSessionStore<HealthFoodEditingSessionDraft> | null;
+  customFoodSessionStore?: EditingSessionStore<HealthCustomFoodEditingSessionDraft> | null;
+  recipeSessionStore?: EditingSessionStore<HealthRecipeEditingSessionDraft> | null;
+  savedMealSessionStore?: EditingSessionStore<HealthSavedMealEditingSessionDraft> | null;
+  mealPlanSessionStore?: EditingSessionStore<HealthMealPlanEditingSessionDraft> | null;
   awards: HealthAchievementAward[];
   checkIns: HealthCheckIn[];
   journalSignals: HealthJournalSignal[];
   journalSignalValues: HealthJournalSignalValue[];
   journalSignalOccurrences: HealthJournalSignalOccurrence[];
+  journalTriggers: HealthJournalTrigger[];
+  journalTriggerLinks: HealthJournalTriggerLink[];
+  journalTriggerDataError: string | null;
+  journalStatisticsDataError: string | null;
+  refreshJournalStatisticsData: () => void;
+  isLoadingJournalTriggers: boolean;
+  hasLoadedJournalTriggerData: boolean;
+  loadJournalTriggerData: () => Promise<boolean>;
+  createJournalTrigger: (name: string) => Promise<HealthJournalTrigger | null>;
   symptoms: HealthSymptom[];
   symptomEntries: HealthSymptomEntry[];
   createSymptom: (input: Omit<HealthSymptomInsert, "user_id">) => Promise<HealthSymptom | null>;
@@ -267,13 +321,13 @@ type HealthPageProps = {
   onToggleSleepClock: () => void;
   onFinishSleepClock: (kind: HealthSleepKind) => void;
   onLogManualSleep: (input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<boolean>;
-  onUpdateSleepSession: (entryId: string, input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<void>;
+  onUpdateSleepSession: (entryId: string, input: { date: string; durationSeconds: number; endedAt: string; kind: HealthSleepKind; startedAt: string }) => Promise<boolean>;
   mealEntries: HealthMealEntry[];
   mealPlanEntries: HealthMealPlanEntry[];
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
   recipes: HealthRecipe[];
-  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthCheckIn | null>;
+  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthJournalEntrySaveResult | null>;
   saveJournalQuestions: (questions: readonly HealthJournalCustomQuestion[]) => Promise<boolean>;
   createJournalSignal: (input: Omit<import("@/lib/database.types").HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   updateJournalSignal: (signalId: string, input: import("@/lib/database.types").HealthJournalSignalUpdate) => Promise<boolean>;
@@ -282,32 +336,9 @@ type HealthPageProps = {
   deleteJournalSignal: (signalId: string) => Promise<boolean>;
   reorderJournalSignals: (orderedSignalIds: readonly string[]) => Promise<boolean>;
   deleteJournalEntry: (entryId: string) => Promise<boolean>;
-  saveFavoriteFood: (input: {
-    attribution?: string | null;
-    barcode?: string | null;
-    brand_name?: string | null;
-    category?: string | null;
-    food_category?: string | null;
-    calories: number;
-    carbs_g?: number | null;
-    fat_g?: number | null;
-    nutrition_details?: HealthNutritionDetails | null;
-    food_name: string;
-    id?: string;
-    protein_g?: number | null;
-    provider?: string;
-    provider_item_id?: string | null;
-    serving_label?: string | null;
-    serving_size?: string | null;
-    serving_quantity?: number;
-    serving_unit?: string;
-    serving_measure_value?: number | null;
-    serving_measure_unit?: HealthServingMeasureUnit | null;
-    serving_weight_amount?: number | null;
-    serving_weight_unit?: HealthServingWeightUnit | null;
-    is_favorite?: boolean;
-  }) => Promise<HealthFoodLibraryItem | null>;
-  updatePreviousFoodLogs: (food: HealthFoodLibraryItem) => Promise<HealthFoodHistoryRepairResult>;
+  saveFavoriteFood: (input: HealthCustomFoodSaveInput, options?: { createOnly?: boolean }) => Promise<HealthFoodLibraryItem | null>;
+  updatePreviousFoodLogs: (food: HealthFoodLibraryItem, options?: { mode?: "all" | "pending" }) => Promise<HealthFoodHistoryRepairResult>;
+  pendingFoodHistoryRepairIds: readonly string[];
   setFavoriteFoodStatus: (itemId: string, isFavorite: boolean) => Promise<boolean>;
   saveRecipe: (input: {
     id?: string;
@@ -315,14 +346,14 @@ type HealthPageProps = {
     notes?: string;
     servings: number;
     ingredients: HealthRecipeIngredient[];
-  }) => Promise<boolean>;
+  }, options?: HealthLibraryDefinitionSaveOptions) => Promise<HealthRecipe | null>;
   savedMeals: HealthSavedMeal[];
   saveSavedMeal: (input: {
     id?: string;
     name: string;
     default_meal_slot: HealthMealEntry["meal_slot"];
     items: HealthSavedMealItem[];
-  }) => Promise<boolean>;
+  }, options?: HealthLibraryDefinitionSaveOptions) => Promise<HealthSavedMeal | null>;
   saveProfile: (updates: HealthProfileUpdate) => Promise<boolean>;
   addMealEntry: (input: Omit<HealthMealEntryInsert, "user_id">) => Promise<boolean>;
   addMealPlanEntry: (input: Omit<HealthMealPlanEntryInsert, "user_id">) => Promise<boolean>;
@@ -460,7 +491,7 @@ type JournalHistoryTagOverlay = {
 } | null;
 
 type JournalSignalCreateKind = "emotion" | "other";
-type JournalWorkspaceMode = "entry" | "history" | "split-history-left" | "split-history-right";
+type JournalWorkspaceMode = MasterJournalWorkspaceMode;
 
 const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
   Mood: ["Very bad", "Bad", "Poor", "Low", "Okay", "Fair", "Good", "Very good", "Great", "Excellent"],
@@ -468,26 +499,6 @@ const CORE_JOURNAL_SCALE_LABELS: Readonly<Record<string, readonly string[]>> = {
   Stress: ["Calm", "Very low", "Low", "Mild", "Moderate", "Noticeable", "High", "Very high", "Severe", "Overwhelmed"],
   "Mental clarity": ["Foggy", "Very foggy", "Unclear", "Distracted", "Mixed", "Fair", "Clear", "Very clear", "Sharp", "Crystal clear"],
 };
-
-type MealEditDraft = {
-  mode: "legacy" | "structured";
-  calories: string;
-  carbs: string;
-  date: string;
-  fat: string;
-  mealSlot: HealthMealEntry["meal_slot"];
-  protein: string;
-  quantity: string;
-  measurement: string;
-  servingLabel: string;
-  time: string;
-};
-
-function createQuickFoodId() {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `quick-food-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-}
 
 function createJournalDraftId() {
   return typeof crypto !== "undefined" && "randomUUID" in crypto
@@ -780,13 +791,13 @@ function JournalHistoryTagPopover({
   const occurrenceRows = option.kind === "symptom" && option.symptomId
     ? symptomEntries
       .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId)
-      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at))
-      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity }))
+      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at) || left.id.localeCompare(right.id))
+      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity, timeIsEstimated: occurrence.time_is_estimated }))
     : option.signal
       ? journalSignalOccurrences
         .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id)
-        .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at))
-        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score }))
+        .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at) || left.id.localeCompare(right.id))
+        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score, timeIsEstimated: occurrence.time_is_estimated }))
       : [];
   const overallValue = option.signal
     ? entryValues.find((value) => value.signal_id === option.signal?.id) ?? null
@@ -830,7 +841,7 @@ function JournalHistoryTagPopover({
             {occurrenceRows.length > 0 ? occurrenceRows.map((occurrence) => (
                 <div className="grid gap-0.5" key={occurrence.id}>
                   <div className="flex items-baseline justify-between gap-3">
-                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal })}</span>
+                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal, timeIsEstimated: occurrence.timeIsEstimated })}</span>
                     <span className="text-right font-semibold text-[#26324f] dark:text-white">{scaleLabels[occurrence.score] ?? ""}</span>
                   </div>
                   {occurrence.note?.trim() ? <p className="text-[#4f5872] dark:text-white/75">{occurrence.note}</p> : null}
@@ -881,6 +892,18 @@ function JournalHistoryReflection({
   matches.forEach((match) => {
     const option = historyTagOptionsByKey.get(match.key);
     if (!option) return;
+    const matchingScores = option.kind === "symptom" && option.symptomId
+      ? symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId).map((occurrence) => occurrence.severity)
+      : option.signal
+        ? journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id).map((occurrence) => occurrence.score)
+        : [];
+    const displayText = formatHealthJournalReflectionTagText({
+      baseText: match.text,
+      denominator: getHealthJournalScaleDenominator(option.signal),
+      matchingOccurrenceCount: matchingScores.length,
+      name: option.name,
+      score: matchingScores.length === 1 ? matchingScores[0] ?? null : null,
+    });
     if (match.start > cursor) nodes.push(reflection.slice(cursor, match.start));
     const isOpen = selectedTag?.entryId === entry.id
       && selectedTag.optionKey === match.key
@@ -890,7 +913,7 @@ function JournalHistoryReflection({
         <button
           aria-expanded={isOpen}
           aria-haspopup="dialog"
-          aria-label={`View ${match.text.slice(1)} details from this Journal Entry`}
+          aria-label={`View ${displayText.slice(1)} details from this Journal Entry`}
           className="rounded px-0.5 font-semibold underline decoration-current/30 underline-offset-2 transition hover:bg-[#f1edff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.08]"
           onClick={() => onToggleTag({ key: match.key, start: match.start })}
           onKeyDown={(event) => {
@@ -902,7 +925,7 @@ function JournalHistoryReflection({
           style={{ color: getJournalTagOptionColor(option, symptoms) }}
           type="button"
         >
-          {match.text}
+          {displayText}
         </button>
         {isOpen ? <JournalHistoryTagPopover entry={entry} entryValues={entryValues} journalSignalOccurrences={journalSignalOccurrences} onClose={() => onToggleTag({ key: match.key, start: match.start })} option={option} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
       </span>,
@@ -930,6 +953,12 @@ function HealthJournalColorControl({
   return <HealthColorControl color={getHealthJournalSignalDisplayColor(signal, symptoms.find((symptom) => symptom.id === signal.symptom_id))} isOpen={isOpen} label={getHealthJournalSignalDisplayName(signal, symptoms)} onSetColor={onSetColor} onToggle={onToggle} />;
 }
 
+function resizeJournalScaleLabelTextarea(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${element.scrollHeight}px`;
+}
+
 function JournalScaleLabelsEditor({
   draft,
   nameDisabled = false,
@@ -950,12 +979,12 @@ function JournalScaleLabelsEditor({
   const labels = Array.from({ length: HEALTH_JOURNAL_SCORE_OPTIONS.length }, (_, index) => draft.scaleLabels[index] ?? "");
   const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
   return (
-    <div className="grid gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+    <div className="grid min-w-0 gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
       {signal.kind === "symptom" ? <p className="text-sm font-semibold text-[#26324f] dark:text-white">{displayName}</p> : <Field label="Name"><input aria-label={`Edit ${displayName} name`} className={HEALTH_COMPACT_INPUT_CLASS} disabled={nameDisabled} onChange={(event) => onChange({ ...draft, name: event.target.value })} value={draft.name} /></Field>}
-      <div className="grid gap-2" id={`journal-scale-labels-${signal.id}`}>
+      <div className="grid min-w-0 gap-2" id={`journal-scale-labels-${signal.id}`}>
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Scale labels</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {labels.map((label, index) => <label className="flex min-w-0 items-center gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><input aria-label={`${displayName} score ${index} label`} className="min-w-0 flex-1 bg-transparent text-sm text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; onChange({ ...draft, scaleLabels: nextLabels }); }} value={label} /></label>)}
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {labels.map((label, index) => <label className="flex min-w-0 items-start gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="mt-0.5 w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><textarea aria-label={`${displayName} score ${index} label`} className="min-h-[1.25rem] min-w-0 flex-1 resize-none overflow-hidden bg-transparent p-0 text-sm leading-5 text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; resizeJournalScaleLabelTextarea(event.currentTarget); onChange({ ...draft, scaleLabels: nextLabels }); }} ref={resizeJournalScaleLabelTextarea} rows={1} value={label} wrap="soft" /></label>)}
         </div>
       </div>
       <div className="flex justify-end gap-2"><AdhdChip onClick={onCancel} type="button">Cancel</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">Save</AdhdChip></div>
@@ -1161,10 +1190,35 @@ function JournalSymptomLibrarySection({
 }
 
 export function HealthPage({
+  activeTab,
+  onSelectTab,
+  onDraftSafetyChange,
+  activeMasterTabId,
+  journalView,
+  onJournalViewChange,
+  journalSessionStore,
+  foodView,
+  onFoodViewChange,
+  foodSessionStore,
+  customFoodSessionStore,
+  recipeSessionStore,
+  savedMealSessionStore,
+  mealPlanSessionStore,
+  journalEntryRequest,
+  onConsumeJournalEntryRequest,
   checkIns,
   journalSignals,
   journalSignalValues,
   journalSignalOccurrences,
+  journalTriggers,
+  journalTriggerLinks,
+  journalTriggerDataError,
+  journalStatisticsDataError,
+  refreshJournalStatisticsData,
+  isLoadingJournalTriggers,
+  hasLoadedJournalTriggerData,
+  loadJournalTriggerData,
+  createJournalTrigger,
   symptoms,
   symptomEntries,
   createSymptom,
@@ -1200,6 +1254,7 @@ export function HealthPage({
   deleteJournalEntry,
   saveFavoriteFood,
   updatePreviousFoodLogs,
+  pendingFoodHistoryRepairIds,
   setFavoriteFoodStatus,
   saveRecipe,
   savedMeals,
@@ -1262,27 +1317,79 @@ export function HealthPage({
   workoutExercises,
   workoutSets,
 }: HealthPageProps) {
-  const activeTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
+  const draftSafetySourcesRef = useRef(new Map<string, { isUnsafe: boolean; section: HealthTab }>());
+  const reportSectionDraftSafety = useCallback((section: HealthTab, source: string, isUnsafe: boolean) => {
+    const key = `${section}:${source}`;
+    if (draftSafetySourcesRef.current.get(key)?.isUnsafe === isUnsafe) return;
+    if (isUnsafe) draftSafetySourcesRef.current.set(key, { isUnsafe, section });
+    else draftSafetySourcesRef.current.delete(key);
+    const hasUnsafeSource = [...draftSafetySourcesRef.current.values()].some((entry) => entry.section === section && entry.isUnsafe);
+    onDraftSafetyChange(section, hasUnsafeSource);
+  }, [onDraftSafetyChange]);
+  const reportFoodDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Food", "food-library", isUnsafe), [reportSectionDraftSafety]);
+  const reportJournalDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Journal", "journal-check-in", isUnsafe), [reportSectionDraftSafety]);
+  const reportJournalQuestionDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Settings", "journal-questions", isUnsafe), [reportSectionDraftSafety]);
+  const reportWaterDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Water", "water-panel", isUnsafe), [reportSectionDraftSafety]);
+  const reportFitnessDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Fitness", "fitness-tab", isUnsafe), [reportSectionDraftSafety]);
+  const journalTriggerLoaderRef = useRef(loadJournalTriggerData);
+  journalTriggerLoaderRef.current = loadJournalTriggerData;
+  useEffect(() => {
+    if (activeTab === "Journal") void journalTriggerLoaderRef.current();
+  }, [activeTab, profile?.user_id]);
   const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
   const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
+  const [legacyFoodView, setLegacyFoodView] = useState<MasterFoodWorkspaceView>(() => createDefaultMasterFoodWorkspaceView());
+  const activeFoodView = foodView ?? legacyFoodView;
+  const setFoodView = useCallback((update: SetStateAction<MasterFoodWorkspaceView>) => {
+    if (foodView && onFoodViewChange) {
+      onFoodViewChange(update);
+      return;
+    }
+    setLegacyFoodView(update);
+  }, [foodView, onFoodViewChange]);
+  const setFoodViewField = useCallback(function setFoodViewField<Key extends keyof MasterFoodWorkspaceView>(
+    key: Key,
+    value: SetStateAction<MasterFoodWorkspaceView[Key]>,
+  ) {
+    setFoodView((current) => ({
+      ...current,
+      [key]: typeof value === "function"
+        ? (value as (previous: MasterFoodWorkspaceView[Key]) => MasterFoodWorkspaceView[Key])(current[key])
+        : value,
+    }));
+  }, [setFoodView]);
+  const foodHistoryDate = activeFoodView.historyDate;
+  const activeMealEntrySlot = activeFoodView.activeMealEntrySlot;
+  const mealEditorMode = activeFoodView.mealEditorMode;
+  const editingMealPlanId = activeFoodView.editingMealPlanId;
+  const editingMealId = activeFoodView.selectedMealEntryId;
+  const isQuickEntryOpen = activeFoodView.isQuickEntryOpen;
+  const customFoodSearchQuery = activeFoodView.customFoodSearchQuery;
+  const selectedCustomFoodCategory = activeFoodView.selectedCustomFoodCategory;
+  const isCustomFoodCategoriesOpen = activeFoodView.isCustomFoodCategoriesOpen;
+  const expandedFavoriteId = activeFoodView.expandedFavoriteId;
+  const setFoodHistoryDate = useCallback((value: SetStateAction<string>) => setFoodViewField("historyDate", value), [setFoodViewField]);
+  const setActiveMealEntrySlot = useCallback((value: SetStateAction<HealthMealEntry["meal_slot"] | null>) => setFoodViewField("activeMealEntrySlot", value), [setFoodViewField]);
+  const setMealEditorMode = useCallback((value: SetStateAction<"actual" | "plan">) => setFoodViewField("mealEditorMode", value), [setFoodViewField]);
+  const setEditingMealPlanId = useCallback((value: SetStateAction<string | null>) => setFoodViewField("editingMealPlanId", value), [setFoodViewField]);
+  const setEditingMealId = useCallback((value: SetStateAction<string | null>) => setFoodViewField("selectedMealEntryId", value), [setFoodViewField]);
+  const setIsQuickEntryOpen = useCallback((value: SetStateAction<boolean>) => setFoodViewField("isQuickEntryOpen", value), [setFoodViewField]);
+  const setCustomFoodSearchQuery = useCallback((value: SetStateAction<string>) => setFoodViewField("customFoodSearchQuery", value), [setFoodViewField]);
+  const setSelectedCustomFoodCategory = useCallback((value: SetStateAction<string | null>) => setFoodViewField("selectedCustomFoodCategory", value), [setFoodViewField]);
+  const setIsCustomFoodCategoriesOpen = useCallback((value: SetStateAction<boolean>) => setFoodViewField("isCustomFoodCategoriesOpen", value), [setFoodViewField]);
+  const setExpandedFavoriteId = useCallback((value: SetStateAction<string | null>) => setFoodViewField("expandedFavoriteId", value), [setFoodViewField]);
+  const setFoodLibrarySection = useCallback((value: MasterFoodWorkspaceView["librarySection"]) => setFoodViewField("librarySection", value), [setFoodViewField]);
+  const setFoodLibrarySearchQuery = useCallback((value: string) => setFoodViewField("foodLibrarySearchQuery", value), [setFoodViewField]);
+  const setIngredientSearchQuery = useCallback((value: string) => setFoodViewField("ingredientSearchQuery", value), [setFoodViewField]);
+  const [foodEditorNotice, setFoodEditorNotice] = useState<string | null>(null);
   const [profileDraft, setProfileDraft] = useState<HealthProfileUpdate>({});
-  const [mealDraft, setMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
-  const [activeMealEntrySlot, setActiveMealEntrySlot] = useState<HealthMealEntry["meal_slot"] | null>(null);
-  const [mealEditorMode, setMealEditorMode] = useState<"actual" | "plan">("actual");
-  const [editingMealPlanId, setEditingMealPlanId] = useState<string | null>(null);
-  const [customFoodSearchQuery, setCustomFoodSearchQuery] = useState("");
-  const [selectedCustomFoodCategory, setSelectedCustomFoodCategory] = useState<string | null>(null);
-  const [isCustomFoodCategoriesOpen, setIsCustomFoodCategoriesOpen] = useState(false);
-  const [foodHistoryDate, setFoodHistoryDate] = useState(todayHealthDate());
+  const [legacyMealDraft, setLegacyMealDraft] = useState<MealDraft>(() => createDefaultMealDraft());
+  const [legacySaveQuickEntryToLibrary, setLegacySaveQuickEntryToLibrary] = useState(false);
   const [sleepLedgerDate, setSleepLedgerDate] = useState(todayHealthDate());
-  const [expandedFavoriteId, setExpandedFavoriteId] = useState<string | null>(null);
   const [targetWeightDraft, setTargetWeightDraft] = useState("");
   const [barcodeLookupError, setBarcodeLookupError] = useState("");
   const [barcodeLookupStatus, setBarcodeLookupStatus] = useState<"idle" | "barcode">("idle");
-  const [isQuickEntryOpen, setIsQuickEntryOpen] = useState(false);
-  const [saveQuickEntryToLibrary, setSaveQuickEntryToLibrary] = useState(false);
-  const [editingMealId, setEditingMealId] = useState<string | null>(null);
-  const [mealEditDraft, setMealEditDraft] = useState<MealEditDraft>({
+  const [legacyMealEditDraft, setLegacyMealEditDraft] = useState<MealEditDraft>({
     mode: "legacy",
     calories: "",
     carbs: "",
@@ -1301,12 +1408,30 @@ export function HealthPage({
   const [isParsingImport, setIsParsingImport] = useState(false);
   const [importParseStatus, setImportParseStatus] = useState(DEFAULT_IMPORT_STATUS);
   const [isSavingImport, setIsSavingImport] = useState(false);
+  const [isSavingHealthProfile, setIsSavingHealthProfile] = useState(false);
+  const [isSavingMeal, setIsSavingMeal] = useState(false);
+  const [mealPlanActionNotice, setMealPlanActionNotice] = useState<string | null>(null);
+  const [isSavingWeight, setIsSavingWeight] = useState(false);
+  const [isSavingManualSleep, setIsSavingManualSleep] = useState(false);
+  const [isSavingSleepEdit, setIsSavingSleepEdit] = useState(false);
   const [importSaveStatus, setImportSaveStatus] = useState("");
   const [weightDraft, setWeightDraft] = useState("");
   const [weightNote, setWeightNote] = useState("");
   const [journalDate, setJournalDate] = useState(todayHealthDate());
   const [journalEntryTime, setJournalEntryTime] = useState(getCurrentHealthDateTimeInputs().time);
-  const [selectedJournalEntryId, setSelectedJournalEntryId] = useState<string | null>(null);
+  const [legacySelectedJournalEntryId, setLegacySelectedJournalEntryId] = useState<string | null>(null);
+  const selectedJournalEntryId = journalView ? journalView.selectedEntryId : legacySelectedJournalEntryId;
+  const setSelectedJournalEntryId = (nextEntryId: string | null) => {
+    if (journalView && onJournalViewChange) {
+      onJournalViewChange({
+        ...journalView,
+        selectedEntryId: nextEntryId,
+        ...(nextEntryId === null ? { newDraftId: `journal-new:${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}` } : {}),
+      });
+      return;
+    }
+    setLegacySelectedJournalEntryId(nextEntryId);
+  };
   const [journalReflection, setJournalReflection] = useState("");
   const [journalMood, setJournalMood] = useState<number | null>(null);
   const [journalEnergy, setJournalEnergy] = useState<number | null>(null);
@@ -1335,11 +1460,19 @@ export function HealthPage({
   const [journalOccurrenceTime, setJournalOccurrenceTime] = useState(getCurrentHealthDateTimeInputs().time);
   const [journalOccurrenceNote, setJournalOccurrenceNote] = useState("");
   const [journalFormError, setJournalFormError] = useState<string | null>(null);
-  const [journalWorkspaceMode, setJournalWorkspaceMode] = useState<JournalWorkspaceMode>("entry");
+  const [legacyJournalWorkspaceMode, setLegacyJournalWorkspaceMode] = useState<JournalWorkspaceMode>("entry");
+  const journalWorkspaceMode = journalView?.workspaceMode ?? legacyJournalWorkspaceMode;
+  const setJournalWorkspaceMode = (nextMode: JournalWorkspaceMode | ((current: JournalWorkspaceMode) => JournalWorkspaceMode)) => {
+    const resolvedMode = typeof nextMode === "function" ? nextMode(journalWorkspaceMode) : nextMode;
+    if (journalView && onJournalViewChange) {
+      onJournalViewChange({ ...journalView, workspaceMode: resolvedMode });
+    } else setLegacyJournalWorkspaceMode(resolvedMode);
+  };
   const [isJournalHistoryMenuOpen, setIsJournalHistoryMenuOpen] = useState(false);
   const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
   const [expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds] = useState<Set<string>>(() => new Set());
   const [collapsedJournalHistoryDates, setCollapsedJournalHistoryDates] = useState<Set<string>>(() => new Set());
+  const [journalHistoryRevealEntryId, setJournalHistoryRevealEntryId] = useState<string | null>(null);
   const [selectedFeelingTrendDefinitionKeys, setSelectedFeelingTrendDefinitionKeys] = useState<Set<string>>(() => new Set());
   const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
   const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
@@ -1376,6 +1509,240 @@ export function HealthPage({
   const previousFeelingTrendDefinitionKeysRef = useRef<string[]>([]);
   const hasInitializedFeelingTrendSelectionRef = useRef(false);
   const today = todayHealthDate();
+  const foodSessionViewId = activeMasterTabId ?? "health-food-legacy";
+  const newFoodSessionDraftId = healthMealNewEntrySessionId(activeFoodView.newMealDraftId);
+  const newFoodSessionInitialDraft = useMemo(() => {
+    const initialMealDraft = {
+      ...createDefaultMealDraft(activeMealEntrySlot ?? "breakfast"),
+      date: foodHistoryDate,
+      mealSlot: activeMealEntrySlot ?? "breakfast",
+    };
+    return createHealthFoodEditingSessionDraft(initialMealDraft, {
+      entryId: activeFoodView.newMealDraftId,
+      quickFoodId: activeFoodView.newMealDraftId,
+    });
+  }, [activeFoodView.newMealDraftId, activeMealEntrySlot, foodHistoryDate]);
+  const subscribeToNewFoodSession = useCallback((listener: () => void) => (
+    foodSessionStore ? foodSessionStore.subscribeToSession(newFoodSessionDraftId, listener) : () => {}
+  ), [foodSessionStore, newFoodSessionDraftId]);
+  const getNewFoodSessionSnapshot = useCallback(
+    () => foodSessionStore?.getSnapshot(newFoodSessionDraftId) ?? null,
+    [foodSessionStore, newFoodSessionDraftId],
+  );
+  const newFoodSession = useSyncExternalStore(subscribeToNewFoodSession, getNewFoodSessionSnapshot, () => null);
+  const savedMealForEditing = editingMealId ? mealEntries.find((entry) => entry.id === editingMealId) ?? null : null;
+  const savedFoodSessionDraftId = editingMealId ? healthMealEntrySessionId(editingMealId) : "";
+  const savedFoodSessionInitialDraft = useMemo<HealthFoodEditingSessionDraft>(() => ({
+    kind: "saved-entry",
+    mealEditDraft: savedMealForEditing ? createMealEditDraftFromEntry(savedMealForEditing) : legacyMealEditDraft,
+  }), [legacyMealEditDraft, savedMealForEditing]);
+  const subscribeToSavedFoodSession = useCallback((listener: () => void) => (
+    foodSessionStore && savedFoodSessionDraftId
+      ? foodSessionStore.subscribeToSession(savedFoodSessionDraftId, listener)
+      : () => {}
+  ), [foodSessionStore, savedFoodSessionDraftId]);
+  const getSavedFoodSessionSnapshot = useCallback(
+    () => foodSessionStore && savedFoodSessionDraftId ? foodSessionStore.getSnapshot(savedFoodSessionDraftId) : null,
+    [foodSessionStore, savedFoodSessionDraftId],
+  );
+  const savedFoodSession = useSyncExternalStore(subscribeToSavedFoodSession, getSavedFoodSessionSnapshot, () => null);
+  const newMealPlanSessionDraftId = healthMealPlanNewEntrySessionId(activeFoodView.newPlannedMealDraftId);
+  const newMealPlanSessionInitialDraft = useMemo(() => {
+    const mealSlot = activeMealEntrySlot ?? "breakfast";
+    const initialMealDraft = {
+      ...createDefaultMealDraft(mealSlot),
+      date: foodHistoryDate,
+      mealSlot,
+    };
+    return createHealthMealPlanEditingSessionDraft("new-plan", activeFoodView.newPlannedMealDraftId, initialMealDraft);
+  }, [activeFoodView.newPlannedMealDraftId, activeMealEntrySlot, foodHistoryDate]);
+  const subscribeToNewMealPlanSession = useCallback((listener: () => void) => (
+    mealPlanSessionStore ? mealPlanSessionStore.subscribeToSession(newMealPlanSessionDraftId, listener) : () => {}
+  ), [mealPlanSessionStore, newMealPlanSessionDraftId]);
+  const getNewMealPlanSessionSnapshot = useCallback(
+    () => mealPlanSessionStore?.getSnapshot(newMealPlanSessionDraftId) ?? null,
+    [mealPlanSessionStore, newMealPlanSessionDraftId],
+  );
+  const newMealPlanSession = useSyncExternalStore(subscribeToNewMealPlanSession, getNewMealPlanSessionSnapshot, () => null);
+  const savedMealPlanForEditing = editingMealPlanId ? mealPlanEntries.find((entry) => entry.id === editingMealPlanId) ?? null : null;
+  const savedMealPlanSessionDraftId = editingMealPlanId ? healthMealPlanEntrySessionId(editingMealPlanId) : "";
+  const subscribeToSavedMealPlanSession = useCallback((listener: () => void) => (
+    mealPlanSessionStore && savedMealPlanSessionDraftId
+      ? mealPlanSessionStore.subscribeToSession(savedMealPlanSessionDraftId, listener)
+      : () => {}
+  ), [mealPlanSessionStore, savedMealPlanSessionDraftId]);
+  const getSavedMealPlanSessionSnapshot = useCallback(
+    () => mealPlanSessionStore && savedMealPlanSessionDraftId ? mealPlanSessionStore.getSnapshot(savedMealPlanSessionDraftId) : null,
+    [mealPlanSessionStore, savedMealPlanSessionDraftId],
+  );
+  const savedMealPlanSession = useSyncExternalStore(subscribeToSavedMealPlanSession, getSavedMealPlanSessionSnapshot, () => null);
+  const activeMealPlanSessionDraftId = editingMealPlanId ? savedMealPlanSessionDraftId : newMealPlanSessionDraftId;
+  const activeMealPlanSession = editingMealPlanId ? savedMealPlanSession : newMealPlanSession;
+  const isEditingInactiveMealPlan = Boolean(editingMealPlanId && (
+    !savedMealPlanForEditing || savedMealPlanForEditing.confirmed_at !== null
+  ));
+  const mealDraft = mealEditorMode === "plan"
+    ? activeMealPlanSession?.draft.mealDraft ?? legacyMealDraft
+    : !foodSessionStore
+      ? legacyMealDraft
+      : newFoodSession && newFoodSession.draft.kind === "new-entry" ? newFoodSession.draft.mealDraft : newFoodSessionInitialDraft.mealDraft;
+  const mealEditorSlot = mealEditorMode === "plan" ? mealDraft.mealSlot : activeMealEntrySlot;
+  const mealEditDraft = foodSessionStore && savedFoodSession?.draft.kind === "saved-entry"
+    ? savedFoodSession.draft.mealEditDraft
+    : legacyMealEditDraft;
+  const saveQuickEntryToLibrary = mealEditorMode === "plan"
+    ? activeMealPlanSession?.draft.saveToLibrary ?? legacySaveQuickEntryToLibrary
+    : newFoodSession?.draft.kind === "new-entry"
+      ? newFoodSession.draft.saveToLibrary
+      : legacySaveQuickEntryToLibrary;
+  const setMealDraft = useCallback((update: SetStateAction<MealDraft>) => {
+    if (mealPlanSessionStore && mealEditorMode === "plan") {
+      mealPlanSessionStore.updateDraft(activeMealPlanSessionDraftId, (current) => ({
+        ...current,
+        mealDraft: typeof update === "function" ? update(current.mealDraft) : update,
+      }));
+      return;
+    }
+    if (foodSessionStore && mealEditorMode === "actual") {
+      foodSessionStore.updateDraft(newFoodSessionDraftId, (current) => current.kind === "new-entry"
+        ? { ...current, mealDraft: typeof update === "function" ? update(current.mealDraft) : update }
+        : current);
+      return;
+    }
+    setLegacyMealDraft(update);
+  }, [activeMealPlanSessionDraftId, foodSessionStore, mealEditorMode, mealPlanSessionStore, newFoodSessionDraftId]);
+  const setMealEditDraft = useCallback((update: SetStateAction<MealEditDraft>) => {
+    if (foodSessionStore && editingMealId) {
+      foodSessionStore.updateDraft(savedFoodSessionDraftId, (current) => current.kind === "saved-entry"
+        ? { ...current, mealEditDraft: typeof update === "function" ? update(current.mealEditDraft) : update }
+        : current);
+      return;
+    }
+    setLegacyMealEditDraft(update);
+  }, [editingMealId, foodSessionStore, savedFoodSessionDraftId]);
+  const setSaveQuickEntryToLibrary = useCallback((update: SetStateAction<boolean>) => {
+    if (mealPlanSessionStore && mealEditorMode === "plan") {
+      mealPlanSessionStore.updateDraft(activeMealPlanSessionDraftId, (current) => ({
+        ...current,
+        saveToLibrary: typeof update === "function" ? update(current.saveToLibrary) : update,
+      }));
+      return;
+    }
+    if (foodSessionStore && mealEditorMode === "actual") {
+      foodSessionStore.updateDraft(newFoodSessionDraftId, (current) => current.kind === "new-entry"
+        ? { ...current, saveToLibrary: typeof update === "function" ? update(current.saveToLibrary) : update }
+        : current);
+      return;
+    }
+    setLegacySaveQuickEntryToLibrary(update);
+  }, [activeMealPlanSessionDraftId, foodSessionStore, mealEditorMode, mealPlanSessionStore, newFoodSessionDraftId]);
+
+  useLayoutEffect(() => {
+    if (!foodSessionStore) return;
+    foodSessionStore.ensureSession(
+      newFoodSessionDraftId,
+      `unsaved-health-meal:${activeFoodView.newMealDraftId}`,
+      newFoodSessionInitialDraft,
+    );
+    foodSessionStore.attachView(newFoodSessionDraftId, foodSessionViewId);
+  }, [activeFoodView.newMealDraftId, foodSessionStore, foodSessionViewId, newFoodSessionDraftId, newFoodSessionInitialDraft]);
+  useLayoutEffect(() => {
+    if (!foodSessionStore || !editingMealId) return;
+    if (savedMealForEditing) {
+      foodSessionStore.ensureSession(savedFoodSessionDraftId, editingMealId, savedFoodSessionInitialDraft);
+    }
+    if (foodSessionStore.getSnapshot(savedFoodSessionDraftId)) {
+      foodSessionStore.attachView(savedFoodSessionDraftId, foodSessionViewId);
+    }
+  }, [editingMealId, foodSessionStore, foodSessionViewId, savedFoodSessionDraftId, savedFoodSessionInitialDraft, savedMealForEditing]);
+  useLayoutEffect(() => {
+    if (!mealPlanSessionStore) return;
+    ensureHealthMealPlanNewSession({
+      store: mealPlanSessionStore,
+      draftId: newMealPlanSessionDraftId,
+      canonicalRecordId: healthMealPlanNewEntryCanonicalId(activeFoodView.newPlannedMealDraftId),
+      initialDraft: newMealPlanSessionInitialDraft,
+      viewId: foodSessionViewId,
+    });
+  }, [activeFoodView.newPlannedMealDraftId, foodSessionViewId, mealPlanSessionStore, newMealPlanSessionDraftId, newMealPlanSessionInitialDraft]);
+  useLayoutEffect(() => {
+    if (!mealPlanSessionStore || !editingMealPlanId) return;
+    if (savedMealPlanForEditing) ensureHealthMealPlanSavedSession({ store: mealPlanSessionStore, plan: savedMealPlanForEditing, viewId: foodSessionViewId });
+  }, [editingMealPlanId, foodSessionViewId, mealPlanSessionStore, savedMealPlanForEditing]);
+  const hasUnsafeFoodDraft = Boolean(
+    isSavingMeal || mealSaveInFlightRef.current
+    || newFoodSession?.isSaving
+    || savedFoodSession?.isSaving
+    || newMealPlanSession?.isSaving
+    || savedMealPlanSession?.isSaving
+  );
+  const hasUnsafeJournalLocalDraft = Boolean(
+    journalOccurrenceEditorOpen
+    || isJournalAddOpen
+    || journalLibraryCreateKind
+    || journalLibraryEditId
+    || isSymptomCreateOpen
+    || isCreatingSymptom
+    || editingSymptomId
+    || journalTagOverlay
+    || journalHistoryTagOverlay,
+  );
+  const hasUnsafeWeightDraft = Boolean(weightDraft.trim() || weightNote.trim() || isSavingWeight);
+  const isManualSleepDraftChanged = manualSleepDraft.date !== initialSleepInputs.date
+    || manualSleepDraft.hours !== "8"
+    || manualSleepDraft.kind !== "Sleep"
+    || manualSleepDraft.minutes !== "0"
+    || manualSleepDraft.time !== initialSleepInputs.time;
+  const hasUnsafeSleepDraft = Boolean(
+    isManualSleepDraftChanged
+    || editingSleepId
+    || isSavingManualSleep
+    || isSavingSleepEdit
+    || sleepActiveSession,
+  );
+  const healthSettingsFields: Array<keyof HealthProfileUpdate> = [
+    "calorie_goal",
+    "carbs_goal_grams",
+    "fat_goal_grams",
+    "movement_goal_calories",
+    "movement_goal_minutes",
+    "preferred_weight_unit",
+    "protein_goal_grams",
+    "sleep_goal_minutes",
+  ];
+  const hasUnsafeHealthSettingsDraft = Boolean(profile && Object.keys(profileDraft).length > 0 && (
+    healthSettingsFields.some((field) => profileDraft[field] !== profile[field])
+    || targetWeightDraft !== (profile.target_weight_kg === null
+      ? ""
+      : formatEditableWeight(profile.target_weight_kg, profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit))
+    || isSavingHealthProfile
+  ));
+  const hasUnsafeHealthImportDraft = Boolean(importPreview || isParsingImport || isSavingImport);
+
+  useEffect(() => {
+    reportSectionDraftSafety("Food", "health-page-food", hasUnsafeFoodDraft);
+    return () => reportSectionDraftSafety("Food", "health-page-food", false);
+  }, [hasUnsafeFoodDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Journal", "health-page-journal", hasUnsafeJournalLocalDraft);
+    return () => reportSectionDraftSafety("Journal", "health-page-journal", false);
+  }, [hasUnsafeJournalLocalDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Weight", "weight-entry", hasUnsafeWeightDraft);
+    return () => reportSectionDraftSafety("Weight", "weight-entry", false);
+  }, [hasUnsafeWeightDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Sleep", "sleep-entry", hasUnsafeSleepDraft);
+    return () => reportSectionDraftSafety("Sleep", "sleep-entry", false);
+  }, [hasUnsafeSleepDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Settings", "health-settings", hasUnsafeHealthSettingsDraft);
+    return () => reportSectionDraftSafety("Settings", "health-settings", false);
+  }, [hasUnsafeHealthSettingsDraft, reportSectionDraftSafety]);
+  useEffect(() => {
+    reportSectionDraftSafety("Insights", "health-import", hasUnsafeHealthImportDraft);
+    return () => reportSectionDraftSafety("Insights", "health-import", false);
+  }, [hasUnsafeHealthImportDraft, reportSectionDraftSafety]);
 
   useEffect(() => {
     journalSignalsRef.current = journalSignals;
@@ -1425,6 +1792,10 @@ export function HealthPage({
     () => selectedJournalEntryId ? checkIns.find((entry) => entry.id === selectedJournalEntryId) ?? null : null,
     [checkIns, selectedJournalEntryId],
   );
+  const currentNewJournalSession = journalView?.newDraftId
+    ? journalSessionStore?.getSnapshot(journalView.newDraftId)
+    : null;
+  const hasUnsafeNewJournalDraft = Boolean(currentNewJournalSession?.dirty || currentNewJournalSession?.isSaving);
 
   useEffect(() => {
     if (selectedJournalEntry) {
@@ -1593,6 +1964,18 @@ export function HealthPage({
     () => groupHealthJournalEntriesByDate(checkIns),
     [checkIns],
   );
+  const visibleJournalHistoryGroups = useMemo(
+    () => getHealthJournalHistoryGroupsIncludingEntry(journalHistoryGroups, journalHistoryRevealEntryId),
+    [journalHistoryGroups, journalHistoryRevealEntryId],
+  );
+  useEffect(() => {
+    if (!journalHistoryRevealEntryId || journalEntryRequest || journalWorkspaceMode !== "history") return;
+    const frame = window.requestAnimationFrame(() => {
+      const entry = document.getElementById("journal-history-entry-" + journalHistoryRevealEntryId);
+      entry?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [journalEntryRequest, journalHistoryRevealEntryId, journalWorkspaceMode]);
   const journalOccurrenceChoices = useMemo(() => {
     const choices = journalFeelingChoices.map((choice) => {
       if (choice.signal || choice.kind !== "symptom" || !choice.symptomId) return choice;
@@ -1875,7 +2258,7 @@ export function HealthPage({
     () => calculateMealDraft(mealDraft),
     [mealDraft],
   );
-  const mealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
+  const mealDate = mealDraft.date;
   const mealEditorNutrition = useMemo(
     () => sumMealNutritionForDate(mealEntries, mealDate),
     [mealDate, mealEntries],
@@ -1907,10 +2290,14 @@ export function HealthPage({
   const mealLoggedAt = buildHealthMealLoggedAt(mealDate, mealDraft.time);
   const mealTimestampError = mealLoggedAt === null
     ? "Choose a valid meal date and time."
-    : mealEditorMode === "actual" && isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time)
+    : mealEditorMode === "actual" && isHealthMealTimestampFuture(mealDraft.date, mealDraft.time)
       ? "Future meal times cannot be saved."
       : null;
-  const canSaveMeal = activeMealEntrySlot !== null && mealDraft.foodName.trim().length > 0 && mealCalculation !== null && mealTimestampError === null;
+  const canSaveMeal = mealEditorSlot !== null
+    && !isEditingInactiveMealPlan
+    && mealDraft.foodName.trim().length > 0
+    && mealCalculation !== null
+    && mealTimestampError === null;
   const weightValue = Number.parseFloat(weightDraft);
   const canSaveWeight = Number.isFinite(weightValue) && weightValue > 0;
 
@@ -1928,12 +2315,18 @@ export function HealthPage({
   }
 
   async function handleSaveManualSleep() {
+    if (isSavingManualSleep) return;
     const payload = resolveSleepDraft(manualSleepDraft);
     if (!payload) return;
-    const saved = await onLogManualSleep(payload);
-    if (saved) {
-      const nextInputs = getCurrentHealthDateTimeInputs();
-      setManualSleepDraft({ date: nextInputs.date, hours: "8", kind: sleepKind, minutes: "0", time: nextInputs.time });
+    setIsSavingManualSleep(true);
+    try {
+      const saved = await onLogManualSleep(payload);
+      if (saved) {
+        const nextInputs = getCurrentHealthDateTimeInputs();
+        setManualSleepDraft({ date: nextInputs.date, hours: "8", kind: sleepKind, minutes: "0", time: nextInputs.time });
+      }
+    } finally {
+      setIsSavingManualSleep(false);
     }
   }
 
@@ -1954,12 +2347,18 @@ export function HealthPage({
   }
 
   async function handleSaveSleepEdit() {
-    if (!editingSleepId || !sleepEditDraft) return;
+    if (!editingSleepId || !sleepEditDraft || isSavingSleepEdit) return;
     const payload = resolveSleepDraft(sleepEditDraft);
     if (!payload) return;
-    await onUpdateSleepSession(editingSleepId, payload);
-    setEditingSleepId(null);
-    setSleepEditDraft(null);
+    setIsSavingSleepEdit(true);
+    try {
+      const saved = await onUpdateSleepSession(editingSleepId, payload);
+      if (!saved) return;
+      setEditingSleepId(null);
+      setSleepEditDraft(null);
+    } finally {
+      setIsSavingSleepEdit(false);
+    }
   }
 
   if (!profile) {
@@ -1974,6 +2373,10 @@ export function HealthPage({
   }
 
   const activeProfile = profile;
+  const visibleJournalWorkspaceMode = journalEntryRequest ? "entry" : journalWorkspaceMode;
+  const isVisibleJournalHistory = visibleJournalWorkspaceMode === "history"
+    || visibleJournalWorkspaceMode === "split-history-left"
+    || visibleJournalWorkspaceMode === "split-history-right";
   const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
   const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
   const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
@@ -2005,20 +2408,26 @@ export function HealthPage({
   }
 
   async function handleSaveProfile() {
+    if (isSavingHealthProfile) return false;
     const parsedTargetWeight = parseNullableNumber(targetWeightDraft);
-    await saveProfile({
-      ...profileDraft,
-      calorie_goal: parseNullableInteger(profileDraft.calorie_goal),
-      carbs_goal_grams: parseNullableInteger(profileDraft.carbs_goal_grams),
-      fat_goal_grams: parseNullableInteger(profileDraft.fat_goal_grams),
-      movement_goal_calories: parseNullableInteger(profileDraft.movement_goal_calories),
-      movement_goal_minutes: parseNullableInteger(profileDraft.movement_goal_minutes),
-      protein_goal_grams: parseNullableInteger(profileDraft.protein_goal_grams),
-      sleep_goal_minutes: parseNullableInteger(profileDraft.sleep_goal_minutes),
-      target_weight_kg: parsedTargetWeight === null
-        ? null
-        : displayWeightToKilograms(parsedTargetWeight, profileDraft.preferred_weight_unit ?? activeProfile.preferred_weight_unit),
-    });
+    setIsSavingHealthProfile(true);
+    try {
+      return await saveProfile({
+        ...profileDraft,
+        calorie_goal: parseNullableInteger(profileDraft.calorie_goal),
+        carbs_goal_grams: parseNullableInteger(profileDraft.carbs_goal_grams),
+        fat_goal_grams: parseNullableInteger(profileDraft.fat_goal_grams),
+        movement_goal_calories: parseNullableInteger(profileDraft.movement_goal_calories),
+        movement_goal_minutes: parseNullableInteger(profileDraft.movement_goal_minutes),
+        protein_goal_grams: parseNullableInteger(profileDraft.protein_goal_grams),
+        sleep_goal_minutes: parseNullableInteger(profileDraft.sleep_goal_minutes),
+        target_weight_kg: parsedTargetWeight === null
+          ? null
+          : displayWeightToKilograms(parsedTargetWeight, profileDraft.preferred_weight_unit ?? activeProfile.preferred_weight_unit),
+      });
+    } finally {
+      setIsSavingHealthProfile(false);
+    }
   }
 
   async function handleSaveJournal() {
@@ -2438,6 +2847,20 @@ export function HealthPage({
     setIsJournalHistoryMenuOpen(false);
   }
 
+  function viewJournalEntryInHistory(entryId: string) {
+    const entry = checkIns.find((candidate) => candidate.id === entryId);
+    if (!entry) return;
+    setJournalHistoryRevealEntryId(entryId);
+    setCollapsedJournalHistoryDates((current) => {
+      if (!current.has(entry.entry_date)) return current;
+      const next = new Set(current);
+      next.delete(entry.entry_date);
+      return next;
+    });
+    setJournalWorkspaceMode("history");
+    setIsJournalHistoryMenuOpen(false);
+  }
+
   function toggleJournalScale(key: string) {
     setExpandedJournalScaleKey((current) => current === key ? null : key);
   }
@@ -2467,6 +2890,7 @@ export function HealthPage({
   }
 
   function startNewJournalEntry() {
+    if (hasUnsafeNewJournalDraft) return;
     if (journalWorkspaceMode === "history") {
       setJournalWorkspaceMode("entry");
     }
@@ -2495,10 +2919,14 @@ export function HealthPage({
   }
 
   function selectJournalEntry(entry: HealthCheckIn) {
-    if (journalWorkspaceMode === "history") {
-      setJournalWorkspaceMode("entry");
+    if (journalView && onJournalViewChange) {
+      selectJournalHistoryEntryForEdit(journalView, entry.id, onJournalViewChange);
+    } else {
+      if (journalWorkspaceMode === "history") {
+        setJournalWorkspaceMode("entry");
+      }
+      setSelectedJournalEntryId(entry.id);
     }
-    setSelectedJournalEntryId(entry.id);
     setJournalDate(entry.entry_date);
   }
 
@@ -2558,104 +2986,195 @@ export function HealthPage({
   }
 
   async function handleSaveMeal(): Promise<boolean> {
-    const calculation = mealCalculation;
-    if (!activeMealEntrySlot) {
+    if (!mealEditorSlot) {
       return false;
     }
-    const selectedMealDate = mealEditorMode === "plan" ? mealDraft.date : foodHistoryDate;
-    const loggedAt = buildHealthMealLoggedAt(selectedMealDate, mealDraft.time);
-    if (!calculation || !loggedAt || (mealEditorMode === "actual" && isHealthMealTimestampFuture(foodHistoryDate, mealDraft.time))) {
-      return false;
-    }
-
-    let sourceFoodId = mealDraft.sourceFoodId;
-    if (isQuickEntryOpen && saveQuickEntryToLibrary) {
-      const libraryInput = {
-        calories: Math.round(calculation.nutrientTotals.calories),
-        carbs_g: calculation.nutrientTotals.carbs_g,
-        food_name: mealDraft.foodName.trim(),
-        fat_g: calculation.nutrientTotals.fat_g,
-        food_category: "Uncategorized",
-        id: createQuickFoodId(),
-        protein_g: calculation.nutrientTotals.protein_g,
-        provider: "manual",
-        ...(calculation.nutrientTotals.nutrition_details
-          ? { nutrition_details: calculation.nutrientTotals.nutrition_details }
-          : {}),
-        serving_label: "1 serving",
-        serving_size: "1 serving",
-        serving_quantity: 1,
-        serving_unit: "serving",
-        is_favorite: false,
-      };
-      const existingLibraryFood = favorites.find(
-        (food) => getHealthFoodIdentityKey(food) === getHealthFoodIdentityKey(libraryInput),
-      );
-      const savedLibraryFood = await saveFavoriteFood(libraryInput);
-      if (!savedLibraryFood) {
-        return false;
-      }
-      sourceFoodId = existingLibraryFood?.id ?? libraryInput.id;
-    } else if (isQuickEntryOpen) {
-      sourceFoodId = null;
-    }
-
-    const foodSnapshot = buildMealFoodSnapshot({ ...mealDraft, sourceFoodId });
-    const saved = mealEditorMode === "plan"
-      ? await (async () => {
+    if (mealEditorMode === "plan") {
+      const persistPlan = async (sessionDraft: HealthMealPlanEditingSessionDraft) => {
+        const draft = sessionDraft.mealDraft;
+        const calculation = calculateMealDraft(draft);
+        const plannedAt = buildHealthMealLoggedAt(draft.date, draft.time);
+        if (!calculation || !plannedAt || draft.foodName.trim().length === 0) {
+          return { error: "Choose a valid planned date and time, and complete the food details. Your draft is still here." } as const;
+        }
+        let sourceFoodId = draft.sourceFoodId;
+        if (isQuickEntryOpen && sessionDraft.saveToLibrary) {
+          const libraryInput = {
+            calories: Math.round(calculation.nutrientTotals.calories),
+            carbs_g: calculation.nutrientTotals.carbs_g,
+            food_name: draft.foodName.trim(),
+            fat_g: calculation.nutrientTotals.fat_g,
+            food_category: "Uncategorized",
+            id: sessionDraft.quickFoodId,
+            protein_g: calculation.nutrientTotals.protein_g,
+            provider: "manual",
+            ...(calculation.nutrientTotals.nutrition_details ? { nutrition_details: calculation.nutrientTotals.nutrition_details } : {}),
+            serving_label: "1 serving",
+            serving_size: "1 serving",
+            serving_quantity: 1,
+            serving_unit: "serving",
+            is_favorite: false,
+          };
+          const existingLibraryFood = favorites.find((food) => getHealthFoodIdentityKey(food) === getHealthFoodIdentityKey(libraryInput));
+          const savedLibraryFood = await saveFavoriteFood(libraryInput);
+          if (!savedLibraryFood) return { error: "The Custom Food could not be saved. Your planned meal draft is still here." } as const;
+          sourceFoodId = existingLibraryFood?.id ?? libraryInput.id;
+        } else if (isQuickEntryOpen) sourceFoodId = null;
+        const foodSnapshot = buildMealFoodSnapshot({ ...draft, sourceFoodId });
         const payload = buildHealthMealPlanPayload({
           calculation,
-          draft: { ...mealDraft, sourceFoodId },
+          draft: { ...draft, sourceFoodId },
           foodSnapshot,
-          mealSlot: activeMealEntrySlot,
-          plannedDate: selectedMealDate,
-          plannedTime: mealDraft.time,
+          mealSlot: draft.mealSlot,
+          plannedDate: draft.date,
+          plannedTime: draft.time,
         });
+        const saved = sessionDraft.kind === "saved-plan"
+          ? await updateMealPlanEntry(sessionDraft.planId, buildHealthMealPlanUpdateFromPayload(payload))
+          : await addMealPlanEntry({ ...payload, id: sessionDraft.planId });
+        if (!saved) return { error: "The planned meal could not be saved. Check the Health warning and retry; your draft is still here." } as const;
+        return { savedDraft: sessionDraft } as const;
+      };
+
+      if (mealPlanSessionStore) {
+        const savingDraft = activeMealPlanSession?.draft;
+        const saved = await saveHealthMealPlanEditingSession({
+          store: mealPlanSessionStore,
+          draftId: activeMealPlanSessionDraftId,
+          removeAfterSuccess: !editingMealPlanId,
+          save: persistPlan,
+        });
+        if (!saved) return false;
         if (editingMealPlanId) {
-          return updateMealPlanEntry(editingMealPlanId, buildHealthMealPlanUpdateFromPayload(payload));
+          setEditingMealPlanId(null);
+          setMealEditorMode("actual");
+          setActiveMealEntrySlot(null);
+          setIsQuickEntryOpen(false);
+          setFoodEditorNotice(null);
+          return true;
         }
-        return addMealPlanEntry(payload);
-      })()
-      : await addMealEntry({
-        attribution: mealDraft.attribution,
-        barcode: mealDraft.barcode,
-        brand_name: emptyToNull(mealDraft.brandName),
-        calories: Math.round(calculation.nutrientTotals.calories),
-        carbs_g: calculation.nutrientTotals.carbs_g,
-        entry_date: foodHistoryDate,
-        fat_g: calculation.nutrientTotals.fat_g,
-        food_name: mealDraft.foodName.trim(),
-        meal_slot: activeMealEntrySlot,
-        logged_at: loggedAt,
-        protein_g: calculation.nutrientTotals.protein_g,
-        provider: mealDraft.provider ?? "manual",
-        provider_item_id: mealDraft.providerItemId,
-        serving_label: formatHealthConsumedMealLabel(calculation, mealDraft.servingLabel),
-        source_food_id: sourceFoodId,
-        consumed_quantity: calculation.consumed.quantity,
-        consumed_unit: calculation.consumed.unit,
-        serving_fraction: calculation.servingFraction,
-        food_snapshot: foodSnapshot,
-        nutrition_snapshot: calculation.nutrientTotals,
-      });
-    if (!saved) {
-      return false;
-    }
-    if (mealEditorMode === "plan" && editingMealPlanId) {
-      setEditingMealPlanId(null);
-      setMealEditorMode("actual");
-      setActiveMealEntrySlot(null);
-      setIsQuickEntryOpen(false);
+        if (savingDraft?.kind === "new-plan") {
+          const nextDraftId = createHealthFoodDraftId();
+          const nextMealDraft = resetMealDraftForNextItem(savingDraft.mealDraft);
+          const nextSessionDraft = createHealthMealPlanEditingSessionDraft("new-plan", nextDraftId, nextMealDraft);
+          const nextSessionDraftId = healthMealPlanNewEntrySessionId(nextDraftId);
+          mealPlanSessionStore.ensureSession(
+            nextSessionDraftId,
+            healthMealPlanNewEntryCanonicalId(nextDraftId),
+            nextSessionDraft,
+          );
+          mealPlanSessionStore.attachView(nextSessionDraftId, foodSessionViewId);
+          setFoodViewField("newPlannedMealDraftId", nextDraftId);
+        }
+        setCustomFoodSearchQuery("");
+        setBarcodeLookupError("");
+        setFoodEditorNotice(null);
+        return true;
+      }
+
+      const legacyDraft = createHealthMealPlanEditingSessionDraft(
+        editingMealPlanId ? "saved-plan" : "new-plan",
+        editingMealPlanId ?? activeFoodView.newPlannedMealDraftId,
+        legacyMealDraft,
+      );
+      const legacyResult = await persistPlan({ ...legacyDraft, saveToLibrary: legacySaveQuickEntryToLibrary });
+      if ("error" in legacyResult) return false;
+      if (editingMealPlanId) {
+        setEditingMealPlanId(null);
+        setMealEditorMode("actual");
+        setActiveMealEntrySlot(null);
+        setIsQuickEntryOpen(false);
+        return true;
+      }
+      setLegacyMealDraft((current) => ({ ...resetMealDraftForNextItem(current), date: current.date, mealSlot: current.mealSlot }));
+      setFoodViewField("newPlannedMealDraftId", createHealthFoodDraftId());
+      setCustomFoodSearchQuery("");
+      setBarcodeLookupError("");
+      setLegacySaveQuickEntryToLibrary(false);
       return true;
     }
-    setMealDraft((current) => {
-      const nextDraft = {
-        ...resetMealDraftForNextItem(current),
-        date: selectedMealDate,
-        mealSlot: activeMealEntrySlot,
-      };
-      return isQuickEntryOpen ? { ...nextDraft, servingQuantity: 1 } : nextDraft;
-    });
+
+    const persistNewMeal = async (sessionDraft: HealthFoodEditingSessionDraft) => {
+      if (sessionDraft.kind !== "new-entry") return { error: "This Food draft is no longer available. Reopen Add Food and retry." } as const;
+      const draft = sessionDraft.mealDraft;
+      const loggedAt = buildHealthMealLoggedAt(draft.date, draft.time);
+      if (!loggedAt || isHealthMealTimestampFuture(draft.date, draft.time) || draft.mealSlot !== activeMealEntrySlot) {
+        return { error: "Choose a valid date, time, meal slot, and completed food before saving." } as const;
+      }
+      let sourceFoodId = draft.sourceFoodId;
+      const initialPreparation = prepareHealthMealEntryFromDraft(draft, {
+        date: draft.date,
+        id: sessionDraft.entryId,
+        loggedAt,
+        mealSlot: draft.mealSlot,
+      });
+      if (!initialPreparation) return { error: "Enter a valid food, amount, and measurement before saving." } as const;
+      const calculation = initialPreparation.calculation;
+      if (isQuickEntryOpen && sessionDraft.saveToLibrary) {
+        const libraryInput = {
+          calories: Math.round(calculation.nutrientTotals.calories),
+          carbs_g: calculation.nutrientTotals.carbs_g,
+          food_name: draft.foodName.trim(),
+          fat_g: calculation.nutrientTotals.fat_g,
+          food_category: "Uncategorized",
+          id: sessionDraft.quickFoodId,
+          protein_g: calculation.nutrientTotals.protein_g,
+          provider: "manual",
+          ...(calculation.nutrientTotals.nutrition_details ? { nutrition_details: calculation.nutrientTotals.nutrition_details } : {}),
+          serving_label: "1 serving",
+          serving_size: "1 serving",
+          serving_quantity: 1,
+          serving_unit: "serving",
+          is_favorite: false,
+        };
+        const existingLibraryFood = favorites.find((food) => getHealthFoodIdentityKey(food) === getHealthFoodIdentityKey(libraryInput));
+        const savedLibraryFood = await saveFavoriteFood(libraryInput);
+        if (!savedLibraryFood) return { error: "The Custom Food could not be saved. Your meal draft is still here." } as const;
+        sourceFoodId = existingLibraryFood?.id ?? libraryInput.id;
+      } else if (isQuickEntryOpen) sourceFoodId = null;
+      const prepared = sourceFoodId === initialPreparation.input.source_food_id
+        ? initialPreparation
+        : prepareHealthMealEntryFromDraft(draft, {
+          date: draft.date,
+          id: sessionDraft.entryId,
+          loggedAt,
+          mealSlot: draft.mealSlot,
+          sourceFoodId,
+        });
+      if (!prepared) return { error: "The meal’s nutrition could not be calculated. Your draft is still here." } as const;
+      const saved = await addMealEntry(prepared.input);
+      if (!saved) return { error: "The meal could not be saved. Check the warning above and retry; your draft is still here." } as const;
+      const resetDraft = resetMealDraftForNextItem(draft);
+      return {
+        savedDraft: {
+          ...sessionDraft,
+          mealDraft: isQuickEntryOpen ? { ...resetDraft, servingQuantity: 1 } : resetDraft,
+          saveToLibrary: false,
+        },
+      } as const;
+    };
+
+    let saved = false;
+    if (foodSessionStore) {
+      saved = await saveHealthFoodEditingSession({
+        store: foodSessionStore,
+        draftId: newFoodSessionDraftId,
+        removeAfterSuccess: true,
+        save: persistNewMeal,
+      });
+    } else {
+      const legacySessionDraft = createHealthFoodEditingSessionDraft(legacyMealDraft, {
+        entryId: activeFoodView.newMealDraftId,
+        quickFoodId: activeFoodView.newMealDraftId,
+      });
+      const result = await persistNewMeal(legacySessionDraft);
+      if (!("error" in result)) {
+        setLegacyMealDraft(result.savedDraft.kind === "new-entry" ? result.savedDraft.mealDraft : legacyMealDraft);
+        saved = true;
+      }
+    }
+    if (!saved) return false;
+    setFoodViewField("newMealDraftId", createHealthFoodDraftId());
     setCustomFoodSearchQuery("");
     setBarcodeLookupError("");
     setSaveQuickEntryToLibrary(false);
@@ -2663,14 +3182,16 @@ export function HealthPage({
   }
 
   async function submitMeal(): Promise<boolean> {
-    if (!canSaveMeal || mealSaveInFlightRef.current) {
+    if (!canSaveMeal || mealSaveInFlightRef.current || isSavingMeal) {
       return false;
     }
     mealSaveInFlightRef.current = true;
+    setIsSavingMeal(true);
     try {
       return await handleSaveMeal();
     } finally {
       mealSaveInFlightRef.current = false;
+      setIsSavingMeal(false);
     }
   }
 
@@ -2685,48 +3206,134 @@ export function HealthPage({
   }
 
   function openMealComposerForSlot(slot: HealthMealEntry["meal_slot"], mode: "actual" | "plan" = "actual") {
-    const preserveFoodDraft = hasMeaningfulMealDraft(mealDraft);
-    setActiveMealEntrySlot(slot);
-    setMealEditorMode(mode);
-    setEditingMealPlanId(null);
-    setMealDraft((current) => preserveFoodDraft
-      ? { ...current, date: foodHistoryDate, mealSlot: slot }
-      : prepareMealDraftForSelectedSlot(current, foodHistoryDate, slot));
-    if (!preserveFoodDraft) {
+    let preservePlanUiState = false;
+    if (mode === "actual") {
+      const currentSession = foodSessionStore?.getSnapshot(newFoodSessionDraftId);
+      if (currentSession?.dirty && currentSession.draft.kind === "new-entry") {
+        if (currentSession.draft.mealDraft.mealSlot !== slot) {
+          setFoodEditorNotice(`Finish or discard the ${getMealSlotLabel(currentSession.draft.mealDraft.mealSlot)} draft before opening ${getMealSlotLabel(slot)}.`);
+          return;
+        }
+        setActiveMealEntrySlot(currentSession.draft.mealDraft.mealSlot);
+        setMealEditorMode("actual");
+        setEditingMealPlanId(null);
+        setFoodEditorNotice(currentSession.draft.mealDraft.date === foodHistoryDate
+          ? null
+          : `This draft is still for ${formatHealthDateLabel(currentSession.draft.mealDraft.date)}. Save or discard it before logging for ${formatHealthDateLabel(foodHistoryDate)}.`);
+        return;
+      }
+      const currentDraft = currentSession?.draft.kind === "new-entry"
+        ? currentSession.draft.mealDraft
+        : mealDraft;
+      const nextMealDraft = prepareMealDraftForSelectedSlot(currentDraft, foodHistoryDate, slot);
+      if (foodSessionStore && currentSession?.draft.kind === "new-entry") {
+        foodSessionStore.rebaseIfClean(newFoodSessionDraftId, {
+          ...currentSession.draft,
+          mealDraft: nextMealDraft,
+          saveToLibrary: false,
+        });
+      } else if (!foodSessionStore) {
+        setLegacyMealDraft(nextMealDraft);
+      }
+      setActiveMealEntrySlot(slot);
+      setMealEditorMode("actual");
+      setEditingMealPlanId(null);
+      setFoodEditorNotice(null);
+      setIsQuickEntryOpen(false);
+      setSaveQuickEntryToLibrary(false);
+    } else {
+      if (mealPlanSessionStore) {
+        const opened = openHealthMealPlanComposerForSlot({
+          store: mealPlanSessionStore,
+          draftId: newMealPlanSessionDraftId,
+          canonicalRecordId: healthMealPlanNewEntryCanonicalId(activeFoodView.newPlannedMealDraftId),
+          initialDraft: newMealPlanSessionInitialDraft,
+          historyDate: foodHistoryDate,
+          mealSlot: slot,
+          viewId: foodSessionViewId,
+        });
+        preservePlanUiState = opened.preserved;
+        const draftSlot = opened.session.draft.mealDraft.mealSlot;
+        setActiveMealEntrySlot(draftSlot);
+        setFoodEditorNotice(opened.preserved
+          ? `Your unfinished planned meal remains for ${formatHealthDateLabel(opened.session.draft.mealDraft.date)} · ${getMealSlotLabel(draftSlot)}.`
+          : null);
+      } else {
+        setLegacyMealDraft(prepareMealDraftForSelectedSlot(legacyMealDraft, foodHistoryDate, slot));
+        setLegacySaveQuickEntryToLibrary(false);
+        setActiveMealEntrySlot(slot);
+        setFoodEditorNotice(null);
+      }
+      setMealEditorMode("plan");
+      setEditingMealPlanId(null);
+      if (!preservePlanUiState) setIsQuickEntryOpen(false);
+    }
+    if (!preservePlanUiState && !hasMeaningfulMealDraft(mealDraft)) {
       setIsQuickEntryOpen(false);
       setCustomFoodSearchQuery("");
       setBarcodeLookupError("");
       setSelectedCustomFoodCategory(null);
       setIsCustomFoodCategoriesOpen(false);
     }
-    setSaveQuickEntryToLibrary(false);
   }
 
   function closeMealEntryEditor() {
+    const currentNewSession = foodSessionStore?.getSnapshot(newFoodSessionDraftId);
+    if (mealEditorMode === "actual" && (currentNewSession?.dirty || currentNewSession?.saveError)) {
+      setFoodEditorNotice("Save or discard this Food draft before closing its editor.");
+      return;
+    }
+    if (mealEditorMode === "plan" && !mealPlanSessionStore && (editingMealPlanId || hasMeaningfulMealDraft(legacyMealDraft))) {
+      setFoodEditorNotice("Save or clear this planned meal draft before closing its editor.");
+      return;
+    }
     setActiveMealEntrySlot(null);
     setEditingMealPlanId(null);
+    if (mealEditorMode === "plan") setLegacySaveQuickEntryToLibrary(false);
     setMealEditorMode("actual");
     setIsScannerOpen(false);
-    setSaveQuickEntryToLibrary(false);
+  }
+
+  function discardNewMealDraft() {
+    if (mealEditorMode === "plan" && mealPlanSessionStore) {
+      mealPlanSessionStore.discardDraft(activeMealPlanSessionDraftId);
+      setIsQuickEntryOpen(false);
+      setSaveQuickEntryToLibrary(false);
+    } else {
+      if (foodSessionStore) foodSessionStore.discardDraft(newFoodSessionDraftId);
+      else setLegacyMealDraft((current) => resetMealDraftForNextItem(current));
+      setSaveQuickEntryToLibrary(false);
+    }
+    setFoodEditorNotice(null);
+    setBarcodeLookupError("");
+    setBarcodeLookupStatus("idle");
+  }
+
+  function closeMealEdit() {
+    if (foodSessionStore && editingMealId) foodSessionStore.discardDraft(savedFoodSessionDraftId);
+    else if (savedMealForEditing) setLegacyMealEditDraft(createMealEditDraftFromEntry(savedMealForEditing));
+    setEditingMealId(null);
   }
 
   function handleFoodHistoryDateChange(date: string) {
-    setActiveMealEntrySlot(null);
-    setEditingMealPlanId(null);
-    setMealEditorMode("actual");
-    setIsScannerOpen(false);
     setFoodHistoryDate(date);
+    if (mealEditorMode === "plan" && mealPlanSessionStore && activeMealPlanSession?.draft.mealDraft.date !== date) {
+      setFoodEditorNotice(`Your planned meal remains for ${formatHealthDateLabel(activeMealPlanSession?.draft.mealDraft.date ?? "")} · ${getMealSlotLabel(activeMealPlanSession?.draft.mealDraft.mealSlot ?? mealDraft.mealSlot)}.`);
+      return;
+    }
+    const draft = foodSessionStore?.getSnapshot(newFoodSessionDraftId)?.draft;
+    setFoodEditorNotice(draft?.kind === "new-entry" && draft.mealDraft.date !== date
+      ? `Your unfinished draft remains for ${formatHealthDateLabel(draft.mealDraft.date)} · ${getMealSlotLabel(draft.mealDraft.mealSlot)}.`
+      : null);
   }
 
   function openQuickEntry() {
     setIsQuickEntryOpen(true);
-    setSaveQuickEntryToLibrary(false);
     setCustomFoodSearchQuery("");
-    setMealDraft((current) => ({
+    setSaveQuickEntryToLibrary(false);
+    setMealDraft((current) => hasMeaningfulMealDraft(current) ? current : ({
       ...resetMealDraftForNextItem(current),
       barcode: current.barcode,
-      date: foodHistoryDate,
-      mealSlot: activeMealEntrySlot ?? current.mealSlot,
       servingQuantity: 1,
     }));
   }
@@ -2734,112 +3341,130 @@ export function HealthPage({
   function closeQuickEntry() {
     setIsQuickEntryOpen(false);
     setSaveQuickEntryToLibrary(false);
-    setMealDraft((current) => ({
-      ...resetMealDraftForNextItem(current),
-    }));
   }
 
   function startEditingMeal(entry: HealthMealEntry) {
-    const structuredMeal = getStructuredMealDefinition(entry);
-    const parsedServing = parseQuantityServingLabel(entry.serving_label ?? "");
-    const quantity = parsedServing.quantity;
     setMealEditorMode("actual");
     setEditingMealPlanId(null);
     setEditingMealId(entry.id);
-    setMealEditDraft({
-      mode: structuredMeal ? "structured" : "legacy",
-      calories: structuredMeal ? String(structuredMeal.calories) : String(Math.round(entry.calories / quantity)),
-      carbs: entry.carbs_g === null ? "" : String(scaleNullableNumber(entry.carbs_g / quantity, 1)),
-      date: entry.entry_date,
-      fat: entry.fat_g === null ? "" : String(scaleNullableNumber(entry.fat_g / quantity, 1)),
-      mealSlot: entry.meal_slot,
-      protein: entry.protein_g === null ? "" : String(scaleNullableNumber(entry.protein_g / quantity, 1)),
-      quantity: structuredMeal ? String(entry.consumed_quantity) : String(quantity),
-      measurement: structuredMeal?.consumedUnit ?? "serving",
-      servingLabel: structuredMeal?.servingLabel ?? parsedServing.servingLabel,
-      time: formatTimeInput(entry.logged_at),
-    });
+    if (!foodSessionStore) setLegacyMealEditDraft(createMealEditDraftFromEntry(entry));
+    setFoodEditorNotice(null);
   }
 
   function startEditingMealPlan(plan: HealthMealPlanEntry) {
+    if (plan.confirmed_at !== null) return;
     setFoodHistoryDate(plan.planned_date);
     setActiveMealEntrySlot(plan.meal_slot);
     setMealEditorMode("plan");
     setEditingMealId(null);
     setEditingMealPlanId(plan.id);
-    setMealDraft(mealDraftFromHealthMealPlan(plan));
+    if (!mealPlanSessionStore) setLegacyMealDraft(mealDraftFromHealthMealPlan(plan));
     setCustomFoodSearchQuery(plan.brand_name ? `${plan.brand_name} · ${plan.food_name}` : plan.food_name);
     setIsQuickEntryOpen(false);
-    setSaveQuickEntryToLibrary(false);
+    setLegacySaveQuickEntryToLibrary(false);
     setBarcodeLookupError("");
     setSelectedCustomFoodCategory(null);
     setIsCustomFoodCategoriesOpen(false);
+    setMealPlanActionNotice(null);
+  }
+
+  async function runMealPlanLifecycle(plan: HealthMealPlanEntry, action: "done" | "remove") {
+    setMealPlanActionNotice(null);
+    if (!mealPlanSessionStore) {
+      const success = action === "done"
+        ? await confirmMealPlanEntry(plan.id)
+        : await deleteMealPlanEntry(plan.id);
+      if (!success) setMealPlanActionNotice(action === "done" ? "This plan could not be confirmed. Review the Health warning and retry." : "This plan could not be removed. Review the Health warning and retry.");
+      return;
+    }
+    const draftId = healthMealPlanEntrySessionId(plan.id);
+    if (!mealPlanSessionStore.getSnapshot(draftId)) {
+      mealPlanSessionStore.ensureSession(draftId, plan.id, createHealthMealPlanEditingSessionDraftFromEntry(plan));
+    }
+    const result = await runHealthMealPlanLifecycleAction({
+      store: mealPlanSessionStore,
+      draftId,
+      action: () => action === "done" ? confirmMealPlanEntry(plan.id) : deleteMealPlanEntry(plan.id),
+      errorMessage: action === "done" ? "Plan confirmation failed. You can retry Done." : "Plan removal failed. You can retry Remove.",
+    });
+    if (result.blockedByDraft) {
+      setMealPlanActionNotice(`Save or discard the unsaved edits for “${plan.food_name}” before ${action === "done" ? "marking it Done" : "removing it"}. The draft is still available from Edit.`);
+    } else if (!result.success) {
+      setMealPlanActionNotice(action === "done" ? "This plan could not be confirmed. Review the Health warning and retry." : "This plan could not be removed. Review the Health warning and retry.");
+    }
   }
 
   async function saveMealEdit(entryId: string) {
     const currentEntry = mealEntries.find((entry) => entry.id === entryId);
     const structuredMeal = currentEntry ? getStructuredMealDefinition(currentEntry) : null;
-    const loggedAt = buildHealthMealLoggedAt(mealEditDraft.date, mealEditDraft.time);
-    if (!loggedAt || isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time)) {
-      return;
-    }
-    if (!currentEntry) {
-      return;
-    }
-    if (structuredMeal && mealEditDraft.mode === "structured") {
-      const calculation = calculateMealSelection(
-        structuredMeal,
-        parsePositiveQuantity(mealEditDraft.quantity),
-        mealEditDraft.measurement,
-      );
-      if (!calculation || !mealEditDraft.date || !mealEditDraft.time) {
-        return;
+    if (!currentEntry) return;
+    const persistEdit = async (sessionDraft: HealthFoodEditingSessionDraft) => {
+      if (sessionDraft.kind !== "saved-entry") return { error: "This saved Food draft is no longer available. Reopen it and retry." } as const;
+      const draft = sessionDraft.mealEditDraft;
+      const loggedAt = buildHealthMealLoggedAt(draft.date, draft.time);
+      if (!loggedAt || isHealthMealTimestampFuture(draft.date, draft.time)) {
+        return { error: "Choose a past or current meal time. Your draft is still here." } as const;
       }
-      const saved = await updateMealEntry(entryId, {
-        calories: Math.round(calculation.nutrientTotals.calories),
-        carbs_g: calculation.nutrientTotals.carbs_g,
-        entry_date: mealEditDraft.date,
-        fat_g: calculation.nutrientTotals.fat_g,
-        logged_at: loggedAt,
-        meal_slot: mealEditDraft.mealSlot,
-        protein_g: calculation.nutrientTotals.protein_g,
-        serving_label: formatHealthConsumedMealLabel(calculation, structuredMeal.servingLabel),
-        source_food_id: currentEntry.source_food_id ?? structuredMeal.sourceFoodId,
-        consumed_quantity: calculation.consumed.quantity,
-        consumed_unit: calculation.consumed.unit,
-        serving_fraction: calculation.servingFraction,
-        food_snapshot: currentEntry.food_snapshot ?? buildMealFoodSnapshot(structuredMeal),
-        nutrition_snapshot: calculation.nutrientTotals,
+      let update: HealthMealEntryUpdate;
+      if (structuredMeal && draft.mode === "structured") {
+        const calculation = calculateMealSelection(structuredMeal, parsePositiveQuantity(draft.quantity), draft.measurement);
+        if (!calculation) return { error: "Enter a valid amount and measurement. Your draft is still here." } as const;
+        update = {
+          calories: Math.round(calculation.nutrientTotals.calories),
+          carbs_g: calculation.nutrientTotals.carbs_g,
+          entry_date: draft.date,
+          fat_g: calculation.nutrientTotals.fat_g,
+          logged_at: loggedAt,
+          meal_slot: draft.mealSlot,
+          protein_g: calculation.nutrientTotals.protein_g,
+          serving_label: formatHealthConsumedMealLabel(calculation, structuredMeal.servingLabel),
+          source_food_id: currentEntry.source_food_id ?? structuredMeal.sourceFoodId,
+          consumed_quantity: calculation.consumed.quantity,
+          consumed_unit: calculation.consumed.unit,
+          serving_fraction: calculation.servingFraction,
+          food_snapshot: currentEntry.food_snapshot ?? buildMealFoodSnapshot(structuredMeal),
+          nutrition_snapshot: calculation.nutrientTotals,
+        };
+      } else {
+        const calories = Number.parseInt(draft.calories, 10);
+        const quantity = parsePositiveQuantity(draft.quantity);
+        if (!Number.isFinite(calories) || calories < 0 || quantity === null) {
+          return { error: "Enter valid calories and serving amount. Your draft is still here." } as const;
+        }
+        update = {
+          calories: Math.round(calories * quantity),
+          carbs_g: scaleNullableNumber(parseNullableNumber(draft.carbs), quantity),
+          entry_date: draft.date,
+          fat_g: scaleNullableNumber(parseNullableNumber(draft.fat), quantity),
+          logged_at: loggedAt,
+          meal_slot: draft.mealSlot,
+          protein_g: scaleNullableNumber(parseNullableNumber(draft.protein), quantity),
+          serving_label: formatQuantityServingLabel(quantity, draft.servingLabel),
+        };
+      }
+      if (!await updateMealEntry(entryId, update)) {
+        return { error: "The meal could not be updated. Check the warning above and retry; your draft is still here." } as const;
+      }
+      return { savedDraft: sessionDraft } as const;
+    };
+
+    let saved: boolean;
+    if (foodSessionStore) {
+      saved = await saveHealthFoodEditingSession({
+        store: foodSessionStore,
+        draftId: savedFoodSessionDraftId,
+        save: persistEdit,
       });
-      if (saved) {
-        setEditingMealId(null);
-      }
-      return;
+    } else {
+      const sessionDraft: HealthFoodEditingSessionDraft = { kind: "saved-entry", mealEditDraft };
+      const result = await persistEdit(sessionDraft);
+      saved = !("error" in result);
     }
-
-    const calories = Number.parseInt(mealEditDraft.calories, 10);
-    const quantity = parsePositiveQuantity(mealEditDraft.quantity);
-    if (!Number.isFinite(calories) || calories < 0 || quantity === null || !mealEditDraft.date || !mealEditDraft.time) {
-      return;
-    }
-
-    const saved = await updateMealEntry(entryId, {
-      calories: Math.round(calories * quantity),
-      carbs_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.carbs), quantity),
-      entry_date: mealEditDraft.date,
-      fat_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.fat), quantity),
-      logged_at: loggedAt,
-      meal_slot: mealEditDraft.mealSlot,
-      protein_g: scaleNullableNumber(parseNullableNumber(mealEditDraft.protein), quantity),
-      serving_label: formatQuantityServingLabel(quantity, mealEditDraft.servingLabel),
-    });
-    if (saved) {
-      setEditingMealId(null);
-    }
+    if (saved) setEditingMealId(null);
   }
 
   async function handleSaveWeight() {
-    if (!profile) {
+    if (!profile || isSavingWeight) {
       return;
     }
     const parsed = Number.parseFloat(weightDraft);
@@ -2847,15 +3472,20 @@ export function HealthPage({
       return;
     }
 
-    const saved = await addWeightEntry({
-      entry_date: today,
-      note: emptyToNull(weightNote),
-      source: "manual",
-      weight_kg: displayWeightToKilograms(parsed, profile.preferred_weight_unit),
-    });
-    if (saved) {
-      setWeightDraft("");
-      setWeightNote("");
+    setIsSavingWeight(true);
+    try {
+      const saved = await addWeightEntry({
+        entry_date: today,
+        note: emptyToNull(weightNote),
+        source: "manual",
+        weight_kg: displayWeightToKilograms(parsed, profile.preferred_weight_unit),
+      });
+      if (saved) {
+        setWeightDraft("");
+        setWeightNote("");
+      }
+    } finally {
+      setIsSavingWeight(false);
     }
   }
 
@@ -3129,6 +3759,7 @@ export function HealthPage({
   }
 
   function resetImportPreviewState() {
+    if (isSavingImport) return;
     importAbortRef.current?.abort();
     importAbortRef.current = null;
     setImportPreview(null);
@@ -3136,7 +3767,6 @@ export function HealthPage({
     setImportParseStatus(DEFAULT_IMPORT_STATUS);
     setImportSaveStatus("");
     setIsParsingImport(false);
-    setIsSavingImport(false);
   }
 
   async function handleAppleFilePicked(file: File | null) {
@@ -3173,7 +3803,7 @@ export function HealthPage({
   }
 
   async function handleSaveImport() {
-    if (!importPreview) {
+    if (!importPreview || isSavingImport) {
       return;
     }
     setIsSavingImport(true);
@@ -3223,8 +3853,27 @@ export function HealthPage({
 
   function renderMealEntryEditor() {
     const isPlanMode = mealEditorMode === "plan";
+    const isNewFoodDraftDirty = isPlanMode
+      ? Boolean(activeMealPlanSession?.dirty || activeMealPlanSession?.saveError)
+        || (!mealPlanSessionStore && hasMeaningfulMealDraft(legacyMealDraft))
+      : Boolean(newFoodSession?.dirty || newFoodSession?.saveError)
+        || (!foodSessionStore && hasMeaningfulMealDraft(legacyMealDraft));
+    if (isPlanMode && isEditingInactiveMealPlan) {
+      return (
+        <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+          <InlineNotice text="This Planned Meal was completed or removed while its editor was open. Its draft is preserved here and cannot be saved as an active plan." />
+          {activeMealPlanSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{activeMealPlanSession.saveError}</p> : null}
+          {isNewFoodDraftDirty ? <AdhdChip disabled={Boolean(activeMealPlanSession?.isSaving)} onClick={discardNewMealDraft} type="button">Discard Draft</AdhdChip> : null}
+          <div className="flex justify-end"><AdhdChip onClick={closeMealEntryEditor}>Close</AdhdChip></div>
+        </div>
+      );
+    }
     return (
       <div className="grid gap-3 rounded-[1.25rem] border border-[#e8e2f7] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+        {!isPlanMode ? <p className="text-xs font-medium text-[#73809c] dark:text-white/50">Draft for {getMealSlotLabel(mealDraft.mealSlot)} · {formatHealthDateLabel(mealDraft.date)}</p> : null}
+        {foodEditorNotice ? <InlineNotice text={foodEditorNotice} /> : null}
+        {!isPlanMode && newFoodSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{newFoodSession.saveError}</p> : null}
+        {isPlanMode && activeMealPlanSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{activeMealPlanSession.saveError}</p> : null}
         <div className="grid min-w-0 gap-3 sm:grid-cols-[minmax(0,1.35fr)_minmax(7rem,0.7fr)_minmax(4rem,0.4fr)_minmax(5.5rem,0.5fr)_auto] sm:items-end">
           <Field label="Food">
             <HealthAutocomplete
@@ -3295,14 +3944,14 @@ export function HealthPage({
         {isPlanMode ? (
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label="Planned date">
-              <HealthMealDateTimeInput onChange={(value) => { setFoodHistoryDate(value); setMealDraft((current) => ({ ...current, date: value })); }} type="date" value={mealDraft.date} />
+              <HealthMealDateTimeInput onChange={(value) => setMealDraft((current) => ({ ...current, date: value }))} type="date" value={mealDraft.date} />
             </Field>
             <Field composite label="Meal">
               <HealthDropdown
                 ariaLabel="Planned meal"
                 onChange={(value) => { const nextSlot = value as HealthMealEntry["meal_slot"]; setActiveMealEntrySlot(nextSlot); setMealDraft((current) => ({ ...current, mealSlot: nextSlot })); }}
                 options={HEALTH_MEAL_SLOTS.map((slot) => ({ label: getMealSlotLabel(slot), value: slot }))}
-                value={activeMealEntrySlot ?? mealDraft.mealSlot}
+                value={mealDraft.mealSlot}
               />
             </Field>
           </div>
@@ -3317,7 +3966,7 @@ export function HealthPage({
               <Field label="Fat (optional)"><input className={HEALTH_COMPACT_INPUT_CLASS} inputMode="decimal" onChange={(event) => setMealDraft((current) => ({ ...current, fat: event.target.value }))} value={mealDraft.fat} /></Field>
             </div>
             <label className="flex items-center gap-2 text-xs text-[#66718f] dark:text-white/60"><input checked={saveQuickEntryToLibrary} onChange={(event) => setSaveQuickEntryToLibrary(event.target.checked)} type="checkbox" />Save to Custom Nutrition Library</label>
-            <p className="text-xs text-[#73809c] dark:text-white/50">The selected ledger date and meal section set this entry context.</p>
+            <p className="text-xs text-[#73809c] dark:text-white/50">{isPlanMode ? "The planned date and meal slot set this entry context." : "The selected ledger date and meal section set this entry context."}</p>
           </div>
         ) : null}
         {mealTimestampError ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">{mealTimestampError}</p> : null}
@@ -3379,6 +4028,7 @@ export function HealthPage({
             <span className="text-xs text-[#73809c] dark:text-white/50">{isPlanMode ? "Add another food to this plan, or finish when you’re done." : "Add another food to this meal, or finish when you’re done."}</span>
           </div>
           <div className="flex flex-wrap justify-end gap-2">
+            {isNewFoodDraftDirty ? <AdhdChip disabled={Boolean(isPlanMode ? activeMealPlanSession?.isSaving : newFoodSession?.isSaving)} onClick={discardNewMealDraft} type="button">Discard Draft</AdhdChip> : null}
             <AdhdChip contentClassName="gap-1.5" icon={<RotateCcw aria-hidden="true" className="h-3.5 w-3.5" />} onClick={clearMealDraft} title="Clear current food selection">Clear</AdhdChip>
             <AdhdChip onClick={closeMealEntryEditor}>Done</AdhdChip>
           <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveMeal} onClick={() => { void submitMeal(); }} type="button">{isPlanMode ? (isQuickEntryOpen ? "Add Quick Entry to Plan" : editingMealPlanId ? "Save Plan" : "Add to Plan") : isQuickEntryOpen ? "Add Quick Entry" : "Add Food"}</button>
@@ -3404,7 +4054,7 @@ export function HealthPage({
             }`}
             id={`health-tab-${tab.toLowerCase()}`}
             key={tab}
-            onClick={() => persistHealthTabPreference(tab)}
+            onClick={() => onSelectTab(tab)}
             role="tab"
             type="button"
           >
@@ -3423,7 +4073,7 @@ export function HealthPage({
             journalSignalOccurrences={journalSignalOccurrences}
             mealEntries={mealEntries}
             metricEntries={metricEntries}
-            onNavigate={persistHealthTabPreference}
+            onNavigate={onSelectTab}
             profile={activeProfile}
             symptoms={symptoms}
             symptomEntries={symptomEntries}
@@ -3438,6 +4088,7 @@ export function HealthPage({
 
       {activeTab === "Fitness" ? (
         <HealthFitnessTab
+          onDraftSafetyChange={reportFitnessDraftSafety}
           addWorkout={addWorkout}
           archiveGoal={archiveGoal}
           archiveExercise={archiveExercise}
@@ -3493,12 +4144,38 @@ export function HealthPage({
               className="min-w-0"
               headerActions={(
                 <div className="flex flex-wrap items-center justify-end gap-1">
+                  <div aria-label="Journal views" className="flex flex-wrap items-center gap-1" role="group">
+                    <AdhdChip
+                      aria-pressed={visibleJournalWorkspaceMode === "entry"}
+                      onClick={() => selectJournalWorkspaceMode("entry")}
+                      selected={visibleJournalWorkspaceMode === "entry"}
+                      type="button"
+                    >
+                      Entry
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-pressed={isVisibleJournalHistory}
+                      onClick={() => selectJournalWorkspaceMode("history")}
+                      selected={isVisibleJournalHistory}
+                      type="button"
+                    >
+                      History
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-pressed={visibleJournalWorkspaceMode === "statistics"}
+                      onClick={() => selectJournalWorkspaceMode("statistics")}
+                      selected={visibleJournalWorkspaceMode === "statistics"}
+                      type="button"
+                    >
+                      Statistics
+                    </AdhdChip>
+                  </div>
                   <div className="relative">
                     <AdhdIconButton
                       aria-controls="journal-history-layout-menu"
                       aria-expanded={isJournalHistoryMenuOpen}
                       aria-haspopup="menu"
-                      aria-label={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      aria-label={visibleJournalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
                       onClick={handleJournalHistoryClick}
                       onKeyDown={handleJournalHistoryKeyDown}
                       onPointerCancel={handleJournalHistoryPointerCancel}
@@ -3506,11 +4183,11 @@ export function HealthPage({
                       onPointerLeave={handleJournalHistoryPointerUp}
                       onPointerUp={handleJournalHistoryPointerUp}
                       size="sm"
-                      title={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      title={visibleJournalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
                       tone="ghost"
                       variant="rowToolbar"
                     >
-                      {journalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+                      {visibleJournalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
                     </AdhdIconButton>
                     {isJournalHistoryMenuOpen ? (
                       <AdhdDropdownPanel
@@ -3533,7 +4210,7 @@ export function HealthPage({
                       </AdhdDropdownPanel>
                     ) : null}
                   </div>
-                  {journalWorkspaceMode === "history" ? <AdhdChip onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
+                  {visibleJournalWorkspaceMode === "history" ? <AdhdChip disabled={hasUnsafeNewJournalDraft} onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
                 </div>
               )}
               id={getHealthTabPanelId("Journal")}
@@ -3543,9 +4220,12 @@ export function HealthPage({
               title="Journal"
               role="tabpanel"
             >
-            <div className={(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
-            {journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+            <div className={(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
+            <div hidden={visibleJournalWorkspaceMode === "history" || visibleJournalWorkspaceMode === "statistics"} className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <JournalCheckInForm
+                key={journalSessionStore
+                  ? selectedJournalEntryId ? `journal-entry:${selectedJournalEntryId}` : journalView?.newDraftId ?? `journal-new:${activeMasterTabId ?? "legacy"}`
+                  : "legacy-journal-form"}
                 checkIns={checkIns}
                 customQuestions={activeProfile.journal_questions ?? []}
                 createJournalSignal={createJournalSignal}
@@ -3554,18 +4234,56 @@ export function HealthPage({
                 journalSignalOccurrences={journalSignalOccurrences}
                 journalSignalValues={journalSignalValues}
                 journalSignals={journalSignals}
+                journalTriggers={journalTriggers}
+                journalTriggerLinks={journalTriggerLinks}
+                journalTriggerDataError={journalTriggerDataError}
+                isLoadingJournalTriggers={isLoadingJournalTriggers}
+                loadJournalTriggerData={loadJournalTriggerData}
+                createJournalTrigger={createJournalTrigger}
+                journalEntryRequest={journalEntryRequest}
                 mealEntries={mealEntries}
                 metricEntries={metricEntries}
                 onAfterSave={startNewJournalEntry}
-                onOpenFood={() => persistHealthTabPreference("Food")}
-                onOpenSleep={() => persistHealthTabPreference("Sleep")}
+                onDraftSafetyChange={reportJournalDraftSafety}
+                sessionStore={journalSessionStore}
+                sessionDraftId={selectedJournalEntryId ? `journal-entry:${selectedJournalEntryId}` : journalView?.newDraftId ?? `journal-new:${activeMasterTabId ?? "legacy"}`}
+                sessionCanonicalRecordId={selectedJournalEntryId ? `health-check-in:${selectedJournalEntryId}` : `unsaved:${journalView?.newDraftId ?? activeMasterTabId ?? "legacy"}`}
+                sessionViewId={activeMasterTabId}
+                onOpenFood={() => onSelectTab("Food")}
+                onOpenSleep={() => onSelectTab("Sleep")}
+                onStartNewEntry={startNewJournalEntry}
+                onRestoreSelectedJournalEntry={(entryId) => {
+                  setSelectedJournalEntryId(entryId);
+                  const previousEntry = entryId ? checkIns.find((entry) => entry.id === entryId) : null;
+                  if (previousEntry) setJournalDate(previousEntry.entry_date);
+                }}
+                onConsumeJournalEntryRequest={onConsumeJournalEntryRequest}
                 saveJournalEntry={saveJournalEntry}
                 selectedJournalEntry={selectedJournalEntry}
                 symptomEntries={symptomEntries}
                 symptoms={symptoms}
               />
-            </div> : null}
-            {false && journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+            </div>
+            {visibleJournalWorkspaceMode === "statistics" ? (
+              <JournalTriggerStatistics
+                checkIns={checkIns}
+                healthDataLoading={isLoading}
+                healthDataError={journalStatisticsDataError}
+                hasLoadedJournalTriggerData={hasLoadedJournalTriggerData}
+                isLoadingJournalTriggers={isLoadingJournalTriggers}
+                journalSignals={journalSignals}
+                journalSignalOccurrences={journalSignalOccurrences}
+                journalTriggerDataError={journalTriggerDataError}
+                journalTriggers={journalTriggers}
+                journalTriggerLinks={journalTriggerLinks}
+                loadJournalTriggerData={loadJournalTriggerData}
+                onViewInHistory={viewJournalEntryInHistory}
+                retryHealthData={refreshJournalStatisticsData}
+                symptomEntries={symptomEntries}
+                symptoms={symptoms}
+              />
+            ) : null}
+            {false && visibleJournalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <div className="grid min-w-0 gap-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-wrap gap-3">
@@ -3625,7 +4343,7 @@ export function HealthPage({
                       {journalFeelingChoices.every((choice) => journalDraftValues.some((value) => choice.signal?.id === value.signal_id)) ? <span className="text-xs text-[#7d7598] dark:text-white/50">All active Feelings are already in this entry.</span> : null}
                     </div>
                   ) : null}
-                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
+                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Mood} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalMood} /></div>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Energy} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalEnergy} /></div>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Stress} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalStress} /></div>
@@ -3751,10 +4469,13 @@ export function HealthPage({
               </div>
             </div> : null}
 
-            {journalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? `${journalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
+            {isVisibleJournalHistory ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? `${visibleJournalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
               <div className="space-y-4">
                 <SectionMiniTitle title="Journal History" />
-                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => {
+                {isLoadingJournalTriggers ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Loading Journal Trigger associations…</p> : null}
+                {journalTriggerDataError ? <div className="flex flex-wrap items-center gap-2 rounded-[0.9rem] border border-[#f2cbd4] bg-[#fff7f8] px-3 py-2 dark:border-[#6f3341] dark:bg-[#351d26]"><p className="min-w-0 flex-1 text-xs font-semibold text-[#a33f58] dark:text-[#ffb0c1]" role="alert">Could not load Journal Trigger associations: {journalTriggerDataError}</p><AdhdChip onClick={() => { void loadJournalTriggerData(); }} type="button">Retry</AdhdChip></div> : null}
+                {!hasLoadedJournalTriggerData && !isLoadingJournalTriggers && !journalTriggerDataError ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Journal Trigger associations have not loaded yet.</p> : null}
+                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : visibleJournalHistoryGroups.map((group) => {
                   const isJournalHistoryDateCollapsed = collapsedJournalHistoryDates.has(group.date);
                   return (
                   <section className="grid gap-2" key={group.date}>
@@ -3777,7 +4498,7 @@ export function HealthPage({
                       const historyReflection = entry.entry_type === "event"
                         ? entryAnswers.event_description?.trim() || entry.reflection
                         : entry.reflection;
-                      const entryOccurrences = [
+                      const entryOccurrences = sortHealthJournalOccurrenceRows([
                         ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
                           const signal = journalSignals.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === occurrence.symptom_id) ?? null;
                           return {
@@ -3786,6 +4507,7 @@ export function HealthPage({
                             score: occurrence.severity,
                             occurredAt: occurrence.logged_at,
                             signal,
+                            timeIsEstimated: occurrence.time_is_estimated,
                           };
                         }),
                         ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
@@ -3811,11 +4533,15 @@ export function HealthPage({
                             score: occurrence.score,
                             occurredAt: occurrence.occurred_at,
                             signal,
+                            timeIsEstimated: occurrence.time_is_estimated,
                           };
                         }),
-                      ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
+                      ]);
                       const isLoggedMetadataOpen = expandedJournalHistoryEntryIds.has(entry.id);
-                      return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
+                      const eventInterval = entry.entry_type === "event"
+                        ? formatHealthJournalEventInterval({ endDate: entryAnswers.event_end_date, endTime: entryAnswers.event_end_time, endTimeEstimated: entryAnswers.event_end_time_estimated, startDate: entry.entry_date, startTime: entry.entry_time, startTimeEstimated: entryAnswers.event_start_time_estimated })
+                        : null;
+                      return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b39eff] dark:border-white/10 dark:bg-white/[0.04]" id={"journal-history-entry-" + entry.id} key={entry.id} tabIndex={-1}>
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="grid gap-1">
                             <div>
@@ -3833,8 +4559,9 @@ export function HealthPage({
                                 >
                                   <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isLoggedMetadataOpen ? "rotate-180" : ""}`} />
                                 </button>
+                                </div>
                               </div>
-                            </div>
+                              {eventInterval ? <p className="text-xs text-[#7d88a3] dark:text-white/45"><span className="font-semibold">Event interval:</span> {eventInterval}</p> : null}
                             {isLoggedMetadataOpen ? <div id={`journal-history-logged-${entry.id}`}>
                               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Logged</p>
                               <p className="text-xs text-[#7d88a3] dark:text-white/45">{formatJournalLoggedAt(entry.created_at)}</p>
@@ -3844,7 +4571,15 @@ export function HealthPage({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                         {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
-                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal })).join(" · ")}</p> : null}
+                        {entryOccurrences.length > 0 ? <div className="mt-1 grid gap-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span>{entryOccurrences.map((occurrence) => {
+                          const occurrenceLinks = journalTriggerLinks.filter((link) => link.symptom_occurrence_id === occurrence.id || link.journal_signal_occurrence_id === occurrence.id);
+                          return <div className="min-w-0" key={occurrence.id}><p>{formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal, timeIsEstimated: occurrence.timeIsEstimated })}</p>{occurrenceLinks.map((link) => {
+                            const trigger = journalTriggers.find((candidate) => candidate.id === link.trigger_id);
+                            const effectLabel = link.effect === "associated" ? "Associated" : link.effect === "worsened" ? "Worsened" : "Improved";
+                            const scoreChange = link.effect === "associated" ? "" : ` · ${link.previous_score ?? "Unknown"} → ${occurrence.score}`;
+                            return <p className="pl-3 text-[#7d88a3] dark:text-white/45" key={link.id}>{trigger?.name ?? "Archived Trigger"} · {effectLabel}{scoreChange}</p>;
+                          })}</div>;
+                        })}</div> : null}
                         {historyReflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} reflection={historyReflection} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
                         <JournalEntrySummary checkIns={checkIns} entry={entry} journalSignalOccurrences={journalSignalOccurrences} journalSignals={journalSignals} symptomEntries={symptomEntries} symptoms={symptoms} />
                         {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}
@@ -4032,6 +4767,7 @@ export function HealthPage({
                 <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">{`${foodHistoryDate === today ? "Today’s Meals" : `Meals — ${formatHealthDateLabel(foodHistoryDate)}`} — ${formatHealthNutritionNumber(selectedNutrition.calories)} kcal`}</p>
                 <FoodHistoryDateChip allowFuture date={foodHistoryDate} onChange={handleFoodHistoryDateChange} today={today} />
               </div>
+              {mealPlanActionNotice ? <InlineNotice text={mealPlanActionNotice} /> : null}
               {HEALTH_MEAL_SLOTS.map((slot) => {
                 const slotMeals = selectedMeals.filter((entry) => entry.meal_slot === slot);
                   const slotPlans = selectedMealPlans.filter((entry) => entry.meal_slot === slot);
@@ -4079,9 +4815,9 @@ export function HealthPage({
                                   <NutritionDetailsDisclosure details={plan.nutrition_snapshot?.nutrition_details} />
                                 </div>
                                 <div className="flex shrink-0 flex-wrap justify-end gap-2">
-                                  <button className="ui-pill-button-strong-light shrink-0 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canMarkDone} onClick={() => { void confirmMealPlanEntry(plan.id); }} title={canMarkDone ? "Mark this planned food Done" : "This planned food cannot be marked Done"} type="button">Done</button>
+                                  <button className="ui-pill-button-strong-light shrink-0 disabled:cursor-not-allowed disabled:opacity-50" disabled={!canMarkDone} onClick={() => { void runMealPlanLifecycle(plan, "done"); }} title={canMarkDone ? "Mark this planned food Done" : "This planned food cannot be marked Done"} type="button">Done</button>
                                   <button className="ui-pill-button-light shrink-0" onClick={() => startEditingMealPlan(plan)} type="button">Edit</button>
-                                  <button className="ui-pill-button-danger-light shrink-0" onClick={() => { void deleteMealPlanEntry(plan.id); }} type="button">Remove</button>
+                                  <button className="ui-pill-button-danger-light shrink-0" onClick={() => { void runMealPlanLifecycle(plan, "remove"); }} type="button">Remove</button>
                                 </div>
                               </div>
                             </div>
@@ -4168,6 +4904,7 @@ export function HealthPage({
                           </Field>
                         </div>
                         {isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time) ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Choose a past or current meal time.</p> : null}
+                        {savedFoodSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{savedFoodSession.saveError}</p> : null}
                         <div aria-live="polite" className="text-sm text-[#5d6783] dark:text-white/65">
                           {editCalculation ? (
                             <>
@@ -4177,11 +4914,11 @@ export function HealthPage({
                           ) : "Enter a positive amount using one of this food’s supported measurements."}
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" onClick={() => setEditingMealId(null)} type="button">
+                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" disabled={Boolean(savedFoodSession?.isSaving)} onClick={closeMealEdit} type="button">
                             <X aria-hidden="true" className="h-3.5 w-3.5" />
-                            Cancel
+                            {savedFoodSession?.dirty || savedFoodSession?.saveError ? "Discard Draft" : "Cancel"}
                           </button>
-                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60" disabled={!editCalculation} onClick={() => { void saveMealEdit(entry.id); }} type="button">
+                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60" disabled={!editCalculation || Boolean(savedFoodSession?.isSaving)} onClick={() => { void saveMealEdit(entry.id); }} type="button">
                             <Check aria-hidden="true" className="h-3.5 w-3.5" />
                             Save
                           </button>
@@ -4209,6 +4946,7 @@ export function HealthPage({
                           </Field>
                         </div>
                         {isHealthMealTimestampFuture(mealEditDraft.date, mealEditDraft.time) ? <p className="text-xs text-[#a25b50] dark:text-[#ffb3a9]">Choose a past or current meal time.</p> : null}
+                        {savedFoodSession?.saveError ? <p aria-live="polite" className="text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]" role="alert">{savedFoodSession.saveError}</p> : null}
                         <div className="grid gap-3 sm:grid-cols-[1.4fr_repeat(4,minmax(0,1fr))]">
                           <Field label="Serving">
                             <input className="health-input" onChange={(event) => setMealEditDraft((current) => ({ ...current, servingLabel: event.target.value }))} value={mealEditDraft.servingLabel} />
@@ -4227,11 +4965,11 @@ export function HealthPage({
                           </Field>
                         </div>
                         <div className="flex flex-wrap justify-end gap-2">
-                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" onClick={() => setEditingMealId(null)} type="button">
+                          <button className="ui-pill-button-light inline-flex items-center gap-1.5" disabled={Boolean(savedFoodSession?.isSaving)} onClick={closeMealEdit} type="button">
                             <X aria-hidden="true" className="h-3.5 w-3.5" />
-                            Cancel
+                            {savedFoodSession?.dirty || savedFoodSession?.saveError ? "Discard Draft" : "Cancel"}
                           </button>
-                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5" onClick={() => { void saveMealEdit(entry.id); }} type="button">
+                          <button className="ui-pill-button-strong-light inline-flex items-center gap-1.5 disabled:cursor-not-allowed disabled:opacity-60" disabled={Boolean(savedFoodSession?.isSaving)} onClick={() => { void saveMealEdit(entry.id); }} type="button">
                             <Check aria-hidden="true" className="h-3.5 w-3.5" />
                             Save
                           </button>
@@ -4391,6 +5129,18 @@ export function HealthPage({
             deleteRecipe={deleteRecipe}
             deleteSavedMeal={deleteSavedMeal}
             favorites={favorites}
+            customFoodSessionStore={customFoodSessionStore}
+            recipeSessionStore={recipeSessionStore}
+            savedMealSessionStore={savedMealSessionStore}
+            foodView={foodView ? activeFoodView : undefined}
+            onFoodViewChange={foodView ? onFoodViewChange : undefined}
+            editingViewId={activeMasterTabId}
+            foodSearchQuery={activeFoodView.foodLibrarySearchQuery}
+            ingredientSearchQuery={activeFoodView.ingredientSearchQuery}
+            onFoodSearchQueryChange={setFoodLibrarySearchQuery}
+            onIngredientSearchQueryChange={setIngredientSearchQuery}
+            onSectionChange={setFoodLibrarySection}
+            section={activeFoodView.librarySection}
             mealEntries={mealEntries}
             recipes={recipes}
             saveFood={saveFavoriteFood}
@@ -4398,6 +5148,8 @@ export function HealthPage({
             savedMeals={savedMeals}
             saveSavedMeal={saveSavedMeal}
             updatePreviousFoodLogs={updatePreviousFoodLogs}
+            pendingFoodHistoryRepairIds={pendingFoodHistoryRepairIds}
+            onDraftSafetyChange={reportFoodDraftSafety}
             shellSurface
           />
           </PageShell>
@@ -4411,6 +5163,7 @@ export function HealthPage({
           addWaterEntry={addWaterEntry}
           confirmWaterEntry={confirmWaterEntry}
           deleteWaterEntry={deleteWaterEntry}
+          onDraftSafetyChange={reportWaterDraftSafety}
           saveWaterGoal={(waterGoalMl) => saveProfile({ water_goal_ml: waterGoalMl })}
           today={today}
           updateWaterEntry={updateWaterEntry}
@@ -4427,15 +5180,15 @@ export function HealthPage({
           <HealthPanel icon={<Scale />} shellSurface subtitle="Weigh-in" title="Track trend, not perfection">
             <div className="grid gap-4 sm:grid-cols-[0.8fr_1.2fr]">
               <Field label={`Weight (${profile.preferred_weight_unit})`}>
-                <input className="health-input" inputMode="decimal" onChange={(event) => setWeightDraft(event.target.value)} placeholder={profile.preferred_weight_unit === "kg" ? "78.2" : "172.4"} value={weightDraft} />
+                <input className="health-input" disabled={isSavingWeight} inputMode="decimal" onChange={(event) => setWeightDraft(event.target.value)} placeholder={profile.preferred_weight_unit === "kg" ? "78.2" : "172.4"} value={weightDraft} />
               </Field>
               <Field label="Note">
-                <input className="health-input" onChange={(event) => setWeightNote(event.target.value)} placeholder="Optional context" value={weightNote} />
+                <input className="health-input" disabled={isSavingWeight} onChange={(event) => setWeightNote(event.target.value)} placeholder="Optional context" value={weightNote} />
               </Field>
             </div>
             <div className="mt-4 flex justify-end">
-              <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveWeight} onClick={() => { void handleSaveWeight(); }} type="button">
-                Save Weight
+              <button className="ui-pill-button-strong-light disabled:cursor-not-allowed disabled:opacity-60" disabled={!canSaveWeight || isSavingWeight} onClick={() => { void handleSaveWeight(); }} type="button">
+                {isSavingWeight ? "Saving…" : "Save Weight"}
               </button>
             </div>
             <div className="mt-5 grid gap-3 sm:grid-cols-3">
@@ -4529,11 +5282,13 @@ export function HealthPage({
 
           <PageShell id="sleep-log" label="Log Sleep">
           <HealthPanel icon={<MoonStar />} shellSurface subtitle="Manual entry" title="Log sleep">
-            <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
-            <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
+            <fieldset className="contents" disabled={isSavingManualSleep}>
+              <SleepKindSelector onChange={(kind) => setManualSleepDraft((current) => ({ ...current, kind }))} value={manualSleepDraft.kind} />
+              <SleepDraftFields draft={manualSleepDraft} onChange={(next) => setManualSleepDraft(next)} />
+            </fieldset>
             {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
             <div className="mt-4 flex justify-end">
-              <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveManualSleep(); }} type="button">Log Sleep</button>
+              <button className="ui-pill-button-strong-light" disabled={isSavingManualSleep} onClick={() => { void handleSaveManualSleep(); }} type="button">{isSavingManualSleep ? "Saving…" : "Log Sleep"}</button>
             </div>
           </HealthPanel>
           </PageShell>
@@ -4585,12 +5340,14 @@ export function HealthPage({
                     </div>
                     {editingSleepId === session.id && sleepEditDraft ? (
                       <div className="mt-3 border-t border-[#edf0fb] pt-3 dark:border-white/10">
-                        <SleepKindSelector onChange={(kind) => setSleepEditDraft((current) => current ? { ...current, kind } : current)} value={sleepEditDraft.kind} />
-                        <SleepDraftFields draft={sleepEditDraft} onChange={(next) => setSleepEditDraft(next)} />
+                        <fieldset className="contents" disabled={isSavingSleepEdit}>
+                          <SleepKindSelector onChange={(kind) => setSleepEditDraft((current) => current ? { ...current, kind } : current)} value={sleepEditDraft.kind} />
+                          <SleepDraftFields draft={sleepEditDraft} onChange={(next) => setSleepEditDraft(next)} />
+                        </fieldset>
                         {sleepFormError ? <p className="mt-3 text-xs font-semibold text-[#c54c68] dark:text-[#ffb0c1]">{sleepFormError}</p> : null}
                         <div className="mt-3 flex justify-end gap-2">
-                          <button className="ui-pill-button-light" onClick={() => { setEditingSleepId(null); setSleepEditDraft(null); }} type="button">Cancel</button>
-                          <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveSleepEdit(); }} type="button">Save</button>
+                          <button className="ui-pill-button-light" disabled={isSavingSleepEdit} onClick={() => { setEditingSleepId(null); setSleepEditDraft(null); }} type="button">Cancel</button>
+                          <button className="ui-pill-button-strong-light" disabled={isSavingSleepEdit} onClick={() => { void handleSaveSleepEdit(); }} type="button">{isSavingSleepEdit ? "Saving…" : "Save"}</button>
                         </div>
                       </div>
                     ) : null}
@@ -4620,6 +5377,7 @@ export function HealthPage({
                     accept=".xml,.zip,text/xml,application/zip"
                     aria-describedby="apple-health-import-help"
                     className="health-input"
+                    disabled={isSavingImport}
                     onChange={(event) => {
                       void handleAppleFilePicked(event.target.files?.[0] ?? null);
                       event.currentTarget.value = "";
@@ -4629,6 +5387,7 @@ export function HealthPage({
                 </Field>
                 <button
                   className="rounded-full bg-[#eef3ff] px-4 py-2 text-sm font-semibold text-[#4e5ec8] dark:bg-[#1d2342] dark:text-[#c4d1ff]"
+                  disabled={isSavingImport}
                   onClick={resetImportPreviewState}
                   type="button"
                 >
@@ -4724,6 +5483,7 @@ export function HealthPage({
           <ReorderablePageShells layout={pageShellLayout}>
           <PageShell id="settings-content" label="Health Settings">
           <HealthPanel icon={<Target />} shellSurface subtitle="Health settings">
+            <fieldset className="contents" disabled={isSavingHealthProfile}>
             <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
             <Field label="Weight unit">
               <select className="health-input" onChange={(event) => handleWeightUnitChange(event.target.value as HealthProfile["preferred_weight_unit"])} value={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit}>
@@ -4772,10 +5532,11 @@ export function HealthPage({
             </div>
             <div className="mt-4 flex justify-end">
               <button className="ui-pill-button-strong-light" onClick={() => { void handleSaveProfile(); }} type="button">
-                Save Goals
+                {isSavingHealthProfile ? "Saving…" : "Save Goals"}
               </button>
             </div>
-            <JournalQuestionSettings onSave={saveJournalQuestions} questions={activeProfile.journal_questions ?? []} />
+            </fieldset>
+            <JournalQuestionSettings onDraftSafetyChange={reportJournalQuestionDraftSafety} onSave={saveJournalQuestions} questions={activeProfile.journal_questions ?? []} />
             <WeightForecastCard forecast={weightForecast} unit={profileDraft.preferred_weight_unit ?? profile.preferred_weight_unit} />
           </HealthPanel>
           </PageShell>
@@ -5401,6 +6162,25 @@ function getStructuredMealDefinition(entry: HealthMealEntry): MealFoodSelection 
     servingQuantity,
     servingUnit: snapshot.serving_unit.trim(),
     sourceFoodId: entry.source_food_id ?? snapshot.source_food_id,
+  };
+}
+
+function createMealEditDraftFromEntry(entry: HealthMealEntry): MealEditDraft {
+  const structuredMeal = getStructuredMealDefinition(entry);
+  const parsedServing = parseQuantityServingLabel(entry.serving_label ?? "");
+  const quantity = parsedServing.quantity;
+  return {
+    mode: structuredMeal ? "structured" : "legacy",
+    calories: structuredMeal ? String(structuredMeal.calories) : String(Math.round(entry.calories / quantity)),
+    carbs: entry.carbs_g === null ? "" : String(scaleNullableNumber(entry.carbs_g / quantity, 1)),
+    date: entry.entry_date,
+    fat: entry.fat_g === null ? "" : String(scaleNullableNumber(entry.fat_g / quantity, 1)),
+    mealSlot: entry.meal_slot,
+    protein: entry.protein_g === null ? "" : String(scaleNullableNumber(entry.protein_g / quantity, 1)),
+    quantity: structuredMeal ? String(entry.consumed_quantity) : String(quantity),
+    measurement: structuredMeal?.consumedUnit ?? "serving",
+    servingLabel: structuredMeal?.servingLabel ?? parsedServing.servingLabel,
+    time: formatTimeInput(entry.logged_at),
   };
 }
 

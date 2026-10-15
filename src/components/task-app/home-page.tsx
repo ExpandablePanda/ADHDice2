@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, Trash2 } from "lucide-react";
+import { ArrowDownToLine, ArrowUpToLine, CalendarDays, ChevronDown, Folder, GripVertical, ListTodo, LoaderCircle, Minus, Pencil, Plus, Search, Settings2, Skull, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type MouseEvent as ReactMouseEvent, type PointerEvent as ReactPointerEvent, type ReactNode } from "react";
 
 import { AdhdCard } from "@/components/ui-system/adhd-card";
@@ -14,12 +14,13 @@ import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, Re
 import { usePageShellLayout } from "@/hooks/usePageShellLayout";
 import { HOME_PAGE_SHELL_CANONICAL_LAYOUT, HOME_PAGE_SHELL_IDS } from "@/lib/page-shell-layout";
 import { SortableList } from "@/components/ui/sortable-list";
-import { useHomeTodoState } from "@/hooks/useHomeTodoState";
+import { useHomeTodoStateController } from "@/components/task-app/home-todo-state-provider";
 import { TaskStatusCircleRail, formatTaskStatusLabel, renderTaskStatusCircle } from "@/components/task-app/task-status-ui";
 import { TaskAttentionChip } from "./task-attention-chip";
 import { PageShellHeader } from "./page-shell-header";
 import { getSelectableTaskStatusesForTask } from "@/lib/task-complete";
 import { resolveTaskStatusOptionsForTask } from "@/lib/task-state-engine/action-authority";
+import { WorkspaceOverlayFrame } from "@/components/task-app/master-workspace-panel";
 import type { TaskBehaviorPolicyResolutionContext } from "@/lib/task-state-engine/behavior-policy";
 import type { Task, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
@@ -50,10 +51,12 @@ import {
 } from "@/lib/home-progress";
 import {
   buildHomeTaskRowHierarchy,
+  buildHomeFolderTaskHierarchyProjection,
   buildHomeTodoHierarchy,
   buildHomeTodoDaySections,
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
+  HOME_ROUTINE_UNSECTIONED_ID,
   createHomeTodoTask,
   reconcileHomeRoutineSectionAssignments,
   formatHomeRoutineDueLabel,
@@ -62,14 +65,16 @@ import {
   getHomeTasksByCanonicalMembership,
   getHomeTodoSearchText,
   reconcileHomeUrgentTaskIds,
-  shouldPersistHomeRoutineReconciliation,
   isHomeTodoTaskEligible,
   mergeHomeTodoVisibleTaskIds,
   moveHomeTodoTaskIdToEdge,
   reconcileHomeTodoTaskIds,
   reconcileHomeRoutineTaskIds,
+  canReconcileHomeTodoMemberships,
   sortHomeTodoSearchResults,
   type HomeRoutineGroup,
+  type HomeFolderTaskHierarchyGroup,
+  type HomeFolderTaskHierarchyNode,
   type HomeScratchpadItem,
   type HomeTodoTaskMetadata,
 } from "@/lib/home-todo-state";
@@ -91,6 +96,7 @@ const HOME_TODO_ACTION_ICON_CLASS = "max-sm:!h-[12.25px] max-sm:!w-[12.25px]";
 const HOME_GEAR_LONG_PRESS_MS = 475;
 const HOME_GEAR_LONG_PRESS_MOVE_PX = 8;
 export type HomePanelTab = "urgent" | "todo" | "attention" | "missed" | "routine" | "scratchpad";
+type HomeRoutineView = "folders" | "sections";
 type HomeRowActionMenuView = "actions" | "move-day" | "move-routine-section";
 
 type HomeRowActionMenuState = {
@@ -356,6 +362,7 @@ export function HomePage({
   onSetRoutineMembership,
   onReorderChildTask,
   onOpenTask,
+  onOpenJournal,
   onSetStatus,
   taskDisplayStatusByTaskId,
   dailyProgress,
@@ -373,6 +380,7 @@ export function HomePage({
   calendarNowMs,
   calendarTimeZone,
   tasks,
+  taskDataReady,
   taskContentFolders,
   userId,
   onTranscribeScratchAudio,
@@ -387,6 +395,7 @@ export function HomePage({
   healthProfile,
   healthFoods,
   healthLoading,
+  healthFoodLibraryReady,
   addWaterEntries,
   addWeightEntries,
   addMealEntries,
@@ -405,6 +414,7 @@ export function HomePage({
   onSetRoutineMembership: (taskId: string, included: boolean) => Promise<boolean>;
   onReorderChildTask: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenTask: (taskId: string) => void;
+  onOpenJournal: (entryType: "start_of_day" | "end_of_day") => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
   dailyProgress: HomeDailyProgress;
@@ -422,6 +432,7 @@ export function HomePage({
   calendarNowMs: number;
   calendarTimeZone: string;
   tasks: Task[];
+  taskDataReady: boolean;
   taskContentFolders: readonly TaskContentFolderRow[];
   userId: string | null;
   onTranscribeScratchAudio: (audio: Blob) => Promise<string>;
@@ -436,6 +447,7 @@ export function HomePage({
   healthProfile: HealthProfile | null;
   healthFoods: HealthFoodLibraryItem[];
   healthLoading: boolean;
+  healthFoodLibraryReady: boolean;
   addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   addMealEntries: (inputs: Array<Omit<HealthMealEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
@@ -449,6 +461,7 @@ export function HomePage({
   const layout = usePageShellLayout(userId, "home", HOME_PAGE_SHELL_IDS, HOME_PAGE_SHELL_CANONICAL_LAYOUT.sizes, HOME_PAGE_SHELL_CANONICAL_LAYOUT);
   const {
     createRoutineSection,
+    deleteRoutineSection,
     deleteScratchpadItem,
     moveTodoTaskToUrgent,
     moveUrgentTaskToTodo,
@@ -456,7 +469,8 @@ export function HomePage({
     moveScratchpadTextToItems,
     saveScratchpadText,
     state,
-    syncStatus,
+    hydration,
+    hydrationReady,
     updateRoutineSectionName,
     updateRoutineTaskIds,
     updateRoutineTaskSection,
@@ -465,10 +479,11 @@ export function HomePage({
     updateTaskIds,
     updateTasksPerDay,
     updateUrgentTaskIds,
-  } = useHomeTodoState(userId);
+  } = useHomeTodoStateController();
   const [query, setQuery] = useState("");
   const [isSearchOpen, setIsSearchOpen] = useState(false);
   const [activeHomeTab, setActiveHomeTab] = useState<HomePanelTab>("urgent");
+  const [routineView, setRoutineView] = useState<HomeRoutineView>("folders");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [scratchpadDraft, setScratchpadDraft] = useState("");
   const [isShorthandHelpOpen, setIsShorthandHelpOpen] = useState(false);
@@ -485,6 +500,7 @@ export function HomePage({
   const [rowActionMenu, setRowActionMenu] = useState<HomeRowActionMenuState | null>(null);
   const [isFastActionMode, setIsFastActionMode] = useState(false);
   const [editingRoutineSectionId, setEditingRoutineSectionId] = useState<string | null>(null);
+  const [routineSectionDeleteConfirmation, setRoutineSectionDeleteConfirmation] = useState<{ id: string; label: string } | null>(null);
   const [routineSectionNameDraft, setRoutineSectionNameDraft] = useState("");
   const [routineChildDragState, setRoutineChildDragState] = useState<HomeRoutineChildDragState | null>(null);
   const [routineChildDropTarget, setRoutineChildDropTarget] = useState<HomeRoutineChildDropTarget | null>(null);
@@ -517,9 +533,9 @@ export function HomePage({
   }, [batchIntakeDrafts, batchIntakeHasFocusRows, onBatchIntakeFocusActivationChange]);
 
   const effectiveBatchIntakeDrafts = useMemo(() => {
-    if (!batchIntakeDrafts || healthLoading || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
+    if (!batchIntakeDrafts || !healthFoodLibraryReady || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
     return reconcileBatchIntakeMealFoodProposals(batchIntakeDrafts, healthFoods, { createWriteId: (proposal) => proposal.writeId ?? createBrowserUuidV4() });
-  }, [batchIntakeDrafts, healthFoods, healthLoading]);
+  }, [batchIntakeDrafts, healthFoods, healthFoodLibraryReady]);
 
   useEffect(() => () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -559,6 +575,10 @@ export function HomePage({
     [routineGroups],
   );
   const routineTaskIdSet = useMemo(() => new Set(routineTasks.map((task) => task.id)), [routineTasks]);
+  const routineFolderGroups = useMemo(
+    () => buildHomeFolderTaskHierarchyProjection(routineTasks, tasks, taskContentFolders, taskHierarchy),
+    [routineTasks, taskContentFolders, taskHierarchy, tasks],
+  );
   const attentionTasks = useMemo(
     () => getHomeTasksByCanonicalMembership(tasks, listMembershipsByTaskId, "attention", taskById),
     [listMembershipsByTaskId, taskById, tasks],
@@ -566,6 +586,14 @@ export function HomePage({
   const missedTasks = useMemo(
     () => getHomeTasksByCanonicalMembership(tasks, listMembershipsByTaskId, "missed", taskById),
     [listMembershipsByTaskId, taskById, tasks],
+  );
+  const attentionFolderGroups = useMemo(
+    () => buildHomeFolderTaskHierarchyProjection(attentionTasks, tasks, taskContentFolders, taskHierarchy),
+    [attentionTasks, taskContentFolders, taskHierarchy, tasks],
+  );
+  const missedFolderGroups = useMemo(
+    () => buildHomeFolderTaskHierarchyProjection(missedTasks, tasks, taskContentFolders, taskHierarchy),
+    [missedTasks, taskContentFolders, taskHierarchy, tasks],
   );
   const searchResults = useMemo(() => {
     const needle = query.trim().toLowerCase();
@@ -610,25 +638,43 @@ export function HomePage({
     [effectiveRoutineSectionState, reconciledRoutineTaskIds],
   );
   const routineGroupByAnchorId = useMemo(() => new Map(routineGroups.map((group) => [group.anchorId, group])), [routineGroups]);
+  const routineGroupAnchorIds = useMemo(() => new Set(routineGroups.map((group) => group.anchorId)), [routineGroups]);
   const dayTaskIds = daySections.flatMap((section) => section.taskIds);
   const sevenDayCapacity = dayTaskIds.length;
   const dayTasks = dayTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
   const doLaterTasks = laterTaskIds.map((taskId) => taskById.get(taskId)).filter((task): task is Task => Boolean(task));
   const visibleTasks = isDoLaterOpen ? [...dayTasks, ...doLaterTasks] : dayTasks;
+  const canReconcileMemberships = canReconcileHomeTodoMemberships({
+    homeHydration: hydration,
+    taskDataOwnerId: userId,
+    taskDataReady,
+    userId,
+  });
 
   useEffect(() => {
-    if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
+    if (!hydrationReady || !canReconcileMemberships) return;
     updateRoutineTaskIds((currentRoutineTaskIds) => reconcileHomeRoutineTaskIds(currentRoutineTaskIds, routineTaskIds));
-  }, [routineTaskIds, syncStatus, tasks.length, updateRoutineTaskIds]);
+  }, [canReconcileMemberships, hydrationReady, routineTaskIds, updateRoutineTaskIds]);
 
   useEffect(() => {
-    if (!tasks.length || !shouldPersistHomeRoutineReconciliation(syncStatus)) return;
+    if (!hydrationReady || !canReconcileMemberships) return;
     updateUrgentTaskIds((currentUrgentTaskIds) => reconcileHomeUrgentTaskIds(currentUrgentTaskIds, tasks));
-  }, [syncStatus, tasks, updateUrgentTaskIds]);
+  }, [canReconcileMemberships, hydrationReady, tasks, updateUrgentTaskIds]);
 
   useEffect(() => {
     if (!scratchpadDraftDirtyRef.current) setScratchpadDraft(state.scratchpadText);
   }, [state.scratchpadText]);
+
+  useEffect(() => {
+    if (!routineSectionDeleteConfirmation) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setRoutineSectionDeleteConfirmation(null);
+    };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [routineSectionDeleteConfirmation]);
 
   const handleScratchpadDictationBody = useCallback((nextBody: string) => {
     scratchpadDraftDirtyRef.current = true;
@@ -750,6 +796,7 @@ export function HomePage({
   async function handleCreateTask(draft: TaskCreationDraft) {
     const creationTab = activeHomeTab;
     if (creationTab === "attention" || creationTab === "missed") return null;
+    if (!hydrationReady || (creationTab === "routine" && !canReconcileMemberships)) return null;
     const conversionItemId = convertingScratchpadItemId;
     const metadata = creationTab === "urgent"
       ? { ...draft.metadata, priority_level: 5 as const }
@@ -782,6 +829,7 @@ export function HomePage({
 
   async function addSearchResult(taskId: string) {
     if (activeHomeTab === "attention" || activeHomeTab === "missed") return;
+    if (!hydrationReady || (activeHomeTab === "routine" && !canReconcileMemberships)) return;
     if (activeHomeTab === "urgent") {
       const promoted = await promoteHomeSearchResultToUrgent({
         moveTodoTaskToUrgent,
@@ -1125,6 +1173,7 @@ export function HomePage({
 
   function renderRoutineSectionHeader(section: typeof routineSections[number]) {
     const isEditing = editingRoutineSectionId === section.id;
+    const isUnsectioned = section.id === HOME_ROUTINE_UNSECTIONED_ID;
     return (
       <div className={`mt-5 flex items-center justify-between gap-3 border-t border-[#ece8f8] pt-4 dark:border-white/10 ${section.sectionIndex === 0 ? "mt-3 border-t-0" : ""}`} key={`home-routine-section-${section.id}`}>
         <div>
@@ -1151,17 +1200,34 @@ export function HomePage({
             ) : (
               <>
                 <h2 className="text-sm font-bold text-[#4d466d] dark:text-white/85">{section.label}</h2>
-                <AdhdIconButton
-                  aria-label={`Rename ${section.label}`}
-                  className="h-6 w-6"
-                  iconClassName="h-3.5 w-3.5"
-                  onClick={() => beginRoutineSectionRename(section)}
-                  size="sm"
-                  title={`Rename ${section.label}`}
-                  tone="ghost"
-                >
-                  <Pencil aria-hidden="true" />
-                </AdhdIconButton>
+                {!isUnsectioned ? <>
+                  <div className="flex items-center gap-0">
+                    <AdhdIconButton
+                      aria-label={`Rename ${section.label}`}
+                      className="!h-6 !w-5"
+                      iconClassName="h-3.5 w-3.5"
+                      onClick={() => beginRoutineSectionRename(section)}
+                      size="sm"
+                      title={`Rename ${section.label}`}
+                      tone="default"
+                      variant="rowToolbar"
+                    >
+                      <Pencil aria-hidden="true" />
+                    </AdhdIconButton>
+                    <AdhdIconButton
+                      aria-label={`Delete ${section.label}`}
+                      className="!h-6 !w-5"
+                      iconClassName="h-3 w-3"
+                      onClick={() => setRoutineSectionDeleteConfirmation({ id: section.id, label: section.label })}
+                      size="sm"
+                      title={`Delete ${section.label}`}
+                      tone="danger"
+                      variant="rowToolbar"
+                    >
+                      <Trash2 aria-hidden="true" />
+                    </AdhdIconButton>
+                  </div>
+                </> : null}
               </>
             )}
           </div>
@@ -1264,18 +1330,24 @@ export function HomePage({
     routineDepth = 0,
     isRoutineGroupAnchor = false,
     routineSectionGroupIds?: readonly string[],
+    isContextOnly = false,
+    isAlphabeticalFolderView = false,
   ) {
     const isRoutine = mode === "routine";
     const isUrgent = mode === "urgent";
-    const isDerived = mode === "attention" || mode === "missed";
-    const isRoutineChild = isRoutine && !isRoutineGroupAnchor;
+    const isDerived = mode === "attention" || mode === "missed" || isContextOnly;
+    const isRoutineChild = isRoutine && !isRoutineGroupAnchor && !isContextOnly;
     const hierarchy = buildHomeTaskRowHierarchy(task, tasks, taskContentFolders, taskById, taskHierarchy);
     const displayStatus = taskDisplayStatusByTaskId[task.id] ?? task.status;
-    const statusMenuOpen = statusMenuTaskId === task.id;
+    const statusMenuOpen = !isContextOnly && statusMenuTaskId === task.id;
     const fastActionOpen = isFastActionMode;
     const rowActionMenuOpen = rowActionMenu?.taskId === task.id;
     const rowActionMenuView = rowActionMenuOpen ? rowActionMenu.view : "actions";
     const currentRoutineSectionId = isRoutine ? effectiveRoutineSectionState.routineSectionIdByTaskId[task.id] : null;
+    const routineSectionDestinations = [
+      ...routineSections.filter((section) => section.id !== HOME_ROUTINE_UNSECTIONED_ID),
+      { id: HOME_ROUTINE_UNSECTIONED_ID, label: "Unsectioned" },
+    ];
     const durableTaskIndex = isUrgent ? state.urgentTaskIds.indexOf(task.id) : state.taskIds.indexOf(task.id);
     const renderedDayOffset = isUrgent ? null : daySections.find((section) => section.taskIds.includes(task.id))?.dayIndex
       ?? (laterTaskIds.includes(task.id) ? 7 : null);
@@ -1296,18 +1368,27 @@ export function HomePage({
     return (
       <AdhdCard
         key={rowKey ?? task.id}
-        className={`${isRoutineChild
-          ? "grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-0"
-          : isDerived
-            ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0"
-            : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}${isRoutineChild && routineChildDragState?.taskId === task.id ? " opacity-60" : ""}${isRoutineChild ? ` ${getRoutineChildDropIndicatorClassName(task.id)}` : ""}`}
+        className={`${isContextOnly
+          ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0 border-dashed bg-[#fbfaff] dark:bg-white/[0.025]"
+          : isAlphabeticalFolderView
+            ? isRoutineChild
+              ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0"
+              : "grid min-w-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-0"
+            : isRoutineChild
+              ? "grid min-w-0 grid-cols-[auto_auto_minmax(0,1fr)] items-center gap-x-0"
+              : isDerived
+                ? "grid min-w-0 grid-cols-[auto_minmax(0,1fr)] items-center gap-x-0"
+                : "grid min-w-0 grid-cols-[auto_auto_auto_minmax(0,1fr)_auto] items-center gap-x-0"}${isRoutineChild && routineChildDragState?.taskId === task.id ? " opacity-60" : ""}${isRoutineChild && !isAlphabeticalFolderView ? ` ${getRoutineChildDropIndicatorClassName(task.id)}` : ""}`}
         padding="sm"
-        onDragOver={isRoutineChild ? (event) => updateRoutineChildDropTarget(event, task, routineDepth) : undefined}
-        onDrop={isRoutineChild ? (event) => dropRoutineChildOnTask(event, task, routineDepth) : undefined}
-        style={isRoutineChild ? { marginLeft: `${Math.min(Math.max(routineDepth, 1), 3) * 0.75}rem` } : undefined}
+        data-home-context-only={isContextOnly ? "true" : undefined}
+        onDragOver={isRoutineChild && !isAlphabeticalFolderView ? (event) => updateRoutineChildDropTarget(event, task, routineDepth) : undefined}
+        onDrop={isRoutineChild && !isAlphabeticalFolderView ? (event) => dropRoutineChildOnTask(event, task, routineDepth) : undefined}
+        style={isAlphabeticalFolderView
+          ? routineDepth > 0 ? { marginLeft: `${Math.min(routineDepth, 5) * 0.75}rem` } : undefined
+          : isRoutineChild ? { marginLeft: `${Math.min(Math.max(routineDepth, 1), 3) * 0.75}rem` } : undefined}
       >
-        {!isRoutineChild && !isDerived ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
-        {isRoutineChild ? (
+        {!isRoutineChild && !isDerived && !isAlphabeticalFolderView ? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">{handle}</span> : null}
+        {isRoutineChild && !isAlphabeticalFolderView ? (
           <button
             aria-label={`Drag to reorder ${routineDepth > 1 ? "substep" : "step"} ${task.title || "Untitled"}`}
             className="inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#8a79d6] opacity-70 transition hover:bg-[#f3efff] hover:text-[#6f57f6] hover:opacity-100 dark:text-[#b6a9ec] dark:hover:bg-[#22193f] dark:hover:text-[#cabfff]"
@@ -1324,11 +1405,14 @@ export function HomePage({
             <GripVertical aria-hidden="true" className="h-3.5 w-3.5" />
           </button>
         ) : null}
-        {!isRoutineChild && !isDerived ? (
+        {!isRoutineChild && !isDerived && !isAlphabeticalFolderView ? (
           <span className="ml-1 shrink-0 text-sm font-medium leading-5 text-[#26324f] dark:text-white">
             {index + 1}
           </span>
         ) : null}
+        {isContextOnly ? (
+          <div className="flex min-h-8 items-center text-[11px] font-medium text-[#8c85a2] dark:text-white/45">Context</div>
+        ) : (
         <div className="relative ml-2 flex h-8 w-8 shrink-0 items-center justify-center" ref={statusMenuOpen ? statusMenuRef : undefined}>
           <button
             aria-expanded={statusMenuOpen}
@@ -1367,31 +1451,44 @@ export function HomePage({
             </div>
           ) : null}
         </div>
+        )}
         <div className="ml-2 min-w-0">
           {isRoutine ? (
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+              {isContextOnly ? (
                 <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
                   {task.title || "Untitled task"}
                 </p>
-              </button>
-              <RoutineTaskMetadata task={task} streakSummary={taskHistoryStreakSummaries[task.id]} />
+              ) : (
+                <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+                  <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
+                    {task.title || "Untitled task"}
+                  </p>
+                </button>
+              )}
+              {!isContextOnly ? <RoutineTaskMetadata task={task} streakSummary={taskHistoryStreakSummaries[task.id]} /> : null}
             </div>
           ) : (
             <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-              <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+              {isContextOnly ? (
                 <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
                   {task.title || "Untitled task"}
                 </p>
-              </button>
-              <HomeTodoTaskSignals
+              ) : (
+                <button className="block min-w-0 max-w-full text-left" onClick={() => onOpenTask(task.id)} type="button">
+                  <p className={`break-words leading-5 ${HOME_TODO_TITLE_CLASS}`}>
+                    {task.title || "Untitled task"}
+                  </p>
+                </button>
+              )}
+              {!isContextOnly ? <HomeTodoTaskSignals
                 attentionReason={taskAttentionReasonByTaskId[task.id]}
                 task={task}
                 streakSummary={taskHistoryStreakSummaries[task.id]}
-              />
+              /> : null}
             </div>
           )}
-          {hierarchy.length ? (
+          {hierarchy.length && !isAlphabeticalFolderView ? (
             <p className="mt-1 break-words text-xs leading-5 text-[#837b9e] dark:text-white/48">{hierarchy.join(" › ")}</p>
           ) : null}
         </div>
@@ -1454,7 +1551,7 @@ export function HomePage({
                     <ArrowDownToLine aria-hidden="true" />
                   </AdhdIconButton>
                 ) : null}
-                {isRoutine && !isAtRoutineTop ? (
+                {isRoutine && !isAlphabeticalFolderView && !isAtRoutineTop ? (
                   <AdhdIconButton
                     aria-label={`Move ${task.title || "Untitled task"} to Top`}
                     className={HOME_TODO_ACTION_CLASS}
@@ -1469,7 +1566,7 @@ export function HomePage({
                     <ArrowUpToLine aria-hidden="true" />
                   </AdhdIconButton>
                 ) : null}
-                {isRoutine && !isAtRoutineBottom ? (
+                {isRoutine && !isAlphabeticalFolderView && !isAtRoutineBottom ? (
                   <AdhdIconButton
                     aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
                     className={HOME_TODO_ACTION_CLASS}
@@ -1491,7 +1588,7 @@ export function HomePage({
                   onClick={() => {
                     setRowActionMenu(null);
                     if (isRoutine) {
-                      void onSetRoutineMembership(task.id, false);
+                      if (canReconcileMemberships) void onSetRoutineMembership(task.id, false);
                     } else if (isUrgent) {
                       updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                     } else {
@@ -1550,7 +1647,7 @@ export function HomePage({
               >
                 {rowActionMenuView === "move-routine-section" ? (
                   <div className="grid gap-1">
-                    {routineSections.map((section) => {
+                    {routineSectionDestinations.map((section) => {
                       const isCurrentSection = currentRoutineSectionId === section.id;
                       return (
                         <button
@@ -1620,7 +1717,7 @@ export function HomePage({
                   </div>
                   ) : (
                   <div className="grid gap-1">
-                    {isRoutine && isRoutineGroupAnchor ? (
+                    {isRoutine && isRoutineGroupAnchor && !isAlphabeticalFolderView ? (
                       <button
                         aria-label={`Move ${task.title || "Untitled task"} to section`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
@@ -1699,7 +1796,7 @@ export function HomePage({
                         Move to Bottom
                       </button>
                     ) : null}
-                    {isRoutine && !isAtRoutineTop ? (
+                    {isRoutine && !isAlphabeticalFolderView && !isAtRoutineTop ? (
                       <button
                         aria-label={`Move ${task.title || "Untitled task"} to Top`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
@@ -1714,7 +1811,7 @@ export function HomePage({
                         Move to Top
                       </button>
                     ) : null}
-                    {isRoutine && !isAtRoutineBottom ? (
+                    {isRoutine && !isAlphabeticalFolderView && !isAtRoutineBottom ? (
                       <button
                         aria-label={`Move ${task.title || "Untitled task"} to Bottom`}
                         className="flex min-h-9 items-center gap-2 rounded-[0.7rem] px-3 py-2 text-left text-sm font-semibold text-[#3c4966] hover:bg-[#f7f3ff] dark:text-white/75 dark:hover:bg-white/[0.08]"
@@ -1735,7 +1832,7 @@ export function HomePage({
                       onClick={() => {
                         setRowActionMenu(null);
                         if (isRoutine) {
-                          void onSetRoutineMembership(task.id, false);
+                          if (canReconcileMemberships) void onSetRoutineMembership(task.id, false);
                         } else if (isUrgent) {
                           updateUrgentTaskIds((taskIds) => taskIds.filter((taskId) => taskId !== task.id));
                         } else {
@@ -1756,6 +1853,66 @@ export function HomePage({
         ) : null}
       </AdhdCard>
     );
+  }
+
+  function renderHomeFolderTaskNode(
+    node: HomeFolderTaskHierarchyNode,
+    mode: "attention" | "missed" | "routine",
+    folderKey: string,
+  ): ReactNode {
+    return (
+      <div className="space-y-2" key={`${folderKey}-${node.task.id}`}>
+        {renderHomeTask(
+          node.task,
+          0,
+          null,
+          mode,
+          `${folderKey}-${node.task.id}`,
+          node.depth,
+          mode === "routine" && routineGroupAnchorIds.has(node.task.id),
+          undefined,
+          !node.isQualifying,
+          true,
+        )}
+        {node.children.map((child) => renderHomeFolderTaskNode(child, mode, folderKey))}
+      </div>
+    );
+  }
+
+  function renderHomeFolderGroup(
+    group: HomeFolderTaskHierarchyGroup,
+    mode: "attention" | "missed" | "routine",
+    folderDepth = 0,
+  ): ReactNode {
+    const folderKey = group.folderId ?? "unfiled";
+    const label = group.isUnfiled ? "Unfiled" : group.folder?.name ?? "Unfiled";
+    return (
+      <div data-home-folder-group={folderKey} key={`${mode}-${folderKey}`}>
+        <div
+          className="mt-4 flex min-w-0 items-center justify-between gap-3 rounded-lg border border-[#e8e2f2] bg-[#faf8ff] px-3 py-2 dark:border-white/10 dark:bg-white/[0.035]"
+          style={folderDepth > 0 ? { marginLeft: `${Math.min(folderDepth, 5) * 0.75}rem` } : undefined}
+        >
+          <h2 className="flex min-w-0 items-center gap-2 text-sm font-bold text-[#4d466d] dark:text-white/85">
+            {!group.isUnfiled ? <Folder aria-hidden="true" className="h-4 w-4 shrink-0 text-[#806fbd] dark:text-[#b6a9ec]" /> : null}
+            <span className="break-words">{label}</span>
+          </h2>
+          <span className="shrink-0 text-xs text-[#817995] dark:text-white/48">
+            {group.qualifyingTaskCount} task{group.qualifyingTaskCount === 1 ? "" : "s"}
+          </span>
+        </div>
+        <div className="mt-2 space-y-2">
+          {group.taskRoots.map((node) => renderHomeFolderTaskNode(node, mode, folderKey))}
+        </div>
+        {group.childFolders.map((child) => renderHomeFolderGroup(child, mode, folderDepth + 1))}
+      </div>
+    );
+  }
+
+  function renderHomeFolderGroups(
+    groups: readonly HomeFolderTaskHierarchyGroup[],
+    mode: "attention" | "missed" | "routine",
+  ) {
+    return <div className={HOME_TODO_LIST_CLASS}>{groups.map((group) => renderHomeFolderGroup(group, mode))}</div>;
   }
 
   useEffect(() => {
@@ -1804,59 +1961,79 @@ export function HomePage({
                 >
                   {activeHomeTab === "urgent" ? "Urgent" : activeHomeTab === "todo" ? "To-do list" : activeHomeTab === "attention" ? "Attention" : activeHomeTab === "missed" ? "Missed" : activeHomeTab === "routine" ? "Routine" : "Scratchpad"}
                 </h1>
-                <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "urgent"}
-                    onClick={() => selectHomeTab("urgent")}
-                    role="tab"
-                    selected={activeHomeTab === "urgent"}
-                  >
-                    Urgent
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "todo"}
-                    onClick={() => selectHomeTab("todo")}
-                    role="tab"
-                    selected={activeHomeTab === "todo"}
-                  >
-                    To-do
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "attention"}
-                    onClick={() => selectHomeTab("attention")}
-                    role="tab"
-                    selected={activeHomeTab === "attention"}
-                  >
-                    Attention
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "missed"}
-                    onClick={() => selectHomeTab("missed")}
-                    role="tab"
-                    selected={activeHomeTab === "missed"}
-                  >
-                    Missed
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "routine"}
-                    onClick={() => selectHomeTab("routine")}
-                    role="tab"
-                    selected={activeHomeTab === "routine"}
-                  >
-                    Routine
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "scratchpad"}
-                    onClick={() => selectHomeTab("scratchpad")}
-                    role="tab"
-                    selected={activeHomeTab === "scratchpad"}
-                  >
-                    Scratchpad
-                  </AdhdChip>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "urgent"}
+                      onClick={() => selectHomeTab("urgent")}
+                      role="tab"
+                      selected={activeHomeTab === "urgent"}
+                    >
+                      Urgent
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "todo"}
+                      onClick={() => selectHomeTab("todo")}
+                      role="tab"
+                      selected={activeHomeTab === "todo"}
+                    >
+                      To-do
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "attention"}
+                      onClick={() => selectHomeTab("attention")}
+                      role="tab"
+                      selected={activeHomeTab === "attention"}
+                    >
+                      Attention
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "missed"}
+                      onClick={() => selectHomeTab("missed")}
+                      role="tab"
+                      selected={activeHomeTab === "missed"}
+                    >
+                      Missed
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "routine"}
+                      onClick={() => selectHomeTab("routine")}
+                      role="tab"
+                      selected={activeHomeTab === "routine"}
+                    >
+                      Routine
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "scratchpad"}
+                      onClick={() => selectHomeTab("scratchpad")}
+                      role="tab"
+                      selected={activeHomeTab === "scratchpad"}
+                    >
+                      Scratchpad
+                    </AdhdChip>
+                  </div>
+                  <nav aria-label="Journal shortcuts" className="flex flex-wrap gap-1.5">
+                    <AdhdChip aria-label="Open Start of Day Journal" onClick={() => onOpenJournal("start_of_day")} type="button">
+                      Start of Day
+                    </AdhdChip>
+                    <AdhdChip aria-label="Open End of Day Journal" onClick={() => onOpenJournal("end_of_day")} type="button">
+                      End of Day
+                    </AdhdChip>
+                  </nav>
                 </div>
               </div>
             </div>
             <div className="relative flex items-center gap-2" ref={settingsMenuRef}>
+              {activeHomeTab === "routine" ? (
+                <div aria-label="Routine view" className="flex gap-1.5" role="group">
+                  <AdhdChip onClick={() => setRoutineView("folders")} selected={routineView === "folders"} type="button">
+                    Folders
+                  </AdhdChip>
+                  <AdhdChip onClick={() => setRoutineView("sections")} selected={routineView === "sections"} type="button">
+                    Sections
+                  </AdhdChip>
+                </div>
+              ) : null}
               {activeHomeTab === "todo" || activeHomeTab === "routine" ? (
                 <AdhdIconButton
                   aria-expanded={isSettingsOpen}
@@ -1975,6 +2152,7 @@ export function HomePage({
                 executionResult={batchIntakeExecutionResult}
                 healthLoading={healthLoading}
                 healthFoods={healthFoods}
+                healthFoodLibraryReady={healthFoodLibraryReady}
                 healthProfile={healthProfile}
                 isApplying={batchIntakeApplying}
                 focusCategories={focusCategories}
@@ -2153,6 +2331,17 @@ export function HomePage({
             </>
           ) : activeHomeTab === "routine" ? (
             <>
+              {routineView === "folders" ? (
+                <>
+                  {renderHomeFolderGroups(routineFolderGroups, "routine")}
+                  {!routineFolderGroups.length ? (
+                    <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/[0.15] dark:bg-white/[0.03] dark:text-white/55">
+                      No Routine tasks yet.
+                    </p>
+                  ) : null}
+                </>
+              ) : (
+                <>
               {routineSections.map((section) => {
                 const sectionRoutineGroups = section.groupIds
                   .map((groupId) => routineGroupByAnchorId.get(groupId))
@@ -2196,12 +2385,12 @@ export function HomePage({
                   No Routine tasks yet.
                 </p>
               ) : null}
+                </>
+              )}
             </>
           ) : activeHomeTab === "attention" ? (
             <>
-              <div className={HOME_TODO_LIST_CLASS}>
-                {attentionTasks.map((task, index) => renderHomeTask(task, index, null, "attention"))}
-              </div>
+              {renderHomeFolderGroups(attentionFolderGroups, "attention")}
               {!attentionTasks.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
                   No tasks need Attention right now.
@@ -2210,9 +2399,7 @@ export function HomePage({
             </>
           ) : activeHomeTab === "missed" ? (
             <>
-              <div className={HOME_TODO_LIST_CLASS}>
-                {missedTasks.map((task, index) => renderHomeTask(task, index, null, "missed"))}
-              </div>
+              {renderHomeFolderGroups(missedFolderGroups, "missed")}
               {!missedTasks.length ? (
                 <p className="mt-5 rounded-[1.25rem] border border-dashed border-[#ddd6ee] bg-[#fcfbff] px-5 py-6 text-center text-sm text-[#7d7597] dark:border-white/15 dark:bg-white/[0.03] dark:text-white/55">
                   No missed tasks right now.
@@ -2297,6 +2484,46 @@ export function HomePage({
       </PageShellSurface>
       </PageShell>
       </ReorderablePageShells>
+      {routineSectionDeleteConfirmation ? (() => {
+        const groupCount = state.routineTaskIds.filter((taskId) => (
+          state.routineSectionIdByTaskId[taskId] === routineSectionDeleteConfirmation.id
+        )).length;
+        return (
+          <WorkspaceOverlayFrame className="z-[100] grid place-items-center bg-[#17142a]/45 p-4" role="presentation">
+            <div
+              aria-labelledby="home-routine-delete-section-title"
+              aria-modal="true"
+              className="w-full max-w-md rounded-2xl border border-[#e4def2] bg-white p-5 shadow-2xl dark:border-white/15 dark:bg-[#201a35]"
+              role="dialog"
+            >
+              <h2 className="text-base font-bold text-[#332d4d] dark:text-white" id="home-routine-delete-section-title">
+                Delete &quot;{routineSectionDeleteConfirmation.label}&quot;?
+              </h2>
+              <p className="mt-2 text-sm leading-6 text-[#716b8c] dark:text-white/65">
+                {groupCount > 0
+                  ? `${groupCount} Routine ${groupCount === 1 ? "group" : "groups"} will move to Unsectioned.`
+                  : "Only the empty section will be removed."}
+              </p>
+              <p className="mt-2 text-sm leading-6 text-[#716b8c] dark:text-white/65">
+                Your Tasks, Steps, Substeps, and their saved data will not be deleted.
+              </p>
+              <div className="mt-5 flex justify-end gap-2">
+                <AdhdChip onClick={() => setRoutineSectionDeleteConfirmation(null)} type="button">Cancel</AdhdChip>
+                <AdhdChip
+                  onClick={() => {
+                    deleteRoutineSection(routineSectionDeleteConfirmation.id);
+                    setRoutineSectionDeleteConfirmation(null);
+                  }}
+                  tone="danger"
+                  type="button"
+                >
+                  Delete Section
+                </AdhdChip>
+              </div>
+            </div>
+          </WorkspaceOverlayFrame>
+        );
+      })() : null}
     </section>
   );
 }

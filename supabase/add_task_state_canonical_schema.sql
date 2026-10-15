@@ -410,7 +410,7 @@ create table if not exists public.adhdice_task_command_operations (
     'set_outcome', 'clear_outcome', 'complete_task', 'delay_occurrence',
     'set_due_date', 'set_repeat', 'calendar_override', 'clear_quota_balance', 'archive_task',
     'trash_task', 'restore_task', 'start_in_progress', 'clear_in_progress',
-    'reconcile_rollover', 'hierarchy_change'
+    'reconcile_rollover', 'recalculate_history', 'hierarchy_change'
   )),
   idempotence_identity text not null
     check (char_length(trim(idempotence_identity)) > 0),

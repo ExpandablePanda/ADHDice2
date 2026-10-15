@@ -331,13 +331,17 @@ test("Health production wiring keeps meal plans out of actual and achievement in
 });
 
 test("Meal Plan fallback writes use the separate per-user pending journal and remote success clears it", () => {
+  const addPlanSource = hookSource.slice(hookSource.indexOf("async function addMealPlanEntry"), hookSource.indexOf("async function updateMealPlanEntry"));
   assert.match(hookSource, /storageKey\(userId, "meal-plan-pending-mutations"\)/);
   assert.match(hookSource, /persistHealthMealPlanPendingMutations\(userId, nextJournal\)/);
-  assert.match(hookSource, /recordMealPlanPendingMutation\(\{ operation: "upsert", plan: nextRow \}\)/);
+  assert.match(addPlanSource, /recordMealPlanPendingMutation\(\{ operation: "upsert", plan: nextRow \}\)/);
+  assert.match(addPlanSource, /const planId = input\.id \?\? createLocalId\("health-meal-plan"\)/);
+  assert.match(addPlanSource, /\.insert\(\{ \.\.\.normalizedInput, user_id: userId \}\)/);
+  assert.match(addPlanSource, /reconcileHealthMealPlanEntryInsert\(/);
+  assert.match(addPlanSource, /\.eq\("id", id\)[\s\S]*?\.eq\("user_id", userId\)/);
   assert.match(hookSource, /recordMealPlanPendingMutation\(\{ operation: "delete", planId: entryId \}\)/);
   assert.match(hookSource, /clearMealPlanPendingMutation\(nextRow\.id\)/);
   assert.match(hookSource, /clearMealPlanPendingMutation\(entryId\)/);
-  assert.match(hookSource, /\.insert\(\{ \.\.\.input, user_id: userId \}\)/);
   assert.match(hookSource, /\.update\(input\)[\s\S]*?\.eq\("id", entryId\)[\s\S]*?\.eq\("user_id", userId\)/);
   assert.match(hookSource, /\.delete\(\)[\s\S]*?\.eq\("id", entryId\)[\s\S]*?\.eq\("user_id", profile\.user_id\)/);
 });

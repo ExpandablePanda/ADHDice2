@@ -35,7 +35,48 @@ export type HealthFoodHistoryRepairResult = {
   skipped: number;
   failed: number;
   failureMessages: string[];
+  pendingEntryIds?: string[] | null;
 };
+
+function stableHistoryValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableHistoryValue);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, child]) => [key, stableHistoryValue(child)]));
+}
+
+function historyUpdateValueMatches(key: string, actual: unknown, expected: unknown) {
+  if (["protein_g", "carbs_g", "fat_g"].includes(key)
+    && typeof actual === "number"
+    && typeof expected === "number") {
+    const postgresRounded = (value: number) => Math.round(value * 100 + Number.EPSILON * 100);
+    return postgresRounded(actual) === postgresRounded(expected);
+  }
+  return JSON.stringify(stableHistoryValue(actual)) === JSON.stringify(stableHistoryValue(expected));
+}
+
+export function healthMealEntryUpdateMatchesRow(row: HealthMealEntry, update: HealthMealEntryUpdate) {
+  return Object.entries(update).every(([key, expected]) => (
+    historyUpdateValueMatches(key, row[key as keyof HealthMealEntry], expected)
+  ));
+}
+
+export function isHealthFoodHistoryRepairComplete(result: HealthFoodHistoryRepairResult) {
+  return result.failed === 0
+    && result.skipped === 0
+    && result.pendingEntryIds !== null
+    && (!result.pendingEntryIds || result.pendingEntryIds.length === 0);
+}
+
+export function selectHealthFoodHistoryRepairRetryEntries<Entry extends { id: string }>(
+  entries: readonly Entry[],
+  pendingEntryIds: readonly string[] | null | undefined,
+) {
+  if (pendingEntryIds === undefined || pendingEntryIds === null) return [...entries];
+  const pendingIds = new Set(pendingEntryIds);
+  return entries.filter((entry) => pendingIds.has(entry.id));
+}
 
 export function selectHealthFoodMealEntriesBySourceId(
   mealEntries: HealthMealEntry[],
@@ -147,6 +188,10 @@ export function buildHealthFoodHistoryMealEntryUpdate(
 
 export function formatHealthFoodHistoryRepairResult(result: HealthFoodHistoryRepairResult) {
   if (result.requested === 0) {
+    if (result.failed > 0) {
+      const failureDetail = result.failureMessages[0] ? ` ${result.failureMessages[0]}` : "";
+      return `Previous logs could not be checked.${failureDetail} Retry Update Previous Logs.`;
+    }
     return "No previous logs were found.";
   }
   const updatedLabel = `${result.updated} previous log${result.updated === 1 ? "" : "s"}`;

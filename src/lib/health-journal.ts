@@ -81,6 +81,7 @@ export function normalizeHealthJournalSignalOccurrence(
     note: typeof occurrence.note === "string" ? occurrence.note : null,
     occurred_at: typeof occurrence.occurred_at === "string" ? occurrence.occurred_at : "",
     score: Number.isInteger(occurrence.score) && occurrence.score >= 1 && occurrence.score <= 10 ? occurrence.score : 1,
+    time_is_estimated: occurrence.time_is_estimated === true,
   };
 }
 
@@ -108,6 +109,20 @@ export function groupHealthJournalEntriesByDate(entries: readonly HealthCheckIn[
     groups.set(entry.entry_date, group);
   });
   return [...groups.entries()].map(([date, groupedEntries]) => ({ date, entries: groupedEntries }));
+}
+
+export function getHealthJournalHistoryGroupsIncludingEntry(
+  groups: ReturnType<typeof groupHealthJournalEntriesByDate>,
+  entryId: string | null,
+  visibleGroupLimit = 12,
+) {
+  const visibleGroups = groups.slice(0, visibleGroupLimit);
+  if (!entryId || visibleGroups.some((group) => group.entries.some((entry) => entry.id === entryId))) {
+    return visibleGroups;
+  }
+  const revealedGroup = groups.find((group) => group.entries.some((entry) => entry.id === entryId));
+  if (!revealedGroup) return visibleGroups;
+  return [...visibleGroups, revealedGroup].sort((left, right) => right.date.localeCompare(left.date));
 }
 
 export function normalizeHealthJournalSignalColor(color: string | null | undefined) {
@@ -243,12 +258,41 @@ export function findHealthJournalReflectionTagMatches(
         && (!nextCharacter || !/[A-Za-z0-9_]/.test(nextCharacter));
     });
     if (!reference) continue;
-    const end = index + reference.name.length + 1;
+    const baseEnd = index + reference.name.length + 1;
+    const scoredSuffix = reflection.slice(baseEnd).match(/^ \(([1-9]|10)\/([1-9]|10)\)/);
+    const end = scoredSuffix ? baseEnd + scoredSuffix[0].length : baseEnd;
     matches.push({ end, key: reference.key, start: index, text: reflection.slice(index, end) });
     index = end - 1;
   }
 
   return matches;
+}
+
+export function formatHealthJournalReflectionTagText({
+  baseText,
+  denominator,
+  matchingOccurrenceCount,
+  name,
+  score,
+}: {
+  baseText: string;
+  denominator: number;
+  matchingOccurrenceCount: number;
+  name: string;
+  score: number | null;
+}) {
+  const bareTag = `#${name}`;
+  if (
+    baseText.toLowerCase() !== bareTag.toLowerCase()
+    || matchingOccurrenceCount !== 1
+    || typeof score !== "number"
+    || !Number.isInteger(score)
+    || score < 1
+    || score > denominator
+  ) {
+    return baseText;
+  }
+  return `${bareTag} (${score}/${denominator})`;
 }
 
 export function ensureHealthJournalDraftValue(

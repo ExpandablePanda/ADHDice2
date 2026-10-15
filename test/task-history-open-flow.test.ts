@@ -6,6 +6,7 @@ const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const listSource = readFileSync(new URL("../src/components/task-app/tasks-list-adapter.tsx", import.meta.url), "utf8");
 const modalSource = readFileSync(new URL("../src/components/task-app/task-view-adapters.tsx", import.meta.url), "utf8");
+const historyActionsSource = readFileSync(new URL("../src/hooks/useTaskHistoryActions.ts", import.meta.url), "utf8");
 const taskHistoryModalSource = modalSource.slice(
   modalSource.indexOf("export function TaskHistoryModal"),
   modalSource.indexOf("\nexport function BottomDockAdapter"),
@@ -67,16 +68,16 @@ test("Task History Calendar overrides use the canonical calendar_override intent
   assert.doesNotMatch(flow, /calendar-override:/);
 });
 
-test("Task History Not Due replaces handled outcomes through clear then override and verifies reconciliation", () => {
-  const notDueStart = appSource.indexOf("async function setTaskHistoryNotDue");
-  const notDueEnd = appSource.indexOf("\n\n  const taskHistoryFlow", notDueStart);
+test("Task History Not Due delegates handled-outcome replacement to one canonical override command", () => {
+  const notDueStart = appSource.indexOf("async function setTaskHistoryCalendarOverride");
+  const notDueEnd = appSource.indexOf("async function setTaskHistoryNotDue", notDueStart);
   const notDue = appSource.slice(notDueStart, notDueEnd);
-  assert.match(notDue, /clearTaskHistoryCalendarDate\(taskId, logicalDate, "Not Due", \{ clearReplaceableOutcome: true \}\)/);
-  assert.ok(notDue.indexOf("clearTaskHistoryCalendarDate") < notDue.indexOf('type: "calendar_override"'));
+  assert.doesNotMatch(notDue, /clearTaskHistoryCalendarDate/);
+  assert.match(notDue, /type: "calendar_override"/);
   assert.match(notDue, /loadTaskHistoryForTasks\(\[taskId\], \{ force: true, silent: true, source: "mutation" \}\)/g);
-  assert.match(notDue, /activeNotDue/);
+  assert.match(notDue, /activeOverride/);
   assert.match(notDue, /conflictingEntry/);
-  assert.match(notDue, /Task was saved, but the requested History change to Not Due/);
+  assert.match(notDue, /Task was saved, but the requested History change to \$\{label\}/);
 });
 
 test("Task History outcome edits use one set_outcome replacement without pre-clearing History", () => {
@@ -93,6 +94,16 @@ test("Task History outcome edits use one set_outcome replacement without pre-cle
   assert.doesNotMatch(flow, /currentTask/);
 });
 
+test("Automatic for an override stays on the canonical clear_outcome path and refreshes the read", () => {
+  const flowStart = appSource.indexOf('    onSetStatuses: async');
+  const flowEnd = appSource.indexOf('    onSetDelayedStatus:', flowStart);
+  const flow = appSource.slice(flowStart, flowEnd);
+  assert.match(flow, /syncTaskHistoryEntries\(\s*taskHistoryModalTaskId,\s*"pending",\s*entryDates,/);
+  assert.match(flow, /refreshTaskHistoryDetailAfterMutation\(taskHistoryModalTaskId\)/);
+  assert.match(historyActionsSource, /if \(status === "pending"\) \{\s*canonicalIntent = \{ type: "clear_outcome", logical_date: entryDate,/);
+  assert.doesNotMatch(historyActionsSource, /outcome: "blank"/);
+});
+
 test("Task History Complete uses the selected date through the canonical History action path", () => {
   const flowStart = appSource.indexOf('    onSetStatuses: async');
   const flowEnd = appSource.indexOf('    onSetDelayedStatus:', flowStart);
@@ -104,22 +115,15 @@ test("Task History Complete uses the selected date through the canonical History
   assert.match(flow, /historicalOverride: true/);
 });
 
-test("Task History Not Due carries the committed canonical Task from clear into its Calendar override", () => {
-  const clearStart = appSource.indexOf("async function clearTaskHistoryCalendarDate");
-  const clearEnd = appSource.indexOf("\n\n  async function setTaskHistoryNotDue", clearStart);
-  const clear = appSource.slice(clearStart, clearEnd);
-  const notDueStart = appSource.indexOf("async function setTaskHistoryNotDue");
-  const notDueEnd = appSource.indexOf("\n\n  const taskHistoryFlow", notDueStart);
+test("Task History Calendar replacement does not stage an intermediate clear revision", () => {
+  const notDueStart = appSource.indexOf("async function setTaskHistoryCalendarOverride");
+  const notDueEnd = appSource.indexOf("async function setTaskHistoryNotDue", notDueStart);
   const notDue = appSource.slice(notDueStart, notDueEnd);
-  const flowStart = appSource.indexOf("const taskHistoryFlow");
-  const flowEnd = appSource.indexOf("\n  function togglePinnedFilter", flowStart);
-  const flow = appSource.slice(flowStart, flowEnd);
 
-  assert.match(clear, /onCanonicalTaskCommitted: \(nextTask\) => \{\s*committedTask = nextTask;/);
-  assert.match(clear, /return \{ history: refreshedHistory\.history, task: committedTask \};/);
-  assert.match(notDue, /currentTask = clearedHistory\.task \?\? currentTask;/);
-  assert.doesNotMatch(flow, /clearReplaceableOutcome/);
-  assert.match(flow, /historySnapshot: completeHistorySnapshot/);
+  assert.doesNotMatch(notDue, /clearTaskHistoryCalendarDate|clearReplaceableOutcome|clearedHistory/);
+  assert.match(notDue, /expectedTask: currentTask/);
+  assert.match(notDue, /activeOverride/);
+  assert.match(notDue, /conflictingEntry/);
 });
 
 test("Task History modal passes active Calendar overrides into the Calendar read bridge", () => {
@@ -149,7 +153,7 @@ test("Task History receives named Custom ruleset identity for centralized displa
 test("Task History merges active Calendar overrides and presents manual Not Due metadata", () => {
   assert.match(modalSource, /buildTaskHistoryRowProjections\(\s*normalizedTaskHistory,[\s\S]*calendarOverrides/);
   assert.match(modalSource, /Manual schedule override/);
-  assert.match(modalSource, /Changed to Not Due/);
+  assert.match(modalSource, /Changed to \{formatTaskCalendarOverrideLabel\(row\.calendarOverride\)\}/);
   assert.match(modalSource, /formatTaskCalendarOverrideChangedLine/);
   assert.match(modalSource, /createdAt/);
   assert.match(modalSource, /key: row\.logicalDate/);

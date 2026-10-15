@@ -285,6 +285,7 @@ export function useTaskUpdateAction({
         // the read state; never recreate a legacy History fact here.
         const requiresFreshTaskHistory = runtimeAction.actionType === "set_due_date"
           || runtimeAction.actionType === "set_repeat"
+          || runtimeAction.actionType === "recalculate_history"
           || Boolean(canonicalResult.response.side_effect_ids.history_fact_id);
         if (requiresFreshTaskHistory) {
           if (!loadTaskHistoryForTasks) {

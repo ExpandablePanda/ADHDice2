@@ -29,6 +29,8 @@ export type HealthNutritionTotals = {
   nutrition_coverage?: HealthNutritionCoverage;
 };
 
+export type HealthFoodLibrarySection = "foods" | "recipes" | "meals";
+
 export type HealthMealPickerSuggestion =
   | { item: HealthFoodLibraryItem; kind: "food"; label: string; value: string }
   | { item: HealthRecipe; kind: "recipe"; label: string; value: string }

@@ -19,6 +19,7 @@ import {
   CalendarDays,
   Camera,
   ChartPie,
+  ChevronDown,
   ChevronUp,
   Clock,
   CirclePause,
@@ -67,7 +68,7 @@ import {
   X,
   Zap,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { cloneElement, isValidElement, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentProps, type CSSProperties, type Dispatch, type ReactElement, type ReactNode, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import {
   BottomDockAdapter as BottomDock,
@@ -112,6 +113,14 @@ import { TaskManagementTableV2, type RunningTaskTimer, type TaskEditorFocusReque
 import { buildEffectiveTrackingExclusionSet } from "@/lib/task-tracking";
 import { AdhdChip } from "@/components/ui-system/adhd-chip";
 import { PageShell, PageShellBody, PageShellLayoutControls, PageShellSurface, ReorderablePageShells } from "@/components/ui-system/reorderable-page-shells";
+import { MasterWorkspaceTabBar } from "@/components/task-app/master-workspace-tab-bar";
+import { MasterWorkspaceShortcutGuide } from "@/components/task-app/master-workspace-shortcut-guide";
+import { HomeTodoStateProvider } from "@/components/task-app/home-todo-state-provider";
+import { TasksSplitLayout } from "@/components/task-app/tasks-split-right-panel";
+import { MasterWorkspacePanel as MasterWorkspacePanelFrame, MasterWorkspacePanelContent, WorkspaceOverlayHostContext, type WorkspaceOverlayHost } from "@/components/task-app/master-workspace-panel";
+import { useMasterWorkspaceController } from "@/hooks/useMasterWorkspaceController";
+import { useMasterWorkspaceShortcutMode } from "@/hooks/useMasterWorkspaceShortcutMode";
+import type { MasterWorkspaceState } from "@/lib/master-workspace-state";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { ModalShell } from "./modal-shell";
 import { ErrorBoundary } from "./error-boundary";
@@ -133,6 +142,23 @@ import { useEconomy } from "@/hooks/useEconomy";
 import { useAchievementNotifications, useAchievementProgress } from "@/hooks/useAchievementProgress";
 import { useFocus, mapFocusCategoryRow, mapFocusSessionRow, mergeStoredFocusHistory, mergeStoredFocusCategories, saveFocusCategories, saveFocusHistory } from "@/hooks/useFocus";
 import { useHealth } from "@/hooks/useHealth";
+import { createEditingSessionStore } from "@/lib/editing-session-store";
+import { areNotesEditingSessionDraftsEqual, type NotesEditingSessionDraft } from "@/lib/note-draft-safety";
+import { areScratchPaperDraftsEqual } from "@/lib/scratch-paper-draft";
+import type { ScratchPaperEditingSessionDraft } from "@/lib/scratch-paper-draft";
+import { areHealthJournalDraftsEqual } from "@/lib/health-journal-checkins";
+import type { JournalCheckInDraftSnapshot } from "./task-app/journal-check-in-form";
+import { areHealthFoodEditingSessionDraftsEqual, type HealthFoodEditingSessionDraft } from "@/lib/health-meal-draft";
+import { areHealthCustomFoodEditingSessionDraftsEqual, type HealthCustomFoodEditingSessionDraft } from "@/lib/health-custom-food-editing-session";
+import { areHealthRecipeEditingSessionDraftsEqual, areHealthSavedMealEditingSessionDraftsEqual, type HealthRecipeEditingSessionDraft, type HealthSavedMealEditingSessionDraft } from "@/lib/health-library-definition-editing-session";
+import { areHealthMealPlanEditingSessionDraftsEqual, type HealthMealPlanEditingSessionDraft } from "@/lib/health-meal-plan-editing-session";
+import {
+  getTaskPanelDraftSourceKey,
+  hasTaskPanelDraftForOwner,
+  hasTaskPanelDraftOutsideOwner,
+  updateTaskPanelDraftOwnerKeys,
+  type TaskPanelDraftSource,
+} from "@/lib/task-panel-draft-safety";
 import { useFitnessGoals } from "@/hooks/useFitnessGoals";
 import { useFitnessPlans } from "@/hooks/useFitnessPlans";
 import { useFitnessSessionDetails } from "@/hooks/useFitnessSessionDetails";
@@ -183,7 +209,7 @@ import { transcribeScratchAudio } from "@/lib/scratch-paper-transcription";
 import { persistHealthTabPreference, readHealthTabPreference, subscribeToHealthTabPreference } from "@/lib/health-tab-preference";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { getLevelProgress } from "@/lib/economy-levels";
-import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind } from "@/lib/health-utils";
+import { buildHealthReminderTemplate, HEALTH_TABS, type HealthReminderTemplateKey, type HealthSleepKind, type HealthTab } from "@/lib/health-utils";
 import { isTaskOpen, shouldRouteTaskToInbox, type TaskBucket, type TaskRoutingBucket } from "@/lib/task-buckets";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
 import { sortTasksForUi } from "@/lib/task-sorting";
@@ -208,7 +234,6 @@ import {
   isDueToday,
   isLater,
   isOverdue,
-  sortTasksForCockpit,
 } from "@/lib/task-cockpit";
 import {
   createEngineRolloverPlan,
@@ -285,17 +310,20 @@ import type { HudWidgetType } from "@/lib/task-hud-layout";
 import { calcNextDueDateFromDate, normalizePresetRepeatSelection, taskRepeatEditorValueToUpdate, type TaskRepeatEditorValue } from "@/lib/task-repeat";
 import {
   buildStableCanonicalTaskIndex,
+  buildTaskSearchPresentationScope,
   buildTaskAppStructuralData,
   buildTaskAppWorkspaceFacts,
   computeTaskAppDerivedData,
   getTaskContentFolderSearchMatchIds,
+  prepareTaskAppDerivedPresentation,
+  selectTaskSearchPresentation,
   type ChildTaskPreviewLookup,
 } from "@/lib/task-app-derived";
-import { buildStableTaskSearchScope, queryTaskSearch, shouldRunTaskSearch } from "@/lib/task-search-selector";
-import { selectCalendarTasks } from "@/lib/task-calendar-selection";
+import { buildTaskAppViewReadModel } from "@/lib/task-app-view-read-model";
 import { createPendingTaskMutationTracker } from "@/lib/task-pending-mutations";
 import { executeTaskRolloverSweep } from "@/lib/task-rollover-sweep";
 import { createStableTaskRowModelCache } from "@/lib/task-table-row";
+import type { TaskTableLayoutPreferences } from "@/lib/task-table-layout-persistence";
 import {
   createTaskRolloverReplayIdentity,
   createTaskRolloverSettingsKey,
@@ -321,7 +349,7 @@ import {
   getSelectableTaskStatusesForTask,
 } from "@/lib/task-complete";
 import { buildMilestoneLifecycleArgs, canDetachAndPromoteTaskToMilestone, canPromoteTaskToMilestone, formatMilestoneRpcError, getMilestoneEligibility, mergeAuthoritativeMilestoneTask, shouldReverseCompletedMilestoneForStatusChange } from "@/lib/milestones";
-import { DUPLICATE_TITLE_SEARCH_OPERATORS, parseTaskSearchInput } from "@/lib/task-search";
+import { DUPLICATE_TITLE_SEARCH_OPERATORS } from "@/lib/task-search";
 import { filterManualListTaskCandidates } from "@/lib/manual-list-task-search";
 import {
   buildTaskHistoryFacts,
@@ -396,13 +424,19 @@ import {
 import type { TaskListRailMutationGeneration } from "@/lib/task-list-rail-order";
 import { DEFAULT_LIST_SORT_PREFERENCE, getListSortSurfaceId } from "@/lib/task-list-sort";
 import {
+  closeTaskWorkspaceTabState,
+  createTaskWorkspaceTabState,
   DEFAULT_TASK_UI_STATE,
   getUserScopedStorageKey,
   isReportTaskWorkspaceTab,
   parseStoredJson,
+  renameTaskWorkspaceTabState,
   TASK_FOCUS_STORAGE_KEY,
+  reorderTaskWorkspaceTabToIndex,
+  resolveActiveTaskWorkspaceTab,
   type AppPage,
   type TaskUiState,
+  type TaskWorkspaceTabsState,
 } from "@/lib/task-ui-state";
 
 import type {
@@ -455,6 +489,7 @@ type Message = {
 };
 
 type PendingCompleteAction = {
+  logicalDate?: string;
   onTimeOrigin?: OnTimeLinkedItemOrigin;
   taskId: string;
 };
@@ -1159,6 +1194,140 @@ function findFinishedCountdownSession(activeSessions: Record<string, ActiveFocus
   )) ?? null;
 }
 
+type TaskPanelOwner = {
+  masterTabId: string;
+  panelId: string;
+  taskWorkspaceTabId: string;
+};
+
+function getTaskPanelOwnerKey(owner: TaskPanelOwner) {
+  return `${owner.panelId}:${owner.masterTabId}:${owner.taskWorkspaceTabId}`;
+}
+
+function getTaskEditorOpenBlockMessage({
+  currentEditorOwner,
+  currentEditorTaskId,
+  editorIsOpen,
+  draftOwnerKeys,
+  owner,
+  requestedTaskId,
+}: {
+  currentEditorOwner: TaskPanelOwner | null;
+  currentEditorTaskId: string | null;
+  draftOwnerKeys: string[];
+  editorIsOpen: boolean;
+  owner: TaskPanelOwner;
+  requestedTaskId: string;
+}) {
+  const ownerKey = getTaskPanelOwnerKey(owner);
+  if (editorIsOpen && (
+    !currentEditorOwner
+    || getTaskPanelOwnerKey(currentEditorOwner) !== ownerKey
+    || currentEditorTaskId !== requestedTaskId
+  )) {
+    return "Close the open Task editor before opening another Task.";
+  }
+  if (hasTaskPanelDraftOutsideOwner(draftOwnerKeys, ownerKey)) {
+    return "Finish the unsaved edit in the other Tasks panel before opening this Task editor.";
+  }
+  if (hasTaskPanelDraftForOwner(draftOwnerKeys, ownerKey)) {
+    return "Finish or cancel the unsaved edit in this Tasks tab before opening another Task editor.";
+  }
+  return null;
+}
+
+function buildTaskListRailStructureOptions({
+  activeListFacetCounts,
+  canonicalTaskListRailTree,
+  selectedBucket,
+  taskListContainers,
+  taskListFolderBreadcrumbs,
+  taskListFolderCounts,
+  taskListFolderTree,
+}: {
+  activeListFacetCounts: Readonly<Record<string, number>>;
+  canonicalTaskListRailTree: ReturnType<typeof buildCanonicalTaskListRailTree>;
+  selectedBucket: string;
+  taskListContainers: Parameters<typeof getTaskListContainerRevision>[0];
+  taskListFolderBreadcrumbs: ReturnType<typeof buildTaskListFolderBreadcrumbs>;
+  taskListFolderCounts: ReturnType<typeof buildTaskListFolderCounts>;
+  taskListFolderTree: ReturnType<typeof buildTaskListFolderTree>;
+}) {
+  const rootContainerRevision = getTaskListContainerRevision(taskListContainers, null);
+  const buildStructureOptions = (
+    folderId: string | null,
+    items = canonicalTaskListRailTree.mixedChildrenByFolderId.get(folderId) ?? [],
+  ) => (
+    items
+      .map((item, containerIndex) => ({ containerIndex, item }))
+      .filter(({ item }) => (
+        item.kind === "folder"
+        || item.entity.isVisible
+        || item.id === selectedBucket
+      ))
+      .map(({ containerIndex, item }) => {
+        if (item.kind === "folder") {
+          const counts = taskListFolderCounts.get(item.id) ?? {
+            containedListCount: 0,
+            dueTodayCount: 0,
+            overdueCount: 0,
+            visibleTaskCount: 0,
+          };
+          return {
+            containerId: folderId,
+            containerKey: getTaskListContainerKey(folderId),
+            containerIndex,
+            count: counts.visibleTaskCount,
+            description: taskListFolderTree.folderPathById.get(item.id) ?? item.entity.name,
+            draggableEligible: true,
+            expectedContainerRevision: folderId === null
+              ? rootContainerRevision
+              : getTaskListContainerRevision(taskListContainers, folderId),
+            folderCounts: counts,
+            id: item.id,
+            entityId: item.id,
+            entityType: "folder" as const,
+            isCustom: true,
+            label: item.entity.name,
+            destinationAppendIndex: canonicalTaskListRailTree.mixedChildrenByFolderId.get(item.id)?.length ?? 0,
+            persistedParentValue: item.placement.container_folder_id,
+            sortOrder: item.sortOrder,
+            structuralKey: item.itemKey,
+            structureKind: "folder" as const,
+          };
+        }
+        return {
+          containerId: folderId,
+          containerKey: getTaskListContainerKey(folderId),
+          containerIndex,
+          count: activeListFacetCounts[item.id] ?? 0,
+          description: taskListFolderTree.listPathById.get(item.id) ?? item.entity.name,
+          draggableEligible: true,
+          entityId: item.entityId ?? undefined,
+          entityType: "list" as const,
+          expectedContainerRevision: folderId === null
+            ? rootContainerRevision
+            : getTaskListContainerRevision(taskListContainers, folderId),
+          id: item.id,
+          isCustom: item.entity.type === "custom",
+          label: item.entity.name,
+          listSubtype: item.listSubtype,
+          persistedParentValue: item.placement.container_folder_id,
+          sortOrder: item.sortOrder,
+          structuralKey: item.itemKey,
+          structureKind: "list" as const,
+        };
+      })
+  );
+  return {
+    primaryRail: buildStructureOptions(null),
+    openFolderRails: taskListFolderBreadcrumbs.map((folder) => ({
+      folderId: folder.id,
+      lists: buildStructureOptions(folder.id),
+    })),
+  };
+}
+
 export function TaskApp() {
   const supabase = useMemo(() => createBrowserSupabaseClient(), []);
   const isNativeIosPlatform = useNativeIosPlatform();
@@ -1168,12 +1337,15 @@ export function TaskApp() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const canonicalTasksRef = useRef<Task[]>([]);
   const taskStatusMutationInFlightRef = useRef(new Map<string, Promise<boolean | undefined>>());
+  const masterWorkspaceShortcutModeOpenRef = useRef(false);
   useEffect(() => {
     canonicalTasksRef.current = tasks;
   }, [tasks]);
   const [message, setMessage] = useState<Message | null>(null);
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
   const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
+  const [journalEntryNavigationRequests, setJournalEntryNavigationRequests] = useState<Record<string, { entryType: "start_of_day" | "end_of_day"; id: number }>>({});
+  const journalEntryNavigationRequestIdRef = useRef(0);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<PendingRewardBankOpenSession | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
@@ -1194,6 +1366,7 @@ export function TaskApp() {
   const countdownAlarmPulseIntervalRef = useRef<number | null>(null);
   const {
     activeTaskWorkspaceTab,
+    applyTaskUiStateUpdate,
     activePage,
     closeTaskWorkspaceTab,
     createTaskWorkspaceTab,
@@ -1204,6 +1377,8 @@ export function TaskApp() {
     isTaskFiltersOpen,
     renameTaskWorkspaceTab,
     reorderTaskWorkspaceTab,
+    replaceTaskWorkspaceTabsState,
+    getTaskWorkspaceTabsState,
     setActivePage,
     setActiveTaskWorkspaceTab,
     setFocusedTaskIdsByDate,
@@ -1222,9 +1397,51 @@ export function TaskApp() {
     supabase,
     userId: session?.user?.id,
   });
+  const [masterPanelPages, setMasterPanelPages] = useState<AppPage[]>([]);
+  const [masterPanelTaskSurfaces, setMasterPanelTaskSurfaces] = useState<TaskUiState["tasksSurface"][]>([]);
+  const [masterPanelOverlayHosts, setMasterPanelOverlayHosts] = useState<Map<string, WorkspaceOverlayHost>>(new Map());
+  const handleMasterPanelOverlayHostChange = useCallback((panelId: string, element: HTMLDivElement | null, tabId: string) => {
+    setMasterPanelOverlayHosts((current) => {
+      const next = new Map(current);
+      if (element) next.set(panelId, { element, panelId, tabId });
+      else next.delete(panelId);
+      return next;
+    });
+  }, []);
+  const isMasterPanelPageActive = useCallback((page: AppPage) => (
+    activePage === page || masterPanelPages.includes(page)
+  ), [activePage, masterPanelPages]);
+  const isMasterPanelTaskSurfaceActive = useCallback((surface: TaskUiState["tasksSurface"]) => (
+    (activePage === "Tasks" && taskUiState.tasksSurface === surface) || masterPanelTaskSurfaces.includes(surface)
+  ), [activePage, masterPanelTaskSurfaces, taskUiState.tasksSurface]);
   const { economy, setEconomy, appendEconomyEvent, resetEconomy } = useEconomy(supabase, session?.user?.id ?? null);
   const [batchIntakeHealthActive, setBatchIntakeHealthActive] = useState(false);
   const [batchIntakeFocusActive, setBatchIntakeFocusActive] = useState(false);
+  const [healthDraftSafetyBySection, setHealthDraftSafetyBySection] = useState<Partial<Record<HealthTab, boolean>>>({});
+  const [hasUnsafeNotesDraft, setHasUnsafeNotesDraft] = useState(false);
+  const masterWorkspaceControllerRef = useRef<ReturnType<typeof useMasterWorkspaceController> | null>(null);
+  const updateHealthDraftSafety = useCallback((section: HealthTab, isUnsafe: boolean) => {
+    setHealthDraftSafetyBySection((current) => current[section] === isUnsafe
+      ? current
+      : { ...current, [section]: isUnsafe });
+  }, []);
+  const requestPageNavigation = useCallback((page: AppPage) => {
+    const controller = masterWorkspaceControllerRef.current;
+    if (controller?.isEnabled) {
+      // Navigator updates the focused destination before asking TaskApp to render it.
+      if (controller.activeTab.destination.page === page && activePage !== page) {
+        setActivePage(page);
+        return true;
+      }
+      const accepted = controller.navigateToPage(page);
+      if (!accepted && controller.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: controller.transitionBlockedReason });
+      }
+      return accepted;
+    }
+    setActivePage(page);
+    return true;
+  }, [activePage, setActivePage, setMessage]);
   const focusDomainMutationBarrierRef = useRef<WorkspaceDomainMutationBarrier>(() => {});
   const invalidateFocusDomainGeneration = useCallback(() => {
     focusDomainMutationBarrierRef.current();
@@ -1249,12 +1466,20 @@ export function TaskApp() {
     supabase,
     session?.user?.id ?? null,
     setMessage,
-    activePage === "Focus" || activePage === "Stats" || activePage === "Health" || batchIntakeFocusActive,
+    isMasterPanelPageActive("Focus") || isMasterPanelPageActive("Stats") || isMasterPanelPageActive("Health") || batchIntakeFocusActive,
     invalidateFocusDomainGeneration,
   );
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
+    journalTriggers: healthJournalTriggers,
+    journalTriggerLinks: healthJournalTriggerLinks,
+    journalTriggerDataError: healthJournalTriggerDataError,
+    journalStatisticsDataError: healthJournalStatisticsDataError,
+    isLoadingJournalTriggers: isLoadingHealthJournalTriggers,
+    hasLoadedJournalTriggerData: hasLoadedHealthJournalTriggerData,
+    loadJournalTriggerData: loadHealthJournalTriggerData,
+    createJournalTrigger: createHealthJournalTrigger,
     journalSignals: healthJournalSignals,
     journalSignalValues: healthJournalSignalValues,
     journalSignalOccurrences: healthJournalSignalOccurrences,
@@ -1275,11 +1500,14 @@ export function TaskApp() {
     deleteWorkout: deleteHealthWorkout,
     deleteWeightEntry,
     favorites: healthFavorites,
+    hasLoadedFoodLibrary: hasLoadedHealthFoodLibrary,
     importAudits: healthImportAudits,
     isLoading: isHealthLoading,
+    refreshHealth: refreshHealthData,
     importAppleHealthData,
     mealEntries: healthMealEntries,
     mealPlanEntries: healthMealPlanEntries,
+    pendingFoodHistoryRepairIds,
     symptoms: healthSymptoms,
     symptomEntries: healthSymptomEntries,
     createSymptom: createHealthSymptom,
@@ -1315,62 +1543,125 @@ export function TaskApp() {
     weightEntries: healthWeightEntries,
     waterEntries: healthWaterEntries,
     workouts: healthWorkouts,
-  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, activePage === "Health" || batchIntakeHealthActive);
-  const activeHealthTab = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
-  const fitnessHooksActive = activePage === "Health" && activeHealthTab === "Fitness";
-  const {
-    archiveGoal: archiveFitnessGoal,
-    createGoal: createFitnessGoal,
-    createLevel: createFitnessGoalLevel,
-    deleteLevel: deleteFitnessGoalLevel,
-    error: fitnessGoalsError,
-    goals: fitnessGoals,
-    isLoading: fitnessGoalsLoading,
-    levels: fitnessGoalLevels,
-    restoreGoal: restoreFitnessGoal,
-    updateGoal: updateFitnessGoal,
-    updateLevel: updateFitnessGoalLevel,
-  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
-  const {
-    archivePlan: archiveFitnessPlan,
-    archivePlanItem: archiveFitnessPlanItem,
-    createPlan: createFitnessPlan,
-    createPlanItem: createFitnessPlanItem,
-    error: fitnessPlanError,
-    isLoading: fitnessPlansLoading,
-    planItems: fitnessPlanItems,
-    plans: fitnessPlans,
-    saveWorkoutPlanItemLinks,
-    updatePlan: updateFitnessPlan,
-    updatePlanItem: updateFitnessPlanItem,
-    workoutPlanItemLinks,
-  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
-  const {
-    archiveExercise,
-    createExercise,
-    error: fitnessSessionError,
-    exerciseLibrary,
-    getWorkoutSessionDetails,
-    isLoaded: fitnessSessionLoaded,
-    isLoading: fitnessSessionLoading,
-    removeLocalWorkoutSessionDetails,
-    reorderExercises,
-    saveWorkoutSessionDetails,
-    updateExercise,
-    workoutExercises,
-    workoutSets,
-  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, fitnessHooksActive);
-  async function deleteHealthWorkoutWithStructuredDetails(workoutId: string) {
-    const deleted = await deleteHealthWorkout(workoutId);
-    if (deleted) {
-      removeLocalWorkoutSessionDetails(workoutId);
-    }
-    return deleted;
-  }
+  } = useHealth(supabase, session?.user?.id ?? null, setMessage, appendEconomyEvent, setEconomy, isMasterPanelPageActive("Health") || batchIntakeHealthActive);
+  const legacyHealthTabPreference = useSyncExternalStore(subscribeToHealthTabPreference, readHealthTabPreference, () => "Today");
   const currentUserId = session?.user?.id ?? null;
+  const journalDraftSessionStore = useMemo(
+    () => createEditingSessionStore<JournalCheckInDraftSnapshot>(currentUserId ?? "signed-out", areHealthJournalDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => journalDraftSessionStore.reset(), [journalDraftSessionStore]);
+  const healthFoodDraftSessionStore = useMemo(
+    () => createEditingSessionStore<HealthFoodEditingSessionDraft>(currentUserId ?? "signed-out", areHealthFoodEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => healthFoodDraftSessionStore.reset(), [healthFoodDraftSessionStore]);
+  const healthCustomFoodDraftSessionStore = useMemo(
+    () => createEditingSessionStore<HealthCustomFoodEditingSessionDraft>(currentUserId ?? "signed-out", areHealthCustomFoodEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => healthCustomFoodDraftSessionStore.reset(), [healthCustomFoodDraftSessionStore]);
+  const healthRecipeDraftSessionStore = useMemo(
+    () => createEditingSessionStore<HealthRecipeEditingSessionDraft>(currentUserId ?? "signed-out", areHealthRecipeEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => healthRecipeDraftSessionStore.reset(), [healthRecipeDraftSessionStore]);
+  const healthSavedMealDraftSessionStore = useMemo(
+    () => createEditingSessionStore<HealthSavedMealEditingSessionDraft>(currentUserId ?? "signed-out", areHealthSavedMealEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => healthSavedMealDraftSessionStore.reset(), [healthSavedMealDraftSessionStore]);
+  const healthMealPlanDraftSessionStore = useMemo(
+    () => createEditingSessionStore<HealthMealPlanEditingSessionDraft>(currentUserId ?? "signed-out", areHealthMealPlanEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => healthMealPlanDraftSessionStore.reset(), [healthMealPlanDraftSessionStore]);
+  const notesDraftSessionStore = useMemo(
+    () => createEditingSessionStore<NotesEditingSessionDraft>(currentUserId ?? "signed-out", areNotesEditingSessionDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => notesDraftSessionStore.reset(), [notesDraftSessionStore]);
+  const scratchPaperDraftSessionStore = useMemo(
+    () => createEditingSessionStore<ScratchPaperEditingSessionDraft>(currentUserId ?? "signed-out", areScratchPaperDraftsEqual),
+    [currentUserId],
+  );
+  useEffect(() => () => scratchPaperDraftSessionStore.reset(), [scratchPaperDraftSessionStore]);
+  const [notesCollectionState, setNotesCollectionState] = useState<{ ownerId: string | null; notes: Note[] }>({ ownerId: null, notes: [] });
+  const notesCollectionOwnerRef = useRef(currentUserId);
+  const notesLoadedOwnerRef = useRef<string | null>(null);
+  const notesLoadingOwnerRef = useRef<string | null>(null);
+  const notesLoadGenerationRef = useRef(0);
+  if (notesCollectionOwnerRef.current !== currentUserId) {
+    notesCollectionOwnerRef.current = currentUserId;
+    notesLoadedOwnerRef.current = null;
+    notesLoadingOwnerRef.current = null;
+    notesLoadGenerationRef.current += 1;
+  }
+  useEffect(() => {
+    if (
+      !supabase
+      || !isMasterPanelPageActive("Notes")
+      || !currentUserId
+      || notesLoadedOwnerRef.current === currentUserId
+      || notesLoadingOwnerRef.current === currentUserId
+    ) return;
+    const generation = ++notesLoadGenerationRef.current;
+    notesLoadingOwnerRef.current = currentUserId;
+    void supabase
+      .from("adhdice_notes")
+      .select("*")
+      .eq("user_id", currentUserId)
+      .order("updated_at", { ascending: false })
+      .then(({ data }) => {
+        if (generation !== notesLoadGenerationRef.current || notesCollectionOwnerRef.current !== currentUserId) return;
+        notesLoadedOwnerRef.current = currentUserId;
+        notesLoadingOwnerRef.current = null;
+        setNotesCollectionState({ ownerId: currentUserId, notes: data ?? [] });
+      })
+      .catch(() => {
+        if (generation !== notesLoadGenerationRef.current || notesCollectionOwnerRef.current !== currentUserId) return;
+        notesLoadedOwnerRef.current = currentUserId;
+        notesLoadingOwnerRef.current = null;
+        setNotesCollectionState({ ownerId: currentUserId, notes: [] });
+      });
+  }, [currentUserId, isMasterPanelPageActive, supabase]);
+  const updateNotesCollection = useCallback((update: (current: Note[]) => Note[]) => {
+    const ownerId = currentUserId;
+    if (!ownerId) return;
+    setNotesCollectionState((current) => current.ownerId === ownerId
+      && notesCollectionOwnerRef.current === ownerId
+      ? { ...current, notes: update(current.notes) }
+      : current);
+  }, [currentUserId]);
+  const notesForCurrentUser = notesCollectionState.ownerId === currentUserId ? notesCollectionState.notes : [];
+  const areNotesLoadedForCurrentUser = Boolean(currentUserId)
+    && notesCollectionState.ownerId === currentUserId
+    && notesLoadedOwnerRef.current === currentUserId;
+  const masterWorkspaceDraftProtection = useMemo(() => ({
+    canCloseView(viewId: string) {
+      return journalDraftSessionStore.canCloseView(viewId)
+        && healthFoodDraftSessionStore.canCloseView(viewId)
+        && healthCustomFoodDraftSessionStore.canCloseView(viewId)
+        && healthRecipeDraftSessionStore.canCloseView(viewId)
+        && healthSavedMealDraftSessionStore.canCloseView(viewId)
+        && healthMealPlanDraftSessionStore.canCloseView(viewId)
+        && notesDraftSessionStore.canCloseView(viewId)
+        && scratchPaperDraftSessionStore.canCloseView(viewId);
+    },
+    detachView(viewId: string) {
+      journalDraftSessionStore.detachView(viewId);
+      healthFoodDraftSessionStore.detachView(viewId);
+      healthCustomFoodDraftSessionStore.detachView(viewId);
+      healthRecipeDraftSessionStore.detachView(viewId);
+      healthSavedMealDraftSessionStore.detachView(viewId);
+      healthMealPlanDraftSessionStore.detachView(viewId);
+      notesDraftSessionStore.detachView(viewId);
+      scratchPaperDraftSessionStore.detachView(viewId);
+    },
+  }), [healthCustomFoodDraftSessionStore, healthFoodDraftSessionStore, healthMealPlanDraftSessionStore, healthRecipeDraftSessionStore, healthSavedMealDraftSessionStore, journalDraftSessionStore, notesDraftSessionStore, scratchPaperDraftSessionStore]);
   const scratchNotes = useScratchNotes(supabase, currentUserId);
   const onTranscribeScratchAudio = useCallback((audio: Blob) => transcribeScratchAudio(supabase, audio), [supabase]);
-  const voiceMemos = useVoiceMemos(supabase, currentUserId, activePage === "Home" || activePage === "Notes");
+  const voiceMemos = useVoiceMemos(supabase, currentUserId, isMasterPanelPageActive("Home") || isMasterPanelPageActive("Notes"));
   const sleepCategory = useMemo(
     () => focusCategories.find((category) => isSleepCategory(category)) ?? null,
     [focusCategories],
@@ -1427,10 +1718,10 @@ export function TaskApp() {
   }) => {
     if (!sleepCategory) {
       setMessage({ tone: "warn", text: "Create a Sleep Focus category first, then edit sleep." });
-      return;
+      return false;
     }
     const existing = focusHistory.find((entry) => entry.id === entryId);
-    await handleUpdateFocusHistoryEntry(entryId, {
+    return handleUpdateFocusHistoryEntry(entryId, {
       categoryId: existing ? existing.categoryId : sleepCategory.id,
       title: existing ? existing.title : sleepCategory.title,
       focusType: existing ? existing.focusType : sleepCategory.focusType,
@@ -1627,6 +1918,7 @@ export function TaskApp() {
   const [showFocusPlanner, setShowFocusPlanner] = useState(false);
   const [focusPlannerStep, setFocusPlannerStep] = useState<FocusPlannerStep>(0);
   const [focusDraftIds, setFocusDraftIds] = useState<string[]>([]);
+  const [focusPlannerTaskCandidatesOverride, setFocusPlannerTaskCandidatesOverride] = useState<Task[] | null>(null);
   const [momentumView, setMomentumView] = useState<MomentumView>("urgent");
   const [isMomentumListOpen, setIsMomentumListOpen] = useState(false);
   const [showBackToTop, setShowBackToTop] = useState(false);
@@ -1634,6 +1926,11 @@ export function TaskApp() {
   const [isAccountOpen, setIsAccountOpen] = useState(false);
   const [requestedSettingsSection, setRequestedSettingsSection] = useState<NavigatorSettingsSection | null>(null);
   const [requestedPageShell, setRequestedPageShell] = useState<Extract<NavigatorSearchAction, { kind: "page-shell" }> | null>(null);
+  const [panelShellNavigationRequest, setPanelShellNavigationRequest] = useState<{
+    panelId: string;
+    request: Extract<NavigatorSearchAction, { kind: "page-shell" }>;
+    tabId: string;
+  } | null>(null);
   const pageShellNavigationHighlightRef = useRef<HTMLElement | null>(null);
   const pageShellNavigationHighlightTimerRef = useRef<number | null>(null);
   const clearPageShellNavigationHighlight = useCallback(() => {
@@ -1652,12 +1949,16 @@ export function TaskApp() {
   }, [clearPageShellNavigationHighlight]);
   const requestedPageShellLayoutReady = useSyncExternalStore(
     subscribeToPageShellLayoutReadiness,
-    () => requestedPageShell ? isPageShellLayoutReady(requestedPageShell.pageKey) : false,
+    () => {
+      const request = panelShellNavigationRequest?.request ?? requestedPageShell;
+      return request ? isPageShellLayoutReady(request.pageKey) : false;
+    },
     () => false,
   );
   const [isListColumnMenuOpen, setIsListColumnMenuOpen] = useState(false);
   const [isKeyboardShortcutsMenuOpen, setIsKeyboardShortcutsMenuOpen] = useState(false);
   const [isTaskListSettingsOpen, setIsTaskListSettingsOpen] = useState(false);
+  const [taskListSettingsPanelContext, setTaskListSettingsPanelContext] = useState<{ panelId: string; tabId: string; folderId: string | null } | null>(null);
   const [isImportWidgetMenuOpen, setIsImportWidgetMenuOpen] = useState(false);
   const [refreshStatus, setRefreshStatus] = useState<RefreshStatus>("idle");
   const [draggedListColumnId, setDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
@@ -1665,6 +1966,7 @@ export function TaskApp() {
   const [shrinkAllColumnsToken, setShrinkAllColumnsToken] = useState(0);
   const [isBatchEditModalOpen, setIsBatchEditModalOpen] = useState(false);
   const [isBatchDeleteModalOpen, setIsBatchDeleteModalOpen] = useState(false);
+  const [batchActionTaskIdsOverride, setBatchActionTaskIdsOverride] = useState<string[] | null>(null);
   const [pendingCompleteAction, setPendingCompleteAction] = useState<PendingCompleteAction | null>(null);
   const setTaskUpdateMessage = useCallback<typeof setMessage>((value) => {
     setMessage(value);
@@ -1674,6 +1976,25 @@ export function TaskApp() {
   const taskHistoryModalLoadGenerationRef = useRef(0);
   const [requestedListOverlayTaskId, setRequestedListOverlayTaskId] = useState<string | null>(null);
   const [sharedTaskEditorOverlayTaskId, setSharedTaskEditorOverlayTaskId] = useState<string | null>(null);
+  const taskEditorOwnerRef = useRef<TaskPanelOwner | null>(null);
+  const [taskEditorPanelOwner, setTaskEditorPanelOwner] = useState<TaskPanelOwner | null>(null);
+  const [workspaceOverlayOwner, setWorkspaceOverlayOwner] = useState<{ panelId: string; tabId: string } | null>(null);
+  const [taskPanelDraftOwnerKeys, setTaskPanelDraftOwnerKeys] = useState<string[]>([]);
+  const [isSplitRightTasksWorkspaceDraftOpen, setIsSplitRightTasksWorkspaceDraftOpen] = useState(false);
+  const [isSplitRightTasksTableDraftOpen, setIsSplitRightTasksTableDraftOpen] = useState(false);
+  const [isSplitRightTasksListDraftOpen, setIsSplitRightTasksListDraftOpen] = useState(false);
+  const [isSplitRightListColumnMenuOpen, setIsSplitRightListColumnMenuOpen] = useState(false);
+  const [isSplitRightKeyboardShortcutsMenuOpen, setIsSplitRightKeyboardShortcutsMenuOpen] = useState(false);
+  const [isSplitRightDailyPlanningCollapsed, setIsSplitRightDailyPlanningCollapsed] = useState(false);
+  const [splitRightExpandAllColumnsToken, setSplitRightExpandAllColumnsToken] = useState(0);
+  const [splitRightShrinkAllColumnsToken, setSplitRightShrinkAllColumnsToken] = useState(0);
+  const [splitRightDraggedListColumnId, setSplitRightDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
+  const splitRightListColumnMenuRef = useRef<HTMLDivElement | null>(null);
+  const splitRightKeyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
+  const [isTasksSearchDraftOpen, setIsTasksSearchDraftOpen] = useState(false);
+  const [isTasksWorkspaceRenameDraftOpen, setIsTasksWorkspaceRenameDraftOpen] = useState(false);
+  const [isTasksListDraftOpen, setIsTasksListDraftOpen] = useState(false);
+  const [isTasksTableDraftOpen, setIsTasksTableDraftOpen] = useState(false);
   const [taskEditorNavigationTaskIds, setTaskEditorNavigationTaskIds] = useState<string[] | null>(null);
   const [milestoneSetupTaskId, setMilestoneSetupTaskId] = useState<string | null>(null);
   const [milestoneCorrectionId, setMilestoneCorrectionId] = useState<string | null>(null);
@@ -1684,6 +2005,14 @@ export function TaskApp() {
   const milestoneOperationIdsRef = useRef(new Map<string, string>());
   const [taskEditorFocusRequest, setTaskEditorFocusRequest] = useState<TaskEditorFocusRequest | null>(null);
   const taskEditorFocusTokenRef = useRef(0);
+
+  const setWorkspaceOverlayOwnerForTaskPanel = useCallback((owner?: TaskPanelOwner) => {
+    const current = masterWorkspaceControllerRef.current;
+    const selectedOwner = owner ?? taskEditorOwnerRef.current ?? undefined;
+    const panelId = selectedOwner?.panelId ?? current?.currentPanel.id;
+    const tabId = selectedOwner?.masterTabId ?? current?.activeTab.id;
+    if (panelId && tabId) setWorkspaceOverlayOwner({ panelId, tabId });
+  }, []);
   const [suppressDetachedListNoticeTaskId, setSuppressDetachedListNoticeTaskId] = useState<string | null>(null);
   const [activeTaskTimerIndex, setActiveTaskTimerIndex] = useState(0);
   const [isActiveTimersTrayOpen, setIsActiveTimersTrayOpen] = useState(false);
@@ -1702,7 +2031,7 @@ export function TaskApp() {
   const achievementProgress = useAchievementProgress(
     supabase,
     session?.user?.id ?? null,
-    activePage === "Achievements" || (activePage === "Tasks" && taskUiState.tasksSurface === "report"),
+    isMasterPanelPageActive("Achievements") || isMasterPanelTaskSurfaceActive("report"),
   );
   const achievementNotifications = useAchievementNotifications({
     client: supabase,
@@ -1720,14 +2049,14 @@ export function TaskApp() {
   const onTimePlan = useOnTimePlan(
     currentUserId,
     userTimeZone,
-    activePage === "Tasks" && taskUiState.tasksSurface === "on_time",
+    isMasterPanelTaskSurfaceActive("on_time"),
   );
   useEffect(() => {
     onTimePlan.updatePlanFromCurrent((current) => reconcileOnTimeManualDurationsFromTasks(current, tasks));
   }, [onTimePlan.updatePlanFromCurrent, tasks]);
   const brainstormState = useBrainstormState(
     currentUserId,
-    activePage === "Tasks" && taskUiState.tasksSurface === "brainstorm",
+    isMasterPanelTaskSurfaceActive("brainstorm"),
   );
   const [focusAlarmAudioBlocked, setFocusAlarmAudioBlocked] = useState(false);
   const focusAlarmAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -1865,7 +2194,7 @@ export function TaskApp() {
     [dayStartTime, logicalDayNow, userTimeZone],
   );
   const homeRecordTargets = useHomeRecordTargets({
-    active: activePage === "Home",
+    active: isMasterPanelPageActive("Home"),
     client: supabase,
     logicalDayStart: dayStartTime,
     timezone: userTimeZone,
@@ -2310,6 +2639,24 @@ export function TaskApp() {
   }, [isKeyboardShortcutsMenuOpen]);
 
   useEffect(() => {
+    if (!isSplitRightListColumnMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!splitRightListColumnMenuRef.current?.contains(event.target as Node)) setIsSplitRightListColumnMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isSplitRightListColumnMenuOpen]);
+
+  useEffect(() => {
+    if (!isSplitRightKeyboardShortcutsMenuOpen) return;
+    const handlePointerDown = (event: MouseEvent) => {
+      if (!splitRightKeyboardShortcutsMenuRef.current?.contains(event.target as Node)) setIsSplitRightKeyboardShortcutsMenuOpen(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    return () => document.removeEventListener("mousedown", handlePointerDown);
+  }, [isSplitRightKeyboardShortcutsMenuOpen]);
+
+  useEffect(() => {
     if (!session?.user?.id) {
       profileSettingsHydratedRef.current = false;
       return;
@@ -2337,10 +2684,11 @@ export function TaskApp() {
     saveLogicalDaySettings({ dayStartTime, timezone: userTimeZone });
   }, [dayStartTime, userTimeZone]);
 
-  const openTaskFromExternalNavigation = useCallback((taskId: string) => {
+  const openTaskFromExternalNavigation = useCallback((taskId: string, masterDestinationAlreadyUpdated = false) => {
     const nextTaskWorkspaceTabId = taskWorkspaceTabsState.tabs.find((tab) => !isReportTaskWorkspaceTab(tab))?.id
       ?? taskWorkspaceTabsState.activeTabId;
-    setActivePage("Tasks");
+    if (masterDestinationAlreadyUpdated) setActivePage("Tasks");
+    else if (!requestPageNavigation("Tasks")) return;
     setActiveTaskWorkspaceTab(nextTaskWorkspaceTabId);
     setTaskUiState((current) => (
       current.tasksSurface === "tasks"
@@ -2351,8 +2699,17 @@ export function TaskApp() {
     setTaskEditorNavigationTaskIds(null);
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorFocusRequest(null);
+    const workspaceController = masterWorkspaceControllerRef.current;
+    const owner = {
+      panelId: workspaceController?.currentPanel.id ?? "legacy-panel",
+      masterTabId: workspaceController?.activeTab.id ?? "legacy-tab",
+      taskWorkspaceTabId: nextTaskWorkspaceTabId,
+    };
+    taskEditorOwnerRef.current = owner;
+    setTaskEditorPanelOwner(owner);
+    setWorkspaceOverlayOwner({ panelId: owner.panelId, tabId: owner.masterTabId });
     setSharedTaskEditorOverlayTaskId(taskId);
-  }, [setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
+  }, [requestPageNavigation, setActivePage, setActiveTaskWorkspaceTab, setTaskUiState, taskWorkspaceTabsState.activeTabId, taskWorkspaceTabsState.tabs]);
 
   useEffect(() => {
     if (typeof window === "undefined" || isRestoringPersistedUiState) {
@@ -3121,8 +3478,8 @@ export function TaskApp() {
   }, [homeDailyProgress, homeFullHistoryShadowProgress, isFullTaskHistoryLoaded, isHomeCurrentDayHistoryReady, todayKey]);
   const openHomeRecord = useCallback((metricKey: RecordMetricKey) => {
     setPendingProgressRecordMetricKey(metricKey);
-    setActivePage("Achievements");
-  }, [setActivePage]);
+    requestPageNavigation("Achievements");
+  }, [requestPageNavigation]);
   const clearPendingProgressRecordMetricKey = useCallback(() => {
     setPendingProgressRecordMetricKey(null);
   }, []);
@@ -3914,33 +4271,13 @@ export function TaskApp() {
     taskHistoryByTaskId,
     todayDateKey: todayKey,
   }), [currentStreakByTaskId, focusedTaskIdSet, hasStepsByTaskId, isFullTaskHistoryLoaded, manualMembershipsByTaskId, milestoneData.activeMilestoneTaskIds, milestoneData.milestoneTaskIds, taskAttentionProjection.attentionEligibleTaskIds, taskDisplayStatusByTaskId, taskHistoryByTaskId, taskHistoryFactsByTaskId, todayKey]);
-  const parsedTaskSearch = useMemo(
-    () => parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode),
-    [taskUiState.duplicateTitleMode, taskUiState.search],
+  const taskDerivedPresentation = useMemo(
+    () => prepareTaskAppDerivedPresentation(taskUiState, { derivationSearchQuery: "" }),
+    [taskUiState],
   );
-  const effectiveSearchQuery = parsedTaskSearch.cleanedQuery;
-  const duplicateTitleModeActive = parsedTaskSearch.duplicateTitleMode;
-  const taskUiStateForDerivedData = useMemo(() => ({
-    duplicateTitleMode: duplicateTitleModeActive,
-    energyFilters: taskUiState.energyFilters,
-    includeStepsByView: taskUiState.includeStepsByView,
-    matchAny: taskUiState.matchAny,
-    quickFilters: taskUiState.quickFilters,
-    selectedBucket: taskUiState.selectedBucket,
-    statusFilters: taskUiState.statusFilters,
-    tableColumnFilters: taskUiState.tableColumnFilters,
-    view: taskUiState.view,
-  }), [
-    duplicateTitleModeActive,
-    taskUiState.energyFilters,
-    taskUiState.includeStepsByView,
-    taskUiState.matchAny,
-    taskUiState.quickFilters,
-    taskUiState.selectedBucket,
-    taskUiState.statusFilters,
-    taskUiState.tableColumnFilters,
-    taskUiState.view,
-  ]);
+  const effectiveSearchQuery = taskDerivedPresentation.normalizedSearchQuery;
+  const duplicateTitleModeActive = taskDerivedPresentation.duplicateTitleMode;
+  const taskUiStateForDerivedData = taskDerivedPresentation.taskUiState;
   const bucketContext = useMemo(() => ({
     focusedTaskIds: focusedTaskIdSet,
     routing: taskRouting,
@@ -4048,27 +4385,6 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [canonicalIndexRevision, projectionCache, taskAppStructuralData],
   );
-  const stableTaskSearchScope = useMemo(() => buildStableTaskSearchScope(
-    Array.from(stableCanonicalTaskIndex.entityFactsById.values()).map((fact) => ({
-      ancestorIds: fact.ancestorIds,
-      displayStatus: fact.displayStatus,
-      id: fact.id,
-      listIds: fact.listMemberships.map((membership) => membership.id),
-      rootParentId: fact.rootParentId,
-      searchDocument: fact.searchDocument,
-      task: fact.task,
-    })),
-    {
-      energyFilters: taskUiStateForDerivedData.energyFilters,
-      focusedTaskIds,
-      listNameById: stableCanonicalTaskIndex.listNameById,
-      matchAny: taskUiStateForDerivedData.matchAny,
-      quickFilters: taskUiStateForDerivedData.quickFilters,
-      selectedBucket: taskUiStateForDerivedData.selectedBucket,
-      statusFilters: taskUiStateForDerivedData.statusFilters,
-      tableColumnFilters: taskUiStateForDerivedData.tableColumnFilters,
-    },
-  ), [focusedTaskIds, stableCanonicalTaskIndex, taskUiStateForDerivedData]);
   const navigatorTaskSearchEntities = useMemo<readonly TaskSearchEntity[]>(
     () => Array.from(stableCanonicalTaskIndex.entityFactsById.values()).map((fact) => ({
       ancestorIds: fact.ancestorIds,
@@ -4081,21 +4397,29 @@ export function TaskApp() {
     })),
     [stableCanonicalTaskIndex],
   );
+  const stableTaskSearchScope = useMemo(
+    () => buildTaskSearchPresentationScope(stableCanonicalTaskIndex, taskUiState, navigatorTaskSearchEntities),
+    [
+      navigatorTaskSearchEntities,
+      stableCanonicalTaskIndex,
+      taskUiState.energyFilters,
+      taskUiState.matchAny,
+      taskUiState.quickFilters,
+      taskUiState.selectedBucket,
+      taskUiState.statusFilters,
+      taskUiState.tableColumnFilters,
+    ],
+  );
   const taskSearchSelection = useMemo(() => {
-    if (!shouldRunTaskSearch(activePage)) return null;
-    const result = queryTaskSearch(
-      effectiveSearchQuery,
-      stableTaskSearchScope,
-      taskUiStateForDerivedData.includeStepsByView[taskUiStateForDerivedData.view] === true,
-    );
-    const visibleTasks = sortTasksForCockpit(
-      result.visibleRootTaskIds
-        .map((taskId) => stableCanonicalTaskIndex.taskById.get(taskId))
-        .filter((task): task is NonNullable<typeof task> => Boolean(task)),
+    return selectTaskSearchPresentation({
       bucketContext,
-    );
-    return { ...result, visibleTasks };
-  }, [activePage, bucketContext, effectiveSearchQuery, stableCanonicalTaskIndex, stableTaskSearchScope, taskUiStateForDerivedData]);
+      index: stableCanonicalTaskIndex,
+      page: activePage,
+      presentation: taskUiState,
+      scope: stableTaskSearchScope,
+      search: effectiveSearchQuery,
+    });
+  }, [activePage, bucketContext, effectiveSearchQuery, stableCanonicalTaskIndex, stableTaskSearchScope, taskUiState.includeStepsByView, taskUiState.view]);
   const matchedTaskContentFolderIds = useMemo(
     () => getTaskContentFolderSearchMatchIds(stableCanonicalTaskIndex, effectiveSearchQuery),
     [effectiveSearchQuery, stableCanonicalTaskIndex],
@@ -4143,16 +4467,8 @@ export function TaskApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [projectionCache, workspaceFactsRevision],
   );
-  const derivationViewRevision = useMemo(
-    () => createProjectionDomainRevision("view", taskUiStateForDerivedData),
-    [taskUiStateForDerivedData],
-  );
-  const derivationSettingsRevision = useMemo(
-    () => createProjectionDomainRevision("view-settings", {
-      listVisibleColumns: taskUiState.visibleColumnsByView.table,
-    }),
-    [taskUiState.visibleColumnsByView.table],
-  );
+  const derivationViewRevision = taskDerivedPresentation.derivationViewRevision;
+  const derivationSettingsRevision = taskDerivedPresentation.derivationSettingsRevision;
   const taskDerivationRevision = createTaskDerivationRevisionKey({
     historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision, quotaCurrentPeriodHistoryRevision),
     listRevision: workspaceFactsRevision,
@@ -4196,31 +4512,29 @@ export function TaskApp() {
         },
       }) : undefined;
       const result = computeTaskAppDerivedData({
-      activePage: TASK_DERIVATION_SCOPE,
-      availableTaskLists,
-      availableTaskNotes,
-      bucketContext,
-      deferredSearchQuery: "",
-      focusedTaskIds,
-      listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
-      listVisibleColumns: taskUiState.visibleColumnsByView.table,
-      milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
-      milestoneTaskIds: milestoneData.milestoneTaskIds,
-      taskHistoryByTaskId,
-      quotaCurrentPeriodHistoryByTaskId,
-      isQuotaCurrentPeriodHistoryReady,
-      taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
-      taskContentFolders,
-      todayDateKey: todayKey,
-      taskListEvaluationContext,
-      taskSubtasksByTaskId,
-      taskUiState: taskUiStateForDerivedData,
-      taskDisplayStatusByTaskId,
-      tasks: tasksForActiveStatusRead,
-      structuralData: taskAppStructuralData,
-      stableCanonicalTaskIndex,
-      workspaceFacts: taskAppWorkspaceFacts,
-      diagnosticDetails: diagnostic,
+        activePage: TASK_DERIVATION_SCOPE,
+        availableTaskLists,
+        availableTaskNotes,
+        bucketContext,
+        focusedTaskIds,
+        listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
+        milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
+        milestoneTaskIds: milestoneData.milestoneTaskIds,
+        taskHistoryByTaskId,
+        quotaCurrentPeriodHistoryByTaskId,
+        isQuotaCurrentPeriodHistoryReady,
+        taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
+        taskContentFolders,
+        todayDateKey: todayKey,
+        taskListEvaluationContext,
+        taskSubtasksByTaskId,
+        presentation: taskDerivedPresentation,
+        taskDisplayStatusByTaskId,
+        tasks: tasksForActiveStatusRead,
+        structuralData: taskAppStructuralData,
+        stableCanonicalTaskIndex,
+        workspaceFacts: taskAppWorkspaceFacts,
+        diagnosticDetails: diagnostic,
       });
       return result;
     }),
@@ -4345,83 +4659,18 @@ export function TaskApp() {
     [activePrimaryFacetVisibleEntityIds, canonicalEntityProjection.entityFactsById, canonicalTaskListRailTree, todayKey],
   );
   const taskListRailStructureOptions = useMemo(() => {
-    const rootContainerRevision = getTaskListContainerRevision(taskListContainers, null);
-    const buildStructureOptions = (
-      folderId: string | null,
-      items = canonicalTaskListRailTree.mixedChildrenByFolderId.get(folderId) ?? [],
-    ) => (
-      items
-        .map((item, containerIndex) => ({ containerIndex, item }))
-        .filter(({ item }) => (
-          item.kind === "folder"
-          || item.entity.isVisible
-          || item.id === taskUiState.selectedBucket
-        ))
-        .map(({ containerIndex, item }) => {
-          if (item.kind === "folder") {
-            const counts = taskListFolderCounts.get(item.id) ?? {
-              containedListCount: 0,
-              dueTodayCount: 0,
-              overdueCount: 0,
-              visibleTaskCount: 0,
-            };
-            return {
-              containerId: folderId,
-              containerKey: getTaskListContainerKey(folderId),
-              containerIndex,
-              count: counts.visibleTaskCount,
-              description: taskListFolderTree.folderPathById.get(item.id) ?? item.entity.name,
-              draggableEligible: true,
-              expectedContainerRevision: folderId === null
-                ? rootContainerRevision
-                : getTaskListContainerRevision(taskListContainers, folderId),
-              folderCounts: counts,
-              id: item.id,
-              entityId: item.id,
-              entityType: "folder" as const,
-              isCustom: true,
-              label: item.entity.name,
-              destinationAppendIndex: canonicalTaskListRailTree.mixedChildrenByFolderId.get(item.id)?.length ?? 0,
-              persistedParentValue: item.placement.container_folder_id,
-              sortOrder: item.sortOrder,
-              structuralKey: item.itemKey,
-              structureKind: "folder" as const,
-            };
-          }
-          return {
-            containerId: folderId,
-            containerKey: getTaskListContainerKey(folderId),
-            containerIndex,
-            count: activeListFacetCounts[item.id] ?? 0,
-            description: taskListFolderTree.listPathById.get(item.id) ?? item.entity.name,
-            draggableEligible: true,
-            entityId: item.entityId ?? undefined,
-            entityType: "list" as const,
-            expectedContainerRevision: folderId === null
-              ? rootContainerRevision
-              : getTaskListContainerRevision(taskListContainers, folderId),
-            id: item.id,
-            isCustom: item.entity.type === "custom",
-            label: item.entity.name,
-            listSubtype: item.listSubtype,
-            persistedParentValue: item.placement.container_folder_id,
-            sortOrder: item.sortOrder,
-            structuralKey: item.itemKey,
-            structureKind: "list" as const,
-          };
-        })
-    );
-    return {
-      primaryRail: buildStructureOptions(null),
-      openFolderRails: taskListFolderBreadcrumbs.map((folder) => ({
-        folderId: folder.id,
-        lists: buildStructureOptions(folder.id),
-      })),
-    };
+    return buildTaskListRailStructureOptions({
+      activeListFacetCounts,
+      canonicalTaskListRailTree,
+      selectedBucket: taskUiState.selectedBucket,
+      taskListContainers,
+      taskListFolderBreadcrumbs,
+      taskListFolderCounts,
+      taskListFolderTree,
+    });
   }, [
     activeListFacetCounts,
     canonicalTaskListRailTree,
-    currentFolderId,
     taskListFolderBreadcrumbs,
     taskListFolderCounts,
     taskListContainers,
@@ -4440,45 +4689,43 @@ export function TaskApp() {
     todayTasks,
     urgentTasks,
   }, momentumView);
-  const selectedBucketTasks = taskSearchSelection?.visibleTasks ?? canonicalVisibleRootTasksSorted;
-  const calendarSelectedTaskIds = useMemo(() => new Set(selectedBucketTasks.map((task) => task.id)), [selectedBucketTasks]);
-  const calendarSelectedTasks = useMemo(
-    () => tasks.filter((task) => calendarSelectedTaskIds.has(task.id)),
-    [calendarSelectedTaskIds, tasks],
-  );
   const tasksForCalendarRead = useMemo(
     () => projectTasksForActiveStatusRead(tasks, calendarTaskDisplayStatusByTaskId, calendarTaskDueOnByTaskId),
     [calendarTaskDisplayStatusByTaskId, calendarTaskDueOnByTaskId, tasks],
   );
-  const calendarSearchMatchingEntityIds = effectiveSearchQuery.length > 0
-    ? taskSearchSelection?.matchingEntityIds
-    : null;
-  const calendarTasks = useMemo(() => {
-    return selectCalendarTasks({
-      childTaskIds: Object.values(childTaskPreviewByParentTaskId).flatMap((group) => group.items.map((item) => item.id)),
-      includeSteps: taskUiState.includeStepsByView.calendar,
-      matchingSearchEntityIds: calendarSearchMatchingEntityIds,
-      searchIsActive: effectiveSearchQuery.length > 0,
-      selectedTasks: calendarSelectedTasks,
-      tasks: tasksForCalendarRead,
-    });
-  }, [calendarSearchMatchingEntityIds, calendarSelectedTasks, childTaskPreviewByParentTaskId, effectiveSearchQuery, taskUiState.includeStepsByView.calendar, tasksForCalendarRead]);
-  const searchMatchedChildTaskIds = taskSearchSelection
-    ? Array.from(taskSearchSelection.matchingDescendantIdsByRootParentId.values())
-      .flatMap((descendantIds) => Array.from(descendantIds))
-    : derivedSearchMatchedChildTaskIds;
-  const searchMatchedStepParentTaskIds = taskSearchSelection
-    ? taskSearchSelection.visibleRootTaskIds
-    : derivedSearchMatchedStepParentTaskIds;
-  const hierarchyStatusFilterActive = effectiveSearchQuery.length === 0 && (
-    taskUiState.statusFilters.length > 0
-    || taskUiState.energyFilters.length > 0
-    || taskUiState.quickFilters.length > 0
-    || taskUiState.tableColumnFilters.priority.length > 0
-    || taskUiState.tableColumnFilters.repeat.length > 0
-    || (taskUiState.tableColumnFilters.taskType?.length ?? 0) > 0
-    || Object.values(taskUiState.tableColumnFilters.text).some((value) => Boolean(value?.trim()))
+  const taskAppViewReadModel = useMemo(
+    () => buildTaskAppViewReadModel({
+      calendarTasksForRead: tasksForCalendarRead,
+      canonicalTasks: tasks,
+      derived: {
+        canonicalVisibleRootTasksSorted,
+        childTaskPreviewByParentTaskId,
+        searchMatchedChildTaskIds: derivedSearchMatchedChildTaskIds,
+        searchMatchedStepParentTaskIds: derivedSearchMatchedStepParentTaskIds,
+      },
+      presentation: taskDerivedPresentation,
+      searchSelection: taskSearchSelection,
+    }),
+    [
+      canonicalVisibleRootTasksSorted,
+      childTaskPreviewByParentTaskId,
+      derivedSearchMatchedChildTaskIds,
+      derivedSearchMatchedStepParentTaskIds,
+      taskDerivedPresentation,
+      taskSearchSelection,
+      tasks,
+      tasksForCalendarRead,
+    ],
   );
+  const {
+    calendarTasks,
+    hierarchyStatusFilterActive,
+    listSelectionResetKey,
+    searchMatchedChildTaskIds,
+    searchMatchedStepParentTaskIds,
+    selectedBucketTasks,
+    visibleListTaskIds,
+  } = taskAppViewReadModel;
   const visiblePinnedTaskCount = taskSearchSelection
     ? activeListFacetCounts.pinned ?? 0
     : visibleListCounts.pinned ?? 0;
@@ -4489,21 +4736,7 @@ export function TaskApp() {
   const visibleRoutineTaskCount = taskSearchSelection
     ? activeListFacetCounts.routine ?? 0
     : visibleListCounts.routine ?? 0;
-  const listVisibleColumns = taskUiState.visibleColumnsByView.table;
-  const listSelectionResetKey = JSON.stringify({
-    duplicateTitleMode: duplicateTitleModeActive,
-    energyFilters: taskUiState.energyFilters,
-    matchAny: taskUiState.matchAny,
-    quickFilters: taskUiState.quickFilters,
-    search: effectiveSearchQuery,
-    selectedBucket: taskUiState.selectedBucket,
-    statusFilters: taskUiState.statusFilters,
-    view: taskUiState.view,
-  });
-  const visibleListTaskIds = useMemo(
-    () => selectedBucketTasks.map((task) => task.id),
-    [selectedBucketTasks],
-  );
+  const listVisibleColumns = taskDerivedPresentation.tableVisibleColumns;
   const taskRowContext = useMemo(() => ({
     focusedTaskIdSet,
     linkedNotesByTaskId: taskLinkedNotesByTaskId,
@@ -5197,7 +5430,7 @@ export function TaskApp() {
   }, [updateTask]);
 
   const showCustomRulesetTasks = useCallback((rulesetId: string) => {
-    setActivePage("Tasks");
+    if (!requestPageNavigation("Tasks")) return;
     setIsTaskFiltersOpen(true);
     setTaskUiState((prev) => ({
       ...prev,
@@ -5217,7 +5450,7 @@ export function TaskApp() {
       },
       view: "table",
     }));
-  }, [setActivePage, setIsTaskFiltersOpen, setTaskUiState]);
+  }, [requestPageNavigation, setIsTaskFiltersOpen, setTaskUiState]);
 
   const moveCustomRulesetTasksToTaskAndDelete = useCallback(async (rulesetId: string) => {
     const rulesetName = customBehaviorRulesets.find((ruleset) => ruleset.id === rulesetId)?.name ?? "the Custom Task Type";
@@ -5248,7 +5481,7 @@ export function TaskApp() {
       view: taskUiState.view === "list" ? "list" : "table",
     };
 
-    setActivePage("Tasks");
+    if (!requestPageNavigation("Tasks")) return;
     setSuppressDetachedListNoticeTaskId(null);
     setRequestedListOverlayTaskId(taskId);
     createTaskWorkspaceTab({
@@ -5256,7 +5489,7 @@ export function TaskApp() {
       label: nextLabel,
       taskUiState: nextTaskUiState,
     });
-  }, [activeTaskWorkspaceTab.isRailHidden, activeTaskWorkspaceTab.taskUiState, createTaskWorkspaceTab, setActivePage, taskUiState.view, tasks]);
+  }, [activeTaskWorkspaceTab.isRailHidden, activeTaskWorkspaceTab.taskUiState, createTaskWorkspaceTab, requestPageNavigation, taskUiState.view, tasks]);
 
   const handleTaskWorkspaceSurfaceChange = useCallback((surface: TaskUiState["tasksSurface"]) => {
     if (surface === "attention") {
@@ -5305,47 +5538,84 @@ export function TaskApp() {
   const handleNavigatorSearchTarget = useCallback((target: NavigatorSearchTarget) => {
     const action: NavigatorSearchAction = target.action;
     clearPageShellNavigationHighlight();
+    const masterWorkspaceController = masterWorkspaceControllerRef.current;
+    if (masterWorkspaceController?.featureEnabled && !masterWorkspaceController.updateFocusedDestination(action)) {
+      if (masterWorkspaceController.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: masterWorkspaceController.transitionBlockedReason });
+      }
+      return;
+    }
+    const hasExperimentalDestination = Boolean(masterWorkspaceController?.featureEnabled);
+    const syncRenderedPage = (page: AppPage) => {
+      if (hasExperimentalDestination) {
+        setActivePage(page);
+        return true;
+      }
+      return requestPageNavigation(page);
+    };
     if (action.kind !== "page-shell") setRequestedPageShell(null);
     if (action.kind === "page") {
       setRequestedSettingsSection(null);
-      setActivePage(action.page);
+      syncRenderedPage(action.page);
     } else if (action.kind === "tasks-surface") {
       setRequestedSettingsSection(null);
-      setActivePage("Tasks");
+      if (!syncRenderedPage("Tasks")) return;
       handleTaskWorkspaceSurfaceChange(action.surface);
     } else if (action.kind === "tasks-view") {
       setRequestedSettingsSection(null);
-      setActivePage("Tasks");
+      if (!syncRenderedPage("Tasks")) return;
       handleTaskWorkspaceSurfaceChange("tasks");
       setTaskUiState((prev) => ({ ...prev, view: action.view }));
     } else if (action.kind === "task") {
       setRequestedSettingsSection(null);
-      openTaskFromExternalNavigation(action.taskId);
+      openTaskFromExternalNavigation(action.taskId, hasExperimentalDestination);
     } else if (action.kind === "health-tab") {
       setRequestedSettingsSection(null);
-      setActivePage("Health");
-      persistHealthTabPreference(action.tab);
+      if (!syncRenderedPage("Health")) return;
+      if (!masterWorkspaceControllerRef.current?.featureEnabled) persistHealthTabPreference(action.tab);
     } else if (action.kind === "page-shell") {
       setRequestedSettingsSection(null);
       setRequestedPageShell(action);
-      setActivePage(action.page);
-      if (action.healthTab) persistHealthTabPreference(action.healthTab);
+      if (!syncRenderedPage(action.page)) return;
+      if (action.healthTab && !masterWorkspaceControllerRef.current?.featureEnabled) persistHealthTabPreference(action.healthTab);
     } else {
-      setActivePage("Settings");
+      if (!syncRenderedPage("Settings")) return;
       setRequestedSettingsSection(action.section);
     }
-  }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, setActivePage, setTaskUiState]);
+  }, [clearPageShellNavigationHighlight, handleTaskWorkspaceSurfaceChange, openTaskFromExternalNavigation, requestPageNavigation, setActivePage, setMessage, setTaskUiState]);
 
-  const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[]) => {
+  const openExistingTaskEditor = useCallback((task: Task, navigationTaskIds?: string[], ownerOverride?: TaskPanelOwner) => {
+    const controller = masterWorkspaceControllerRef.current;
+    const owner = ownerOverride ?? {
+      panelId: controller?.currentPanel.id ?? "legacy-panel",
+      masterTabId: controller?.activeTab.id ?? "legacy-tab",
+      taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
+    };
+    const blockMessage = getTaskEditorOpenBlockMessage({
+      currentEditorOwner: taskEditorOwnerRef.current,
+      currentEditorTaskId: sharedTaskEditorOverlayTaskId,
+      draftOwnerKeys: taskPanelDraftOwnerKeys,
+      editorIsOpen: Boolean(sharedTaskEditorOverlayTaskId),
+      owner,
+      requestedTaskId: task.id,
+    });
+    if (blockMessage) {
+      setMessage({ tone: "warn", text: blockMessage });
+      return false;
+    }
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
+    taskEditorOwnerRef.current = owner;
+    setTaskEditorPanelOwner(owner);
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setSharedTaskEditorOverlayTaskId(task.id);
     setTaskEditorFocusRequest(null);
-  }, [selectedBucketTasks]);
+    return true;
+  }, [selectedBucketTasks, setMessage, sharedTaskEditorOverlayTaskId, taskPanelDraftOwnerKeys, taskWorkspaceTabsState.activeTabId]);
 
   const createTaskAndOpenSharedEditor = useCallback(async (
     initialTaskValues: TaskDraft,
-    options?: { routeToCurrentBucket?: boolean },
+    options?: { owner?: TaskPanelOwner; routeToCurrentBucket?: boolean; selectedBucket?: string },
   ) => {
     const createdTask = await addTask(initialTaskValues);
     if (!createdTask) {
@@ -5353,7 +5623,7 @@ export function TaskApp() {
     }
 
     if (options?.routeToCurrentBucket) {
-      const selectedBucket = taskUiState.selectedBucket;
+      const selectedBucket = options.selectedBucket ?? taskUiState.selectedBucket;
       if (
         selectedBucket === "inbox"
         || selectedBucket === "today"
@@ -5365,25 +5635,25 @@ export function TaskApp() {
       }
     }
 
-    openExistingTaskEditor(createdTask);
+    openExistingTaskEditor(createdTask, undefined, options?.owner);
     return createdTask;
   }, [addTask, openExistingTaskEditor, routeTask, taskUiState.selectedBucket]);
 
-  const openCalendarDateTaskEditor = useCallback((dueOn: string) => (
+  const openCalendarDateTaskEditor = useCallback((dueOn: string, options?: { owner?: TaskPanelOwner; selectedBucket?: string }) => (
     createTaskAndOpenSharedEditor(
       buildNewTaskDraft("New Task", { dueOn }),
-      { routeToCurrentBucket: true },
+      { ...options, routeToCurrentBucket: true },
     )
   ), [createTaskAndOpenSharedEditor]);
 
-  const openInlineNewListTaskComposer = useCallback(() => {
+  const openInlineNewListTaskComposer = useCallback((options?: { owner?: TaskPanelOwner; selectedBucket?: string }) => {
     void createTaskAndOpenSharedEditor(
       buildNewTaskDraft("New Task"),
-      { routeToCurrentBucket: true },
+      { ...options, routeToCurrentBucket: true },
     );
   }, [createTaskAndOpenSharedEditor]);
 
-  const openTaskComposerForType = useCallback((selectionValue: string) => {
+  const openTaskComposerForType = useCallback((selectionValue: string, options?: { owner?: TaskPanelOwner; selectedBucket?: string }) => {
     const selection = resolveTaskTypeSelection(selectionValue, customBehaviorRulesets);
     if (!selection) {
       setMessage({ tone: "warn", text: "That Task Type is no longer available." });
@@ -5394,7 +5664,7 @@ export function TaskApp() {
       ...buildNewTaskDraft("New Task"),
       custom_ruleset_id: selection.customRulesetId,
       task_type: selection.taskType,
-    }, { routeToCurrentBucket: true });
+    }, { ...options, routeToCurrentBucket: true });
   }, [createTaskAndOpenSharedEditor, customBehaviorRulesets, setMessage]);
 
   const createHomeTodoTaskWithType = useCallback(async (title: string, selectionValue: string, metadata: HomeTodoTaskMetadata) => {
@@ -5475,14 +5745,13 @@ export function TaskApp() {
     });
   }, [createTaskAndOpenSharedEditor, todayKey]);
 
-  const openScratchLinkedTaskTemplate = useCallback((title: string) => (
-    createTaskAndOpenSharedEditor(buildNewTaskDraft(title))
+  const openScratchLinkedTaskTemplate = useCallback((title: string, owner?: TaskPanelOwner) => (
+    createTaskAndOpenSharedEditor(buildNewTaskDraft(title), { owner })
   ), [createTaskAndOpenSharedEditor]);
 
   const {
     deferTask,
     focusTask,
-    openFocusPlanner,
     planTasksForToday,
     sendTaskToWaiting,
   } = useTaskPlannerActions({
@@ -5496,6 +5765,13 @@ export function TaskApp() {
     setTaskRouting,
     setTaskUiState,
   });
+  const openFocusPlanner = useCallback((taskIds?: string[], taskCandidates?: Task[], owner?: TaskPanelOwner) => {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
+    setFocusPlannerTaskCandidatesOverride(taskCandidates ?? null);
+    setFocusPlannerStep(0);
+    setFocusDraftIds(taskIds ?? focusedTaskIds);
+    setShowFocusPlanner(true);
+  }, [focusedTaskIds, setWorkspaceOverlayOwnerForTaskPanel]);
   const { setTaskPriority } = useTaskPriorityRoutingController({
     focusedTaskIds,
     onOpenEditTaskEditor: openExistingTaskEditor,
@@ -5507,7 +5783,7 @@ export function TaskApp() {
     },
   });
   useEffect(() => {
-    if (typeof window === "undefined" || activePage !== "Tasks") {
+    if (typeof window === "undefined" || !isMasterPanelPageActive("Tasks")) {
       return;
     }
 
@@ -5529,6 +5805,10 @@ export function TaskApp() {
     const handleKeyDown = (event: KeyboardEvent) => {
       if (
         event.defaultPrevented
+        || masterWorkspaceShortcutModeOpenRef.current
+        || event.metaKey
+        || event.ctrlKey
+        || event.altKey
         || isKeyboardEventFromEditableTarget(event.target)
         || isInsideDialog(event.target)
       ) {
@@ -5675,11 +5955,442 @@ export function TaskApp() {
   const shouldDeferPageRender = isRestoringPersistedUiState;
   const isInitialTaskStateProjectionReady = isCurrentTaskProjectionReadReady && isBehaviorAuthorityReady;
   const isAuthenticatedAppBootReady = isHudAppearanceReady && !isWorkspaceLoading && !isTaskResumeSyncPending && !shouldDeferPageRender && isInitialTaskStateProjectionReady;
+  const getTaskWorkspaceSnapshotForMasterWorkspace = useCallback(() => {
+    const current = getTaskWorkspaceTabsState();
+    return {
+      ...current,
+      tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? {
+        ...tab,
+        collapsedTaskContentFolderIds: Array.from(collapsedTaskContentFolderIds),
+        currentFolderId,
+        taskTableLayoutPreferences,
+    } : tab),
+  };
+  }, [collapsedTaskContentFolderIds, currentFolderId, getTaskWorkspaceTabsState, taskTableLayoutPreferences]);
+  const hasUnsafeTasksDraftForPanel = useCallback((panelId: string, masterTabId: string, includeInlineRename = true) => {
+    const ownerPrefix = `${panelId}:${masterTabId}:`;
+    const ownsSharedEditor = Boolean(sharedTaskEditorOverlayTaskId
+      && taskEditorPanelOwner?.panelId === panelId
+      && taskEditorPanelOwner.masterTabId === masterTabId);
+    const ownsPanelDraft = taskPanelDraftOwnerKeys.some((key) => {
+      const [ownerKey, source] = key.split("::");
+      return Boolean(ownerKey?.startsWith(ownerPrefix) && (includeInlineRename || source !== "workspace"));
+    });
+    return ownsSharedEditor || ownsPanelDraft;
+  }, [sharedTaskEditorOverlayTaskId, taskEditorPanelOwner, taskPanelDraftOwnerKeys]);
+  const hasUnsafeTasksDraftForSplit = useCallback((workspace: MasterWorkspaceState) => {
+    const rightPanel = workspace.panels.find((panel) => panel.side === "right");
+    return Boolean(rightPanel?.tabs.some((tab) => tab.destination.page === "Tasks"
+      && hasUnsafeTasksDraftForPanel(rightPanel.id, tab.id, false)));
+  }, [hasUnsafeTasksDraftForPanel]);
+  const masterWorkspace = useMasterWorkspaceController({
+    activePage,
+    healthDraftSafetyBySection,
+    hasUnsafeNotesDraft,
+    hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen || isSplitRightTasksWorkspaceDraftOpen || isSplitRightTasksListDraftOpen || isSplitRightTasksTableDraftOpen || taskPanelDraftOwnerKeys.length > 0,
+    hasUnsafeTasksDraftForPanel,
+    hasUnsafeTasksDraftForSplit,
+    initialHealthSection: legacyHealthTabPreference,
+    isReady: isAuthenticatedAppBootReady,
+    replaceTaskWorkspaceTabsState,
+    applyTaskUiStateUpdate,
+    getTaskWorkspaceTabsState: getTaskWorkspaceSnapshotForMasterWorkspace,
+    setActivePage,
+    taskWorkspaceTabsState,
+    userId: session?.user?.id,
+    draftProtection: masterWorkspaceDraftProtection,
+  });
+  masterWorkspaceControllerRef.current = masterWorkspace;
+  const reportMasterWorkspaceShortcutBlock = useCallback((reason: string) => {
+    setMessage({ tone: "warn", text: reason });
+  }, []);
+  const masterWorkspaceShortcutMode = useMasterWorkspaceShortcutMode({
+    activateTabInPanel: masterWorkspace.activateTabInPanel,
+    canActivateTabInPanel: masterWorkspace.canActivateTabInPanel,
+    enabled: masterWorkspace.isEnabled,
+    getTabTransitionBlockReasonInPanel: masterWorkspace.getTabTransitionBlockReasonInPanel,
+    isOpenRef: masterWorkspaceShortcutModeOpenRef,
+    onBlocked: reportMasterWorkspaceShortcutBlock,
+    workspace: masterWorkspace.workspace,
+  });
+  const handleMasterPanelNavigatorSearchTarget = useCallback((panelId: string, tabId: string, target: NavigatorSearchTarget) => {
+    const controller = masterWorkspaceControllerRef.current;
+    if (!controller?.isEnabled) return;
+    const action = target.action;
+    if (!controller.updatePanelDestination(panelId, tabId, action)) {
+      if (controller.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: controller.transitionBlockedReason });
+      }
+      return;
+    }
+
+    setPanelShellNavigationRequest((current) => action.kind === "page-shell"
+      ? { panelId, request: action, tabId }
+      : current?.panelId === panelId && current.tabId === tabId ? null : current);
+
+    if (action.kind === "tasks-surface") {
+      controller.updateTasksUiState(panelId, tabId, (current) => current.tasksSurface === action.surface
+        ? current
+        : { ...current, tasksSurface: action.surface });
+    } else if (action.kind === "tasks-view") {
+      controller.updateTasksUiState(panelId, tabId, (current) => current.tasksSurface === "tasks" && current.view === action.view
+        ? current
+        : { ...current, tasksSurface: "tasks", view: action.view });
+    } else if (action.kind === "task") {
+      const targetPanel = controller.workspace.panels.find((panel) => panel.id === panelId);
+      const targetTab = targetPanel?.tabs.find((tab) => tab.id === tabId);
+      openSharedTaskEditor(action.taskId, {
+        owner: {
+          masterTabId: tabId,
+          panelId,
+          taskWorkspaceTabId: targetTab?.presentation.tasksWorkspace?.activeTabId ?? taskWorkspaceTabsState.activeTabId,
+        },
+        preserveActivePage: true,
+      });
+    }
+  }, [setMessage, taskWorkspaceTabsState.activeTabId]);
+  const activeWorkspaceOverlayOwner = workspaceOverlayOwner ?? {
+    panelId: masterWorkspace.currentPanel.id,
+    tabId: masterWorkspace.activeTab.id,
+  };
+  const workspaceModalOverlayHost = masterWorkspace.hasSplit
+    ? (() => {
+      const host = masterPanelOverlayHosts.get(activeWorkspaceOverlayOwner.panelId);
+      return host ? { ...host, tabId: activeWorkspaceOverlayOwner.tabId } : null;
+    })()
+    : undefined;
+  const sharedTaskEditorOverlayHost = masterWorkspace.hasSplit && sharedTaskEditorOverlayTaskId && workspaceOverlayOwner
+    ? (() => {
+      const host = masterPanelOverlayHosts.get(workspaceOverlayOwner.panelId);
+      return host ? { ...host, tabId: workspaceOverlayOwner.tabId } : null;
+    })()
+    : undefined;
+  const { isEnabled: masterWorkspaceIsEnabled, workspace: masterWorkspaceState, getTasksUiState: getMasterWorkspaceTasksUiState } = masterWorkspace;
+  useLayoutEffect(() => {
+    const nextPages = masterWorkspaceIsEnabled
+      ? Array.from(new Set(masterWorkspaceState.panels.flatMap((panel) => {
+        const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+        return tab ? [tab.destination.page] : [];
+      })))
+      : [];
+    const nextTaskSurfaces = masterWorkspaceIsEnabled
+      ? masterWorkspaceState.panels.flatMap((panel) => {
+        const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+        if (tab?.destination.page !== "Tasks") return [];
+        const panelTaskUiState = getMasterWorkspaceTasksUiState(panel.id, tab.id);
+        return panelTaskUiState ? [panelTaskUiState.tasksSurface] : [];
+      })
+      : [];
+    setMasterPanelPages((current) => current.length === nextPages.length && current.every((page, index) => page === nextPages[index])
+      ? current
+      : nextPages);
+    setMasterPanelTaskSurfaces((current) => current.length === nextTaskSurfaces.length && current.every((surface, index) => surface === nextTaskSurfaces[index])
+      ? current
+      : nextTaskSurfaces);
+  }, [getMasterWorkspaceTasksUiState, masterWorkspace, masterWorkspaceIsEnabled, masterWorkspaceState]);
+  const splitPanels = useMemo(() => {
+    const left = masterWorkspace.workspace.panels.find((panel) => panel.side === "left");
+    const right = masterWorkspace.workspace.panels.find((panel) => panel.side === "right");
+    const leftTab = left?.tabs.find((tab) => tab.id === left.activeTabId);
+    const rightTab = right?.tabs.find((tab) => tab.id === right.activeTabId);
+    return { left, leftTab, right, rightTab };
+  }, [masterWorkspace.workspace]);
+  const isSplitRightTaskPanel = masterWorkspace.isEnabled
+    && Boolean(splitPanels.right && splitPanels.rightTab?.destination.page === "Tasks");
+  const isTasksSplit = isSplitRightTaskPanel && splitPanels.leftTab?.destination.page === "Tasks";
+  const splitRightTasksUiState = isSplitRightTaskPanel && splitPanels.right && splitPanels.rightTab
+    ? masterWorkspace.getTasksUiState(splitPanels.right.id, splitPanels.rightTab.id) ?? null
+    : null;
+  const splitRightDerivedPresentation = useMemo(
+    () => splitRightTasksUiState
+      ? prepareTaskAppDerivedPresentation(splitRightTasksUiState, { derivationSearchQuery: "" })
+      : null,
+    [splitRightTasksUiState],
+  );
+  const splitRightSearchScope = useMemo(
+    () => splitRightTasksUiState
+      ? buildTaskSearchPresentationScope(stableCanonicalTaskIndex, splitRightTasksUiState, navigatorTaskSearchEntities)
+      : null,
+    [navigatorTaskSearchEntities, splitRightTasksUiState, stableCanonicalTaskIndex],
+  );
+  const splitRightSearchSelection = useMemo(() => (
+    splitRightTasksUiState && splitRightSearchScope && splitRightDerivedPresentation
+      ? selectTaskSearchPresentation({
+        bucketContext,
+        index: stableCanonicalTaskIndex,
+        page: "Tasks",
+        presentation: splitRightTasksUiState,
+        scope: splitRightSearchScope,
+        search: splitRightDerivedPresentation.normalizedSearchQuery,
+      })
+      : null
+  ), [bucketContext, splitRightDerivedPresentation, splitRightSearchScope, splitRightTasksUiState, stableCanonicalTaskIndex]);
+  const splitRightTaskDerivationRevision = splitRightDerivedPresentation
+    ? createTaskDerivationRevisionKey({
+      historyRevision: combineProjectionRevisions(taskHistoryRevision, taskHistoryStreakSummaryRevision, quotaCurrentPeriodHistoryRevision),
+      listRevision: workspaceFactsRevision,
+      settingsRevision: splitRightDerivedPresentation.derivationSettingsRevision,
+      taskRevision: taskDomainRevision,
+      viewRevision: splitRightDerivedPresentation.derivationViewRevision,
+    })
+    : null;
+  const splitRightDerivedData = useMemo(() => {
+    if (!splitRightTaskDerivationRevision || !splitRightDerivedPresentation) return null;
+    return projectionCache.getOrCreate("complete-derived", splitRightTaskDerivationRevision, () => computeTaskAppDerivedData({
+      activePage: TASK_DERIVATION_SCOPE,
+      availableTaskLists,
+      availableTaskNotes,
+      bucketContext,
+      focusedTaskIds,
+      listColumnPickerOrder: LIST_COLUMN_PICKER_ORDER,
+      milestoneSearchTokensByTaskId: milestoneData.milestoneSearchTokensByTaskId,
+      milestoneTaskIds: milestoneData.milestoneTaskIds,
+      taskHistoryByTaskId,
+      quotaCurrentPeriodHistoryByTaskId,
+      isQuotaCurrentPeriodHistoryReady,
+      taskHistoryStreakSummaryByTaskId: effectiveTaskHistoryStreakSummaries,
+      taskContentFolders,
+      todayDateKey: todayKey,
+      taskListEvaluationContext,
+      taskSubtasksByTaskId,
+      presentation: splitRightDerivedPresentation,
+      taskDisplayStatusByTaskId,
+      tasks: tasksForActiveStatusRead as Task[],
+      structuralData: taskAppStructuralData,
+      stableCanonicalTaskIndex,
+      workspaceFacts: taskAppWorkspaceFacts,
+    }));
+    // The revision includes the shared Task, History, list, and right-panel presentation inputs.
+    // Search text is intentionally handled by the right-panel selector below.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectionCache, splitRightTaskDerivationRevision]);
+  const splitRightTaskViewReadModel = useMemo(() => {
+    if (!splitRightDerivedData || !splitRightDerivedPresentation) return null;
+    return buildTaskAppViewReadModel({
+      calendarTasksForRead: tasksForCalendarRead as Task[],
+      canonicalTasks: tasks,
+      derived: {
+        canonicalVisibleRootTasksSorted: splitRightDerivedData.canonicalVisibleRootTasksSorted,
+        childTaskPreviewByParentTaskId: splitRightDerivedData.childTaskPreviewByParentTaskId,
+        searchMatchedChildTaskIds: splitRightDerivedData.searchMatchedChildTaskIds,
+        searchMatchedStepParentTaskIds: splitRightDerivedData.searchMatchedStepParentTaskIds,
+      },
+      presentation: splitRightDerivedPresentation,
+      searchSelection: splitRightSearchSelection,
+    });
+  }, [splitRightDerivedData, splitRightDerivedPresentation, splitRightSearchSelection, tasks, tasksForCalendarRead]);
+  const splitRightTaskWorkspaceTabsState = splitPanels.rightTab?.presentation.tasksWorkspace ?? taskWorkspaceTabsState;
+  const splitRightActiveTaskWorkspaceTab = resolveActiveTaskWorkspaceTab(splitRightTaskWorkspaceTabsState);
+  const splitRightCollapsedTaskContentFolderIds = useMemo(() => new Set(
+    splitRightActiveTaskWorkspaceTab.collapsedTaskContentFolderIds ?? Array.from(collapsedTaskContentFolderIds),
+  ), [collapsedTaskContentFolderIds, splitRightActiveTaskWorkspaceTab]);
+  const {
+    clearListTaskSelection: clearSplitRightListTaskSelection,
+    selectAllVisibleListTasks: selectAllSplitRightVisibleListTasks,
+    selectedListTaskIds: splitRightSelectedTaskIds,
+    toggleListTaskSelection: toggleSplitRightListTaskSelection,
+  } = useTaskListSelection({
+    resetKey: `${splitRightActiveTaskWorkspaceTab.id}:${splitRightTaskViewReadModel?.listSelectionResetKey ?? "inactive"}`,
+    tasks,
+    visibleListTaskIds: splitRightTaskViewReadModel?.visibleListTaskIds ?? [],
+  });
+  const [isSplitRightTaskFiltersOpen, setIsSplitRightTaskFiltersOpen] = useState(isTaskFiltersOpen);
+  const splitRightPresentationSeedKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) {
+      splitRightPresentationSeedKeyRef.current = null;
+      return;
+    }
+    const seedKey = `${splitPanels.right.id}:${splitPanels.rightTab.id}`;
+    if (splitRightPresentationSeedKeyRef.current === seedKey) return;
+    splitRightPresentationSeedKeyRef.current = seedKey;
+    setIsSplitRightTaskFiltersOpen(isTaskFiltersOpen);
+    setIsSplitRightDailyPlanningCollapsed(isDailyPlanningCollapsed);
+  }, [isDailyPlanningCollapsed, isTaskFiltersOpen, isTasksSplit, splitPanels.right, splitPanels.rightTab]);
+  const leftTaskPanelOwner: TaskPanelOwner = {
+    panelId: masterWorkspace.workspace.focusedPanelId,
+    masterTabId: masterWorkspace.activeTab.id,
+    taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
+  };
+  const leftTaskPanelOwnerKey = getTaskPanelOwnerKey(leftTaskPanelOwner);
+  const rightTaskPanelOwner: TaskPanelOwner | null = splitPanels.right && splitPanels.rightTab
+    ? {
+      panelId: splitPanels.right.id,
+      masterTabId: splitPanels.rightTab.id,
+      taskWorkspaceTabId: splitRightTaskWorkspaceTabsState.activeTabId,
+    }
+    : null;
+  const rightTaskPanelOwnerKey = rightTaskPanelOwner ? getTaskPanelOwnerKey(rightTaskPanelOwner) : null;
+  const reportTaskPanelDraft = useCallback((ownerKey: string, source: TaskPanelDraftSource, isEditing: boolean) => {
+    const ownerSourceKey = getTaskPanelDraftSourceKey(ownerKey, source);
+    setTaskPanelDraftOwnerKeys((current) => {
+      return updateTaskPanelDraftOwnerKeys(current, ownerSourceKey, isEditing);
+    });
+  }, []);
+  const reportLeftWorkspaceDraft = useCallback((isEditing: boolean) => {
+    setIsTasksWorkspaceRenameDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "workspace", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportLeftSearchDraft = useCallback((isEditing: boolean) => {
+    setIsTasksSearchDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "search", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportLeftTableDraft = useCallback((isEditing: boolean) => {
+    setIsTasksTableDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "table", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportLeftListDraft = useCallback((isEditing: boolean) => {
+    setIsTasksListDraftOpen(isEditing);
+    reportTaskPanelDraft(leftTaskPanelOwnerKey, "list", isEditing);
+  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
+  const reportRightWorkspaceDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "workspace", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
+  const reportRightSearchDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "search", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
+  const reportRightTableDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksTableDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "table", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
+  const reportRightListDraft = useCallback((isEditing: boolean) => {
+    setIsSplitRightTasksListDraftOpen(isEditing);
+    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "list", isEditing);
+  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
+  const updateRightPanelTasksUiState = masterWorkspace.updateTasksUiState;
+  const updateSplitRightTaskUiState = useCallback((updater: TaskUiState | ((current: TaskUiState) => TaskUiState)) => {
+    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return false;
+    return updateRightPanelTasksUiState(splitPanels.right.id, splitPanels.rightTab.id, updater).status === "queued";
+  }, [isTasksSplit, splitPanels.right, splitPanels.rightTab, updateRightPanelTasksUiState]);
+  const updateSplitRightTasksWorkspace = masterWorkspace.updateTasksWorkspace;
+  const updateSplitRightWorkspace = useCallback((updater: TaskWorkspaceTabsState | ((current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState)) => {
+    if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab) return false;
+    return updateSplitRightTasksWorkspace(splitPanels.right.id, splitPanels.rightTab.id, updater);
+  }, [isTasksSplit, splitPanels.right, splitPanels.rightTab, updateSplitRightTasksWorkspace]);
+  useEffect(() => {
+    if (!isTasksSplit || splitRightActiveTaskWorkspaceTab.collapsedTaskContentFolderIds) return;
+    updateSplitRightWorkspace((current) => ({
+      ...current,
+      tabs: current.tabs.map((tab) => tab.id === current.activeTabId
+        ? { ...tab, collapsedTaskContentFolderIds: Array.from(collapsedTaskContentFolderIds) }
+        : tab),
+    }));
+  }, [collapsedTaskContentFolderIds, isTasksSplit, splitRightActiveTaskWorkspaceTab, updateSplitRightWorkspace]);
+  const updateSplitRightSearch = useCallback((search: string) => {
+    updateSplitRightTaskUiState((current) => current.search === search ? current : { ...current, search });
+  }, [updateSplitRightTaskUiState]);
+  useEffect(() => {
+    if (!masterWorkspace.featureEnabled || typeof window === "undefined") return;
+    const protectUnsavedEditingSessions = (event: BeforeUnloadEvent) => {
+      if (!journalDraftSessionStore.hasUnsavedDrafts()
+        && !healthFoodDraftSessionStore.hasUnsavedDrafts()
+        && !healthCustomFoodDraftSessionStore.hasUnsavedDrafts()
+        && !healthRecipeDraftSessionStore.hasUnsavedDrafts()
+        && !healthSavedMealDraftSessionStore.hasUnsavedDrafts()
+        && !healthMealPlanDraftSessionStore.hasUnsavedDrafts()
+        && !notesDraftSessionStore.hasUnsavedDrafts()
+        && !scratchPaperDraftSessionStore.hasUnsavedDrafts()) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", protectUnsavedEditingSessions);
+    return () => window.removeEventListener("beforeunload", protectUnsavedEditingSessions);
+  }, [healthCustomFoodDraftSessionStore, healthFoodDraftSessionStore, healthMealPlanDraftSessionStore, healthRecipeDraftSessionStore, healthSavedMealDraftSessionStore, journalDraftSessionStore, masterWorkspace.featureEnabled, notesDraftSessionStore, scratchPaperDraftSessionStore]);
+  const activeHealthTab = masterWorkspace.isEnabled && activePage === "Health"
+    ? masterWorkspace.activeTab.presentation.healthSection ?? legacyHealthTabPreference
+    : legacyHealthTabPreference;
+  const masterPanelHealthSections = masterWorkspace.isEnabled
+    ? masterWorkspace.workspace.panels.flatMap((panel) => {
+      const tab = panel.tabs.find((candidate) => candidate.id === panel.activeTabId);
+      return tab?.destination.page === "Health"
+        ? [tab.presentation.healthSection ?? legacyHealthTabPreference]
+        : [];
+    })
+    : [];
+  const isMasterPanelHealthSectionActive = (section: HealthTab) => (
+    (activePage === "Health" && activeHealthTab === section) || masterPanelHealthSections.includes(section)
+  );
+  const isMasterTabsFeatureEnabled = masterWorkspace.featureEnabled;
+  const selectMasterHealthSection = masterWorkspace.selectHealthSection;
+  const handleHealthTabSelection = useCallback((tab: HealthTab) => {
+    if (isMasterTabsFeatureEnabled) {
+      if (!selectMasterHealthSection(tab) && masterWorkspaceControllerRef.current?.transitionBlockedReason) {
+        setMessage({ tone: "warn", text: masterWorkspaceControllerRef.current.transitionBlockedReason });
+      }
+    } else persistHealthTabPreference(tab);
+  }, [isMasterTabsFeatureEnabled, selectMasterHealthSection, setMessage]);
+  const {
+    archiveGoal: archiveFitnessGoal,
+    createGoal: createFitnessGoal,
+    createLevel: createFitnessGoalLevel,
+    deleteLevel: deleteFitnessGoalLevel,
+    error: fitnessGoalsError,
+    goals: fitnessGoals,
+    isLoading: fitnessGoalsLoading,
+    levels: fitnessGoalLevels,
+    restoreGoal: restoreFitnessGoal,
+    updateGoal: updateFitnessGoal,
+    updateLevel: updateFitnessGoalLevel,
+  } = useFitnessGoals(supabase, session?.user?.id ?? null, setMessage, isMasterPanelHealthSectionActive("Fitness"));
+  const {
+    archivePlan: archiveFitnessPlan,
+    archivePlanItem: archiveFitnessPlanItem,
+    createPlan: createFitnessPlan,
+    createPlanItem: createFitnessPlanItem,
+    error: fitnessPlanError,
+    isLoading: fitnessPlansLoading,
+    planItems: fitnessPlanItems,
+    plans: fitnessPlans,
+    saveWorkoutPlanItemLinks,
+    updatePlan: updateFitnessPlan,
+    updatePlanItem: updateFitnessPlanItem,
+    workoutPlanItemLinks,
+  } = useFitnessPlans(supabase, session?.user?.id ?? null, setMessage, isMasterPanelHealthSectionActive("Fitness"));
+  const {
+    archiveExercise,
+    createExercise,
+    error: fitnessSessionError,
+    exerciseLibrary,
+    getWorkoutSessionDetails,
+    isLoaded: fitnessSessionLoaded,
+    isLoading: fitnessSessionLoading,
+    removeLocalWorkoutSessionDetails,
+    reorderExercises,
+    saveWorkoutSessionDetails,
+    updateExercise,
+    workoutExercises,
+    workoutSets,
+  } = useFitnessSessionDetails(supabase, session?.user?.id ?? null, setMessage, isMasterPanelHealthSectionActive("Fitness"));
+  async function deleteHealthWorkoutWithStructuredDetails(workoutId: string) {
+    const deleted = await deleteHealthWorkout(workoutId);
+    if (deleted) removeLocalWorkoutSessionDetails(workoutId);
+    return deleted;
+  }
   const shouldBlockAuthenticatedAppBody = !hasCompletedInitialAppBoot && !isAuthenticatedAppBootReady;
   const requestedSharedTaskRow = sharedTaskEditorOverlayTaskId
     ? sharedTaskEditorRows.find((task) => task.id === sharedTaskEditorOverlayTaskId) ?? null
     : null;
   const isSharedTaskEditorOpen = Boolean(sharedTaskEditorOverlayTaskId && requestedSharedTaskRow);
+
+  useEffect(() => {
+    if (!masterWorkspace.isEnabled) return;
+    const destination = masterWorkspace.activeTab.destination;
+    if (masterWorkspace.hasSplit) {
+      // This effect mirrors the focused route into navigation request state.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setRequestedPageShell(null);
+      setRequestedSettingsSection(null);
+      setPanelShellNavigationRequest((current) => destination.kind === "page-shell"
+        ? { panelId: masterWorkspace.currentPanel.id, request: destination, tabId: masterWorkspace.activeTab.id }
+        : current?.panelId === masterWorkspace.currentPanel.id && current.tabId === masterWorkspace.activeTab.id ? null : current);
+      return;
+    }
+    setPanelShellNavigationRequest(null);
+    setRequestedPageShell(destination.kind === "page-shell" ? destination : null);
+    setRequestedSettingsSection(destination.kind === "settings-section" ? destination.section : null);
+  }, [masterWorkspace.activeTab.destination, masterWorkspace.activeTab.id, masterWorkspace.currentPanel.id, masterWorkspace.hasSplit, masterWorkspace.isEnabled]);
 
   useEffect(() => {
     if (!session?.user || !isAuthenticatedAppBootReady || !isSharedTaskEditorOpen) {
@@ -5690,7 +6401,7 @@ export function TaskApp() {
 
   useEffect(() => {
     const requestedNavigation = requestedPageShell;
-    if (!requestedNavigation) return;
+    if (!requestedNavigation || masterWorkspace.hasSplit) return;
     if (!requestedPageShellLayoutReady || !isAuthenticatedAppBootReady || activePage !== requestedNavigation.page || (requestedNavigation.healthTab && activeHealthTab !== requestedNavigation.healthTab)) {
       return;
     }
@@ -5824,7 +6535,54 @@ export function TaskApp() {
       if (frame !== null) window.cancelAnimationFrame(frame);
       restoreOverflowAnchor();
     };
-  }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, requestedPageShell, requestedPageShellLayoutReady]);
+  }, [activeHealthTab, activePage, highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, masterWorkspace.hasSplit, requestedPageShell, requestedPageShellLayoutReady]);
+  useEffect(() => {
+    const pending = panelShellNavigationRequest;
+    if (!pending || !masterWorkspace.hasSplit || !isAuthenticatedAppBootReady || !requestedPageShellLayoutReady) return;
+    const panel = masterWorkspace.workspace.panels.find((candidate) => candidate.id === pending.panelId);
+    const tab = panel?.tabs.find((candidate) => candidate.id === pending.tabId);
+    if (panel?.activeTabId !== pending.tabId || tab?.destination.kind !== "page-shell" || tab.destination.shellId !== pending.request.shellId) {
+      // The request belongs to a tab that is no longer active in this panel.
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      setPanelShellNavigationRequest((current) => current === pending ? null : current);
+      return;
+    }
+
+    let frame: number | null = null;
+    let attempts = 0;
+    const retry = () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(revealPanelShell);
+    };
+    const revealPanelShell = () => {
+      frame = null;
+      attempts += 1;
+      const panelElement = Array.from(document.querySelectorAll<HTMLElement>("[data-master-workspace-panel-id]"))
+        .find((element) => element.dataset.masterWorkspacePanelId === pending.panelId);
+      const scrollElement = panelElement?.querySelector<HTMLElement>("[data-master-workspace-scroll-container]");
+      const shell = Array.from(panelElement?.querySelectorAll<HTMLElement>("[data-page-shell-id]") ?? [])
+        .find((element) => element.dataset.pageShellId === pending.request.shellId);
+      if (!scrollElement || !shell || !shell.isConnected || shell.getBoundingClientRect().height <= 0) {
+        if (attempts < PAGE_SHELL_NAVIGATION_MAX_ATTEMPTS) retry();
+        else setPanelShellNavigationRequest((current) => current === pending ? null : current);
+        return;
+      }
+      const shellBody = shell.querySelector<HTMLElement>(".page-shell-body");
+      if (shellBody) shellBody.scrollTop = 0;
+      const shellRect = shell.getBoundingClientRect();
+      const scrollRect = scrollElement.getBoundingClientRect();
+      scrollElement.scrollTo({
+        behavior: "smooth",
+        top: Math.max(0, scrollElement.scrollTop + shellRect.top - scrollRect.top - 12),
+      });
+      highlightPageShellNavigationTarget(shell);
+      setPanelShellNavigationRequest((current) => current === pending ? null : current);
+    };
+    retry();
+    return () => {
+      if (frame !== null) window.cancelAnimationFrame(frame);
+    };
+  }, [highlightPageShellNavigationTarget, isAuthenticatedAppBootReady, masterWorkspace.hasSplit, masterWorkspace.workspace, panelShellNavigationRequest, requestedPageShellLayoutReady]);
   useEffect(() => () => clearPageShellNavigationHighlight(), [clearPageShellNavigationHighlight]);
   const childTaskCreationBlockedTaskIds = taskHierarchyDiagnostics.cycleTaskIds;
   const createChildTaskFromPreview = useCallback(async (parentTaskId: string, title: string, selectionValue = "task", metadata?: TaskCreationMetadata) => {
@@ -5917,22 +6675,24 @@ export function TaskApp() {
     });
     return true;
   }, [persistTaskHierarchyRow, setMessage, tasks]);
-  const openMilestoneSetup = useCallback((taskId: string) => {
+  const openMilestoneSetup = useCallback((taskId: string, owner?: TaskPanelOwner) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !canPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
       setMessage({ tone: "warn", text: "This task is no longer eligible for Milestone promotion." });
       return;
     }
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setMilestoneSetupTaskId(taskId);
-  }, [milestoneData.milestoneByTaskId, setMessage, tasks]);
-  const requestDetachAndPromoteMilestone = useCallback((taskId: string) => {
+  }, [milestoneData.milestoneByTaskId, setMessage, setWorkspaceOverlayOwnerForTaskPanel, tasks]);
+  const requestDetachAndPromoteMilestone = useCallback((taskId: string, owner?: TaskPanelOwner) => {
     const task = tasks.find((entry) => entry.id === taskId);
     if (!task || !canDetachAndPromoteTaskToMilestone(task, milestoneData.milestoneByTaskId)) {
       setMessage({ tone: "warn", text: "This Step or Substep can no longer be detached for Milestone promotion." });
       return;
     }
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setPendingDetachMilestoneTaskId(taskId);
-  }, [milestoneData.milestoneByTaskId, setMessage, tasks]);
+  }, [milestoneData.milestoneByTaskId, setMessage, setWorkspaceOverlayOwnerForTaskPanel, tasks]);
   const confirmDetachAndPromoteMilestone = useCallback(async () => {
     const taskId = pendingDetachMilestoneTaskId;
     if (!taskId || isDetachingMilestoneTask) return;
@@ -6267,9 +7027,26 @@ export function TaskApp() {
     setIsActiveTimersTrayOpen(true);
   }
 
-  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; navigationTaskIds?: string[]; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
+  function openSharedTaskEditor(taskId: string, options?: { initialField?: TaskEditorInitialField; navigationTaskIds?: string[]; owner?: TaskPanelOwner; preserveActivePage?: boolean; timer?: RunningTaskTimer | null }) {
     const task = tasks.find((entry) => entry.id === taskId) ?? null;
     const timer = options?.timer ?? null;
+    const owner = options?.owner ?? {
+      panelId: masterWorkspace.currentPanel.id,
+      masterTabId: masterWorkspace.activeTab.id,
+      taskWorkspaceTabId: taskWorkspaceTabsState.activeTabId,
+    };
+    const blockMessage = getTaskEditorOpenBlockMessage({
+      currentEditorOwner: taskEditorOwnerRef.current,
+      currentEditorTaskId: sharedTaskEditorOverlayTaskId,
+      draftOwnerKeys: taskPanelDraftOwnerKeys,
+      editorIsOpen: Boolean(sharedTaskEditorOverlayTaskId),
+      owner,
+      requestedTaskId: taskId,
+    });
+    if (blockMessage) {
+      setMessage({ tone: "warn", text: blockMessage });
+      return false;
+    }
     const taskOccurrence = task ? buildTaskOccurrenceIdentity(task) : null;
     const occurrenceIsClearlyStale = Boolean(timer?.occurrenceKey && taskOccurrence?.occurrenceKey
       && !occurrenceIdentityMatches(timer, taskOccurrence));
@@ -6280,6 +7057,9 @@ export function TaskApp() {
 
     setSuppressDetachedListNoticeTaskId(null);
     setTaskEditorNavigationTaskIds(normalizeTaskEditorNavigationTaskIds(options?.navigationTaskIds ?? selectedBucketTasks.map((entry) => entry.id)));
+    taskEditorOwnerRef.current = owner;
+    setTaskEditorPanelOwner(owner);
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setSharedTaskEditorOverlayTaskId(taskId);
     setTaskEditorFocusRequest(options?.initialField
       ? { field: options.initialField, taskId, token: ++taskEditorFocusTokenRef.current }
@@ -6445,6 +7225,7 @@ export function TaskApp() {
   function handleFocusPlannerFinish() {
     void saveFocusSelection(focusDraftIds);
     setShowFocusPlanner(false);
+    setFocusPlannerTaskCandidatesOverride(null);
     setMessage({
       tone: "good",
       text: focusDraftIds.length === 0
@@ -6455,7 +7236,8 @@ export function TaskApp() {
     });
   }
 
-  function openTaskHistoryForTask(taskId: string) {
+  function openTaskHistoryForTask(taskId: string, owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     const loadGeneration = ++taskHistoryModalLoadGenerationRef.current;
     setTaskHistoryModalTaskId(taskId);
     setTaskHistoryModalLoadingTaskId(taskId);
@@ -6470,12 +7252,14 @@ export function TaskApp() {
     });
   }
 
-  function openBatchDeleteModal() {
+  function openBatchDeleteModal(taskIds?: string[], owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
+    setBatchActionTaskIdsOverride(taskIds ? [...taskIds] : null);
     setIsBatchDeleteModalOpen(true);
   }
 
-  async function emptyTrash() {
-    if (taskUiState.selectedBucket !== "trash") {
+  async function emptyTrash(selectedBucket = taskUiState.selectedBucket) {
+    if (selectedBucket !== "trash") {
       return;
     }
 
@@ -6562,9 +7346,12 @@ export function TaskApp() {
   function requestTaskComplete(
     task: Task,
     options?: {
+      logicalDate?: string;
       onTimeOrigin?: OnTimeLinkedItemOrigin;
+      owner?: TaskPanelOwner;
     },
   ) {
+    if (options?.logicalDate && options.logicalDate > todayKey) return false;
     if (isTaskTypeBehaviorProfilesLoading || !resolveTaskManualActionAvailabilityForTask({
       action: "complete",
       behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
@@ -6584,7 +7371,9 @@ export function TaskApp() {
       return false;
     }
 
+    setWorkspaceOverlayOwnerForTaskPanel(options?.owner);
     setPendingCompleteAction({
+      logicalDate: options?.logicalDate,
       onTimeOrigin: options?.onTimeOrigin,
       taskId: task.id,
     });
@@ -6621,6 +7410,29 @@ export function TaskApp() {
     }
 
     if (!milestoneData.milestoneByTaskId.has(task.id)) {
+      if (completeAction.logicalDate) {
+        const historyLoad = (await loadTaskHistoryForTasks([task.id]))[task.id];
+        if (!historyLoad || historyLoad.status !== "ready") {
+          return fail(historyLoad?.error ?? "Could not load task history. The task was not completed.");
+        }
+        const historySaved = await syncTaskHistoryEntries(
+          task.id,
+          "complete",
+          [completeAction.logicalDate],
+          {
+            historicalOverride: true,
+            historySnapshot: historyLoad.history,
+            syncLiveTask: true,
+          },
+        );
+        if (!historySaved) return false;
+        routeTask(task.id, null);
+        if (focusedTaskIds.includes(task.id)) void saveFocusSelection(focusedTaskIds.filter((id) => id !== task.id));
+        setPendingCompleteAction(null);
+        clearOnTimeExecution(completeAction.onTimeOrigin);
+        setMessage({ tone: "good", text: task.parent_task_id ? `"${task.title}" marked Complete and kept with its parent.` : `"${task.title}" marked Complete and moved to Archive.` });
+        return true;
+      }
       const canonicalCommitted = await updateTask(task.id, { status: "complete" }, { expectedTask: task });
       if (!canonicalCommitted) return false;
 
@@ -7228,56 +8040,81 @@ export function TaskApp() {
 
   function closeBatchDeleteModal() {
     setIsBatchDeleteModalOpen(false);
+    setBatchActionTaskIdsOverride(null);
+    setWorkspaceOverlayOwner(null);
   }
 
   function confirmBatchDelete() {
+    if (batchActionTaskIdsOverride) {
+      if (batchActionTaskIdsOverride.length === 0) return;
+      void deleteTasks(batchActionTaskIdsOverride).then((deleted) => {
+        if (!deleted) return;
+        clearSplitRightListTaskSelection();
+        closeBatchDeleteModal();
+      });
+      return;
+    }
     void deleteSelectedListTasks();
   }
 
-  function openBatchEditModal() {
+  function openBatchEditModal(taskIds?: string[], owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
+    setBatchActionTaskIdsOverride(taskIds ? [...taskIds] : null);
     setIsBatchEditModalOpen(true);
   }
 
   function closeBatchEditModal() {
     setIsBatchEditModalOpen(false);
+    setBatchActionTaskIdsOverride(null);
+    setWorkspaceOverlayOwner(null);
   }
 
   function closeFocusPlanner() {
     setShowFocusPlanner(false);
+    setFocusPlannerTaskCandidatesOverride(null);
+    setWorkspaceOverlayOwner(null);
   }
 
-  function openMomentumDetails() {
+  function openMomentumDetails(owner?: TaskPanelOwner) {
+    setWorkspaceOverlayOwnerForTaskPanel(owner);
     setIsMomentumListOpen(true);
   }
 
   function closeMomentumDetails() {
     setIsMomentumListOpen(false);
+    setWorkspaceOverlayOwner(null);
   }
 
   function closeTaskHistoryModal() {
     taskHistoryModalLoadGenerationRef.current += 1;
     setTaskHistoryModalTaskId(null);
     setTaskHistoryModalLoadingTaskId(null);
+    setWorkspaceOverlayOwner(null);
   }
 
+  const batchModalTasks = batchActionTaskIdsOverride
+    ? tasks.filter((task) => batchActionTaskIdsOverride.includes(task.id))
+    : selectedListTasks;
   const batchDeleteFlow = isBatchDeleteModalOpen ? {
-    count: selectedListTaskIds.length,
+    count: batchModalTasks.length,
     onClose: closeBatchDeleteModal,
     onConfirm: confirmBatchDelete,
-    previewTasks: selectedListTasks.map((task) => ({ id: task.id, title: task.title })),
+    previewTasks: batchModalTasks.map((task) => ({ id: task.id, title: task.title })),
   } : null;
 
   const batchEditFlow = isBatchEditModalOpen ? {
     allTags: allTaskTags,
-    count: selectedListTaskIds.length,
+    count: batchModalTasks.length,
     customBehaviorRulesets,
     energyOptions,
     onClose: closeBatchEditModal,
-    onSave: applyBatchTaskEdit,
+    onSave: batchActionTaskIdsOverride
+      ? (draft: Parameters<typeof applyBatchTaskEdit>[0]) => applyBatchTaskEdit(draft, { clearSelection: false, selectedTasks: batchModalTasks })
+      : applyBatchTaskEdit,
     priorityOptions,
     repeatFrequencyOptions,
     repeatWeekdayOptions,
-    selectedTasks: selectedListTasks,
+    selectedTasks: batchModalTasks,
     behaviorProfiles: taskTypeBehaviorProfiles,
     behaviorPolicyRevisions: taskTypeBehaviorProfileRevisions,
     namedCustomRulesetBehaviorPolicyRevisions: customRulesetBehaviorPolicyRevisions,
@@ -7293,7 +8130,7 @@ export function TaskApp() {
     onSetDraftIds: setFocusDraftIds,
     onStepChange: setFocusPlannerStep,
     step: focusPlannerStep,
-    tasks: focusPlannerTasks.length > 0 ? focusPlannerTasks : activeTasks,
+    tasks: focusPlannerTaskCandidatesOverride ?? (focusPlannerTasks.length > 0 ? focusPlannerTasks : activeTasks),
     todayDateKey: todayKey,
   } : null;
 
@@ -7337,135 +8174,129 @@ export function TaskApp() {
     }
     return refreshedWindow;
   }
-  type HistoryCalendarClearResult = {
-    history: DbTaskHistory[];
-    task: TaskStateRuntimeLocalTask | null;
-  };
-  async function clearTaskHistoryCalendarDate(
+  async function setTaskHistoryCalendarOverride(
     taskId: string,
     logicalDate: string,
-    replacementLabel: string,
-    options?: { clearReplaceableOutcome?: boolean; currentTask?: TaskStateRuntimeLocalTask | null },
-  ): Promise<HistoryCalendarClearResult | null> {
-    const detailHistorySnapshot = taskHistoryDetailByTaskId[taskId]?.history ?? [];
-    const historySnapshot = taskHistoryByTaskId[taskId] ?? detailHistorySnapshot;
-    const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
-    const activeOverride = (taskCalendarOverridesByTaskId[taskId] ?? []).some((override) => override.logicalDate === logicalDate);
-    const hasReplaceableOutcome = Boolean(
-      options?.clearReplaceableOutcome
-      && existingEntry
-      && replaceableTaskHistoryOutcomes.has(existingEntry.status),
-    );
-    const currentTask = (options?.currentTask
-      ?? canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
-      ?? tasks.find((candidate) => candidate.id === taskId)
-      ?? null) as TaskStateRuntimeLocalTask | null;
-    if (!activeOverride && !hasReplaceableOutcome) {
-      return { history: historySnapshot, task: currentTask };
-    }
-
-    if (!currentTask) {
-      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${replacementLabel}.` });
-      return null;
-    }
-    if (!await ensureCompleteTaskHistoryForMutation(taskId)) return null;
-    let committedTask: TaskStateRuntimeLocalTask | null = null;
-    const cleared = await updateTask(taskId, {}, {
-      canonicalIntent: {
-        type: "clear_outcome",
-        logical_date: logicalDate,
-        ...(existingEntry?.occurrence_key ? { occurrence_key: existingEntry.occurrence_key } : {}),
-        ...(existingEntry?.occurrence_due_on ? { scheduled_due_on: existingEntry.occurrence_due_on } : {}),
-      },
-      expectedTask: currentTask,
-      onCanonicalTaskCommitted: (nextTask) => {
-        committedTask = nextTask;
-      },
-      replayIdentity: createTaskStateReplayIdentity(),
-    });
-    if (!cleared) {
-      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${replacementLabel}.` });
-      return null;
-    }
-    if (!committedTask) {
-      setMessage({ tone: "warn", text: `Task was saved, but the canonical Task revision could not be carried into the replacement with ${replacementLabel}.` });
-      return null;
-    }
-
-    const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
-    const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
-    if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
-      setMessage({ tone: "warn", text: `Task was saved, but History could not be reconciled while replacing the existing status with ${replacementLabel}.` });
-      return null;
-    }
-    await reconcileTaskHistoryMutation(taskId, refreshedHistory.history, committedTask);
-    await refreshTaskHistoryDetailAfterMutation(taskId);
-    if (refreshedOverrides.some((override) => override.logicalDate === logicalDate)) {
-      setMessage({ tone: "warn", text: `Task was saved, but the existing Calendar status could not be cleared while replacing it with ${replacementLabel}.` });
-      return null;
-    }
-    return { history: refreshedHistory.history, task: committedTask };
-  }
-
-  async function setTaskHistoryNotDue(taskId: string, logicalDate: string): Promise<boolean> {
-    const historySnapshot = taskHistoryByTaskId[taskId] ?? taskHistoryDetailByTaskId[taskId]?.history ?? [];
-    const existingEntry = historySnapshot.find((entry) => entry.entry_date === logicalDate) ?? null;
-    let currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
+    overrideState: "not_due" | "blank_due" | "due_open" | "in_progress",
+    label: "Not Due" | "Blank" | "Due" | "In Progress",
+  ): Promise<boolean> {
+    const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
       ?? tasks.find((candidate) => candidate.id === taskId)
       ?? null;
-    if (existingEntry && replaceableTaskHistoryOutcomes.has(existingEntry.status)) {
-      const clearedHistory = await clearTaskHistoryCalendarDate(taskId, logicalDate, "Not Due", { clearReplaceableOutcome: true });
-      if (!clearedHistory) return false;
-      currentTask = clearedHistory.task ?? currentTask;
-    }
 
     if (!currentTask) {
-      setMessage({ tone: "warn", text: "Task wasn't updated: Could not replace the existing History status with Not Due." });
+      setMessage({ tone: "warn", text: `Task wasn't updated: Could not replace the existing History status with ${label}.` });
       return false;
     }
     const committed = await updateTask(taskId, {}, {
       canonicalIntent: {
         type: "calendar_override",
         logical_date: logicalDate,
-        override_state: "not_due",
+        override_state: overrideState,
       },
       expectedTask: currentTask,
       replayIdentity: createTaskStateReplayIdentity(),
     });
     if (!committed) {
-      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due did not finish correctly." });
+      setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${label} did not finish correctly.` });
       return false;
     }
 
     const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
     const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
     if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
-      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });
+      setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${label} could not be reconciled.` });
       return false;
     }
     await reconcileTaskHistoryMutation(taskId, refreshedHistory.history);
     const conflictingEntry = refreshedHistory.history.find((entry) => entry.entry_date === logicalDate && replaceableTaskHistoryOutcomes.has(entry.status));
-    const activeNotDue = refreshedOverrides.some((override) => override.logicalDate === logicalDate && override.overrideState === "not_due");
-    if (conflictingEntry || !activeNotDue) {
-      setMessage({ tone: "warn", text: "Task was saved, but the requested History change to Not Due could not be reconciled." });
+    const activeOverride = refreshedOverrides.some((override) => override.logicalDate === logicalDate && override.overrideState === overrideState);
+    if (conflictingEntry || !activeOverride) {
+      setMessage({ tone: "warn", text: `Task was saved, but the requested History change to ${label} could not be reconciled.` });
       return false;
     }
     return true;
   }
 
+  async function setTaskHistoryNotDue(taskId: string, logicalDate: string): Promise<boolean> {
+    return setTaskHistoryCalendarOverride(taskId, logicalDate, "not_due", "Not Due");
+  }
+
+  async function setTaskHistoryBlankDue(taskId: string, logicalDate: string): Promise<boolean> {
+    return setTaskHistoryCalendarOverride(taskId, logicalDate, "blank_due", "Blank");
+  }
+
+  async function setTaskHistoryInProgress(taskId: string, logicalDate: string): Promise<boolean> {
+    return setTaskHistoryCalendarOverride(taskId, logicalDate, "in_progress", "In Progress");
+  }
+
+  async function recalculateTaskHistoryFromDate(taskId: string, fromLogicalDate: string): Promise<boolean> {
+    const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskId)
+      ?? tasks.find((candidate) => candidate.id === taskId)
+      ?? null;
+    if (!currentTask) return false;
+    if (fromLogicalDate > todayKey) return false;
+    if (currentTask.repeat_frequency === "per_week" || currentTask.repeat_frequency === "per_month") {
+      setMessage({ tone: "warn", text: "Historical recalculation for quota recurrence is not supported yet." });
+      return false;
+    }
+    const pendingTaskIds = [taskId];
+    beginPendingTaskMutationScope(pendingTaskIds);
+    try {
+      const committed = await updateTask(taskId, {}, {
+        canonicalIntent: {
+          type: "recalculate_history",
+          from_logical_date: fromLogicalDate,
+        },
+        expectedTask: currentTask,
+        replayIdentity: createTaskStateReplayIdentity(),
+      });
+      if (!committed) {
+        setMessage({ tone: "warn", text: "Task was not recalculated. The canonical Task State command was rejected or could not be reconciled." });
+        return false;
+      }
+      const refreshedHistory = (await loadTaskHistoryForTasks([taskId], { force: true, silent: true, source: "mutation" }))[taskId];
+      const refreshedOverrides = await loadTaskCalendarOverridesForTask(taskId, undefined, { force: true });
+      if (!refreshedHistory || refreshedHistory.status !== "ready" || refreshedOverrides === null) {
+        setMessage({ tone: "warn", text: "Task was recalculated, but Calendar History could not be reconciled." });
+        return false;
+      }
+      await reconcileTaskHistoryMutation(taskId, refreshedHistory.history);
+      await refreshTaskHistoryStreakSummary(taskId);
+      return true;
+    } finally {
+      endPendingTaskMutationScope(pendingTaskIds);
+    }
+  }
+
+  const workspaceOverlayTaskOwner: TaskPanelOwner | undefined = workspaceOverlayOwner ? {
+    panelId: workspaceOverlayOwner.panelId,
+    masterTabId: workspaceOverlayOwner.tabId,
+    taskWorkspaceTabId: masterWorkspace.workspace.panels
+      .find((panel) => panel.id === workspaceOverlayOwner.panelId)?.tabs
+      .find((tab) => tab.id === workspaceOverlayOwner.tabId)?.presentation.tasksWorkspace?.activeTabId
+      ?? taskWorkspaceTabsState.activeTabId,
+  } : undefined;
   const taskHistoryFlow = taskHistoryModalTaskId && taskHistoryModalTask ? {
     onClose: closeTaskHistoryModal,
-    onSelectTask: openTaskHistoryForTask,
+    onRequestComplete: (logicalDate: string) => requestTaskComplete(taskHistoryModalTask, { logicalDate, owner: workspaceOverlayTaskOwner }),
+    onSelectTask: (taskId: string) => openTaskHistoryForTask(taskId, workspaceOverlayTaskOwner),
     onRefreshTaskAuthority: async () => {
       if (!taskHistoryModalTaskId) return false;
       await reconcileTaskEntity(taskHistoryModalTaskId);
       return true;
     },
     onRenameTaskTitle: (taskId: string, nextTitle: string): Promise<boolean> => updateTask(taskId, { title: nextTitle }),
-    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "due_open"): Promise<boolean> => {
+    onSetCalendarOverride: async (logicalDate: string, overrideState: "not_due" | "blank_due" | "due_open" | "in_progress"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) return false;
       if (overrideState === "not_due") {
         return setTaskHistoryNotDue(taskHistoryModalTaskId, logicalDate);
+      }
+      if (overrideState === "blank_due") {
+        return setTaskHistoryBlankDue(taskHistoryModalTaskId, logicalDate);
+      }
+      if (overrideState === "in_progress") {
+        return setTaskHistoryInProgress(taskHistoryModalTaskId, logicalDate);
       }
       const currentTask = canonicalTasksRef.current.find((candidate) => candidate.id === taskHistoryModalTaskId) ?? taskHistoryModalTask;
       const committed = await updateTask(taskHistoryModalTaskId, {}, {
@@ -7484,6 +8315,10 @@ export function TaskApp() {
         }
       }
       return committed;
+    },
+    onRecalculateFromDate: (fromLogicalDate: string) => {
+      if (!taskHistoryModalTaskId) return Promise.resolve(false);
+      return recalculateTaskHistoryFromDate(taskHistoryModalTaskId, fromLogicalDate);
     },
     onSetStatuses: async (entryDates: string[], status: "clear" | "complete" | "did_my_best" | "done" | "missed"): Promise<boolean> => {
       if (!taskHistoryModalTaskId) {
@@ -7698,6 +8533,11 @@ export function TaskApp() {
       ) : null}
     </div>
   );
+  const openTaskListSettingsForPanel = (panelId: string, tabId: string, folderId: string | null) => {
+    setWorkspaceOverlayOwner({ panelId, tabId });
+    setTaskListSettingsPanelContext({ folderId, panelId, tabId });
+    setIsTaskListSettingsOpen(true);
+  };
   const listPanelProps = {
     draggedListColumnId,
     isKeyboardShortcutsMenuOpen,
@@ -7709,7 +8549,7 @@ export function TaskApp() {
     listVisibleColumns,
     onOpenComposer: openInlineNewListTaskComposer,
     onOpenImport: () => { void openTaskImportPanel(); },
-    onOpenListSettings: () => setIsTaskListSettingsOpen(true),
+    onOpenListSettings: () => openTaskListSettingsForPanel(masterWorkspace.currentPanel.id, masterWorkspace.activeTab.id, currentFolderId),
     onOpenCompletedMilestones: () => {
       setTaskUiState((prev) => ({ ...prev, tasksSurface: "completed_milestones" }));
     },
@@ -7742,6 +8582,9 @@ export function TaskApp() {
     openSharedTaskEditor(taskId, { initialField: "estimated_time" });
   };
   const closeSharedTaskEditorOverlay = () => {
+    taskEditorOwnerRef.current = null;
+    setTaskEditorPanelOwner(null);
+    setWorkspaceOverlayOwner(null);
     setSharedTaskEditorOverlayTaskId(null);
     setTaskEditorNavigationTaskIds(null);
     setTaskEditorFocusRequest(null);
@@ -7752,6 +8595,8 @@ export function TaskApp() {
   };
   const scratchPaperData: ScratchPaperData = {
     error: scratchNotes.error,
+    editingSessionStore: masterWorkspace.isEnabled ? scratchPaperDraftSessionStore : null,
+    editingViewId: masterWorkspace.isEnabled ? masterWorkspace.activeTab.id : undefined,
     isLoading: scratchNotes.isLoading,
     links: scratchNotes.links,
     notes: scratchNotes.notes,
@@ -7772,6 +8617,8 @@ export function TaskApp() {
     tasks,
     userId: currentUserId,
     voiceMemos,
+    scratchPaperView: masterWorkspace.isEnabled ? masterWorkspace.activeScratchPaperView : undefined,
+    onScratchPaperViewChange: masterWorkspace.isEnabled ? masterWorkspace.updateScratchPaperView : undefined,
   };
 
   const taskOperationsHeaderProps = {
@@ -7796,7 +8643,7 @@ export function TaskApp() {
     onOpenTaskComposerForType: openTaskComposerForType,
     onOpenFocusPlanner: openFocusPlanner,
     onOpenImport: () => { void openTaskImportPanel(); },
-    onOpenListSettings: () => setIsTaskListSettingsOpen(true),
+    onOpenListSettings: () => openTaskListSettingsForPanel(masterWorkspace.currentPanel.id, masterWorkspace.activeTab.id, currentFolderId),
     onOpenMomentumDetails: openMomentumDetails,
     canMoveStructureInto: (sourceItemKey: string, sourceEntityType: "folder" | "list", destinationFolderId: string) => (
       sourceEntityType === "list"
@@ -7823,6 +8670,7 @@ export function TaskApp() {
     onSearchSubmit: handleTaskOperationsSearchSubmit,
     onExpandAllColumns: () => setExpandAllColumnsToken((current) => current + 1),
     onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
+    onSearchDraftEditingChange: setIsTasksSearchDraftOpen,
     onSearchChange: handleTaskOperationsSearchChange,
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
     onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
@@ -7931,7 +8779,10 @@ export function TaskApp() {
       modalLabel: (pendingCompleteTask?.parent_task_id ?? null)
         ? "Mark step complete"
         : "Mark task permanently complete",
-      onClose: () => setPendingCompleteAction(null),
+      onClose: () => {
+        setPendingCompleteAction(null);
+        setWorkspaceOverlayOwner(null);
+      },
       onConfirm: () => { void confirmPendingTaskComplete(); },
       pending: isMilestoneComplete && isMilestoneLifecyclePending,
       taskTitle: pendingCompleteTask?.title ?? "Task",
@@ -7944,24 +8795,26 @@ export function TaskApp() {
   })();
 
   const taskWorkspaceFlowLayer = (
-    <>
-      <TaskEditFlows
-        batchDeleteFlow={batchDeleteFlow}
-        batchEditFlow={batchEditFlow}
-        completeFlow={null}
-        focusPlannerFlow={focusPlannerFlow}
-        momentumFlow={momentumFlow}
-        taskHistoryFlow={null}
-      />
+    <WorkspaceOverlayHostContext.Provider value={workspaceModalOverlayHost}>
+      <>
+        <TaskEditFlows
+          batchDeleteFlow={batchDeleteFlow}
+          batchEditFlow={batchEditFlow}
+          completeFlow={null}
+          focusPlannerFlow={focusPlannerFlow}
+          momentumFlow={momentumFlow}
+          taskHistoryFlow={null}
+        />
       {milestoneSetupTask ? (
         <MilestoneSetupModal
           localDate={milestoneLocalDate}
-          onClose={() => setMilestoneSetupTaskId(null)}
+          onClose={() => { setMilestoneSetupTaskId(null); setWorkspaceOverlayOwner(null); }}
           onLock={milestoneData.lockMilestone}
           onSuccess={(milestone) => {
             setMilestoneSetupTaskId(null);
+            setWorkspaceOverlayOwner(null);
             setMessage({ tone: "good", text: `“${milestone.task_title_snapshot}” is now a Milestone.` });
-            if (milestone.task_id) openSharedTaskEditor(milestone.task_id);
+            if (milestone.task_id) openSharedTaskEditor(milestone.task_id, { owner: workspaceOverlayTaskOwner });
           }}
           task={milestoneSetupTask}
           timezone={userTimeZone}
@@ -7970,17 +8823,18 @@ export function TaskApp() {
       {milestoneCorrection ? (
         <MilestoneCorrectionModal
           milestone={milestoneCorrection}
-          onClose={() => setMilestoneCorrectionId(null)}
+          onClose={() => { setMilestoneCorrectionId(null); setWorkspaceOverlayOwner(null); }}
           onCorrect={milestoneData.correctMilestone}
           onSuccess={() => {
             setMilestoneCorrectionId(null);
+            setWorkspaceOverlayOwner(null);
             setMessage({ tone: "good", text: "Milestone setup corrected." });
           }}
         />
       ) : null}
       {pendingDetachMilestoneTask ? (
         <DetachAndPromoteMilestoneModal
-          onCancel={() => setPendingDetachMilestoneTaskId(null)}
+          onCancel={() => { setPendingDetachMilestoneTaskId(null); setWorkspaceOverlayOwner(null); }}
           onConfirm={() => { void confirmDetachAndPromoteMilestone(); }}
           pending={isDetachingMilestoneTask}
           task={pendingDetachMilestoneTask}
@@ -7990,316 +8844,69 @@ export function TaskApp() {
         <MilestoneLifecycleModal
           action={pendingMilestoneLifecycle.action}
           milestone={pendingMilestoneLifecycleRecord}
-          onCancel={() => setPendingMilestoneLifecycle(null)}
+          onCancel={() => { setPendingMilestoneLifecycle(null); setWorkspaceOverlayOwner(null); }}
           onConfirm={(reason) => { void confirmMilestoneLifecycle(reason); }}
           pending={isMilestoneLifecyclePending}
         />
       ) : null}
-    </>
+      </>
+    </WorkspaceOverlayHostContext.Provider>
   );
 
-  return (
-    <main
-      data-theme={theme}
-      data-lowstim={lowStim ? "" : undefined}
-      className="min-h-screen px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white"
-    >
-      <TaskEditFlows
-        batchDeleteFlow={null}
-        batchEditFlow={null}
-        completeFlow={completeFlow}
-        focusPlannerFlow={null}
-        momentumFlow={null}
-        taskHistoryFlow={taskHistoryFlow}
-      />
-      {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
-        <TaskManagementTableV2
-          allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
-          allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
-          allRows={sharedTaskEditorRows}
-          allTagOptions={allTaskTags}
-          userId={currentUserId}
-          todayDateKey={todayKey}
-          taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
-          attentionReasonByTaskId={taskAttentionReasonByTaskId}
-          childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
-          childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
-          className="m-0 max-w-none p-0"
-          enableInspector
-          editorNavigationTaskIds={taskEditorNavigationTaskIds ?? undefined}
-          getFollowTaskDestination={getFollowTaskDestination}
-          milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
-          milestonePromotionTaskIds={milestonePromotionTaskIds}
-          onCreateChildTask={createChildTaskFromPreview}
-          onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
-          onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
-          onDiscardTaskTimer={requestTaskTimerDiscard}
-          onDuplicateTask={(taskId) => {
-            const task = tasks.find((entry) => entry.id === taskId);
-            if (task) void duplicateTaskInPlace(task);
-          }}
-          onFollowDetachedTask={followDetachedTask}
-          onInspectorClose={closeSharedTaskEditorOverlay}
-          onTaskEditorNavigate={(taskId) => setSharedTaskEditorOverlayTaskId(taskId)}
-          onMoveTaskIntoParent={moveTaskIntoParent}
-          onNextTaskTimer={() => cycleHudTaskTimer("next")}
-          onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
-          onOpenNote={(noteId) => {
-            closeSharedTaskEditorOverlay();
-            setNotePageOpenNoteId(noteId);
-            setActivePage("Notes");
-          }}
-          onOpenTaskHistory={openTaskHistoryForTask}
-          onPauseTaskTimer={pauseHudTaskTimer}
-          onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
-          onPromoteTaskToMilestone={openMilestoneSetup}
-          onReorderChildTask={(taskId, direction) => { void reorderChildTask(taskId, direction); }}
-          onRequestedEditorFocusHandled={(token) => {
-            setTaskEditorFocusRequest((current) => current?.token === token ? null : current);
-          }}
-          onRestoreTask={(taskId) => { void restoreTaskFromTrash(taskId); }}
-          onResumeTaskTimer={resumeHudTaskTimer}
-          onStartTaskTimer={startHudTaskTimer}
-          onStopTaskTimer={stopHudTaskTimer}
-          onTaskActualSecondsChange={(taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); }}
-          onTaskDueChange={(taskId, schedule, options) => {
-            const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
-            let didPersist = false;
-            const didFullyReconcile = updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, {
-              ...(manualAction ? { manualAction } : {}),
-              onCanonicalMutationPersisted: () => {
-                didPersist = true;
-              },
-            });
-            return didFullyReconcile.then((didReconcile) => didPersist || didReconcile);
-          }}
-          onTaskEnergyChange={(taskId, energy) => { void updateTask(taskId, { energy }); }}
-          onTaskEstimatedMinutesChange={(taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); }}
-          onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
-          onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
-          onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
-          onTaskTypeChange={(taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); }}
-          onTaskBehaviorProfileChange={updateTaskBehaviorProfile}
-          onCustomRulesetBehaviorProfileChange={updateCustomBehaviorRulesetProfile}
-          onResetTaskBehaviorProfile={resetTaskBehaviorProfile}
-          taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
-          behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
-          namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
-          behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
-          behaviorPolicyLogicalDate={todayKey}
-          behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
-          customBehaviorRulesets={customBehaviorRulesets}
-          customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
-          onCreateCustomRuleset={createCustomRuleset}
-          onDeleteCustomRuleset={deleteCustomRuleset}
-          onShowCustomRulesetTasks={showCustomRulesetTasks}
-          onMoveCustomRulesetTasksToTaskAndDelete={moveCustomRulesetTasksToTaskAndDelete}
-          onRenameCustomRuleset={renameCustomRuleset}
-          onUpdateCustomRulesetPresentation={updateCustomRulesetPresentation}
-          onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
-          onTaskPriorityChange={applyTaskPriorityChange}
-          onTaskRepeatChange={handleSharedTaskRepeatChange}
-          onTaskQuotaBalanceClear={handleClearTaskQuotaBalance}
-          onTaskStatusChange={(taskId, status) => {
-            const task = tasks.find((entry) => entry.id === taskId);
-            if (task) void updateTaskStatus(task, status);
-          }}
-          onTaskSubtaskAdd={addTaskSubtask}
-          onTaskSubtaskAddChild={addChildTaskSubtask}
-          onTaskSubtaskDelete={(subtaskId) => { void deleteTaskSubtask(subtaskId); }}
-          onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
-          onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
-          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
-          onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
-          onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
-          onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
-          onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
-          onUnlinkTask={unlinkSameTableTask}
-          overlayOnly
-          renderFullInspectorExtension={renderMilestoneInspectorExtension}
-          requestedEditorFocus={taskEditorFocusRequest}
-          requestedOpenTask={requestedSharedTaskRow}
-          requestedOpenTaskId={sharedTaskEditorOverlayTaskId}
-          rows={sharedTaskEditorRows}
-          runningTaskTimers={runningTaskTimers}
-          selectedTaskIds={[]}
-          showHeader={false}
-        />
-      ) : null}
-      {isAccountOpen ? (
-        <AccountModal
-          onClose={() => setIsAccountOpen(false)}
-          onSave={handleSaveProfile}
-          onSignOut={() => void client.auth.signOut()}
-          profile={profile}
-        />
-      ) : null}
-      {isTaskListSettingsOpen ? (
-        <TaskListSettingsModal
-          currentFolderId={currentFolderId}
-          energyOptions={energyOptions}
-          fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
-          folders={taskListFolders}
-          listCounts={visibleListCounts}
-          lists={availableTaskLists.filter(isTaskListSettingsEligible)}
-          onClose={() => setIsTaskListSettingsOpen(false)}
-          onCreateCustomList={createCustomTaskList}
-          onCreateFolder={taskListFolderActions.createFolder}
-          onDeleteFolder={taskListFolderActions.deleteFolder}
-          onDeleteList={deleteTaskList}
-          onRenameFolder={taskListFolderActions.renameFolder}
-          onSaveList={saveTaskListDefinition}
-          operatorOptionsByField={TASK_LIST_RULE_OPERATOR_OPTIONS}
-          taskStatusOptions={taskStatusOptions}
-        />
-      ) : null}
-      {isImportWidgetMenuOpen ? (
-        <ModalShell className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Import list" onClose={() => setIsImportWidgetMenuOpen(false)}>
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="flex shrink-0 items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Import</p>
-                <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">Import list</h2>
-                <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/55">
-                  Paste a rough list and turn it into calm, structured tasks without leaving list view.
-                </p>
-              </div>
-              <button
-                aria-label="Close"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white"
-                onClick={() => setIsImportWidgetMenuOpen(false)}
-                type="button"
-              >
-                <X className="h-4 w-4" />
-              </button>
-            </div>
-            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
-              <ImportWidgetCard
-                embeddedInModal
-                message={message}
-                onImport={async (lines, options) => {
-                  const result = await importTasks(lines, { ...options, todayDateKey: todayKey });
-                  if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
-                    setIsImportWidgetMenuOpen(false);
-                  }
-                }}
-              />
-            </div>
-          </div>
-        </ModalShell>
-      ) : null}
-      {activeRewardBankSession ? (
-        <TaskRewardModal
-          isDark={theme === "dark"}
-          onClaim={claimPendingRewardBank}
-          onClose={() => setActiveRewardBankSession(null)}
-          onReset={handleResetPendingRewardBank}
-          pendingBankSnapshot={activeRewardBankSession}
-          pendingRewards={activeRewardBankSession.pendingRewards}
-        />
-      ) : null}
-      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
-        <div className="w-full">
-          <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
-              <HudRuntimeClock active>
-                {(hudNow) => {
-                  const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
-                  const notificationInboxItems = [
-                    ...hudNotificationBaseItems,
-                    ...(focusAlarmRemainingMs !== null
-                      ? [{
-                          detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
-                          id: "focus-alarm",
-                          title: "Focus alarm armed",
-                          tone: "neutral" as const,
-                        }]
-                      : []),
-                    ...hudNotificationEvents,
-                  ].slice(0, 8);
-
-                  return (
-                    <CommandCenterHeader
-                      activeHudTaskTimer={activeHudTaskTimer}
-                      activeSessions={activeSessions}
-                      activeTaskCount={filteredActiveTasks.length}
-                      currentHudPageId={hudUiState.activeHudPageId}
-                      economy={economy}
-                      focusCategories={focusCategories}
-                      hudUiState={hudUiState}
-                      urgentTaskCount={filteredUrgentTasks.length}
-                      onOpenAccount={() => setIsAccountOpen(true)}
-                      onOpenComposer={openInlineNewListTaskComposer}
-                      onOpenFocusPlanner={openFocusPlanner}
-                      onOpenQuickCapture={() => { void openTaskImportPanel(); }}
-                      onViewScratchPaper={() => setActivePage("Notes")}
-                      onNextTaskTimer={() => cycleHudTaskTimer("next")}
-                      onPauseTaskTimer={pauseHudTaskTimer}
-                      onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
-                      onResumeTaskTimer={resumeHudTaskTimer}
-                      onStopTaskTimer={stopHudTaskTimer}
-                      onToggleFocusTimer={(categoryId) => {
-                        void handleToggleTimer(categoryId);
-                      }}
-                      profile={profile}
-                      runningTaskTimers={runningTaskTimers}
-                      setHudUiState={setHudUiState}
-                      hudNow={hudNow}
-                      taskTimerNow={hudNow}
-                      theme={theme}
-                      todayTaskCount={filteredTodayTasks.length}
-                      onThemeChange={setTheme}
-                      lowStim={lowStim}
-                      onLowStimChange={setLowStim}
-                      currentStreak={taskActivitySummary?.tracked.current_streak ?? 0}
-                      notificationInboxItems={notificationInboxItems}
-                      isNativeIosPlatform={isNativeIosPlatform}
-                      focusAlarmEnabled={focusAlarmEnabled}
-                      focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
-                      focusAlarmRemainingMs={focusAlarmRemainingMs}
-                      onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-                      onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
-                      onToggleFocusAlarmEnabled={() => {
-                        if (focusAlarmAudioBlocked && focusAlarmEnabled) {
-                          void playFocusAlarmSound({ rearmOnly: true });
-                          return;
-                        }
-
-                        setFocusAlarmEnabled((current) => !current);
-                        if (focusAlarmEnabled) {
-                          setFocusAlarmAudioBlocked(false);
-                        }
-                      }}
-                      mobileZoom={mobileZoom}
-                      onRefreshWorkspace={() => { void handleHudRefresh(); }}
-                      onDecreaseMobileZoom={decreaseMobileZoom}
-                      onIncreaseMobileZoom={increaseMobileZoom}
-                      refreshStatus={refreshStatus === "updating" ? "updating" : (isSoftWorkspaceRefreshing || refreshStatus === "syncing") ? "syncing" : "idle"}
-                      canDecreaseMobileZoom={canDecreaseMobileZoom}
-                      canIncreaseMobileZoom={canIncreaseMobileZoom}
-                      onOpenPendingRewardBank={openPendingRewardBank}
-                      pendingRewardDiceCount={pendingRewardDiceCount}
-                      scratchPaper={scratchPaperData}
-                    />
-                  );
-                }}
-              </HudRuntimeClock>
-          </div>
-        </div>
-      </div>
-      <div className="mx-auto w-full" style={shellZoomStyle}>
-        <section className="w-full pb-28">
-
-        {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
-
+  const renderWorkspacePage = (panelPage: AppPage, panel: typeof masterWorkspace.workspace.panels[number], panelTab: typeof masterWorkspace.activeTab) => {
+    const panelHealthTab = panelPage === "Health"
+      ? panelTab.presentation.healthSection ?? legacyHealthTabPreference
+      : legacyHealthTabPreference;
+    const panelTasksWorkspace = panelTab.presentation.tasksWorkspace ?? getTaskWorkspaceSnapshotForMasterWorkspace();
+    const panelTaskOwner: TaskPanelOwner = {
+      panelId: panel.id,
+      masterTabId: panelTab.id,
+      taskWorkspaceTabId: panelTasksWorkspace.activeTabId,
+    };
+    const openPanelTaskEditor = (taskId: string) => openSharedTaskEditor(taskId, { owner: panelTaskOwner, preserveActivePage: true });
+    const openPanelTaskEditorWithTime = (taskId: string) => openSharedTaskEditor(taskId, { owner: panelTaskOwner, initialField: "estimated_time" });
+    const openPanelBatchDelete = (taskIds?: string[]) => openBatchDeleteModal(taskIds, panelTaskOwner);
+    const openPanelBatchEdit = (taskIds?: string[]) => openBatchEditModal(taskIds, panelTaskOwner);
+    const openPanelTaskHistory = (taskId: string) => openTaskHistoryForTask(taskId, panelTaskOwner);
+    const openPanelFocusPlanner = (taskIds?: string[], candidates?: Task[]) => openFocusPlanner(taskIds, candidates, panelTaskOwner);
+    const openPanelMomentumDetails = () => openMomentumDetails(panelTaskOwner);
+    const openPanelMilestoneSetup = (taskId: string) => openMilestoneSetup(taskId, panelTaskOwner);
+    const requestPanelDetachAndPromoteMilestone = (taskId: string) => requestDetachAndPromoteMilestone(taskId, panelTaskOwner);
+    const panelScratchPaperData: ScratchPaperData = {
+      ...scratchPaperData,
+      editingViewId: panelTab.id,
+      onCreateTask: (title) => openScratchLinkedTaskTemplate(title, panelTaskOwner),
+      onOpenTask: openPanelTaskEditor,
+      scratchPaperView: panelTab.presentation.scratchPaperView ?? masterWorkspace.activeScratchPaperView,
+      onScratchPaperViewChange: (view) => masterWorkspace.updateScratchPaperViewInPanel(panel.id, panelTab.id, view),
+    };
+    const panelListPanelProps = {
+      ...listPanelProps,
+      onOpenComposer: () => openInlineNewListTaskComposer({ owner: panelTaskOwner, selectedBucket: taskUiState.selectedBucket }),
+      onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(panelTaskOwner); void openTaskImportPanel(); },
+      onOpenListSettings: () => openTaskListSettingsForPanel(panel.id, panelTab.id, currentFolderId),
+    };
+    const panelTaskOperationsHeaderProps = {
+      ...taskOperationsHeaderProps,
+      onOpenFocusPlanner: () => openPanelFocusPlanner(),
+      onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(panelTaskOwner); void openTaskImportPanel(); },
+      onOpenListSettings: () => openTaskListSettingsForPanel(panel.id, panelTab.id, currentFolderId),
+      onOpenMomentumDetails: openPanelMomentumDetails,
+      onOpenTaskComposerForType: (selectionValue: string) => openTaskComposerForType(selectionValue, { owner: panelTaskOwner, selectedBucket: taskUiState.selectedBucket }),
+    };
+    const panelNavigate = masterWorkspace.isEnabled
+      ? (page: AppPage) => masterWorkspace.navigatePanelToPage(panel.id, page)
+      : requestPageNavigation;
+    return (
         <ErrorBoundary
-          key={shouldDeferPageRender ? "restoring-page" : activePage}
+          key={shouldDeferPageRender ? "restoring-page" : panelPage}
           fallback={<div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">This workspace could not load. Switch pages and try again.</div>}
         >
         {shouldDeferPageRender ? (
           <div className="flex min-h-48 items-center justify-center rounded-[1.5rem] border border-[#ece8f8] bg-white/70 px-5 py-8 text-sm font-semibold text-[#7d88a1] dark:border-white/10 dark:bg-white/6 dark:text-white/60">
             Restoring your last page...
           </div>
-        ) : activePage === "Home" ? (
+        ) : panelPage === "Home" ? (
           <TaskHomePage
             allTags={allTaskTags}
             listMembershipsByTaskId={taskListMembershipsByTaskId}
@@ -8308,7 +8915,21 @@ export function TaskApp() {
             onSetTaskPriority={(taskId, priority) => setTaskPriority(taskId, priority)}
             onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
-            onOpenTask={openTaskEditorFromId}
+            onOpenTask={openPanelTaskEditor}
+            onOpenJournal={(entryType) => {
+              const pageAccepted = panelNavigate("Health");
+              const sectionAccepted = !masterWorkspace.isEnabled
+                || masterWorkspace.selectHealthSectionInPanel(panel.id, panelTab.id, "Journal");
+              if (!pageAccepted || !sectionAccepted) {
+                setMessage({ tone: "warn", text: masterWorkspace.transitionBlockedReason ?? "Save or cancel the current edit before opening Journal." });
+                return;
+              }
+              if (!masterWorkspace.isEnabled) persistHealthTabPreference("Journal");
+              setJournalEntryNavigationRequests((current) => ({
+                ...current,
+                [panel.id]: { entryType, id: ++journalEntryNavigationRequestIdRef.current },
+              }));
+            }}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
             dailyProgress={homeDailyProgress}
@@ -8333,6 +8954,7 @@ export function TaskApp() {
             calendarTimeZone={userTimeZone}
             taskContentFolders={taskContentFolders}
             tasks={tasks}
+            taskDataReady={Boolean(currentUserId && !isWorkspaceLoading && isCurrentTaskProjectionReadReady && isTaskListMembershipDataReady)}
             taskTypeOptions={taskTypeOptions}
             userId={currentUserId}
             onTranscribeScratchAudio={onTranscribeScratchAudio}
@@ -8345,12 +8967,13 @@ export function TaskApp() {
             handleManualFocusEntries={handleManualFocusEntries}
             healthLoading={isHealthLoading}
             healthFoods={healthFavorites}
+            healthFoodLibraryReady={hasLoadedHealthFoodLibrary}
             healthProfile={healthProfile}
             onBatchIntakeHealthActivationChange={setBatchIntakeHealthActive}
             onBatchIntakeFocusActivationChange={setBatchIntakeFocusActive}
             syncTaskHistoryEntries={syncTaskHistoryEntries}
           />
-        ) : activePage === "Achievements" ? (
+        ) : panelPage === "Achievements" ? (
           <AchievementsPage
             achievementError={achievementProgress.error}
             achievementLoading={achievementProgress.isLoading}
@@ -8365,27 +8988,27 @@ export function TaskApp() {
             initialRecordMetricKey={pendingProgressRecordMetricKey}
             onRecordRequestHandled={clearPendingProgressRecordMetricKey}
             onExcludeTasksFromTracking={excludeTasksFromTracking}
-            onOpenTask={openTaskEditorFromId}
+            onOpenTask={openPanelTaskEditor}
             onTriggerDevelopmentAchievementTest={achievementNotifications.enqueueDevelopmentTestAchievements}
             onOpenMilestones={() => {
-              setActivePage("Tasks");
+              if (!panelNavigate("Tasks")) return;
               handleTaskWorkspaceSurfaceChange("tasks");
               setTaskUiState((current) => getHomeMilestoneNavigationState("active", current));
             }}
             onOpenMilestoneTask={(taskId) => {
-              setActivePage("Tasks");
-              openTaskInSharedTasksEditorFromPaths(taskId);
+              if (!panelNavigate("Tasks")) return;
+              openPanelTaskEditor(taskId);
             }}
             tasks={tasks}
             recordsClient={supabase}
             timezone={userTimeZone}
             userId={session?.user?.id ?? null}
           />
-        ) : activePage === "Tasks" ? (
-          <>
-            {taskWorkspaceFlowLayer}
+        ) : panelPage === "Tasks" ? (() => {
+          const tasksWorkspace = (
             <TasksWorkspace
               activeTabId={taskWorkspaceTabsState.activeTabId}
+              activeMasterTabId={panelTab.id}
             onAddTab={() => createTaskWorkspaceTab({
               isRailHidden: false,
               taskUiState: {
@@ -8409,12 +9032,13 @@ export function TaskApp() {
                 loading={milestoneData.isLoading}
                 lowStimulation={lowStim}
                 milestones={milestoneData.milestones}
-                onOpenTask={openTaskInSharedTasksEditorFromPaths}
+                onOpenTask={openPanelTaskEditor}
                 tasks={tasks}
                 userId={session?.user?.id ?? null}
               />
             )}
             onCloseTab={closeTaskWorkspaceTab}
+            onDraftEditingChange={reportLeftWorkspaceDraft}
             onTimeWorkspacePanel={(
               <OnTimePlannerWorkspace
                 behaviorProfiles={taskTypeBehaviorProfiles}
@@ -8424,7 +9048,7 @@ export function TaskApp() {
                 behaviorPolicyLogicalDate={todayKey}
                 behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
                 error={onTimePlan.error}
-                onOpenTask={openTaskInSharedTasksEditorFromOnTime}
+                onOpenTask={openPanelTaskEditorWithTime}
                 onSetTaskStatus={(task, status, origin) => { void updateTaskStatus(task, status, false, origin); }}
                 onPauseTimer={pauseHudTaskTimer}
                 onResumeTimer={resumeHudTaskTimer}
@@ -8446,14 +9070,17 @@ export function TaskApp() {
             onRenameTab={handleRenameTaskWorkspaceTab}
             onSurfaceChange={handleTaskWorkspaceSurfaceChange}
             onTabChange={setActiveTaskWorkspaceTab}
-            operationsHeaderProps={taskOperationsHeaderProps}
+            operationsHeaderProps={{
+              ...panelTaskOperationsHeaderProps,
+              onSearchDraftEditingChange: reportLeftSearchDraft,
+            }}
             pathsWorkspacePanel={(
               <PathsWorkspace
                 availableTaskLists={availableTaskLists}
                 customBehaviorRulesets={customBehaviorRulesets}
                 getTaskStatusOptions={resolveCurrentTaskStatusOptions}
                 listMembershipsByTaskId={taskListMembershipsByTaskId}
-                onOpenTask={openTaskInSharedTasksEditorFromPaths}
+                onOpenTask={openPanelTaskEditor}
                 onSetTaskStatus={(taskId, status) => {
                   const task = tasks.find((entry) => entry.id === taskId);
                   if (!task) {
@@ -8486,18 +9113,19 @@ export function TaskApp() {
                   listDefinitions={availableTaskLists}
                   listMembershipsByTaskId={taskListMembershipsByTaskId}
                   onClearSelection={clearListTaskSelection}
-                  onOpenBatchDelete={openBatchDeleteModal}
-                  onOpenBatchEdit={openBatchEditModal}
+                  onOpenBatchDelete={openPanelBatchDelete}
+                  onOpenBatchEdit={openPanelBatchEdit}
                   onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
-                  onOpenTaskEditor={openTaskEditorFromId}
+                  onOpenTaskEditor={openPanelTaskEditor}
                   onSelectTaskIds={selectAllVisibleListTasks}
                   onToggleTaskSelection={toggleListTaskSelection}
-                  panelProps={listPanelProps}
+                  panelProps={panelListPanelProps}
                   selectedTaskIds={selectedListTaskIds}
                 />
               ) : (
                 <TasksTableAdapter
-                tableProps={{
+                  onDraftEditingChange={reportLeftTableDraft}
+                  tableProps={{
                   allListOptions: availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name })),
                   allNoteOptions: availableTaskNotes,
                   allTagOptions: allTaskTags,
@@ -8533,11 +9161,11 @@ export function TaskApp() {
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
-                  onOpenBatchDelete: openBatchDeleteModal,
-                  onOpenBatchEdit: openBatchEditModal,
+                  onOpenBatchDelete: openPanelBatchDelete,
+                  onOpenBatchEdit: openPanelBatchEdit,
                   onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
                   onRestoreTask: (taskId) => { void restoreTaskFromTrash(taskId); },
-                  onOpenTaskHistory: openTaskHistoryForTask,
+                  onOpenTaskHistory: openPanelTaskHistory,
                   onPauseTaskTimer: pauseHudTaskTimer,
                   onPreviousTaskTimer: () => cycleHudTaskTimer("previous"),
                   onResumeTaskTimer: resumeHudTaskTimer,
@@ -8546,8 +9174,8 @@ export function TaskApp() {
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenNote: (noteId) => {
+                    if (!panelNavigate("Notes")) return;
                     setNotePageOpenNoteId(noteId);
-                    setActivePage("Notes");
                   },
                   onSetDue: (taskId, schedule, options) => {
                     const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
@@ -8639,8 +9267,8 @@ export function TaskApp() {
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
                   onUnlinkTasks: unlinkSameTableTasks,
-                  onPromoteTaskToMilestone: openMilestoneSetup,
-                  onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
+                  onPromoteTaskToMilestone: openPanelMilestoneSetup,
+                  onDetachAndPromoteTaskToMilestone: requestPanelDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,
                   milestoneDetachPromotionTaskIds,
                   renderFullInspectorExtension: renderMilestoneInspectorExtension,
@@ -8669,7 +9297,7 @@ export function TaskApp() {
                   emptyStateMessage: pinnedEmptyStateMessage,
                 }}
                 filterRowsNode={taskFilterRowsNode}
-                panelProps={listPanelProps}
+                panelProps={panelListPanelProps}
               />
               )
             )}
@@ -8678,8 +9306,9 @@ export function TaskApp() {
                 currentListLabel={selectedBucketLabel}
                 filterRowsNode={taskFilterRowsNode}
                 listSortPreference={activeListSortPreference}
-                onToggleFocusToday={toggleFocusTodayForTask}
-                panelProps={listPanelProps}
+                onDraftEditingChange={reportLeftListDraft}
+              onToggleFocusToday={toggleFocusTodayForTask}
+                panelProps={panelListPanelProps}
                 selectedBucket={taskUiState.selectedBucket}
                 tableProps={{
                   currentListId: taskUiState.selectedBucket,
@@ -8716,11 +9345,11 @@ export function TaskApp() {
                   onCreateChildTask: createChildTaskFromPreview,
                   onClearSelection: clearListTaskSelection,
                   onNextTaskTimer: () => cycleHudTaskTimer("next"),
-                  onOpenBatchDelete: openBatchDeleteModal,
-                  onOpenBatchEdit: openBatchEditModal,
+                  onOpenBatchDelete: openPanelBatchDelete,
+                  onOpenBatchEdit: openPanelBatchEdit,
                   onOpenDeleteTask: (taskId) => { void openSingleTaskDeleteModal(taskId); },
                   onRestoreTask: (taskId) => { void restoreTaskFromTrash(taskId); },
-                  onOpenTaskHistory: openTaskHistoryForTask,
+                  onOpenTaskHistory: openPanelTaskHistory,
                   onPauseTaskTimer: pauseHudTaskTimer,
                   onPreviousTaskTimer: () => cycleHudTaskTimer("previous"),
                   onResumeTaskTimer: resumeHudTaskTimer,
@@ -8729,8 +9358,8 @@ export function TaskApp() {
                   onStopTaskTimer: stopHudTaskTimer,
                   onDiscardTaskTimer: requestTaskTimerDiscard,
                   onOpenNote: (noteId) => {
+                    if (!panelNavigate("Notes")) return;
                     setNotePageOpenNoteId(noteId);
-                    setActivePage("Notes");
                   },
                   onSetDue: (taskId, schedule, options) => {
                     const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
@@ -8815,8 +9444,8 @@ export function TaskApp() {
                   onToggleTaskList: (taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); },
                   onUnlinkTask: (taskId) => unlinkSameTableTask(taskId),
                   onUnlinkTasks: unlinkSameTableTasks,
-                  onPromoteTaskToMilestone: openMilestoneSetup,
-                  onDetachAndPromoteTaskToMilestone: requestDetachAndPromoteMilestone,
+                  onPromoteTaskToMilestone: openPanelMilestoneSetup,
+                  onDetachAndPromoteTaskToMilestone: requestPanelDetachAndPromoteMilestone,
                   milestonePromotionTaskIds,
                   milestoneDetachPromotionTaskIds,
                   renderFullInspectorExtension: renderMilestoneInspectorExtension,
@@ -8862,8 +9491,555 @@ export function TaskApp() {
               />
             )}
             />
-          </>
-        ) : activePage === "Focus" ? (
+          );
+          const rightWorkspace = (() => {
+            if (!isTasksSplit || !splitPanels.right || !splitPanels.rightTab || !splitRightTasksUiState || !splitRightTaskViewReadModel) return null;
+            const rightOwner = {
+              panelId: splitPanels.right.id,
+              masterTabId: splitPanels.rightTab.id,
+              taskWorkspaceTabId: splitRightTaskWorkspaceTabsState.activeTabId,
+            };
+            const rightOwnerKey = getTaskPanelOwnerKey(rightOwner);
+            const rightDerivedCollections = splitRightDerivedData?.collections;
+            const getRightTaskTabDraftBlockMessage = (taskWorkspaceTabId: string) => {
+              const owner = { ...rightOwner, taskWorkspaceTabId };
+              const ownerKey = getTaskPanelOwnerKey(owner);
+              if (hasTaskPanelDraftForOwner(taskPanelDraftOwnerKeys, ownerKey)) return "Finish or cancel the unsaved edit in this Tasks tab before navigating away.";
+              if (sharedTaskEditorOverlayTaskId && taskEditorOwnerRef.current && getTaskPanelOwnerKey(taskEditorOwnerRef.current) === ownerKey) {
+                return "Close the Task editor before navigating away from this Tasks tab.";
+              }
+              return null;
+            };
+            const updateRightUi = (updater: TaskUiState | ((current: TaskUiState) => TaskUiState)) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return false;
+              }
+              return updateSplitRightTaskUiState(updater);
+            };
+            const changeRightView = (view: TaskUiState["view"]) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              updateRightUi((current) => current.view === view ? current : { ...current, view });
+            };
+            const updateRightBucket = (selectedBucket: string) => updateRightUi((current) => (
+              current.selectedBucket === selectedBucket ? current : { ...current, selectedBucket }
+            ));
+            const rightSearch = splitRightDerivedPresentation?.normalizedSearchQuery ?? splitRightTasksUiState.search;
+            const rightSelectedTasks = splitRightTaskViewReadModel.selectedBucketTasks;
+            const rightVisibleTaskIds = new Set(splitRightSearchSelection?.visibleTasks.map((task) => task.id) ?? []);
+            const rightFocusPlannerCandidates = (splitRightDerivedData?.focusPlannerTasks ?? [])
+              .filter((task) => rightVisibleTaskIds.has(task.id));
+            const rightFocusPlannerTaskChoices = rightFocusPlannerCandidates.length > 0
+              ? rightFocusPlannerCandidates
+              : (rightDerivedCollections?.filteredActiveTasks ?? []).filter((task) => rightVisibleTaskIds.has(task.id));
+            const rightCurrentFolderId = splitRightActiveTaskWorkspaceTab.currentFolderId ?? null;
+            const rightFolderBreadcrumbs = buildTaskListFolderBreadcrumbs(taskListFolderTree, rightCurrentFolderId);
+            const rightTaskListFolderCounts = buildTaskListFolderCounts(
+              canonicalTaskListRailTree,
+              Array.from(canonicalEntityProjection.entityFactsById.values())
+                .filter((fact) => isTaskOpen(fact.task))
+                .map((fact) => ({ id: fact.id, listMemberships: fact.listMemberships, task: fact.task })),
+              splitRightSearchSelection?.primaryFacetVisibleEntityIds ?? canonicalEntityProjection.primaryFacetVisibleEntityIds,
+              todayKey,
+            );
+            const rightTaskListRailStructureOptions = buildTaskListRailStructureOptions({
+              activeListFacetCounts: splitRightSearchSelection?.listFacetCounts ?? canonicalEntityProjection.listFacetCounts,
+              canonicalTaskListRailTree,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              taskListContainers,
+              taskListFolderBreadcrumbs: rightFolderBreadcrumbs,
+              taskListFolderCounts: rightTaskListFolderCounts,
+              taskListFolderTree,
+            });
+            const updateRightCurrentFolder = (currentFolderId: string | null) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return false;
+              }
+              return updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? { ...tab, currentFolderId } : tab),
+              }));
+            };
+            const rightSelectedBucketLabel = splitRightTasksUiState.selectedBucket === "pinned"
+              ? "Pinned"
+              : splitRightTasksUiState.selectedBucket in TASK_BUCKET_LABELS
+                ? TASK_BUCKET_LABELS[splitRightTasksUiState.selectedBucket as TaskBucket]
+                : availableTaskLists.find((list) => list.id === splitRightTasksUiState.selectedBucket)?.name ?? splitRightTasksUiState.selectedBucket;
+            const rightListSortSurfaceId = getListSortSurfaceId(splitRightTasksUiState.tasksSurface, splitRightTasksUiState.selectedBucket);
+            const rightListSortPreference = splitRightTasksUiState.listSortBySurface[rightListSortSurfaceId] ?? DEFAULT_LIST_SORT_PREFERENCE;
+            const rightTableLayoutPreferences = splitRightActiveTaskWorkspaceTab.taskTableLayoutPreferences ?? taskTableLayoutPreferences;
+            const toggleRightTaskContentFolderCollapsed = (folderId: string) => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => {
+                  if (tab.id !== current.activeTabId) return tab;
+                  const collapsedIds = new Set(tab.collapsedTaskContentFolderIds ?? Array.from(splitRightCollapsedTaskContentFolderIds));
+                  if (collapsedIds.has(folderId)) collapsedIds.delete(folderId);
+                  else collapsedIds.add(folderId);
+                  return { ...tab, collapsedTaskContentFolderIds: Array.from(collapsedIds) };
+                }),
+              }));
+            };
+            const rightStatusCounts = splitRightDerivedData?.tableStatusCounts ?? tableStatusCounts;
+            const rightVisiblePinnedCount = splitRightSearchSelection
+              ? splitRightSearchSelection.listFacetCounts["pinned"] ?? 0
+              : (splitRightDerivedData?.visibleListCounts as Readonly<Record<string, number>> | undefined)?.["pinned"] ?? 0;
+            const rightVisibleRoutineCount = splitRightSearchSelection
+              ? splitRightSearchSelection.listFacetCounts["routine"] ?? 0
+              : (splitRightDerivedData?.visibleListCounts as Readonly<Record<string, number>> | undefined)?.["routine"] ?? 0;
+            const updateRightDuplicateTitleMode = () => updateRightUi((current) => {
+              if (!current.duplicateTitleMode) return { ...current, duplicateTitleMode: true };
+              const cleanedSearch = current.search
+                .split(/\s+/)
+                .filter((token) => !DUPLICATE_TITLE_SEARCH_OPERATORS.includes(token.toLowerCase() as (typeof DUPLICATE_TITLE_SEARCH_OPERATORS)[number]))
+                .join(" ")
+                .trim();
+              return { ...current, duplicateTitleMode: false, search: cleanedSearch };
+            });
+            const openTaskInRightWorkspaceTab = (taskId: string) => {
+              const id = `workspace-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+              const owner = { ...rightOwner, taskWorkspaceTabId: id };
+              const blockMessage = getTaskEditorOpenBlockMessage({
+                currentEditorOwner: taskEditorOwnerRef.current,
+                currentEditorTaskId: sharedTaskEditorOverlayTaskId,
+                draftOwnerKeys: taskPanelDraftOwnerKeys,
+                editorIsOpen: Boolean(sharedTaskEditorOverlayTaskId),
+                owner,
+                requestedTaskId: taskId,
+              });
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              const destination = getFollowTaskDestination(taskId);
+              const created = updateSplitRightWorkspace((current) => createTaskWorkspaceTabState(current, {
+                collapsedTaskContentFolderIds: Array.from(splitRightCollapsedTaskContentFolderIds),
+                currentFolderId: rightCurrentFolderId,
+                id,
+                isRailHidden: false,
+                kind: "tasks",
+                label: `Tab ${current.tabs.length + 1}`,
+                taskTableLayoutPreferences: splitRightActiveTaskWorkspaceTab.taskTableLayoutPreferences,
+                taskUiState: {
+                  ...splitRightTasksUiState,
+                  search: "",
+                  ...(destination ? { selectedBucket: destination.id } : {}),
+                  tasksSurface: "tasks",
+                },
+              }));
+              if (created) openSharedTaskEditor(taskId, { owner, navigationTaskIds: [taskId], preserveActivePage: true });
+            };
+            const clearRightTableColumnFilter = (dimension: "priority" | "repeat" | "taskType" | "title" | "lists" | "tags" | "link" | "notes") => updateRightUi((current) => {
+              if (dimension === "priority" || dimension === "repeat" || dimension === "taskType") {
+                return { ...current, tableColumnFilters: { ...current.tableColumnFilters, [dimension]: [] } };
+              }
+              const textFilters = { ...current.tableColumnFilters.text };
+              delete textFilters[dimension];
+              return { ...current, tableColumnFilters: { ...current.tableColumnFilters, text: textFilters } };
+            });
+            const rightFilterRowsNode = (
+              <div className="space-y-2">
+                <FilterRows
+                  compact
+                  duplicateTitleMode={splitRightTasksUiState.duplicateTitleMode}
+                  includeSteps={splitRightTasksUiState.includeStepsByView[splitRightTasksUiState.view]}
+                  hasActiveFilters={hasActiveTaskFilters(splitRightTasksUiState)}
+                  isOpen={isSplitRightTaskFiltersOpen}
+                  matchAny={splitRightTasksUiState.matchAny}
+                  pinnedCount={rightVisiblePinnedCount}
+                  pinnedFilterActive={splitRightTasksUiState.selectedBucket === "pinned"}
+                  routineCount={rightVisibleRoutineCount}
+                  routineFilterActive={splitRightTasksUiState.selectedBucket === "routine"}
+                  onReset={() => updateRightUi((current) => resetTaskFiltersPreservingView(current))}
+                  onTogglePinnedFilter={() => updateRightBucket(splitRightTasksUiState.selectedBucket === "pinned" ? "today" : "pinned")}
+                  onToggleRoutineFilter={() => updateRightBucket(splitRightTasksUiState.selectedBucket === "routine" ? "today" : "routine")}
+                  onToggleDuplicateTitleMode={updateRightDuplicateTitleMode}
+                  onToggleIncludeSteps={() => updateRightUi((current) => ({
+                    ...current,
+                    includeStepsByView: { ...current.includeStepsByView, [current.view]: !current.includeStepsByView[current.view] },
+                  }))}
+                  onToggleEnergy={(energy) => updateRightUi((current) => ({
+                    ...current,
+                    energyFilters: current.energyFilters.includes(energy)
+                      ? current.energyFilters.filter((value) => value !== energy)
+                      : [...current.energyFilters, energy],
+                  }))}
+                  onToggleMatchMode={() => updateRightUi((current) => ({ ...current, matchAny: !current.matchAny }))}
+                  onToggleOpen={() => setIsSplitRightTaskFiltersOpen((current) => !current)}
+                  onToggleStatusFilter={(status) => updateRightUi((current) => ({
+                    ...current,
+                    statusFilters: current.statusFilters.includes(status)
+                      ? current.statusFilters.filter((value) => value !== status)
+                      : [...current.statusFilters, status],
+                  }))}
+                  statusCounts={rightStatusCounts}
+                  selectedStatuses={splitRightTasksUiState.statusFilters}
+                  selectedEnergies={splitRightTasksUiState.energyFilters}
+                  tableColumnFilters={splitRightTasksUiState.tableColumnFilters}
+                  customBehaviorRulesets={customBehaviorRulesets}
+                  onClearTableColumnFilter={clearRightTableColumnFilter}
+                  listSortPreference={splitRightTasksUiState.view === "list" && !splitRightTasksUiState.duplicateTitleMode ? rightListSortPreference : undefined}
+                  onListSortPreferenceChange={splitRightTasksUiState.view === "list" && !splitRightTasksUiState.duplicateTitleMode
+                    ? (preference) => updateRightUi((current) => ({
+                      ...current,
+                      listSortBySurface: { ...current.listSortBySurface, [rightListSortSurfaceId]: preference },
+                    }))
+                    : undefined}
+                />
+              </div>
+            );
+            const rightListElement = isValidElement(tasksWorkspace.props.listViewPanel)
+              ? tasksWorkspace.props.listViewPanel as ReactElement<ComponentProps<typeof TasksListAdapter>>
+              : null;
+            if (!rightListElement) return null;
+            const rightBaseTableProps = rightListElement.props.tableProps;
+            const rightTaskTableProps = {
+              ...rightBaseTableProps,
+              allTasks: tasksForActiveStatusRead as Task[],
+              columnFilters: splitRightTasksUiState.tableColumnFilters,
+              collapsedTaskContentFolderIds: splitRightCollapsedTaskContentFolderIds,
+              currentListId: splitRightTasksUiState.selectedBucket,
+              currentListLabel: rightSelectedBucketLabel,
+              energyColumnFilters: splitRightTasksUiState.energyFilters,
+              emptyStateMessage: splitRightTasksUiState.selectedBucket === "pinned" ? "No pinned tasks match this view right now." : "No tasks match this view right now.",
+              highlightedActiveTaskId: null,
+              highlightedRevealShouldFocus: false,
+              highlightedScrollToken: null,
+              highlightedTaskIds: [],
+              matchedTaskContentFolderIds: getTaskContentFolderSearchMatchIds(stableCanonicalTaskIndex, rightSearch),
+              onClearSelection: clearSplitRightListTaskSelection,
+              onColumnFiltersChange: (tableColumnFilters: TaskUiState["tableColumnFilters"]) => updateRightUi((current) => ({ ...current, tableColumnFilters })),
+              onEnergyColumnFiltersChange: (energyFilters: TaskUiState["energyFilters"]) => updateRightUi((current) => ({ ...current, energyFilters })),
+              onOpenBatchDelete: () => openBatchDeleteModal(splitRightSelectedTaskIds, rightOwner),
+              onOpenBatchEdit: () => openBatchEditModal(splitRightSelectedTaskIds, rightOwner),
+              onOpenChildTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((task) => task.id), preserveActivePage: true }),
+              onOpenTaskEditor: (taskId: string, navigationTaskIds?: string[]) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds, preserveActivePage: true }),
+              onOpenTaskInNewTab: openTaskInRightWorkspaceTab,
+              onRequestedEditorFocusHandled: () => undefined,
+              onRequestedOpenTaskHandled: () => undefined,
+              onRequestedOpenTaskOverlayClose: closeSharedTaskEditorOverlay,
+              onSelectAllVisible: selectAllSplitRightVisibleListTasks,
+              onStatusColumnFiltersChange: (statusFilters: TaskUiState["statusFilters"]) => updateRightUi((current) => ({ ...current, statusFilters })),
+              onTaskTableLayoutPreferencesChange: (preferences: TaskTableLayoutPreferences) => updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? { ...tab, taskTableLayoutPreferences: preferences } : tab),
+              })),
+              onToggleTaskSelection: toggleSplitRightListTaskSelection,
+              onToggleTaskContentFolderCollapsed: toggleRightTaskContentFolderCollapsed,
+              onVisibleSearchMatchIdsChange: () => undefined,
+              requestedEditorFocus: null,
+              requestedOpenTask: null,
+              requestedOpenTaskId: null,
+              searchActive: rightSearch.length > 0,
+              searchMatchedChildTaskIds: Array.from(splitRightTaskViewReadModel.searchMatchedChildTaskIds),
+              searchMatchedStepParentTaskIds: Array.from(splitRightTaskViewReadModel.searchMatchedStepParentTaskIds),
+              selectedTaskIds: splitRightSelectedTaskIds,
+              statusColumnFilters: splitRightTasksUiState.statusFilters,
+              statusMatchedChildTaskIds: Array.from(splitRightDerivedData?.statusMatchedChildTaskIds ?? []),
+              statusMatchedStepParentTaskIds: Array.from(splitRightDerivedData?.statusMatchedStepParentTaskIds ?? []),
+              statusFilterActive: splitRightTaskViewReadModel.hierarchyStatusFilterActive,
+              taskTableLayoutPreferences: rightTableLayoutPreferences,
+              tasks: rightSelectedTasks as Task[],
+            };
+            const rightPanelProps = {
+              ...rightListElement.props.panelProps,
+              draggedListColumnId: splitRightDraggedListColumnId,
+              filterRowsNode: rightFilterRowsNode,
+              onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(rightOwner); void openTaskImportPanel(); },
+              onOpenComposer: () => openInlineNewListTaskComposer({ owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }),
+              listSortPreference: rightListSortPreference,
+              isKeyboardShortcutsMenuOpen: isSplitRightKeyboardShortcutsMenuOpen,
+              isListColumnMenuOpen: isSplitRightListColumnMenuOpen,
+              keyboardShortcutsMenuRef: splitRightKeyboardShortcutsMenuRef,
+              listColumnMenuRef: splitRightListColumnMenuRef,
+              expandAllColumnsToken: splitRightExpandAllColumnsToken,
+              shrinkAllColumnsToken: splitRightShrinkAllColumnsToken,
+              onSetDraggedListColumnId: setSplitRightDraggedListColumnId,
+              onToggleKeyboardShortcutsMenu: () => setIsSplitRightKeyboardShortcutsMenuOpen((current) => !current),
+              onToggleListColumnMenu: () => setIsSplitRightListColumnMenuOpen((current) => !current),
+              onExpandAllColumns: () => setSplitRightExpandAllColumnsToken((current) => current + 1),
+              onShrinkAllColumns: () => setSplitRightShrinkAllColumnsToken((current) => current + 1),
+              onOpenArchive: () => updateRightBucket("archive"),
+              onOpenCompletedMilestones: () => updateRightUi((current) => ({ ...current, tasksSurface: "completed_milestones" })),
+              onOpenTrash: () => updateRightBucket("trash"),
+              onSelectBucket: updateRightBucket,
+              onSetView: changeRightView,
+              onUpdateSearch: updateSplitRightSearch,
+              search: splitRightTasksUiState.search,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              view: splitRightTasksUiState.view,
+            };
+            const rightListViewPanel = cloneElement(rightListElement, {
+              currentListLabel: rightSelectedBucketLabel,
+              filterRowsNode: rightFilterRowsNode,
+              listSortPreference: rightListSortPreference,
+              onDraftEditingChange: reportRightListDraft,
+              panelProps: rightPanelProps,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              tableProps: rightTaskTableProps,
+            });
+            const rightTableViewPanel = splitRightTasksUiState.duplicateTitleMode
+              ? (
+                <DuplicateTaskGroupsAdapter
+                  duplicateGroups={splitRightDerivedData?.duplicateTitleGroups ?? []}
+                  filterRowsNode={rightFilterRowsNode}
+                  listDefinitions={availableTaskLists}
+                  listMembershipsByTaskId={taskListMembershipsByTaskId}
+                  onClearSelection={clearSplitRightListTaskSelection}
+                  onOpenBatchDelete={() => openBatchDeleteModal(splitRightSelectedTaskIds, rightOwner)}
+                  onOpenBatchEdit={() => openBatchEditModal(splitRightSelectedTaskIds, rightOwner)}
+                  onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
+                  onOpenTaskEditor={(taskId) => openSharedTaskEditor(taskId, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((task) => task.id), preserveActivePage: true })}
+                  onSelectTaskIds={selectAllSplitRightVisibleListTasks}
+                  onToggleTaskSelection={toggleSplitRightListTaskSelection}
+                  panelProps={rightPanelProps}
+                  selectedTaskIds={splitRightSelectedTaskIds}
+                />
+              )
+              : (
+                <TasksTableAdapter
+                  filterRowsNode={rightFilterRowsNode}
+                  onDraftEditingChange={reportRightTableDraft}
+                  panelProps={rightPanelProps}
+                  tableProps={rightTaskTableProps}
+                />
+              );
+            const baseAlternatePanel = isValidElement(tasksWorkspace.props.alternateViewPanel)
+              ? tasksWorkspace.props.alternateViewPanel as ReactElement<ComponentProps<typeof TasksNonListShell>>
+              : null;
+            const rightAlternateViewPanel = baseAlternatePanel ? cloneElement(baseAlternatePanel, {
+              calendarNode: isValidElement(baseAlternatePanel.props.calendarNode)
+                ? cloneElement(baseAlternatePanel.props.calendarNode as ReactElement<ComponentProps<typeof TaskCalendarView>>, {
+                  onAddTask: (dueOn: string) => { void openCalendarDateTaskEditor(dueOn, { owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }); },
+                  onOpenTask: (task: Task) => openSharedTaskEditor(task.id, { owner: rightOwner, navigationTaskIds: splitRightTaskViewReadModel.calendarTasks.map((entry) => entry.id), preserveActivePage: true }),
+                  tasks: splitRightTaskViewReadModel.calendarTasks,
+                })
+                : baseAlternatePanel.props.calendarNode,
+              cardsNode: isValidElement(baseAlternatePanel.props.cardsNode)
+                ? cloneElement(baseAlternatePanel.props.cardsNode as ReactElement<ComponentProps<typeof TaskCardGallery>>, {
+                  onEditTask: (task: Task) => openSharedTaskEditor(task.id, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.map((entry) => entry.id), preserveActivePage: true }),
+                  tasks: rightSelectedTasks,
+                })
+                : baseAlternatePanel.props.cardsNode,
+              dailyPlanningNode: isValidElement(baseAlternatePanel.props.dailyPlanningNode)
+                ? cloneElement(baseAlternatePanel.props.dailyPlanningNode as ReactElement<ComponentProps<typeof DailyPlanningPanel>>, {
+                  focusCount: rightDerivedCollections?.filteredFocusTasks.length ?? 0,
+                  inboxCount: rightDerivedCollections?.inboxTasks.length ?? 0,
+                  isCollapsed: isSplitRightDailyPlanningCollapsed,
+                  missedCount: rightDerivedCollections?.missedTasks.length ?? 0,
+                  onOpenFocusPlanner: () => openFocusPlanner(undefined, rightFocusPlannerTaskChoices, rightOwner),
+                  onToggleCollapsed: () => setIsSplitRightDailyPlanningCollapsed((current) => !current),
+                  onSelectBucket: updateRightBucket,
+                  planningCandidates: (splitRightDerivedData?.planningCandidates ?? [])
+                    .filter((task) => rightVisibleTaskIds.has(task.id)),
+                  recurringCount: rightDerivedCollections?.recurringTasks.length ?? 0,
+                  routeTaskToToday: (taskId: string) => planTasksForToday([taskId], updateRightBucket),
+                  todayCount: rightDerivedCollections?.filteredTodayTasks.length ?? 0,
+                  waitingCount: rightDerivedCollections?.waitingTasks.length ?? 0,
+                })
+                : baseAlternatePanel.props.dailyPlanningNode,
+              filterRowsNode: rightFilterRowsNode,
+              matrixNode: isValidElement(baseAlternatePanel.props.matrixNode)
+                ? cloneElement(baseAlternatePanel.props.matrixNode as ReactElement<ComponentProps<typeof TaskMatrixView>>, {
+                  onEditTask: (task: Task) => openSharedTaskEditor(task.id, { owner: rightOwner, navigationTaskIds: rightSelectedTasks.filter(isTaskOpen).map((entry) => entry.id), preserveActivePage: true }),
+                  tasks: rightSelectedTasks.filter(isTaskOpen),
+                })
+                : baseAlternatePanel.props.matrixNode,
+              view: splitRightTasksUiState.view,
+            }) : tasksWorkspace.props.alternateViewPanel;
+            const rightOperationsHeaderProps = {
+              ...tasksWorkspace.props.operationsHeaderProps,
+              draggedListColumnId: splitRightDraggedListColumnId,
+              filterRowsNode: rightFilterRowsNode,
+              onOpenImport: () => { setWorkspaceOverlayOwnerForTaskPanel(rightOwner); void openTaskImportPanel(); },
+              hideSearch: splitRightTasksUiState.duplicateTitleMode,
+              isKeyboardShortcutsMenuOpen: isSplitRightKeyboardShortcutsMenuOpen,
+              isRailHidden: splitRightActiveTaskWorkspaceTab.isRailHidden,
+              isListColumnMenuOpen: isSplitRightListColumnMenuOpen,
+              keyboardShortcutsMenuRef: splitRightKeyboardShortcutsMenuRef,
+              listColumnMenuRef: splitRightListColumnMenuRef,
+              listVisibleColumns: splitRightTasksUiState.visibleColumnsByView[splitRightTasksUiState.view],
+              expandAllColumnsToken: splitRightExpandAllColumnsToken,
+              shrinkAllColumnsToken: splitRightShrinkAllColumnsToken,
+              onExpandAllColumns: () => setSplitRightExpandAllColumnsToken((current) => current + 1),
+              onShrinkAllColumns: () => setSplitRightShrinkAllColumnsToken((current) => current + 1),
+              onSetDraggedListColumnId: setSplitRightDraggedListColumnId,
+              onToggleKeyboardShortcutsMenu: () => setIsSplitRightKeyboardShortcutsMenuOpen((current) => !current),
+              onToggleListColumnMenu: () => setIsSplitRightListColumnMenuOpen((current) => !current),
+              lists: rightTaskListRailStructureOptions.primaryRail,
+              openFolderRails: rightTaskListRailStructureOptions.openFolderRails,
+              currentFolderBreadcrumbs: rightFolderBreadcrumbs,
+              currentFolderId: rightCurrentFolderId,
+              onOpenListSettings: () => openTaskListSettingsForPanel(rightOwner.panelId, rightOwner.masterTabId, rightCurrentFolderId),
+              onOpenArchive: () => updateRightBucket("archive"),
+              onOpenTaskComposerForType: (selectionValue: string) => openTaskComposerForType(selectionValue, { owner: rightOwner, selectedBucket: splitRightTasksUiState.selectedBucket }),
+              onOpenTrash: () => updateRightBucket("trash"),
+              onEmptyTrash: () => { void emptyTrash(splitRightTasksUiState.selectedBucket); },
+              onReorderListColumns: (columnId: AgentPlanColumnId, targetColumnId: AgentPlanColumnId) => updateRightUi((current) => {
+                const columns = [...current.visibleColumnsByView.table];
+                const fromIndex = columns.indexOf(columnId);
+                const toIndex = columns.indexOf(targetColumnId);
+                if (fromIndex < 0 || toIndex < 0 || fromIndex === toIndex) return current;
+                const [moved] = columns.splice(fromIndex, 1);
+                if (!moved) return current;
+                columns.splice(toIndex, 0, moved);
+                return { ...current, visibleColumnsByView: { ...current.visibleColumnsByView, table: columns } };
+              }),
+              onSearchChange: updateSplitRightSearch,
+              onSearchDraftEditingChange: reportRightSearchDraft,
+              onSearchSubmit: updateSplitRightSearch,
+              onSelectBucket: updateRightBucket,
+              onSelectDirectoryEntry: (entry: typeof allTaskListDirectoryEntries[number]) => {
+                if (entry.kind === "folder") {
+                  updateRightCurrentFolder(entry.id);
+                  return;
+                }
+                updateRightCurrentFolder(entry.kind === "list" ? entry.folderId : null);
+                updateRightBucket(entry.id);
+              },
+              onToggleListColumn: (columnId: AgentPlanColumnId) => updateRightUi((current) => {
+                const columns = current.visibleColumnsByView.table;
+                const nextColumns = columns.includes(columnId) ? columns.filter((column) => column !== columnId) : [...columns, columnId];
+                return { ...current, visibleColumnsByView: { ...current.visibleColumnsByView, table: nextColumns } };
+              }),
+              onNavigateFolder: updateRightCurrentFolder,
+              onToggleRail: () => updateSplitRightWorkspace((current) => ({
+                ...current,
+                tabs: current.tabs.map((tab) => tab.id === current.activeTabId ? { ...tab, isRailHidden: !tab.isRailHidden } : tab),
+              })),
+              onViewChange: changeRightView,
+              search: splitRightTasksUiState.search,
+              selectedBucket: splitRightTasksUiState.selectedBucket,
+              view: splitRightTasksUiState.view,
+            };
+            const createRightWorkspaceTab = () => {
+              const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+              if (blockMessage) {
+                setMessage({ tone: "warn", text: blockMessage });
+                return;
+              }
+              updateSplitRightWorkspace((current) => {
+              const active = resolveActiveTaskWorkspaceTab(current);
+              const id = `workspace-${typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`}`;
+              return createTaskWorkspaceTabState(current, {
+                collapsedTaskContentFolderIds: Array.from(splitRightCollapsedTaskContentFolderIds),
+              currentFolderId: rightCurrentFolderId,
+              onOpenListSettings: () => openTaskListSettingsForPanel(rightOwner.panelId, rightOwner.masterTabId, rightCurrentFolderId),
+                id,
+                isRailHidden: false,
+                kind: "tasks",
+                label: `Tab ${current.tabs.length + 1}`,
+                taskTableLayoutPreferences: splitRightActiveTaskWorkspaceTab.taskTableLayoutPreferences,
+                taskUiState: { ...active.taskUiState, tasksSurface: "tasks" },
+              });
+              });
+            };
+            const updateRightTaskWorkspace = (updater: (current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState) => updateSplitRightWorkspace(updater);
+            const rightPathsWorkspacePanel = isValidElement(tasksWorkspace.props.pathsWorkspacePanel)
+              ? cloneElement(tasksWorkspace.props.pathsWorkspacePanel as ReactElement<ComponentProps<typeof PathsWorkspace>>, {
+                onOpenTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, preserveActivePage: true }),
+              })
+              : tasksWorkspace.props.pathsWorkspacePanel;
+            const rightOnTimeWorkspacePanel = isValidElement(tasksWorkspace.props.onTimeWorkspacePanel)
+              ? cloneElement(tasksWorkspace.props.onTimeWorkspacePanel as ReactElement<ComponentProps<typeof OnTimePlannerWorkspace>>, {
+                onOpenTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, initialField: "estimated_time" }),
+              })
+              : tasksWorkspace.props.onTimeWorkspacePanel;
+            const rightMilestonesWorkspacePanel = isValidElement(tasksWorkspace.props.completedMilestonesWorkspacePanel)
+              ? cloneElement(tasksWorkspace.props.completedMilestonesWorkspacePanel as ReactElement<ComponentProps<typeof CompletedMilestonesWorkspace>>, {
+                onOpenTask: (taskId: string) => openSharedTaskEditor(taskId, { owner: rightOwner, preserveActivePage: true }),
+              })
+              : tasksWorkspace.props.completedMilestonesWorkspacePanel;
+            return cloneElement(tasksWorkspace, {
+              key: `right-${splitPanels.rightTab.id}`,
+              activeMasterTabId: splitPanels.rightTab.id,
+              activeTabId: splitRightTaskWorkspaceTabsState.activeTabId,
+              alternateViewPanel: rightAlternateViewPanel,
+              brainstormWorkspacePanel: tasksWorkspace.props.brainstormWorkspacePanel,
+              completedMilestonesWorkspacePanel: rightMilestonesWorkspacePanel,
+              listViewPanel: rightListViewPanel,
+              onAddTab: createRightWorkspaceTab,
+              onCloseTab: (tabId: string) => {
+                const blockMessage = getRightTaskTabDraftBlockMessage(tabId);
+                if (blockMessage) {
+                  setMessage({ tone: "warn", text: blockMessage });
+                  return;
+                }
+                updateRightTaskWorkspace((current) => closeTaskWorkspaceTabState(current, tabId));
+              },
+              onDraftEditingChange: reportRightWorkspaceDraft,
+              onReorderTab: (tabId: string, targetIndex: number) => updateRightTaskWorkspace((current) => reorderTaskWorkspaceTabToIndex(current, tabId, targetIndex)),
+              onRenameTab: (tabId: string, nextLabel: string) => updateRightTaskWorkspace((current) => renameTaskWorkspaceTabState(current, tabId, nextLabel)),
+              onSurfaceChange: (surface: TaskUiState["tasksSurface"]) => {
+                const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+                if (blockMessage) {
+                  setMessage({ tone: "warn", text: blockMessage });
+                  return;
+                }
+                updateRightUi((current) => ({ ...current, tasksSurface: surface }));
+              },
+              onTabChange: (tabId: string) => {
+                if (tabId !== splitRightTaskWorkspaceTabsState.activeTabId) {
+                  const blockMessage = getRightTaskTabDraftBlockMessage(splitRightTaskWorkspaceTabsState.activeTabId);
+                  if (blockMessage) {
+                    setMessage({ tone: "warn", text: blockMessage });
+                    return;
+                  }
+                }
+                updateRightTaskWorkspace((current) => current.tabs.some((tab) => tab.id === tabId) ? { ...current, activeTabId: tabId } : current);
+              },
+              onTimeWorkspacePanel: rightOnTimeWorkspacePanel,
+              operationsHeaderProps: rightOperationsHeaderProps,
+              pathsWorkspacePanel: rightPathsWorkspacePanel,
+              reportWorkspacePanel: tasksWorkspace.props.reportWorkspacePanel,
+              showSharedTaskEditorOverlay: false,
+              surface: splitRightTasksUiState.tasksSurface,
+              tableViewPanel: rightTableViewPanel,
+              tabs: splitRightTaskWorkspaceTabsState.tabs,
+              view: splitRightTasksUiState.duplicateTitleMode ? "table" : splitRightTasksUiState.view,
+              archiveCount: splitRightDerivedData?.archiveFilteredTasksSorted.length ?? 0,
+              trashCount: splitRightDerivedData?.trashFilteredTasksSorted.length ?? 0,
+            });
+          })();
+          return (
+            <TasksSplitLayout
+              active={isTasksSplit && Boolean(rightWorkspace)}
+              left={<>{taskWorkspaceFlowLayer}{tasksWorkspace}</>}
+              leftPanel={isTasksSplit && splitPanels.left && splitPanels.leftTab ? {
+                activeTabId: splitPanels.leftTab.id,
+                bottomNavigation: renderMasterWorkspaceApplicationNavigation(splitPanels.left, splitPanels.leftTab),
+                id: splitPanels.left.id,
+                navigation: renderMasterWorkspaceNavigation(splitPanels.left),
+                shortcutGuide: renderMasterWorkspaceShortcutGuide(splitPanels.left),
+                scrollTop: splitPanels.leftTab.presentation.scrollTop ?? 0,
+              } : undefined}
+              onPanelInteraction={masterWorkspaceShortcutMode.recordPanelInteraction}
+              onOverlayHostChange={handleMasterPanelOverlayHostChange}
+              right={rightWorkspace}
+              rightPanel={isTasksSplit && splitPanels.right && splitPanels.rightTab ? {
+                activeTabId: splitPanels.rightTab.id,
+                bottomNavigation: renderMasterWorkspaceApplicationNavigation(splitPanels.right, splitPanels.rightTab),
+                id: splitPanels.right.id,
+                navigation: renderMasterWorkspaceNavigation(splitPanels.right),
+                shortcutGuide: renderMasterWorkspaceShortcutGuide(splitPanels.right),
+                scrollTop: splitPanels.rightTab.presentation.scrollTop ?? 0,
+              } : undefined}
+              splitRatio={masterWorkspace.workspace.splitRatio}
+            />
+          );
+        })() : panelPage === "Focus" ? (
           <FocusPage
             activeSessions={activeSessions}
             adjustments={focusDailyGoalAdjustments}
@@ -8907,8 +10083,31 @@ export function TaskApp() {
             onSetFocusReallocationMode={setFocusReallocationMode}
             userId={currentUserId}
           />
-        ) : activePage === "Health" ? (
+        ) : panelPage === "Health" ? (
           <TaskHealthPage
+            activeTab={panelHealthTab}
+            onSelectTab={masterWorkspace.isEnabled
+              ? (tab) => { if (!masterWorkspace.selectHealthSectionInPanel(panel.id, panelTab.id, tab)) setMessage({ tone: "warn", text: masterWorkspace.transitionBlockedReason ?? "Save or cancel the current edit before switching Health sections." }); }
+              : handleHealthTabSelection}
+            onDraftSafetyChange={updateHealthDraftSafety}
+            activeMasterTabId={masterWorkspace.isEnabled ? panelTab.id : undefined}
+            journalView={masterWorkspace.isEnabled ? panelTab.presentation.journalView : undefined}
+            onJournalViewChange={masterWorkspace.isEnabled ? (journalView) => masterWorkspace.updateJournalViewInPanel(panel.id, panelTab.id, journalView) : undefined}
+            journalSessionStore={masterWorkspace.isEnabled ? journalDraftSessionStore : null}
+            foodView={masterWorkspace.isEnabled ? panelTab.presentation.foodView : undefined}
+            onFoodViewChange={masterWorkspace.isEnabled ? (foodView) => masterWorkspace.updateFoodViewInPanel(panel.id, panelTab.id, foodView) : undefined}
+            foodSessionStore={masterWorkspace.isEnabled ? healthFoodDraftSessionStore : null}
+            customFoodSessionStore={masterWorkspace.isEnabled ? healthCustomFoodDraftSessionStore : null}
+            recipeSessionStore={masterWorkspace.isEnabled ? healthRecipeDraftSessionStore : null}
+            savedMealSessionStore={masterWorkspace.isEnabled ? healthSavedMealDraftSessionStore : null}
+            mealPlanSessionStore={masterWorkspace.isEnabled ? healthMealPlanDraftSessionStore : null}
+            journalEntryRequest={journalEntryNavigationRequests[panel.id] ?? null}
+            onConsumeJournalEntryRequest={(requestId) => setJournalEntryNavigationRequests((current) => {
+              if (current[panel.id]?.id !== requestId) return current;
+              const next = { ...current };
+              delete next[panel.id];
+              return next;
+            })}
             awards={healthAwards}
             archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}
@@ -8917,6 +10116,15 @@ export function TaskApp() {
             journalSignals={healthJournalSignals}
             journalSignalValues={healthJournalSignalValues}
             journalSignalOccurrences={healthJournalSignalOccurrences}
+            journalTriggers={healthJournalTriggers}
+            journalTriggerLinks={healthJournalTriggerLinks}
+            journalTriggerDataError={healthJournalTriggerDataError}
+            journalStatisticsDataError={healthJournalStatisticsDataError}
+            refreshJournalStatisticsData={refreshHealthData}
+            isLoadingJournalTriggers={isLoadingHealthJournalTriggers}
+            hasLoadedJournalTriggerData={hasLoadedHealthJournalTriggerData}
+            loadJournalTriggerData={loadHealthJournalTriggerData}
+            createJournalTrigger={createHealthJournalTrigger}
             saveJournalEntry={saveJournalEntry}
             saveJournalQuestions={saveJournalQuestions}
             createJournalSignal={createJournalSignal}
@@ -8986,6 +10194,7 @@ export function TaskApp() {
             recipes={healthRecipes}
             saveFavoriteFood={saveFavoriteFood}
             updatePreviousFoodLogs={updateHealthPreviousFoodLogs}
+            pendingFoodHistoryRepairIds={pendingFoodHistoryRepairIds}
             setFavoriteFoodStatus={setFavoriteFoodStatus}
             saveRecipe={saveHealthRecipe}
             savedMeals={healthSavedMeals}
@@ -9013,13 +10222,13 @@ export function TaskApp() {
             workouts={healthWorkouts}
             workoutPlanItemLinks={workoutPlanItemLinks}
           />
-        ) : activePage === "Roll" ? (
+        ) : panelPage === "Roll" ? (
           <RollPage
             client={client}
             currentUser={currentUser}
             isDark={theme === "dark"}
           />
-        ) : activePage === "Stats" ? (
+        ) : panelPage === "Stats" ? (
           <TaskStatsPage
             achievementSummary={achievementSummaryPresentation}
             economy={economy}
@@ -9030,17 +10239,26 @@ export function TaskApp() {
             todayDateKey={todayKey}
             userId={currentUserId}
           />
-        ) : activePage === "Notes" ? (
-          <NotesPage
-            client={client}
-            currentUser={currentUser}
-            onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
-            openNoteId={notePageOpenNoteId}
-            scratchPaper={scratchPaperData}
-            tasks={tasks}
-            voiceMemos={voiceMemos}
-          />
-        ) : activePage === "Settings" ? (
+        ) : panelPage === "Notes" ? (
+          areNotesLoadedForCurrentUser ? (
+            <NotesPage
+              client={client}
+              currentUser={currentUser}
+              notes={notesForCurrentUser}
+              onNotesChange={updateNotesCollection}
+              onDraftSafetyChange={setHasUnsafeNotesDraft}
+              onOpenNoteHandled={() => setNotePageOpenNoteId(null)}
+              openNoteId={notePageOpenNoteId}
+              notesSessionStore={masterWorkspace.isEnabled ? notesDraftSessionStore : null}
+              activeMasterTabId={masterWorkspace.isEnabled ? panelTab.id : undefined}
+              notesView={masterWorkspace.isEnabled ? panelTab.presentation.notesView : undefined}
+              onNotesViewChange={masterWorkspace.isEnabled ? (notesView) => masterWorkspace.updateNotesViewInPanel(panel.id, panelTab.id, notesView) : undefined}
+              scratchPaper={panelScratchPaperData}
+              tasks={tasks}
+              voiceMemos={voiceMemos}
+            />
+          ) : <PageLoadingFallback />
+        ) : panelPage === "Settings" ? (
           <TaskSettingsPage
             accentColor={accentColor}
             client={supabase}
@@ -9050,17 +10268,25 @@ export function TaskApp() {
             onDayStartTimeChange={setDayStartTime}
             onTimeZoneChange={setUserTimeZone}
             onResetEconomy={resetEconomy}
-            onSectionRequestHandled={(section) => setRequestedSettingsSection((current) => (current === section ? null : current))}
+            onSectionRequestHandled={(section) => {
+              if (masterWorkspace.hasSplit && panelTab.destination.kind === "settings-section" && panelTab.destination.section === section) {
+                masterWorkspace.updatePanelDestination(panel.id, panelTab.id, { kind: "page", page: "Settings" });
+                return;
+              }
+              setRequestedSettingsSection((current) => (current === section ? null : current));
+            }}
             onWorkspaceRefresh={softRefreshWorkspace}
             onThemeChange={setTheme}
-            requestedSection={requestedSettingsSection}
+            requestedSection={masterWorkspace.hasSplit
+              ? panelTab.destination.kind === "settings-section" ? panelTab.destination.section : null
+              : requestedSettingsSection}
             tasks={tasks}
             theme={theme}
             userId={currentUser.id}
             lowStim={lowStim}
             onLowStimChange={setLowStim}
           />
-        ) : activePage === "Games" ? (
+        ) : panelPage === "Games" ? (
           <GamesPage
             todayCompletedCount={taskActivitySummary?.unfiltered_today_completed_count ?? null}
             onAwardXP={(xp, reason) =>
@@ -9071,27 +10297,458 @@ export function TaskApp() {
           <PagePlaceholder
             count={activeTasks.length}
             isDark={theme === "dark"}
-            page={activePage}
-            setActivePage={setActivePage}
+            page={panelPage}
+            setActivePage={panelNavigate}
             userId={currentUser.id}
           />
         )}
         </ErrorBoundary>
-        </section>
+    );
+  };
+
+  const renderMasterWorkspaceNavigation = (panel: typeof masterWorkspace.workspace.panels[number]) => panel.tabsCollapsed ? null : (
+    <MasterWorkspaceTabBar
+      activeTabId={panel.activeTabId}
+      canActivateTab={(tabId) => masterWorkspace.canActivateTabInPanel(panel.id, tabId)}
+      canCloseSplit={masterWorkspace.canCloseSplit}
+      hasSplit={masterWorkspace.hasSplit}
+      splitCloseBlockedReason={masterWorkspace.splitCloseBlockedReason}
+      canCloseTab={(tabId) => masterWorkspace.canCloseTabInPanel(panel.id, tabId)}
+      canOpenNewTab={masterWorkspace.canOpenNewTabInPanel(panel.id)}
+      canNavigate={masterWorkspace.canNavigate}
+      canSplitRight={panel.side === "left" && masterWorkspace.canSplitRight}
+      transitionBlockedReason={panel.id === masterWorkspace.workspace.focusedPanelId ? masterWorkspace.transitionBlockedReason : null}
+      onActivate={(tabId) => masterWorkspace.activateTabInPanel(panel.id, tabId)}
+      onClose={(tabId) => masterWorkspace.closeTabInPanel(panel.id, tabId)}
+      onCloseSplit={masterWorkspace.closeSplit}
+      onOpenPage={(page) => { masterWorkspace.openPageTabInPanel(panel.id, page); }}
+      onSplitRight={masterWorkspace.splitRight}
+      showSplitActions={panel.side === "left"}
+      tabs={panel.tabs}
+    />
+  );
+  const renderMasterWorkspaceShortcutGuide = (panel: typeof masterWorkspace.workspace.panels[number]) => (
+    masterWorkspaceShortcutMode.targetPanelId === panel.id
+      ? <MasterWorkspaceShortcutGuide panel={panel} />
+      : null
+  );
+  const masterWorkspaceHudTabToggles = masterWorkspace.isEnabled
+    ? masterWorkspace.hasSplit
+      ? masterWorkspace.workspace.panels.map((panel) => ({
+        expanded: panel.tabsCollapsed !== true,
+        label: panel.side === "left" ? "Window 1 Tabs" : "Window 2 Tabs",
+        onToggle: () => {
+          masterWorkspaceShortcutMode.recordPanelInteraction(panel.id);
+          masterWorkspace.setPanelTabsCollapsed(panel.id, panel.tabsCollapsed !== true);
+        },
+      }))
+      : [{
+        expanded: masterWorkspace.currentPanel.tabsCollapsed !== true,
+        label: "Tabs",
+        onToggle: () => {
+          masterWorkspaceShortcutMode.recordPanelInteraction(masterWorkspace.currentPanel.id);
+          masterWorkspace.setPanelTabsCollapsed(masterWorkspace.currentPanel.id, masterWorkspace.currentPanel.tabsCollapsed !== true);
+        },
+      }]
+    : [];
+  const renderMasterWorkspaceApplicationNavigation = (
+    panel: typeof masterWorkspace.workspace.panels[number],
+    panelTab: typeof masterWorkspace.activeTab,
+  ) => (
+    <BottomDock
+      activePage={panelTab.destination.page}
+      dockIcons={dockIcons}
+      dockItems={dockItems}
+      layoutMode="panel"
+      onNavigate={(page) => { masterWorkspace.navigatePanelToPage(panel.id, page); }}
+      onNavigateSearchTarget={(target) => handleMasterPanelNavigatorSearchTarget(panel.id, panelTab.id, target)}
+      renderIcon={(name) => <CategoryIcon className="h-5 w-5" name={name} />}
+      searchTargets={navigatorSearchTargets}
+      taskSearchEntities={navigatorTaskSearchEntities}
+    />
+  );
+
+  return (
+    <main
+      data-theme={theme}
+      data-lowstim={lowStim ? "" : undefined}
+      className={`${masterWorkspace.hasSplit ? "flex min-h-dvh flex-col" : "min-h-screen"} px-[15px] pb-4 pt-0 transition-colors bg-[linear-gradient(180deg,#ffffff_0%,#faf8ff_100%)] text-[#182033] dark:bg-[linear-gradient(180deg,#0d0c17_0%,#141124_100%)] dark:text-white`}
+    >
+      <WorkspaceOverlayHostContext.Provider value={workspaceModalOverlayHost}>
+        <TaskEditFlows
+          batchDeleteFlow={null}
+          batchEditFlow={null}
+          completeFlow={completeFlow}
+          focusPlannerFlow={null}
+          momentumFlow={null}
+          taskHistoryFlow={taskHistoryFlow}
+        />
+      </WorkspaceOverlayHostContext.Provider>
+      {sharedTaskEditorOverlayTaskId && requestedSharedTaskRow ? (
+        <WorkspaceOverlayHostContext.Provider value={sharedTaskEditorOverlayHost}>
+        <TaskManagementTableV2
+          allListOptions={availableTaskLists.filter(isManualTaskListDestination).map((list) => ({ id: list.id, label: list.name }))}
+          allNoteOptions={availableTaskNotes.map((note) => ({ id: note.id, title: note.title }))}
+          allRows={sharedTaskEditorRows}
+          allTagOptions={allTaskTags}
+          userId={currentUserId}
+          todayDateKey={todayKey}
+          taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
+          attentionReasonByTaskId={taskAttentionReasonByTaskId}
+          childTaskCreationBlockedTaskIds={childTaskCreationBlockedTaskIds}
+          childTaskPreviewByParentTaskId={childTaskPreviewByParentTaskId}
+          className="m-0 max-w-none p-0"
+          enableInspector
+          editorNavigationTaskIds={taskEditorNavigationTaskIds ?? undefined}
+          getFollowTaskDestination={getFollowTaskDestination}
+          milestoneDetachPromotionTaskIds={milestoneDetachPromotionTaskIds}
+          milestonePromotionTaskIds={milestonePromotionTaskIds}
+          onCreateChildTask={createChildTaskFromPreview}
+          onCreateTaskList={async (name) => createCustomTaskList({ membershipMode: "manual", name, rules: null })}
+          onDetachAndPromoteTaskToMilestone={requestDetachAndPromoteMilestone}
+          onDiscardTaskTimer={requestTaskTimerDiscard}
+          onDuplicateTask={(taskId) => {
+            const task = tasks.find((entry) => entry.id === taskId);
+            if (task) void duplicateTaskInPlace(task);
+          }}
+          onFollowDetachedTask={followDetachedTask}
+          onInspectorClose={closeSharedTaskEditorOverlay}
+          onTaskEditorNavigate={(taskId) => setSharedTaskEditorOverlayTaskId(taskId)}
+          onMoveTaskIntoParent={moveTaskIntoParent}
+          onNextTaskTimer={() => cycleHudTaskTimer("next")}
+          onOpenDeleteTask={(taskId) => { void openSingleTaskDeleteModal(taskId); }}
+          onOpenNote={(noteId) => {
+            if (!requestPageNavigation("Notes")) return;
+            closeSharedTaskEditorOverlay();
+            setNotePageOpenNoteId(noteId);
+          }}
+          onOpenTaskHistory={openTaskHistoryForTask}
+          onPauseTaskTimer={pauseHudTaskTimer}
+          onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
+          onPromoteTaskToMilestone={openMilestoneSetup}
+          onReorderChildTask={(taskId, direction) => { void reorderChildTask(taskId, direction); }}
+          onRequestedEditorFocusHandled={(token) => {
+            setTaskEditorFocusRequest((current) => current?.token === token ? null : current);
+          }}
+          onRestoreTask={(taskId) => { void restoreTaskFromTrash(taskId); }}
+          onResumeTaskTimer={resumeHudTaskTimer}
+          onStartTaskTimer={startHudTaskTimer}
+          onStopTaskTimer={stopHudTaskTimer}
+          onTaskActualSecondsChange={(taskId, seconds) => { void updateTask(taskId, { actual_seconds: seconds }); }}
+          onTaskDueChange={(taskId, schedule, options) => {
+            const manualAction = options?.manualAction ?? (schedule.dueOn ? undefined : "unscheduled_status");
+            let didPersist = false;
+            const didFullyReconcile = updateTask(taskId, { due_on: schedule.dueOn || null, due_time: schedule.dueTime || null }, {
+              ...(manualAction ? { manualAction } : {}),
+              onCanonicalMutationPersisted: () => {
+                didPersist = true;
+              },
+            });
+            return didFullyReconcile.then((didReconcile) => didPersist || didReconcile);
+          }}
+          onTaskEnergyChange={(taskId, energy) => { void updateTask(taskId, { energy }); }}
+          onTaskEstimatedMinutesChange={(taskId, minutes) => { void updateTask(taskId, { estimated_minutes: minutes }); }}
+          onTaskLinkChange={(taskId, nextLink) => { void updateTask(taskId, { external_link_label: nextLink.label || null, external_link_url: nextLink.url || null }); }}
+          onTaskLinkedNoteIdsChange={(taskId, linkedNoteIds) => { void syncTaskNoteLinks(taskId, linkedNoteIds); }}
+          onTaskNotesChange={(taskId, notes) => { void updateTask(taskId, { notes: notes || null }); }}
+          onTaskTypeChange={(taskId, taskType, customRulesetId) => { void updateTask(taskId, { task_type: taskType, custom_ruleset_id: customRulesetId ?? null }); }}
+          onTaskBehaviorProfileChange={updateTaskBehaviorProfile}
+          onCustomRulesetBehaviorProfileChange={updateCustomBehaviorRulesetProfile}
+          onResetTaskBehaviorProfile={resetTaskBehaviorProfile}
+          taskTypeBehaviorProfiles={taskTypeBehaviorProfiles}
+          behaviorPolicyRevisions={taskTypeBehaviorProfileRevisions}
+          namedCustomRulesetBehaviorPolicyRevisions={customRulesetBehaviorPolicyRevisions}
+          behaviorSelectionsByTaskId={behaviorSelectionsByTaskId}
+          behaviorPolicyLogicalDate={todayKey}
+          behaviorPolicyLoading={isTaskTypeBehaviorProfilesLoading}
+          customBehaviorRulesets={customBehaviorRulesets}
+          customBehaviorRulesetProfiles={customBehaviorRulesetProfiles}
+          onCreateCustomRuleset={createCustomRuleset}
+          onDeleteCustomRuleset={deleteCustomRuleset}
+          onShowCustomRulesetTasks={showCustomRulesetTasks}
+          onMoveCustomRulesetTasksToTaskAndDelete={moveCustomRulesetTasksToTaskAndDelete}
+          onRenameCustomRuleset={renameCustomRuleset}
+          onUpdateCustomRulesetPresentation={updateCustomRulesetPresentation}
+          onTaskPinToggle={(taskId) => { void toggleTaskPinned(taskId); }}
+          onTaskPriorityChange={applyTaskPriorityChange}
+          onTaskRepeatChange={handleSharedTaskRepeatChange}
+          onTaskQuotaBalanceClear={handleClearTaskQuotaBalance}
+          onTaskStatusChange={(taskId, status) => {
+            const task = tasks.find((entry) => entry.id === taskId);
+            if (task) void updateTaskStatus(task, status);
+          }}
+          onTaskSubtaskAdd={addTaskSubtask}
+          onTaskSubtaskAddChild={addChildTaskSubtask}
+          onTaskSubtaskDelete={(subtaskId) => { void deleteTaskSubtask(subtaskId); }}
+          onTaskSubtaskRename={(subtaskId, title) => { void renameTaskSubtask(subtaskId, title); }}
+          onTaskSubtasksAutoResetChange={(taskId, subtasksAutoReset) => { void updateTask(taskId, { subtasks_auto_reset: subtasksAutoReset }); }}
+          onTaskSubtaskStatusChange={(subtaskId, status) => { void updateTaskSubtaskStatusWithPolicy(subtaskId, status); }}
+          onTaskTagsChange={(taskId, tags) => { void updateTask(taskId, { tags }); }}
+          onTaskTitleChange={(taskId, title) => { void updateTask(taskId, { title }); }}
+          onTaskTrackingExclusionChange={(taskId, excluded) => { void updateTaskTrackingExclusion(taskId, excluded); }}
+          onToggleTaskList={(taskId, listId) => { void toggleTaskManualListMembership(taskId, listId); }}
+          onUnlinkTask={unlinkSameTableTask}
+          overlayOnly
+          renderFullInspectorExtension={renderMilestoneInspectorExtension}
+          requestedEditorFocus={taskEditorFocusRequest}
+          requestedOpenTask={requestedSharedTaskRow}
+          requestedOpenTaskId={sharedTaskEditorOverlayTaskId}
+          rows={sharedTaskEditorRows}
+          runningTaskTimers={runningTaskTimers}
+          selectedTaskIds={[]}
+          showHeader={false}
+        />
+        </WorkspaceOverlayHostContext.Provider>
+      ) : null}
+      {isAccountOpen ? (
+        <AccountModal
+          onClose={() => setIsAccountOpen(false)}
+          onSave={handleSaveProfile}
+          onSignOut={() => void client.auth.signOut()}
+          profile={profile}
+        />
+      ) : null}
+      {isTaskListSettingsOpen ? (
+        <WorkspaceOverlayHostContext.Provider value={masterWorkspace.hasSplit && taskListSettingsPanelContext
+          ? (() => {
+            const host = masterPanelOverlayHosts.get(taskListSettingsPanelContext.panelId);
+            return host ? { ...host, tabId: taskListSettingsPanelContext.tabId } : null;
+          })()
+          : undefined}
+        >
+          <TaskListSettingsModal
+            currentFolderId={taskListSettingsPanelContext ? taskListSettingsPanelContext.folderId : currentFolderId}
+            energyOptions={energyOptions}
+            fieldOptions={TASK_LIST_RULE_FIELD_OPTIONS}
+            folders={taskListFolders}
+            listCounts={visibleListCounts}
+            lists={availableTaskLists.filter(isTaskListSettingsEligible)}
+            onClose={() => {
+              setIsTaskListSettingsOpen(false);
+              setTaskListSettingsPanelContext(null);
+              setWorkspaceOverlayOwner(null);
+            }}
+            onCreateCustomList={createCustomTaskList}
+            onCreateFolder={taskListFolderActions.createFolder}
+            onDeleteFolder={taskListFolderActions.deleteFolder}
+            onDeleteList={deleteTaskList}
+            onRenameFolder={taskListFolderActions.renameFolder}
+            onSaveList={saveTaskListDefinition}
+            operatorOptionsByField={TASK_LIST_RULE_OPERATOR_OPTIONS}
+            taskStatusOptions={taskStatusOptions}
+          />
+        </WorkspaceOverlayHostContext.Provider>
+      ) : null}
+      {isImportWidgetMenuOpen ? (
+        <WorkspaceOverlayHostContext.Provider value={workspaceModalOverlayHost}>
+        <ModalShell className="flex max-h-[90vh] w-full max-w-2xl flex-col overflow-hidden rounded-[2rem] border border-[#ece8f8] bg-white p-6 shadow-[0_30px_80px_rgba(81,61,168,0.18)] dark:border-white/10 dark:bg-[#171328]" label="Import list" onClose={() => { setIsImportWidgetMenuOpen(false); setWorkspaceOverlayOwner(null); }}>
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex shrink-0 items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-black uppercase tracking-[0.18em] text-[#7a63f7] dark:text-[#c9bbff]">Import</p>
+                <h2 className="mt-2 text-2xl font-black text-[#1f2642] dark:text-white">Import list</h2>
+                <p className="mt-2 text-sm text-[#7d88a1] dark:text-white/55">
+                  Paste a rough list and turn it into calm, structured tasks without leaving list view.
+                </p>
+              </div>
+              <button
+                aria-label="Close"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-[#f3f0ff] text-[#6f57f6] dark:bg-white/8 dark:text-white"
+                onClick={() => setIsImportWidgetMenuOpen(false)}
+                type="button"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <div className="mt-5 min-h-0 flex-1 overflow-y-auto pr-1">
+              <ImportWidgetCard
+                embeddedInModal
+                message={message}
+                onImport={async (lines, options) => {
+                  const result = await importTasks(lines, { ...options, todayDateKey: todayKey });
+                  if (result && result.importedCount > 0 && result.warningCount === 0 && result.errorCount === 0) {
+                    setIsImportWidgetMenuOpen(false);
+                  }
+                }}
+              />
+            </div>
+          </div>
+        </ModalShell>
+        </WorkspaceOverlayHostContext.Provider>
+      ) : null}
+      {activeRewardBankSession ? (
+        <TaskRewardModal
+          isDark={theme === "dark"}
+          onClaim={claimPendingRewardBank}
+          onClose={() => setActiveRewardBankSession(null)}
+          onReset={handleResetPendingRewardBank}
+          pendingBankSnapshot={activeRewardBankSession}
+          pendingRewards={activeRewardBankSession.pendingRewards}
+        />
+      ) : null}
+      <div className="adhdice-hud-safe-area sticky top-0 z-30 -mx-[15px] w-[calc(100%+30px)] border-b border-[#ece8f8] bg-[var(--hud-surface)] shadow-[0_14px_34px_rgba(81,61,168,0.06)] [--hud-surface:#fff] dark:border-white/10 dark:[--hud-surface:#131021]" data-app-fixed-header>
+        <div className="w-full">
+          <div className={`w-full bg-[var(--hud-surface)] px-0 ${hudUiState.isHudCollapsed ? "py-1.5" : "py-2"}`}>
+              <HudRuntimeClock active>
+                {(hudNow) => {
+                  const focusAlarmRemainingMs = focusAlarmEnabled && focusAlarmNextRingAt ? Math.max(0, focusAlarmNextRingAt - hudNow) : null;
+                  const notificationInboxItems = [
+                    ...hudNotificationBaseItems,
+                    ...(focusAlarmRemainingMs !== null
+                      ? [{
+                          detail: `Next check-in in ${formatFocusAlarmRemaining(focusAlarmRemainingMs)}.`,
+                          id: "focus-alarm",
+                          title: "Focus alarm armed",
+                          tone: "neutral" as const,
+                        }]
+                      : []),
+                    ...hudNotificationEvents,
+                  ].slice(0, 8);
+
+                  return (
+                    <CommandCenterHeader
+                      activeHudTaskTimer={activeHudTaskTimer}
+                      activeSessions={activeSessions}
+                      activeTaskCount={filteredActiveTasks.length}
+                      currentHudPageId={hudUiState.activeHudPageId}
+                      economy={economy}
+                      focusCategories={focusCategories}
+                      hudUiState={hudUiState}
+                      workspaceTabToggles={masterWorkspaceHudTabToggles}
+                      urgentTaskCount={filteredUrgentTasks.length}
+                      onOpenAccount={() => setIsAccountOpen(true)}
+                      onOpenComposer={openInlineNewListTaskComposer}
+                      onOpenFocusPlanner={openFocusPlanner}
+                      onOpenQuickCapture={() => { void openTaskImportPanel(); }}
+                      onViewScratchPaper={() => { requestPageNavigation("Notes"); }}
+                      onNextTaskTimer={() => cycleHudTaskTimer("next")}
+                      onPauseTaskTimer={pauseHudTaskTimer}
+                      onPreviousTaskTimer={() => cycleHudTaskTimer("previous")}
+                      onResumeTaskTimer={resumeHudTaskTimer}
+                      onStopTaskTimer={stopHudTaskTimer}
+                      onToggleFocusTimer={(categoryId) => {
+                        void handleToggleTimer(categoryId);
+                      }}
+                      profile={profile}
+                      runningTaskTimers={runningTaskTimers}
+                      setHudUiState={setHudUiState}
+                      hudNow={hudNow}
+                      taskTimerNow={hudNow}
+                      theme={theme}
+                      todayTaskCount={filteredTodayTasks.length}
+                      onThemeChange={setTheme}
+                      lowStim={lowStim}
+                      onLowStimChange={setLowStim}
+                      currentStreak={taskActivitySummary?.tracked.current_streak ?? 0}
+                      notificationInboxItems={notificationInboxItems}
+                      isNativeIosPlatform={isNativeIosPlatform}
+                      focusAlarmEnabled={focusAlarmEnabled}
+                      focusAlarmIntervalMinutes={focusAlarmIntervalMinutes}
+                      focusAlarmRemainingMs={focusAlarmRemainingMs}
+                      onDecreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current - FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                      onIncreaseFocusAlarmInterval={() => setFocusAlarmIntervalMinutes((current) => clampFocusAlarmInterval(current + FOCUS_ALARM_INTERVAL_STEP_MINUTES))}
+                      onToggleFocusAlarmEnabled={() => {
+                        if (focusAlarmAudioBlocked && focusAlarmEnabled) {
+                          void playFocusAlarmSound({ rearmOnly: true });
+                          return;
+                        }
+
+                        setFocusAlarmEnabled((current) => !current);
+                        if (focusAlarmEnabled) {
+                          setFocusAlarmAudioBlocked(false);
+                        }
+                      }}
+                      mobileZoom={mobileZoom}
+                      onRefreshWorkspace={() => { void handleHudRefresh(); }}
+                      onDecreaseMobileZoom={decreaseMobileZoom}
+                      onIncreaseMobileZoom={increaseMobileZoom}
+                      refreshStatus={refreshStatus === "updating" ? "updating" : (isSoftWorkspaceRefreshing || refreshStatus === "syncing") ? "syncing" : "idle"}
+                      canDecreaseMobileZoom={canDecreaseMobileZoom}
+                      canIncreaseMobileZoom={canIncreaseMobileZoom}
+                      onOpenPendingRewardBank={openPendingRewardBank}
+                      pendingRewardDiceCount={pendingRewardDiceCount}
+                      scratchPaper={scratchPaperData}
+                    />
+                  );
+                }}
+              </HudRuntimeClock>
+          </div>
+        </div>
+        {masterWorkspace.isEnabled && !masterWorkspace.hasSplit
+          ? renderMasterWorkspaceNavigation(masterWorkspace.currentPanel)
+          : null}
+        {!masterWorkspace.hasSplit && masterWorkspaceShortcutMode.targetPanelId === masterWorkspace.currentPanel.id ? (
+          <div className="pointer-events-none absolute inset-x-0 top-full z-[125] flex justify-center px-3">
+            <div className="pointer-events-auto flex w-full max-w-[1680px] justify-end">
+              {renderMasterWorkspaceShortcutGuide(masterWorkspace.currentPanel)}
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <div className={`mx-auto w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : ""}`} style={shellZoomStyle}>
+        <HomeTodoStateProvider userId={isMasterPanelPageActive("Home") ? currentUserId : null}>
+          <section className={`w-full ${masterWorkspace.hasSplit ? "flex min-h-0 flex-1 flex-col" : "pb-28"}`}>
+
+        {batchEditProgress ? <BatchEditProgressBanner onDismiss={() => setBatchEditProgress(null)} progress={batchEditProgress} /> : message ? <StatusBanner message={message} /> : null}
+
+        {masterWorkspace.isEnabled && masterWorkspace.hasSplit && !isTasksSplit && splitPanels.left && splitPanels.leftTab && splitPanels.right && splitPanels.rightTab ? (
+          <div
+            className="grid min-h-0 min-w-0 flex-1 items-stretch gap-3"
+            data-master-workspace-split="pages"
+            style={{ gridTemplateColumns: `minmax(0, ${masterWorkspace.workspace.splitRatio}fr) minmax(0, ${1 - masterWorkspace.workspace.splitRatio}fr)` }}
+          >
+            <MasterWorkspacePanelFrame
+              activeTabId={splitPanels.leftTab.id}
+              bottomNavigation={renderMasterWorkspaceApplicationNavigation(splitPanels.left, splitPanels.leftTab)}
+              id={splitPanels.left.id}
+              navigation={renderMasterWorkspaceNavigation(splitPanels.left)}
+              onInteraction={masterWorkspaceShortcutMode.recordPanelInteraction}
+              onOverlayHostChange={handleMasterPanelOverlayHostChange}
+              scrollTop={splitPanels.leftTab.presentation.scrollTop ?? 0}
+              shortcutGuide={renderMasterWorkspaceShortcutGuide(splitPanels.left)}
+              side="left"
+            >
+              <MasterWorkspacePanelContent render={() => renderWorkspacePage(splitPanels.leftTab.destination.page, splitPanels.left, splitPanels.leftTab)} />
+            </MasterWorkspacePanelFrame>
+            <MasterWorkspacePanelFrame
+              activeTabId={splitPanels.rightTab.id}
+              bottomNavigation={renderMasterWorkspaceApplicationNavigation(splitPanels.right, splitPanels.rightTab)}
+              id={splitPanels.right.id}
+              navigation={renderMasterWorkspaceNavigation(splitPanels.right)}
+              onInteraction={masterWorkspaceShortcutMode.recordPanelInteraction}
+              onOverlayHostChange={handleMasterPanelOverlayHostChange}
+              scrollTop={splitPanels.rightTab.presentation.scrollTop ?? 0}
+              shortcutGuide={renderMasterWorkspaceShortcutGuide(splitPanels.right)}
+              side="right"
+            >
+              <MasterWorkspacePanelContent render={() => renderWorkspacePage(splitPanels.rightTab.destination.page, splitPanels.right, splitPanels.rightTab)} />
+            </MasterWorkspacePanelFrame>
+          </div>
+        ) : (
+          <MasterWorkspacePanelContent render={() => renderWorkspacePage(
+            masterWorkspace.isEnabled ? masterWorkspace.activeTab.destination.page : activePage,
+            masterWorkspace.currentPanel,
+            masterWorkspace.activeTab,
+          )} />
+        )}
+          </section>
+        </HomeTodoStateProvider>
       </div>
 
-      <div style={mobileChromeZoomStyle}>
-        <BottomDock
-          activePage={activePage}
-          dockIcons={dockIcons}
-          dockItems={dockItems}
-          onNavigate={setActivePage}
-          onNavigateSearchTarget={handleNavigatorSearchTarget}
-          renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
-          searchTargets={navigatorSearchTargets}
-          taskSearchEntities={navigatorTaskSearchEntities}
-        />
-      </div>
+      {!masterWorkspace.hasSplit ? (
+        <div style={mobileChromeZoomStyle}>
+          <BottomDock
+            activePage={activePage}
+            dockIcons={dockIcons}
+            dockItems={dockItems}
+            onNavigate={requestPageNavigation}
+            onNavigateSearchTarget={handleNavigatorSearchTarget}
+            renderIcon={(name) => <CategoryIcon className="h-6 w-6" name={name} />}
+            searchTargets={navigatorSearchTargets}
+            taskSearchEntities={navigatorTaskSearchEntities}
+          />
+        </div>
+      ) : null}
       <TaskActiveTimersTray
         isOpen={isActiveTimersTrayOpen}
         onDiscard={(taskId) => { void persistDiscardedTaskTimer(taskId); }}
@@ -9813,6 +11470,12 @@ function TopHeader({
   );
 }
 
+type MasterWorkspaceHudTabToggle = {
+  expanded: boolean;
+  label: string;
+  onToggle: () => void;
+};
+
 function CommandCenterHeader({
   activeHudTaskTimer,
   activeSessions,
@@ -9821,6 +11484,7 @@ function CommandCenterHeader({
   economy,
   focusCategories,
   hudUiState,
+  workspaceTabToggles,
   urgentTaskCount,
   onOpenAccount,
   onOpenComposer,
@@ -9870,6 +11534,7 @@ function CommandCenterHeader({
   economy: { level: number; xp: number; points: number; tokens: number };
   focusCategories: FocusCategory[];
   hudUiState: import("@/lib/task-hud-layout").HudUiState;
+  workspaceTabToggles: MasterWorkspaceHudTabToggle[];
   urgentTaskCount: number;
   onOpenAccount: () => void;
   onOpenComposer: () => void;
@@ -9926,6 +11591,24 @@ function CommandCenterHeader({
   const activeHudPageTitle = hudUiState.hudPages.find((page) => page.id === currentHudPageId)?.title ?? "HUD";
   const hudDateTime = isNativeIosPlatform ? null : formatHudDateTime(hudNow);
   const [isNotificationInboxOpen, setIsNotificationInboxOpen] = useState(false);
+
+  function renderWorkspaceTabToggles() {
+    return workspaceTabToggles.map(({ expanded, label, onToggle }) => (
+      <AdhdChip
+        aria-expanded={expanded}
+        aria-label={`${expanded ? "Collapse" : "Expand"} ${label}`}
+        className="shrink-0"
+        icon={expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        iconName={expanded ? "chevron-up" : "chevron-down"}
+        key={label}
+        onClick={onToggle}
+        title={`${expanded ? "Collapse" : "Expand"} ${label.toLowerCase()}`}
+        type="button"
+      >
+        {label}
+      </AdhdChip>
+    ));
+  }
 
   function setHudCollapsed(isCollapsed: boolean) {
     setHudUiState((current) => ({
@@ -10210,6 +11893,7 @@ function CommandCenterHeader({
                 <span className="hidden max-w-28 truncate text-[11px] font-medium sm:inline">{collapsedHudTaskTimer.title}</span>
               </TaskTableChipButton>
             ) : null}
+            {renderWorkspaceTabToggles()}
             {currentHudPageId !== "overview" ? (
               <span className="hidden shrink-0 sm:inline">
                 <span className={`${TASK_TABLE_CHIP_BASE_CLASS}${isNativeIosPlatform ? " -translate-y-0.5" : ""} border-[#ddd2ff] bg-[#f1ecff] text-[#7f6af7] dark:border-[#42306f] dark:bg-white/10 dark:text-[#c5b8ff]`} data-style-component="HudCollapsedChip" data-style-role="hud.collapsed.chip">
@@ -10311,6 +11995,7 @@ function CommandCenterHeader({
           setHudUiState={setHudUiState}
         />
         <div className="flex items-center justify-end gap-2 lg:shrink-0">
+          {renderWorkspaceTabToggles()}
           {pendingRewardDiceCount > 0 ? (
             <TaskTableChipButton
               aria-label={formatPendingDiceChipLabel(pendingRewardDiceCount)}

@@ -325,11 +325,13 @@ test("Calendar Include Steps scopes child previews to the authoritative search h
 });
 
 test("Calendar consumes the existing Task search selection instead of matching child previews itself", () => {
-  const source = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
-  assert.match(source, /selectCalendarTasks\(\{/);
-  assert.match(source, /matchingSearchEntityIds: calendarSearchMatchingEntityIds/);
-  assert.match(source, /searchIsActive: effectiveSearchQuery\.length > 0/);
-  assert.match(source, /taskSearchSelection\?\.matchingEntityIds/);
+  const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  const readModelSource = readFileSync(new URL("../src/lib/task-app-view-read-model.ts", import.meta.url), "utf8");
+  assert.match(appSource, /buildTaskAppViewReadModel\(/);
+  assert.match(readModelSource, /selectCalendarTasks\(\{/);
+  assert.match(readModelSource, /matchingSearchEntityIds: calendarSearchMatchingEntityIds/);
+  assert.match(readModelSource, /searchIsActive,/);
+  assert.match(readModelSource, /searchSelection\?\.matchingEntityIds/);
 });
 
 test("manual selected roots make an unlisted depth-one child searchable", () => {
