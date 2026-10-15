@@ -92,9 +92,12 @@ Task row, a selected Calendar cell, or a private History subset.
 
 History date state and Active Status are different projections. An earlier
 unresolved Missed can keep Active Status Missed while today’s Calendar cell is
-Open/Due. After a successful recurring outcome, Active Status immediately uses
-the next due date and becomes Upcoming or Not Due; the saved History date remains
-Done or Did My Best. Complete is permanent lifecycle completion.
+Open/Due. For Daily Until Complete, a later successful Done or Did My Best
+clears earlier Missed conditions from current Active Status; the Missed History
+row remains intact. Active Status immediately uses the next due date and is Not
+Due until that date, then Pending when the due logical day begins. Other
+recurrence types retain their existing unresolved-Missed rules. Complete is
+permanent lifecycle completion.
 
 Unscheduled means no due date and no repeat frequency. It remains active until
 permanently Complete or schedule metadata is added. Done/Did My Best records a

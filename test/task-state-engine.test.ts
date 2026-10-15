@@ -592,18 +592,82 @@ test("independent Daily success gets its own action-day identity when old Missed
   }
 });
 
-test("Daily Until Complete keeps its existing unresolved Missed semantics", () => {
+test("Daily Until Complete later success clears earlier Missed from Active Status and preserves History", () => {
+  const miss = history("2026-10-14", "missed", {
+    occurrenceIdentity: "task:task-1:occurrence:2026-10-14",
+    occurrenceDueOn: "2026-10-14",
+  });
+
+  for (const outcome of ["done", "did_my_best"] as const) {
+    const success = history("2026-10-15", outcome, {
+      occurrenceIdentity: "task:task-1:occurrence:2026-10-15",
+      occurrenceDueOn: "2026-10-15",
+    });
+    const result = evaluateTaskState(input({
+      now: "2026-10-15T14:00:00.000Z",
+      task: task({
+        activeStatus: "missed",
+        activeStatusLogicalDate: "2026-10-14",
+        activeOccurrenceDueOn: "2026-10-14",
+        dueOn: "2026-10-16",
+        recurrence: { kind: "rolling", intervalDays: 1, untilComplete: true },
+      }),
+      history: [miss, success],
+    }));
+
+    assert.equal(result.activeStatus, "not_due", outcome);
+    assert.equal(result.nextDueDate, "2026-10-16", outcome);
+    assert.equal(result.unresolvedOccurrenceIdentity, null, outcome);
+    assert.equal(result.calendar["2026-10-14"], "missed", outcome);
+    assert.equal(result.calendar["2026-10-15"], outcome, outcome);
+    assert.deepEqual(result.proposedHistoryChanges, [], outcome);
+  }
+});
+
+test("Daily Until Complete without a later success retains unresolved Missed status", () => {
   const result = evaluateTaskState(input({
-    now: "2026-08-23T14:00:00.000Z",
-    task: task({ activeStatus: "missed", dueOn: "2026-08-24", recurrence: { kind: "rolling", intervalDays: 1, untilComplete: true } }),
-    history: [
-      history("2026-08-20", "missed", { occurrenceIdentity: "task:task-1:occurrence:2026-08-20", occurrenceDueOn: "2026-08-20" }),
-      history("2026-08-21", "missed", { occurrenceIdentity: "task:task-1:occurrence:2026-08-21", occurrenceDueOn: "2026-08-21" }),
-      history("2026-08-23", "done", { occurrenceIdentity: "task:task-1:occurrence:2026-08-23", occurrenceDueOn: "2026-08-23" }),
-    ],
+    now: "2026-10-15T14:00:00.000Z",
+    task: task({
+      activeStatus: "missed",
+      activeStatusLogicalDate: "2026-10-14",
+      activeOccurrenceDueOn: "2026-10-14",
+      dueOn: "2026-10-16",
+      recurrence: { kind: "rolling", intervalDays: 1, untilComplete: true },
+    }),
+    history: [history("2026-10-14", "missed", {
+      occurrenceIdentity: "task:task-1:occurrence:2026-10-14",
+      occurrenceDueOn: "2026-10-14",
+    })],
   }));
 
   assert.equal(result.activeStatus, "missed");
+  assert.equal(result.unresolvedOccurrenceDueOn, "2026-10-14");
+});
+
+test("Daily Until Complete is Pending on the next due logical day after success", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-10-16T14:00:00.000Z",
+    task: task({
+      activeStatus: "not_due",
+      dueOn: "2026-10-16",
+      recurrence: { kind: "rolling", intervalDays: 1, untilComplete: true },
+    }),
+    history: [
+      history("2026-10-14", "missed", {
+        occurrenceIdentity: "task:task-1:occurrence:2026-10-14",
+        occurrenceDueOn: "2026-10-14",
+      }),
+      history("2026-10-15", "done", {
+        occurrenceIdentity: "task:task-1:occurrence:2026-10-15",
+        occurrenceDueOn: "2026-10-15",
+      }),
+    ],
+  }));
+
+  assert.equal(result.activeStatus, "pending");
+  assert.equal(result.nextDueDate, "2026-10-16");
+  assert.equal(result.calendar["2026-10-16"], "open");
+  assert.equal(result.calendar["2026-10-14"], "missed");
 });
 
 test("Delayed resolves the occurrence through one coherent engine plan", () => {

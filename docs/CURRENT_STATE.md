@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.171`.
+- Current working app version: `7.16.173`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,19 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.173 Daily Until Complete Active Status
+
+Daily Until Complete now clears an earlier Missed condition from current Active
+Status after a later Done or Did My Best outcome. The earlier Missed row remains
+in canonical History. The shared current-status projection is requested after a
+successful History mutation reconciles its Task row, keeping Home, Table, List,
+and Edit Task on the same projection without a page reload.
+
+Focused engine and projection reconciliation regressions cover the October 14
+Missed, October 15 success, and October 16 next-due sequence. Build, lint, and
+focused test results are recorded with the release commit; browser QA remains
+Andrew's manual responsibility.
 
 ## 2026-10-15 7.16.171 Side, Main, and iOS Integration
 
