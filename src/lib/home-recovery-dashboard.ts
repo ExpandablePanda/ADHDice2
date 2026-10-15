@@ -1,6 +1,6 @@
 import type { Task } from "@/lib/database.types";
 
-export const HOME_RECOVERY_APP_VERSION = "7.16.167";
+export const HOME_RECOVERY_APP_VERSION = "7.16.168";
 export const HOME_RECOVERY_CHECKPOINT_INTERVAL_MS = 4 * 60 * 60 * 1000;
 
 export type HomeRecoveryStatus = {

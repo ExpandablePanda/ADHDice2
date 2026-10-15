@@ -301,8 +301,8 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
   const dashboardErrorMessage = unavailableMessage ?? statusDetail(statusResult) ?? statusDetail(pointsResult);
 
   return (
-    <div className="grid min-w-0 gap-4 px-4 pb-4 sm:px-5">
-      <div className="flex min-w-0 flex-col gap-3 rounded-2xl border border-[#e5e0f5] bg-white/70 p-4 dark:border-white/10 dark:bg-white/[0.035] sm:flex-row sm:items-center sm:justify-between">
+    <div className="settings-recovery-dashboard grid min-w-0 gap-4 px-3 pb-4">
+      <div className="settings-recovery-actions flex min-w-0 flex-col gap-3 rounded-2xl border border-[#e5e0f5] bg-white/70 p-4 dark:border-white/10 dark:bg-white/[0.035]">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
             <span aria-live="polite" className={`rounded-full px-2.5 py-1 text-xs font-bold ${dashboardAvailable ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-400/15 dark:text-emerald-200" : "bg-amber-100 text-amber-900 dark:bg-amber-400/15 dark:text-amber-100"}`}>{availabilityLabel}</span>
@@ -310,12 +310,12 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
           </div>
           <p className="mt-2 text-sm text-[#5f6982] dark:text-white/65">Home snapshots can contain Scratchpad text and items. Keep recovery information and downloaded files private.</p>
         </div>
-        <div className="flex shrink-0 flex-wrap gap-2">
-          <button className="ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-55" disabled={!client || !userId || isRefreshing} onClick={() => { void refresh(); }} type="button">
+        <div className="flex min-w-0 max-w-full flex-wrap gap-2">
+          <button className="max-w-full whitespace-normal ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-55" disabled={!client || !userId || isRefreshing} onClick={() => { void refresh(); }} type="button">
             {isRefreshing ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : <RefreshCw aria-hidden="true" className="h-4 w-4" />}
             Refresh
           </button>
-          <button className="ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-55" disabled={!actionsAvailable || isCapturing || isRefreshing} onClick={() => { void handleCreateManualPoint(); }} type="button">
+          <button className="max-w-full whitespace-normal ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-55" disabled={!actionsAvailable || isCapturing || isRefreshing} onClick={() => { void handleCreateManualPoint(); }} type="button">
             {isCapturing ? <LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" /> : <Plus aria-hidden="true" className="h-4 w-4" />}
             {isCapturing ? "Creating…" : "Create Home backup"}
           </button>
@@ -330,7 +330,7 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
         </div>
       ) : null}
 
-      <dl className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 xl:grid-cols-4">
+      <dl className="settings-recovery-stats-grid grid min-w-0 gap-2">
         <div className="min-w-0 rounded-xl bg-[#f7f5ff] px-4 py-3 dark:bg-white/5"><dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#8d87a7] dark:text-white/45">Scheduled interval</dt><dd className="mt-1 text-sm font-semibold text-[#27304c] dark:text-white">4 hours · runtime setting not exposed</dd></div>
         <div className="min-w-0 rounded-xl bg-[#f7f5ff] px-4 py-3 dark:bg-white/5"><dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#8d87a7] dark:text-white/45">Scheduler status</dt><dd className="mt-1 text-sm font-semibold text-[#27304c] dark:text-white">Not verifiable in the app</dd><p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Last scheduled attempt: {statusResult?.kind === "available" ? formatHomeRecoveryDate(status?.last_scheduled_attempt_at) : "Not confirmed"}. Automatic backups are not reported as active.</p></div>
         <div className="min-w-0 rounded-xl bg-[#f7f5ff] px-4 py-3 dark:bg-white/5"><dt className="text-[11px] font-bold uppercase tracking-[0.12em] text-[#8d87a7] dark:text-white/45">Last successful recovery point</dt><dd className="mt-1 break-words text-sm font-semibold text-[#27304c] dark:text-white">{statusResult?.kind === "available" ? formatHomeRecoveryDate(status?.latest_successful_point_at) : statusResult?.kind === "unavailable" ? "Unavailable" : "Not confirmed"}</dd></div>
@@ -348,7 +348,7 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
         {status?.database_capture_suspended ? <p className="mt-2 text-sm font-semibold text-amber-800 dark:text-amber-100">Database capacity has reached its capture limit. New checkpoints are suspended.</p> : null}
       </section>
 
-      <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(16rem,0.85fr)_minmax(0,1.4fr)]">
+      <div className="settings-recovery-panels-grid grid min-w-0 gap-4">
         <section aria-labelledby="home-recovery-points-title" className="min-w-0 rounded-2xl border border-[#e5e0f5] bg-white/60 p-4 dark:border-white/10 dark:bg-white/[0.03]">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <h3 className="text-sm font-bold text-[#27304c] dark:text-white" id="home-recovery-points-title">Recovery points</h3>
@@ -361,7 +361,7 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
             <ul className="mt-3 grid min-w-0 gap-2">
               {points.map((point) => (
                 <li className="min-w-0" key={point.id}>
-                  <button aria-pressed={selectedPointId === point.id} className={`grid w-full min-w-0 gap-1 rounded-xl border px-3 py-3 text-left transition sm:grid-cols-[minmax(0,1fr)_auto] ${selectedPointId === point.id ? "border-[#8b78ff] bg-[#f0edff] dark:border-[#9486ff] dark:bg-[#6f57f6]/15" : "border-[#e5e0f5] bg-white/70 hover:bg-[#f7f5ff] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"}`} onClick={() => selectPoint(point.id)} type="button">
+                  <button aria-pressed={selectedPointId === point.id} className={`settings-recovery-point-button grid w-full min-w-0 gap-1 rounded-xl border px-3 py-3 text-left transition ${selectedPointId === point.id ? "border-[#8b78ff] bg-[#f0edff] dark:border-[#9486ff] dark:bg-[#6f57f6]/15" : "border-[#e5e0f5] bg-white/70 hover:bg-[#f7f5ff] dark:border-white/10 dark:bg-white/5 dark:hover:bg-white/10"}`} onClick={() => selectPoint(point.id)} type="button">
                     <span className="min-w-0 break-words text-sm font-semibold text-[#27304c] dark:text-white">{formatHomeRecoveryDate(point.created_at)}</span>
                     <span className="text-xs font-semibold text-[#6f57f6] dark:text-[#d6ccff]">{formatHomeRecoveryBytes(point.payload_bytes)}</span>
                     <span className="text-xs text-[#7d88a1] dark:text-white/55">{getHomeRecoveryPointType(point)} · {point.verification_status}</span>
@@ -376,15 +376,15 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
         <section aria-labelledby="home-recovery-preview-title" className="grid min-w-0 content-start gap-3 rounded-2xl border border-[#e5e0f5] bg-white/60 p-4 dark:border-white/10 dark:bg-white/[0.03]">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div><h3 className="text-sm font-bold text-[#27304c] dark:text-white" id="home-recovery-preview-title">Home-only snapshot preview</h3>{selectedPoint ? <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">{formatHomeRecoveryDate(selectedPoint.created_at)} · {getHomeRecoveryPointType(selectedPoint)}</p> : null}</div>
-            <button className="ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-55" disabled={!preview || !preview.integrity_valid || !preview.schema_compatible || preview.verification_status !== "verified" || !preview.home_state} onClick={handleDownload} type="button"><Download aria-hidden="true" className="h-4 w-4" />Download Home-only backup</button>
+            <button className="max-w-full whitespace-normal ui-pill-button-strong-light inline-flex items-center gap-2 disabled:cursor-not-allowed disabled:opacity-55" disabled={!preview || !preview.integrity_valid || !preview.schema_compatible || preview.verification_status !== "verified" || !preview.home_state} onClick={handleDownload} type="button"><Download aria-hidden="true" className="h-4 w-4" />Download Home-only backup</button>
           </div>
           <p className="rounded-xl bg-[#f7f5ff] px-3 py-2 text-xs text-[#68627d] dark:bg-white/5 dark:text-white/60">This read-only preview leaves your current Home state unchanged. Home snapshots store list memberships and Task IDs; visible Task titles come from current Task data. Change details compare this point with the preceding saved recovery point, when one exists, and cover membership and ordering in these three lists.</p>
           {previewMessage ? <p role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">{previewMessage}</p> : null}
           {status?.latest_attempt_result === "failed" ? <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">{attemptResultLabel(status)} {captureFailureDetails(status.latest_failure_reason)}</p> : null}
           {preview?.status === "preview" && preview.integrity_valid && preview.schema_compatible && preview.home_state ? (
             <>
-              {preview.missing_task_ids?.length ? <div role="alert" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"><p className="font-bold">Missing Task references ({preview.missing_task_ids.length})</p><p className="mt-1 break-all">{preview.missing_task_ids.join(" · ")}</p></div> : null}
-              <div className="grid min-w-0 gap-2 md:grid-cols-2">
+              {preview.missing_task_ids?.length ? <div role="alert" className="min-w-0 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"><p className="font-bold">Missing Task references ({preview.missing_task_ids.length})</p><p className="mt-1 break-words">{preview.missing_task_ids.join(" · ")}</p></div> : null}
+              <div className="settings-recovery-preview-lists grid min-w-0 gap-2">
                 {(() => {
                   const ids = getHomeRecoveryListIds(preview.home_state);
                   return <>
@@ -397,13 +397,13 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
               {previousPreview?.status === "preview" && previousPreview.home_state ? (
                 <section aria-label="Changes since previous recovery point" className="rounded-2xl bg-[#f7f5ff] p-3 dark:bg-white/5">
                   <h4 className="text-xs font-bold uppercase tracking-[0.12em] text-[#6f57f6] dark:text-[#d6ccff]">List changes since preceding saved point</h4>
-                  <ul className="mt-2 grid min-w-0 gap-2 sm:grid-cols-2">{(() => {
+                  <ul className="settings-recovery-changes-grid mt-2 grid min-w-0 gap-2">{(() => {
                     const changes = compareHomeRecoveryLists(preview.home_state, previousPreview.home_state ?? null);
                     return <>{changeSummary("Home Todo", changes.todo, tasks)}{changeSummary("Urgent", changes.urgent, tasks)}{changeSummary("Routine", changes.routine, tasks)}</>;
                   })()}</ul>
                 </section>
               ) : hasPrecedingPoint ? <p className="text-xs text-[#7d88a1] dark:text-white/55">The preceding saved point could not be compared.</p> : <p className="text-xs text-[#7d88a1] dark:text-white/55">No preceding saved point is available for comparison.</p>}
-              <button aria-describedby="home-recovery-restore-note" className="ui-pill-button-strong-light w-fit cursor-not-allowed opacity-55" disabled type="button">Restore · available in a later release</button>
+              <button aria-describedby="home-recovery-restore-note" className="max-w-full whitespace-normal ui-pill-button-strong-light w-fit cursor-not-allowed opacity-55" disabled type="button">Restore · available in a later release</button>
               <p className="text-xs text-[#7d88a1] dark:text-white/55" id="home-recovery-restore-note">Safe restoration is not enabled in this release.</p>
             </>
           ) : selectionPreview?.selected.kind === "error" && selectionPreview.selected.message === "Loading preview…" ? <p className="inline-flex items-center gap-2 text-sm text-[#7d88a1] dark:text-white/55"><LoaderCircle aria-hidden="true" className="h-4 w-4 animate-spin" />Loading Home snapshot preview…</p>

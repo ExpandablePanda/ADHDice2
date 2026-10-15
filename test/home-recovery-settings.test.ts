@@ -6,6 +6,7 @@ import {
   compareHomeRecoveryLists,
   createHomeOnlyBackupDocument,
   createManualHomeRecoveryPoint,
+  HOME_RECOVERY_APP_VERSION,
   getHomeRecoveryListIds,
   getNextHomeRecoveryEligibility,
   loadHomeRecoveryPoints,
@@ -18,6 +19,7 @@ import {
 
 const settingsComponent = readFileSync(new URL("../src/components/task-app/settings-home-backup-recovery.tsx", import.meta.url), "utf8");
 const settingsPage = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
+const settingsStyles = readFileSync(new URL("../src/app/globals.css", import.meta.url), "utf8");
 const recoveryModule = readFileSync(new URL("../src/lib/home-recovery-dashboard.ts", import.meta.url), "utf8");
 
 const status: HomeRecoveryStatus = {
@@ -146,7 +148,7 @@ test("manual captures only report confirmed creation and surface database failur
   });
   assert.deepEqual(created.calls, [{
     name: "create_home_recovery_point",
-    args: { p_app_version: "7.16.167" },
+    args: { p_app_version: HOME_RECOVERY_APP_VERSION },
   }]);
 
   const unchanged = mockRpc(async () => ({ status: "unchanged", recovery_point_id: "existing-point" }));
@@ -196,7 +198,7 @@ test("download payload is explicitly Home-only and carries schema, source, and p
   assert.equal(document.format_version, 1);
   assert.equal(document.scope, "Home-only backup");
   assert.equal(document.exported_at, "2026-10-15T13:00:00.000Z");
-  assert.equal(document.app_version, "7.16.167");
+  assert.equal(document.app_version, HOME_RECOVERY_APP_VERSION);
   assert.equal(document.homeTodo.schema_version, 8);
   assert.deepEqual(document.homeTodo.state, state);
   assert.match(document.privacy_notice, /Scratchpad.*private/);
@@ -222,4 +224,18 @@ test("Settings uses authenticated recovery RPCs without table access or a Restor
   assert.match(settingsComponent, /disabled[^>]*type="button">Restore/);
   assert.doesNotMatch(settingsComponent, /restore_home_recovery_point|\.from\("adhdice_(?:recovery|home_todo_state)/);
   assert.doesNotMatch(recoveryModule, /\.from\("adhdice_(?:recovery|home_todo_state)/);
+});
+
+test("Settings width and recovery grids follow the rendered PageShell width", () => {
+  assert.match(settingsPage, /layout\.isCanonical \? "max-w-\[70rem\]" : "max-w-none"/);
+  assert.match(settingsPage, /settings-page mx-auto w-full/);
+  assert.match(settingsStyles, /\.settings-page \.page-shell-body > \* \{\s*min-width: max\(100%, 16rem\);/);
+  assert.match(settingsComponent, /settings-recovery-stats-grid/);
+  assert.match(settingsComponent, /settings-recovery-panels-grid/);
+  assert.match(settingsComponent, /settings-recovery-preview-lists/);
+  assert.doesNotMatch(settingsComponent, /(?:sm|md|xl):grid-cols/);
+  assert.match(settingsStyles, /@container page-shell \(min-width: 36rem\) \{\s*\.settings-recovery-stats-grid \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/);
+  assert.match(settingsStyles, /@container page-shell \(min-width: 64rem\) \{\s*\.settings-recovery-stats-grid \{\s*grid-template-columns: repeat\(4, minmax\(0, 1fr\)\);/);
+  assert.match(settingsStyles, /@container page-shell \(min-width: 64rem\) \{[\s\S]*?\.settings-recovery-panels-grid \{\s*grid-template-columns: minmax\(16rem, 0\.85fr\) minmax\(0, 1\.4fr\);/);
+  assert.match(settingsStyles, /@container page-shell \(min-width: 80rem\) \{\s*\.settings-recovery-preview-lists,\s*\.settings-recovery-changes-grid \{/);
 });

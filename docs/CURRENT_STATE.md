@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.167`.
+- Current working app version: `7.16.168`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.168 Settings Width and Responsive Recovery Layout
+
+The canonical Settings page now uses a centered 70rem maximum width. Recovery
+statistics, recovery-point cards, and snapshot previews switch columns from the
+rendered PageShell width, so mobile, split-window, and custom narrow shells
+remain stacked until their available width is sufficient. Settings controls
+wrap at narrow sizes, and shells below 16rem keep readable content through
+horizontal scrolling without changing saved layout preferences.
+
+No recovery RPC, business logic, stored layout, Home synchronization, SQL, or
+Cron behavior changed. Focused Settings recovery and layout checks passed
+(9/9), targeted ESLint passed, and the Next.js 16.2.4 production build passed
+while skipping type validation. `git diff --check` passed. Browser visual QA
+remains Andrew's manual check; the Settings checklist now covers desktop,
+mobile, split-window, and resized PageShell layouts.
 
 ## 2026-10-15 7.16.167 Settings Home Backup & Recovery
 

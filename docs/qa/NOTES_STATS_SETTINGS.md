@@ -24,6 +24,8 @@ Use the relevant subsection when a ticket changes Notes, Stats, or Settings. Do 
 ### Settings
 
 - [ ] The Settings page loads without missing controls or broken sections.
+- [ ] Desktop, mobile, split-window, and resized PageShell layouts keep sections and controls readable.
+- [ ] Backup & Recovery statistics and previews change columns based on their PageShell width and stack when space is limited.
 - [ ] Changing a safe setting persists or visibly updates as expected.
 - [ ] Returning to Settings shows the updated value instead of stale state.
 - [ ] Backup & Recovery distinguishes unavailable RPCs from an available empty list.
