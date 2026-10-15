@@ -1,7 +1,58 @@
-import type { Task } from "@/lib/database.types";
+import type { Database, Task } from "@/lib/database.types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
-export const HOME_RECOVERY_APP_VERSION = "7.16.168";
+export const HOME_RECOVERY_APP_VERSION = "7.16.169";
 export const HOME_RECOVERY_CHECKPOINT_INTERVAL_MS = 4 * 60 * 60 * 1000;
+export const HOME_RECOVERY_TASK_TITLE_BATCH_SIZE = 100;
+
+export type HomeRecoveryTaskTitleLookup = {
+  titleById: Record<string, string>;
+  unresolvedIds: string[];
+};
+
+export function getHomeRecoveryTaskTitleLookupIds(
+  taskIds: readonly string[],
+  tasks: readonly Pick<Task, "id" | "title">[],
+) {
+  const projectedTitles = new Set(tasks.filter((task) => task.title?.trim()).map((task) => task.id));
+  return [...new Set(taskIds)].filter((taskId) => (
+    taskId.trim().length > 0 && !projectedTitles.has(taskId)
+  ));
+}
+
+export async function loadHomeRecoveryTaskTitles(
+  client: SupabaseClient<Database>,
+  userId: string,
+  taskIds: readonly string[],
+): Promise<HomeRecoveryTaskTitleLookup> {
+  const ids = [...new Set(taskIds.filter((taskId) => taskId.trim().length > 0))];
+  const titleById: Record<string, string> = {};
+  const batches: string[][] = [];
+  for (let index = 0; index < ids.length; index += HOME_RECOVERY_TASK_TITLE_BATCH_SIZE) {
+    batches.push(ids.slice(index, index + HOME_RECOVERY_TASK_TITLE_BATCH_SIZE));
+  }
+
+  const results = await Promise.allSettled(batches.map((batch) => (
+    client
+      .from("adhdice_clean_tasks")
+      .select("id,title")
+      .eq("user_id", userId)
+      .in("id", batch)
+  )));
+  results.forEach((result, index) => {
+    if (result.status !== "fulfilled" || result.value.error || !result.value.data) return;
+    const requestedIds = new Set(batches[index]);
+    for (const row of result.value.data) {
+      const title = row.title?.trim();
+      if (requestedIds.has(row.id) && title) titleById[row.id] = title;
+    }
+  });
+
+  return {
+    titleById,
+    unresolvedIds: ids.filter((taskId) => !titleById[taskId]),
+  };
+}
 
 export type HomeRecoveryStatus = {
   recovery_storage_bytes: number;
@@ -427,8 +478,16 @@ export function getHomeRecoveryPointType(point: HomeRecoveryPoint | HomeRecovery
   }
 }
 
-export function getHomeRecoveryTaskLabel(taskId: string, tasks: readonly Task[], missingTaskIds: readonly string[]) {
+export function getHomeRecoveryTaskLabel(
+  taskId: string,
+  tasks: readonly Pick<Task, "id" | "title">[],
+  missingTaskIds: readonly string[],
+  titleById: Readonly<Record<string, string>> = {},
+  titleLookupComplete = true,
+) {
   if (missingTaskIds.includes(taskId)) return `Missing Task · ${taskId}`;
   const task = tasks.find((candidate) => candidate.id === taskId);
-  return task?.title?.trim() ? task.title : taskId;
+  const taskTitle = task?.title?.trim() || titleById[taskId]?.trim();
+  if (taskTitle) return taskTitle;
+  return titleLookupComplete ? `Task title temporarily unavailable · ${taskId}` : `Resolving Task title · ${taskId}`;
 }

@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.168`.
+- Current working app version: `7.16.169`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,21 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.169 Backup Preview Task Titles
+
+Home backup previews now resolve titles for referenced Task IDs that are not
+present in the currently loaded Task projection. The Settings preview uses
+read-only, owner-filtered batches against the canonical `adhdice_clean_tasks`
+source. The recovery preview's `missing_task_ids` continues to identify
+confirmed missing references; unresolved title lookups are labeled separately.
+Saved list order, Routine assignments, day offsets, integrity checks, and the
+downloaded Home snapshot state and payload format are unchanged; its app-version
+metadata follows the 7.16.169 release. No Home persistence, recovery data,
+restore behavior, SQL, or Cron behavior changed.
+
+Focused recovery Settings tests, targeted ESLint, the production build, and
+`git diff --check` passed. Browser QA remains Andrew's manual check.
 
 ## 2026-10-15 7.16.168 Settings Width and Responsive Recovery Layout
 

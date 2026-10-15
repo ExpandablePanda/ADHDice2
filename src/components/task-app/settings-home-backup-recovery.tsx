@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { Download, LoaderCircle, Plus, RefreshCw } from "lucide-react";
 import type { Database, Task } from "@/lib/database.types";
@@ -14,7 +14,9 @@ import {
   getHomeRecoveryListIds,
   getHomeRecoveryPointType,
   getHomeRecoveryTaskLabel,
+  getHomeRecoveryTaskTitleLookupIds,
   getNextHomeRecoveryEligibility,
+  loadHomeRecoveryTaskTitles,
   loadHomeRecoveryPoints,
   loadHomeRecoveryPreview,
   loadHomeRecoveryStatus,
@@ -34,6 +36,11 @@ type SettingsHomeBackupRecoveryProps = {
 type SelectionPreview = {
   selected: HomeRecoveryRequestResult<HomeRecoveryPreview>;
   previous: HomeRecoveryRequestResult<HomeRecoveryPreview> | null;
+};
+
+type TaskTitleLookupState = {
+  key: string;
+  titleById: Record<string, string>;
 };
 
 function statusDetail(result: HomeRecoveryRequestResult<unknown> | null) {
@@ -68,11 +75,18 @@ function changeSummary(
   label: string,
   change: ReturnType<typeof compareHomeRecoveryLists>["todo"],
   tasks: readonly Task[],
+  addedMissingTaskIds: readonly string[],
+  removedMissingTaskIds: readonly string[],
+  titleById: Readonly<Record<string, string>>,
+  titleLookupComplete: boolean,
 ) {
   const additions = change.added.length ? `${change.added.length} added` : "no additions";
   const removals = change.removed.length ? `${change.removed.length} removed` : "no removals";
   const ordering = change.orderChanged ? "sequence changed" : "sequence unchanged";
-  const changedIds = [...change.added.map((id) => `+ ${getHomeRecoveryTaskLabel(id, tasks, [])}`), ...change.removed.map((id) => `− ${getHomeRecoveryTaskLabel(id, tasks, [])}`)];
+  const changedIds = [
+    ...change.added.map((id) => `+ ${getHomeRecoveryTaskLabel(id, tasks, addedMissingTaskIds, titleById, titleLookupComplete)}`),
+    ...change.removed.map((id) => `− ${getHomeRecoveryTaskLabel(id, tasks, removedMissingTaskIds, titleById, titleLookupComplete)}`),
+  ];
   return (
     <li className="min-w-0 rounded-xl bg-white/70 px-3 py-2 dark:bg-white/5" key={label}>
       <p className="font-semibold text-[#27304c] dark:text-white">{label}: {additions}, {removals}, {ordering}</p>
@@ -88,6 +102,8 @@ function HomeRecoveryTaskList({
   state,
   tasks,
   missingTaskIds,
+  titleById,
+  titleLookupComplete,
 }: {
   emptyLabel: string;
   ids: string[];
@@ -95,6 +111,8 @@ function HomeRecoveryTaskList({
   state: Record<string, unknown>;
   tasks: readonly Task[];
   missingTaskIds: readonly string[];
+  titleById: Readonly<Record<string, string>>;
+  titleLookupComplete: boolean;
 }) {
   const routineSections = Array.isArray(state.routineSections) ? state.routineSections : [];
   const routineSectionById = new Map(routineSections.flatMap((value) => {
@@ -123,7 +141,7 @@ function HomeRecoveryTaskList({
             return (
               <li className="min-w-0 rounded-lg bg-white/80 px-3 py-2 text-xs text-[#27304c] dark:bg-white/5 dark:text-white/85" key={`${taskId}-${index}`}>
                 <span className="mr-2 font-bold tabular-nums text-[#8d87a7] dark:text-white/45">{index + 1}.</span>
-                <span className="break-words">{getHomeRecoveryTaskLabel(taskId, tasks, missingTaskIds)}</span>
+                <span className="break-words">{getHomeRecoveryTaskLabel(taskId, tasks, missingTaskIds, titleById, titleLookupComplete)}</span>
                 {label === "Routine" && sectionLabel ? <span className="ml-2 text-[#7d88a1] dark:text-white/50">· {sectionLabel}</span> : null}
                 {label === "Home Todo" && typeof dayOffset === "number" && dayOffset !== 0 ? <span className="ml-2 text-[#7d88a1] dark:text-white/50">· Day offset {dayOffset}</span> : null}
               </li>
@@ -151,13 +169,30 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
   const [previewMessage, setPreviewMessage] = useState<string | null>(null);
   const refreshGeneration = useRef(0);
   const previewGeneration = useRef(0);
+  const titleLookupGeneration = useRef(0);
   const mounted = useRef(false);
+  const [taskTitleLookup, setTaskTitleLookup] = useState<TaskTitleLookupState>({ key: "", titleById: {} });
   const rpcClient = client as unknown as HomeRecoveryRpcClient | null;
   const status = statusResult?.kind === "available" ? statusResult.value : null;
   const points = pointsResult?.kind === "available" ? pointsResult.value : [];
   const selectedPoint = points.find((point) => point.id === selectedPointId) ?? null;
   const preview = selectionPreview?.selected.kind === "available" ? selectionPreview.selected.value : null;
   const previousPreview = selectionPreview?.previous?.kind === "available" ? selectionPreview.previous.value : null;
+  const titleLookupIds = useMemo(() => {
+    const referencedIds: string[] = [];
+    const includePreviewLists = (candidate: HomeRecoveryPreview | null) => {
+      if (candidate?.status !== "preview" || !candidate.integrity_valid || !candidate.schema_compatible || !candidate.home_state) return;
+      const ids = getHomeRecoveryListIds(candidate.home_state);
+      referencedIds.push(...ids.todo, ...ids.urgent, ...ids.routine);
+    };
+    includePreviewLists(preview);
+    includePreviewLists(previousPreview);
+    return getHomeRecoveryTaskTitleLookupIds(referencedIds, tasks);
+  }, [preview, previousPreview, tasks]);
+  const titleLookupKey = JSON.stringify(titleLookupIds);
+  const titleLookupMatchesPreview = taskTitleLookup.key === titleLookupKey;
+  const titleById = titleLookupMatchesPreview ? taskTitleLookup.titleById : {};
+  const titleLookupComplete = titleLookupMatchesPreview;
   const dashboardAvailable = statusResult?.kind === "available" && pointsResult?.kind === "available";
   const actionsAvailable = canCreateHomeRecoveryPoint({
     clientAvailable: Boolean(rpcClient),
@@ -237,6 +272,17 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
       previewGeneration.current += 1;
     };
   }, [client, userId]);
+
+  useEffect(() => {
+    const generation = ++titleLookupGeneration.current;
+    if (client && userId && titleLookupIds.length > 0) {
+      void loadHomeRecoveryTaskTitles(client, userId, titleLookupIds).then((result) => {
+        if (!mounted.current || generation !== titleLookupGeneration.current) return;
+        setTaskTitleLookup({ key: titleLookupKey, titleById: result.titleById });
+      });
+    }
+    return () => { titleLookupGeneration.current += 1; };
+  }, [client, titleLookupIds, titleLookupKey, userId]);
 
   async function handleCreateManualPoint() {
     if (!rpcClient || !actionsAvailable) {
@@ -383,14 +429,14 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
           {status?.latest_attempt_result === "failed" ? <p role="status" className="rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100">{attemptResultLabel(status)} {captureFailureDetails(status.latest_failure_reason)}</p> : null}
           {preview?.status === "preview" && preview.integrity_valid && preview.schema_compatible && preview.home_state ? (
             <>
-              {preview.missing_task_ids?.length ? <div role="alert" className="min-w-0 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"><p className="font-bold">Missing Task references ({preview.missing_task_ids.length})</p><p className="mt-1 break-words">{preview.missing_task_ids.join(" · ")}</p></div> : null}
+              {preview.missing_task_ids?.length ? <div role="alert" className="min-w-0 rounded-xl border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900 dark:border-amber-400/25 dark:bg-amber-400/10 dark:text-amber-100"><p className="font-bold">Missing Task references ({preview.missing_task_ids.length})</p><p className="mt-1 break-words">{preview.missing_task_ids.map((id) => getHomeRecoveryTaskLabel(id, tasks, preview.missing_task_ids ?? [], titleById, titleLookupComplete)).join(" · ")}</p></div> : null}
               <div className="settings-recovery-preview-lists grid min-w-0 gap-2">
                 {(() => {
                   const ids = getHomeRecoveryListIds(preview.home_state);
                   return <>
-                    <HomeRecoveryTaskList emptyLabel="No Home Todo Tasks in this snapshot." ids={ids.todo} label="Home Todo" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} />
-                    <HomeRecoveryTaskList emptyLabel="No Urgent Tasks in this snapshot." ids={ids.urgent} label="Urgent" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} />
-                    <HomeRecoveryTaskList emptyLabel="No Routine Tasks in this snapshot." ids={ids.routine} label="Routine" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} />
+                    <HomeRecoveryTaskList emptyLabel="No Home Todo Tasks in this snapshot." ids={ids.todo} label="Home Todo" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
+                    <HomeRecoveryTaskList emptyLabel="No Urgent Tasks in this snapshot." ids={ids.urgent} label="Urgent" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
+                    <HomeRecoveryTaskList emptyLabel="No Routine Tasks in this snapshot." ids={ids.routine} label="Routine" missingTaskIds={preview.missing_task_ids ?? []} state={preview.home_state} tasks={tasks} titleById={titleById} titleLookupComplete={titleLookupComplete} />
                   </>;
                 })()}
               </div>
@@ -399,7 +445,7 @@ export function SettingsHomeBackupRecovery({ client, tasks, userId }: SettingsHo
                   <h4 className="text-xs font-bold uppercase tracking-[0.12em] text-[#6f57f6] dark:text-[#d6ccff]">List changes since preceding saved point</h4>
                   <ul className="settings-recovery-changes-grid mt-2 grid min-w-0 gap-2">{(() => {
                     const changes = compareHomeRecoveryLists(preview.home_state, previousPreview.home_state ?? null);
-                    return <>{changeSummary("Home Todo", changes.todo, tasks)}{changeSummary("Urgent", changes.urgent, tasks)}{changeSummary("Routine", changes.routine, tasks)}</>;
+                    return <>{changeSummary("Home Todo", changes.todo, tasks, preview.missing_task_ids ?? [], previousPreview.missing_task_ids ?? [], titleById, titleLookupComplete)}{changeSummary("Urgent", changes.urgent, tasks, preview.missing_task_ids ?? [], previousPreview.missing_task_ids ?? [], titleById, titleLookupComplete)}{changeSummary("Routine", changes.routine, tasks, preview.missing_task_ids ?? [], previousPreview.missing_task_ids ?? [], titleById, titleLookupComplete)}</>;
                   })()}</ul>
                 </section>
               ) : hasPrecedingPoint ? <p className="text-xs text-[#7d88a1] dark:text-white/55">The preceding saved point could not be compared.</p> : <p className="text-xs text-[#7d88a1] dark:text-white/55">No preceding saved point is available for comparison.</p>}

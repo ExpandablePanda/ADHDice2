@@ -8,7 +8,11 @@ import {
   createManualHomeRecoveryPoint,
   HOME_RECOVERY_APP_VERSION,
   getHomeRecoveryListIds,
+  getHomeRecoveryTaskLabel,
+  getHomeRecoveryTaskTitleLookupIds,
   getNextHomeRecoveryEligibility,
+  HOME_RECOVERY_TASK_TITLE_BATCH_SIZE,
+  loadHomeRecoveryTaskTitles,
   loadHomeRecoveryPoints,
   loadHomeRecoveryPreview,
   loadHomeRecoveryStatus,
@@ -16,6 +20,8 @@ import {
   type HomeRecoveryRpcClient,
   type HomeRecoveryStatus,
 } from "@/lib/home-recovery-dashboard";
+import type { Database, Task } from "@/lib/database.types";
+import type { SupabaseClient } from "@supabase/supabase-js";
 
 const settingsComponent = readFileSync(new URL("../src/components/task-app/settings-home-backup-recovery.tsx", import.meta.url), "utf8");
 const settingsPage = readFileSync(new URL("../src/components/task-app/settings-page.tsx", import.meta.url), "utf8");
@@ -110,6 +116,29 @@ function successfulPreview(id = point.id, homeState: Record<string, unknown> = s
   };
 }
 
+function mockTaskTitleClient(handler: (userId: string, taskIds: string[]) => unknown | Promise<unknown>) {
+  const calls: Array<{ table: string; columns: string; ownerColumn: string; userId: string; idColumn: string; taskIds: string[] }> = [];
+  const client = {
+    from(table: string) {
+      return {
+        select(columns: string) {
+          return {
+            eq(ownerColumn: string, userId: string) {
+              return {
+                async in(idColumn: string, taskIds: string[]) {
+                  calls.push({ table, columns, ownerColumn, userId, idColumn, taskIds });
+                  return await handler(userId, taskIds);
+                },
+              };
+            },
+          };
+        },
+      };
+    },
+  } as unknown as SupabaseClient<Database>;
+  return { client, calls };
+}
+
 test("an available empty point list is distinct from a missing recovery RPC", async () => {
   const empty = mockRpc(async (name) => name === "list_home_recovery_points" ? [] : null);
   assert.deepEqual(await loadHomeRecoveryPoints(empty.client), { kind: "available", value: [] });
@@ -181,6 +210,56 @@ test("preview retains ordered Home lists and reports missing Task references", a
   assert.equal((await loadHomeRecoveryPreview(mismatched.client, point.id)).kind, "error");
 });
 
+test("partially loaded Task projections request only titles missing from the projection", () => {
+  const projection: Pick<Task, "id" | "title">[] = [
+    { id: "projected-task", title: "Already loaded" },
+    { id: "blank-title-task", title: "   " },
+  ];
+  assert.deepEqual(
+    getHomeRecoveryTaskTitleLookupIds(
+      ["projected-task", "canonical-task", "blank-title-task", "deleted-task", "canonical-task"],
+      projection,
+    ),
+    ["canonical-task", "blank-title-task", "deleted-task"],
+  );
+  assert.equal(getHomeRecoveryTaskLabel("projected-task", projection, []), "Already loaded");
+});
+
+test("valid referenced IDs absent from the Task projection resolve through owner-scoped batches", async () => {
+  const ids = Array.from({ length: HOME_RECOVERY_TASK_TITLE_BATCH_SIZE + 1 }, (_, index) => `task-${index}`);
+  const mock = mockTaskTitleClient(async (_userId, taskIds) => ({
+    data: taskIds.includes("task-0") ? [{ id: "task-0", title: "Canonical Task title" }] : [],
+    error: null,
+  }));
+  const result = await loadHomeRecoveryTaskTitles(mock.client, "owner-a", ids);
+
+  assert.equal(mock.calls.length, 2);
+  assert.ok(mock.calls.every((call) => (
+    call.table === "adhdice_clean_tasks"
+    && call.columns === "id,title"
+    && call.ownerColumn === "user_id"
+    && call.userId === "owner-a"
+    && call.idColumn === "id"
+  )));
+  assert.deepEqual(mock.calls.map((call) => call.taskIds.length), [HOME_RECOVERY_TASK_TITLE_BATCH_SIZE, 1]);
+  assert.equal(result.titleById["task-0"], "Canonical Task title");
+  assert.equal(result.unresolvedIds.length, HOME_RECOVERY_TASK_TITLE_BATCH_SIZE);
+  assert.equal(getHomeRecoveryTaskLabel("task-0", [], [], result.titleById), "Canonical Task title");
+});
+
+test("confirmed deleted Tasks stay distinct from titles that are temporarily unresolved", () => {
+  const projection: Pick<Task, "id" | "title">[] = [{ id: "stale-task", title: "Stale projection title" }];
+  assert.equal(getHomeRecoveryTaskLabel("stale-task", projection, ["stale-task"]), "Missing Task · stale-task");
+  assert.equal(
+    getHomeRecoveryTaskLabel("unresolved-task", [], [], {}, true),
+    "Task title temporarily unavailable · unresolved-task",
+  );
+  assert.equal(
+    getHomeRecoveryTaskLabel("unresolved-task", [], [], {}, false),
+    "Resolving Task title · unresolved-task",
+  );
+});
+
 test("list changes compare the selected point to the preceding point, including order", () => {
   const current = { taskIds: ["b", "a", "c"], urgentTaskIds: ["u2"], routineTaskIds: ["r1"] };
   const previous = { taskIds: ["a", "b"], urgentTaskIds: ["u1"], routineTaskIds: ["r1", "r2"] };
@@ -220,6 +299,8 @@ test("Settings uses authenticated recovery RPCs without table access or a Restor
   assert.match(settingsComponent, /loadHomeRecoveryStatus\(rpcClient\)/);
   assert.match(settingsComponent, /loadHomeRecoveryPoints\(rpcClient\)/);
   assert.match(settingsComponent, /loadHomeRecoveryPreview\(rpcClient, pointId\)/);
+  assert.match(settingsComponent, /loadHomeRecoveryTaskTitles\(client, userId, titleLookupIds\)/);
+  assert.match(recoveryModule, /\.from\("adhdice_clean_tasks"\)[\s\S]*?\.eq\("user_id", userId\)[\s\S]*?\.in\("id", batch\)/);
   assert.match(settingsComponent, /createManualHomeRecoveryPoint\(rpcClient\)/);
   assert.match(settingsComponent, /disabled[^>]*type="button">Restore/);
   assert.doesNotMatch(settingsComponent, /restore_home_recovery_point|\.from\("adhdice_(?:recovery|home_todo_state)/);

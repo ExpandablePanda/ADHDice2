@@ -74,6 +74,16 @@ attempt, but labels scheduler activation as unverifiable and does not claim
 automatic backups are active. A missing recovery RPC is reported as
 unavailable; it is not shown as an empty recovery-point list.
 
+Version 7.16.169 resolves Task titles for preview IDs absent from the loaded
+Task projection with batched, read-only queries to the canonical
+`adhdice_clean_tasks` table filtered by the authenticated owner. The preview
+RPC's `missing_task_ids` remains the authority for confirmed missing Tasks;
+IDs with no resolved title and no confirmed missing status are labeled as
+temporarily unavailable. These lookups affect preview labels only and do not
+change saved Home state, recovery snapshot contents, list ordering, integrity
+checks, Routine assignments, day offsets, or download format. Download app
+version metadata follows the running application release.
+
 The revision also closes the old direct-write route for authenticated users.
 Do not apply the migration while relying on 7.16.164 clients to continue
 syncing: those clients write directly, and 7.16.165 clients do not send the
