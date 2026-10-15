@@ -60,6 +60,7 @@ const ownershipMigrationSource = readFileSync(
   "utf8",
 );
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
+const pendingMutationSource = readFileSync(new URL("../src/lib/health-journal-pending-mutations.ts", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const activityChartSource = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
 
@@ -69,6 +70,7 @@ function symptomEntry(
   loggedAt: string,
   severity: number,
   symptomId = "symptom-1",
+  timeIsEstimated = false,
 ) {
   return {
     created_at: loggedAt,
@@ -79,6 +81,7 @@ function symptomEntry(
     note: null,
     severity,
     symptom_id: symptomId,
+    time_is_estimated: timeIsEstimated,
     updated_at: loggedAt,
     user_id: "user-1",
   };
@@ -101,6 +104,7 @@ function journalSignalOccurrence(
     occurred_at: occurredAt,
     score,
     signal_id: signalId,
+    time_is_estimated: false,
     updated_at: occurredAt,
     user_id: "user-1",
   };
@@ -166,7 +170,7 @@ test("Journal scales use 1 through 10 and normalize symptom input", () => {
 
 test("same symptom entries coexist and remain individually grouped by day and time", () => {
   const groups = groupHealthSymptomEntriesByDate([
-    symptomEntry("morning", "2026-08-29", "2026-08-29T09:00:00.000Z", 3),
+    symptomEntry("morning", "2026-08-29", "2026-08-29T09:00:00.000Z", 3, "symptom-1", true),
     symptomEntry("afternoon", "2026-08-29", "2026-08-29T13:30:00.000Z", 6),
     symptomEntry("prior-day", "2026-08-28", "2026-08-28T19:30:00.000Z", 4),
   ]);
@@ -177,6 +181,8 @@ test("same symptom entries coexist and remain individually grouped by day and ti
     ["morning", 3],
   ]);
   assert.equal(groups[0]?.entries.length, 2);
+  assert.equal(groups[0]?.entries.find((entry) => entry.id === "morning")?.time_is_estimated, true);
+  assert.equal(groups[0]?.entries.find((entry) => entry.id === "afternoon")?.time_is_estimated, false);
 });
 
 test("symptom trends order timestamped entries and preserve multiple same-day points", () => {
@@ -741,9 +747,9 @@ test("symptom definition colors are persisted with a safe default and never adde
   assert.match(colorMigrationSource, /alter column color set not null/i);
   assert.match(colorMigrationSource, /add constraint adhdice_health_symptoms_color_hex_check/i);
   assert.doesNotMatch(colorMigrationSource, /adhdice_health_symptom_entries[\s\S]*color/i);
-  assert.match(healthHookSource, /color: symptom\.color/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\("symptom", localRow, "create", remoteEnabled\)/);
   assert.match(healthHookSource, /color: normalizeHealthSymptomColor\(input\.color\)/);
-  assert.match(healthHookSource, /insert\(\{ \.\.\.input, archived_at: null, color: localRow\.color/);
+  assert.match(pendingMutationSource, /input\.remote\.insert\(mutation\.entity,[\s\S]*?mutation\.row/);
 });
 
 test("new symptom tables use authenticated owner-scoped Data API access", () => {
@@ -775,7 +781,7 @@ test("Journal owns Feeling Occurrences and symptom persistence rejects orphan ow
     healthHookSource.indexOf("async function updateSymptomDefinition"),
     healthHookSource.indexOf("async function createSymptom"),
   );
-  assert.match(symptomDefinitionUpdate, /\.update\(normalizedInput\)[\s\S]*?\.eq\("id", symptomId\)[\s\S]*?\.eq\("user_id", userId\)/);
+  assert.match(symptomDefinitionUpdate, /saveJournalPendingUpsert\("symptom", localRow, "update", remoteEnabled\)/);
   assert.match(healthHookSource, /async function archiveSymptom/);
   assert.match(healthHookSource, /async function addSymptomEntry/);
   assert.match(healthHookSource, /async function updateSymptomEntry/);
@@ -783,16 +789,14 @@ test("Journal owns Feeling Occurrences and symptom persistence rejects orphan ow
   assert.match(healthHookSource, /Feeling occurrences must belong to a Journal Entry/);
   assert.match(healthHookSource, /normalizeHealthSymptomEntries/);
   assert.match(healthHookSource, /\.eq\("id", entryId\)\n\s+\.eq\("user_id", userId\)/);
-  const recoverySectionStart = healthHookSource.indexOf("let remoteSymptoms =");
+  const recoverySectionStart = healthHookSource.indexOf("const latestLocalSymptoms =");
   const recoverySectionEnd = healthHookSource.indexOf("const remoteWorkouts =", recoverySectionStart);
   const recoverySection = healthHookSource.slice(recoverySectionStart, recoverySectionEnd);
-  const definitionUpsert = recoverySection.indexOf('.from("adhdice_health_symptoms")');
-  const entryUpsert = recoverySection.indexOf('.from("adhdice_health_symptom_entries")');
-  assert.ok(definitionUpsert >= 0 && entryUpsert > definitionUpsert);
-  assert.match(recoverySection, /symptomRecovery\.unreconciledLocalSymptoms/);
-  assert.match(recoverySection, /symptomRecovery\.unreconciledLocalEntries/);
-  assert.match(healthHookSource, /symptoms: symptomsResult\.error \? currentLocalSymptoms : symptomRecovery\.mergedSymptoms/);
-  assert.match(healthHookSource, /symptomEntries: symptomEntriesResult\.error \? currentLocalSymptomEntries : normalizeHealthSymptomEntries\(symptomRecovery\.mergedEntries\)/);
+  assert.match(recoverySection, /Object\.entries\(pendingMutationsAtHydrationStart\)/);
+  assert.match(recoverySection, /deleteHealthJournalRecordWithTombstone\([\s\S]*?replayHealthJournalPendingUpsertMutation\(/);
+  assert.doesNotMatch(recoverySection, /unreconciledLocalSymptoms|unreconciledLocalEntries|symptomRecovery/);
+  assert.match(healthHookSource, /symptomsResult\.error[\s\S]*?replayHealthJournalPendingMutations\("symptom", remoteSymptoms, pendingMutationsForProjection, userId\)/);
+  assert.match(healthHookSource, /symptomEntriesResult\.error[\s\S]*?replayHealthJournalPendingMutations\("symptom_entry", remoteSymptomEntries, pendingMutationsForProjection, userId\)/);
   const baseHealthErrorsStart = healthHookSource.indexOf("const errors = [");
   const baseHealthErrorsEnd = healthHookSource.indexOf("].filter(Boolean);", baseHealthErrorsStart);
   assert.doesNotMatch(healthHookSource.slice(baseHealthErrorsStart, baseHealthErrorsEnd), /symptom/i);
@@ -855,12 +859,10 @@ test("Symptom Library supports definition-only creation and shared color editing
 });
 
 test("Health hydration checks lifecycle before and after each recovery mutation phase", () => {
-  const recoveryStart = healthHookSource.indexOf("let remoteSymptoms =");
+  const recoveryStart = healthHookSource.indexOf("const pendingMutationsAtHydrationStart =");
   const recoveryEnd = healthHookSource.indexOf("const remoteSnapshot =", recoveryStart);
   const recoverySection = healthHookSource.slice(recoveryStart, recoveryEnd);
   const phaseWrites = [
-    '.from("adhdice_health_symptoms")',
-    '.from("adhdice_health_symptom_entries")',
     '.from("adhdice_health_workouts")',
     '.from("adhdice_health_meal_plan_entries")',
   ];
@@ -871,10 +873,9 @@ test("Health hydration checks lifecycle before and after each recovery mutation 
     assert.ok(recoverySection.lastIndexOf("if (!isActive", writeIndex) >= 0, `expected lifecycle guard before ${phaseWrite}`);
   }
 
-  const currentLifecycleGuard = /if \(!isActive(?: \|\| !isCurrentOperation\(hydrationOperation\))?\) \{\s*return;\s*\}/;
-  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_symptoms"\\)[\\s\\S]*?\\.select\\("\\*"\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_symptom_entries"\\)[\\s\\S]*?\\.select\\("\\*"\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`\\.from\\("adhdice_health_workouts"\\)[\\s\\S]*?\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`await client[\\s\\S]*?adhdice_health_meal_plan_entries[\\s\\S]*?\\.eq\\("user_id", userId\\);\\s*${currentLifecycleGuard.source}`));
-  assert.match(recoverySection, new RegExp(`for \\(const \\[planId, mutation\\] of Object\\.entries\\(pendingMealPlanMutations\\)\\) \\{\\s*${currentLifecycleGuard.source}`));
+  assert.match(recoverySection, /const pendingMutations = Object\.entries\(pendingMutationsAtHydrationStart\)\.sort/);
+  assert.match(recoverySection, /for \(const \[key\] of pendingMutations\) \{\s*if \(!isActive \|\| !isCurrentOperation\(hydrationOperation\)\) return;/);
+  assert.match(recoverySection, /deleteHealthJournalRecordWithTombstone\([\s\S]*?if \(!isActive \|\| !isCurrentOperation\(hydrationOperation\)\) return;/);
+  assert.match(recoverySection, /replayHealthJournalPendingUpsertMutation\([\s\S]*?if \(!isActive \|\| !isCurrentOperation\(hydrationOperation\)\) return;/);
+  assert.match(recoverySection, /for \(const \[planId, mutation\] of Object\.entries\(pendingMealPlanMutations\)\) \{\s*if \(!isActive/);
 });

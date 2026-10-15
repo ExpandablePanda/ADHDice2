@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.170`.
+- Current working app version: `7.16.171`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.171 Side, Main, and iOS Integration
+
+The 7.16 line now includes the Side Journal and Batch Intake work: Trigger
+statistics and occurrence associations, owner-safe Journal deletion/tombstones,
+Journal Event timing and scored Feeling tags, Home Journal shortcuts, and
+improved partial, custom-food, and split-brand matching. Shared Journal draft
+sessions and panel-scoped Master Workspace state remain the active editing and
+navigation owners. The Home restore-generation, hydration, and recovery-point
+protections from 7.16.164–7.16.170 remain intact.
+
+The Side Journal schema and source migrations are included for reviewed
+deployment coordination; they were not executed against production. Browser
+QA remains Andrew's manual responsibility.
 
 ## 2026-10-15 7.16.170 Safe Home Recovery Restore Interface
 

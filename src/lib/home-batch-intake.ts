@@ -4,6 +4,7 @@ import { displayWeightToKilograms } from "@/lib/health-utils";
 import { mealFoodSelectionFromLibraryItem } from "@/lib/health-meal-draft";
 import { waterAmountToMilliliters } from "@/lib/health-library";
 import { calculateHealthFoodNutrition, getHealthFoodMeasurementOptions } from "@/lib/health-nutrition";
+import { getBatchIntakeMealFoodMatch } from "@/lib/home-batch-intake-food-matching";
 import {
   extractTrailingShorthandTime,
   normalizeShorthandMealUnit,
@@ -14,6 +15,7 @@ import {
   tokenizeShorthandCsvTokens,
   type ScratchpadShorthandPrefix,
 } from "@/lib/scratchpad-shorthand";
+export { normalizeBatchIntakeFoodName } from "@/lib/home-batch-intake-food-matching";
 
 export type BatchIntakeKind = "task" | "water" | "weight" | "meal" | "focus" | "unsupported";
 export type BatchIntakeManualKind = Exclude<BatchIntakeKind, "unsupported">;
@@ -165,6 +167,7 @@ export type BatchIntakeMealFoodProposalDraft = BatchIntakeDraftBase & {
   proposedFoodName: string;
   proposedQuantity: number | null;
   proposedUnit: string | null;
+  userCorrected?: boolean;
   writeId?: string;
 };
 
@@ -684,6 +687,7 @@ function createShorthandMealDrafts(
       proposedFoodName: parsed.proposedFoodName,
       proposedQuantity: parsed.proposedQuantity,
       proposedUnit: parsed.proposedUnit,
+      userCorrected: false,
       writeId: undefined,
       groupId: occurrence.id,
     };
@@ -863,6 +867,28 @@ function parseMultiDateTaskExpression(value: string) {
   };
 }
 
+function isOutsideShorthandQuotes(value: string, position: number) {
+  let quoted = false;
+  for (let index = 0; index < position; index += 1) {
+    if (value[index] !== '"') continue;
+    if (quoted && value[index + 1] === '"') {
+      index += 1;
+      continue;
+    }
+    quoted = !quoted;
+  }
+  return !quoted;
+}
+
+function parseTrailingSharedTaskOutcome(rawToken: string) {
+  const suffix = rawToken.match(/\s+-\s+(did\s+my\s+best|dmb|done|missed)\s*$/i);
+  if (!suffix || !isOutsideShorthandQuotes(rawToken, suffix.index ?? 0)) return null;
+  const rawTitle = rawToken.slice(0, suffix.index).trim();
+  const taskTitle = tokenizeShorthandCsvTokens(rawTitle)[0]?.value ?? "";
+  if (!taskTitle) return null;
+  return { outcome: normalizeTaskOutcome(suffix[1] ?? ""), taskTitle };
+}
+
 function createMultiDateTaskDrafts(
   line: string,
   lineNumber: number,
@@ -911,11 +937,15 @@ function createTaskShorthandDrafts(
   referenceDate: string,
 ) {
   const tokens = tokenizeShorthandCsvTokens(body);
+  const trailingShared = tokens.length > 1 ? parseTrailingSharedTaskOutcome(tokens.at(-1)?.raw ?? "") : null;
+  const hasMixedMultiDateExpression = tokens.some((token) => (parseMultiDateTaskExpression(token.value)?.dateTokens.length ?? 0) > 0);
+  const sharedOutcome = trailingShared && !hasMixedMultiDateExpression ? trailingShared.outcome : null;
   const drafts: BatchIntakeTaskDraft[] = [];
   tokens.forEach((token, part) => {
-    const multiDateDrafts = createMultiDateTaskDrafts(line, lineNumber, date, token.value, referenceDate, part);
-    if (multiDateDrafts) drafts.push(...multiDateDrafts);
-    else drafts.push(createTaskDraft(line, lineNumber, date, token.value, part, "high"));
+    const title = sharedOutcome && part === tokens.length - 1 ? trailingShared!.taskTitle : token.value;
+    const multiDateDrafts = createMultiDateTaskDrafts(line, lineNumber, date, title, referenceDate, part);
+    const taskDrafts = multiDateDrafts ?? [createTaskDraft(line, lineNumber, date, title, part, "high")];
+    drafts.push(...taskDrafts.map((draft) => sharedOutcome && draft.outcome === null ? { ...draft, outcome: sharedOutcome } : draft));
   });
   if (tokens.length === 0) drafts.push(createTaskDraft(line, lineNumber, date, "", 0, "high"));
   return drafts;
@@ -1235,10 +1265,6 @@ export function addMealFromParsedFood(
   return addMealFromLibraryFood(parsedMeal, food, options);
 }
 
-export function normalizeBatchIntakeFoodName(value: string) {
-  return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
-}
-
 function findBatchIntakeMealMeasurementOption(value: string, options: ReturnType<typeof getHealthFoodMeasurementOptions>) {
   const normalizedValue = normalizeShorthandMealUnit(value);
   return normalizedValue ? options.find((option) => normalizeShorthandMealUnit(option.value) === normalizedValue) ?? null : null;
@@ -1312,11 +1338,23 @@ export function reconcileBatchIntakeMealFoodProposals(
   return drafts.flatMap((draft) => {
     if (draft.kind !== "meal" || draft.entryMode !== "food_proposal") return [draft];
     const occurrence = occurrences.get(draft.mealOccurrenceId);
-    const matches = foods.filter((food) => normalizeBatchIntakeFoodName(food.food_name) === normalizeBatchIntakeFoodName(draft.proposedFoodName));
-    if (!occurrence || matches.length !== 1) {
-      return [proposalIssue(draft, matches.length > 1 ? "Multiple exact Custom Food matches require review" : "No exact Custom Food match; choose a Custom Food or use manual food")];
+    const match = getBatchIntakeMealFoodMatch(draft.proposedFoodName, foods);
+    if (draft.userCorrected) {
+      return [proposalIssue(draft, "Corrected food name requires explicit Custom Food selection")];
     }
-    return [resolveBatchIntakeMealFoodProposal(draft, occurrence, matches[0], {
+    if (!occurrence || !match.selectedFoodId) {
+      const issue = match.state === "multiple_exact"
+        ? "Multiple exact Custom Food matches require review"
+        : match.state === "multiple_normalized"
+          ? "Multiple normalized Custom Food matches require review"
+          : match.candidates.length > 0
+            ? "Suggested Custom Food matches require explicit review"
+            : "No exact Custom Food match; choose a Custom Food or use manual food";
+      return [proposalIssue(draft, issue)];
+    }
+    const food = foods.find((candidate) => candidate.id === match.selectedFoodId);
+    if (!food) return [proposalIssue(draft, "No exact Custom Food match; choose a Custom Food or use manual food")];
+    return [resolveBatchIntakeMealFoodProposal(draft, occurrence, food, {
       writeId: draft.writeId ?? options.createWriteId?.(draft) ?? draft.id,
     })];
   });

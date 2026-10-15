@@ -1344,6 +1344,8 @@ export function TaskApp() {
   const [message, setMessage] = useState<Message | null>(null);
   const [batchEditProgress, setBatchEditProgress] = useState<BatchEditProgress | null>(null);
   const [pendingProgressRecordMetricKey, setPendingProgressRecordMetricKey] = useState<RecordMetricKey | null>(null);
+  const [journalEntryNavigationRequests, setJournalEntryNavigationRequests] = useState<Record<string, { entryType: "start_of_day" | "end_of_day"; id: number }>>({});
+  const journalEntryNavigationRequestIdRef = useRef(0);
   const [hudNotificationEvents, setHudNotificationEvents] = useState<HudNotificationItem[]>([]);
   const [activeRewardBankSession, setActiveRewardBankSession] = useState<PendingRewardBankOpenSession | null>(null);
   const lastHudNotificationMessageRef = useRef<string | null>(null);
@@ -1470,6 +1472,14 @@ export function TaskApp() {
   const {
     awards: healthAwards,
     checkIns: healthCheckIns,
+    journalTriggers: healthJournalTriggers,
+    journalTriggerLinks: healthJournalTriggerLinks,
+    journalTriggerDataError: healthJournalTriggerDataError,
+    journalStatisticsDataError: healthJournalStatisticsDataError,
+    isLoadingJournalTriggers: isLoadingHealthJournalTriggers,
+    hasLoadedJournalTriggerData: hasLoadedHealthJournalTriggerData,
+    loadJournalTriggerData: loadHealthJournalTriggerData,
+    createJournalTrigger: createHealthJournalTrigger,
     journalSignals: healthJournalSignals,
     journalSignalValues: healthJournalSignalValues,
     journalSignalOccurrences: healthJournalSignalOccurrences,
@@ -1490,8 +1500,10 @@ export function TaskApp() {
     deleteWorkout: deleteHealthWorkout,
     deleteWeightEntry,
     favorites: healthFavorites,
+    hasLoadedFoodLibrary: hasLoadedHealthFoodLibrary,
     importAudits: healthImportAudits,
     isLoading: isHealthLoading,
+    refreshHealth: refreshHealthData,
     importAppleHealthData,
     mealEntries: healthMealEntries,
     mealPlanEntries: healthMealPlanEntries,
@@ -8904,6 +8916,20 @@ export function TaskApp() {
             onSetRoutineMembership={(taskId, included) => setTaskManualListMembership(taskId, "routine", included)}
             onReorderChildTask={(taskId, instruction) => { void reorderChildTask(taskId, instruction); }}
             onOpenTask={openPanelTaskEditor}
+            onOpenJournal={(entryType) => {
+              const pageAccepted = panelNavigate("Health");
+              const sectionAccepted = !masterWorkspace.isEnabled
+                || masterWorkspace.selectHealthSectionInPanel(panel.id, panelTab.id, "Journal");
+              if (!pageAccepted || !sectionAccepted) {
+                setMessage({ tone: "warn", text: masterWorkspace.transitionBlockedReason ?? "Save or cancel the current edit before opening Journal." });
+                return;
+              }
+              if (!masterWorkspace.isEnabled) persistHealthTabPreference("Journal");
+              setJournalEntryNavigationRequests((current) => ({
+                ...current,
+                [panel.id]: { entryType, id: ++journalEntryNavigationRequestIdRef.current },
+              }));
+            }}
             onSetStatus={(task, status) => { void updateTaskStatus(task, status); }}
             taskDisplayStatusByTaskId={taskDisplayStatusByTaskId}
             dailyProgress={homeDailyProgress}
@@ -8941,6 +8967,7 @@ export function TaskApp() {
             handleManualFocusEntries={handleManualFocusEntries}
             healthLoading={isHealthLoading}
             healthFoods={healthFavorites}
+            healthFoodLibraryReady={hasLoadedHealthFoodLibrary}
             healthProfile={healthProfile}
             onBatchIntakeHealthActivationChange={setBatchIntakeHealthActive}
             onBatchIntakeFocusActivationChange={setBatchIntakeFocusActive}
@@ -10074,6 +10101,13 @@ export function TaskApp() {
             recipeSessionStore={masterWorkspace.isEnabled ? healthRecipeDraftSessionStore : null}
             savedMealSessionStore={masterWorkspace.isEnabled ? healthSavedMealDraftSessionStore : null}
             mealPlanSessionStore={masterWorkspace.isEnabled ? healthMealPlanDraftSessionStore : null}
+            journalEntryRequest={journalEntryNavigationRequests[panel.id] ?? null}
+            onConsumeJournalEntryRequest={(requestId) => setJournalEntryNavigationRequests((current) => {
+              if (current[panel.id]?.id !== requestId) return current;
+              const next = { ...current };
+              delete next[panel.id];
+              return next;
+            })}
             awards={healthAwards}
             archiveGoal={archiveFitnessGoal}
             archivePlan={archiveFitnessPlan}
@@ -10082,6 +10116,15 @@ export function TaskApp() {
             journalSignals={healthJournalSignals}
             journalSignalValues={healthJournalSignalValues}
             journalSignalOccurrences={healthJournalSignalOccurrences}
+            journalTriggers={healthJournalTriggers}
+            journalTriggerLinks={healthJournalTriggerLinks}
+            journalTriggerDataError={healthJournalTriggerDataError}
+            journalStatisticsDataError={healthJournalStatisticsDataError}
+            refreshJournalStatisticsData={refreshHealthData}
+            isLoadingJournalTriggers={isLoadingHealthJournalTriggers}
+            hasLoadedJournalTriggerData={hasLoadedHealthJournalTriggerData}
+            loadJournalTriggerData={loadHealthJournalTriggerData}
+            createJournalTrigger={createHealthJournalTrigger}
             saveJournalEntry={saveJournalEntry}
             saveJournalQuestions={saveJournalQuestions}
             createJournalSignal={createJournalSignal}

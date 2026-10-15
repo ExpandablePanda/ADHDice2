@@ -1680,6 +1680,10 @@ export type HealthJournalStructuredAnswers = {
   remember_tomorrow?: string;
   event_description?: string;
   event_time?: string;
+  event_end_date?: string | null;
+  event_end_time?: string | null;
+  event_start_time_estimated?: boolean;
+  event_end_time_estimated?: boolean;
   event_record?: string;
   anything_else?: string;
   custom_answers?: HealthJournalCustomAnswer[];
@@ -1853,6 +1857,7 @@ export type HealthJournalSignalOccurrence = {
   entry_date: string;
   occurred_at: string;
   score: number;
+  time_is_estimated: boolean;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -1866,13 +1871,14 @@ export type HealthJournalSignalOccurrenceInsert = {
   entry_date: string;
   occurred_at: string;
   score: number;
+  time_is_estimated?: boolean;
   note?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
 export type HealthJournalSignalOccurrenceUpdate = Partial<
-  Pick<HealthJournalSignalOccurrence, "journal_entry_id" | "signal_id" | "entry_date" | "occurred_at" | "score" | "note">
+  Pick<HealthJournalSignalOccurrence, "journal_entry_id" | "signal_id" | "entry_date" | "occurred_at" | "score" | "time_is_estimated" | "note">
 >;
 
 export type HealthSymptom = {
@@ -1905,6 +1911,7 @@ export type HealthSymptomEntry = {
   entry_date: string;
   logged_at: string;
   severity: number;
+  time_is_estimated: boolean;
   note: string | null;
   created_at: string;
   updated_at: string;
@@ -1918,14 +1925,63 @@ export type HealthSymptomEntryInsert = {
   entry_date: string;
   logged_at?: string;
   severity: number;
+  time_is_estimated?: boolean;
   note?: string | null;
   created_at?: string;
   updated_at?: string;
 };
 
 export type HealthSymptomEntryUpdate = Partial<
-  Pick<HealthSymptomEntry, "symptom_id" | "journal_entry_id" | "entry_date" | "logged_at" | "severity" | "note">
+  Pick<HealthSymptomEntry, "symptom_id" | "journal_entry_id" | "entry_date" | "logged_at" | "severity" | "time_is_estimated" | "note">
 >;
+
+export type HealthJournalTriggerEffect = "associated" | "worsened" | "improved";
+
+export type HealthJournalTrigger = {
+  id: string;
+  user_id: string;
+  name: string;
+  archived_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalTriggerInsert = {
+  id?: string;
+  user_id: string;
+  name: string;
+  archived_at?: string | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalTriggerUpdate = Partial<Pick<HealthJournalTrigger, "name" | "archived_at">>;
+
+export type HealthJournalTriggerLink = {
+  id: string;
+  user_id: string;
+  trigger_id: string;
+  symptom_occurrence_id: string | null;
+  journal_signal_occurrence_id: string | null;
+  effect: HealthJournalTriggerEffect;
+  previous_score: number | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type HealthJournalTriggerLinkInsert = {
+  id?: string;
+  user_id: string;
+  trigger_id: string;
+  symptom_occurrence_id?: string | null;
+  journal_signal_occurrence_id?: string | null;
+  effect: HealthJournalTriggerEffect;
+  previous_score?: number | null;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export type HealthJournalTriggerLinkUpdate = Partial<Pick<HealthJournalTriggerLink, "effect" | "previous_score">>;
 
 export type HealthFoodLibraryItem = {
   id: string;
@@ -3249,6 +3305,18 @@ export type Database = {
         Update: HealthSymptomEntryUpdate;
         Relationships: [];
       };
+      adhdice_health_journal_triggers: {
+        Row: HealthJournalTrigger;
+        Insert: HealthJournalTriggerInsert;
+        Update: HealthJournalTriggerUpdate;
+        Relationships: [];
+      };
+      adhdice_health_journal_trigger_links: {
+        Row: HealthJournalTriggerLink;
+        Insert: HealthJournalTriggerLinkInsert;
+        Update: HealthJournalTriggerLinkUpdate;
+        Relationships: [];
+      };
       adhdice_health_food_library: {
         Row: HealthFoodLibraryItem;
         Insert: HealthFoodLibraryItemInsert;
@@ -3478,6 +3546,14 @@ export type Database = {
         Args: Record<string, never>;
         Returns: Record<string, unknown>;
       };
+      adhdice_delete_health_journal_record: {
+        Args: {
+          p_entity: "checkin" | "signal" | "signal_value" | "signal_occurrence" | "symptom_entry";
+          p_journal_entry_id: string | null;
+          p_record_id: string;
+        };
+        Returns: Array<{ deleted: boolean; id: string; tombstoned: boolean }>;
+      };
       adhdice_get_latest_manual_task_commands: {
         Args: {
           p_entity_ids: string[];
@@ -3558,6 +3634,10 @@ export type Database = {
       adhdice_get_records_source_state: {
         Args: Record<string, never>;
         Returns: RecordsSourceState;
+      };
+      adhdice_replace_health_journal_trigger_associations: {
+        Args: { p_journal_entry_id: string; p_replacements: unknown };
+        Returns: { saved: boolean; target_count: number; links: HealthJournalTriggerLink[] };
       };
       adhdice_activate_achievement_profile: {
         Args: {

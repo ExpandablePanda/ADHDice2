@@ -2,30 +2,36 @@ import type { Task } from "@/lib/database.types";
 import { batchIntakeCanonicalGroupId, type BatchIntakeDraft, type BatchIntakeTaskDraft } from "@/lib/home-batch-intake";
 import { getTaskContentFolderPathLabel, type TaskContentFolderRow } from "@/lib/task-content-folders";
 
-export type BatchIntakeTaskMatchState = "unique_exact" | "multiple_exact" | "no_exact";
+export type BatchIntakeTaskMatchState = "unique_exact" | "multiple_exact" | "unique_normalized" | "multiple_normalized" | "no_exact";
 
 export type BatchIntakeTaskCandidate = {
   task: Task;
   context: string;
 };
 
+export type BatchIntakeTaskMatch = {
+  candidates: BatchIntakeTaskCandidate[];
+  selectedTaskId: string | null;
+  state: BatchIntakeTaskMatchState;
+};
+
 export function normalizeBatchIntakeTaskTitle(value: string) {
   return value.trim().replace(/\s+/g, " ").toLocaleLowerCase();
 }
+
+export function normalizeBatchIntakeTaskTitleForPunctuationFallback(value: string) {
+  return value
+    .toLocaleLowerCase()
+    .replace(/[\p{P}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export function isBatchIntakeTaskSelectable(task: Pick<Task, "status" | "permanently_deleted_at">) {
   return task.status !== "trashed" && task.permanently_deleted_at == null;
 }
 
-export function getBatchIntakeTaskCandidates(title: string, tasks: readonly Task[], taskContentFolders: readonly TaskContentFolderRow[] = []): BatchIntakeTaskCandidate[] {
-  const needle = normalizeBatchIntakeTaskTitle(title);
-  if (!needle) return [];
-  const eligible = tasks.filter(isBatchIntakeTaskSelectable);
-  const exact = eligible.filter((task) => normalizeBatchIntakeTaskTitle(task.title) === needle);
-  const source = exact.length > 0
-    ? exact
-    : eligible
-      .filter((task) => normalizeBatchIntakeTaskTitle(task.title).includes(needle) || needle.includes(normalizeBatchIntakeTaskTitle(task.title)))
-      .slice(0, 12);
+function toCandidates(source: readonly Task[], tasks: readonly Task[], taskContentFolders: readonly TaskContentFolderRow[]) {
   const byId = new Map(tasks.map((task) => [task.id, task]));
   return source.map((task) => ({
     task,
@@ -33,9 +39,43 @@ export function getBatchIntakeTaskCandidates(title: string, tasks: readonly Task
   }));
 }
 
+export function getBatchIntakeTaskMatch(title: string, tasks: readonly Task[], taskContentFolders: readonly TaskContentFolderRow[] = []): BatchIntakeTaskMatch {
+  const needle = normalizeBatchIntakeTaskTitle(title);
+  if (!needle) return { candidates: [], selectedTaskId: null, state: "no_exact" };
+  const eligible = tasks.filter(isBatchIntakeTaskSelectable);
+  const exact = eligible.filter((task) => normalizeBatchIntakeTaskTitle(task.title) === needle);
+  if (exact.length > 0) {
+    return {
+      candidates: toCandidates(exact, tasks, taskContentFolders),
+      selectedTaskId: exact.length === 1 ? exact[0].id : null,
+      state: exact.length === 1 ? "unique_exact" : "multiple_exact",
+    };
+  }
+
+  const normalizedNeedle = normalizeBatchIntakeTaskTitleForPunctuationFallback(title);
+  const normalized = normalizedNeedle
+    ? eligible.filter((task) => normalizeBatchIntakeTaskTitleForPunctuationFallback(task.title) === normalizedNeedle)
+    : [];
+  if (normalized.length > 0) {
+    return {
+      candidates: toCandidates(normalized, tasks, taskContentFolders),
+      selectedTaskId: normalized.length === 1 ? normalized[0].id : null,
+      state: normalized.length === 1 ? "unique_normalized" : "multiple_normalized",
+    };
+  }
+
+  const partial = eligible
+    .filter((task) => normalizeBatchIntakeTaskTitle(task.title).includes(needle) || needle.includes(normalizeBatchIntakeTaskTitle(task.title)))
+    .slice(0, 12);
+  return { candidates: toCandidates(partial, tasks, taskContentFolders), selectedTaskId: null, state: "no_exact" };
+}
+
+export function getBatchIntakeTaskCandidates(title: string, tasks: readonly Task[], taskContentFolders: readonly TaskContentFolderRow[] = []): BatchIntakeTaskCandidate[] {
+  return getBatchIntakeTaskMatch(title, tasks, taskContentFolders).candidates;
+}
+
 export function getBatchIntakeTaskMatchState(title: string, tasks: readonly Task[]): BatchIntakeTaskMatchState {
-  const exactCount = tasks.filter((task) => isBatchIntakeTaskSelectable(task) && normalizeBatchIntakeTaskTitle(task.title) === normalizeBatchIntakeTaskTitle(title)).length;
-  return exactCount === 1 ? "unique_exact" : exactCount > 1 ? "multiple_exact" : "no_exact";
+  return getBatchIntakeTaskMatch(title, tasks).state;
 }
 
 export function buildBatchIntakeTaskContext(task: Task, byId: Map<string, Task>, taskContentFolders: readonly TaskContentFolderRow[] = []) {
@@ -73,27 +113,25 @@ export function buildBatchIntakeTaskContext(task: Task, byId: Map<string, Task>,
 }
 
 function taskMatchIssue(state: BatchIntakeTaskMatchState) {
-  return state === "unique_exact"
+  return state === "unique_exact" || state === "unique_normalized"
     ? []
-    : state === "multiple_exact"
-      ? ["Multiple exact Task matches require review"]
+    : state === "multiple_exact" || state === "multiple_normalized"
+      ? [state === "multiple_exact" ? "Multiple exact Task matches require review" : "Multiple punctuation-normalized Task matches require review"]
       : ["Select an existing canonical Task; no exact match was found"];
 }
 
 export function applyBatchIntakeTaskMatches(drafts: readonly BatchIntakeDraft[], tasks: readonly Task[], taskContentFolders: readonly TaskContentFolderRow[] = []): BatchIntakeDraft[] {
   return drafts.map((draft) => {
     if (draft.kind !== "task") return draft;
-    const exactCandidates = getBatchIntakeTaskCandidates(draft.taskTitle, tasks, taskContentFolders).filter(
-      ({ task }) => normalizeBatchIntakeTaskTitle(task.title) === normalizeBatchIntakeTaskTitle(draft.taskTitle),
-    );
-    const state = exactCandidates.length === 1 ? "unique_exact" : exactCandidates.length > 1 ? "multiple_exact" : "no_exact";
-    const existingMatchIssues = draft.issues.filter((issue) => !issue.includes("exact Task match") && !issue.includes("canonical Task"));
+    const match = getBatchIntakeTaskMatch(draft.taskTitle, tasks, taskContentFolders);
+    const isUnique = match.state === "unique_exact" || match.state === "unique_normalized";
+    const existingMatchIssues = draft.issues.filter((issue) => !issue.includes("exact Task match") && !issue.includes("punctuation-normalized Task match") && !issue.includes("canonical Task"));
     return {
       ...draft,
-      groupId: state === "unique_exact" ? batchIntakeCanonicalGroupId("task", exactCandidates[0].task.id) : draft.groupId,
-      selectedTaskId: state === "unique_exact" ? exactCandidates[0].task.id : null,
-      confidence: state === "unique_exact" ? "high" : draft.confidence,
-      issues: [...existingMatchIssues, ...taskMatchIssue(state)],
+      groupId: isUnique ? batchIntakeCanonicalGroupId("task", match.selectedTaskId!) : draft.groupId,
+      selectedTaskId: isUnique ? match.selectedTaskId : null,
+      confidence: isUnique ? "high" : draft.confidence,
+      issues: [...existingMatchIssues, ...taskMatchIssue(match.state)],
     } satisfies BatchIntakeTaskDraft;
   });
 }
@@ -104,7 +142,7 @@ export function setBatchIntakeTaskSelection(
   tasks: readonly Task[],
 ): BatchIntakeTaskDraft {
   const selected = selectedTaskId ? tasks.find((task) => task.id === selectedTaskId && isBatchIntakeTaskSelectable(task)) : null;
-  const retainedIssues = draft.issues.filter((issue) => !issue.includes("exact Task match") && !issue.includes("canonical Task") && !issue.includes("Select a Task"));
+  const retainedIssues = draft.issues.filter((issue) => !issue.includes("exact Task match") && !issue.includes("punctuation-normalized Task match") && !issue.includes("canonical Task") && !issue.includes("Select a Task"));
   return {
     ...draft,
     ...(selected ? { groupId: batchIntakeCanonicalGroupId("task", selected.id) } : {}),

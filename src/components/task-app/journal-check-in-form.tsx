@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type SetStateAction } from "react";
+import { startTransition, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode, type SetStateAction } from "react";
 
 import type {
   HealthCheckIn,
@@ -12,12 +12,14 @@ import type {
   HealthJournalSignalInsert,
   HealthJournalSignalOccurrence,
   HealthJournalStructuredAnswers,
+  HealthJournalTrigger,
+  HealthJournalTriggerLink,
   HealthMealEntry,
   HealthMetricEntry,
   HealthSymptom,
   HealthSymptomEntry,
 } from "@/lib/database.types";
-import type { HealthJournalEntrySaveInput } from "@/hooks/useHealth";
+import type { HealthJournalEntrySaveInput, HealthJournalEntrySaveResult } from "@/hooks/useHealth";
 import type { HealthJournalDraftValue } from "@/lib/health-journal";
 import type { EditingSessionStore } from "@/lib/editing-session-store";
 import {
@@ -31,7 +33,9 @@ import {
   getHealthJournalEntryTypeLabel,
   getHealthJournalScaleDenominator,
   HEALTH_JOURNAL_ENTRY_TYPES,
+  normalizeHealthJournalEventEnd,
   normalizeHealthJournalCustomQuestions,
+  normalizeHealthJournalDate,
   normalizeHealthJournalReframes,
   normalizeHealthJournalStructuredAnswers,
   normalizeHealthJournalWins,
@@ -49,22 +53,37 @@ import { HEALTH_COMPACT_INPUT_CLASS } from "./health-dropdown";
 import {
   getJournalEventSignalForDraft,
   hydrateJournalEventOccurrences,
+  JournalEstimatedToggle,
   JournalEventCapture,
   type JournalEventOccurrenceDraft,
 } from "./journal-event-capture";
+import type { HealthJournalTriggerOccurrenceReplacement } from "@/lib/health-journal-triggers";
 import { HealthStandardTimeInput } from "./health-standard-time-input";
+import {
+  getHealthJournalEditorTargetIdentity,
+  getHealthJournalSelectedEntryIdentity,
+  shouldPreserveHealthJournalEditorDraft,
+} from "@/lib/health-journal-occurrence-persistence";
 
 const LONG_TEXT_CLASS = "block min-h-24 w-full rounded-[1.2rem] border border-[#e6e8f5] bg-white px-4 py-3 text-sm text-[#22304b] outline-none transition focus:border-[#9e8cf9] dark:border-white/10 dark:bg-white/[0.04] dark:text-white";
 const QUESTION_LABEL_CLASS = "text-sm font-semibold text-[#26324f] dark:text-white";
 const QUESTION_HINT_CLASS = "text-xs text-[#7d88a3] dark:text-white/50";
 
 type JournalCheckInFormProps = {
+  journalEntryRequest: { entryType: "start_of_day" | "end_of_day"; id: number } | null;
+  onConsumeJournalEntryRequest: (requestId: number) => void;
   checkIns: readonly HealthCheckIn[];
   customQuestions: readonly HealthJournalCustomQuestion[];
   focusCategories: Parameters<typeof findRelevantHealthSleepContext>[0]["focusCategories"];
   focusHistory: Parameters<typeof findRelevantHealthSleepContext>[0]["focusHistory"];
   journalSignalOccurrences: readonly HealthJournalSignalOccurrence[];
   journalSignalValues: readonly (HealthJournalDraftValue & { journal_entry_id: string })[];
+  journalTriggers: readonly HealthJournalTrigger[];
+  journalTriggerLinks: readonly HealthJournalTriggerLink[];
+  journalTriggerDataError: string | null;
+  isLoadingJournalTriggers: boolean;
+  loadJournalTriggerData: () => Promise<boolean>;
+  createJournalTrigger: (name: string) => Promise<HealthJournalTrigger | null>;
   journalSignals: readonly HealthJournalSignal[];
   createJournalSignal: (input: Omit<HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   mealEntries: readonly HealthMealEntry[];
@@ -75,18 +94,20 @@ type JournalCheckInFormProps = {
   sessionDraftId?: string;
   sessionCanonicalRecordId?: string;
   sessionViewId?: string;
+  onStartNewEntry: () => void;
+  onRestoreSelectedJournalEntry: (entryId: string | null) => void;
   onOpenFood: () => void;
   onOpenSleep: () => void;
-  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthCheckIn | null>;
+  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthJournalEntrySaveResult | null>;
   selectedJournalEntry: HealthCheckIn | null;
   symptomEntries: readonly HealthSymptomEntry[];
   symptoms: readonly HealthSymptom[];
 };
 
-function createDraftId(prefix: string) {
-  return typeof crypto !== "undefined" && "randomUUID" in crypto
-    ? crypto.randomUUID()
-    : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+function createPersistedJournalUuid() {
+  if (typeof crypto === "undefined" || typeof crypto.randomUUID !== "function") return null;
+  const id = crypto.randomUUID();
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : null;
 }
 
 function snapshotBreakfastMeal(entry: HealthMealEntry) {
@@ -120,9 +141,13 @@ function getCustomQuestionDefinition(
 export type JournalEventDraftState = {
   date: string;
   description: string;
+  endDate: string;
+  endTime: string;
+  endTimeEstimated: boolean;
   id: string | null;
   notes: string;
   occurrences: JournalEventOccurrenceDraft[];
+  startTimeEstimated: boolean;
   time: string;
 };
 
@@ -136,6 +161,8 @@ export type JournalCheckInDraftSnapshot = {
 };
 
 export function JournalCheckInForm({
+  journalEntryRequest,
+  onConsumeJournalEntryRequest,
   checkIns,
   customQuestions,
   focusCategories,
@@ -143,11 +170,19 @@ export function JournalCheckInForm({
   journalSignalOccurrences,
   journalSignalValues,
   journalSignals,
+  journalTriggers,
+  journalTriggerLinks,
+  journalTriggerDataError,
+  isLoadingJournalTriggers,
+  loadJournalTriggerData,
+  createJournalTrigger,
   createJournalSignal,
   mealEntries,
   metricEntries,
   onAfterSave,
   onDraftSafetyChange,
+  onStartNewEntry,
+  onRestoreSelectedJournalEntry,
   onOpenFood,
   onOpenSleep,
   saveJournalEntry,
@@ -195,18 +230,22 @@ export function JournalCheckInForm({
       eventDraft: {
         date: eventEntry?.entry_date ?? nextInputs.date,
         description: eventAnswers.event_description ?? (!hasEventAnswers && eventEntry?.reflection ? eventEntry.reflection : ""),
+        endDate: normalizeHealthJournalDate(eventAnswers.event_end_date) ?? "",
+        endTime: typeof eventAnswers.event_end_time === "string" ? eventAnswers.event_end_time : "",
+        endTimeEstimated: eventAnswers.event_end_time_estimated === true,
         id: eventEntry?.id ?? linkedEventId,
         notes: eventAnswers.event_record ?? "",
-        occurrences: hydrateJournalEventOccurrences(eventEntry, symptomEntries, journalSignalOccurrences, journalSignals),
+        occurrences: hydrateJournalEventOccurrences(eventEntry, symptomEntries, journalSignalOccurrences, journalSignals, journalTriggerLinks),
+        startTimeEstimated: eventAnswers.event_start_time_estimated === true,
         time: eventEntry?.entry_time ?? nextInputs.time,
       },
     };
-  }, [checkIns, initialInputs, journalSignalOccurrences, journalSignals, selectedJournalEntry, symptomEntries]);
+  }, [checkIns, initialInputs, journalSignalOccurrences, journalSignals, journalTriggerLinks, selectedJournalEntry, symptomEntries]);
   const hydrationKey = useMemo(() => {
     const linkedEventId = initialDraft.answers.linked_event_ids?.[0] ?? "";
     const eventId = initialDraft.eventDraft.id ?? "";
-    const occurrenceKey = initialDraft.eventDraft.occurrences.map((occurrence) => occurrence.id ?? occurrence.draftKey).sort().join(",");
-    return `${selectedJournalEntry?.id ?? "new"}:${linkedEventId}:${eventId}:${occurrenceKey}`;
+    const occurrenceKey = JSON.stringify(initialDraft.eventDraft.occurrences);
+    return `${selectedJournalEntry?.id ?? "new"}:${linkedEventId}:${eventId}:${occurrenceKey}:${initialDraft.eventDraft.endDate}:${initialDraft.eventDraft.endTime}:${initialDraft.eventDraft.endTimeEstimated}:${initialDraft.eventDraft.startTimeEstimated}`;
   }, [initialDraft, selectedJournalEntry?.id]);
   const [localSession, setLocalSession] = useState(() => ({ draft: initialDraft, baseline: initialDraft }));
   const [isLocallySaving, setIsLocallySaving] = useState(false);
@@ -258,6 +297,10 @@ export function JournalCheckInForm({
   const [isEventCaptureDraftUnsafe, setIsEventCaptureDraftUnsafe] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const hydratedSelectedEntryKeyRef = useRef<string | undefined>(undefined);
+  const hydratedTargetIdentityRef = useRef<string | null>(null);
+  const triggerEditorDirtyEntryIdRef = useRef<string | null>(null);
+  const previousSelectedEntryIdRef = useRef<string | null | undefined>(undefined);
+  const consumedJournalEntryRequestIdRef = useRef<number | null>(null);
   useLayoutEffect(() => {
     if (!sharedSessionEnabled || !sessionStore || !sessionDraftId || !sessionCanonicalRecordId || !sessionViewId) return;
     sessionStore.ensureSession(sessionDraftId, sessionCanonicalRecordId, initialDraft);
@@ -274,14 +317,38 @@ export function JournalCheckInForm({
   }, [initialDraft, linkedEventEntry, linkedEventInitialDraft, linkedEventSessionDraftId, sessionCanonicalRecordId, sessionDraftId, sessionStore, sessionViewId, sharedBaseDraft.eventDraft, sharedSessionEnabled]);
   useEffect(() => {
     if (sharedSessionEnabled) return;
+    if (journalEntryRequest) return;
+    const nextSelectedEntryId = selectedJournalEntry?.id ?? null;
+    const nextTargetIdentity = getHealthJournalSelectedEntryIdentity(nextSelectedEntryId);
+    const previousSelectedEntryId = previousSelectedEntryIdRef.current;
+    const localDraftIsDirty = !areHealthJournalDraftsEqual(localSession.draft, localSession.baseline) || isEventCaptureDraftUnsafe;
+    const selectionChanged = previousSelectedEntryId !== undefined && previousSelectedEntryId !== nextSelectedEntryId;
+    if (selectionChanged && localDraftIsDirty) {
+      const canDiscard = typeof window === "undefined"
+        || window.confirm("Discard unsaved Journal changes and open the selected entry?");
+      if (!canDiscard) {
+        onRestoreSelectedJournalEntry(previousSelectedEntryId);
+        return;
+      }
+    } else if (hydratedSelectedEntryKeyRef.current !== undefined && localDraftIsDirty) {
+      return;
+    }
+    if (shouldPreserveHealthJournalEditorDraft({
+      dirtyTargetIdentity: triggerEditorDirtyEntryIdRef.current,
+      hydratedTargetIdentity: hydratedTargetIdentityRef.current,
+      nextTargetIdentity,
+    })) return;
     if (hydratedSelectedEntryKeyRef.current === hydrationKey) return;
     hydratedSelectedEntryKeyRef.current = hydrationKey;
+    hydratedTargetIdentityRef.current = getHealthJournalEditorTargetIdentity(nextSelectedEntryId, initialDraft.eventDraft.id);
+    previousSelectedEntryIdRef.current = nextSelectedEntryId;
+    triggerEditorDirtyEntryIdRef.current = null;
     setLocalSession({ draft: initialDraft, baseline: initialDraft });
     setIsLocallySaving(false);
     setEventCaptureResetKey((key) => key + 1);
     setIsEventCaptureDraftUnsafe(false);
     setFormError(null);
-  }, [hydrationKey, initialDraft, sharedSessionEnabled]);
+  }, [hydrationKey, initialDraft, isEventCaptureDraftUnsafe, journalEntryRequest, localSession.baseline, localSession.draft, onRestoreSelectedJournalEntry, selectedJournalEntry?.id, sharedSessionEnabled]);
 
   const updateDraft = useCallback((update: (current: JournalCheckInDraftSnapshot) => JournalCheckInDraftSnapshot) => {
     if (sharedSessionEnabled && sessionStore && sessionDraftId) {
@@ -323,6 +390,32 @@ export function JournalCheckInForm({
     onDraftSafetyChange(hasUnsafeDraft);
     return () => onDraftSafetyChange(false);
   }, [hasUnsafeDraft, onDraftSafetyChange]);
+  useEffect(() => {
+    if (!journalEntryRequest || isSaving || consumedJournalEntryRequestIdRef.current === journalEntryRequest.id) return;
+    if (selectedJournalEntry) {
+      const canLeave = sharedSessionEnabled || !isDraftDirty && !isEventCaptureDraftUnsafe
+        || typeof window === "undefined"
+        || window.confirm("Discard unsaved Journal changes and open a new check-in?");
+      if (!canLeave) {
+        consumedJournalEntryRequestIdRef.current = journalEntryRequest.id;
+        onConsumeJournalEntryRequest(journalEntryRequest.id);
+        return;
+      }
+      if (!sharedSessionEnabled) resetFormForNewEntry();
+      onStartNewEntry();
+      return;
+    }
+    if ((isDraftDirty || isEventCaptureDraftUnsafe) && typeof window !== "undefined"
+      && !window.confirm("Discard unsaved Journal changes and open a new check-in?")) {
+      consumedJournalEntryRequestIdRef.current = journalEntryRequest.id;
+      onConsumeJournalEntryRequest(journalEntryRequest.id);
+      return;
+    }
+    if (isDraftDirty || isEventCaptureDraftUnsafe) resetFormForNewEntry({ resetSharedSession: true });
+    consumedJournalEntryRequestIdRef.current = journalEntryRequest.id;
+    startTransition(() => setEntryType(journalEntryRequest.entryType));
+    onConsumeJournalEntryRequest(journalEntryRequest.id);
+  }, [isDraftDirty, isEventCaptureDraftUnsafe, isSaving, journalEntryRequest, onConsumeJournalEntryRequest, onStartNewEntry, selectedJournalEntry, sharedSessionEnabled]);
 
   const normalizedQuestions = useMemo(() => normalizeHealthJournalCustomQuestions(customQuestions), [customQuestions]);
   const visibleCustomQuestions = useMemo(
@@ -383,10 +476,12 @@ export function JournalCheckInForm({
     updateAnswer("breakfast_meals", breakfastEntries.filter((meal) => nextIds.includes(meal.id)).map(snapshotBreakfastMeal));
   }
 
-  function resetFormForNewEntry() {
+  function resetFormForNewEntry({ resetSharedSession = false }: { resetSharedSession?: boolean } = {}) {
     const current = getCurrentHealthDateTimeInputs();
     const nextAnswers: HealthJournalStructuredAnswers = { custom_answers: [], schema_version: 1 };
-    const nextEventDraft: JournalEventDraftState = { date: current.date, description: "", id: null, notes: "", occurrences: [], time: current.time };
+    const nextEventDraft: JournalEventDraftState = { date: current.date, description: "", endDate: "", endTime: "", endTimeEstimated: false, id: null, notes: "", occurrences: [], startTimeEstimated: false, time: current.time };
+    triggerEditorDirtyEntryIdRef.current = null;
+    hydratedTargetIdentityRef.current = null;
     const nextBaseline: JournalCheckInDraftSnapshot = {
       answers: nextAnswers,
       entryDate: current.date,
@@ -398,6 +493,8 @@ export function JournalCheckInForm({
     if (!sharedSessionEnabled) {
       setLocalSession({ draft: nextBaseline, baseline: nextBaseline });
       setIsLocallySaving(false);
+    } else if (resetSharedSession) {
+      updateDraft(() => nextBaseline);
     }
     setIsEventCaptureDraftUnsafe(false);
     setEventCaptureResetKey((key) => key + 1);
@@ -428,6 +525,7 @@ export function JournalCheckInForm({
     function buildOccurrenceInputs(drafts: readonly JournalEventOccurrenceDraft[], date: string) {
       const symptomOccurrenceInputs = [] as HealthJournalEntrySaveInput["symptomOccurrences"];
       const feelingOccurrenceInputs = [] as HealthJournalEntrySaveInput["journalSignalOccurrences"];
+      const triggerAssociationReplacements: HealthJournalTriggerOccurrenceReplacement[] = [];
       for (const draft of drafts) {
         const signal = getJournalEventSignalForDraft(draft.signalId, journalSignals, symptoms);
         const occurredAt = buildHealthMealLoggedAt(date, draft.time);
@@ -437,19 +535,21 @@ export function JournalCheckInForm({
           return null;
         }
         if (signal.kind === "symptom" && signal.symptom_id) {
-          symptomOccurrenceInputs.push({ ...(draft.id ? { id: draft.id } : {}), entry_date: date, logged_at: occurredAt, note: draft.note, severity: draft.score, symptom_id: signal.symptom_id });
+          symptomOccurrenceInputs.push({ ...(draft.id ? { id: draft.id } : {}), entry_date: date, logged_at: occurredAt, note: draft.note, severity: draft.score, symptom_id: signal.symptom_id, time_is_estimated: draft.timeIsEstimated });
+          if (draft.triggerAssociationsEdited && draft.id) triggerAssociationReplacements.push({ occurrence_kind: "symptom", occurrence_id: draft.id, associations: draft.triggerAssociations, expected_associations: draft.expectedTriggerAssociations });
         } else if (signal.kind === "emotion" || signal.kind === "other") {
-          feelingOccurrenceInputs.push({ ...(draft.id ? { id: draft.id } : {}), entry_date: date, note: draft.note, occurred_at: occurredAt, score: draft.score, signal_id: signal.id });
+          feelingOccurrenceInputs.push({ ...(draft.id ? { id: draft.id } : {}), entry_date: date, note: draft.note, occurred_at: occurredAt, score: draft.score, signal_id: signal.id, time_is_estimated: draft.timeIsEstimated });
+          if (draft.triggerAssociationsEdited && draft.id) triggerAssociationReplacements.push({ occurrence_kind: "journal_signal", occurrence_id: draft.id, associations: draft.triggerAssociations, expected_associations: draft.expectedTriggerAssociations });
         }
       }
-      return { journalSignalOccurrences: feelingOccurrenceInputs, symptomOccurrences: symptomOccurrenceInputs };
+      return { journalSignalOccurrences: feelingOccurrenceInputs, symptomOccurrences: symptomOccurrenceInputs, triggerAssociationReplacements };
     }
 
     const legacySymptomOccurrences = selectedJournalEntry
-      ? symptomEntries.filter((occurrence) => occurrence.journal_entry_id === selectedJournalEntry.id).map((occurrence) => ({ entry_date: occurrence.entry_date, id: occurrence.id, logged_at: occurrence.logged_at, note: occurrence.note, severity: occurrence.severity, symptom_id: occurrence.symptom_id }))
+      ? symptomEntries.filter((occurrence) => occurrence.journal_entry_id === selectedJournalEntry.id).map((occurrence) => ({ entry_date: occurrence.entry_date, id: occurrence.id, logged_at: occurrence.logged_at, note: occurrence.note, severity: occurrence.severity, symptom_id: occurrence.symptom_id, time_is_estimated: occurrence.time_is_estimated }))
       : [];
     const legacyFeelingOccurrences = selectedJournalEntry
-      ? journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === selectedJournalEntry.id).map((occurrence) => ({ entry_date: occurrence.entry_date, id: occurrence.id, note: occurrence.note, occurred_at: occurrence.occurred_at, score: occurrence.score, signal_id: occurrence.signal_id }))
+      ? journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === selectedJournalEntry.id).map((occurrence) => ({ entry_date: occurrence.entry_date, id: occurrence.id, note: occurrence.note, occurred_at: occurrence.occurred_at, score: occurrence.score, signal_id: occurrence.signal_id, time_is_estimated: occurrence.time_is_estimated }))
       : [];
     const nextAnswers: HealthJournalStructuredAnswers = {
       ...answers,
@@ -541,16 +641,43 @@ export function JournalCheckInForm({
     let nextEventId = eventDraft.id;
     let eventWasSaved = false;
     if (entryType === "event" || eventCaptureEnabled) {
-      nextEventId = nextEventId ?? createDraftId("journal-event");
-      const eventOccurrenceInputs = buildOccurrenceInputs(eventDraft.occurrences, eventDraft.date);
+      nextEventId = nextEventId ?? createPersistedJournalUuid();
+      if (!nextEventId || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(nextEventId)) {
+        setFormError("A valid Event ID could not be established. Keep this draft open and retry in a browser with UUID support.");
+        return;
+      }
+      const stableOccurrenceDrafts = eventDraft.occurrences.map((draft) => {
+        const id = draft.id ?? createPersistedJournalUuid();
+        return id && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? { ...draft, id } : null;
+      });
+      if (stableOccurrenceDrafts.some((draft) => draft === null)) {
+        setFormError("A valid Feeling occurrence ID could not be established. Keep this draft open and retry in a browser with UUID support.");
+        return;
+      }
+      const occurrencesWithIds = stableOccurrenceDrafts as JournalEventOccurrenceDraft[];
+      updateEventDraft((current) => ({ ...current, id: nextEventId, occurrences: occurrencesWithIds }));
+      const eventDate = entryType === "event" ? entryDate : eventDraft.date;
+      const eventTime = entryType === "event" ? entryTime : eventDraft.time;
+      const eventEnd = normalizeHealthJournalEventEnd({ endDate: eventDraft.endDate, endTime: eventDraft.endTime, startDate: eventDate, startTime: eventTime });
+      if (eventEnd.error) {
+        setFormError(eventEnd.error);
+        return;
+      }
+      const endDate = eventEnd.endDate;
+      const endTime = eventEnd.endTime;
+      const eventOccurrenceInputs = buildOccurrenceInputs(occurrencesWithIds, eventDate);
       if (!eventOccurrenceInputs) return;
       const eventAnswers = normalizeHealthJournalStructuredAnswers(existingEvent?.structured_answers);
       const nextEventAnswers: HealthJournalStructuredAnswers = {
         ...eventAnswers,
         custom_answers: eventAnswers.custom_answers ?? [],
         event_description: eventDraft.description,
+        event_end_date: endDate,
+        event_end_time: endTime,
+        event_end_time_estimated: endTime ? eventDraft.endTimeEstimated : false,
         event_record: eventDraft.notes,
-        event_time: `${eventDraft.date}T${eventDraft.time}`,
+        event_start_time_estimated: eventDraft.startTimeEstimated,
+        event_time: `${eventDate}T${eventTime}`,
         schema_version: 1,
       };
       updateEventDraft((current) => ({ ...current, id: nextEventId }));
@@ -561,16 +688,16 @@ export function JournalCheckInForm({
       const linkedEventDraft = entryType === "event" ? undefined : buildEventSessionSnapshot(nextEventId, nextEventAnswers);
       if (!beginDraftSave(entryType === "event" ? null : nextEventId, linkedEventDraft)) return;
       setFormError(null);
-      let eventSaved: HealthCheckIn | null;
+      let eventSaveResult: HealthJournalEntrySaveResult | null;
       try {
-        eventSaved = await saveJournalEntry({
+        eventSaveResult = await saveJournalEntry({
           allowInsertWithId: true,
           checkIn: {
             id: nextEventId,
             clarity_score: existingEvent?.clarity_score ?? null,
             energy_score: existingEvent?.energy_score ?? null,
-            entry_date: eventDraft.date,
-            entry_time: eventDraft.time,
+            entry_date: eventDate,
+            entry_time: eventTime,
             entry_type: "event",
             mood_score: existingEvent?.mood_score ?? null,
             reflection: eventDraft.notes.trim(),
@@ -578,6 +705,7 @@ export function JournalCheckInForm({
             structured_answers: nextEventAnswers,
           },
           journalSignalOccurrences: eventOccurrenceInputs.journalSignalOccurrences,
+          triggerAssociationReplacements: eventOccurrenceInputs.triggerAssociationReplacements,
           signalValues: existingEvent
             ? journalSignalValues.filter((value) => value.journal_entry_id === existingEvent.id).map(({ id, signal_id, score }) => ({ id, signal_id, score }))
             : [],
@@ -587,13 +715,31 @@ export function JournalCheckInForm({
         failDraftSave(caught instanceof Error ? caught.message : "The Event could not be saved. Your Event draft is still here.");
         return;
       }
-      if (!eventSaved) {
+      if (!eventSaveResult) {
         failDraftSave("The Event could not be saved. Check the warning above and retry; your Event draft is still here.");
+        return;
+      }
+      const eventSaved = eventSaveResult.entry;
+      if (eventSaveResult.triggerAssociationError) {
+        nextEventId = eventSaved.id;
+        updateEventDraft((current) => ({ ...current, id: eventSaved.id }));
+        failDraftSave(eventSaveResult.triggerAssociationError);
         return;
       }
       nextEventId = eventSaved.id;
       if (nextAnswers.linked_event_ids?.length) nextAnswers.linked_event_ids = [nextEventId];
-      const savedEventDraft = buildSavedEventSnapshot(eventSaved, nextEventAnswers);
+      const savedTriggerOccurrenceIds = new Set(eventOccurrenceInputs.triggerAssociationReplacements.map((replacement) => replacement.occurrence_id));
+      const savedEventDraftState: JournalEventDraftState = {
+        ...eventDraft,
+        id: eventSaved.id,
+        occurrences: eventOccurrenceInputs.triggerAssociationReplacements.length > 0
+          ? eventDraft.occurrences.map((draft) => savedTriggerOccurrenceIds.has(draft.id ?? "")
+            ? { ...draft, expectedTriggerAssociations: draft.triggerAssociations, triggerAssociationsEdited: false }
+            : draft)
+          : eventDraft.occurrences,
+      };
+      updateEventDraft(() => savedEventDraftState);
+      const savedEventDraft = { ...buildSavedEventSnapshot(eventSaved, nextEventAnswers), eventDraft: savedEventDraftState };
       if (sharedSessionEnabled && sessionStore) {
         const canonicalDraftId = `journal-entry:${eventSaved.id}`;
         if (linkedEventSaveRevision !== null) {
@@ -616,7 +762,7 @@ export function JournalCheckInForm({
     setAnswers(nextAnswers);
     if (!eventWasSaved && !beginDraftSave()) return;
     setFormError(null);
-    let saved: HealthCheckIn | null;
+    let saved: HealthJournalEntrySaveResult | null;
     try {
       saved = await saveJournalEntry({
         checkIn: {
@@ -641,17 +787,22 @@ export function JournalCheckInForm({
       failDraftSave(caught instanceof Error ? caught.message : "The Journal entry could not be saved. Your draft is still here.");
       return;
     }
-    if (saved) {
+    if (saved?.entry) {
+      if (saved.triggerAssociationError) {
+        failDraftSave(saved.triggerAssociationError);
+        return;
+      }
+      const savedEntry = saved.entry;
       const savedDraft: JournalCheckInDraftSnapshot = {
         ...currentDraft,
         answers: nextAnswers,
-        entryDate: saved.entry_date,
-        entryTime: saved.entry_time,
-        entryType: getHealthJournalEntryType(saved),
-        eventCaptureEnabled: getHealthJournalEntryType(saved) !== "event" && Boolean(nextAnswers.linked_event_ids?.length),
+        entryDate: savedEntry.entry_date,
+        entryTime: savedEntry.entry_time,
+        entryType: getHealthJournalEntryType(savedEntry),
+        eventCaptureEnabled: getHealthJournalEntryType(savedEntry) !== "event" && Boolean(nextAnswers.linked_event_ids?.length),
         eventDraft: { ...eventDraft, ...(nextEventId ? { id: nextEventId } : {}) },
       };
-      finishDraftSave(savedDraft, saved.id);
+      finishDraftSave(savedDraft, savedEntry.id);
       resetFormForNewEntry();
       onAfterSave();
     } else if (eventWasSaved) {
@@ -668,19 +819,38 @@ export function JournalCheckInForm({
     key={eventCaptureResetKey}
     date={entryType === "event" ? entryDate : eventDraft.date}
     description={eventDraft.description}
+    endDate={eventDraft.endDate}
+    endTime={eventDraft.endTime}
+    endTimeEstimated={eventDraft.endTimeEstimated}
     eventDateTime={entryType !== "event"}
     occurrences={eventDraft.occurrences}
     onChangeDate={entryType !== "event" ? (date) => updateEventDraft((current) => ({ ...current, date })) : undefined}
     onChangeDescription={(description) => updateEventDraft((current) => ({ ...current, description }))}
+    onChangeEndDate={(endDate) => updateEventDraft((current) => ({ ...current, endDate }))}
+    onChangeEndTime={(endTime) => updateEventDraft((current) => ({ ...current, endTime }))}
+    onChangeEndTimeEstimated={(endTimeEstimated) => updateEventDraft((current) => ({ ...current, endTimeEstimated }))}
+    onChangeStartTimeEstimated={(startTimeEstimated) => updateEventDraft((current) => ({ ...current, startTimeEstimated }))}
     onChangeTime={entryType !== "event" ? (time) => updateEventDraft((current) => ({ ...current, time })) : undefined}
     onCreateSignal={createJournalSignal}
     onDraftSafetyChange={setIsEventCaptureDraftUnsafe}
+    journalTriggers={journalTriggers}
+    triggerLibraryError={journalTriggerDataError}
+    isLoadingTriggers={isLoadingJournalTriggers}
+    onCreateTrigger={createJournalTrigger}
+    onRetryTriggerLoad={() => { void loadJournalTriggerData(); }}
     onRemoveOccurrence={(draftKey) => updateEventDraft((current) => ({ ...current, occurrences: current.occurrences.filter((occurrence) => occurrence.draftKey !== draftKey) }))}
-    onSaveOccurrence={(occurrence) => updateEventDraft((current) => ({ ...current, occurrences: [...current.occurrences, occurrence] }))}
-    onUpdateOccurrence={(occurrence) => updateEventDraft((current) => ({ ...current, occurrences: current.occurrences.map((candidate) => candidate.draftKey === occurrence.draftKey ? occurrence : candidate) }))}
+    onSaveOccurrence={(occurrence) => {
+      if (occurrence.triggerAssociationsEdited) triggerEditorDirtyEntryIdRef.current = getHealthJournalSelectedEntryIdentity(selectedJournalEntry?.id ?? null);
+      updateEventDraft((current) => ({ ...current, occurrences: [...current.occurrences, occurrence] }));
+    }}
+    onUpdateOccurrence={(occurrence) => {
+      if (occurrence.triggerAssociationsEdited) triggerEditorDirtyEntryIdRef.current = getHealthJournalSelectedEntryIdentity(selectedJournalEntry?.id ?? null);
+      updateEventDraft((current) => ({ ...current, occurrences: current.occurrences.map((candidate) => candidate.draftKey === occurrence.draftKey ? occurrence : candidate) }));
+    }}
     signals={journalSignals}
     symptoms={symptoms}
     time={entryType === "event" ? entryTime : eventDraft.time}
+    timeEstimated={eventDraft.startTimeEstimated}
   />;
   return (
     <div className="grid min-w-0 gap-5">
@@ -691,7 +861,13 @@ export function JournalCheckInForm({
           <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topDateLabel}</span><input aria-label={topDateLabel} className={HEALTH_COMPACT_INPUT_CLASS} max={getCurrentHealthDateTimeInputs().date} onChange={(event) => { setEntryDate(event.target.value); if (entryType === "event") updateEventDraft((current) => ({ ...current, date: event.target.value })); }} type="date" value={entryDate} /></label>
           <div className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topTimeLabel}</span><HealthStandardTimeInput ariaLabel={topTimeLabel} compact onChange={(time) => { setEntryTime(time); if (entryType === "event") updateEventDraft((current) => ({ ...current, time })); }} value={entryTime} /></div>
         </div>
-        <div className="flex flex-wrap items-center gap-2"><span className={QUESTION_HINT_CLASS}>{selectedJournalEntry ? "Existing entry" : "New entry · not saved yet"}</span>{(isDraftDirty || saveError) && !isSaving ? <AdhdChip onClick={discardDraft} type="button">Discard Draft</AdhdChip> : null}<AdhdChip disabled={isSaving || isDraftDirty || isEventCaptureDraftUnsafe} onClick={() => { resetFormForNewEntry(); onAfterSave(); }} type="button">+ New entry</AdhdChip></div>
+        <div className="grid min-w-0 gap-3 sm:grid-cols-2 lg:grid-cols-[minmax(8rem,auto)_repeat(4,minmax(0,1fr))] lg:items-end">
+          <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">Entry type</span><select aria-label="Journal entry type" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => { const nextType = event.target.value as HealthJournalEntryType; setEntryType(nextType); const updateDateTime = (current: JournalEventDraftState) => ({ ...current, date: entryDate, time: entryTime }); if (nextType === "event") setEventDraft(updateDateTime); else updateEventDraft(updateDateTime); }} value={entryType}>{HEALTH_JOURNAL_ENTRY_TYPES.map((type) => <option key={type} value={type}>{getHealthJournalEntryTypeLabel(type)}</option>)}</select></label>
+          <label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topDateLabel}</span><input aria-label={topDateLabel} className={HEALTH_COMPACT_INPUT_CLASS} max={getCurrentHealthDateTimeInputs().date} onChange={(event) => { setEntryDate(event.target.value); if (entryType === "event") updateEventDraft((current) => ({ ...current, date: event.target.value })); }} type="date" value={entryDate} /></label>
+          <div className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">{topTimeLabel}</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel={topTimeLabel} compact onChange={(time) => { setEntryTime(time); if (entryType === "event") updateEventDraft((current) => ({ ...current, time })); }} value={entryTime} />{entryType === "event" ? <JournalEstimatedToggle checked={eventDraft.startTimeEstimated} label="Event start time" onChange={(value) => updateEventDraft((current) => ({ ...current, startTimeEstimated: value }))} /> : null}</div></div>
+          {entryType === "event" ? <><label className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">Event end date (optional)</span><input aria-label="Event end date" className={HEALTH_COMPACT_INPUT_CLASS} onChange={(event) => updateEventDraft((current) => ({ ...current, endDate: event.target.value }))} type="date" value={eventDraft.endDate} /></label><div className="grid gap-2"><span className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a3] dark:text-white/40">When did it end? (optional)</span><div className="flex flex-wrap items-center gap-2"><HealthStandardTimeInput ariaLabel="When did it end?" compact onChange={(endTime) => updateEventDraft((current) => ({ ...current, endTime }))} value={eventDraft.endTime} /><JournalEstimatedToggle checked={eventDraft.endTimeEstimated} label="Event end time" onChange={(value) => updateEventDraft((current) => ({ ...current, endTimeEstimated: value }))} /></div></div></> : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2"><span className={QUESTION_HINT_CLASS}>{selectedJournalEntry ? "Existing entry" : "New entry · not saved yet"}</span>{(isDraftDirty || saveError) && !isSaving ? <AdhdChip onClick={discardDraft} type="button">Discard Draft</AdhdChip> : null}<AdhdChip disabled={isSaving || isDraftDirty || isEventCaptureDraftUnsafe} onClick={() => { resetFormForNewEntry(); onStartNewEntry(); }} type="button">+ New entry</AdhdChip></div>
       </div>
 
       {entryType === "start_of_day" ? <StartOfDayQuestions answers={answers} breakfastEntries={filteredBreakfastEntries} breakfastSearch={searchBreakfast} eventCapture={eventCapture} eventCaptureEnabled={eventCaptureEnabled} linkedBreakfastIds={selectedBreakfastIds} linkedSleep={linkedSleep} onOpenFood={onOpenFood} onOpenSleep={onOpenSleep} onSearchBreakfast={setSearchBreakfast} onToggleBreakfast={toggleBreakfast} onToggleEventCapture={(enabled) => { setEventCaptureEnabled(enabled); if (enabled) updateEventDraft((current) => ({ ...current, date: current.id ? current.date : entryDate, time: current.id ? current.time : entryTime })); }} onUpdateAnswer={updateAnswer} sleepContext={sleepContext} /> : null}

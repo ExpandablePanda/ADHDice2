@@ -2,9 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { addMealFromLibraryFood, addMealFromParsedFood, calculateBatchIntakeMealNutrition, changeBatchIntakeFocusDraftGroup, createManualBatchIntakeDraft, createManualMealFood, createManualMealFoodFromProposal, duplicateManualBatchIntakeDraft, getBatchIntakeReviewGroups, parseBatchIntake, parseBatchIntakeDuration, reconcileBatchIntakeMealFoodProposals, resolveBatchIntakeMealFoodProposal, updateBatchIntakeFocusCategory, updateBatchIntakeFocusTitle } from "../src/lib/home-batch-intake.ts";
-import { applyBatchIntakeTaskMatches, getBatchIntakeTaskCandidates, getBatchIntakeTaskMatchState } from "../src/lib/home-batch-intake-matching.ts";
+import { applyBatchIntakeTaskMatches, getBatchIntakeTaskCandidates, getBatchIntakeTaskMatch, getBatchIntakeTaskMatchState, setBatchIntakeTaskSelection } from "../src/lib/home-batch-intake-matching.ts";
 import { buildBatchIntakeExecutionPlan, executeBatchIntakePlan, getBatchIntakeApplyCount, isBatchIntakeMealFoodDraftReady, mergeBatchIntakeExecutionResults } from "../src/lib/home-batch-intake-executor.ts";
 import { buildHealthMealEntryInputFromSelection, mealFoodSelectionFromLibraryItem } from "../src/lib/health-meal-draft.ts";
+import { getBatchIntakeMealFoodMatch } from "../src/lib/home-batch-intake-food-matching.ts";
 import { getHealthFoodMeasurementOptions } from "../src/lib/health-nutrition.ts";
 import type { HealthFoodLibraryItem, Task } from "../src/lib/database.types.ts";
 import type { FocusCategory } from "../src/lib/types.ts";
@@ -397,6 +398,166 @@ const cinnamonToastCrunch = {
   provider_item_id: "provider-cinnamon-toast-crunch",
 } satisfies HealthFoodLibraryItem;
 
+function customFood(id: string, food_name: string, brand_name: string | null = null, is_favorite = false) {
+  return { ...libraryFood, id, food_name, brand_name, is_favorite, provider_item_id: id } satisfies HealthFoodLibraryItem;
+}
+
+test("Meal food matcher keeps exact names first and safely normalizes case, spacing, and punctuation", () => {
+  const food = customFood("granola", "Nature's Valley Granola");
+  assert.deepEqual(getBatchIntakeMealFoodMatch("  NATURE'S   VALLEY GRANOLA ", [food]).state, "unique_exact");
+  const punctuation = getBatchIntakeMealFoodMatch("Natures-Valley Granola", [food]);
+  assert.equal(punctuation.state, "unique_normalized");
+  assert.equal(punctuation.selectedFoodId, food.id);
+});
+
+test("Meal food matcher resolves explicit brand and safely recognized embedded brand names", () => {
+  const branded = customFood("branded-granola", "Honey Oat Granola", "Acme", false);
+  const explicitBrand = getBatchIntakeMealFoodMatch("ACME honey oat granola", [branded]);
+  assert.equal(explicitBrand.state, "unique_normalized");
+  assert.equal(explicitBrand.selectedFoodId, branded.id);
+
+  const embeddedBrand = customFood("embedded-brand-granola", "Acme Honey Oat Granola", "Acme", false);
+  const brandless = getBatchIntakeMealFoodMatch("Honey Oat Granola", [embeddedBrand]);
+  assert.equal(brandless.state, "unique_normalized");
+  assert.equal(brandless.selectedFoodId, embeddedBrand.id);
+});
+
+test("Meal food matcher keeps same-name records ambiguous across brands", () => {
+  const foods = [customFood("granola-a", "Honey Oat Granola", "Acme"), customFood("granola-b", "Honey Oat Granola", "North Farm")];
+  const result = getBatchIntakeMealFoodMatch("Honey Oat Granola", foods);
+  assert.equal(result.state, "multiple_exact");
+  assert.equal(result.selectedFoodId, null);
+  assert.deepEqual(new Set(result.candidates.map(({ food }) => food.id)), new Set(foods.map(({ id }) => id)));
+
+  const equivalentNames = [customFood("granola-embedded", "Acme Honey-Oat Granola"), customFood("granola-separated", "Honey Oat Granola", "Acme")];
+  const equivalent = getBatchIntakeMealFoodMatch("Acme Honey Oat Granola", equivalentNames);
+  assert.equal(equivalent.state, "multiple_normalized");
+  assert.equal(equivalent.selectedFoodId, null);
+});
+
+test("Meal food matcher preserves percentages, varieties, sugar-free, fat, flavor, and product-number modifiers", () => {
+  const foods = [
+    customFood("milk-two-percent", "2% Milk"),
+    customFood("milk-two", "2 Milk"),
+    customFood("yogurt-strawberry", "Strawberry Yogurt"),
+    customFood("yogurt-vanilla", "Vanilla Yogurt"),
+    customFood("soda-diet", "Diet Orange Soda"),
+    customFood("soda-sugar-free", "Sugar Free Orange Soda"),
+    customFood("chips-spicy-14", "Spicy Chips #14"),
+    customFood("chips-spicy-15", "Spicy Chips #15"),
+  ];
+  assert.equal(getBatchIntakeMealFoodMatch("2 milk", foods).selectedFoodId, "milk-two");
+  assert.equal(getBatchIntakeMealFoodMatch("2% milk", foods).selectedFoodId, "milk-two-percent");
+  for (const query of ["yogurt", "orange soda", "spicy chips"]) {
+    assert.equal(getBatchIntakeMealFoodMatch(query, foods).selectedFoodId, null, query);
+  }
+});
+
+test("Meal food suggestions rank partial, brand-fragment, reordered, and one-character typo matches without selecting", () => {
+  const strawberry = customFood("strawberry-yogurt", "Strawberry Yogurt", "Acme");
+  const result = getBatchIntakeMealFoodMatch("yogurt strawberry", [strawberry]);
+  assert.equal(result.state, "no_exact");
+  assert.equal(result.selectedFoodId, null);
+  assert.equal(result.candidates[0]?.matchKind, "reordered");
+
+  const typo = getBatchIntakeMealFoodMatch("strawbery yogurt", [strawberry]);
+  assert.equal(typo.state, "no_exact");
+  assert.equal(typo.selectedFoodId, null);
+  assert.equal(typo.candidates[0]?.matchKind, "typo");
+
+  const partial = getBatchIntakeMealFoodMatch("strawberry", [strawberry]);
+  assert.equal(partial.selectedFoodId, null);
+  assert.equal(partial.candidates[0]?.matchKind, "partial");
+
+  const partialWord = getBatchIntakeMealFoodMatch("strawb yogurt", [strawberry]);
+  assert.equal(partialWord.selectedFoodId, null);
+  assert.equal(partialWord.candidates[0]?.matchKind, "partial");
+
+  const brandFragment = getBatchIntakeMealFoodMatch("acm strawberry", [strawberry]);
+  assert.equal(brandFragment.selectedFoodId, null);
+  assert.equal(brandFragment.candidates[0]?.matchKind, "brand");
+});
+
+test("Meal food suggestions rank ice/iced variants with saved descriptors for explicit review", () => {
+  const icedTeaMix = customFood("4c-iced-tea-mix", "4C Iced Tea Mix");
+  const lemonIcedTea = customFood("4c-lemon-iced-tea", "4C Lemon Iced Tea Mix");
+  const peachIcedTea = customFood("4c-peach-iced-tea", "4C Peach Iced Tea Mix");
+  const fourDIcedTea = customFood("4d-iced-tea", "4D Iced Tea Mix");
+  const varieties = [icedTeaMix, lemonIcedTea, peachIcedTea, fourDIcedTea];
+
+  for (const query of ["4c ice tea", "4c iced tea"]) {
+    const result = getBatchIntakeMealFoodMatch(query, varieties);
+    assert.equal(result.state, "no_exact", query);
+    assert.equal(result.selectedFoodId, null, query);
+    assert.equal(result.candidates[0]?.food.id, icedTeaMix.id, query);
+    assert.equal(result.candidates[0]?.matchKind, "partial", query);
+    assert.ok((result.candidates[0]?.score ?? 0) >= 90, query);
+    assert.deepEqual(
+      new Set(result.candidates.map(({ food }) => food.id)),
+      new Set([icedTeaMix.id, lemonIcedTea.id, peachIcedTea.id]),
+      query,
+    );
+  }
+
+  const exactName = getBatchIntakeMealFoodMatch("4C Iced Tea Mix", varieties);
+  assert.equal(exactName.state, "unique_exact");
+  assert.equal(exactName.selectedFoodId, icedTeaMix.id);
+
+  const shortIdentifierMismatch = getBatchIntakeMealFoodMatch("4c ice tea", [fourDIcedTea]);
+  assert.equal(shortIdentifierMismatch.candidates.length, 0);
+  assert.equal(shortIdentifierMismatch.selectedFoodId, null);
+
+  const unrelated = getBatchIntakeMealFoodMatch("4c ice tea", [customFood("orange-juice", "Orange Juice")]);
+  assert.equal(unrelated.selectedFoodId, null);
+});
+
+test("Meal food matcher suggests an exact short brand with an ice/iced food-name variation", () => {
+  const splitBrandFood = customFood("4c-brand-iced-tea", "Iced Tea Mix", "4C");
+
+  for (const query of ["4c ice tea", "4c iced tea"]) {
+    const result = getBatchIntakeMealFoodMatch(query, [splitBrandFood]);
+    assert.equal(result.state, "no_exact", query);
+    assert.equal(result.selectedFoodId, null, query);
+    assert.equal(result.candidates[0]?.food.id, splitBrandFood.id, query);
+    assert.equal(result.candidates[0]?.matchKind, "partial", query);
+    assert.ok((result.candidates[0]?.score ?? 0) >= 90, query);
+  }
+
+  const fullName = getBatchIntakeMealFoodMatch("4c iced tea mix", [splitBrandFood]);
+  assert.equal(fullName.state, "unique_normalized");
+  assert.equal(fullName.selectedFoodId, splitBrandFood.id);
+});
+
+test("split short brands keep tea flavors and varieties distinct and reject a different identifier", () => {
+  const mix = customFood("4c-split-mix", "Iced Tea Mix", "4C");
+  const diet = customFood("4c-split-diet", "Diet Iced Tea Mix", "4C");
+  const lemon = customFood("4c-split-lemon", "Lemon Iced Tea Mix", "4C");
+  const peach = customFood("4c-split-peach", "Peach Iced Tea Mix", "4C");
+  const fourD = customFood("4d-split-mix", "Iced Tea Mix", "4D");
+  const foods = [mix, diet, lemon, peach, fourD];
+
+  const result = getBatchIntakeMealFoodMatch("4c ice tea", foods);
+  assert.equal(result.state, "no_exact");
+  assert.equal(result.selectedFoodId, null);
+  assert.equal(result.candidates[0]?.food.id, mix.id);
+  assert.deepEqual(
+    new Set(result.candidates.map(({ food }) => food.id)),
+    new Set([mix.id, diet.id, lemon.id, peach.id]),
+  );
+});
+
+test("Meal reconciliation keeps partial Custom Food suggestions in explicit review", () => {
+  const parsed = parseBatchIntake("10/3\nb: 4c ice tea", { referenceDate: "2026-10-03" });
+  const icedTeaMix = customFood("4c-iced-tea-mix", "4C Iced Tea Mix");
+  const reconciled = reconcileBatchIntakeMealFoodProposals(parsed, [icedTeaMix]);
+  const proposal = reconciled.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+
+  assert.ok(proposal);
+  assert.equal(proposal.proposedFoodName, "4c ice tea");
+  assert.ok(proposal.issues.includes("Suggested Custom Food matches require explicit review"));
+  assert.equal(reconciled.some((draft) => draft.kind === "meal" && draft.entryMode === "food"), false);
+});
+
 test("custom food selection preserves canonical identity and parsed Meal derivation stays one row per food", () => {
   const selection = mealFoodSelectionFromLibraryItem(libraryFood);
   assert.deepEqual({ sourceFoodId: selection.sourceFoodId, provider: selection.provider, providerItemId: selection.providerItemId, calories: selection.calories, protein: selection.protein, carbs: selection.carbs, fat: selection.fat, servingLabel: selection.servingLabel }, { sourceFoodId: "food-turkey-bacon", provider: "custom", providerItemId: "provider-turkey-bacon", calories: 60, protein: 5, carbs: 1, fat: 4, servingLabel: "3 slices" });
@@ -434,6 +595,7 @@ test("Meal proposal correction resolves the same child and preserves source evid
   const edited = { ...unresolved, proposedFoodName: "milk", proposedQuantity: 180, proposedUnit: "ml" };
   const resolved = resolveBatchIntakeMealFoodProposal(edited, occurrence, milkFood, { writeId: edited.writeId ?? "milk-proposal-write" });
   const replaced = initial.map((draft) => draft.id === edited.id ? resolved : draft);
+  const reconciledAgain = reconcileBatchIntakeMealFoodProposals(replaced, [cinnamonToastCrunch, milkFood]);
 
   assert.equal(resolved.id, edited.id);
   assert.equal(resolved.writeId, "milk-proposal-write");
@@ -446,6 +608,24 @@ test("Meal proposal correction resolves the same child and preserves source evid
   assert.equal(calculateBatchIntakeMealNutrition(resolved)?.consumed.quantity, 180);
   assert.equal(replaced.filter((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal").length, 0);
   assert.equal(replaced.filter((draft) => draft.kind === "meal" && draft.entryMode === "food").length, 2);
+  assert.deepEqual(reconciledAgain.filter((draft) => draft.kind === "meal" && draft.entryMode === "food").map((draft) => [draft.id, draft.writeId]), replaced.filter((draft) => draft.kind === "meal" && draft.entryMode === "food").map((draft) => [draft.id, draft.writeId]));
+});
+
+test("user-corrected Meal proposals remain reviewable and are not auto-replaced by later matching", () => {
+  const parsed = parseBatchIntake("10/3\nb: cereal", { referenceDate: "2026-10-03" });
+  const corrected = parsed.map((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal"
+    ? { ...draft, proposedFoodName: "Cinnamon Toast Crunch", proposedQuantity: 2, proposedUnit: "cups", userCorrected: true, writeId: "corrected-write" }
+    : draft);
+  const reconciled = reconcileBatchIntakeMealFoodProposals(corrected, [cinnamonToastCrunch]);
+  const proposal = reconciled.find((draft): draft is Extract<typeof draft, { kind: "meal"; entryMode: "food_proposal" }> => draft.kind === "meal" && draft.entryMode === "food_proposal");
+  assert.ok(proposal);
+  assert.equal(proposal.proposedFoodName, "Cinnamon Toast Crunch");
+  assert.equal(proposal.proposedQuantity, 2);
+  assert.equal(proposal.proposedUnit, "cups");
+  assert.equal(proposal.id, corrected.find((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")?.id);
+  assert.equal(proposal.writeId, "corrected-write");
+  assert.equal(proposal.issues.includes("Corrected food name requires explicit Custom Food selection"), true);
+  assert.equal(reconciled.filter((draft) => draft.kind === "meal" && draft.entryMode === "food").length, 0);
 });
 
 test("resolved Meal proposals derive custom consumed units, preserve quantity, and keep one child", () => {
@@ -592,6 +772,7 @@ test("Meal proposal manual fallback keeps corrected interpretation and raw sourc
   assert.ok(occurrence && proposal);
   const edited = { ...proposal, proposedFoodName: "milk", proposedQuantity: 180, proposedUnit: "ml", writeId: "manual-proposal-write" };
   const manual = createManualMealFoodFromProposal(occurrence, edited, { writeId: edited.writeId });
+  const manuallyResolved = reconcileBatchIntakeMealFoodProposals([...parsed.filter((draft) => draft.id !== proposal.id), manual], [milkFood]);
 
   assert.equal(manual.id, proposal.id);
   assert.equal(manual.writeId, "manual-proposal-write");
@@ -604,6 +785,12 @@ test("Meal proposal manual fallback keeps corrected interpretation and raw sourc
   assert.equal(manual.sourceParsedMealId, occurrence.id);
   assert.equal(manual.included, proposal.included);
   assert.equal(manual.foodMode, "manual");
+  assert.equal(manuallyResolved.filter((draft) => draft.kind === "meal" && draft.entryMode === "food" && draft.foodMode === "manual").length, 1);
+  const retainedManual = manuallyResolved.find((draft) => draft.id === proposal.id);
+  assert.equal(retainedManual?.kind, "meal");
+  assert.equal(retainedManual?.kind === "meal" ? retainedManual.entryMode : null, "food");
+  assert.equal(retainedManual?.kind === "meal" && retainedManual.entryMode === "food" ? retainedManual.foodMode : null, "manual");
+  assert.equal(manuallyResolved.filter((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal").length, 0);
 });
 
 test("corrected Meal proposal units still use canonical compatibility validation", () => {
@@ -772,6 +959,109 @@ test("matching auto-selects one exact Task, preserves duplicates for review, and
   assert.equal((matched[2] as Extract<typeof matched[number], { kind: "task" }>).selectedTaskId, null);
   const archived = applyBatchIntakeTaskMatches(parseBatchIntake("10/2\ntasks\nArchived Task", { referenceDate: "2026-10-03" }), tasks)[0];
   assert.equal(archived.kind === "task" ? archived.selectedTaskId : "unexpected", "archived");
+});
+
+test("Task shorthand applies an explicit shared trailing outcome and preserves item overrides", () => {
+  const source = "t: NBA 2K27, ADHDice, Magic The Practicing, PANDOPLY, Pills am, Wolverine, Animal Control, Spy Family, Dishes, Brush Teeth PM - done";
+  const drafts = parseBatchIntake(source, { referenceDate: "2026-10-03" });
+  const tasks = drafts.filter((draft): draft is Extract<typeof draft, { kind: "task" }> => draft.kind === "task");
+
+  assert.equal(tasks.length, 10);
+  assert.deepEqual(tasks.map((draft) => draft.taskTitle), ["NBA 2K27", "ADHDice", "Magic The Practicing", "PANDOPLY", "Pills am", "Wolverine", "Animal Control", "Spy Family", "Dishes", "Brush Teeth PM"]);
+  assert.ok(tasks.every((draft) => draft.outcome === "done"));
+  assert.ok(tasks.every((draft) => draft.date === null && draft.issues.includes("Missing date heading")));
+
+  const aliasCases = [
+    ["Done", "done"],
+    ["DMB", "did_my_best"],
+    ["Did My Best", "did_my_best"],
+    ["Missed", "missed"],
+  ] as const;
+  for (const [alias, outcome] of aliasCases) {
+    const shared = parseBatchIntake(`10/2\nt: Alpha, Beta - ${alias}`, { referenceDate: "2026-10-03" }).filter((draft) => draft.kind === "task");
+    assert.deepEqual(shared.map((draft) => draft.kind === "task" ? draft.outcome : null), [outcome, outcome]);
+  }
+
+  const overrides = parseBatchIntake("10/2\nt: Alpha missed, Beta dmb, Gamma missed - done", { referenceDate: "2026-10-03" }).filter((draft) => draft.kind === "task");
+  assert.deepEqual(overrides.map((draft) => draft.kind === "task" ? [draft.taskTitle, draft.outcome] : null), [
+    ["Alpha", "missed"],
+    ["Beta", "did_my_best"],
+    ["Gamma", "missed"],
+  ]);
+
+  const quotedComma = parseBatchIntake('10/2\nt: "Call Smith, Jr.", Dishes - done', { referenceDate: "2026-10-03" }).filter((draft) => draft.kind === "task");
+  assert.deepEqual(quotedComma.map((draft) => draft.kind === "task" ? [draft.taskTitle, draft.outcome] : null), [
+    ["Call Smith, Jr.", "done"],
+    ["Dishes", "done"],
+  ]);
+
+  const ordinaryTrailingWord = parseBatchIntake("10/2\nt: Alpha, Beta done", { referenceDate: "2026-10-03" }).filter((draft) => draft.kind === "task");
+  assert.deepEqual(ordinaryTrailingWord.map((draft) => draft.kind === "task" ? [draft.taskTitle, draft.outcome] : null), [
+    ["Alpha", null],
+    ["Beta", "done"],
+  ]);
+});
+
+test("shared Task outcomes preserve single-Task multi-date and ambiguous mixed expressions", () => {
+  const single = parseBatchIntake("t: NBA 2K - Done 9/27 9/28", { referenceDate: "2026-10-03" }).filter((draft) => draft.kind === "task");
+  assert.deepEqual(single.map((draft) => draft.kind === "task" ? [draft.taskTitle, draft.outcome, draft.date] : null), [
+    ["NBA 2K", "done", "2026-09-27"],
+    ["NBA 2K", "done", "2026-09-28"],
+  ]);
+
+  const mixed = parseBatchIntake("10/2\nt: NBA 2K - Done 9/27 9/28, Unmarked, Explicit - done", { referenceDate: "2026-10-03" }).filter((draft) => draft.kind === "task");
+  assert.deepEqual(mixed.map((draft) => draft.kind === "task" ? [draft.taskTitle, draft.outcome, draft.date] : null), [
+    ["NBA 2K", "done", "2026-09-27"],
+    ["NBA 2K", "done", "2026-09-28"],
+    ["Unmarked", null, "2026-10-02"],
+    ["Explicit", "done", "2026-10-02"],
+  ]);
+});
+
+test("Task punctuation fallback is unambiguous, shared by review selection, and keeps execution IDs canonical", () => {
+  const tasks = [
+    { id: "pills-am", title: "Pills (AM)", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "pills-pm", title: "Pills (PM)", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "brush-pm", title: "Brush Teeth (PM)", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "magic", title: "Magic: The Practicing", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "call-colon", title: "Call: the Dog", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "call-dash", title: "Call - the Dog", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+  ] as unknown as Task[];
+  const sourceTitles = tasks.map((task) => task.title);
+  const parsed = parseBatchIntake("10/2\nt: pills am done, pills pm done, Brush Teeth PM done, Magic The Practicing done, Call the Dog done, Unknown Task done", { referenceDate: "2026-10-03" });
+  const matched = applyBatchIntakeTaskMatches(parsed, tasks);
+  const taskDrafts = matched.filter((draft): draft is Extract<typeof draft, { kind: "task" }> => draft.kind === "task");
+  const byTitle = new Map(taskDrafts.map((draft) => [draft.taskTitle, draft]));
+
+  assert.equal(byTitle.get("pills am")?.selectedTaskId, "pills-am");
+  assert.equal(byTitle.get("pills pm")?.selectedTaskId, "pills-pm");
+  assert.equal(byTitle.get("Brush Teeth PM")?.selectedTaskId, "brush-pm");
+  assert.equal(byTitle.get("Magic The Practicing")?.selectedTaskId, "magic");
+  assert.equal(byTitle.get("Call the Dog")?.selectedTaskId, null);
+  assert.match(byTitle.get("Call the Dog")?.issues.join(" ") ?? "", /Multiple punctuation-normalized/);
+  assert.equal(byTitle.get("Unknown Task")?.selectedTaskId, null);
+  assert.match(byTitle.get("Unknown Task")?.issues.join(" ") ?? "", /no exact match/);
+  assert.deepEqual(tasks.map((task) => task.title), sourceTitles);
+
+  const exactPrecedence = getBatchIntakeTaskMatch("pills am", [
+    { id: "exact", title: "Pills am", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+    { id: "punctuation", title: "Pills (AM)", parent_task_id: null, status: "pending", permanently_deleted_at: null },
+  ] as unknown as Task[]);
+  assert.equal(exactPrecedence.state, "unique_exact");
+  assert.equal(exactPrecedence.selectedTaskId, "exact");
+
+  const ambiguous = byTitle.get("Call the Dog")!;
+  const reviewCandidates = getBatchIntakeTaskCandidates("Call the Dog", tasks);
+  assert.deepEqual(reviewCandidates.map(({ task }) => task.id), ["call-colon", "call-dash"]);
+  const manuallySelected = setBatchIntakeTaskSelection(ambiguous, "call-colon", tasks);
+  assert.equal(manuallySelected.selectedTaskId, "call-colon");
+  assert.equal(manuallySelected.issues.some((issue) => issue.includes("punctuation-normalized")), false);
+  assert.equal(manuallySelected.taskTitle, "Call the Dog");
+
+  const plan = buildBatchIntakeExecutionPlan(matched.map((draft) => draft.id === ambiguous.id ? manuallySelected : draft));
+  assert.equal(plan.taskGroups.length, 5);
+  assert.deepEqual(plan.taskGroups.map((group) => group.taskId).sort(), ["brush-pm", "call-colon", "magic", "pills-am", "pills-pm"]);
+  assert.ok(plan.taskGroups.every((group) => group.outcome === "done" && group.dates.length === 1 && group.dates[0] === "2026-10-02" && group.rowIds.length === 1));
 });
 
 test("Task candidates expose root hierarchy, canonical Folder paths, archive state, and safe cycle handling", () => {

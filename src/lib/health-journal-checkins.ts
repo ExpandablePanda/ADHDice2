@@ -15,10 +15,13 @@ import type {
 } from "@/lib/database.types";
 import {
   formatHealthSleepDuration,
+  formatHealthJournalDate,
+  formatHealthStandardTime,
   formatHealthTimestampDate,
   formatHealthTimestampTime,
   getHealthSleepStartTimestamp,
   getSleepFocusSessions,
+  normalizeHealthMealTime,
   shiftHealthDate,
 } from "@/lib/health-utils";
 import type { FocusCategory, HistoricalFocusSession } from "@/lib/types";
@@ -53,6 +56,7 @@ export type HealthJournalOccurrenceDisplay = {
   score: number;
   denominator: number;
   occurredAt: string;
+  timeIsEstimated?: boolean;
 };
 
 export function normalizeHealthJournalEntryType(value: unknown): HealthJournalEntryType {
@@ -83,6 +87,59 @@ function normalizeQuestionText(value: unknown) {
 function normalizeQuestionOptions(value: unknown) {
   if (!Array.isArray(value)) return [];
   return [...new Set(value.filter((option): option is string => typeof option === "string").map(normalizeQuestionText).filter(Boolean))];
+}
+
+export function normalizeHealthJournalDate(value: unknown) {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
+  const date = new Date(`${value}T12:00:00`);
+  if (!Number.isFinite(date.getTime())) return null;
+  const [year, month, day] = value.split("-").map((part) => Number.parseInt(part, 10));
+  return date.getFullYear() === year && date.getMonth() + 1 === month && date.getDate() === day ? value : null;
+}
+
+export function normalizeHealthJournalEventEnd({
+  endDate,
+  endTime,
+  startDate,
+  startTime,
+}: {
+  endDate: string;
+  endTime: string;
+  startDate: string;
+  startTime: string;
+}) {
+  const hasEndDate = endDate.trim().length > 0;
+  const hasEndTime = endTime.trim().length > 0;
+  const normalizedEndDate = normalizeHealthJournalDate(endDate);
+  const normalizedEndTime = normalizeHealthMealTime(endTime);
+  if (hasEndDate && !normalizedEndDate) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event end date." };
+  }
+  if (hasEndTime && !normalizedEndTime) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event end time." };
+  }
+  if (!hasEndTime) {
+    return hasEndDate
+      ? { endDate: null, endTime: null, error: "Choose an Event end time or clear the end date." }
+      : { endDate: null, endTime: null, error: null };
+  }
+  if (!normalizedEndTime) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event end time." };
+  }
+
+  const normalizedStartDate = normalizeHealthJournalDate(startDate);
+  const normalizedStartTime = normalizeHealthMealTime(startTime);
+  const effectiveEndDate = normalizedEndDate ?? normalizedStartDate;
+  if (!effectiveEndDate) {
+    return { endDate: null, endTime: null, error: "Choose a valid Event start date before adding an end time." };
+  }
+  if (normalizedStartDate && effectiveEndDate < normalizedStartDate) {
+    return { endDate: null, endTime: null, error: "Event end date must be the start date or a later date." };
+  }
+  if (normalizedStartDate && normalizedStartTime && effectiveEndDate === normalizedStartDate && normalizedEndTime < normalizedStartTime) {
+    return { endDate: null, endTime: null, error: "Choose a later Event end date for an end time earlier than the start." };
+  }
+  return { endDate: effectiveEndDate, endTime: normalizedEndTime, error: null };
 }
 
 export function normalizeHealthJournalCustomQuestions(value: unknown): HealthJournalCustomQuestion[] {
@@ -150,6 +207,16 @@ export function normalizeHealthJournalStructuredAnswers(value: unknown): HealthJ
     : [];
   const normalizedRecord = { ...record };
   delete normalizedRecord.linked_event_ids;
+  if ("event_end_date" in record || "event_end_time" in record) {
+    normalizedRecord.event_end_date = normalizeHealthJournalDate(record.event_end_date);
+    normalizedRecord.event_end_time = normalizeHealthMealTime(typeof record.event_end_time === "string" ? record.event_end_time : "") ?? null;
+  }
+  if ("event_start_time_estimated" in record) {
+    normalizedRecord.event_start_time_estimated = record.event_start_time_estimated === true;
+  }
+  if ("event_end_time_estimated" in record) {
+    normalizedRecord.event_end_time_estimated = record.event_end_time_estimated === true;
+  }
   return {
     ...normalizedRecord,
     custom_answers: customAnswers,
@@ -202,24 +269,76 @@ function formatHealthJournalOccurrenceDateTime(occurredAt: string) {
   return date && time ? `${date} · ${time}` : "Time unavailable";
 }
 
+function markHealthJournalDateTimeEstimated(dateTime: string) {
+  const separator = " · ";
+  const separatorIndex = dateTime.indexOf(separator);
+  return separatorIndex >= 0
+    ? `${dateTime.slice(0, separatorIndex)}${separator}~${dateTime.slice(separatorIndex + separator.length)}`
+    : `~${dateTime}`;
+}
+
+function formatHealthJournalEventBoundary(date: unknown, time: unknown, isEstimated: boolean) {
+  const normalizedDate = normalizeHealthJournalDate(date);
+  const normalizedTime = normalizeHealthMealTime(typeof time === "string" ? time : "");
+  if (!normalizedDate || !normalizedTime) return null;
+  const displayTime = formatHealthStandardTime(normalizedTime) ?? normalizedTime;
+  return `${formatHealthJournalDate(normalizedDate)} · ${isEstimated ? "~" : ""}${displayTime}`;
+}
+
+export function formatHealthJournalEventInterval({
+  endDate,
+  endTime,
+  endTimeEstimated = false,
+  startDate,
+  startTime,
+  startTimeEstimated = false,
+}: {
+  endDate?: unknown;
+  endTime?: unknown;
+  endTimeEstimated?: boolean;
+  startDate: unknown;
+  startTime: unknown;
+  startTimeEstimated?: boolean;
+}) {
+  const start = formatHealthJournalEventBoundary(startDate, startTime, startTimeEstimated);
+  if (!start) return null;
+  const end = formatHealthJournalEventBoundary(endDate, endTime, endTimeEstimated);
+  return end ? `${start} → ${end}` : start;
+}
+
+export function sortHealthJournalOccurrenceRows<T extends { occurredAt: string; draftKey?: string; id?: string; key?: string }>(rows: readonly T[]) {
+  return [...rows].sort((left, right) => {
+    const leftTimestamp = Date.parse(left.occurredAt);
+    const rightTimestamp = Date.parse(right.occurredAt);
+    const leftTime = Number.isFinite(leftTimestamp) ? leftTimestamp : Number.MAX_SAFE_INTEGER;
+    const rightTime = Number.isFinite(rightTimestamp) ? rightTimestamp : Number.MAX_SAFE_INTEGER;
+    return leftTime - rightTime
+      || (left.id ?? left.draftKey ?? left.key ?? "").localeCompare(right.id ?? right.draftKey ?? right.key ?? "");
+  });
+}
+
 export function formatHealthJournalOccurrenceReference({
   name,
   occurredAt,
   score,
   signal,
+  timeIsEstimated = false,
 }: {
   name: string;
   occurredAt: string;
   score: number;
   signal?: Pick<HealthJournalSignal, "scale_labels"> | null;
+  timeIsEstimated?: boolean;
 }) {
-  return `${name} (${score}/${getHealthJournalScaleDenominator(signal)}) · ${formatHealthJournalOccurrenceDateTime(occurredAt)}`;
+  const dateTime = formatHealthJournalOccurrenceDateTime(occurredAt);
+  return `${name} (${score}/${getHealthJournalScaleDenominator(signal)}) · ${timeIsEstimated && dateTime !== "Time unavailable" ? markHealthJournalDateTimeEstimated(dateTime) : dateTime}`;
 }
 
 export function getHealthJournalOccurrenceDisplay(
   occurrence: HealthJournalOccurrenceDisplay,
 ) {
-  return `${occurrence.name} (${occurrence.score}/${occurrence.denominator}) · ${formatHealthJournalOccurrenceDateTime(occurrence.occurredAt)}`;
+  const dateTime = formatHealthJournalOccurrenceDateTime(occurrence.occurredAt);
+  return `${occurrence.name} (${occurrence.score}/${occurrence.denominator}) · ${occurrence.timeIsEstimated && dateTime !== "Time unavailable" ? markHealthJournalDateTimeEstimated(dateTime) : dateTime}`;
 }
 
 export function findRelevantHealthSleepContext({

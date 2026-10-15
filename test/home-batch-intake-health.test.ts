@@ -58,11 +58,11 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.match(reviewSource, /OperationProgressBar/);
   assert.match(reviewSource, /Applying Batch Intake/);
   assert.match(reviewSource, /applyProgress\.processed/);
-  assert.match(appSource, /activePage === "Health" \|\| batchIntakeHealthActive/);
+  assert.match(appSource, /isMasterPanelPageActive\("Health"\) \|\| batchIntakeHealthActive/);
   assert.match(appSource, /onBatchIntakeHealthActivationChange=\{setBatchIntakeHealthActive\}/);
   assert.match(appSource, /<TaskHomePage[\s\S]*taskContentFolders=\{taskContentFolders\}/);
   assert.match(appSource, /batchIntakeFocusActive/);
-  assert.match(appSource, /activePage === "Focus" \|\| activePage === "Stats" \|\| activePage === "Health" \|\| batchIntakeFocusActive/);
+  assert.match(appSource, /isMasterPanelPageActive\("Focus"\) \|\| isMasterPanelPageActive\("Stats"\) \|\| isMasterPanelPageActive\("Health"\) \|\| batchIntakeFocusActive/);
   assert.match(appSource, /onBatchIntakeFocusActivationChange=\{setBatchIntakeFocusActive\}/);
   assert.match(reviewSource, /\+ \{kind === "task"/);
   assert.match(reviewSource, /Meals review-only/);
@@ -99,6 +99,19 @@ test("Home batch intake keeps Scratchpad source text separate and activates Heal
   assert.doesNotMatch(reviewSource, /text-\[11px\]/);
   assert.match(reviewSource, /Parsed: \$\{details\} · line/);
   assert.match(reviewSource, /taskContentFolders=\{taskContentFolders\}/);
+});
+
+test("Meal reconciliation waits for the complete lazy-loaded Custom Food Library", () => {
+  const libraryRead = healthSource.slice(healthSource.indexOf('client.from("adhdice_health_food_library")'), healthSource.indexOf('client.from("adhdice_health_recipes")'));
+  assert.match(libraryRead, /\.eq\("user_id", userId\)/);
+  assert.doesNotMatch(libraryRead, /\.eq\("is_favorite"/);
+  assert.match(healthSource, /hasLoadedFoodLibrary: Boolean\(userId && foodLibraryLoadedUserIdRef\.current === userId && healthSnapshotRef\.current\?\.profile\.user_id === userId\)/);
+  assert.match(appSource, /hasLoadedFoodLibrary: hasLoadedHealthFoodLibrary/);
+  assert.match(appSource, /healthFoodLibraryReady=\{hasLoadedHealthFoodLibrary\}/);
+  assert.match(homeSource, /!healthFoodLibraryReady \|\| !batchIntakeDrafts\.some/);
+  assert.match(homeSource, /\[batchIntakeDrafts, healthFoods, healthFoodLibraryReady\]/);
+  assert.match(reviewSource, /Loading saved Custom Food Library/);
+  assert.match(reviewSource, /getBatchIntakeMealFoodMatch\(searchValue, foods\)/);
 });
 
 test("cumulative Applied results back every supported row lock", () => {

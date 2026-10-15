@@ -69,9 +69,30 @@ t: nba 2k done, adhdice dmb, wolverine
 
 Outcome aliases are `done`, `dmb`, `did my best`, and `missed`. An unmarked
 Task has No change; it is not executable until reviewed and changed. Task
-matching uses canonical exact-match rules: one unique exact match can be
-selected automatically, while multiple exact matches and no exact match remain
-Needs Review. Fuzzy matches never auto-select and `t:` never creates a Task.
+matching first uses case- and whitespace-normalized exact matching. One unique
+exact match is selected automatically and takes precedence over any punctuation
+fallback. If there is no exact match, punctuation is treated as a word boundary
+and case, punctuation, and whitespace are normalized; only one
+unique normalized match is selected automatically. Multiple exact or
+normalized matches remain Needs Review until manually selected. Partial-name
+suggestions may appear in the review picker but never auto-select. Unknown Tasks
+remain Needs Review and `t:` never creates a Task. Matching preserves the
+canonical Task ID and title.
+
+A multi-item `t:` list may use a deliberate trailing ` - <outcome>` as a shared
+default for items without their own outcome:
+
+```text
+t: NBA 2K27, ADHDice, Pills am, Brush Teeth PM - done
+```
+
+The shared default accepts `Done`, `DMB`, `Did My Best`, and `Missed`.
+An item's explicit outcome overrides the shared default. A trailing ordinary
+word such as `done` does not set a list-wide default; without the deliberate
+` - ` separator, an outcome applies only to its own Task token. When the same
+list contains a multi-date Task expression, no shared default is inferred, so
+the existing multi-date interpretation is preserved. Quoted comma-containing
+Task titles continue to be treated as one item.
 
 ### Task multi-date history
 
@@ -184,11 +205,26 @@ units include `g`, `gram`, `grams`, `oz`, `ounce`, `ounces`, `ml`, `milliliter`,
 `servings`, plus stored Custom Food units such as `slice`, `slices`, `piece`,
 and `pieces`.
 
-Meal proposals are ephemeral review state, not Health rows. Once the lazy Health
-Custom Nutrition Library is available, exact normalized food-name matching may
-resolve a unique match. Multiple exact matches and no exact match remain review
-items; the user can select a Custom Food or use the manual-food fallback. The
-raw source token, requested quantity, and requested unit remain visible.
+Meal proposals are ephemeral review state, not Health rows. Reconciliation waits
+until the lazy-loaded, per-user Custom Nutrition Library is available; an
+unloaded library is not treated as empty. It considers all saved Custom Food
+records, including foods that are not marked favorite.
+
+A unique case- and whitespace-normalized `food_name` match has highest priority.
+If that does not resolve uniquely, safe normalized exact matching also accepts
+benign punctuation differences, an explicit `brand_name + food_name`, and a
+brand embedded at the start or end of `food_name` when saved brand metadata
+identifies it. Percentages and other meaningful name tokens remain part of the
+match, including varieties, diet/sugar-free labels, fat content, flavors, and
+product numbers. Multiple saved records with equivalent matching names remain
+in review even when their brands differ.
+
+Partial-name, brand-fragment, reordered-word, and one-character typo matches
+may appear as ranked review suggestions only; they never auto-resolve. Unknown
+foods remain review items, and users can explicitly select a saved Custom Food
+or use the manual-food fallback. User-corrected proposals stay in review until
+explicit selection. The raw source token, requested quantity, and requested
+unit remain visible.
 
 Explicit quantity and unit become the consumed quantity/unit. A unitless
 quantity adopts the uniquely matched Custom Food's stored serving unit; if no

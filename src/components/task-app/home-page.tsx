@@ -362,6 +362,7 @@ export function HomePage({
   onSetRoutineMembership,
   onReorderChildTask,
   onOpenTask,
+  onOpenJournal,
   onSetStatus,
   taskDisplayStatusByTaskId,
   dailyProgress,
@@ -394,6 +395,7 @@ export function HomePage({
   healthProfile,
   healthFoods,
   healthLoading,
+  healthFoodLibraryReady,
   addWaterEntries,
   addWeightEntries,
   addMealEntries,
@@ -412,6 +414,7 @@ export function HomePage({
   onSetRoutineMembership: (taskId: string, included: boolean) => Promise<boolean>;
   onReorderChildTask: (taskId: string, instruction: TaskSiblingReorderInstruction) => void;
   onOpenTask: (taskId: string) => void;
+  onOpenJournal: (entryType: "start_of_day" | "end_of_day") => void;
   onSetStatus: (task: Task, status: TaskStatus) => void;
   taskDisplayStatusByTaskId: TaskDisplayStatusByTaskId;
   dailyProgress: HomeDailyProgress;
@@ -444,6 +447,7 @@ export function HomePage({
   healthProfile: HealthProfile | null;
   healthFoods: HealthFoodLibraryItem[];
   healthLoading: boolean;
+  healthFoodLibraryReady: boolean;
   addWaterEntries: (inputs: Array<Omit<HealthWaterEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   addWeightEntries: (inputs: Array<Omit<HealthWeightEntryInsert, "user_id">>) => Promise<{ success: boolean; rows: Array<{ index: number; success: boolean; error?: string }>; error?: string }>;
   addMealEntries: (inputs: Array<Omit<HealthMealEntryInsert, "user_id">>) => Promise<BatchHealthWriteResult>;
@@ -529,9 +533,9 @@ export function HomePage({
   }, [batchIntakeDrafts, batchIntakeHasFocusRows, onBatchIntakeFocusActivationChange]);
 
   const effectiveBatchIntakeDrafts = useMemo(() => {
-    if (!batchIntakeDrafts || healthLoading || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
+    if (!batchIntakeDrafts || !healthFoodLibraryReady || !batchIntakeDrafts.some((draft) => draft.kind === "meal" && draft.entryMode === "food_proposal")) return batchIntakeDrafts;
     return reconcileBatchIntakeMealFoodProposals(batchIntakeDrafts, healthFoods, { createWriteId: (proposal) => proposal.writeId ?? createBrowserUuidV4() });
-  }, [batchIntakeDrafts, healthFoods, healthLoading]);
+  }, [batchIntakeDrafts, healthFoods, healthFoodLibraryReady]);
 
   useEffect(() => () => {
     if (longPressTimerRef.current) clearTimeout(longPressTimerRef.current);
@@ -1957,55 +1961,65 @@ export function HomePage({
                 >
                   {activeHomeTab === "urgent" ? "Urgent" : activeHomeTab === "todo" ? "To-do list" : activeHomeTab === "attention" ? "Attention" : activeHomeTab === "missed" ? "Missed" : activeHomeTab === "routine" ? "Routine" : "Scratchpad"}
                 </h1>
-                <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "urgent"}
-                    onClick={() => selectHomeTab("urgent")}
-                    role="tab"
-                    selected={activeHomeTab === "urgent"}
-                  >
-                    Urgent
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "todo"}
-                    onClick={() => selectHomeTab("todo")}
-                    role="tab"
-                    selected={activeHomeTab === "todo"}
-                  >
-                    To-do
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "attention"}
-                    onClick={() => selectHomeTab("attention")}
-                    role="tab"
-                    selected={activeHomeTab === "attention"}
-                  >
-                    Attention
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "missed"}
-                    onClick={() => selectHomeTab("missed")}
-                    role="tab"
-                    selected={activeHomeTab === "missed"}
-                  >
-                    Missed
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "routine"}
-                    onClick={() => selectHomeTab("routine")}
-                    role="tab"
-                    selected={activeHomeTab === "routine"}
-                  >
-                    Routine
-                  </AdhdChip>
-                  <AdhdChip
-                    aria-selected={activeHomeTab === "scratchpad"}
-                    onClick={() => selectHomeTab("scratchpad")}
-                    role="tab"
-                    selected={activeHomeTab === "scratchpad"}
-                  >
-                    Scratchpad
-                  </AdhdChip>
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <div aria-label="Home task view" className="flex flex-wrap gap-1.5" role="tablist">
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "urgent"}
+                      onClick={() => selectHomeTab("urgent")}
+                      role="tab"
+                      selected={activeHomeTab === "urgent"}
+                    >
+                      Urgent
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "todo"}
+                      onClick={() => selectHomeTab("todo")}
+                      role="tab"
+                      selected={activeHomeTab === "todo"}
+                    >
+                      To-do
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "attention"}
+                      onClick={() => selectHomeTab("attention")}
+                      role="tab"
+                      selected={activeHomeTab === "attention"}
+                    >
+                      Attention
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "missed"}
+                      onClick={() => selectHomeTab("missed")}
+                      role="tab"
+                      selected={activeHomeTab === "missed"}
+                    >
+                      Missed
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "routine"}
+                      onClick={() => selectHomeTab("routine")}
+                      role="tab"
+                      selected={activeHomeTab === "routine"}
+                    >
+                      Routine
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-selected={activeHomeTab === "scratchpad"}
+                      onClick={() => selectHomeTab("scratchpad")}
+                      role="tab"
+                      selected={activeHomeTab === "scratchpad"}
+                    >
+                      Scratchpad
+                    </AdhdChip>
+                  </div>
+                  <nav aria-label="Journal shortcuts" className="flex flex-wrap gap-1.5">
+                    <AdhdChip aria-label="Open Start of Day Journal" onClick={() => onOpenJournal("start_of_day")} type="button">
+                      Start of Day
+                    </AdhdChip>
+                    <AdhdChip aria-label="Open End of Day Journal" onClick={() => onOpenJournal("end_of_day")} type="button">
+                      End of Day
+                    </AdhdChip>
+                  </nav>
                 </div>
               </div>
             </div>
@@ -2138,6 +2152,7 @@ export function HomePage({
                 executionResult={batchIntakeExecutionResult}
                 healthLoading={healthLoading}
                 healthFoods={healthFoods}
+                healthFoodLibraryReady={healthFoodLibraryReady}
                 healthProfile={healthProfile}
                 isApplying={batchIntakeApplying}
                 focusCategories={focusCategories}

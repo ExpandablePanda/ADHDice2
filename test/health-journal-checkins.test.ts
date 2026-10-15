@@ -11,6 +11,7 @@ import {
   areHealthJournalDraftsEqual,
   buildHealthJournalCustomAnswer,
   buildHealthJournalSleepLink,
+  formatHealthJournalEventInterval,
   findRelevantHealthSleepContext,
   formatHealthJournalOccurrenceReference,
   getHealthJournalOccurrenceDisplay,
@@ -18,10 +19,13 @@ import {
   getHealthJournalEntryType,
   getHealthJournalScaleDenominator,
   normalizeHealthJournalCustomQuestions,
+  normalizeHealthJournalDate,
+  normalizeHealthJournalEventEnd,
   normalizeHealthJournalLinkedOccurrences,
   normalizeHealthJournalReframes,
   normalizeHealthJournalStructuredAnswers,
   normalizeHealthJournalWins,
+  sortHealthJournalOccurrenceRows,
 } from "../src/lib/health-journal-checkins.ts";
 import { formatHealthTimestampDate, formatHealthTimestampTime } from "../src/lib/health-utils.ts";
 
@@ -31,8 +35,10 @@ const summarySource = readFileSync(new URL("../src/components/task-app/journal-e
 const settingsSource = readFileSync(new URL("../src/components/task-app/journal-question-settings.tsx", import.meta.url), "utf8");
 const healthPageSource = readFileSync(new URL("../src/components/task-app/health-page.tsx", import.meta.url), "utf8");
 const healthHookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
+const pendingMutationSource = readFileSync(new URL("../src/lib/health-journal-pending-mutations.ts", import.meta.url), "utf8");
 const schemaSource = readFileSync(new URL("../supabase/schema.sql", import.meta.url), "utf8");
 const migrationSource = readFileSync(new URL("../supabase/add_health_journal_checkin_types_7_13_43.sql", import.meta.url), "utf8");
+const timeEstimatesMigrationSource = readFileSync(new URL("../supabase/add_health_journal_time_estimates_7_16_112.sql", import.meta.url), "utf8");
 
 test("Journal draft comparison releases reverted fields and distinguishes saved from new Feeling occurrences", () => {
   const emptyDraft = {
@@ -150,6 +156,77 @@ test("Journal entry types, legacy fallback, optional answers, paired rows, and w
   assert.deepEqual(normalizeHealthJournalWins(["Win one", "Win two", "Win three", "Win four", "Win five", "ignored"]), ["Win one", "Win two", "Win three", "Win four", "Win five"]);
 });
 
+test("Event timing fields validate independently, preserve legacy answers, and render estimated intervals", () => {
+  const legacy = normalizeHealthJournalStructuredAnswers({ event_description: "Legacy event" });
+  assert.equal("event_end_date" in legacy, false);
+  assert.equal(normalizeHealthJournalDate("2026-02-30"), null);
+  const normalized = normalizeHealthJournalStructuredAnswers({
+    event_end_date: "2026-10-08",
+    event_end_time: "03:40:00",
+    event_end_time_estimated: true,
+    event_start_time_estimated: true,
+  });
+  assert.equal(normalized.event_end_date, "2026-10-08");
+  assert.equal(normalized.event_end_time, "03:40");
+  assert.equal(normalized.event_end_time_estimated, true);
+  assert.equal(formatHealthJournalEventInterval({
+    endDate: normalized.event_end_date,
+    endTime: normalized.event_end_time,
+    endTimeEstimated: normalized.event_end_time_estimated,
+    startDate: "2026-10-07",
+    startTime: "13:15",
+    startTimeEstimated: normalized.event_start_time_estimated,
+  }), "Oct 7, 2026 · ~1:15 PM → Oct 8, 2026 · ~3:40 AM");
+  assert.match(formSource, /event_end_date/);
+  assert.match(formSource, /event_start_time_estimated/);
+  assert.match(eventCaptureSource, /Event end date \(optional\)/);
+  assert.match(eventCaptureSource, /Event start time.*Estimated/);
+  assert.match(healthPageSource, /Event interval/);
+  assert.doesNotMatch(summarySource, /label="Event interval"/);
+});
+
+test("Event end timing accepts same-day time-only input and requires explicit overnight dates", () => {
+  assert.deepEqual(normalizeHealthJournalEventEnd({ endDate: "", endTime: "15:40", startDate: "2026-10-07", startTime: "13:15" }), {
+    endDate: "2026-10-07",
+    endTime: "15:40",
+    error: null,
+  });
+  assert.deepEqual(normalizeHealthJournalEventEnd({ endDate: "", endTime: "", startDate: "2026-10-07", startTime: "13:15" }), {
+    endDate: null,
+    endTime: null,
+    error: null,
+  });
+  assert.deepEqual(normalizeHealthJournalEventEnd({ endDate: "2026-10-08", endTime: "03:40", startDate: "2026-10-07", startTime: "13:15" }), {
+    endDate: "2026-10-08",
+    endTime: "03:40",
+    error: null,
+  });
+  assert.match(normalizeHealthJournalEventEnd({ endDate: "", endTime: "03:40", startDate: "2026-10-07", startTime: "13:15" }).error ?? "", /later Event end date/);
+  assert.match(formSource, /endDate: normalizeHealthJournalDate\(eventAnswers\.event_end_date\)/);
+  assert.match(formSource, /normalizeHealthJournalEventEnd/);
+  assert.match(formSource, /lg:grid-cols-\[minmax\(8rem,auto\)_repeat\(4,minmax\(0,1fr\)\)\]/);
+  assert.match(eventCaptureSource, /lg:grid-cols-4/);
+});
+
+test("Editing an existing Event preserves its explicit end date and accepts a changed end time", () => {
+  const existing = normalizeHealthJournalEventEnd({ endDate: "2026-10-08", endTime: "03:40", startDate: "2026-10-07", startTime: "13:15" });
+  const edited = normalizeHealthJournalEventEnd({ endDate: existing.endDate ?? "", endTime: "04:10", startDate: "2026-10-07", startTime: "13:15" });
+  assert.deepEqual(existing, { endDate: "2026-10-08", endTime: "03:40", error: null });
+  assert.deepEqual(edited, { endDate: "2026-10-08", endTime: "04:10", error: null });
+});
+
+test("Standalone Event History keeps upper content and only exposes additional lower details", () => {
+  assert.match(summarySource, /const isStandaloneEvent = entry\.entry_type === "event"/);
+  assert.match(summarySource, /const additionalEventNotes/);
+  assert.match(summarySource, /!isStandaloneEvent && linkedOccurrenceKeys\.size > 0/);
+  assert.equal(summarySource.includes('label="Event interval"'), false);
+  assert.equal(summarySource.includes('label="Event"'), false);
+  assert.match(summarySource, /entry\.entry_type === "end_of_day"/);
+  assert.match(summarySource, /Morning thoughts/);
+  assert.match(healthPageSource, /Event interval/);
+  assert.match(healthPageSource, /historyReflection/);
+});
+
 test("Start and End custom question targeting preserves order and historical answer snapshots", () => {
   const questions = normalizeHealthJournalCustomQuestions([
     { id: "end", question: "End question", target: "end_of_day", input_type: "number", options: [], enabled: true, sort_order: 2 },
@@ -192,6 +269,7 @@ test("Occurrence references include local date and time while preserving identit
   assert.equal(formatHealthJournalOccurrenceReference({ name: "Back Pain", occurredAt, score: 3, signal: customScale }), `Back Pain (3/4) · ${localDate} · ${localTime}`);
   assert.equal(getHealthJournalOccurrenceDisplay({ id: "symptom-occurrence", kind: "symptom", name: "Back Pain", occurredAt, score: 3, denominator: 4 }), `Back Pain (3/4) · ${localDate} · ${localTime}`);
   assert.equal(getHealthJournalOccurrenceDisplay({ id: "feeling-occurrence", kind: "feeling", name: "Anxiety", occurredAt, score: 8, denominator: 10 }), `Anxiety (8/10) · ${localDate} · ${localTime}`);
+  assert.equal(getHealthJournalOccurrenceDisplay({ id: "estimated-occurrence", kind: "feeling", name: "Anxiety", occurredAt, score: 8, denominator: 10, timeIsEstimated: true }), `Anxiety (8/10) · ${localDate} · ~${localTime}`);
   const priorDateOccurrenceAt = "2026-09-11T01:15:00.000Z";
   const currentDateOccurrenceAt = "2026-09-12T01:15:00.000Z";
   const priorDateOccurrence = formatHealthJournalOccurrenceReference({ name: "Back Pain", occurredAt: priorDateOccurrenceAt, score: 4, signal: customScale });
@@ -227,14 +305,17 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(eventCaptureSource, /Array\.from\(\{ length: denominator \}/);
   assert.match(eventCaptureSource, /scale_labels\[score\]/);
   assert.match(eventCaptureSource, /HealthStandardTimeInput/);
+  assert.match(eventCaptureSource, /timeIsEstimated/);
   assert.match(formSource, /journal_entry_id/);
   assert.match(formSource, /saveJournalEntry\(\{\s*allowInsertWithId: true,\s*checkIn: \{\s*id: nextEventId/);
   assert.match(formSource, /eventDateTime=\{entryType !== "event"\}/);
-  assert.match(formSource, /sm:grid-cols-\[auto_auto_auto\]/);
+  assert.match(formSource, /lg:grid-cols-\[minmax\(8rem,auto\)_repeat\(4,minmax\(0,1fr\)\)\]/);
   assert.match(formSource, /The Event was saved, but the check-in could not be saved/);
   assert.match(formSource, /hydrateJournalEventOccurrences/);
   assert.match(healthHookSource, /allowInsertWithId/);
-  assert.match(healthHookSource, /insert\(\{ \.\.\.\(requestedEntryId \? \{ id: requestedEntryId \} : \{\}\)/);
+  assert.match(healthHookSource, /id: requestedEntryId \?\? createLocalId\("health-checkin"\)/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\([\s\S]*?localRow[\s\S]*?existingRow \? "update" : "create"/);
+  assert.match(pendingMutationSource, /input\.remote\.insert\(mutation\.entity,[\s\S]*?mutation\.row/);
   assert.match(summarySource, /Feeling occurrences/);
   assert.match(summarySource, /Linked Event/);
   assert.match(summarySource, /checkIns: readonly HealthCheckIn\[\]/);
@@ -245,6 +326,18 @@ test("Occurrence references include local date and time while preserving identit
   assert.match(healthPageSource, /JournalScaleLabelsEditor/);
   assert.match(formSource, /hasStructuredJournalContent/);
   assert.match(formSource, /selectedJournalEntry\?\.reflection/);
+});
+
+test("Occurrence display rows interleave kinds chronologically with stable identity ties", () => {
+  const rows = sortHealthJournalOccurrenceRows([
+    { id: "back-pain-late", occurredAt: "2026-10-07T13:15:00.000Z", signalId: "back-pain" },
+    { id: "symptom-tie", occurredAt: "2026-10-07T12:00:00.000Z" },
+    { id: "feeling-tie", occurredAt: "2026-10-07T12:00:00.000Z" },
+    { id: "symptom-early", occurredAt: "2026-10-07T09:00:00.000Z" },
+    { id: "back-pain-early", occurredAt: "2026-10-07T11:15:00.000Z", signalId: "back-pain" },
+  ]);
+  assert.deepEqual(rows.map((row) => row.id), ["symptom-early", "back-pain-early", "feeling-tie", "symptom-tie", "back-pain-late"]);
+  assert.deepEqual(rows.filter((row) => row.signalId === "back-pain").map((row) => row.id), ["back-pain-early", "back-pain-late"]);
 });
 
 test("7.13.51 Journal QA correction reduces Event Feeling scale-description typography and preserves legacy behavior", () => {
@@ -336,4 +429,15 @@ test("Schema and migration keep Journal additions additive and backward-compatib
   assert.match(migrationSource, /add column if not exists/);
   assert.match(healthHookSource, /entry_type: checkIn\.entry_type \?\? "event"/);
   assert.match(healthHookSource, /structured_answers/);
+});
+
+test("Estimated occurrence times use one additive legacy-safe migration and complete the persistence path", () => {
+  assert.match(timeEstimatesMigrationSource, /add column if not exists time_is_estimated boolean not null default false/);
+  assert.equal((timeEstimatesMigrationSource.match(/add column if not exists time_is_estimated/g) ?? []).length, 2);
+  assert.match(timeEstimatesMigrationSource, /adhdice_health_symptom_entries/);
+  assert.match(timeEstimatesMigrationSource, /adhdice_health_journal_signal_occurrences/);
+  assert.match(healthHookSource, /time_is_estimated/);
+  assert.match(healthHookSource, /select\("id,user_id,journal_entry_id,signal_id,entry_date,occurred_at,score,time_is_estimated/);
+  assert.match(healthHookSource, /select\("id,user_id,symptom_id,journal_entry_id,entry_date,logged_at,severity,time_is_estimated/);
+  assert.match(schemaSource, /time_is_estimated boolean not null default false/);
 });

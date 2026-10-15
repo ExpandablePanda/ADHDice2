@@ -28,6 +28,8 @@ import type {
   HealthJournalSignalKind,
   HealthJournalSignalOccurrence,
   HealthJournalSignalOccurrenceInsert,
+  HealthJournalTrigger,
+  HealthJournalTriggerLink,
   HealthJournalSignalValue,
   HealthMealEntry,
   HealthMealEntryInsert,
@@ -65,7 +67,7 @@ import {
   type AppleHealthImportParseProgress,
   type AppleHealthImportPreview,
 } from "@/lib/health-apple-import";
-import type { HealthImportSaveProgress, HealthJournalEntrySaveInput } from "@/hooks/useHealth";
+import type { HealthImportSaveProgress, HealthJournalEntrySaveInput, HealthJournalEntrySaveResult } from "@/hooks/useHealth";
 import type { HealthWorkoutSessionDetails, HealthWorkoutSessionSaveResult } from "@/hooks/useFitnessSessionDetails";
 import type { HealthWorkoutStructuredDraft } from "@/lib/health-fitness-session";
 import type { HealthCustomFoodEditingSessionDraft, HealthCustomFoodSaveInput } from "@/lib/health-custom-food-editing-session";
@@ -162,14 +164,16 @@ import {
   getHealthJournalSignalDisplayColor,
   getHealthJournalSignalDisplayName,
   getHealthJournalTemplateSignals,
+  getHealthJournalHistoryGroupsIncludingEntry,
   groupHealthJournalEntriesByDate,
   normalizeHealthJournalEntryTime,
   findHealthJournalReflectionTagMatches,
+  formatHealthJournalReflectionTagText,
   replaceHealthJournalReflectionTag,
   type HealthJournalDraftValue,
   updateHealthJournalDraftValue,
 } from "@/lib/health-journal";
-import { formatHealthJournalOccurrenceReference, normalizeHealthJournalStructuredAnswers } from "@/lib/health-journal-checkins";
+import { formatHealthJournalEventInterval, formatHealthJournalOccurrenceReference, getHealthJournalScaleDenominator, normalizeHealthJournalStructuredAnswers, sortHealthJournalOccurrenceRows } from "@/lib/health-journal-checkins";
 import type { ActiveFocusSession, FocusCategory, HistoricalFocusSession } from "@/lib/types";
 import { ADHDICE_ACCENT_COLORS } from "@/lib/accent-colors";
 import {
@@ -249,8 +253,11 @@ import { JournalEntrySummary } from "./journal-entry-summary";
 import { JournalQuestionSettings } from "./journal-question-settings";
 import type { EditingSessionStore } from "@/lib/editing-session-store";
 import { createDefaultMasterFoodWorkspaceView, selectJournalHistoryEntryForEdit, type MasterFoodWorkspaceView, type MasterFoodWorkspaceViewUpdate, type MasterJournalWorkspaceMode, type MasterTabPresentationState } from "@/lib/master-workspace-state";
+import { JournalTriggerStatistics } from "./journal-trigger-statistics";
 
 type HealthPageProps = {
+  journalEntryRequest: { entryType: "start_of_day" | "end_of_day"; id: number } | null;
+  onConsumeJournalEntryRequest: (requestId: number) => void;
   activeTab: HealthTab;
   onSelectTab: (tab: HealthTab) => void;
   onDraftSafetyChange: (section: HealthTab, isUnsafe: boolean) => void;
@@ -270,6 +277,15 @@ type HealthPageProps = {
   journalSignals: HealthJournalSignal[];
   journalSignalValues: HealthJournalSignalValue[];
   journalSignalOccurrences: HealthJournalSignalOccurrence[];
+  journalTriggers: HealthJournalTrigger[];
+  journalTriggerLinks: HealthJournalTriggerLink[];
+  journalTriggerDataError: string | null;
+  journalStatisticsDataError: string | null;
+  refreshJournalStatisticsData: () => void;
+  isLoadingJournalTriggers: boolean;
+  hasLoadedJournalTriggerData: boolean;
+  loadJournalTriggerData: () => Promise<boolean>;
+  createJournalTrigger: (name: string) => Promise<HealthJournalTrigger | null>;
   symptoms: HealthSymptom[];
   symptomEntries: HealthSymptomEntry[];
   createSymptom: (input: Omit<HealthSymptomInsert, "user_id">) => Promise<HealthSymptom | null>;
@@ -311,7 +327,7 @@ type HealthPageProps = {
   metricEntries: HealthMetricEntry[];
   profile: HealthProfile | null;
   recipes: HealthRecipe[];
-  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthCheckIn | null>;
+  saveJournalEntry: (input: HealthJournalEntrySaveInput) => Promise<HealthJournalEntrySaveResult | null>;
   saveJournalQuestions: (questions: readonly HealthJournalCustomQuestion[]) => Promise<boolean>;
   createJournalSignal: (input: Omit<import("@/lib/database.types").HealthJournalSignalInsert, "user_id">) => Promise<HealthJournalSignal | null>;
   updateJournalSignal: (signalId: string, input: import("@/lib/database.types").HealthJournalSignalUpdate) => Promise<boolean>;
@@ -775,13 +791,13 @@ function JournalHistoryTagPopover({
   const occurrenceRows = option.kind === "symptom" && option.symptomId
     ? symptomEntries
       .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId)
-      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at))
-      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity }))
+      .sort((left, right) => Date.parse(left.logged_at) - Date.parse(right.logged_at) || left.id.localeCompare(right.id))
+      .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.logged_at, note: occurrence.note, score: occurrence.severity, timeIsEstimated: occurrence.time_is_estimated }))
     : option.signal
       ? journalSignalOccurrences
         .filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id)
-        .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at))
-        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score }))
+        .sort((left, right) => Date.parse(left.occurred_at) - Date.parse(right.occurred_at) || left.id.localeCompare(right.id))
+        .map((occurrence) => ({ id: occurrence.id, occurredAt: occurrence.occurred_at, note: occurrence.note, score: occurrence.score, timeIsEstimated: occurrence.time_is_estimated }))
       : [];
   const overallValue = option.signal
     ? entryValues.find((value) => value.signal_id === option.signal?.id) ?? null
@@ -825,7 +841,7 @@ function JournalHistoryTagPopover({
             {occurrenceRows.length > 0 ? occurrenceRows.map((occurrence) => (
                 <div className="grid gap-0.5" key={occurrence.id}>
                   <div className="flex items-baseline justify-between gap-3">
-                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal })}</span>
+                    <span>{formatHealthJournalOccurrenceReference({ name: displayName, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: option.signal, timeIsEstimated: occurrence.timeIsEstimated })}</span>
                     <span className="text-right font-semibold text-[#26324f] dark:text-white">{scaleLabels[occurrence.score] ?? ""}</span>
                   </div>
                   {occurrence.note?.trim() ? <p className="text-[#4f5872] dark:text-white/75">{occurrence.note}</p> : null}
@@ -876,6 +892,18 @@ function JournalHistoryReflection({
   matches.forEach((match) => {
     const option = historyTagOptionsByKey.get(match.key);
     if (!option) return;
+    const matchingScores = option.kind === "symptom" && option.symptomId
+      ? symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.symptom_id === option.symptomId).map((occurrence) => occurrence.severity)
+      : option.signal
+        ? journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id && occurrence.signal_id === option.signal?.id).map((occurrence) => occurrence.score)
+        : [];
+    const displayText = formatHealthJournalReflectionTagText({
+      baseText: match.text,
+      denominator: getHealthJournalScaleDenominator(option.signal),
+      matchingOccurrenceCount: matchingScores.length,
+      name: option.name,
+      score: matchingScores.length === 1 ? matchingScores[0] ?? null : null,
+    });
     if (match.start > cursor) nodes.push(reflection.slice(cursor, match.start));
     const isOpen = selectedTag?.entryId === entry.id
       && selectedTag.optionKey === match.key
@@ -885,7 +913,7 @@ function JournalHistoryReflection({
         <button
           aria-expanded={isOpen}
           aria-haspopup="dialog"
-          aria-label={`View ${match.text.slice(1)} details from this Journal Entry`}
+          aria-label={`View ${displayText.slice(1)} details from this Journal Entry`}
           className="rounded px-0.5 font-semibold underline decoration-current/30 underline-offset-2 transition hover:bg-[#f1edff] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#d9d0ff]/80 dark:hover:bg-white/[0.08]"
           onClick={() => onToggleTag({ key: match.key, start: match.start })}
           onKeyDown={(event) => {
@@ -897,7 +925,7 @@ function JournalHistoryReflection({
           style={{ color: getJournalTagOptionColor(option, symptoms) }}
           type="button"
         >
-          {match.text}
+          {displayText}
         </button>
         {isOpen ? <JournalHistoryTagPopover entry={entry} entryValues={entryValues} journalSignalOccurrences={journalSignalOccurrences} onClose={() => onToggleTag({ key: match.key, start: match.start })} option={option} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
       </span>,
@@ -925,6 +953,12 @@ function HealthJournalColorControl({
   return <HealthColorControl color={getHealthJournalSignalDisplayColor(signal, symptoms.find((symptom) => symptom.id === signal.symptom_id))} isOpen={isOpen} label={getHealthJournalSignalDisplayName(signal, symptoms)} onSetColor={onSetColor} onToggle={onToggle} />;
 }
 
+function resizeJournalScaleLabelTextarea(element: HTMLTextAreaElement | null) {
+  if (!element) return;
+  element.style.height = "auto";
+  element.style.height = `${element.scrollHeight}px`;
+}
+
 function JournalScaleLabelsEditor({
   draft,
   nameDisabled = false,
@@ -945,12 +979,12 @@ function JournalScaleLabelsEditor({
   const labels = Array.from({ length: HEALTH_JOURNAL_SCORE_OPTIONS.length }, (_, index) => draft.scaleLabels[index] ?? "");
   const displayName = getHealthJournalSignalDisplayName(signal, symptoms);
   return (
-    <div className="grid gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
+    <div className="grid min-w-0 gap-3 rounded-[0.9rem] border border-[#e4deef] bg-[#fbfaff] p-3 dark:border-white/10 dark:bg-white/[0.03]">
       {signal.kind === "symptom" ? <p className="text-sm font-semibold text-[#26324f] dark:text-white">{displayName}</p> : <Field label="Name"><input aria-label={`Edit ${displayName} name`} className={HEALTH_COMPACT_INPUT_CLASS} disabled={nameDisabled} onChange={(event) => onChange({ ...draft, name: event.target.value })} value={draft.name} /></Field>}
-      <div className="grid gap-2" id={`journal-scale-labels-${signal.id}`}>
+      <div className="grid min-w-0 gap-2" id={`journal-scale-labels-${signal.id}`}>
         <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#8d87a7] dark:text-white/40">Scale labels</p>
-        <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
-          {labels.map((label, index) => <label className="flex min-w-0 items-center gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><input aria-label={`${displayName} score ${index} label`} className="min-w-0 flex-1 bg-transparent text-sm text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; onChange({ ...draft, scaleLabels: nextLabels }); }} value={label} /></label>)}
+        <div className="grid min-w-0 grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {labels.map((label, index) => <label className="flex min-w-0 items-start gap-2 rounded-[0.7rem] border border-[#edf0fb] bg-white px-2 py-1.5 text-xs dark:border-white/10 dark:bg-white/[0.04]" key={index}><span className="mt-0.5 w-4 shrink-0 font-black text-[#6f57f6] dark:text-[#cabfff]">{index}</span><textarea aria-label={`${displayName} score ${index} label`} className="min-h-[1.25rem] min-w-0 flex-1 resize-none overflow-hidden bg-transparent p-0 text-sm leading-5 text-[#3c4966] outline-none dark:text-white/75" onChange={(event) => { const nextLabels = [...labels]; nextLabels[index] = event.target.value; resizeJournalScaleLabelTextarea(event.currentTarget); onChange({ ...draft, scaleLabels: nextLabels }); }} ref={resizeJournalScaleLabelTextarea} rows={1} value={label} wrap="soft" /></label>)}
         </div>
       </div>
       <div className="flex justify-end gap-2"><AdhdChip onClick={onCancel} type="button">Cancel</AdhdChip><AdhdChip onClick={onSave} tone="purple" type="button">Save</AdhdChip></div>
@@ -1170,10 +1204,21 @@ export function HealthPage({
   recipeSessionStore,
   savedMealSessionStore,
   mealPlanSessionStore,
+  journalEntryRequest,
+  onConsumeJournalEntryRequest,
   checkIns,
   journalSignals,
   journalSignalValues,
   journalSignalOccurrences,
+  journalTriggers,
+  journalTriggerLinks,
+  journalTriggerDataError,
+  journalStatisticsDataError,
+  refreshJournalStatisticsData,
+  isLoadingJournalTriggers,
+  hasLoadedJournalTriggerData,
+  loadJournalTriggerData,
+  createJournalTrigger,
   symptoms,
   symptomEntries,
   createSymptom,
@@ -1286,6 +1331,11 @@ export function HealthPage({
   const reportJournalQuestionDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Settings", "journal-questions", isUnsafe), [reportSectionDraftSafety]);
   const reportWaterDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Water", "water-panel", isUnsafe), [reportSectionDraftSafety]);
   const reportFitnessDraftSafety = useCallback((isUnsafe: boolean) => reportSectionDraftSafety("Fitness", "fitness-tab", isUnsafe), [reportSectionDraftSafety]);
+  const journalTriggerLoaderRef = useRef(loadJournalTriggerData);
+  journalTriggerLoaderRef.current = loadJournalTriggerData;
+  useEffect(() => {
+    if (activeTab === "Journal") void journalTriggerLoaderRef.current();
+  }, [activeTab, profile?.user_id]);
   const canonicalPageShellLayout = HEALTH_PAGE_SHELL_CANONICAL_LAYOUTS[activeTab];
   const pageShellLayout = usePageShellLayout(profile?.user_id ?? null, getHealthPageShellKey(activeTab), HEALTH_PAGE_SHELL_IDS[activeTab], canonicalPageShellLayout.sizes, canonicalPageShellLayout);
   const [legacyFoodView, setLegacyFoodView] = useState<MasterFoodWorkspaceView>(() => createDefaultMasterFoodWorkspaceView());
@@ -1422,6 +1472,7 @@ export function HealthPage({
   const [isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen] = useState(false);
   const [expandedJournalHistoryEntryIds, setExpandedJournalHistoryEntryIds] = useState<Set<string>>(() => new Set());
   const [collapsedJournalHistoryDates, setCollapsedJournalHistoryDates] = useState<Set<string>>(() => new Set());
+  const [journalHistoryRevealEntryId, setJournalHistoryRevealEntryId] = useState<string | null>(null);
   const [selectedFeelingTrendDefinitionKeys, setSelectedFeelingTrendDefinitionKeys] = useState<Set<string>>(() => new Set());
   const [openSymptomColorPickerKey, setOpenSymptomColorPickerKey] = useState<string | null>(null);
   const [isSymptomCreateOpen, setIsSymptomCreateOpen] = useState(false);
@@ -1913,6 +1964,18 @@ export function HealthPage({
     () => groupHealthJournalEntriesByDate(checkIns),
     [checkIns],
   );
+  const visibleJournalHistoryGroups = useMemo(
+    () => getHealthJournalHistoryGroupsIncludingEntry(journalHistoryGroups, journalHistoryRevealEntryId),
+    [journalHistoryGroups, journalHistoryRevealEntryId],
+  );
+  useEffect(() => {
+    if (!journalHistoryRevealEntryId || journalEntryRequest || journalWorkspaceMode !== "history") return;
+    const frame = window.requestAnimationFrame(() => {
+      const entry = document.getElementById("journal-history-entry-" + journalHistoryRevealEntryId);
+      entry?.focus();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [journalEntryRequest, journalHistoryRevealEntryId, journalWorkspaceMode]);
   const journalOccurrenceChoices = useMemo(() => {
     const choices = journalFeelingChoices.map((choice) => {
       if (choice.signal || choice.kind !== "symptom" || !choice.symptomId) return choice;
@@ -2310,6 +2373,10 @@ export function HealthPage({
   }
 
   const activeProfile = profile;
+  const visibleJournalWorkspaceMode = journalEntryRequest ? "entry" : journalWorkspaceMode;
+  const isVisibleJournalHistory = visibleJournalWorkspaceMode === "history"
+    || visibleJournalWorkspaceMode === "split-history-left"
+    || visibleJournalWorkspaceMode === "split-history-right";
   const effectiveSleepGoalMinutes = parseNullableInteger(profileDraft.sleep_goal_minutes ?? activeProfile.sleep_goal_minutes);
   const sleepGoalHours = effectiveSleepGoalMinutes === null ? "" : String(Math.floor(effectiveSleepGoalMinutes / 60));
   const sleepGoalRemainingMinutes = effectiveSleepGoalMinutes === null ? "" : String(effectiveSleepGoalMinutes % 60);
@@ -2777,6 +2844,20 @@ export function HealthPage({
 
   function selectJournalWorkspaceMode(mode: JournalWorkspaceMode) {
     setJournalWorkspaceMode(mode);
+    setIsJournalHistoryMenuOpen(false);
+  }
+
+  function viewJournalEntryInHistory(entryId: string) {
+    const entry = checkIns.find((candidate) => candidate.id === entryId);
+    if (!entry) return;
+    setJournalHistoryRevealEntryId(entryId);
+    setCollapsedJournalHistoryDates((current) => {
+      if (!current.has(entry.entry_date)) return current;
+      const next = new Set(current);
+      next.delete(entry.entry_date);
+      return next;
+    });
+    setJournalWorkspaceMode("history");
     setIsJournalHistoryMenuOpen(false);
   }
 
@@ -4063,12 +4144,38 @@ export function HealthPage({
               className="min-w-0"
               headerActions={(
                 <div className="flex flex-wrap items-center justify-end gap-1">
+                  <div aria-label="Journal views" className="flex flex-wrap items-center gap-1" role="group">
+                    <AdhdChip
+                      aria-pressed={visibleJournalWorkspaceMode === "entry"}
+                      onClick={() => selectJournalWorkspaceMode("entry")}
+                      selected={visibleJournalWorkspaceMode === "entry"}
+                      type="button"
+                    >
+                      Entry
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-pressed={isVisibleJournalHistory}
+                      onClick={() => selectJournalWorkspaceMode("history")}
+                      selected={isVisibleJournalHistory}
+                      type="button"
+                    >
+                      History
+                    </AdhdChip>
+                    <AdhdChip
+                      aria-pressed={visibleJournalWorkspaceMode === "statistics"}
+                      onClick={() => selectJournalWorkspaceMode("statistics")}
+                      selected={visibleJournalWorkspaceMode === "statistics"}
+                      type="button"
+                    >
+                      Statistics
+                    </AdhdChip>
+                  </div>
                   <div className="relative">
                     <AdhdIconButton
                       aria-controls="journal-history-layout-menu"
                       aria-expanded={isJournalHistoryMenuOpen}
                       aria-haspopup="menu"
-                      aria-label={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      aria-label={visibleJournalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
                       onClick={handleJournalHistoryClick}
                       onKeyDown={handleJournalHistoryKeyDown}
                       onPointerCancel={handleJournalHistoryPointerCancel}
@@ -4076,11 +4183,11 @@ export function HealthPage({
                       onPointerLeave={handleJournalHistoryPointerUp}
                       onPointerUp={handleJournalHistoryPointerUp}
                       size="sm"
-                      title={journalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
+                      title={visibleJournalWorkspaceMode === "entry" ? "View Journal History" : "Return to Journal Entry"}
                       tone="ghost"
                       variant="rowToolbar"
                     >
-                      {journalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+                      {visibleJournalWorkspaceMode === "entry" ? <History aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
                     </AdhdIconButton>
                     {isJournalHistoryMenuOpen ? (
                       <AdhdDropdownPanel
@@ -4103,7 +4210,7 @@ export function HealthPage({
                       </AdhdDropdownPanel>
                     ) : null}
                   </div>
-                  {journalWorkspaceMode === "history" ? <AdhdChip disabled={hasUnsafeNewJournalDraft} onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
+                  {visibleJournalWorkspaceMode === "history" ? <AdhdChip disabled={hasUnsafeNewJournalDraft} onClick={startNewJournalEntry} type="button">+ New Entry</AdhdChip> : null}
                 </div>
               )}
               id={getHealthTabPanelId("Journal")}
@@ -4113,10 +4220,12 @@ export function HealthPage({
               title="Journal"
               role="tabpanel"
             >
-            <div className={(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
-            {journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+            <div className={(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? "grid min-w-0 gap-5 md:grid-cols-2" : "min-w-0"}>
+            <div hidden={visibleJournalWorkspaceMode === "history" || visibleJournalWorkspaceMode === "statistics"} className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <JournalCheckInForm
-                key={selectedJournalEntryId ? `journal-entry:${selectedJournalEntryId}` : journalView?.newDraftId ?? `journal-new:${activeMasterTabId ?? "legacy"}`}
+                key={journalSessionStore
+                  ? selectedJournalEntryId ? `journal-entry:${selectedJournalEntryId}` : journalView?.newDraftId ?? `journal-new:${activeMasterTabId ?? "legacy"}`
+                  : "legacy-journal-form"}
                 checkIns={checkIns}
                 customQuestions={activeProfile.journal_questions ?? []}
                 createJournalSignal={createJournalSignal}
@@ -4125,6 +4234,13 @@ export function HealthPage({
                 journalSignalOccurrences={journalSignalOccurrences}
                 journalSignalValues={journalSignalValues}
                 journalSignals={journalSignals}
+                journalTriggers={journalTriggers}
+                journalTriggerLinks={journalTriggerLinks}
+                journalTriggerDataError={journalTriggerDataError}
+                isLoadingJournalTriggers={isLoadingJournalTriggers}
+                loadJournalTriggerData={loadJournalTriggerData}
+                createJournalTrigger={createJournalTrigger}
+                journalEntryRequest={journalEntryRequest}
                 mealEntries={mealEntries}
                 metricEntries={metricEntries}
                 onAfterSave={startNewJournalEntry}
@@ -4135,13 +4251,39 @@ export function HealthPage({
                 sessionViewId={activeMasterTabId}
                 onOpenFood={() => onSelectTab("Food")}
                 onOpenSleep={() => onSelectTab("Sleep")}
+                onStartNewEntry={startNewJournalEntry}
+                onRestoreSelectedJournalEntry={(entryId) => {
+                  setSelectedJournalEntryId(entryId);
+                  const previousEntry = entryId ? checkIns.find((entry) => entry.id === entryId) : null;
+                  if (previousEntry) setJournalDate(previousEntry.entry_date);
+                }}
+                onConsumeJournalEntryRequest={onConsumeJournalEntryRequest}
                 saveJournalEntry={saveJournalEntry}
                 selectedJournalEntry={selectedJournalEntry}
                 symptomEntries={symptomEntries}
                 symptoms={symptoms}
               />
-            </div> : null}
-            {false && journalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? journalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
+            </div>
+            {visibleJournalWorkspaceMode === "statistics" ? (
+              <JournalTriggerStatistics
+                checkIns={checkIns}
+                healthDataLoading={isLoading}
+                healthDataError={journalStatisticsDataError}
+                hasLoadedJournalTriggerData={hasLoadedJournalTriggerData}
+                isLoadingJournalTriggers={isLoadingJournalTriggers}
+                journalSignals={journalSignals}
+                journalSignalOccurrences={journalSignalOccurrences}
+                journalTriggerDataError={journalTriggerDataError}
+                journalTriggers={journalTriggers}
+                journalTriggerLinks={journalTriggerLinks}
+                loadJournalTriggerData={loadJournalTriggerData}
+                onViewInHistory={viewJournalEntryInHistory}
+                retryHealthData={refreshJournalStatisticsData}
+                symptomEntries={symptomEntries}
+                symptoms={symptoms}
+              />
+            ) : null}
+            {false && visibleJournalWorkspaceMode !== "history" ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? visibleJournalWorkspaceMode === "split-history-left" ? "md:order-2" : "md:order-1" : ""}`}>
               <div className="grid min-w-0 gap-5">
                 <div className="flex flex-wrap items-end justify-between gap-3">
                   <div className="flex flex-wrap gap-3">
@@ -4201,7 +4343,7 @@ export function HealthPage({
                       {journalFeelingChoices.every((choice) => journalDraftValues.some((value) => choice.signal?.id === value.signal_id)) ? <span className="text-xs text-[#7d7598] dark:text-white/50">All active Feelings are already in this entry.</span> : null}
                     </div>
                   ) : null}
-                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
+                  <div className={`grid min-w-0 gap-4 md:grid-cols-2 ${visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right" ? "lg:grid-cols-2" : "lg:grid-cols-3"}`}>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:mood"} expandedScaleKey="core:mood" label="Mood" onClear={() => { setJournalMood(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalMood(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:mood")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Mood} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalMood} /></div>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:energy"} expandedScaleKey="core:energy" label="Energy" onClear={() => { setJournalEnergy(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalEnergy(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:energy")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Energy} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalEnergy} /></div>
                     <div className="min-w-0"><JournalRatingCard expanded={expandedJournalScaleKey === "core:stress"} expandedScaleKey="core:stress" label="Stress" onClear={() => { setJournalStress(null); setExpandedJournalScaleKey(null); }} onSelect={(score) => { setJournalStress(score); setExpandedJournalScaleKey(null); }} onToggle={() => toggleJournalScale("core:stress")} scaleLabelIndexOffset={-1} scaleLabels={CORE_JOURNAL_SCALE_LABELS.Stress} scoreOptions={HEALTH_SCALE_OPTIONS} value={journalStress} /></div>
@@ -4327,10 +4469,13 @@ export function HealthPage({
               </div>
             </div> : null}
 
-            {journalWorkspaceMode !== "entry" ? <div className={`min-w-0 ${(journalWorkspaceMode === "split-history-left" || journalWorkspaceMode === "split-history-right") ? `${journalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
+            {isVisibleJournalHistory ? <div className={`min-w-0 ${(visibleJournalWorkspaceMode === "split-history-left" || visibleJournalWorkspaceMode === "split-history-right") ? `${visibleJournalWorkspaceMode === "split-history-left" ? "md:order-1" : "md:order-2"} hidden md:block` : ""}`}>
               <div className="space-y-4">
                 <SectionMiniTitle title="Journal History" />
-                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : journalHistoryGroups.slice(0, 12).map((group) => {
+                {isLoadingJournalTriggers ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Loading Journal Trigger associations…</p> : null}
+                {journalTriggerDataError ? <div className="flex flex-wrap items-center gap-2 rounded-[0.9rem] border border-[#f2cbd4] bg-[#fff7f8] px-3 py-2 dark:border-[#6f3341] dark:bg-[#351d26]"><p className="min-w-0 flex-1 text-xs font-semibold text-[#a33f58] dark:text-[#ffb0c1]" role="alert">Could not load Journal Trigger associations: {journalTriggerDataError}</p><AdhdChip onClick={() => { void loadJournalTriggerData(); }} type="button">Retry</AdhdChip></div> : null}
+                {!hasLoadedJournalTriggerData && !isLoadingJournalTriggers && !journalTriggerDataError ? <p aria-live="polite" className="text-xs text-[#7d88a3] dark:text-white/50" role="status">Journal Trigger associations have not loaded yet.</p> : null}
+                {journalHistoryGroups.length === 0 ? <EmptyCopy text="Your first Journal Entry will start history here." /> : visibleJournalHistoryGroups.map((group) => {
                   const isJournalHistoryDateCollapsed = collapsedJournalHistoryDates.has(group.date);
                   return (
                   <section className="grid gap-2" key={group.date}>
@@ -4353,7 +4498,7 @@ export function HealthPage({
                       const historyReflection = entry.entry_type === "event"
                         ? entryAnswers.event_description?.trim() || entry.reflection
                         : entry.reflection;
-                      const entryOccurrences = [
+                      const entryOccurrences = sortHealthJournalOccurrenceRows([
                         ...symptomEntries.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
                           const signal = journalSignals.find((candidate) => candidate.kind === "symptom" && candidate.symptom_id === occurrence.symptom_id) ?? null;
                           return {
@@ -4362,6 +4507,7 @@ export function HealthPage({
                             score: occurrence.severity,
                             occurredAt: occurrence.logged_at,
                             signal,
+                            timeIsEstimated: occurrence.time_is_estimated,
                           };
                         }),
                         ...journalSignalOccurrences.filter((occurrence) => occurrence.journal_entry_id === entry.id).map((occurrence) => {
@@ -4387,11 +4533,15 @@ export function HealthPage({
                             score: occurrence.score,
                             occurredAt: occurrence.occurred_at,
                             signal,
+                            timeIsEstimated: occurrence.time_is_estimated,
                           };
                         }),
-                      ].sort((left, right) => Date.parse(left.occurredAt) - Date.parse(right.occurredAt));
+                      ]);
                       const isLoggedMetadataOpen = expandedJournalHistoryEntryIds.has(entry.id);
-                      return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 dark:border-white/10 dark:bg-white/[0.04]" key={entry.id}>
+                      const eventInterval = entry.entry_type === "event"
+                        ? formatHealthJournalEventInterval({ endDate: entryAnswers.event_end_date, endTime: entryAnswers.event_end_time, endTimeEstimated: entryAnswers.event_end_time_estimated, startDate: entry.entry_date, startTime: entry.entry_time, startTimeEstimated: entryAnswers.event_start_time_estimated })
+                        : null;
+                      return <div className="rounded-[1.25rem] border border-[#edf0fb] bg-white/80 px-4 py-3 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#b39eff] dark:border-white/10 dark:bg-white/[0.04]" id={"journal-history-entry-" + entry.id} key={entry.id} tabIndex={-1}>
                         <div className="flex flex-wrap items-start justify-between gap-2">
                           <div className="grid gap-1">
                             <div>
@@ -4409,8 +4559,9 @@ export function HealthPage({
                                 >
                                   <ChevronDown aria-hidden="true" className={`h-3.5 w-3.5 transition-transform ${isLoggedMetadataOpen ? "rotate-180" : ""}`} />
                                 </button>
+                                </div>
                               </div>
-                            </div>
+                              {eventInterval ? <p className="text-xs text-[#7d88a3] dark:text-white/45"><span className="font-semibold">Event interval:</span> {eventInterval}</p> : null}
                             {isLoggedMetadataOpen ? <div id={`journal-history-logged-${entry.id}`}>
                               <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#8d87a7] dark:text-white/40">Logged</p>
                               <p className="text-xs text-[#7d88a3] dark:text-white/45">{formatJournalLoggedAt(entry.created_at)}</p>
@@ -4420,7 +4571,15 @@ export function HealthPage({
                         </div>
                         <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-xs text-[#68738c] dark:text-white/60">{entry.mood_score !== null ? <span>Mood {entry.mood_score}</span> : null}{entry.energy_score !== null ? <span>Energy {entry.energy_score}</span> : null}{entry.stress_score !== null ? <span>Stress {entry.stress_score}</span> : null}{entry.clarity_score !== null ? <span>Clarity {entry.clarity_score}</span> : null}</div>
                         {entryValues.length > 0 ? <p className="mt-2 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Snapshot ratings:</span> {entryValues.map((value) => { const signal = journalSignals.find((candidate) => candidate.id === value.signal_id); return `${signal ? getHealthJournalSignalDisplayName(signal, symptoms) : "Feeling"} ${value.score}`; }).join(" · ")}</p> : null}
-                        {entryOccurrences.length > 0 ? <p className="mt-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span> {entryOccurrences.map((occurrence) => formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal })).join(" · ")}</p> : null}
+                        {entryOccurrences.length > 0 ? <div className="mt-1 grid gap-1 text-xs text-[#68738c] dark:text-white/60"><span className="font-semibold">Feeling Occurrences:</span>{entryOccurrences.map((occurrence) => {
+                          const occurrenceLinks = journalTriggerLinks.filter((link) => link.symptom_occurrence_id === occurrence.id || link.journal_signal_occurrence_id === occurrence.id);
+                          return <div className="min-w-0" key={occurrence.id}><p>{formatHealthJournalOccurrenceReference({ name: occurrence.label, occurredAt: occurrence.occurredAt, score: occurrence.score, signal: occurrence.signal, timeIsEstimated: occurrence.timeIsEstimated })}</p>{occurrenceLinks.map((link) => {
+                            const trigger = journalTriggers.find((candidate) => candidate.id === link.trigger_id);
+                            const effectLabel = link.effect === "associated" ? "Associated" : link.effect === "worsened" ? "Worsened" : "Improved";
+                            const scoreChange = link.effect === "associated" ? "" : ` · ${link.previous_score ?? "Unknown"} → ${occurrence.score}`;
+                            return <p className="pl-3 text-[#7d88a3] dark:text-white/45" key={link.id}>{trigger?.name ?? "Archived Trigger"} · {effectLabel}{scoreChange}</p>;
+                          })}</div>;
+                        })}</div> : null}
                         {historyReflection ? <JournalHistoryReflection entry={entry} entryValues={entryValues} historyTagOptions={journalHistoryTagOptions} historyTagOptionsByKey={journalHistoryTagOptionsByKey} journalSignalOccurrences={journalSignalOccurrences} onToggleTag={(tag) => toggleJournalHistoryTag(entry.id, tag)} reflection={historyReflection} selectedTag={journalHistoryTagOverlay} symptomEntries={symptomEntries} symptoms={symptoms} /> : null}
                         <JournalEntrySummary checkIns={checkIns} entry={entry} journalSignalOccurrences={journalSignalOccurrences} journalSignals={journalSignals} symptomEntries={symptomEntries} symptoms={symptoms} />
                         {entry.symptom_tags.length > 0 ? <p className="mt-2 text-xs text-[#7d7598] dark:text-white/50">Legacy tags: {entry.symptom_tags.join(", ")}</p> : null}

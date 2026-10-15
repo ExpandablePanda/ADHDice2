@@ -96,6 +96,7 @@ function signalOccurrence(id: string, entryId: string, entryDate: string) {
     entry_date: entryDate,
     occurred_at: `${entryDate}T10:00:00.000Z`,
     score: 5,
+    time_is_estimated: false,
     note: null,
     created_at: `${entryDate}T10:00:00.000Z`,
     updated_at: `${entryDate}T10:00:00.000Z`,
@@ -111,6 +112,7 @@ function symptomOccurrence(id: string, entryId: string, entryDate: string) {
     entry_date: entryDate,
     logged_at: `${entryDate}T10:30:00.000Z`,
     severity: 5,
+    time_is_estimated: false,
     note: null,
     created_at: `${entryDate}T10:30:00.000Z`,
     updated_at: `${entryDate}T10:30:00.000Z`,
@@ -214,7 +216,7 @@ test("Today renders safe empty states, canonical tab navigation, Quick Log, and 
 
 test("HealthPage owns Today navigation and passes canonical records without adding Today persistence", () => {
   const todayBranch = pageSource.slice(pageSource.indexOf('{activeTab === "Today"'), pageSource.indexOf('{activeTab === "Fitness"'));
-  assert.match(todayBranch, /onNavigate=\{persistHealthTabPreference\}/);
+  assert.match(todayBranch, /onNavigate=\{onSelectTab\}/);
   for (const prop of ["checkIns", "mealEntries", "waterEntries", "metricEntries", "focusHistory", "journalSignals", "journalSignalOccurrences", "symptoms", "symptomEntries", "profile", "weightEntries", "workouts"]) {
     assert.match(todayBranch, new RegExp(`${prop}=`));
   }

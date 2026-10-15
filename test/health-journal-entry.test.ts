@@ -22,6 +22,7 @@ import {
   HEALTH_JOURNAL_DEFAULT_SCALE_LABELS,
   HEALTH_JOURNAL_SCORE_OPTIONS,
   findHealthJournalReflectionTagMatches,
+  formatHealthJournalReflectionTagText,
   normalizeHealthJournalScaleLabels,
   normalizeHealthJournalScore,
   normalizeHealthJournalSignal,
@@ -158,6 +159,28 @@ test("Journal History tag matching resolves known display names without changing
   assert.equal(matches.reduceRight((current, match) => `${current.slice(0, match.start)}${match.text}${current.slice(match.end)}`, reflection), reflection);
   assert.equal(reflection.slice(matches[1]!.end, matches[2]!.start), ", then ");
   assert.equal(reflection.includes("#Unknown"), true);
+});
+
+test("Journal History treats scored hashtags as one link and keeps legacy bare tags", () => {
+  const reflection = "Pain at #Back Pain (7/10), then #Back Pain and #Back Pain (3/4).";
+  const matches = findHealthJournalReflectionTagMatches(reflection, [
+    { key: "symptom:back-pain", kind: "symptom", name: "Back Pain" },
+  ]);
+
+  assert.deepEqual(matches.map((match) => [match.text, match.start, match.end]), [
+    ["#Back Pain (7/10)", 8, 25],
+    ["#Back Pain", 32, 42],
+    ["#Back Pain (3/4)", 47, 63],
+  ]);
+  assert.equal(reflection.slice(25, 32), ", then ");
+  assert.equal(reflection.slice(42, 47), " and ");
+});
+
+test("Journal History safely scores one legacy bare hashtag and preserves ambiguous or scored text", () => {
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain", denominator: 10, matchingOccurrenceCount: 1, name: "Back Pain", score: 7 }), "#Back Pain (7/10)");
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain", denominator: 10, matchingOccurrenceCount: 2, name: "Back Pain", score: 7 }), "#Back Pain");
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain (7/10)", denominator: 10, matchingOccurrenceCount: 1, name: "Back Pain", score: 7 }), "#Back Pain (7/10)");
+  assert.equal(formatHealthJournalReflectionTagText({ baseText: "#Back Pain", denominator: 4, matchingOccurrenceCount: 1, name: "Back Pain", score: 5 }), "#Back Pain");
 });
 
 test("Daily Log draft helpers keep one row while preserving 0 and Not logged semantics", () => {
@@ -327,8 +350,8 @@ test("7.12.35 source contract covers scale-label migration, unified Symptoms, co
   assert.match(scaleLabelsMigrationSource, /set low_label = scale_labels\[1\],[\s\S]*high_label = scale_labels\[11\]/);
   assert.match(schemaSource, /scale_labels text\[\] not null/);
   assert.match(schemaSource, /check \(cardinality\(scale_labels\) = 11\)/);
-  assert.match(healthHookSource, /scale_labels: signal\.scale_labels/);
-  assert.match(healthHookSource, /scale_labels: nextRow\.scale_labels/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\("signal", localRow, "create", remoteEnabled\)/);
+  assert.match(healthHookSource, /scale_labels: normalizeHealthJournalScaleLabels\(input\.scale_labels, kind, input\.low_label, input\.high_label\)/);
   assert.match(healthPageSource, /expandedJournalScaleKey/);
   assert.match(healthPageSource, /Type # while writing to tag a symptom or feeling/);
   assert.match(healthPageSource, /journal-tag-picker/);
@@ -426,10 +449,9 @@ test("7.12.41 source contract covers unified tag occurrence overlays and shared 
   assert.match(schemaSource, /color text,[\s\S]*scale_labels text\[\] not null/);
   assert.match(schemaSource, /adhdice_health_journal_signals_color_check/);
   assert.match(schemaSource, /kind in \('emotion', 'other'\) and color is not null and color ~/);
-  assert.match(healthHookSource, /color: signal\.color/);
-  assert.match(healthHookSource, /color: nextRow\.color/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\("signal", localRow, "create", remoteEnabled\)/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\("signal", nextRow, "update", remoteEnabled\)/);
   assert.match(healthHookSource, /color: kind === "symptom" \? null : input\.color/);
-  assert.match(healthHookSource, /update\([\s\S]*color: nextRow\.color/);
 });
 
 test("7.12.39 source contract covers interactive History tags, exact ownership details, no-scroll overlays, and canonical symptom color reuse", () => {
@@ -440,7 +462,9 @@ test("7.12.39 source contract covers interactive History tags, exact ownership d
 
   assert.match(healthPageSource, /findHealthJournalReflectionTagMatches/);
   assert.match(healthPageSource, /<JournalHistoryReflection/);
-  assert.match(healthPageSource, /aria-label=\{`View \$\{match\.text\.slice\(1\)\} details from this Journal Entry`\}/);
+  assert.match(healthPageSource, /aria-label=\{`View \$\{displayText\.slice\(1\)\} details from this Journal Entry`\}/);
+  assert.match(healthPageSource, /formatHealthJournalReflectionTagText/);
+  assert.match(healthPageSource, /matchingOccurrenceCount: matchingScores\.length/);
   assert.match(healthPageSource, /type="button"/);
   assert.match(healthPageSource, /role="dialog"/);
   assert.match(healthPageSource, /occurrence\.journal_entry_id === entry\.id && occurrence\.symptom_id === option\.symptomId/);
@@ -544,12 +568,11 @@ test("7.12.41 source contract covers multiple entries, occurrence ownership, RLS
   assert.match(multipleEntriesMigrationSource, /notify pgrst, 'reload schema'/);
   assert.doesNotMatch(schemaSource, /unique \(user_id, entry_date\)/);
   assert.match(schemaSource, /entry_time time without time zone not null/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.insert\(\{ \.\.\.\(requestedEntryId \? \{ id: requestedEntryId \} : \{\}\), \.\.\.remoteCheckInFields, user_id: userId \}\)/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_checkins"\)[\s\S]*\.update\(remoteCheckInFields\)[\s\S]*\.eq\("id", requestedEntryId\)/);
+  assert.match(healthHookSource, /saveJournalPendingUpsert\([\s\S]*?existingRow \? "update" : "create"/);
   assert.doesNotMatch(healthHookSource, /onConflict: "user_id,entry_date"/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_values"\)[\s\S]*\.upsert\(scoredValues/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*\.upsert\(occurrenceRows/);
-  assert.match(healthHookSource, /\.from\("adhdice_health_journal_signal_occurrences"\)[\s\S]*\.upsert\(journalSignalOccurrenceRows/);
+  assert.match(healthHookSource, /saveChildRows\("signal_value", scoredValues/);
+  assert.match(healthHookSource, /saveChildRows\("symptom_entry", occurrenceRows/);
+  assert.match(healthHookSource, /saveChildRows\("signal_occurrence", journalSignalOccurrenceRows/);
   assert.match(healthHookSource, /journal_entry_id: nextRow\.id/);
   assert.match(healthHookSource, /checkIns\.filter\(\(entry\) => entry\.id !== nextRow\.id\)/);
   assert.match(healthHookSource, /journalSignalOccurrences.*storageKey\(userId, "journal-signal-occurrences"\)/s);
@@ -601,11 +624,11 @@ test("7.12.42 hardens Journal occurrence reruns and native kind integrity", () =
   const guardIndex = saveJournalSource.indexOf("hasInvalidNativeOccurrenceSignal");
   assert.ok(guardIndex >= 0);
   assert.match(saveJournalSource, /signal\?\.user_id === userId[\s\S]*?signal\.kind === "emotion"[\s\S]*?signal\.kind === "other"/);
-  assert.ok(guardIndex < saveJournalSource.indexOf('.from("adhdice_health_checkins")'));
+  assert.ok(guardIndex < saveJournalSource.indexOf("saveJournalPendingUpsert("));
   assert.match(saveJournalSource, /hasInvalidNativeOccurrenceSignal[\s\S]*?Choose an Emotion or Other Feeling for each occurrence\./);
   assert.ok(guardIndex < saveJournalSource.indexOf("const journalSignalOccurrenceRows"));
-  assert.match(saveJournalSource, /\.from\("adhdice_health_journal_signal_occurrences"\)[\s\S]*?\.upsert\(journalSignalOccurrenceRows/);
-  assert.match(saveJournalSource, /\.from\("adhdice_health_symptom_entries"\)[\s\S]*?\.upsert\(occurrenceRows/);
+  assert.match(saveJournalSource, /saveChildRows\("signal_occurrence", journalSignalOccurrenceRows/);
+  assert.match(saveJournalSource, /saveChildRows\("symptom_entry", occurrenceRows/);
 });
 
 test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, and one Feeling section", () => {
@@ -613,13 +636,8 @@ test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, 
     healthPageSource.indexOf("headerActions={("),
     healthPageSource.indexOf("icon={<HeartPulse />}", healthPageSource.indexOf("headerActions={(")),
   );
-  const journalEditorSource = healthPageSource.slice(
-    healthPageSource.indexOf("{journalWorkspaceMode !== \"history\" ?"),
-    healthPageSource.indexOf("{journalWorkspaceMode !== \"entry\" ?", healthPageSource.indexOf("{journalWorkspaceMode !== \"history\" ?")),
-  );
-
-  assert.match(journalHeaderSource, /aria-label=\{journalWorkspaceMode === "entry" \? "View Journal History" : "Return to Journal Entry"\}/);
-  assert.match(journalHeaderSource, /journalWorkspaceMode === "entry" \? <History aria-hidden="true" \/> : <BookOpen aria-hidden="true" \/>/);
+  assert.match(journalHeaderSource, /aria-label=\{visibleJournalWorkspaceMode === "entry" \? "View Journal History" : "Return to Journal Entry"\}/);
+  assert.match(journalHeaderSource, /visibleJournalWorkspaceMode === "entry" \? <History aria-hidden="true" \/> : <BookOpen aria-hidden="true" \/>/);
   assert.doesNotMatch(journalHeaderSource, /<AdhdChip[\s\S]*?>History Left<\/AdhdChip>/);
   assert.doesNotMatch(journalHeaderSource, /<AdhdChip[\s\S]*?>History Right<\/AdhdChip>/);
   assert.doesNotMatch(journalHeaderSource, /Single Pane/);
@@ -633,10 +651,10 @@ test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, 
   assert.match(healthPageSource, /setTimeout\(\(\) => \{[\s\S]*?openJournalHistoryMenu\(\);[\s\S]*?\}, 500\)/);
   assert.match(healthPageSource, /selectJournalWorkspaceMode\("split-history-left"\)/);
   assert.match(healthPageSource, /selectJournalWorkspaceMode\("split-history-right"\)/);
-  assert.match(journalHeaderSource, /journalWorkspaceMode === "history" \? <AdhdChip disabled=\{hasUnsafeNewJournalDraft\} onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
+  assert.match(journalHeaderSource, /visibleJournalWorkspaceMode === "history" \? <AdhdChip disabled=\{hasUnsafeNewJournalDraft\} onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
   assert.match(healthPageSource, /function startNewJournalEntry\(\) \{\s*if \(hasUnsafeNewJournalDraft\) return;\s*if \(journalWorkspaceMode === "history"\) \{\s*setJournalWorkspaceMode\("entry"\);/);
-  assert.match(journalEditorSource, /<AdhdChip onClick=\{startNewJournalEntry\} type="button">\+ New Entry<\/AdhdChip>/);
-  assert.match(healthPageSource, /journalWorkspaceMode === "split-history-left" \|\| journalWorkspaceMode === "split-history-right"/);
+  assert.match(healthPageSource, /onStartNewEntry=\{startNewJournalEntry\}/);
+  assert.match(healthPageSource, /visibleJournalWorkspaceMode === "split-history-left" \|\| visibleJournalWorkspaceMode === "split-history-right"/);
   assert.match(healthPageSource, /const \[isJournalLoggedMetadataOpen, setIsJournalLoggedMetadataOpen\] = useState\(false\)/);
   assert.match(healthPageSource, /formatHealthJournalMetadataDate\(selectedJournalEntry\.created_at\)/);
   assert.match(healthPageSource, /<HealthStandardTimeInput ariaLabel="Logged Time" readOnly value=\{formatTimeInput\(selectedJournalEntry\.created_at\)\} \/>/);
@@ -656,6 +674,39 @@ test("7.12.45 uses one responsive History/Journal toggle, collapsible metadata, 
   assert.match(journalSource, /Manage Journal Library/);
   assert.match(healthPageSource, /note: occurrence\.note/);
   assert.match(healthPageSource, /occurrence\.note\?\.trim\(\)/);
+});
+
+test("Journal Library scale labels use compact auto-growing textareas in Symptoms and Feeling sections", () => {
+  const textareaResizeStart = healthPageSource.indexOf("function resizeJournalScaleLabelTextarea(");
+  const scaleLabelEditorStart = healthPageSource.indexOf("function JournalScaleLabelsEditor(");
+  const scaleLabelEditorEnd = healthPageSource.indexOf("function JournalFeelingCreationRow(", scaleLabelEditorStart);
+  const scaleLabelEditingSource = healthPageSource.slice(textareaResizeStart, scaleLabelEditorEnd);
+  const scaleLabelEditorSource = healthPageSource.slice(scaleLabelEditorStart, scaleLabelEditorEnd);
+  const feelingLibraryStart = healthPageSource.indexOf("function JournalFeelingLibrarySection(");
+  const feelingLibraryEnd = healthPageSource.indexOf("function JournalSymptomLibrarySection(", feelingLibraryStart);
+  const feelingLibrarySource = healthPageSource.slice(feelingLibraryStart, feelingLibraryEnd);
+  const symptomLibraryStart = healthPageSource.indexOf("function JournalSymptomLibrarySection(");
+  const symptomLibraryEnd = healthPageSource.indexOf("export function HealthPage(", symptomLibraryStart);
+  const symptomLibrarySource = healthPageSource.slice(symptomLibraryStart, symptomLibraryEnd);
+
+  assert.ok(textareaResizeStart >= 0 && scaleLabelEditorStart > textareaResizeStart && scaleLabelEditorEnd > scaleLabelEditorStart);
+  assert.match(scaleLabelEditingSource, /function resizeJournalScaleLabelTextarea\(element: HTMLTextAreaElement \| null\)/);
+  assert.match(scaleLabelEditingSource, /element\.style\.height = "auto";[\s\S]*?element\.style\.height = `\$\{element\.scrollHeight\}px`/);
+  assert.match(scaleLabelEditorSource, /<textarea aria-label=\{`\$\{displayName\} score \$\{index\} label`\}/);
+  assert.match(scaleLabelEditorSource, /resizeJournalScaleLabelTextarea\(event\.currentTarget\)/);
+  assert.match(scaleLabelEditorSource, /nextLabels\[index\] = event\.target\.value/);
+  assert.match(scaleLabelEditorSource, /onChange\(\{ \.\.\.draft, scaleLabels: nextLabels \}\)/);
+  assert.match(scaleLabelEditorSource, /ref=\{resizeJournalScaleLabelTextarea\} rows=\{1\} value=\{label\} wrap="soft" \/>/);
+  assert.match(scaleLabelEditorSource, /grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3/);
+  assert.doesNotMatch(scaleLabelEditorSource, /<input aria-label=\{`\$\{displayName\} score/);
+  assert.ok(feelingLibraryStart >= 0 && feelingLibraryEnd > feelingLibraryStart);
+  assert.match(feelingLibrarySource, /const sectionSignals = signals\.filter\(\(signal\) => signal\.kind === kind/);
+  assert.match(feelingLibrarySource, /<JournalScaleLabelsEditor draft=\{draft\}/);
+  assert.match(symptomLibrarySource, /<JournalScaleLabelsEditor draft=\{journalLibraryEditDraft\} nameDisabled/);
+  assert.match(symptomLibrarySource, /title="Symptoms"/);
+  assert.match(feelingLibrarySource, /const sectionTitle = kind === "emotion" \? "Emotions" : "Other Feelings"/);
+  assert.match(healthPageSource, /<JournalFeelingLibrarySection[\s\S]*?kind="emotion"/);
+  assert.match(healthPageSource, /<JournalFeelingLibrarySection[\s\S]*?kind="other"/);
 });
 
 test("7.12.49 keeps Journal rating cards unified, date groups independent, and resets after save", () => {
@@ -704,7 +755,7 @@ test("7.12.49 keeps Journal rating cards unified, date groups independent, and r
     healthPageSource.indexOf('<section className="grid gap-3" aria-labelledby="journal-feelings-heading">'),
     healthPageSource.indexOf('<section className="grid gap-3" aria-labelledby="journal-occurrences-heading">'),
   );
-  assert.match(journalFeelingsSource, /grid min-w-0 gap-4 md:grid-cols-2 \$\{journalWorkspaceMode/);
+  assert.match(journalFeelingsSource, /grid min-w-0 gap-4 md:grid-cols-2 \$\{visibleJournalWorkspaceMode/);
   assert.match(journalFeelingsSource, /"lg:grid-cols-2" : "lg:grid-cols-3"/);
   assert.match(journalFeelingsSource, /JournalRatingCard[\s\S]*journalDraftValues\.map/);
   assert.match(journalFeelingsSource, /scaleLabelIndexOffset=\{-1\}/);

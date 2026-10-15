@@ -27,7 +27,7 @@ export const MASTER_WORKSPACE_SPLIT_RATIO_MAX = 0.75;
 
 export type MasterPanelSide = "left" | "right";
 export type MasterTabDestination = NavigatorSearchAction;
-export type MasterJournalWorkspaceMode = "entry" | "history" | "split-history-left" | "split-history-right";
+export type MasterJournalWorkspaceMode = "entry" | "history" | "statistics" | "split-history-left" | "split-history-right";
 export type MasterNotesSelection =
   | { kind: "list" }
   | { kind: "saved"; noteId: string }
@@ -114,7 +114,7 @@ export type MasterWorkspaceStorage = Pick<Storage, "getItem" | "setItem" | "remo
 const VALID_TASK_SURFACES = new Set(["tasks", "attention", "paths", "report", "on_time", "brainstorm", "completed_milestones"]);
 const VALID_TASK_VIEWS = new Set(["table", "list", "cards", "matrix", "calendar"]);
 const VALID_SETTINGS_SECTIONS = new Set(["appearance", "day-reset", "economy", "import-export", "backup-recovery"]);
-const VALID_JOURNAL_WORKSPACE_MODES = new Set(["entry", "history", "split-history-left", "split-history-right"]);
+const VALID_JOURNAL_WORKSPACE_MODES = new Set(["entry", "history", "statistics", "split-history-left", "split-history-right"]);
 const VALID_SCRATCH_PAPER_FILTERS = new Set(["all", "active", "resolved", "trashed"]);
 const DEFAULT_NOTES_WORKSPACE_VIEW: MasterNotesWorkspaceView = {
   selection: { kind: "list" },
