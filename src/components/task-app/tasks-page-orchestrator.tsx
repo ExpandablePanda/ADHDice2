@@ -15,6 +15,7 @@ import { AdhdDropdownPanel } from "@/components/ui-system";
 import type { TaskWorkspaceTab, TasksSurface, TaskViewMode } from "@/lib/task-ui-state";
 
 type TasksPageOrchestratorProps = {
+  activeMasterTabId: string;
   activeTabId: string;
   alternateViewPanel: ReactNode;
   brainstormWorkspacePanel: ReactNode;
@@ -24,6 +25,7 @@ type TasksPageOrchestratorProps = {
   onTimeWorkspacePanel: ReactNode;
   showSharedTaskEditorOverlay?: boolean;
   onCloseTab: (tabId: string) => void;
+  onDraftEditingChange: (isEditing: boolean) => void;
   onReorderTab: (tabId: string, targetIndex: number) => void;
   onRenameTab: (tabId: string, nextLabel: string) => void;
   onSurfaceChange: (surface: TasksSurface) => void;
@@ -38,6 +40,7 @@ type TasksPageOrchestratorProps = {
 };
 
 export function TasksWorkspace({
+  activeMasterTabId,
   activeTabId,
   alternateViewPanel,
   brainstormWorkspacePanel,
@@ -47,6 +50,7 @@ export function TasksWorkspace({
   onTimeWorkspacePanel,
   showSharedTaskEditorOverlay,
   onCloseTab,
+  onDraftEditingChange,
   onReorderTab,
   onRenameTab,
   onSurfaceChange,
@@ -63,6 +67,7 @@ export function TasksWorkspace({
   const [editingTabId, setEditingTabId] = useState<string | null>(null);
   const [draggingTabId, setDraggingTabId] = useState<string | null>(null);
   const [menuTabId, setMenuTabId] = useState<string | null>(null);
+  const [menuMasterTabId, setMenuMasterTabId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const ignoreBlurCommitRef = useRef(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
@@ -123,6 +128,7 @@ export function TasksWorkspace({
     setMenuTabId(null);
     setMenuPosition(null);
     setRenameDraft("");
+    onDraftEditingChange(false);
   };
 
   const startRename = (tabId: string, label: string) => {
@@ -130,15 +136,18 @@ export function TasksWorkspace({
     setMenuPosition(null);
     setEditingTabId(tabId);
     setRenameDraft(label);
+    onDraftEditingChange(true);
   };
 
   const toggleTabMenu = (tabId: string, button: HTMLButtonElement) => {
-    if (menuTabId === tabId) {
+    if (menuMasterTabId === activeMasterTabId && menuTabId === tabId) {
       setMenuTabId(null);
       setMenuPosition(null);
+      setMenuMasterTabId(null);
       return;
     }
 
+    setMenuMasterTabId(activeMasterTabId);
     const buttonRect = button.getBoundingClientRect();
     setMenuPosition({
       left: Math.max(8, buttonRect.right - 144),
@@ -146,6 +155,17 @@ export function TasksWorkspace({
     });
     setMenuTabId(tabId);
   };
+
+  useEffect(() => () => onDraftEditingChange(false), [onDraftEditingChange]);
+
+  useEffect(() => {
+    // The menu is local to one Tasks master tab; clear it when the tab changes.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMenuTabId(null);
+    setMenuPosition(null);
+    setMenuMasterTabId(null);
+    setDraggingTabId(null);
+  }, [activeMasterTabId]);
 
   return (
     <>
@@ -166,7 +186,7 @@ export function TasksWorkspace({
               {tabs.map((tab, index) => {
                 const isActive = tab.id === activeTabId;
                 const isEditing = tab.id === editingTabId;
-                const isMenuOpen = tab.id === menuTabId;
+                const isMenuOpen = menuMasterTabId === activeMasterTabId && tab.id === menuTabId;
                 return (
                   <div
                     className={`relative inline-flex items-center gap-1 ${draggingTabId === tab.id ? "opacity-60" : ""}`}
@@ -221,6 +241,7 @@ export function TasksWorkspace({
                             setMenuTabId(null);
                             setMenuPosition(null);
                             setRenameDraft("");
+                            onDraftEditingChange(false);
                           }
                         }}
                         style={{
@@ -312,7 +333,7 @@ export function TasksWorkspace({
         tableViewPanel={tableViewPanel}
         view={view}
       />
-      {menuTabId && menuPosition ? (
+      {menuMasterTabId === activeMasterTabId && menuTabId && menuPosition ? (
         <div ref={menuRef}>
           <AdhdDropdownPanel
             className="min-w-[9rem] p-1.5"

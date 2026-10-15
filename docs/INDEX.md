@@ -31,6 +31,7 @@ This file is the documentation map for the ADHDice repo. Use it to decide which 
 - `docs/UI_SYSTEM.md` - Canonical ADHDice visual, interaction, and reuse rules.
 - `docs/TASKAPP_ARCHITECTURE.md` - Canonical TaskApp production routing, ownership, and change-boundary contract.
 - `docs/TASK_STATE_ENGINE.md` - Canonical active Task State Engine authority for state evaluation, status/action routing, recurrence, rollover, Calendar projection, rewards eligibility, and persistence projection.
+- `docs/architecture/home-backup-recovery.md` - Current Home recovery storage, RPC, restore-generation, deployment, budget, and rollback contract.
 - `docs/architecture/task-state-phase-1e-current-task-read-projection-contract.md` - Canonical current Task read-projection, freshness, invalidation, repair, and migration authority; supersedes full canonical History as normal current-workspace startup authority.
 - `docs/architecture/WORKSPACE_EFFICIENCY_RELEASE_GATE.md` - Canonical 7.15 current-read migration measurement plan, HAR audit interpretation, architecture budgets, and manual release scenarios.
 

@@ -104,6 +104,24 @@ export function normalizeHealthNutritionDetails(value: unknown): HealthNutrition
   return Object.keys(normalized).length > 0 ? normalized : null;
 }
 
+const HEALTH_NUMERIC_INPUT_PATTERN = /^(?:(?:\d{1,3}(?:,\d{3})+)|\d+)(?:\.\d*)?$|^\.\d+$/;
+
+export function parseHealthNutritionNumber(value: string | number | null | undefined): number | null {
+  if (value === null || value === undefined) {
+    return null;
+  }
+  if (typeof value === "number") {
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
+
+  const trimmed = value.trim();
+  if (!trimmed || !HEALTH_NUMERIC_INPUT_PATTERN.test(trimmed)) {
+    return null;
+  }
+  const parsed = Number(trimmed.replace(/,/g, ""));
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
 export function parseHealthNutritionDetailsInput(input: Partial<Record<HealthNutritionDetailKey, string | number | null | undefined>>): HealthNutritionDetails | null {
   const values: Partial<Record<HealthNutritionDetailKey, number | null>> = {};
   for (const field of HEALTH_NUTRITION_FIELD_REGISTRY) {
@@ -111,8 +129,8 @@ export function parseHealthNutritionDetailsInput(input: Partial<Record<HealthNut
     if (rawValue === null || rawValue === undefined || rawValue === "") {
       continue;
     }
-    const parsed = typeof rawValue === "number" ? rawValue : Number(rawValue);
-    if (Number.isFinite(parsed) && parsed >= 0) {
+    const parsed = parseHealthNutritionNumber(rawValue);
+    if (parsed !== null) {
       values[field.key] = parsed;
     }
   }

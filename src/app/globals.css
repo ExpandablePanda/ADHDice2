@@ -536,6 +536,90 @@ body::-webkit-scrollbar-thumb:hover,
   container-name: page-shell;
 }
 
+.settings-page .page-shell-body {
+  overflow-x: auto;
+}
+
+.settings-page .page-shell-body > * {
+  min-width: max(100%, 16rem);
+}
+
+.settings-recovery-stats-grid,
+.settings-recovery-preview-lists,
+.settings-recovery-changes-grid,
+.settings-recovery-point-button,
+.settings-recovery-panels-grid {
+  min-width: 0;
+}
+
+.settings-recovery-stats-grid,
+.settings-recovery-preview-lists,
+.settings-recovery-changes-grid,
+.settings-recovery-point-button,
+.settings-recovery-panels-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.settings-recovery-stats-grid > *,
+.settings-recovery-preview-lists > *,
+.settings-recovery-changes-grid > *,
+.settings-recovery-point-button > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.settings-recovery-actions {
+  align-items: stretch;
+  justify-content: flex-start;
+}
+
+@container page-shell (min-width: 36rem) {
+  .settings-recovery-stats-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page-shell (min-width: 48rem) {
+  .settings-recovery-actions {
+    align-items: center;
+    flex-direction: row;
+    justify-content: space-between;
+  }
+
+  .settings-recovery-point-button {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+}
+
+@container page-shell (min-width: 64rem) {
+  .settings-recovery-stats-grid {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+
+  .settings-recovery-panels-grid {
+    grid-template-columns: minmax(16rem, 0.85fr) minmax(0, 1.4fr);
+  }
+}
+
+@container page-shell (min-width: 80rem) {
+  .settings-recovery-preview-lists,
+  .settings-recovery-changes-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container page-shell (max-width: 24rem) {
+  .settings-page-row {
+    align-items: stretch;
+    flex-direction: column;
+    padding-inline: 0.75rem;
+  }
+
+  .settings-row-control {
+    width: 100%;
+  }
+}
+
 .page-shell-body {
   flex: 1 1 auto;
   min-height: 0;

@@ -6,6 +6,7 @@ import type { Task } from "../src/lib/database.types.ts";
 import type { TaskContentFolderRow } from "../src/lib/task-content-folders.ts";
 import {
   buildHomeTaskRowHierarchy,
+  buildHomeFolderTaskHierarchyProjection,
   buildHomeRoutineGroups,
   buildHomeRoutineSections,
   buildHomeTodoDaySections,
@@ -13,6 +14,9 @@ import {
   createHomeScratchpadItem,
   createHomeScratchpadItems,
   createHomeTodoTask,
+  canReconcileHomeTodoMemberships,
+  canSyncHomeTodoStateToRemote,
+  deleteHomeRoutineSection,
   formatHomeRoutineDueLabel,
   formatHomeTodoDateLabel,
   getHomeTasksByCanonicalMembership,
@@ -20,7 +24,9 @@ import {
   getHomeRoutineTaskIds,
   getHomeTodoSearchText,
   hasMeaningfulHomeTodoState,
+  HOME_ROUTINE_UNSECTIONED_ID,
   isHomeTodoTaskEligible,
+  isHomeTodoHydratedForUser,
   mergeHomeTodoVisibleTaskIds,
   moveHomeScratchpadTextToItems,
   moveHomeRoutineTaskIdToSection,
@@ -39,8 +45,8 @@ import {
   reconcileHomeTodoTaskIds,
   reconcileHomeUrgentTaskIds,
   reorderHomeScratchpadItems,
-  shouldPersistHomeRoutineReconciliation,
   sortHomeTodoSearchResults,
+  type HomeFolderTaskHierarchyNode,
   type HomeTodoTaskMetadata,
 } from "../src/lib/home-todo-state.ts";
 import { getCalendarDayKey, getLogicalDayKey } from "../src/lib/logical-day.ts";
@@ -55,6 +61,14 @@ function task(id: string, overrides: Partial<Task> = {}) {
     trashed_at: null,
     ...overrides,
   } as Task;
+}
+
+function contentFolder(id: string, name: string, parent_folder_id: string | null = null) {
+  return { id, name, parent_folder_id } as TaskContentFolderRow;
+}
+
+function flattenFolderTaskNodes(nodes: readonly HomeFolderTaskHierarchyNode[]): HomeFolderTaskHierarchyNode[] {
+  return nodes.flatMap((node) => [node, ...flattenFolderTaskNodes(node.children)]);
 }
 
 const homeTaskMetadata: HomeTodoTaskMetadata = {
@@ -489,6 +503,145 @@ test("Home Routine groups inherit nested descendants without duplicating direct 
   assert.deepEqual(groups[1]?.taskIds, [standaloneChild.id]);
 });
 
+test("Home Folder hierarchy sorts Folder siblings alphabetically and keeps nested ancestry", () => {
+  const folders = [
+    contentFolder("folder-z", "Zulu"),
+    contentFolder("folder-alpha-10", "Folder 10", "folder-alpha"),
+    contentFolder("folder-alpha", "Alpha"),
+    contentFolder("folder-alpha-2", "Folder 2", "folder-alpha"),
+  ];
+  const tasks = [
+    task("task-z", { task_content_folder_id: "folder-z" }),
+    task("task-alpha-10", { task_content_folder_id: "folder-alpha-10" }),
+    task("task-alpha-2", { task_content_folder_id: "folder-alpha-2" }),
+  ];
+  const groups = buildHomeFolderTaskHierarchyProjection(tasks, tasks, folders);
+
+  assert.deepEqual(groups.map((group) => group.folder?.name), ["Alpha", "Zulu"]);
+  assert.deepEqual(groups[0]?.childFolders.map((group) => group.folder?.name), ["Folder 2", "Folder 10"]);
+  assert.equal(groups[0]?.childFolders[0]?.taskRoots[0]?.task.id, "task-alpha-2");
+});
+
+test("Home Folder hierarchy sorts Parent Tasks, Steps, and Substeps recursively", () => {
+  const folder = contentFolder("folder", "Projects");
+  const parentZ = task("parent-z", { title: "Zulu", task_content_folder_id: folder.id });
+  const parentA = task("parent-a", { title: "alpha", task_content_folder_id: folder.id });
+  const stepZ = task("step-z", { parent_task_id: parentA.id, title: "zebra" });
+  const stepA = task("step-a", { parent_task_id: parentA.id, title: "Apple" });
+  const substepZ = task("substep-z", { parent_task_id: stepA.id, title: "zinc" });
+  const substepA = task("substep-a", { parent_task_id: stepA.id, title: "almond" });
+  const tasks = [parentZ, stepZ, substepZ, parentA, stepA, substepA];
+  const groups = buildHomeFolderTaskHierarchyProjection(tasks, tasks, [folder]);
+  const parents = groups[0]?.taskRoots ?? [];
+
+  assert.deepEqual(parents.map((node) => node.task.id), [parentA.id, parentZ.id]);
+  assert.deepEqual(parents[0]?.children.map((node) => node.task.id), [stepA.id, stepZ.id]);
+  assert.deepEqual(parents[0]?.children[0]?.children.map((node) => node.task.id), [substepA.id, substepZ.id]);
+});
+
+test("Home Folder hierarchy puts missing and unfiled Tasks after named Folders", () => {
+  const folder = contentFolder("folder", "Alpha");
+  const named = task("named", { task_content_folder_id: folder.id });
+  const dangling = task("dangling-folder", { task_content_folder_id: "deleted-folder" });
+  const unfiled = task("unfiled", { task_content_folder_id: null });
+  const missingParent = task("missing-parent-child", { parent_task_id: "deleted-parent" });
+  const tasks = [unfiled, missingParent, dangling, named];
+  const groups = buildHomeFolderTaskHierarchyProjection(tasks, tasks, [folder]);
+
+  assert.deepEqual(groups.map((group) => group.isUnfiled), [false, true]);
+  assert.deepEqual(groups[1]?.taskRoots.map((node) => node.task.id), ["dangling-folder", "missing-parent-child", "unfiled"]);
+});
+
+test("Missed child stays under a context-only Parent without nonqualifying siblings", () => {
+  const parent = task("parent", { title: "Parent" });
+  const missedChild = task("missed-child", { parent_task_id: parent.id, title: "Missed child" });
+  const sibling = task("sibling", { parent_task_id: parent.id, title: "Sibling" });
+  const groups = buildHomeFolderTaskHierarchyProjection([missedChild], [parent, missedChild, sibling], []);
+  const root = groups[0]?.taskRoots[0];
+
+  assert.equal(root?.task.id, parent.id);
+  assert.equal(root?.isQualifying, false);
+  assert.deepEqual(root?.children.map((node) => [node.task.id, node.isQualifying]), [[missedChild.id, true]]);
+  assert.equal(groups[0]?.qualifyingTaskCount, 1);
+});
+
+test("Attention Substep keeps Parent and Step context and excludes nonqualifying siblings", () => {
+  const parent = task("parent", { title: "Parent" });
+  const step = task("step", { parent_task_id: parent.id, title: "Step" });
+  const attentionSubstep = task("attention-substep", { parent_task_id: step.id, title: "Attention" });
+  const siblingStep = task("sibling-step", { parent_task_id: parent.id, title: "Sibling step" });
+  const siblingSubstep = task("sibling-substep", { parent_task_id: step.id, title: "Sibling substep" });
+  const tasks = [parent, step, attentionSubstep, siblingStep, siblingSubstep];
+  const groups = buildHomeFolderTaskHierarchyProjection([attentionSubstep], tasks, []);
+  const root = groups[0]?.taskRoots[0];
+  const projectedStep = root?.children[0];
+
+  assert.deepEqual([root?.task.id, projectedStep?.task.id, projectedStep?.children[0]?.task.id], [parent.id, step.id, attentionSubstep.id]);
+  assert.equal(root?.isQualifying, false);
+  assert.equal(projectedStep?.isQualifying, false);
+  assert.equal(projectedStep?.children[0]?.isQualifying, true);
+  assert.deepEqual(root?.children.map((node) => node.task.id), [step.id]);
+  assert.deepEqual(projectedStep?.children.map((node) => node.task.id), [attentionSubstep.id]);
+  assert.equal(groups[0]?.qualifyingTaskCount, 1);
+});
+
+test("Qualifying Parent remains qualifying and does not become context-only", () => {
+  const parent = task("parent", { title: "Parent" });
+  const child = task("child", { parent_task_id: parent.id, title: "Child" });
+  const groups = buildHomeFolderTaskHierarchyProjection([parent, child], [parent, child], []);
+
+  assert.equal(groups[0]?.taskRoots[0]?.isQualifying, true);
+  assert.equal(groups[0]?.taskRoots[0]?.children[0]?.isQualifying, true);
+  assert.equal(groups[0]?.qualifyingTaskCount, 2);
+});
+
+test("Routine Folder projection preserves member descendants and adds context for a child anchor", () => {
+  const parent = task("routine-parent", { title: "Routine parent" });
+  const child = task("routine-child", { parent_task_id: parent.id, title: "Routine child" });
+  const descendant = task("routine-descendant", { parent_task_id: child.id, title: "Routine descendant" });
+  const sibling = task("routine-sibling", { parent_task_id: parent.id, title: "Unrelated sibling" });
+  const parentMembershipGroups = buildHomeRoutineGroups([parent.id], [parent, child, descendant, sibling]);
+  const parentProjection = buildHomeFolderTaskHierarchyProjection(
+    parentMembershipGroups.flatMap((group) => group.tasks.map((entry) => entry.task)),
+    [parent, child, descendant, sibling],
+    [],
+  );
+  const parentRows = flattenFolderTaskNodes(parentProjection[0]?.taskRoots ?? []);
+  assert.deepEqual(parentRows.map((node) => node.task.id), [parent.id, child.id, descendant.id, sibling.id]);
+
+  const childAnchorGroups = buildHomeRoutineGroups([child.id], [parent, child, descendant, sibling]);
+  const childProjection = buildHomeFolderTaskHierarchyProjection(
+    childAnchorGroups.flatMap((group) => group.tasks.map((entry) => entry.task)),
+    [parent, child, descendant, sibling],
+    [],
+  );
+  const contextRoot = childProjection[0]?.taskRoots[0];
+  assert.deepEqual(contextRoot?.children.map((node) => node.task.id), [child.id]);
+  assert.equal(contextRoot?.isQualifying, false);
+  assert.deepEqual(contextRoot?.children[0]?.children.map((node) => node.task.id), [descendant.id]);
+  assert.equal(new Set(flattenFolderTaskNodes(childProjection[0]?.taskRoots ?? []).map((node) => node.task.id)).size, 3);
+});
+
+test("Home Folder hierarchy safely retains missing-parent and cyclic Tasks without duplicates", () => {
+  const cycleA = task("cycle-a", { parent_task_id: "cycle-b", title: "Same" });
+  const cycleB = task("cycle-b", { parent_task_id: "cycle-a", title: "Same" });
+  const selfParent = task("self-parent", { parent_task_id: "self-parent", title: "Solo" });
+  const orphan = task("orphan", { parent_task_id: "missing", title: "Orphan" });
+  const tasks = [cycleB, selfParent, orphan, cycleA];
+  const folderA = contentFolder("folder-a", "Folder A", "folder-b");
+  const folderB = contentFolder("folder-b", "Folder B", "folder-a");
+  cycleA.task_content_folder_id = folderA.id;
+  cycleB.task_content_folder_id = folderA.id;
+  const groups = buildHomeFolderTaskHierarchyProjection([cycleA, cycleA, cycleB, selfParent, orphan], tasks, [folderA, folderB]);
+  const rows = groups.flatMap((group) => flattenFolderTaskNodes(group.taskRoots));
+  const ids = rows.map((node) => node.task.id);
+
+  assert.equal(ids.length, 4);
+  assert.deepEqual([...ids].sort(), [cycleA.id, cycleB.id, orphan.id, selfParent.id].sort());
+  assert.equal(new Set(ids).size, ids.length);
+  assert.deepEqual(groups.find((group) => group.folderId === folderA.id)?.taskRoots.map((node) => node.task.id), [cycleA.id, cycleB.id]);
+});
+
 test("Home Routine uses direct membership as the anchor authority", () => {
   const parent = task("parent");
   const child = task("child", { parent_task_id: parent.id });
@@ -541,11 +694,113 @@ test("Home Routine persistence reconciliation uses the saved order and does not 
   assert.deepEqual(reconcileHomeRoutineTaskIds(["anchor-b", "anchor-a", "anchor-c"], sourceOrder), ["anchor-b", "anchor-a", "anchor-c"]);
 });
 
-test("Home Routine persistence reconciliation waits for Home hydration", () => {
-  assert.equal(shouldPersistHomeRoutineReconciliation("loading"), false);
-  assert.equal(shouldPersistHomeRoutineReconciliation("local"), true);
-  assert.equal(shouldPersistHomeRoutineReconciliation("synced"), true);
-  assert.equal(shouldPersistHomeRoutineReconciliation("saving"), true);
+test("Home hydration blocks null-to-user reconciliation before cached Todo and Urgent arrays hydrate", () => {
+  const cached = normalizeHomeTodoState({
+    routineTaskIds: ["routine-kept"],
+    schemaVersion: 8,
+    taskIds: ["todo-kept"],
+    urgentTaskIds: ["urgent-kept"],
+  });
+  const uninitialized = {
+    generation: 0,
+    ownerId: null,
+    remoteReady: false,
+    status: "inactive" as const,
+  };
+  const nextUserId = "user-1";
+  const staleSyncStatus = "local";
+
+  assert.equal(staleSyncStatus, "local");
+  assert.equal(isHomeTodoHydratedForUser(uninitialized, nextUserId), false);
+  const mayReconcile = canReconcileHomeTodoMemberships({
+    homeHydration: uninitialized,
+    taskDataOwnerId: nextUserId,
+    taskDataReady: true,
+    userId: nextUserId,
+  });
+  const taskIdsAfterReconciliation = mayReconcile
+    ? reconcileHomeTodoTaskIds(cached.taskIds, [])
+    : cached.taskIds;
+  const urgentTaskIdsAfterReconciliation = mayReconcile
+    ? reconcileHomeUrgentTaskIds(cached.urgentTaskIds, [])
+    : cached.urgentTaskIds;
+
+  assert.equal(mayReconcile, false);
+  assert.deepEqual(taskIdsAfterReconciliation, ["todo-kept"]);
+  assert.deepEqual(urgentTaskIdsAfterReconciliation, ["urgent-kept"]);
+
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  assert.match(hookSource, /const hydrationReady = isHomeTodoHydratedForUser\(hydrationState, userId\)/);
+  assert.match(hookSource, /const persistCache = useCallback\([\s\S]*?if \(!canMutateForOwner\(ownerId\)\) return;/);
+  assert.match(hookSource, /const commitState = useCallback\([\s\S]*?if \(!canMutateForOwner\(userId\)\) return false;/);
+  assert.match(hookSource, /const flush = useCallback\([\s\S]*?if \(!canSyncForOwner\(ownerId, generation\)/);
+  assert.match(homeSource, /if \(!hydrationReady \|\| !canReconcileMemberships\) return;/);
+  assert.match(homeSource, /if \(!hydrationReady \|\| \(creationTab === "routine" && !canReconcileMemberships\)\) return null;/);
+  assert.match(homeSource, /if \(!hydrationReady \|\| \(activeHomeTab === "routine" && !canReconcileMemberships\)\) return;/);
+  assert.doesNotMatch(homeSource, /shouldPersistHomeRoutineReconciliation\(syncStatus\)/);
+});
+
+test("offline Home hydration allows local edits but never authorizes remote writes before a remote read", () => {
+  const offlineHydration = {
+    generation: 4,
+    ownerId: "user-1",
+    remoteReady: false,
+    status: "ready-local" as const,
+  };
+
+  assert.equal(isHomeTodoHydratedForUser(offlineHydration, "user-1"), true);
+  assert.equal(canSyncHomeTodoStateToRemote(offlineHydration, "user-1", 4), false);
+  assert.equal(canSyncHomeTodoStateToRemote({ ...offlineHydration, status: "ready-remote", remoteReady: true }, "user-1", 4), true);
+});
+
+test("Home reconciliation waits for complete Task and membership reads owned by the same user", () => {
+  const readyHome = {
+    generation: 9,
+    ownerId: "user-1",
+    remoteReady: true,
+    status: "ready-remote" as const,
+  };
+  const context = { homeHydration: readyHome, taskDataOwnerId: "user-1", taskDataReady: false, userId: "user-1" };
+
+  assert.equal(canReconcileHomeTodoMemberships(context), false);
+  assert.equal(canReconcileHomeTodoMemberships({ ...context, taskDataReady: true, taskDataOwnerId: "user-2" }), false);
+  assert.equal(canReconcileHomeTodoMemberships({ ...context, taskDataReady: true }), true);
+});
+
+test("stale auth and Strict Mode generations cannot authorize Home writes", () => {
+  const oldOwnerHydration = {
+    generation: 11,
+    ownerId: "user-1",
+    remoteReady: true,
+    status: "ready-remote" as const,
+  };
+
+  assert.equal(isHomeTodoHydratedForUser(oldOwnerHydration, "user-2"), false);
+  assert.equal(canSyncHomeTodoStateToRemote(oldOwnerHydration, "user-1", 12), false);
+  assert.equal(canSyncHomeTodoStateToRemote(oldOwnerHydration, "user-1", 11), true);
+});
+
+test("ready Home state keeps intentional membership removals and provider synchronization", () => {
+  const readyHome = {
+    generation: 15,
+    ownerId: "user-1",
+    remoteReady: false,
+    status: "ready-local" as const,
+  };
+  assert.equal(canReconcileHomeTodoMemberships({
+    homeHydration: readyHome,
+    taskDataOwnerId: "user-1",
+    taskDataReady: true,
+    userId: "user-1",
+  }), true);
+  assert.deepEqual(reconcileHomeRoutineTaskIds([], []), []);
+  assert.deepEqual(reconcileHomeUrgentTaskIds([], [task("still-valid")]), []);
+
+  const providerSource = readFileSync(new URL("../src/components/task-app/home-todo-state-provider.tsx", import.meta.url), "utf8");
+  const appSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
+  assert.equal((appSource.match(/<HomeTodoStateProvider\b/g) ?? []).length, 1);
+  assert.equal((providerSource.match(/useHomeTodoState\(userId\)/g) ?? []).length, 1);
 });
 
 test("Home V8 bootstrap recognizes meaningful state outside To-do taskIds", () => {
@@ -828,6 +1083,86 @@ test("Home Routine section moves append to the destination and no-op in the curr
     routineTaskIds,
     routineSectionIdByTaskId: assignments,
   });
+});
+
+test("Home Routine section deletion preserves Home state and moves only its groups to persistent Unsectioned", () => {
+  const base = normalizeHomeTodoState({
+    schemaVersion: 8,
+    taskIds: ["todo"],
+    taskDayOffsets: { todo: 2 },
+    routineTaskIds: ["a", "b", "c", "d"],
+    routineSections: [
+      { id: "first", name: "First" },
+      { id: "middle", name: "Middle" },
+      { id: "last", name: "Last" },
+    ],
+    routineSectionIdByTaskId: { a: "first", b: "middle", c: "middle", d: "last" },
+    urgentTaskIds: ["urgent"],
+    scratchpadText: "keep this",
+    scratchpadItems: [{ id: "note", text: "keep this too" }],
+  });
+
+  const deleted = deleteHomeRoutineSection(base.routineSections, base.routineSectionIdByTaskId, base.routineTaskIds, "middle");
+  assert.ok(deleted);
+  const next = normalizeHomeTodoState({ ...base, ...deleted });
+  assert.deepEqual(next.routineSections, [{ id: "first", name: "First" }, { id: "last", name: "Last" }]);
+  assert.deepEqual(next.routineTaskIds, ["a", "b", "c", "d"]);
+  assert.deepEqual(next.routineSectionIdByTaskId, { a: "first", b: HOME_ROUTINE_UNSECTIONED_ID, c: HOME_ROUTINE_UNSECTIONED_ID, d: "last" });
+  assert.deepEqual(next.taskIds, base.taskIds);
+  assert.deepEqual(next.taskDayOffsets, base.taskDayOffsets);
+  assert.deepEqual(next.urgentTaskIds, base.urgentTaskIds);
+  assert.equal(next.scratchpadText, base.scratchpadText);
+  assert.deepEqual(next.scratchpadItems, base.scratchpadItems);
+  assert.deepEqual(buildHomeRoutineSections(next.routineTaskIds, next.routineSections, next.routineSectionIdByTaskId).map((section) => [section.id, section.groupIds]), [
+    ["first", ["a"]], ["last", ["d"]], [HOME_ROUTINE_UNSECTIONED_ID, ["b", "c"]],
+  ]);
+  assert.equal(deleteHomeRoutineSection(next.routineSections, next.routineSectionIdByTaskId, next.routineTaskIds, "middle"), null);
+});
+
+test("Home Routine deletion handles empty, first, last, and only sections without renumbering", () => {
+  const emptySections = [{ id: "empty", name: "Empty" }, { id: "kept", name: "Kept" }];
+  const emptyDelete = deleteHomeRoutineSection(emptySections, { routine: "kept" }, ["routine"], "empty");
+  assert.deepEqual(emptyDelete, { routineSections: [{ id: "kept", name: "Kept" }], routineSectionIdByTaskId: { routine: "kept" } });
+
+  const firstDelete = deleteHomeRoutineSection(emptySections, { routine: "kept" }, ["routine"], "kept");
+  assert.deepEqual(firstDelete?.routineSections, [{ id: "empty", name: "Empty" }]);
+  assert.deepEqual(firstDelete?.routineSectionIdByTaskId, { routine: HOME_ROUTINE_UNSECTIONED_ID });
+
+  const onlyDelete = deleteHomeRoutineSection([{ id: "only", name: "Only" }], { a: "only", b: "only" }, ["a", "b"], "only");
+  const persisted = normalizeHomeTodoState({ schemaVersion: 8, routineTaskIds: ["a", "b"], ...onlyDelete });
+  assert.deepEqual(persisted.routineSections, []);
+  assert.deepEqual(persisted.routineSectionIdByTaskId, { a: HOME_ROUTINE_UNSECTIONED_ID, b: HOME_ROUTINE_UNSECTIONED_ID });
+  assert.deepEqual(buildHomeRoutineSections(persisted.routineTaskIds, persisted.routineSections, persisted.routineSectionIdByTaskId).map((section) => section.groupIds), [["a", "b"]]);
+  const withNewSection = normalizeHomeTodoState({
+    ...persisted,
+    routineSections: [...persisted.routineSections, { id: "new-id", name: "New Section" }],
+  });
+  assert.deepEqual(withNewSection.routineSectionIdByTaskId, persisted.routineSectionIdByTaskId);
+  assert.equal(buildHomeRoutineSections(withNewSection.routineTaskIds, withNewSection.routineSections, withNewSection.routineSectionIdByTaskId).at(-1)?.label, "Unsectioned");
+});
+
+test("Home Routine Unsectioned assignments survive moves, sorting, normalization, and remote-state reconstruction", () => {
+  const state = normalizeHomeTodoState({
+    schemaVersion: 8,
+    routineTaskIds: ["named", "unsectioned-a", "other", "unsectioned-b"],
+    routineSections: [{ id: "named-section", name: "Named" }, { id: "other-section", name: "Other" }],
+    routineSectionIdByTaskId: {
+      named: "named-section", "unsectioned-a": HOME_ROUTINE_UNSECTIONED_ID,
+      other: "other-section", "unsectioned-b": HOME_ROUTINE_UNSECTIONED_ID,
+    },
+  });
+  const restored = normalizeHomeTodoState(JSON.parse(JSON.stringify(state)));
+  assert.deepEqual(restored, state);
+
+  const movedToNamed = moveHomeRoutineTaskIdToSection(restored.routineTaskIds, restored.routineSectionIdByTaskId, "unsectioned-a", "named-section");
+  const movedBack = moveHomeRoutineTaskIdToSection(movedToNamed.routineTaskIds, movedToNamed.routineSectionIdByTaskId, "unsectioned-a", HOME_ROUTINE_UNSECTIONED_ID);
+  assert.deepEqual(movedBack.routineSectionIdByTaskId, restored.routineSectionIdByTaskId);
+  assert.deepEqual(movedBack.routineTaskIds, ["named", "other", "unsectioned-b", "unsectioned-a"]);
+  const unsectioned = buildHomeRoutineSections(movedBack.routineTaskIds, restored.routineSections, movedBack.routineSectionIdByTaskId).at(-1)!;
+  assert.deepEqual(unsectioned.groupIds, ["unsectioned-b", "unsectioned-a"]);
+  const reordered = mergeHomeTodoVisibleTaskIds(movedBack.routineTaskIds, unsectioned.groupIds, ["unsectioned-a", "unsectioned-b"]);
+  assert.deepEqual(reordered, ["named", "other", "unsectioned-a", "unsectioned-b"]);
+  assert.deepEqual(new Set(reordered), new Set(["named", "other", "unsectioned-a", "unsectioned-b"]));
 });
 
 test("Home Routine section moves survive V6 normalization", () => {
@@ -1131,15 +1466,15 @@ test("Home derived tabs use canonical membership, retain task controls, and avoi
   assert.match(source, /<AdhdChip[\s\S]*>\s*Urgent\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*To-do\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Attention\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Missed\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Routine\s*<\/AdhdChip>[\s\S]*<AdhdChip[\s\S]*>\s*Scratchpad\s*<\/AdhdChip>/);
   assert.match(source, /No tasks need Attention right now\./);
   assert.match(source, /No missed tasks right now\./);
-  assert.match(source, /const isDerived = mode === "attention" \|\| mode === "missed"/);
+  assert.match(source, /const isDerived = mode === "attention" \|\| mode === "missed" \|\| isContextOnly/);
   assert.match(renderSource, /const hierarchy = buildHomeTaskRowHierarchy\(task, tasks, taskContentFolders, taskById, taskHierarchy\)/);
   assert.doesNotMatch(renderSource, /buildHomeTodoHierarchy\(task, tasks, taskById\)/);
   assert.match(source, /renderHomeTask\(task, index, handle, "urgent"\)/);
   assert.match(source, /renderHomeTask\(task, index, handle, "todo"\)/);
   assert.match(source, /renderHomeTask\([\s\S]*"routine"[\s\S]*\)/);
-  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
-  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
-  assert.match(renderSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(attentionFolderGroups, "attention"\)/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(missedFolderGroups, "missed"\)/);
+  assert.match(renderSource, /!isRoutineChild && !isDerived && !isAlphabeticalFolderView \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
   assert.match(renderSource, /!isRoutineChild && !isDerived \? \(/);
   assert.match(renderSource, /renderTaskStatusCircle\(displayStatus, "sm"\)/);
   assert.match(renderSource, /onClick=\{\(\) => onOpenTask\(task\.id\)\}/);
@@ -1159,8 +1494,8 @@ test("Home derived task rows use canonical Task-ID keys and preserve Routine row
 
   assert.match(renderSource, /key=\{rowKey \?\? task\.id\}/);
   assert.doesNotMatch(renderSource, /key=\{index\}/);
-  assert.match(derivedViewSource, /attentionTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "attention"\)\)/);
-  assert.match(derivedViewSource, /missedTasks\.map\(\(task, index\) => renderHomeTask\(task, index, null, "missed"\)\)/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(attentionFolderGroups, "attention"\)/);
+  assert.match(derivedViewSource, /renderHomeFolderGroups\(missedFolderGroups, "missed"\)/);
   assert.match(source, /renderHomeTask\(\s*task,\s*reconciledRoutineTaskIds\.indexOf\(group\.anchorId\),\s*isAnchor \? handle : null,\s*"routine",\s*`\$\{group\.anchorId\}-\$\{task\.id\}`,/);
 });
 
@@ -1267,11 +1602,20 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /routineSectionIdByTaskId/);
   assert.match(source, /items=\{sectionRoutineGroups\}/);
   assert.match(source, /mergeHomeTodoVisibleTaskIds\([\s\S]*section\.groupIds[\s\S]*nextGroups\.map/);
-  assert.match(source, /shouldPersistHomeRoutineReconciliation\(syncStatus\)/);
+  assert.match(source, /canReconcileHomeTodoMemberships\(/);
+  assert.match(source, /taskDataReady/);
+  assert.match(source, /if \(!hydrationReady \|\| !canReconcileMemberships\) return;/);
   assert.match(source, /updateRoutineTaskIds\(\(currentRoutineTaskIds\) => reconcileHomeRoutineTaskIds\(currentRoutineTaskIds, routineTaskIds\)/);
   assert.match(source, /createRoutineSection/);
   assert.match(source, /New section/);
   assert.match(source, /updateRoutineSectionName/);
+  assert.match(source, /Delete \$\{section\.label\}/);
+  assert.match(source, /routineSectionDeleteConfirmation/);
+  assert.match(source, /Delete Section/);
+  assert.match(source, /event\.key !== "Escape"/);
+  assert.match(source, /groupCount > 0/);
+  assert.match(source, /HOME_ROUTINE_UNSECTIONED_ID/);
+  assert.match(source, /section\.groupIds/);
   assert.match(source, /updateRoutineTaskSection/);
   assert.match(source, /Move to section/);
   assert.doesNotMatch(source, /updateRoutinesPerSection|state\.routinesPerSection|state\.routineSectionNames/);
@@ -1300,10 +1644,14 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(hookSource, /routineSectionIdByTaskId/);
   assert.match(hookSource, /createRoutineSection/);
   assert.match(hookSource, /updateRoutineTaskSection/);
+  assert.match(hookSource, /const deleteRoutineSection = useCallback/);
+  assert.match(hookSource, /deleteHomeRoutineSection\(/);
+  assert.match(hookSource, /commitState\(\{ \.\.\.current, \.\.\.nextRoutineState \}\)/);
   assert.match(hookSource, /hasMeaningfulHomeTodoState\(cached\)/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
-  assert.match(hookSource, /state: outgoing,\s*user_id: userId/);
+  assert.match(hookSource, /rpc\("save_home_todo_state"[\s\S]*p_expected_restore_generation: expectedRestoreGeneration[\s\S]*p_expected_state_revision: expectedStateRevision[\s\S]*p_state: outgoing/);
+  assert.match(hookSource, /result\?\.status === "restore_conflict" \|\| result\?\.status === "state_conflict"/);
   assert.match(logicalDaySource, /export function getCalendarDayKey/);
   assert.match(logicalDaySource, /export function getLogicalDayKey/);
   assert.match(taskAppSource, /calendarNowMs=\{logicalDayNow\}/);
@@ -1311,7 +1659,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(taskAppSource, /taskHistoryStreakSummaries=\{effectiveTaskHistoryStreakSummaries\}/);
   assert.match(taskAppSource, /manualMembershipsByTaskId=\{manualMembershipsByTaskId\}/);
   assert.match(source, /const HOME_TODO_TITLE_CLASS = "text-sm font-medium text-\[#26324f\] dark:text-white"/);
-  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 5);
+  assert.equal((source.match(/HOME_TODO_TITLE_CLASS/g) ?? []).length, 7);
   assert.match(source, /grid min-w-0 grid-cols-\[auto_auto_auto_minmax\(0,1fr\)_auto\] items-center gap-x-0/);
   assert.match(source, /const HOME_TODO_LIST_CLASS = "mt-3 space-y-2 max-sm:-mx-2"/);
   assert.match(source, /max-sm:-ml-3 sm:-ml-2 shrink-0/);
@@ -1339,7 +1687,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(source, /<ArrowDownToLine aria-hidden="true"/);
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "top"\)\)/);
   assert.match(source, /updateRoutineTaskIds\(\(taskIds\) => moveHomeTodoTaskIdToEdge\(taskIds, task\.id, "bottom"\)\)/);
-  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
+  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor && !isContextOnly/);
   assert.match(source, /!isRoutineChild && !isDerived \? \(/);
   assert.doesNotMatch(source, /<ArrowUp aria-hidden/);
   assert.doesNotMatch(source, /<ArrowDown aria-hidden/);
@@ -1360,7 +1708,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(sharedIconButton, /sm: "h-8 w-8"/);
   assert.match(sharedIconButton, /sm: "h-3\.5 w-3\.5"/);
   assert.match(source, /text-\[#d65775\]/);
-  assert.doesNotMatch(source, /variant="rowToolbar"/);
+  assert.match(source, /className="flex min-w-0 items-center gap-1"[\s\S]*?<h2 className="text-sm font-bold text-\[#4d466d\] dark:text-white\/85"\>\{section\.label\}<\/h2>[\s\S]*?<div className="flex items-center gap-0">[\s\S]*?aria-label=\{`Rename \$\{section\.label\}`\}[\s\S]*?className="!h-6 !w-5"[\s\S]*?iconClassName="h-3\.5 w-3\.5"[\s\S]*?tone="default"[\s\S]*?variant="rowToolbar"[\s\S]*?aria-label=\{`Delete \$\{section\.label\}`\}[\s\S]*?className="!h-6 !w-5"[\s\S]*?iconClassName="h-3 w-3"[\s\S]*?tone="danger"[\s\S]*?variant="rowToolbar"/);
   assert.match(source, /-mx-\[15px\] w-auto px-3 pb-32 pt-6 sm:mx-auto sm:px-4/);
   assert.doesNotMatch(source, /Search your Tasks and arrange the order you want to work through\./);
   assert.match(source, /<div className="relative mt-2" ref=\{searchRef\}>/);
@@ -1426,6 +1774,23 @@ test("Home Routine section updates use canonical Routine ordering", () => {
   assert.match(updateSource, /nextRoutineState\.routineTaskIds\) === JSON\.stringify\(current\.routineTaskIds\)/);
 });
 
+test("Home Routine deletion and movement stay within Home assignment persistence", () => {
+  const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
+  const deleteStart = hookSource.indexOf("const deleteRoutineSection");
+  const deleteEnd = hookSource.indexOf("const updateRoutineSectionName", deleteStart);
+  const deleteSource = hookSource.slice(deleteStart, deleteEnd);
+  assert.match(deleteSource, /stateRef\.current/);
+  assert.match(deleteSource, /deleteHomeRoutineSection\(/);
+  assert.match(deleteSource, /commitState\(\{ \.\.\.current, \.\.\.nextRoutineState \}\)/);
+  assert.doesNotMatch(deleteSource, /updateTask|parent_task_id|history|archive|trash/i);
+
+  const homeSource = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  assert.match(homeSource, /routineSections\.filter\(\(section\) => section\.id !== HOME_ROUTINE_UNSECTIONED_ID\)/);
+  assert.match(homeSource, /\{ id: HOME_ROUTINE_UNSECTIONED_ID, label: "Unsectioned" \}/);
+  assert.match(homeSource, /group\.tasks\.map\(\(\{ depth, isAnchor, task \}\)/);
+  assert.match(homeSource, /setRoutineSectionDeleteConfirmation\(null\)/);
+});
+
 test("useHomeTodoState exposes V8 Urgent and Scratchpad mutations through shared persistence", () => {
   const hookSource = readFileSync(new URL("../src/hooks/useHomeTodoState.ts", import.meta.url), "utf8");
   assert.match(hookSource, /const commitState = useCallback/);
@@ -1439,7 +1804,7 @@ test("useHomeTodoState exposes V8 Urgent and Scratchpad mutations through shared
   assert.match(hookSource, /const reorderScratchpadItems = useCallback/);
   assert.match(hookSource, /schemaVersion: 8/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
-  assert.match(hookSource, /scheduleWrite\(\)/);
+  assert.match(hookSource, /scheduleWrite\(userId\)/);
 });
 
 test("TaskApp passes Home creation through the shared canonical addTask seam", () => {
@@ -1496,7 +1861,7 @@ test("Home Routine child drag reuses TaskApp sibling reorder without changing Ho
   assert.match(taskAppSource, /<TaskHomePage[\s\S]*onReorderChildTask=\{\(taskId, instruction\) => \{ void reorderChildTask\(taskId, instruction\); \}\}/);
   assert.match(homeSource, /items=\{sectionRoutineGroups\}/);
   assert.match(homeSource, /mergeHomeTodoVisibleTaskIds\([\s\S]*section\.groupIds[\s\S]*nextGroups\.map/);
-  assert.match(homeSource, /!isRoutineChild && !isDerived \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
+  assert.match(homeSource, /!isRoutineChild && !isDerived && !isAlphabeticalFolderView \? <span className="max-sm:-ml-3 sm:-ml-2 shrink-0">\{handle\}<\/span>/);
 });
 
 test("Home row gear menus and long-press fast actions preserve Home behavior", () => {
@@ -1557,16 +1922,16 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   const fastActionControlsSource = fastActionSource.slice(0, fastActionSource.indexOf("aria-label={`Collapse actions"));
   assert.doesNotMatch(fastActionControlsSource, /setIsFastActionMode\(false\)/);
   assert.match(actionsSource, /Move to day/);
-  assert.match(actionsSource, /\{isRoutine && isRoutineGroupAnchor \?[\s\S]*Move to section/);
+  assert.match(actionsSource, /\{isRoutine && isRoutineGroupAnchor && !isAlphabeticalFolderView \?[\s\S]*Move to section/);
   assert.doesNotMatch(actionsSource, /\{isRoutine \?[\s\S]*Move to section/);
-  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor/);
+  assert.match(source, /const isRoutineChild = isRoutine && !isRoutineGroupAnchor && !isContextOnly/);
   assert.match(actionsSource, /Move to Top/);
   assert.match(actionsSource, /Move to Bottom/);
   assert.match(actionsSource, /Remove from Home To-do/);
   assert.match(actionsSource, /Remove from Routine/);
   assert.match(actionsSource, /\{!isRoutine \?/);
-  assert.match(actionsSource, /\{isRoutine && !isAtRoutineTop \?/);
-  assert.match(actionsSource, /\{isRoutine && !isAtRoutineBottom \?/);
+  assert.match(actionsSource, /\{isRoutine && !isAlphabeticalFolderView && !isAtRoutineTop \?/);
+  assert.match(actionsSource, /\{isRoutine && !isAlphabeticalFolderView && !isAtRoutineBottom \?/);
   assert.match(renderSource, /dayOffset: section\.dayIndex/);
   assert.match(renderSource, /label: section\.label/);
   assert.match(renderSource, /\{ dayOffset: 7, isFull: false, label: "Later" \}/);
@@ -1575,7 +1940,8 @@ test("Home row gear menus and long-press fast actions preserve Home behavior", (
   assert.match(destinationSource, /const disabled = isCurrentDestination \|\| destination\.isFull/);
   assert.match(destinationSource, /setRowActionMenu\(null\)/);
   assert.match(destinationSource, /Back to task actions/);
-  assert.match(routineDestinationSource, /routineSections\.map/);
+  assert.match(routineDestinationSource, /routineSectionDestinations\.map/);
+  assert.match(source, /label: "Unsectioned"/);
   assert.match(routineDestinationSource, /updateRoutineTaskSection\(task\.id, section\.id\)/);
   assert.match(routineDestinationSource, /disabled=\{isCurrentSection\}/);
   assert.match(routineDestinationSource, /Move \$\{task\.title \|\| "Untitled task"\} to section/);
@@ -1606,9 +1972,7 @@ test("Home To-do consumes canonical streak and Attention projections without cha
   const renderSource = source.slice(renderStart, renderEnd);
   const routineTitleStart = renderSource.indexOf("{isRoutine ? (");
   const normalTitleStart = renderSource.indexOf("          ) : (", routineTitleStart);
-  const normalTitleEnd = renderSource.indexOf("          )}", normalTitleStart);
   const routineTitleSource = renderSource.slice(routineTitleStart, normalTitleStart);
-  const normalTitleSource = renderSource.slice(normalTitleStart, normalTitleEnd);
 
   assert.match(source, /function HomeTodoTaskSignals/);
   assert.match(source, /taskAttentionReasonByTaskId: Readonly<Record<string, TaskAttentionReason>>/);
@@ -1619,9 +1983,55 @@ test("Home To-do consumes canonical streak and Attention projections without cha
   assert.match(source, /<TaskCurrentStreakChip className="px-1\.5 py-0 text-\[11px\]" currentStreak=\{currentStreak\} \/>/);
   assert.match(source, /<TaskAttentionChip dueOn=\{task\.due_on\} reason=\{attentionReason\} taskId=\{task\.id\} \/>/);
   assert.match(taskAppSource, /<TaskHomePage[\s\S]*taskAttentionReasonByTaskId=\{taskAttentionReasonByTaskId\}/);
-  assert.match(normalTitleSource, /HomeTodoTaskSignals/);
+  assert.match(renderSource, /!isContextOnly \? <HomeTodoTaskSignals/);
   assert.doesNotMatch(routineTitleSource, /HomeTodoTaskSignals|TaskAttentionChip|taskAttentionReasonByTaskId/);
   assert.doesNotMatch(source, /buildTaskAttentionReasonMap|evaluateTaskListMemberships|matchesTaskListRules|resolveEffectiveTaskListRules/);
+});
+
+test("Home Routine defaults to Folders and keeps Sections presentation-only", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+  const toggleStart = source.indexOf('<div aria-label="Routine view"');
+  const toggleEnd = source.indexOf("</div>", toggleStart);
+  const toggleSource = source.slice(toggleStart, toggleEnd);
+  const folderViewStart = source.indexOf('{routineView === "folders" ? (');
+  const sectionViewStart = source.indexOf(") : (", folderViewStart);
+  const folderViewSource = source.slice(folderViewStart, sectionViewStart);
+  const routineViewStart = source.indexOf(') : activeHomeTab === "routine" ? (');
+  const routineViewEnd = source.indexOf(') : activeHomeTab === "attention" ?', routineViewStart);
+  const routineSource = source.slice(routineViewStart, routineViewEnd);
+  const renderStart = source.indexOf("function renderHomeTask");
+  const renderSource = source.slice(renderStart, source.indexOf("\n  function renderHomeFolderTaskNode", renderStart));
+
+  assert.match(source, /useState<HomeRoutineView>\("folders"\)/);
+  assert.match(toggleSource, /onClick=\{\(\) => setRoutineView\("folders"\)\}[\s\S]*Folders[\s\S]*onClick=\{\(\) => setRoutineView\("sections"\)\}[\s\S]*Sections/);
+  assert.doesNotMatch(toggleSource, /updateRoutineTaskIds|updateRoutineTaskSection|createRoutineSection|deleteRoutineSection|updateRoutineSectionName/);
+  assert.match(folderViewSource, /renderHomeFolderGroups\(routineFolderGroups, "routine"\)/);
+  assert.doesNotMatch(folderViewSource, /SortableList|updateRoutineTaskIds|updateRoutineTaskSection|moveHomeTodoTaskIdToEdge/);
+  assert.match(routineSource, /routineSections\.map/);
+  assert.match(routineSource, /items=\{sectionRoutineGroups\}/);
+  assert.match(source, /New section/);
+  assert.match(source, /Rename \$\{section\.label\}/);
+  assert.match(source, /Delete \$\{section\.label\}/);
+  assert.match(source, /updateRoutineTaskSection\(task\.id, section\.id\)/);
+  assert.match(routineSource, /onReorder=\{\(nextGroups\) => updateRoutineTaskIds/);
+  assert.match(source, /onReorderChildTask\(dragState\.taskId/);
+  assert.match(renderSource, /isRoutine && !isAlphabeticalFolderView && !isAtRoutineTop/);
+  assert.match(renderSource, /isRoutine && isRoutineGroupAnchor && !isAlphabeticalFolderView/);
+  assert.match(source, /isContextOnly \? \([\s\S]*Context[\s\S]*\) : \([\s\S]*aria-label=\{`Change status:/);
+  assert.match(source, /!node\.isQualifying/);
+  assert.match(source, /group\.qualifyingTaskCount/);
+});
+
+test("Home Folder hierarchy leaves Urgent, To-do day order, and Scratchpad paths intact", () => {
+  const source = readFileSync(new URL("../src/components/task-app/home-page.tsx", import.meta.url), "utf8");
+
+  assert.match(source, /items=\{urgentTasks\}[\s\S]*renderHomeTask\(task, index, handle, "urgent"\)/);
+  assert.match(source, /items=\{visibleTasks\}/);
+  assert.match(source, /buildHomeTodoDaySections\(todoTasks\.map/);
+  assert.match(source, /updateTaskDayOffset\(sourceTask\.id, Number\.isInteger\(targetDayOffset\) \? targetDayOffset : null\)/);
+  assert.match(source, /items=\{state\.scratchpadItems\}[\s\S]*reorderScratchpadItems\(nextItems\.map\(\(item\) => item\.id\)\)/);
+  assert.match(source, /activeHomeTab === "attention" \? \([\s\S]*renderHomeFolderGroups\(attentionFolderGroups, "attention"\)/);
+  assert.match(source, /activeHomeTab === "missed" \? \([\s\S]*renderHomeFolderGroups\(missedFolderGroups, "missed"\)/);
 });
 
 test("Home todo migration and schema provide owner-scoped realtime state", () => {

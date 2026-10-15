@@ -10,11 +10,14 @@ import type {
 import { getTaskFocusFilterFacts, getTaskHistoryLastDone, getTaskHistoryLastHandled } from "@/lib/task-history";
 import type { TaskHistoryStreakSummaryMap } from "@/lib/task-history-streak-summaries";
 import type { TaskEditorLinkedNote } from "@/lib/task-notes";
+import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
 import type {
   TaskBucketContext,
 } from "@/lib/task-buckets";
 import { normalizeTaskDisplayStatus, type TaskDisplayStatus, type TaskDisplayStatusByTaskId } from "@/lib/task-display-status";
 import type { TaskTableColumnFilters, TaskUiState } from "@/lib/task-ui-state";
+import { parseTaskSearchInput } from "@/lib/task-search";
+import { createProjectionDomainRevision } from "@/lib/stable-task-projection";
 import type {
   TaskListDefinition,
   TaskListEvaluationContext,
@@ -31,8 +34,65 @@ import { todayISO } from "@/lib/utils";
 import { matchesTaskTypeSelections } from "@/lib/task-type";
 import { quotaProgressForTask, type QuotaProgress } from "@/lib/task-state-engine/quota";
 import type { TaskHistoryOutcome } from "@/lib/task-state-engine/types";
+import {
+  buildStableTaskSearchScope,
+  queryTaskSearch,
+  shouldRunTaskSearch,
+  type StableTaskSearchScope,
+  type TaskSearchEntity,
+  type TaskSearchQueryResult,
+} from "@/lib/task-search-selector";
 
-type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
+export type TaskDerivedFilterState = Pick<TaskUiState, "duplicateTitleMode" | "energyFilters" | "includeStepsByView" | "matchAny" | "quickFilters" | "selectedBucket" | "statusFilters" | "tableColumnFilters" | "view">;
+
+export type TaskAppDerivedPresentation = {
+  /** Search text after operators and casing are normalized for this presentation. */
+  normalizedSearchQuery: string;
+  /** Query used by the full derivation. TaskApp leaves this empty because its canonical search selector owns live search. */
+  derivationSearchQuery: string;
+  duplicateTitleMode: boolean;
+  taskUiState: TaskDerivedFilterState;
+  /** Column settings for the explicitly selected Task view. */
+  visibleColumns: AgentPlanColumnId[];
+  /** Existing shared column-picker source; retained for single-panel parity. */
+  tableVisibleColumns: AgentPlanColumnId[];
+  derivationViewRevision: string;
+  derivationSettingsRevision: string;
+};
+
+export function prepareTaskAppDerivedPresentation(
+  taskUiState: TaskUiState,
+  options: { derivationSearchQuery?: string } = {},
+): TaskAppDerivedPresentation {
+  const parsedSearch = parseTaskSearchInput(taskUiState.search, taskUiState.duplicateTitleMode);
+  const derivedFilterState: TaskDerivedFilterState = {
+    duplicateTitleMode: parsedSearch.duplicateTitleMode,
+    energyFilters: taskUiState.energyFilters,
+    includeStepsByView: taskUiState.includeStepsByView,
+    matchAny: taskUiState.matchAny,
+    quickFilters: taskUiState.quickFilters,
+    selectedBucket: taskUiState.selectedBucket,
+    statusFilters: taskUiState.statusFilters,
+    tableColumnFilters: taskUiState.tableColumnFilters,
+    view: taskUiState.view,
+  };
+  const visibleColumns = taskUiState.visibleColumnsByView[taskUiState.view];
+  const tableVisibleColumns = taskUiState.visibleColumnsByView.table;
+
+  return {
+    normalizedSearchQuery: parsedSearch.cleanedQuery,
+    derivationSearchQuery: options.derivationSearchQuery ?? parsedSearch.cleanedQuery,
+    duplicateTitleMode: parsedSearch.duplicateTitleMode,
+    taskUiState: derivedFilterState,
+    visibleColumns,
+    tableVisibleColumns,
+    derivationViewRevision: createProjectionDomainRevision("view", derivedFilterState),
+    derivationSettingsRevision: createProjectionDomainRevision("view-settings", {
+      listVisibleColumns: tableVisibleColumns,
+      viewVisibleColumns: visibleColumns,
+    }),
+  };
+}
 
 type VisibleTaskBaseFacts = {
   isDoneTask: boolean;
@@ -178,6 +238,10 @@ export type StableCanonicalTaskIndex = {
   taskListMembershipsByTaskId: Record<string, TaskListMembership[]>;
   todayDateKey: string;
   validChildTaskIdSet: ReadonlySet<string>;
+};
+
+export type TaskSearchPresentationSelection = TaskSearchQueryResult & {
+  visibleTasks: Task[];
 };
 
 export type TaskAppWorkspaceFacts = {
@@ -737,6 +801,53 @@ export function getTaskContentFolderSearchMatchIds(
   );
 }
 
+export function buildTaskSearchPresentationScope(
+  index: StableCanonicalTaskIndex,
+  presentation: TaskUiState,
+  entities: readonly TaskSearchEntity[],
+): StableTaskSearchScope {
+  return buildStableTaskSearchScope(entities, {
+    energyFilters: presentation.energyFilters,
+    focusedTaskIds: index.focusedTaskIds,
+    listNameById: index.listNameById,
+    matchAny: presentation.matchAny,
+    quickFilters: presentation.quickFilters,
+    selectedBucket: presentation.selectedBucket,
+    statusFilters: presentation.statusFilters,
+    tableColumnFilters: presentation.tableColumnFilters,
+  });
+}
+
+export function selectTaskSearchPresentation({
+  bucketContext,
+  index,
+  page,
+  presentation,
+  scope,
+  search,
+}: {
+  bucketContext: TaskBucketContext;
+  index: StableCanonicalTaskIndex;
+  page: string;
+  presentation: TaskUiState;
+  scope: StableTaskSearchScope;
+  search: string;
+}): TaskSearchPresentationSelection | null {
+  if (!shouldRunTaskSearch(page)) return null;
+  const result = queryTaskSearch(
+    search,
+    scope,
+    presentation.includeStepsByView[presentation.view] === true,
+  );
+  const visibleTasks = sortTasksForCockpit(
+    result.visibleRootTaskIds
+      .map((taskId) => index.taskById.get(taskId))
+      .filter((task): task is Task => Boolean(task)),
+    bucketContext,
+  );
+  return { ...result, visibleTasks };
+}
+
 export function queryCanonicalTaskEntityProjection({
   index,
   normalizedSearchQuery,
@@ -1119,15 +1230,13 @@ export function buildTaskAppWorkspaceFacts({
   };
 }
 
-type ComputeTaskAppDerivedDataInput = {
+type ComputeTaskAppDerivedDataBaseInput = {
   activePage: string;
   availableTaskLists: TaskListDefinition[];
   availableTaskNotes: TaskEditorLinkedNote[];
   bucketContext: TaskBucketContext;
-  deferredSearchQuery: string;
   focusedTaskIds: string[];
   listColumnPickerOrder: string[];
-  listVisibleColumns: string[];
   milestoneSearchTokensByTaskId?: ReadonlyMap<string, readonly string[]>;
   milestoneTaskIds?: ReadonlySet<string>;
   taskHistoryByTaskId: Record<string, TaskHistory[]>;
@@ -1138,7 +1247,6 @@ type ComputeTaskAppDerivedDataInput = {
   todayDateKey: string;
   taskListEvaluationContext: TaskListEvaluationContext;
   taskSubtasksByTaskId: Record<string, Task[]>;
-  taskUiState: TaskDerivedFilterState;
   taskDisplayStatusByTaskId?: TaskDisplayStatusByTaskId;
   tasks: Task[];
   structuralData?: TaskAppStructuralData;
@@ -1147,33 +1255,40 @@ type ComputeTaskAppDerivedDataInput = {
   workspaceFacts?: TaskAppWorkspaceFacts;
 };
 
-export function computeTaskAppDerivedData({
-  activePage,
-  availableTaskLists,
-  availableTaskNotes,
-  bucketContext,
-  deferredSearchQuery,
-  focusedTaskIds,
-  listColumnPickerOrder,
-  listVisibleColumns,
-  milestoneSearchTokensByTaskId,
-  milestoneTaskIds,
-  taskHistoryByTaskId,
-  quotaCurrentPeriodHistoryByTaskId,
-  isQuotaCurrentPeriodHistoryReady,
-  taskHistoryStreakSummaryByTaskId,
-  taskContentFolders,
-  todayDateKey,
-  taskListEvaluationContext,
-  taskSubtasksByTaskId,
-  taskUiState,
-  taskDisplayStatusByTaskId = {},
-  tasks,
-  structuralData,
-  stableCanonicalTaskIndex,
-  diagnosticDetails,
-  workspaceFacts,
-}: ComputeTaskAppDerivedDataInput) {
+type ComputeTaskAppDerivedDataInput = ComputeTaskAppDerivedDataBaseInput & (
+  | { presentation: TaskAppDerivedPresentation; deferredSearchQuery?: never; listVisibleColumns?: never; taskUiState?: never }
+  | { presentation?: never; deferredSearchQuery: string; listVisibleColumns: string[]; taskUiState: TaskDerivedFilterState }
+);
+
+export function computeTaskAppDerivedData(input: ComputeTaskAppDerivedDataInput) {
+  const {
+    activePage,
+    availableTaskLists,
+    availableTaskNotes,
+    bucketContext,
+    focusedTaskIds,
+    listColumnPickerOrder,
+    milestoneSearchTokensByTaskId,
+    milestoneTaskIds,
+    taskHistoryByTaskId,
+    quotaCurrentPeriodHistoryByTaskId,
+    isQuotaCurrentPeriodHistoryReady,
+    taskHistoryStreakSummaryByTaskId,
+    taskContentFolders,
+    todayDateKey,
+    taskListEvaluationContext,
+    taskSubtasksByTaskId,
+    taskDisplayStatusByTaskId = {},
+    tasks,
+    structuralData,
+    stableCanonicalTaskIndex,
+    diagnosticDetails,
+    workspaceFacts,
+  } = input;
+  const presentation = input.presentation;
+  const taskUiState = presentation?.taskUiState ?? input.taskUiState!;
+  const deferredSearchQuery = presentation?.derivationSearchQuery ?? input.deferredSearchQuery!;
+  const listVisibleColumns = presentation?.tableVisibleColumns ?? input.listVisibleColumns!;
   if (tasks.length === 0) {
     const emptyStructuralData = structuralData ?? buildTaskAppStructuralData({
       focusedTaskIds,
@@ -1251,6 +1366,7 @@ export function computeTaskAppDerivedData({
       todayTasks: emptyTasks,
       trashFilteredTasksSorted: emptyTasks,
       urgentTasks: emptyTasks,
+      viewVisibleColumns: presentation?.visibleColumns ?? listVisibleColumns,
       visibleListCounts: {},
     };
   }
@@ -1717,6 +1833,7 @@ export function computeTaskAppDerivedData({
     todayQueueTaskCount,
     urgentTasks,
     tableStatusCounts: canonicalEntityProjection.statusFacetCounts,
+    viewVisibleColumns: presentation?.visibleColumns ?? listVisibleColumns,
     visibleListCounts: resolvedWorkspaceFacts.baseListCounts,
   };
 }

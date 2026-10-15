@@ -1,6 +1,7 @@
 import type { Task, TaskHistory, TaskHistoryActionInput, TaskRepeatFrequency, TaskStatus } from "@/lib/database.types";
 import type { TaskDisplayStatus } from "@/lib/task-display-status";
 import { getTaskDescendants } from "@/lib/task-hierarchy";
+import type { TaskCalendarOverride } from "@/lib/task-state-engine/types";
 
 export const COMPLETE_CONFIRMATION_MESSAGE = "Mark permanently Complete? This task will stop recurring and move to Archive.";
 export const CHILD_COMPLETE_CONFIRMATION_MESSAGE = "Mark this Step Complete? This will stop recurring but keep it with its parent until the parent is complete.";
@@ -38,7 +39,8 @@ const HISTORY_OVERRIDE_ACTION_STATUSES = [
   "complete",
 ] as const;
 
-const HISTORY_CALENDAR_OVERRIDE_ACTIONS = ["not_due", "due_open"] as const;
+const HISTORY_CALENDAR_OVERRIDE_ACTIONS = ["in_progress", "blank_due", "not_due", "due_open"] as const;
+export type TaskHistoryCalendarOverrideAction = typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number];
 
 export function getSelectableTaskStatusesForRepeatFrequency(repeatFrequency: TaskRepeatFrequency) {
   if (repeatFrequency === "per_week" || repeatFrequency === "per_month") {
@@ -116,24 +118,55 @@ export function getTaskHistoryCalendarActionStatuses(task: Pick<Task, "repeat_fr
 }
 
 export function isTaskHistoryEntryClearable({
+  calendarOverride,
   entry,
   entryDate,
   task,
   todayDateKey,
 }: {
+  calendarOverride?: Pick<TaskCalendarOverride, "id" | "logicalDate"> | null;
   entry: Pick<TaskHistory, "status"> | null | undefined;
   entryDate: string;
   task: Pick<Task, "status">;
   todayDateKey: string;
 }) {
-  return entryDate <= todayDateKey
-    && Boolean(entry)
+  if (entryDate > todayDateKey
+    || task.status === "complete"
+    || task.status === "archived"
+    || task.status === "trashed"
+    || entry?.status === "complete"
+    || entry?.status === "delayed") {
+    return false;
+  }
+
+  const hasClearableHistoryOutcome = entry?.status === "done"
+    || entry?.status === "did_my_best"
+    || entry?.status === "missed";
+  const hasRemovableCalendarOverride = !entry
+    && Boolean(calendarOverride?.id)
+    && calendarOverride?.logicalDate === entryDate;
+
+  return hasClearableHistoryOutcome || hasRemovableCalendarOverride;
+}
+
+export function canRecalculateTaskHistoryFromDate({
+  selectedDate,
+  task,
+  todayDateKey,
+  isMultiSelect = false,
+}: {
+  selectedDate: string;
+  task: Pick<Task, "repeat_frequency" | "status">;
+  todayDateKey: string;
+  isMultiSelect?: boolean;
+}) {
+  return !isMultiSelect
+    && selectedDate <= todayDateKey
     && task.status !== "complete"
     && task.status !== "archived"
     && task.status !== "trashed"
-    && entry?.status !== "complete"
-    && entry?.status !== "delayed"
-    && (entry?.status === "done" || entry?.status === "did_my_best" || entry?.status === "missed");
+    && task.repeat_frequency !== "per_week"
+    && task.repeat_frequency !== "per_month";
 }
 
 export function getTaskHistoryCalendarVisibleActionStatuses({
@@ -162,29 +195,34 @@ export function getTaskHistoryCalendarVisibleActionStatuses({
 }
 
 export function getTaskHistoryCalendarOverrideActions({
+  entryStatuses = [],
   isMultiSelect,
   selectedDate,
   selectedDates,
   task,
   todayDateKey,
 }: {
+  entryStatuses?: readonly (Pick<TaskHistory, "status"> | null | undefined)[];
   isMultiSelect: boolean;
   selectedDate: string;
   selectedDates?: readonly string[];
   task: Pick<Task, "status">;
   todayDateKey: string;
-}): Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]> {
+}): TaskHistoryCalendarOverrideAction[] {
   if (task.status === "complete" || task.status === "archived" || task.status === "trashed") {
-    return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
+    return [] as TaskHistoryCalendarOverrideAction[];
+  }
+  if (entryStatuses.some((entry) => entry?.status === "complete" || entry?.status === "delayed")) {
+    return [] as TaskHistoryCalendarOverrideAction[];
   }
   if (isMultiSelect) {
     const editableDates = (selectedDates ?? [selectedDate]).filter((dateKey) => dateKey <= todayDateKey);
     return editableDates.length > 0 ? ["not_due"] : [];
   }
   if (selectedDate > todayDateKey) {
-    return [] as Array<typeof HISTORY_CALENDAR_OVERRIDE_ACTIONS[number]>;
+    return [] as TaskHistoryCalendarOverrideAction[];
   }
-  if (selectedDate < todayDateKey) return ["not_due"];
+  if (selectedDate < todayDateKey) return ["blank_due", "not_due"];
   return [...HISTORY_CALENDAR_OVERRIDE_ACTIONS];
 }
 

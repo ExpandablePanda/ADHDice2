@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { resolveCanonicalTaskOccurrence } from "../src/lib/task-state-canonical/occurrence-resolution.ts";
 import type { CanonicalTaskOccurrence } from "../src/lib/task-state-canonical/types.ts";
+
+const historyActionsSource = readFileSync(new URL("../src/hooks/useTaskHistoryActions.ts", import.meta.url), "utf8");
 
 function occurrence(overrides: Partial<CanonicalTaskOccurrence> = {}): CanonicalTaskOccurrence {
   return {
@@ -54,7 +57,7 @@ test("Delay resolution prefers trusted identity and ignores superseded occurrenc
   assert.equal(result.occurrence?.id, "occurrence-trusted");
 });
 
-test("Delay resolution fails closed when no materialized occurrence exists", async () => {
+test("the standalone occurrence reader remains fail-closed when no materialized row exists", async () => {
   const result = await resolveCanonicalTaskOccurrence(clientFor([]), "user-1", "task-1", {
     logicalDate: "2026-08-10",
     scheduledDueOn: "2026-08-10",
@@ -62,6 +65,12 @@ test("Delay resolution fails closed when no materialized occurrence exists", asy
   assert.equal(result.occurrence, null);
   assert.match(result.error ?? "", /No valid canonical occurrence exists/);
   assert.match(result.error ?? "", /Delay was not written/);
+});
+
+test("historical Delay no longer blocks on the browser occurrence reader", () => {
+  assert.doesNotMatch(historyActionsSource, /resolveCanonicalTaskOccurrence/);
+  assert.match(historyActionsSource, /type: "delay_occurrence"/);
+  assert.match(historyActionsSource, /effective_due_on: effectiveDueOn/);
 });
 
 test("occurrence read failures remain fail-closed", async () => {

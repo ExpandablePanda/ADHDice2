@@ -81,6 +81,18 @@ test("navigation search matches destination titles and aliases without searching
   assert.equal(foodResults.some((target) => target.title === "Custom Nutrition Library"), true);
   assert.deepEqual(findTarget("brain").breadcrumb, ["Tasks", "Brainstorm"]);
   assert.deepEqual(findTarget("timezone").breadcrumb, ["Settings", "Day Reset", "Time Zone"]);
+  assert.equal(findTarget("backup recovery").title, "Backup & Recovery");
+  assert.deepEqual(findTarget("backup recovery").action, {
+    kind: "page-shell",
+    page: "Settings",
+    pageKey: "settings",
+    shellId: "settings-backup-recovery",
+  });
+  assert.deepEqual(findTarget("manual backup").action, {
+    kind: "settings-section",
+    page: "Settings",
+    section: "backup-recovery",
+  });
   assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /Task\[\]|supabase|from\("/);
 });
 
@@ -192,7 +204,7 @@ test("Settings targets remain pending through shell hydration and acknowledge af
     shellId: "settings-appearance",
   });
   assert.match(appSource, /setRequestedSettingsSection\(action\.section\)/);
-  assert.match(appSource, /requestedSection=\{requestedSettingsSection\}/);
+  assert.match(appSource, /requestedSection=\{masterWorkspace\.hasSplit[\s\S]*?requestedSettingsSection\}/);
   assert.match(settingsSource, /shell\.scrollIntoView\(\{ block: "start" \}\)/);
   assert.match(settingsSource, /!layout\.isLayoutReady/);
   assert.match(settingsSource, /requestAnimationFrame/);
@@ -220,7 +232,7 @@ test("shell destinations route to their page and request direct shell reveal", (
   assert.match(appSource, /data-page-shell-id=\"\$\{request\.shellId\}\"/);
   assert.match(appSource, /persistHealthTabPreference\(action\.healthTab\)/);
   assert.match(appSource, /const requestedPageShellLayoutReady = useSyncExternalStore/);
-  assert.match(appSource, /isPageShellLayoutReady\(requestedPageShell\.pageKey\)/);
+  assert.match(appSource, /isPageShellLayoutReady\(request\.pageKey\)/);
   assert.match(appSource, /!requestedPageShellLayoutReady/);
   const shellNavigationSource = appSource.slice(appSource.indexOf("const requestedNavigation = requestedPageShell"), appSource.indexOf("useEffect(() => () => clearPageShellNavigationHighlight"));
   assert.doesNotMatch(shellNavigationSource, /scrollIntoView/);
@@ -287,7 +299,7 @@ test("task selection converges with the openTask deep-link path and preserves th
   assert.match(appSource, /const openTaskFromExternalNavigation = useCallback/);
   assert.match(appSource, /openTaskFromExternalNavigation\(requestedTaskId\)/);
   assert.match(appSource, /action\.kind === "task"/);
-  assert.match(appSource, /openTaskFromExternalNavigation\(action\.taskId\)/);
+  assert.match(appSource, /openTaskFromExternalNavigation\(action\.taskId,\s*hasExperimentalDestination\)/);
   assert.match(appSource, /setActiveTaskWorkspaceTab\(nextTaskWorkspaceTabId\)/);
   assert.match(appSource, /setSharedTaskEditorOverlayTaskId\(taskId\)/);
   assert.match(adapterSource, /taskSearchEntities/);
@@ -310,6 +322,8 @@ test("expanded dock puts search first and swaps normal controls for inline searc
   assert.match(dockSource, /!isSearchMode && showPlacementMenu/);
   assert.match(dockSource, /onClick=\{\(\) => onNavigate\(item\)\}/);
   assert.match(dockSource, /if \(isCollapsed\) \{/);
+  assert.match(dockSource, /if \(isPanelScoped\) \{[\s\S]*?data-navigation-layout="panel"/);
+  assert.match(dockSource, /const dockPositionClass = isPanelScoped\s*\?\s*"absolute bottom-/);
   assert.match(dockSource, /onPointerDown=\{startBubbleDrag\}/);
   assert.match(dockSource, /const dockZIndexClass = isSearchMode \? "z-40" : "z-10";/);
   assert.match(dockSource, /fixed inset-x-0 \$\{dockZIndexClass\} min-w-0 px-4/);
@@ -343,6 +357,10 @@ test("top-level Settings shell destinations replace duplicate legacy section res
 });
 
 test("inline results remain attached to each supported dock placement", () => {
+  assert.match(inlineSource, /panelScoped \? "w-\[min\(28rem,100%\)\] max-w-full"/);
+  assert.match(inlineSource, /panelAvailableHeight === undefined \? "min\(55dvh, 22rem\)"/);
+  assert.match(inlineSource, /panelAvailableHeight - 92/);
+  assert.doesNotMatch(inlineSource, /26\.5rem/);
   assert.match(inlineSource, /placement === "bottom"/);
   assert.match(inlineSource, /bottom-full left-0 mb-3/);
   assert.match(inlineSource, /placement === "left"/);

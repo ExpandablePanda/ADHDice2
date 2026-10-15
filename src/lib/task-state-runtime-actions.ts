@@ -167,6 +167,7 @@ export type TaskStateRuntimeActionType =
   | "calendar_override"
   | "clear_outcome"
   | "clear_quota_balance"
+  | "recalculate_history"
   | "reconcile_rollover";
 
 type ClassificationBase = {

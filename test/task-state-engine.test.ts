@@ -58,6 +58,319 @@ test("logical day changes exactly at the configured 06:00 rollover", () => {
   assert.equal(logicalDateForTimestamp("2026-07-30T10:00:00Z", "America/New_York", "06:00"), "2026-07-30");
 });
 
+test("recompute replays the current rolling cadence, preserves Done, and materializes only the still-due Missed date", () => {
+  const replayInput = input({
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: task({
+      dueOn: "2026-09-02",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      activeStatus: "missed",
+    }),
+    history: [
+      history("2026-09-02", "done", { occurrenceDueOn: "2026-09-02", occurrenceIdentity: "task-state:task-1:2026-09-02" }),
+      ...["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06", "2026-09-07"].map((logicalDate) => history(logicalDate, "missed")),
+    ],
+    action: { type: "recompute", fromLogicalDate: "2026-09-01" },
+  });
+  const result = evaluateTaskState(replayInput);
+  const refreshedResult = evaluateTaskState(replayInput);
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.calendar["2026-09-02"], "done");
+  for (const logicalDate of ["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"]) {
+    assert.equal(result.calendar[logicalDate], "not_due", logicalDate);
+  }
+  assert.equal(result.calendar["2026-09-07"], "missed");
+  assert.equal(result.nextDueDate, "2026-09-07");
+  assert.equal(result.activeStatus, "missed");
+  assert.deepEqual(result.timeline.automaticHistoryRows?.map((row) => row.logicalDate), ["2026-09-07"]);
+  assert.deepEqual(result.proposedHistoryChanges.filter((change) => change.type === "insert").map((change) => change.row.logicalDate), ["2026-09-07"]);
+  assert.deepEqual(refreshedResult.calendar, result.calendar, "refresh/read reconstruction remains deterministic");
+  assert.equal(refreshedResult.nextDueDate, result.nextDueDate);
+  assert.deepEqual(refreshedResult.timeline.automaticHistoryRows?.map((row) => row.logicalDate), ["2026-09-07"]);
+});
+
+test("unresolved Missed stays continuous across calculated rolling and fixed recurrence gaps", () => {
+  const scenarios = [
+    {
+      label: "Every 4 Days",
+      dueOn: "2026-09-22",
+      missedOn: "2026-09-26",
+      successOn: "2026-09-28",
+      recurrence: { kind: "rolling", intervalDays: 4 } as const,
+      dates: ["2026-09-27"],
+      notDueDates: ["2026-09-23", "2026-09-24", "2026-09-25"],
+    },
+    {
+      label: "Every 5 Days",
+      dueOn: "2026-09-02",
+      missedOn: "2026-09-07",
+      successOn: "2026-09-10",
+      recurrence: { kind: "rolling", intervalDays: 5 } as const,
+      dates: ["2026-09-08", "2026-09-09"],
+      notDueDates: ["2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"],
+    },
+    {
+      label: "fixed weekly gap",
+      dueOn: "2026-08-31",
+      missedOn: "2026-09-07",
+      successOn: "2026-09-14",
+      recurrence: { kind: "weekly", weekdays: [1], anchorDate: "2026-08-31" } as const,
+      dates: ["2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11", "2026-09-12", "2026-09-13"],
+      notDueDates: ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-04", "2026-09-05", "2026-09-06"],
+    },
+  ];
+
+  for (const scenario of scenarios) {
+    const rows = [
+      history(scenario.dueOn, "done", {
+        occurrenceDueOn: scenario.dueOn,
+        occurrenceIdentity: `task-state:task-1:${scenario.dueOn}`,
+      }),
+      history(scenario.missedOn, "missed", {
+        occurrenceDueOn: scenario.missedOn,
+        occurrenceIdentity: `task-state:task-1:${scenario.missedOn}`,
+      }),
+      history(scenario.successOn, "done", {
+        occurrenceDueOn: scenario.missedOn,
+        occurrenceIdentity: `task-state:task-1:${scenario.missedOn}`,
+      }),
+    ];
+    const base = {
+      now: `${scenario.successOn}T14:00:00.000Z`,
+      calendarStart: scenario.dueOn,
+      calendarEnd: scenario.successOn,
+      task: task({ dueOn: scenario.dueOn, recurrence: scenario.recurrence }),
+      history: rows,
+    };
+    const recalculated = evaluateTaskState(input({
+      ...base,
+      action: { type: "recompute", fromLogicalDate: scenario.dueOn },
+    }));
+    const refreshed = evaluateTaskState(input(base));
+
+    for (const date of scenario.notDueDates) {
+      assert.equal(recalculated.calendar[date], "not_due", `${scenario.label}:${date} before Missed`);
+    }
+    for (const date of scenario.dates) {
+      const day = recalculated.timeline.days[date];
+      assert.equal(recalculated.calendar[date], "missed", `${scenario.label}:${date}`);
+      assert.equal(day?.sourceKind, "calculated", `${scenario.label}:${date}`);
+      assert.equal(day?.historyRowId, null, `${scenario.label}:${date}`);
+      assert.equal(day?.occurrenceDueOn, scenario.missedOn, `${scenario.label}:${date}`);
+      assert.equal(day?.occurrenceIdentity, `task:task-1:occurrence:${scenario.missedOn}`, `${scenario.label}:${date}`);
+      assert.equal(recalculated.proposedHistoryChanges.some((change) => (
+        change.type === "insert" && change.row.logicalDate === date
+      )), false, `${scenario.label}:${date} must remain calculated`);
+      assert.equal(refreshed.timeline.days[date]?.state, "missed", `${scenario.label}:refresh:${date}`);
+      assert.equal(refreshed.timeline.days[date]?.occurrenceDueOn, scenario.missedOn);
+    }
+    assert.equal(recalculated.calendar[scenario.successOn], "done", scenario.label);
+    assert.equal(refreshed.calendar[scenario.successOn], "done", `${scenario.label}:refresh`);
+    assert.equal(recalculated.timeline.currentMissedStreak, 0, scenario.label);
+    assert.deepEqual(
+      Object.fromEntries(Object.entries(refreshed.timeline.days).map(([date, day]) => [date, day.state])),
+      Object.fromEntries(Object.entries(recalculated.timeline.days).map(([date, day]) => [date, day.state])),
+      `${scenario.label}:repeat calculation`,
+    );
+    assert.equal(
+      (recalculated.timeline.automaticHistoryRows ?? []).some((row) => scenario.dates.includes(row.logicalDate)),
+      false,
+      `${scenario.label}: no Missed History is materialized solely for a non-due continuation day`,
+    );
+  }
+});
+
+test("Did My Best and Complete end an unresolved Missed span", () => {
+  for (const outcome of ["did_my_best", "complete"] as const) {
+    const result = evaluateTaskState(input({
+      now: "2026-09-06T14:00:00.000Z",
+      calendarStart: "2026-09-01",
+      calendarEnd: "2026-09-06",
+      task: task({ dueOn: "2026-09-01", recurrence: { kind: "rolling", intervalDays: 4 } }),
+      history: [
+        history("2026-09-01", "missed", {
+          occurrenceDueOn: "2026-09-01",
+          occurrenceIdentity: "task-state:task-1:2026-09-01",
+        }),
+        history("2026-09-05", outcome, {
+          occurrenceDueOn: "2026-09-01",
+          occurrenceIdentity: "task-state:task-1:2026-09-01",
+          ...(outcome === "complete" ? { eventType: "completed_permanently" } : {}),
+        }),
+      ],
+    }));
+
+    for (const date of ["2026-09-02", "2026-09-03", "2026-09-04"]) {
+      assert.equal(result.timeline.days[date]?.state, "missed", `${outcome}:${date}`);
+    }
+    assert.equal(result.timeline.days["2026-09-05"]?.state, outcome);
+    assert.notEqual(result.timeline.days["2026-09-06"]?.state, "missed");
+  }
+});
+
+test("recompute derives Active Status from the replayed current state in both directions", () => {
+  const replayedFuture = evaluateTaskState(input({
+    now: "2026-09-05T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-08",
+    task: task({
+      dueOn: "2026-09-02",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      activeStatus: "missed",
+    }),
+    history: [history("2026-09-02", "done", {
+      occurrenceDueOn: "2026-09-02",
+      occurrenceIdentity: "task-state:task-1:2026-09-02",
+    })],
+    action: { type: "recompute", fromLogicalDate: "2026-09-02" },
+  }));
+
+  assert.equal(replayedFuture.nextDueDate, "2026-09-07");
+  assert.equal(replayedFuture.activeStatus, "not_due");
+  assert.equal(replayedFuture.timeline.activeStatus, "not_due");
+
+  const replayedOverdue = evaluateTaskState(input({
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: task({
+      dueOn: "2026-09-12",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      activeStatus: "not_due",
+    }),
+    history: [history("2026-09-02", "done", {
+      occurrenceDueOn: "2026-09-02",
+      occurrenceIdentity: "task-state:task-1:2026-09-02",
+    })],
+    action: { type: "recompute", fromLogicalDate: "2026-09-02" },
+  }));
+
+  assert.equal(replayedOverdue.nextDueDate, "2026-09-07");
+  assert.equal(replayedOverdue.activeStatus, "missed");
+  assert.equal(replayedOverdue.timeline.activeStatus, "missed");
+});
+
+test("recompute preserves a live current-day workflow from the replayed timeline", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: task({
+      dueOn: "2026-09-07",
+      recurrence: { kind: "rolling", intervalDays: 5 },
+      activeStatus: "missed",
+      activeStatusLogicalDate: "2026-09-10",
+      activeOccurrenceDueOn: "2026-09-10",
+    }),
+    history: [history("2026-09-02", "done", {
+      occurrenceDueOn: "2026-09-02",
+      occurrenceIdentity: "task-state:task-1:2026-09-02",
+    })],
+    workflow: {
+      state: "in_progress",
+      logicalDate: "2026-09-10",
+      occurrenceId: "workflow-occurrence",
+      commandId: "workflow-command",
+      revision: 2,
+    },
+    action: { type: "recompute", fromLogicalDate: "2026-09-02" },
+  }));
+
+  assert.equal(result.activeStatus, "in_progress");
+  assert.equal(result.timeline.activeStatus, "in_progress");
+  assert.equal(result.timeline.days["2026-09-10"]?.state, "in_progress");
+});
+
+test("recompute is range-bounded and preserves every protected factual outcome", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-08-30",
+    calendarEnd: "2026-09-10",
+    task: task({
+      dueOn: "2026-09-01",
+      recurrence: { kind: "rolling", intervalDays: 1 },
+      activeStatus: "complete",
+    }),
+    history: [
+      history("2026-08-31", "missed"),
+      history("2026-09-01", "done"),
+      history("2026-09-02", "did_my_best"),
+      history("2026-09-03", "delayed", { occurrenceDueOn: "2026-09-03", effectiveDueOn: "2026-09-05" }),
+      history("2026-09-05", "complete", { eventType: "completed_permanently" }),
+    ],
+    action: { type: "recompute", fromLogicalDate: "2026-09-01" },
+  }));
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.calendar["2026-08-31"], "missed", "pre-range facts remain untouched");
+  assert.equal(result.calendar["2026-09-01"], "done");
+  assert.equal(result.calendar["2026-09-02"], "did_my_best");
+  assert.equal(result.calendar["2026-09-03"], "delayed");
+  assert.equal(result.calendar["2026-09-05"], "complete");
+  assert.equal(result.nextDueDate, null, "Complete remains terminal after replay");
+  assert.equal(result.activeStatus, "complete");
+  assert.deepEqual(result.proposedHistoryChanges.filter((change) => change.type === "delete"), []);
+});
+
+test("recompute materializes current weekly and monthly obligations through canonical replay", () => {
+  const cases = [
+    {
+      label: "weekly",
+      task: task({
+        dueOn: "2026-09-07",
+        recurrence: { kind: "weekly", weekdays: [1], anchorDate: "2026-09-07" },
+      }),
+      dates: ["2026-09-07", "2026-09-14", "2026-09-21", "2026-09-28", "2026-10-05", "2026-10-12", "2026-10-19"],
+    },
+    {
+      label: "monthly",
+      task: task({
+        dueOn: "2026-09-15",
+        recurrence: { kind: "monthly", mode: "day_of_month", dayOfMonth: 15, anchorDate: "2026-09-15" },
+      }),
+      dates: ["2026-09-15", "2026-10-15"],
+    },
+  ] as const;
+
+  for (const candidate of cases) {
+    const result = evaluateTaskState(input({
+      now: "2026-10-20T14:00:00.000Z",
+      calendarStart: "2026-09-01",
+      calendarEnd: "2026-10-20",
+      task: candidate.task,
+      history: [history(candidate.dates[0]!, "missed")],
+      action: { type: "recompute", fromLogicalDate: "2026-09-01" },
+    }));
+
+    assert.deepEqual(result.validationErrors, [], candidate.label);
+    assert.deepEqual(result.timeline.automaticHistoryRows?.map((row) => row.logicalDate), candidate.dates, candidate.label);
+    assert.equal(result.calendar[candidate.dates[0]!], "missed", candidate.label);
+  }
+});
+
+test("recompute continues Daily Until Complete recurrence until a protected Complete anchor", () => {
+  const result = evaluateTaskState(input({
+    now: "2026-09-10T14:00:00.000Z",
+    calendarStart: "2026-09-01",
+    calendarEnd: "2026-09-10",
+    task: task({
+      dueOn: "2026-09-01",
+      recurrence: { kind: "rolling", intervalDays: 1, untilComplete: true },
+    }),
+    history: [history("2026-09-01", "missed"), history("2026-09-05", "complete", { eventType: "completed_permanently" })],
+    action: { type: "recompute", fromLogicalDate: "2026-09-01" },
+  }));
+
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.calendar["2026-09-01"], "missed");
+  assert.equal(result.calendar["2026-09-05"], "complete");
+  assert.equal(result.calendar["2026-09-06"], "no_entry");
+  assert.equal(result.nextDueDate, null);
+});
+
 test("fixed Weekdays schedule agrees for historical, current, and future dates", () => {
   const result = evaluateTaskState(input({
     calendarEnd: "2026-08-09",

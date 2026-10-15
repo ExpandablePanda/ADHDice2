@@ -34,10 +34,12 @@ test("folder navigation is separate from selectedBucket and All Lists uses the e
 test("folder items stay out of generic bucket selectors and derived Task filtering", () => {
   assert.doesNotMatch(appSource, /const listPanelProps = \{[\s\S]*?lists: listRailOptions,/);
   assert.doesNotMatch(appSource, /<TasksNonListShell[\s\S]*?lists=\{listRailOptions\}/);
-  const derivedStateStart = appSource.indexOf("const taskUiStateForDerivedData = useMemo");
+  const derivedStateStart = appSource.indexOf("const taskDerivedPresentation = useMemo");
   const derivedStateEnd = appSource.indexOf("const bucketContext = useMemo", derivedStateStart);
   assert.equal(derivedStateStart >= 0 && derivedStateEnd > derivedStateStart, true);
-  assert.doesNotMatch(appSource.slice(derivedStateStart, derivedStateEnd), /currentFolderId/);
+  const derivedPresentationSource = appSource.slice(derivedStateStart, derivedStateEnd);
+  assert.match(derivedPresentationSource, /prepareTaskAppDerivedPresentation\(taskUiState/);
+  assert.doesNotMatch(derivedPresentationSource, /currentFolderId/);
 });
 
 test("pointer and touch drops are the sole authoritative placement controls", () => {

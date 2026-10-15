@@ -12,14 +12,20 @@ import { buildTaskTypeSelectionOptions } from "../src/lib/task-type.ts";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
-test("7.16.45 Home work surfaces keep V8 state local to Home", () => {
+test("7.16.162 Home panels share one Todo owner and keep presentation state local", () => {
   const app = read("../src/components/task-app.tsx");
   const home = read("../src/components/task-app/home-page.tsx");
+  const owner = read("../src/components/task-app/home-todo-state-provider.tsx");
   const table = read("../src/components/ui/task-management-table-v2.tsx");
   const adapter = read("../src/components/task-app/tasks-list-adapter.tsx");
   assert.doesNotMatch(app, /useHomeTodoState\(/);
-  assert.match(home, /useHomeTodoState\(userId\)/);
+  assert.match(app, /<HomeTodoStateProvider userId=\{isMasterPanelPageActive\("Home"\) \? currentUserId : null\}>/);
+  assert.equal((app.match(/<HomeTodoStateProvider\b/g) ?? []).length, 1);
+  assert.match(owner, /const controller = useHomeTodoState\(userId\)/);
+  assert.match(home, /useHomeTodoStateController\(\)/);
+  assert.doesNotMatch(home, /useHomeTodoState\(/);
   assert.match(home, /useState<HomePanelTab>\("urgent"\)/);
+  assert.match(home, /const \[query, setQuery\] = useState\(""\)/);
   for (const source of [app, table, adapter]) {
     assert.doesNotMatch(source, /homeTodoTaskIds|onSetHomeTodoMembership|home_todo/);
   }

@@ -12,13 +12,15 @@ export type NavigatorSearchPlacement = "bottom" | "left" | "right";
 type NavigatorSearchInlineProps = {
   onClose: () => void;
   onNavigate: (target: NavigatorSearchTarget) => void;
+  panelAvailableHeight?: number;
+  panelScoped?: boolean;
   placement: NavigatorSearchPlacement;
   renderIcon: (name: string) => ReactNode;
   targets: readonly NavigatorSearchTarget[];
   taskSearchEntities: readonly TaskSearchEntity[];
 };
 
-export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIcon, targets, taskSearchEntities }: NavigatorSearchInlineProps) {
+export function NavigatorSearchInline({ onClose, onNavigate, panelAvailableHeight, panelScoped = false, placement, renderIcon, targets, taskSearchEntities }: NavigatorSearchInlineProps) {
   const [query, setQuery] = useState("");
   const [highlightedIndex, setHighlightedIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -129,11 +131,17 @@ export function NavigatorSearchInline({ onClose, onNavigate, placement, renderIc
         <X aria-hidden="true" className="h-5 w-5" />
       </button>
 
-      <div aria-label={isTaskSearchMode ? "All tasks" : "Navigation destinations"} className={`absolute z-30 ${placement === "bottom" ? "w-[min(28rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]" : "w-[min(28rem,calc(100vw-7rem))] max-w-[calc(100vw-7rem)] sm:w-[min(28rem,calc(100vw-22rem))] sm:max-w-[calc(100vw-22rem)]"} rounded-2xl border border-[#ece8f8] bg-white p-2 shadow-[0_20px_50px_rgba(60,44,140,0.18)] dark:border-white/10 dark:bg-[#171328] ${resultsPositionClass}`} id="navigator-search-results" role="listbox">
+      <div aria-label={isTaskSearchMode ? "All tasks" : "Navigation destinations"} className={`absolute z-30 ${panelScoped ? "w-[min(28rem,100%)] max-w-full" : placement === "bottom" ? "w-[min(28rem,calc(100vw-2rem))] max-w-[calc(100vw-2rem)]" : "w-[min(28rem,calc(100vw-7rem))] max-w-[calc(100vw-7rem)] sm:w-[min(28rem,calc(100vw-22rem))] sm:max-w-[calc(100vw-22rem)]"} rounded-2xl border border-[#ece8f8] bg-white p-2 shadow-[0_20px_50px_rgba(60,44,140,0.18)] dark:border-white/10 dark:bg-[#171328] ${resultsPositionClass}`} id="navigator-search-results" role="listbox">
         {results.length === 0 ? (
           <p className="px-3 py-5 text-center text-sm font-medium text-[#7d88a1] dark:text-white/55">{isTaskSearchMode ? (query.trim() ? "No tasks found." : "Type to search all tasks.") : "No destinations found."}</p>
         ) : (
-          <div className="adhdice-scrollbar max-h-[min(55vh,22rem)] overflow-y-auto" ref={panelRef}>
+          <div
+            className="adhdice-scrollbar max-h-[min(55dvh,22rem)] overflow-y-auto"
+            ref={panelRef}
+            style={panelScoped
+              ? { maxHeight: panelAvailableHeight === undefined ? "min(55dvh, 22rem)" : `${Math.max(0, Math.min(352, panelAvailableHeight - 92))}px` }
+              : undefined}
+          >
             {results.map((target, index) => (
               <button
                 aria-selected={highlightedIndex === index}

@@ -1,0 +1,1099 @@
+import { HEALTH_TABS, todayHealthDate, type HealthTab } from "@/lib/health-utils";
+import { getRegisteredPageShellPages } from "@/lib/page-shell-layout";
+import type { NavigatorSearchAction } from "@/lib/navigator-search";
+import type { HealthMealSlot, ScratchNoteStatus } from "@/lib/database.types";
+import { createScratchPaperRecordId } from "@/lib/scratch-paper-draft";
+import { createHealthFoodDraftId } from "@/lib/health-meal-draft";
+import { createHealthCustomFoodDraftId } from "@/lib/health-custom-food-editing-session";
+import { createHealthLibraryDefinitionDraftId } from "@/lib/health-library-definition-editing-session";
+import type { HealthFoodLibrarySection } from "@/lib/health-library";
+import {
+  DEFAULT_TASK_WORKSPACE_TABS_STATE,
+  isAppPage,
+  normalizeTaskWorkspaceTabsState,
+  resolveActiveTaskUiState,
+  updateActiveTaskUiState,
+  type AppPage,
+  type TasksSurface,
+  type TaskUiState,
+  type TaskViewMode,
+  type TaskWorkspaceTabsState,
+} from "@/lib/task-ui-state";
+
+export const MASTER_WORKSPACE_SCHEMA_VERSION = 1;
+export const MASTER_WORKSPACE_STORAGE_KEY = "adhdice-master-workspace-v1";
+export const MASTER_WORKSPACE_SPLIT_RATIO_MIN = 0.25;
+export const MASTER_WORKSPACE_SPLIT_RATIO_MAX = 0.75;
+
+export type MasterPanelSide = "left" | "right";
+export type MasterTabDestination = NavigatorSearchAction;
+export type MasterJournalWorkspaceMode = "entry" | "history" | "statistics" | "split-history-left" | "split-history-right";
+export type MasterNotesSelection =
+  | { kind: "list" }
+  | { kind: "saved"; noteId: string }
+  | { kind: "new"; draftId: string };
+export type MasterNotesWorkspaceView = {
+  selection: MasterNotesSelection;
+  search: string;
+  activeTag: string | null;
+};
+export type MasterScratchPaperWorkspaceView = {
+  currentNoteId: string | null;
+  newDraftId: string;
+  isNewNoteSelected: boolean;
+  search: string;
+  filter: "all" | ScratchNoteStatus;
+};
+export type MasterFoodWorkspaceView = {
+  historyDate: string;
+  newMealDraftId: string;
+  newPlannedMealDraftId: string;
+  activeMealEntrySlot: HealthMealSlot | null;
+  selectedMealEntryId: string | null;
+  mealEditorMode: "actual" | "plan";
+  editingMealPlanId: string | null;
+  isQuickEntryOpen: boolean;
+  customFoodSearchQuery: string;
+  selectedCustomFoodCategory: string | null;
+  isCustomFoodCategoriesOpen: boolean;
+  expandedFavoriteId: string | null;
+  librarySection: HealthFoodLibrarySection;
+  foodLibrarySearchQuery: string;
+  ingredientSearchQuery: string;
+  selectedCustomFoodDefinitionId: string | null;
+  newCustomFoodDraftId: string;
+  customFoodEditorMode: "new" | "saved";
+  selectedRecipeDefinitionId: string | null;
+  newRecipeDraftId: string;
+  recipeEditorMode: "new" | "saved";
+  selectedSavedMealDefinitionId: string | null;
+  newSavedMealDraftId: string;
+  savedMealEditorMode: "new" | "saved";
+};
+
+export type MasterFoodWorkspaceViewUpdate = MasterFoodWorkspaceView | ((current: MasterFoodWorkspaceView) => MasterFoodWorkspaceView);
+export type MasterTabPresentationState = {
+  healthSection?: HealthTab;
+  scrollTop?: number;
+  journalView?: {
+    selectedEntryId: string | null;
+    newDraftId: string;
+    workspaceMode: MasterJournalWorkspaceMode;
+  };
+  notesView?: MasterNotesWorkspaceView;
+  scratchPaperView?: MasterScratchPaperWorkspaceView;
+  foodView?: MasterFoodWorkspaceView;
+  tasksWorkspace?: TaskWorkspaceTabsState;
+};
+
+export type MasterWorkspaceTab = {
+  id: string;
+  destination: MasterTabDestination;
+  presentation: MasterTabPresentationState;
+};
+
+export type MasterWorkspacePanel = {
+  id: string;
+  side: MasterPanelSide;
+  tabs: MasterWorkspaceTab[];
+  activeTabId: string;
+  /** Missing in older saved states; tabs are expanded unless explicitly collapsed. */
+  tabsCollapsed?: true;
+};
+
+export type MasterWorkspaceState = {
+  schemaVersion: typeof MASTER_WORKSPACE_SCHEMA_VERSION;
+  panels: MasterWorkspacePanel[];
+  focusedPanelId: string;
+  splitRatio: number;
+  visiblePanelId: string;
+};
+
+export type MasterWorkspaceStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
+
+const VALID_TASK_SURFACES = new Set(["tasks", "attention", "paths", "report", "on_time", "brainstorm", "completed_milestones"]);
+const VALID_TASK_VIEWS = new Set(["table", "list", "cards", "matrix", "calendar"]);
+const VALID_SETTINGS_SECTIONS = new Set(["appearance", "day-reset", "economy", "import-export", "backup-recovery"]);
+const VALID_JOURNAL_WORKSPACE_MODES = new Set(["entry", "history", "statistics", "split-history-left", "split-history-right"]);
+const VALID_SCRATCH_PAPER_FILTERS = new Set(["all", "active", "resolved", "trashed"]);
+const DEFAULT_NOTES_WORKSPACE_VIEW: MasterNotesWorkspaceView = {
+  selection: { kind: "list" },
+  search: "",
+  activeTag: null,
+};
+function createRegisteredShellKeySet() {
+  return new Set(getRegisteredPageShellPages().flatMap(({ canonicalLayout, pageKey }) => (
+    canonicalLayout.order.map((shellId) => `${pageKey}\u0000${shellId}`)
+  )));
+}
+
+function isHealthTab(value: unknown): value is HealthTab {
+  return HEALTH_TABS.includes(value as HealthTab);
+}
+
+function normalizeDestination(value: unknown): MasterTabDestination {
+  if (!value || typeof value !== "object") return { kind: "page", page: "Home" };
+  const candidate = value as Record<string, unknown>;
+  const page = candidate.page;
+  switch (candidate.kind) {
+    case "page":
+      return isAppPage(page) ? { kind: "page", page } : { kind: "page", page: "Home" };
+    case "task":
+      return page === "Tasks" && typeof candidate.taskId === "string" && candidate.taskId.trim()
+        ? { kind: "task", page: "Tasks", taskId: candidate.taskId.trim() }
+        : { kind: "page", page: "Home" };
+    case "tasks-surface":
+      return page === "Tasks" && typeof candidate.surface === "string" && VALID_TASK_SURFACES.has(candidate.surface)
+        ? { kind: "tasks-surface", page: "Tasks", surface: candidate.surface as TasksSurface }
+        : { kind: "page", page: "Home" };
+    case "tasks-view":
+      return page === "Tasks" && candidate.surface === "tasks" && typeof candidate.view === "string" && VALID_TASK_VIEWS.has(candidate.view)
+        ? { kind: "tasks-view", page: "Tasks", surface: "tasks", view: candidate.view as TaskViewMode }
+        : { kind: "page", page: "Home" };
+    case "health-tab":
+      return page === "Health" && isHealthTab(candidate.tab)
+        ? { kind: "health-tab", page: "Health", tab: candidate.tab }
+        : { kind: "page", page: "Home" };
+    case "settings-section":
+      return page === "Settings" && typeof candidate.section === "string" && VALID_SETTINGS_SECTIONS.has(candidate.section)
+        ? { kind: "settings-section", page: "Settings", section: candidate.section as "appearance" | "day-reset" | "economy" | "import-export" | "backup-recovery" }
+        : { kind: "page", page: "Home" };
+    case "page-shell": {
+      if (!isAppPage(page) || typeof candidate.pageKey !== "string" || typeof candidate.shellId !== "string") {
+        return { kind: "page", page: "Home" };
+      }
+      const pageKey = candidate.pageKey;
+      const shellId = candidate.shellId;
+      const registeredKeys = createRegisteredShellKeySet();
+      if (!registeredKeys.has(`${pageKey}\u0000${shellId}`)) return { kind: "page", page: "Home" };
+      const shellPage = pageKey.startsWith("health:")
+        ? "Health"
+        : pageKey === "focus" ? "Focus"
+          : pageKey === "home" ? "Home"
+            : pageKey === "notes" ? "Notes"
+              : pageKey === "settings" ? "Settings"
+                : pageKey === "stats" ? "Stats"
+                  : pageKey === "test" || pageKey === "test:d20" ? "Test"
+                    : null;
+      const healthTab = pageKey.startsWith("health:")
+        ? HEALTH_TABS.find((tab) => tab.toLowerCase() === pageKey.slice("health:".length))
+        : undefined;
+      if (shellPage !== page || (pageKey.startsWith("health:") && !healthTab)) return { kind: "page", page: "Home" };
+      return {
+        kind: "page-shell",
+        page,
+        pageKey,
+        shellId,
+        ...(healthTab ? { healthTab } : {}),
+        ...(typeof candidate.tasksSurface === "string" && VALID_TASK_SURFACES.has(candidate.tasksSurface)
+          ? { tasksSurface: candidate.tasksSurface as TasksSurface }
+          : {}),
+      };
+    }
+    default:
+      return { kind: "page", page: "Home" };
+  }
+}
+
+function cloneTaskWorkspaceState(value: unknown): TaskWorkspaceTabsState {
+  const normalized = normalizeTaskWorkspaceTabsState(value);
+  return {
+    activeTabId: normalized.activeTabId,
+    uiStateVersion: normalized.uiStateVersion,
+    tabs: normalized.tabs.map((tab) => ({
+      ...tab,
+      ...(tab.collapsedTaskContentFolderIds
+        ? { collapsedTaskContentFolderIds: [...tab.collapsedTaskContentFolderIds] }
+        : {}),
+      ...(tab.taskTableLayoutPreferences
+        ? { taskTableLayoutPreferences: {
+          ...tab.taskTableLayoutPreferences,
+          ...(tab.taskTableLayoutPreferences.columnOrder ? { columnOrder: [...tab.taskTableLayoutPreferences.columnOrder] } : {}),
+          ...(tab.taskTableLayoutPreferences.sortState ? { sortState: { ...tab.taskTableLayoutPreferences.sortState } } : {}),
+        } }
+        : {}),
+      taskUiState: {
+        ...tab.taskUiState,
+        includeStepsByView: { ...tab.taskUiState.includeStepsByView },
+        listSortBySurface: Object.fromEntries(
+          Object.entries(tab.taskUiState.listSortBySurface).map(([surface, preference]) => [surface, { ...preference }]),
+        ),
+        quickFilters: Array.isArray(tab.taskUiState.quickFilters) ? [...tab.taskUiState.quickFilters] : [],
+        statusFilters: [...tab.taskUiState.statusFilters],
+        tableColumnFilters: {
+          priority: [...tab.taskUiState.tableColumnFilters.priority],
+          repeat: [...tab.taskUiState.tableColumnFilters.repeat],
+          taskType: [...(tab.taskUiState.tableColumnFilters.taskType ?? [])],
+          text: { ...tab.taskUiState.tableColumnFilters.text },
+        },
+        energyFilters: Array.isArray(tab.taskUiState.energyFilters) ? [...tab.taskUiState.energyFilters] : [],
+        visibleColumnsByView: Object.fromEntries(
+          Object.entries(tab.taskUiState.visibleColumnsByView).map(([view, columns]) => [view, [...columns]]),
+        ) as TaskWorkspaceTabsState["tabs"][number]["taskUiState"]["visibleColumnsByView"],
+      },
+    })),
+  };
+}
+
+function defaultJournalDraftId(tabId: string) {
+  return `journal-new:${tabId}`;
+}
+
+function defaultNotesWorkspaceView(): MasterNotesWorkspaceView {
+  return { selection: { kind: "list" }, search: "", activeTag: null };
+}
+
+function normalizeNotesWorkspaceView(value: unknown): MasterNotesWorkspaceView {
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const rawSelection = candidate.selection && typeof candidate.selection === "object"
+    ? candidate.selection as Record<string, unknown>
+    : {};
+  let selection: MasterNotesSelection = { kind: "list" };
+  if (rawSelection.kind === "saved" && typeof rawSelection.noteId === "string" && rawSelection.noteId.trim()) {
+    selection = { kind: "saved", noteId: rawSelection.noteId.trim() };
+  } else if (rawSelection.kind === "new" && typeof rawSelection.draftId === "string" && rawSelection.draftId.trim()) {
+    selection = { kind: "new", draftId: rawSelection.draftId.trim() };
+  }
+  return {
+    selection,
+    search: typeof candidate.search === "string" ? candidate.search : "",
+    activeTag: typeof candidate.activeTag === "string" && candidate.activeTag.trim() ? candidate.activeTag.trim() : null,
+  };
+}
+
+function defaultScratchPaperWorkspaceView(): MasterScratchPaperWorkspaceView {
+  return { currentNoteId: null, newDraftId: createScratchPaperRecordId(), isNewNoteSelected: false, search: "", filter: "all" };
+}
+
+export function createDefaultMasterFoodWorkspaceView(): MasterFoodWorkspaceView {
+  return {
+    historyDate: todayHealthDate(),
+    newMealDraftId: createHealthFoodDraftId(),
+    newPlannedMealDraftId: createHealthFoodDraftId(),
+    activeMealEntrySlot: null,
+    selectedMealEntryId: null,
+    mealEditorMode: "actual",
+    editingMealPlanId: null,
+    isQuickEntryOpen: false,
+    customFoodSearchQuery: "",
+    selectedCustomFoodCategory: null,
+    isCustomFoodCategoriesOpen: false,
+    expandedFavoriteId: null,
+    librarySection: "foods",
+    foodLibrarySearchQuery: "",
+    ingredientSearchQuery: "",
+    selectedCustomFoodDefinitionId: null,
+    newCustomFoodDraftId: createHealthCustomFoodDraftId(),
+    customFoodEditorMode: "new",
+    selectedRecipeDefinitionId: null,
+    newRecipeDraftId: createHealthLibraryDefinitionDraftId(),
+    recipeEditorMode: "new",
+    selectedSavedMealDefinitionId: null,
+    newSavedMealDraftId: createHealthLibraryDefinitionDraftId(),
+    savedMealEditorMode: "new",
+  };
+}
+
+function isScratchPaperRecordId(value: unknown): value is string {
+  return typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+function normalizeScratchPaperWorkspaceView(value: unknown): MasterScratchPaperWorkspaceView {
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  return {
+    currentNoteId: typeof candidate.currentNoteId === "string" && candidate.currentNoteId.trim()
+      ? candidate.currentNoteId.trim()
+      : null,
+    newDraftId: isScratchPaperRecordId(candidate.newDraftId)
+      ? candidate.newDraftId
+      : createScratchPaperRecordId(),
+    isNewNoteSelected: candidate.isNewNoteSelected === true,
+    search: typeof candidate.search === "string" ? candidate.search : "",
+    filter: typeof candidate.filter === "string" && VALID_SCRATCH_PAPER_FILTERS.has(candidate.filter)
+      ? candidate.filter as MasterScratchPaperWorkspaceView["filter"]
+      : "all",
+  };
+}
+
+function normalizeFoodWorkspaceView(value: unknown): MasterFoodWorkspaceView {
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const slots = new Set(["breakfast", "lunch", "dinner", "snack"]);
+  const newCustomFoodDraftId = typeof candidate.newCustomFoodDraftId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.newCustomFoodDraftId)
+    ? candidate.newCustomFoodDraftId
+    : createHealthCustomFoodDraftId();
+  const newRecipeDraftId = typeof candidate.newRecipeDraftId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.newRecipeDraftId)
+    ? candidate.newRecipeDraftId
+    : createHealthLibraryDefinitionDraftId();
+  const selectedRecipeDefinitionId = typeof candidate.selectedRecipeDefinitionId === "string" && candidate.selectedRecipeDefinitionId.trim()
+    ? candidate.selectedRecipeDefinitionId.trim()
+    : null;
+  const newSavedMealDraftId = typeof candidate.newSavedMealDraftId === "string"
+    && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(candidate.newSavedMealDraftId)
+    ? candidate.newSavedMealDraftId
+    : createHealthLibraryDefinitionDraftId();
+  const selectedSavedMealDefinitionId = typeof candidate.selectedSavedMealDefinitionId === "string" && candidate.selectedSavedMealDefinitionId.trim()
+    ? candidate.selectedSavedMealDefinitionId.trim()
+    : null;
+  return {
+    historyDate: typeof candidate.historyDate === "string" && /^\d{4}-\d{2}-\d{2}$/.test(candidate.historyDate)
+      ? candidate.historyDate
+      : todayHealthDate(),
+    newMealDraftId: typeof candidate.newMealDraftId === "string" && candidate.newMealDraftId.trim()
+      ? candidate.newMealDraftId.trim()
+      : createHealthFoodDraftId(),
+    newPlannedMealDraftId: typeof candidate.newPlannedMealDraftId === "string" && candidate.newPlannedMealDraftId.trim()
+      ? candidate.newPlannedMealDraftId.trim()
+      : createHealthFoodDraftId(),
+    activeMealEntrySlot: typeof candidate.activeMealEntrySlot === "string" && slots.has(candidate.activeMealEntrySlot)
+      ? candidate.activeMealEntrySlot as HealthMealSlot
+      : null,
+    selectedMealEntryId: typeof candidate.selectedMealEntryId === "string" && candidate.selectedMealEntryId.trim()
+      ? candidate.selectedMealEntryId.trim()
+      : null,
+    mealEditorMode: candidate.mealEditorMode === "plan" ? "plan" : "actual",
+    editingMealPlanId: typeof candidate.editingMealPlanId === "string" && candidate.editingMealPlanId.trim()
+      ? candidate.editingMealPlanId.trim()
+      : null,
+    isQuickEntryOpen: candidate.isQuickEntryOpen === true,
+    customFoodSearchQuery: typeof candidate.customFoodSearchQuery === "string" ? candidate.customFoodSearchQuery : "",
+    selectedCustomFoodCategory: typeof candidate.selectedCustomFoodCategory === "string" && candidate.selectedCustomFoodCategory.trim()
+      ? candidate.selectedCustomFoodCategory.trim()
+      : null,
+    isCustomFoodCategoriesOpen: candidate.isCustomFoodCategoriesOpen === true,
+    expandedFavoriteId: typeof candidate.expandedFavoriteId === "string" && candidate.expandedFavoriteId.trim()
+      ? candidate.expandedFavoriteId.trim()
+      : null,
+    librarySection: candidate.librarySection === "recipes" || candidate.librarySection === "meals" ? candidate.librarySection : "foods",
+    foodLibrarySearchQuery: typeof candidate.foodLibrarySearchQuery === "string" ? candidate.foodLibrarySearchQuery : "",
+    ingredientSearchQuery: typeof candidate.ingredientSearchQuery === "string" ? candidate.ingredientSearchQuery : "",
+    selectedCustomFoodDefinitionId: typeof candidate.selectedCustomFoodDefinitionId === "string" && candidate.selectedCustomFoodDefinitionId.trim()
+      ? candidate.selectedCustomFoodDefinitionId.trim()
+      : null,
+    newCustomFoodDraftId,
+    customFoodEditorMode: candidate.customFoodEditorMode === "saved" && typeof candidate.selectedCustomFoodDefinitionId === "string" && candidate.selectedCustomFoodDefinitionId.trim()
+      ? "saved"
+      : "new",
+    selectedRecipeDefinitionId,
+    newRecipeDraftId,
+    recipeEditorMode: candidate.recipeEditorMode === "saved" && selectedRecipeDefinitionId ? "saved" : "new",
+    selectedSavedMealDefinitionId,
+    newSavedMealDraftId,
+    savedMealEditorMode: candidate.savedMealEditorMode === "saved" && selectedSavedMealDefinitionId ? "saved" : "new",
+  };
+}
+
+function normalizePresentation(value: unknown, destination: MasterTabDestination, tabId: string): MasterTabPresentationState {
+  const candidate = value && typeof value === "object" ? value as Record<string, unknown> : {};
+  const presentation: MasterTabPresentationState = {};
+  presentation.scratchPaperView = normalizeScratchPaperWorkspaceView(candidate.scratchPaperView);
+  if (isHealthTab(candidate.healthSection)) presentation.healthSection = candidate.healthSection;
+  if (typeof candidate.scrollTop === "number" && Number.isFinite(candidate.scrollTop) && candidate.scrollTop >= 0) {
+    presentation.scrollTop = candidate.scrollTop;
+  }
+  const rawJournalView = candidate.journalView && typeof candidate.journalView === "object"
+    ? candidate.journalView as Record<string, unknown>
+    : null;
+  if (rawJournalView || destination.page === "Health") {
+    presentation.journalView = {
+      selectedEntryId: rawJournalView?.selectedEntryId === null
+        ? null
+        : typeof rawJournalView?.selectedEntryId === "string" && rawJournalView.selectedEntryId.trim()
+          ? rawJournalView.selectedEntryId.trim()
+          : null,
+      newDraftId: typeof rawJournalView?.newDraftId === "string" && rawJournalView.newDraftId.trim()
+        ? rawJournalView.newDraftId.trim()
+        : defaultJournalDraftId(tabId),
+      workspaceMode: typeof rawJournalView?.workspaceMode === "string" && VALID_JOURNAL_WORKSPACE_MODES.has(rawJournalView.workspaceMode)
+        ? rawJournalView.workspaceMode as MasterJournalWorkspaceMode
+        : "entry",
+    };
+  }
+  presentation.foodView = normalizeFoodWorkspaceView(candidate.foodView ?? createDefaultMasterFoodWorkspaceView());
+  if (candidate.notesView !== undefined || destination.page === "Notes") {
+    presentation.notesView = normalizeNotesWorkspaceView(candidate.notesView ?? defaultNotesWorkspaceView());
+  }
+  if (candidate.tasksWorkspace !== undefined) {
+    presentation.tasksWorkspace = cloneTaskWorkspaceState(candidate.tasksWorkspace);
+  }
+  if (destination.page === "Health") {
+    const destinationHealthSection = destination.kind === "health-tab"
+      ? destination.tab
+      : destination.kind === "page-shell" ? destination.healthTab : undefined;
+    presentation.healthSection = destinationHealthSection ?? presentation.healthSection ?? "Today";
+  }
+  if (destination.page === "Tasks") {
+    presentation.tasksWorkspace = cloneTaskWorkspaceState(presentation.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  }
+  return presentation;
+}
+
+export function getMasterTabJournalView(tab: MasterWorkspaceTab) {
+  return tab.presentation.journalView ?? {
+    selectedEntryId: null,
+    newDraftId: defaultJournalDraftId(tab.id),
+    workspaceMode: "entry" as const,
+  };
+}
+
+export function getMasterTabNotesView(tab: MasterWorkspaceTab) {
+  return tab.presentation.notesView ?? DEFAULT_NOTES_WORKSPACE_VIEW;
+}
+
+export function getMasterTabScratchPaperView(tab: MasterWorkspaceTab) {
+  return tab.presentation.scratchPaperView ?? defaultScratchPaperWorkspaceView();
+}
+
+export function getMasterTabFoodView(tab: MasterWorkspaceTab) {
+  return tab.presentation.foodView ?? createDefaultMasterFoodWorkspaceView();
+}
+
+export function updateMasterTabFoodView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  foodViewUpdate: MasterFoodWorkspaceViewUpdate,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const foodView = typeof foodViewUpdate === "function"
+    ? foodViewUpdate(getMasterTabFoodView(tab))
+    : foodViewUpdate;
+  const normalized = normalizeFoodWorkspaceView(foodView);
+  if (JSON.stringify(getMasterTabFoodView(tab)) === JSON.stringify(normalized)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, foodView: normalized },
+      }),
+    }),
+  };
+}
+
+export function updateMasterTabNotesView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  notesView: MasterNotesWorkspaceView,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const current = getMasterTabNotesView(tab);
+  if (JSON.stringify(current) === JSON.stringify(notesView)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, notesView: normalizeNotesWorkspaceView(notesView) },
+      }),
+    }),
+  };
+}
+
+export function updateMasterTabScratchPaperView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  scratchPaperView: MasterScratchPaperWorkspaceView,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const current = getMasterTabScratchPaperView(tab);
+  const normalized = normalizeScratchPaperWorkspaceView(scratchPaperView);
+  if (JSON.stringify(current) === JSON.stringify(normalized)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, scratchPaperView: normalized },
+      }),
+    }),
+  };
+}
+
+export function selectJournalHistoryEntryForEdit(
+  journalView: NonNullable<MasterTabPresentationState["journalView"]>,
+  entryId: string,
+  onJournalViewChange: (journalView: MasterTabPresentationState["journalView"]) => void,
+) {
+  onJournalViewChange({
+    ...journalView,
+    selectedEntryId: entryId,
+    workspaceMode: journalView.workspaceMode === "history" ? "entry" : journalView.workspaceMode,
+  });
+}
+
+export function updateMasterTabJournalView(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  journalView: MasterTabPresentationState["journalView"],
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab || !journalView) return state;
+  if (
+    tab.presentation.journalView?.selectedEntryId === journalView.selectedEntryId
+    && tab.presentation.journalView?.newDraftId === journalView.newDraftId
+    && tab.presentation.journalView?.workspaceMode === journalView.workspaceMode
+  ) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, journalView: { ...journalView } },
+      }),
+    }),
+  };
+}
+
+export function updateMasterTabScrollPosition(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  scrollTop: number,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab || !Number.isFinite(scrollTop) || scrollTop < 0 || tab.presentation.scrollTop === scrollTop) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, scrollTop },
+      }),
+    }),
+  };
+}
+
+function findMasterTabByIdentity(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+): MasterWorkspaceTab | undefined {
+  if (
+    typeof panelId !== "string"
+    || panelId.length === 0
+    || panelId.trim() !== panelId
+    || typeof tabId !== "string"
+    || tabId.length === 0
+    || tabId.trim() !== tabId
+  ) return undefined;
+
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  return panel?.tabs.find((candidate) => candidate.id === tabId);
+}
+
+export function resolveMasterTabTasksWorkspace(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+): TaskWorkspaceTabsState | undefined {
+  const tab = findMasterTabByIdentity(state, panelId, tabId);
+  if (!tab || tab.destination.page !== "Tasks") return undefined;
+  return cloneTaskWorkspaceState(tab.presentation.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE);
+}
+
+export function resolveMasterTabTasksUiState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+): TaskUiState | undefined {
+  const tasksWorkspace = resolveMasterTabTasksWorkspace(state, panelId, tabId);
+  return tasksWorkspace ? resolveActiveTaskUiState(tasksWorkspace) : undefined;
+}
+
+export function updateMasterTabTasksUiState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  updater: TaskUiState | ((current: TaskUiState) => TaskUiState),
+): MasterWorkspaceState {
+  const tab = findMasterTabByIdentity(state, panelId, tabId);
+  if (!tab || tab.destination.page !== "Tasks") return state;
+
+  const currentWorkspace = cloneTaskWorkspaceState(tab.presentation.tasksWorkspace ?? DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  const nextWorkspace = updateActiveTaskUiState(currentWorkspace, updater);
+  if (
+    nextWorkspace === currentWorkspace
+    || JSON.stringify(nextWorkspace) === JSON.stringify(currentWorkspace)
+  ) return state;
+
+  return updateMasterTabTasksWorkspace(state, panelId, tabId, nextWorkspace);
+}
+
+export function updateMasterTabTasksWorkspace(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  taskWorkspaceTabsState: TaskWorkspaceTabsState,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab || tab.destination.page !== "Tasks") return state;
+
+  const tasksWorkspace = cloneTaskWorkspaceState(taskWorkspaceTabsState);
+  if (JSON.stringify(tab.presentation.tasksWorkspace) === JSON.stringify(tasksWorkspace)) return state;
+
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+      ...candidate,
+      tabs: candidate.tabs.map((candidateTab) => candidateTab.id !== tabId ? candidateTab : {
+        ...candidateTab,
+        presentation: { ...candidateTab.presentation, tasksWorkspace },
+      }),
+    }),
+  };
+}
+
+export function updateMasterTabTasksWorkspaceState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  updater: TaskWorkspaceTabsState | ((current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState),
+): MasterWorkspaceState {
+  const current = resolveMasterTabTasksWorkspace(state, panelId, tabId);
+  if (!current) return state;
+  const next = typeof updater === "function" ? updater(current) : updater;
+  if (next === current || JSON.stringify(next) === JSON.stringify(current)) return state;
+  return updateMasterTabTasksWorkspace(state, panelId, tabId, next);
+}
+
+export function masterTabTasksWorkspaceMatchesLiveState(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  taskWorkspaceTabsState: TaskWorkspaceTabsState,
+): boolean {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!tab || tab.destination.page !== "Tasks") return false;
+  return JSON.stringify(tab.presentation.tasksWorkspace) === JSON.stringify(cloneTaskWorkspaceState(taskWorkspaceTabsState));
+}
+
+function makeHomeTab(id = "master-tab-1"): MasterWorkspaceTab {
+  return {
+    id,
+    destination: { kind: "page", page: "Home" },
+    presentation: {
+      foodView: createDefaultMasterFoodWorkspaceView(),
+      scratchPaperView: defaultScratchPaperWorkspaceView(),
+    },
+  };
+}
+
+export function createDefaultMasterWorkspaceState(): MasterWorkspaceState {
+  const panel: MasterWorkspacePanel = {
+    id: "master-panel-1",
+    side: "left",
+    tabs: [makeHomeTab()],
+    activeTabId: "master-tab-1",
+  };
+  return {
+    schemaVersion: MASTER_WORKSPACE_SCHEMA_VERSION,
+    panels: [panel],
+    focusedPanelId: panel.id,
+    splitRatio: 0.5,
+    visiblePanelId: panel.id,
+  };
+}
+
+function uniqueId(candidate: unknown, fallback: string, used: Set<string>): string {
+  const base = typeof candidate === "string" && candidate.trim() ? candidate.trim() : fallback;
+  let id = base;
+  let suffix = 2;
+  while (used.has(id)) id = `${base}-${suffix++}`;
+  used.add(id);
+  return id;
+}
+
+export function normalizeMasterWorkspaceState(value: unknown): MasterWorkspaceState {
+  if (!value || typeof value !== "object") return createDefaultMasterWorkspaceState();
+  const candidate = value as Record<string, unknown>;
+  if (candidate.schemaVersion !== MASTER_WORKSPACE_SCHEMA_VERSION || !Array.isArray(candidate.panels)) {
+    return createDefaultMasterWorkspaceState();
+  }
+
+  const usedPanelIds = new Set<string>();
+  const usedTabIds = new Set<string>();
+  const panels: MasterWorkspacePanel[] = candidate.panels.slice(0, 2).map((panelValue, panelIndex) => {
+    const panel = panelValue && typeof panelValue === "object" ? panelValue as Record<string, unknown> : {};
+    const id = uniqueId(panel.id, `master-panel-${panelIndex + 1}`, usedPanelIds);
+    const side: MasterPanelSide = panelIndex === 0 ? "left" : "right";
+    const rawTabs = Array.isArray(panel.tabs) ? panel.tabs : [];
+    const tabs = rawTabs.flatMap((tabValue, tabIndex): MasterWorkspaceTab[] => {
+      if (!tabValue || typeof tabValue !== "object") return [];
+      const tab = tabValue as Record<string, unknown>;
+      const tabId = uniqueId(tab.id, `master-tab-${panelIndex + 1}-${tabIndex + 1}`, usedTabIds);
+      const destination = normalizeDestination(tab.destination);
+      return [{ id: tabId, destination, presentation: normalizePresentation(tab.presentation, destination, tabId) }];
+    });
+    const usableTabs = tabs.length > 0 ? tabs : [makeHomeTab(uniqueId(undefined, `master-tab-${panelIndex + 1}-1`, usedTabIds))];
+    const activeTabId = typeof panel.activeTabId === "string" && usableTabs.some((tab) => tab.id === panel.activeTabId)
+      ? panel.activeTabId
+      : usableTabs[0].id;
+    return {
+      id,
+      side,
+      tabs: usableTabs,
+      activeTabId,
+      ...(panel.tabsCollapsed === true ? { tabsCollapsed: true as const } : {}),
+    };
+  });
+
+  const usablePanels = panels.length > 0 ? panels : createDefaultMasterWorkspaceState().panels;
+  const panelIds = new Set(usablePanels.map((panel) => panel.id));
+  const focusedPanelId = typeof candidate.focusedPanelId === "string" && panelIds.has(candidate.focusedPanelId)
+    ? candidate.focusedPanelId
+    : usablePanels[0].id;
+  const visiblePanelId = typeof candidate.visiblePanelId === "string" && panelIds.has(candidate.visiblePanelId)
+    ? candidate.visiblePanelId
+    : focusedPanelId;
+  const splitRatio = typeof candidate.splitRatio === "number" && Number.isFinite(candidate.splitRatio)
+    ? Math.max(MASTER_WORKSPACE_SPLIT_RATIO_MIN, Math.min(MASTER_WORKSPACE_SPLIT_RATIO_MAX, candidate.splitRatio))
+    : 0.5;
+
+  return {
+    schemaVersion: MASTER_WORKSPACE_SCHEMA_VERSION,
+    panels: usablePanels,
+    focusedPanelId,
+    splitRatio,
+    visiblePanelId,
+  };
+}
+
+export function initializeMasterWorkspaceState(
+  previousActivePage: AppPage,
+  existingTaskWorkspaceTabsState: TaskWorkspaceTabsState,
+  initialHealthSection: HealthTab = "Today",
+): MasterWorkspaceState {
+  const state = createDefaultMasterWorkspaceState();
+  const firstPanel = state.panels[0];
+  const tasksWorkspace = previousActivePage === "Tasks"
+    ? cloneTaskWorkspaceState(existingTaskWorkspaceTabsState)
+    : undefined;
+  return {
+    ...state,
+    panels: [{
+      ...firstPanel,
+      tabs: [{
+        ...firstPanel.tabs[0],
+        destination: { kind: "page", page: previousActivePage },
+        presentation: {
+          ...firstPanel.tabs[0].presentation,
+          ...(tasksWorkspace ? { tasksWorkspace } : {}),
+          ...(previousActivePage === "Health" ? { healthSection: initialHealthSection } : {}),
+          ...(previousActivePage === "Health" ? { foodView: createDefaultMasterFoodWorkspaceView() } : {}),
+        },
+      }],
+    }],
+  };
+}
+
+export function activateMasterTab(state: MasterWorkspaceState, panelId: string, tabId: string): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  if (!panel || !panel.tabs.some((tab) => tab.id === tabId)) return state;
+  return {
+    ...state,
+    focusedPanelId: panelId,
+    visiblePanelId: panelId,
+    panels: state.panels.map((candidate) => candidate.id === panelId ? { ...candidate, activeTabId: tabId } : candidate),
+  };
+}
+
+export function activateMasterTabInPanel(state: MasterWorkspaceState, panelId: string, tabId: string): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  if (!panel || !panel.tabs.some((tab) => tab.id === tabId)) return state;
+  if (panel.activeTabId === tabId) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidate) => candidate.id === panelId
+      ? { ...candidate, activeTabId: tabId }
+      : candidate),
+  };
+}
+
+function areNormalizedMasterValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => areNormalizedMasterValuesEqual(value, right[index]));
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord);
+  const rightKeys = Object.keys(rightRecord);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
+      && areNormalizedMasterValuesEqual(leftRecord[key], rightRecord[key]));
+}
+
+export function replaceMasterTabDestination(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  destination: MasterTabDestination,
+): MasterWorkspaceState {
+  const destinationCopy = normalizeDestination(destination);
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const presentation = normalizePresentation(tab.presentation, destinationCopy, tab.id);
+  if (
+    areNormalizedMasterValuesEqual(tab.destination, destinationCopy)
+    && areNormalizedMasterValuesEqual(tab.presentation, presentation)
+  ) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidatePanel) => candidatePanel.id !== panelId ? candidatePanel : {
+      ...candidatePanel,
+      tabs: candidatePanel.tabs.map((candidateTab) => candidateTab.id !== tabId
+        ? candidateTab
+        : {
+          ...candidateTab,
+          destination: destinationCopy,
+          presentation,
+        }),
+    }),
+  };
+}
+
+export function updateMasterTabPresentation(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabId: string,
+  updater: MasterTabPresentationState | ((current: MasterTabPresentationState) => MasterTabPresentationState),
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  const tab = panel?.tabs.find((candidate) => candidate.id === tabId);
+  if (!panel || !tab) return state;
+  const candidate = typeof updater === "function" ? updater(tab.presentation) : updater;
+  const presentation = normalizePresentation(candidate, tab.destination, tab.id);
+  if (areNormalizedMasterValuesEqual(tab.presentation, presentation)) return state;
+  return {
+    ...state,
+    panels: state.panels.map((candidatePanel) => candidatePanel.id !== panelId ? candidatePanel : {
+      ...candidatePanel,
+      tabs: candidatePanel.tabs.map((candidateTab) => candidateTab.id !== tabId
+        ? candidateTab
+        : { ...candidateTab, presentation }),
+    }),
+  };
+}
+
+export function replaceFocusedMasterTabDestination(state: MasterWorkspaceState, destination: MasterTabDestination): MasterWorkspaceState {
+  const focusedPanel = state.panels.find((panel) => panel.id === state.focusedPanelId);
+  if (!focusedPanel) return state;
+  return replaceMasterTabDestination(state, focusedPanel.id, focusedPanel.activeTabId, destination);
+}
+
+export function createMasterTab(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tab: MasterWorkspaceTab,
+  activate = true,
+  focusPanel = activate,
+): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  if (!panel || state.panels.some((candidate) => candidate.tabs.some((existing) => existing.id === tab.id))) return state;
+  const destination = normalizeDestination(tab.destination);
+  const nextTab = { id: tab.id, destination, presentation: normalizePresentation(tab.presentation, destination, tab.id) };
+  return {
+    ...state,
+    focusedPanelId: activate && focusPanel ? panelId : state.focusedPanelId,
+    visiblePanelId: activate && focusPanel ? panelId : state.visiblePanelId,
+    panels: state.panels.map((candidate) => candidate.id === panelId ? {
+      ...candidate,
+      tabs: [...candidate.tabs, nextTab],
+      activeTabId: activate ? tab.id : candidate.activeTabId,
+    } : candidate),
+  };
+}
+
+export function closeMasterTabInPanel(state: MasterWorkspaceState, panelId: string, tabId: string): MasterWorkspaceState {
+  const next = closeMasterTab(state, panelId, tabId);
+  if (next === state) return state;
+  const focusedPanelId = next.panels.some((panel) => panel.id === state.focusedPanelId)
+    ? state.focusedPanelId
+    : next.panels[0]?.id ?? state.focusedPanelId;
+  const visiblePanelId = next.panels.some((panel) => panel.id === state.visiblePanelId)
+    ? state.visiblePanelId
+    : focusedPanelId;
+  return { ...next, focusedPanelId, visiblePanelId };
+}
+
+export function closeMasterTab(state: MasterWorkspaceState, panelId: string, tabId: string): MasterWorkspaceState {
+  const panel = state.panels.find((candidate) => candidate.id === panelId);
+  if (!panel || !panel.tabs.some((tab) => tab.id === tabId)) return state;
+  if (panel.tabs.length === 1) {
+    return {
+      ...state,
+      focusedPanelId: panelId,
+      visiblePanelId: panelId,
+      panels: state.panels.map((candidate) => candidate.id !== panelId ? candidate : {
+        ...candidate,
+        tabs: [{ ...makeHomeTab(tabId) }],
+        activeTabId: tabId,
+      }),
+    };
+  }
+  const remainingTabs = panel.tabs.filter((tab) => tab.id !== tabId);
+  const activeTabId = panel.activeTabId === tabId
+    ? remainingTabs[Math.max(0, panel.tabs.findIndex((tab) => tab.id === tabId) - 1)].id
+    : panel.activeTabId;
+  return {
+    ...state,
+    focusedPanelId: panelId,
+    visiblePanelId: panelId,
+    panels: state.panels.map((candidate) => candidate.id === panelId ? { ...candidate, tabs: remainingTabs, activeTabId } : candidate),
+  };
+}
+
+export function activateMasterPanel(state: MasterWorkspaceState, panelId: string): MasterWorkspaceState {
+  if (!state.panels.some((panel) => panel.id === panelId)) return state;
+  return { ...state, focusedPanelId: panelId, visiblePanelId: panelId };
+}
+
+export function setMasterWorkspacePanelTabsCollapsed(
+  state: MasterWorkspaceState,
+  panelId: string,
+  tabsCollapsed: boolean,
+): MasterWorkspaceState {
+  const panelIndex = state.panels.findIndex((candidate) => candidate.id === panelId);
+  if (panelIndex < 0) return state;
+  const panel = state.panels[panelIndex];
+  if (Boolean(panel.tabsCollapsed) === tabsCollapsed) return state;
+
+  const nextPanel = { ...panel };
+  if (tabsCollapsed) nextPanel.tabsCollapsed = true;
+  else delete nextPanel.tabsCollapsed;
+  const panels = [...state.panels];
+  panels[panelIndex] = nextPanel;
+  return { ...state, panels };
+}
+
+export function duplicateFocusedPageIntoRightPanel(
+  state: MasterWorkspaceState,
+  ids: { panelId: string; tabId: string },
+): MasterWorkspaceState {
+  const focusedPanel = state.panels.find((panel) => panel.id === state.focusedPanelId);
+  const focusedTab = focusedPanel?.tabs.find((tab) => tab.id === focusedPanel.activeTabId);
+  if (!focusedPanel || !focusedTab) return state;
+  const rightPanel = state.panels.find((panel) => panel.side === "right");
+  if (!rightPanel && state.panels.length >= 2) return state;
+  if (state.panels.some((panel) => panel.id === ids.panelId) && !rightPanel) return state;
+  const duplicate: MasterWorkspaceTab = {
+    id: ids.tabId,
+    destination: focusedTab.destination,
+    presentation: normalizePresentation(focusedTab.presentation, focusedTab.destination, ids.tabId),
+  };
+  if (!rightPanel) {
+    if (state.panels.some((panel) => panel.tabs.some((tab) => tab.id === ids.tabId))) return state;
+    const panel: MasterWorkspacePanel = {
+      id: ids.panelId,
+      side: "right",
+      tabs: [duplicate],
+      activeTabId: ids.tabId,
+    };
+    return {
+      ...state,
+      panels: [...state.panels, panel],
+      focusedPanelId: panel.id,
+      splitRatio: 0.5,
+      visiblePanelId: panel.id,
+    };
+  }
+  return createMasterTab(state, rightPanel.id, duplicate, true);
+}
+
+export function closeMasterSplit(state: MasterWorkspaceState, panelId?: string): MasterWorkspaceState {
+  if (state.panels.length < 2) return state;
+  const panelToClose = panelId
+    ? state.panels.find((panel) => panel.id === panelId && panel.side === "right")
+    : state.panels.find((panel) => panel.side === "right");
+  if (!panelToClose) return state;
+  const panels = state.panels.filter((panel) => panel.id !== panelToClose.id);
+  return {
+    ...state,
+    panels: panels.map((panel) => ({ ...panel, side: "left" as const })),
+    focusedPanelId: panels[0].id,
+    visiblePanelId: panels[0].id,
+  };
+}
+
+export function adjustMasterWorkspaceSplitRatio(state: MasterWorkspaceState, splitRatio: number): MasterWorkspaceState {
+  if (state.panels.length < 2 || !Number.isFinite(splitRatio)) return state;
+  return {
+    ...state,
+    splitRatio: Math.max(MASTER_WORKSPACE_SPLIT_RATIO_MIN, Math.min(MASTER_WORKSPACE_SPLIT_RATIO_MAX, splitRatio)),
+  };
+}
+
+export function getMasterWorkspaceStorageKey(userId: string): string {
+  return `${MASTER_WORKSPACE_STORAGE_KEY}:${userId}`;
+}
+
+export function loadMasterWorkspaceState(storage: MasterWorkspaceStorage, userId: string): MasterWorkspaceState {
+  if (!userId.trim()) return createDefaultMasterWorkspaceState();
+  const key = getMasterWorkspaceStorageKey(userId);
+  let rawValue: string | null;
+  try {
+    rawValue = storage.getItem(key);
+  } catch {
+    return createDefaultMasterWorkspaceState();
+  }
+  if (!rawValue) return createDefaultMasterWorkspaceState();
+  try {
+    return normalizeMasterWorkspaceState(JSON.parse(rawValue));
+  } catch {
+    try { storage.removeItem(key); } catch { /* Storage may be unavailable. */ }
+    return createDefaultMasterWorkspaceState();
+  }
+}
+
+export function saveMasterWorkspaceState(storage: MasterWorkspaceStorage, userId: string, state: MasterWorkspaceState): boolean {
+  if (!userId.trim()) return false;
+  try {
+    storage.setItem(getMasterWorkspaceStorageKey(userId), JSON.stringify(normalizeMasterWorkspaceState(state)));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+export function loadMasterWorkspaceStateFromLocalStorage(userId: string): MasterWorkspaceState {
+  if (typeof window === "undefined") return createDefaultMasterWorkspaceState();
+  try {
+    return loadMasterWorkspaceState(window.localStorage, userId);
+  } catch {
+    return createDefaultMasterWorkspaceState();
+  }
+}
+
+export function saveMasterWorkspaceStateToLocalStorage(userId: string, state: MasterWorkspaceState): boolean {
+  if (typeof window === "undefined") return false;
+  try {
+    return saveMasterWorkspaceState(window.localStorage, userId, state);
+  } catch {
+    return false;
+  }
+}

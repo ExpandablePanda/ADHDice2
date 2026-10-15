@@ -612,6 +612,7 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   const chart = readFileSync(new URL("../src/components/task-app/health-calorie-line-chart.tsx", import.meta.url), "utf8");
   const sharedChart = readFileSync(new URL("../src/components/activity-line-chart-card.tsx", import.meta.url), "utf8");
   const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const taskApp = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
   const dropdown = readFileSync(new URL("../src/components/task-app/health-dropdown.tsx", import.meta.url), "utf8");
   assert.doesNotMatch(library, /filteredFoodGroups/);
   assert.match(library, /sortHealthFoodLibraryByCreatedAt/);
@@ -630,7 +631,7 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
   assert.match(source, /selectedCustomFoodCategory/);
   assert.doesNotMatch(source, /matchingCustomFoodGroups/);
   assert.match(source, /getHealthFoodIdentityKey/);
-  assert.match(source, /readHealthTabPreference/);
+  assert.match(taskApp, /readHealthTabPreference/);
   assert.match(source, /HEALTH_TABS/);
   assert.match(source, /adhdice-scrollbar max-h-\[min\(32rem,calc\(100dvh-2rem\)\)\] overflow-y-auto/);
   assert.match(source, /adhdice-scrollbar max-h-24 overflow-y-auto/);
@@ -697,27 +698,75 @@ test("Health Food preserves nutrition behavior while using flat category-filtere
 
 test("Custom Food barcode Clear restores its scan baseline and ignores stale lookup responses", () => {
   const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const sessionHelper = readFileSync(new URL("../src/lib/health-custom-food-editing-session.ts", import.meta.url), "utf8");
   const scanHandler = library.slice(library.indexOf("function handleFoodBarcodeDetected"), library.indexOf("function startEditingFood"));
   const clearHandler = library.slice(library.indexOf("function clearFoodScan"), library.indexOf("async function handleSaveFood"));
   assert.match(library, /const barcodeLookupGenerationRef = useRef\(0\)/);
-  assert.match(library, /const foodScanBaselineRef = useRef<FoodDraft \| null>\(null\)/);
+  assert.match(library, /const foodScanBaselineRef = useRef<\{ draftId: string; form: FoodDraft \} \| null>\(null\)/);
   assert.match(scanHandler, /const requestGeneration = \+\+barcodeLookupGenerationRef\.current/);
-  assert.match(scanHandler, /foodScanBaselineRef\.current = cloneFoodDraft\(foodDraft\)/);
-  assert.match(scanHandler, /if \(requestGeneration !== barcodeLookupGenerationRef\.current\)/);
-  assert.match(scanHandler, /if \(requestGeneration === barcodeLookupGenerationRef\.current\)/);
+  assert.match(scanHandler, /foodScanBaselineRef\.current = \{ draftId: requestDraftId, form: cloneFoodDraft\(foodDraft\) \}/);
+  assert.match(scanHandler, /isCurrentHealthCustomFoodBarcodeLookup/);
   assert.match(clearHandler, /const baseline = foodScanBaselineRef\.current/);
   assert.match(clearHandler, /barcodeLookupGenerationRef\.current \+= 1/);
   assert.match(clearHandler, /foodScanBaselineRef\.current = null/);
-  assert.match(clearHandler, /setFoodDraft\(cloneFoodDraft\(baseline\)\)/);
+  assert.match(clearHandler, /updateFoodDraftFor\(baseline\.draftId, cloneFoodDraft\(baseline\.form\)\)/);
   assert.match(clearHandler, /setBarcodeLookupStatus\("idle"\)/);
   assert.match(clearHandler, /setBarcodeLookupMessage\(""\)/);
   assert.match(clearHandler, /setIsBarcodeScannerOpen\(false\)/);
   assert.match(library, /hasFoodScanBaseline \? <AdhdChip[\s\S]*?onClick=\{clearFoodScan\}>Clear<\/AdhdChip>/);
   assert.match(library, /function startEditingFood\(food: HealthFoodLibraryItem\)/);
   assert.match(library, /onClick=\{\(\) => startEditingFood\(food\)\}/);
+  assert.match(scanHandler, /applyHealthCustomFoodBarcodeLookup/);
+  assert.match(sessionHelper, /export function applyHealthCustomFoodBarcodeLookup/);
+  assert.match(sessionHelper, /providerItemId: result\.providerItemId/);
   assert.doesNotMatch(scanHandler, /saveFood\(/);
   assert.match(library, /onClick=\{\(\) => \{ void handleSaveFood\(\); \}\}/);
   assert.doesNotMatch(library, />Lookup<\//);
+});
+
+test("Custom Food save reports validation/failure, gates in-flight saves, and preserves the requested form order", () => {
+  const library = readFileSync(new URL("../src/components/task-app/health-library-panel.tsx", import.meta.url), "utf8");
+  const sessionHelper = readFileSync(new URL("../src/lib/health-custom-food-editing-session.ts", import.meta.url), "utf8");
+  const saveHandler = library.slice(library.indexOf("async function handleSaveFood"), library.indexOf("async function completeFoodSave"));
+  const persistHandler = library.slice(library.indexOf("async function persistCustomFood"), library.indexOf("function handleFoodBarcodeDetected"));
+  const formStart = library.indexOf('title={isSavedCustomFoodEditor ? "Edit custom food"');
+  const form = library.slice(formStart, library.indexOf("</HealthCollapsiblePanel>", formStart));
+  const brandIndex = form.indexOf('<LibraryField label="Brand">');
+  const foodNameIndex = form.indexOf('<LibraryField label="Food name">');
+  const caloriesIndex = form.indexOf('<LibraryField label="Calories per serving">');
+  const fatIndex = form.indexOf('<LibraryField label="Fat (g)">');
+  const carbsIndex = form.indexOf('<LibraryField label="Carbs (g)">');
+  const proteinIndex = form.indexOf('<LibraryField label="Protein (g)">');
+
+  assert.match(library, /getFoodDraftValidationMessage\(foodDraft\)/);
+  assert.match(library, /function getFoodDraftValidationMessage\(draft: FoodDraft\)/);
+  assert.match(sessionHelper, /export function getHealthCustomFoodDraftValidationMessage/);
+  assert.match(sessionHelper, /Enter a food name\./);
+  assert.match(sessionHelper, /Calories per serving must be a valid non-negative number\./);
+  assert.match(sessionHelper, /Serving quantity must be greater than 0\./);
+  assert.match(sessionHelper, /Enter a serving unit\./);
+  assert.match(sessionHelper, /Serving measure value must be greater than 0\./);
+  assert.match(sessionHelper, /Choose a serving measure unit or clear the measure value\./);
+  assert.match(sessionHelper, /Enter a serving measure value or choose No measure\./);
+  assert.match(sessionHelper, /Nutrition Details contains an invalid number\./);
+  assert.match(saveHandler, /if \(isSavingFood\) \{\s*return;/);
+  assert.match(saveHandler, /const validationMessage = getFoodDraftValidationMessage\(foodDraft\)/);
+  assert.match(saveHandler, /setFoodSaveFeedback\(""\)/);
+  assert.match(saveHandler, /setFoodSaveFeedback\(validationMessage\)/);
+  assert.match(library, /foodSaveFeedback \? <p aria-live="polite"[\s\S]*?\{foodSaveFeedback\}/);
+  assert.match(library, /disabled=\{isSavingFood\}[\s\S]*?\{isSavingFood \? "Saving\.\.\." : "Save food"\}/);
+  assert.match(persistHandler, /setIsSavingFood\(true\)/);
+  assert.match(persistHandler, /setIsSavingFood\(false\)/);
+  assert.match(persistHandler, /saveHealthCustomFoodEditingSession/);
+  assert.match(persistHandler, /createOnly: draft\.kind === "new"/);
+  assert.match(library, /customFoodSessionStore\.updateDraft/);
+  assert.match(library, />Discard Draft<\/AdhdChip>/);
+  assert.ok(brandIndex >= 0 && brandIndex < foodNameIndex);
+  assert.ok(caloriesIndex >= 0 && caloriesIndex < fatIndex);
+  assert.ok(fatIndex < carbsIndex && carbsIndex < proteinIndex);
+  assert.match(library, /disabled=\{isSavingFood \|\| Boolean\(updatingFoodLogsId\) \|\| editingFoodHasUnsavedChanges\}/);
+  assert.match(library, /disabled=\{isSavingFood\} onClick=\{\(\) => \{ void completeFoodSave\("update"\); \}\}/);
+  assert.match(library, /disabled=\{isSavingFood\} onClick=\{\(\) => \{ void completeFoodSave\("future"\); \}\}/);
 });
 
 test("Task History selected actions use semantic inverted status fills", () => {

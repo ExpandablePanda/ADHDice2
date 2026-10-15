@@ -176,6 +176,7 @@ export const SETTINGS_PAGE_SHELL_IDS = [
   "settings-day-reset",
   "settings-economy",
   "settings-import-export",
+  "settings-backup-recovery",
 ] as const;
 
 export const NOTES_PAGE_SHELL_IDS = ["notes-scratch-paper", "notes-library", "notes-voice-memos"] as const;

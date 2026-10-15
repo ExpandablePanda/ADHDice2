@@ -18,6 +18,8 @@ import { isMissingHudUiSettingsTableError } from "@/lib/task-db-compat";
 import type { TaskRoutingBucket } from "@/lib/task-buckets";
 import {
   ACTIVE_PAGE_STORAGE_KEY,
+  closeTaskWorkspaceTabState,
+  createTaskWorkspaceTabState,
   DAILY_PLANNING_COLLAPSED_STORAGE_KEY,
   DEFAULT_TASK_WORKSPACE_TABS_STATE,
   getUserScopedStorageKey,
@@ -26,12 +28,16 @@ import {
   normalizeHudUiState,
   normalizeTaskWorkspaceTabsState,
   parseStoredJson,
+  renameTaskWorkspaceTabState,
+  resolveActiveTaskUiState,
+  resolveActiveTaskWorkspaceTab,
   reorderTaskWorkspaceTabToIndex,
   reorderTaskWorkspaceTabs,
   TASK_FILTERS_OPEN_STORAGE_KEY,
   TASK_FOCUS_STORAGE_KEY,
   TASK_ROUTING_STORAGE_KEY,
   TASK_UI_STORAGE_KEY,
+  updateActiveTaskUiState,
   type AppPage,
   type HudUiState,
   type TaskWorkspaceTab,
@@ -39,6 +45,8 @@ import {
   type TaskUiState,
 } from "@/lib/task-ui-state";
 import { createDefaultHudUiState, DEFAULT_HUD_UI_STATE } from "@/lib/task-hud-layout";
+import { canPersistLegacyTaskWorkspace, isMasterWorkspaceFeatureEnabled } from "@/lib/master-workspace-controller";
+import { updateSynchronousState } from "@/lib/synchronous-state-update";
 import {
   createAdhdiceRealtimeChannelDebugId,
   describeAdhdiceRealtimeSubscriptionError,
@@ -138,8 +146,16 @@ export function useTaskUiState({
   supabase,
   userId,
 }: UseTaskUiStateOptions) {
+  const isMasterWorkspaceEnabled = isMasterWorkspaceFeatureEnabled(
+    process.env.NODE_ENV,
+    process.env.NEXT_PUBLIC_ADHDICE_MASTER_TABS,
+  );
   const [activePage, setActivePage] = useState<AppPage>("Home");
   const [taskWorkspaceTabsState, setTaskWorkspaceTabsState] = useState<TaskWorkspaceTabsState>(DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  const taskWorkspaceTabsStateRef = useRef(taskWorkspaceTabsState);
+  const updateTaskWorkspaceTabsState = useCallback((
+    updater: TaskWorkspaceTabsState | ((current: TaskWorkspaceTabsState) => TaskWorkspaceTabsState),
+  ) => updateSynchronousState(taskWorkspaceTabsStateRef, updater, setTaskWorkspaceTabsState), []);
   const [taskRouting, setTaskRouting] = useState<Record<string, TaskRoutingBucket>>({});
   const [focusedTaskIdsByDate, setFocusedTaskIdsByDate] = useState<Record<string, string[]>>({});
   const [hudUiState, setHudUiStateState] = useState<HudUiState>(() => (userId ? readStoredHudState(userId) : createDefaultHudState()));
@@ -186,7 +202,7 @@ export function useTaskUiState({
   useLayoutEffect(() => {
     if (!userId) {
       setActivePage("Home");
-      setTaskWorkspaceTabsState(DEFAULT_TASK_WORKSPACE_TABS_STATE);
+      updateTaskWorkspaceTabsState(DEFAULT_TASK_WORKSPACE_TABS_STATE);
       setTaskRouting({});
       setFocusedTaskIdsByDate({});
       setHudUiStateState(createDefaultHudState());
@@ -210,7 +226,7 @@ export function useTaskUiState({
       getUserScopedStorageKey(TASK_UI_STORAGE_KEY, userId),
       DEFAULT_TASK_WORKSPACE_TABS_STATE,
     );
-    setTaskWorkspaceTabsState(normalizeTaskWorkspaceTabsState(storedTaskWorkspaceTabsState));
+    updateTaskWorkspaceTabsState(normalizeTaskWorkspaceTabsState(storedTaskWorkspaceTabsState));
     setTaskRouting(
       parseStoredJson<Record<string, TaskRoutingBucket>>(
         getUserScopedStorageKey(TASK_ROUTING_STORAGE_KEY, userId),
@@ -261,7 +277,7 @@ export function useTaskUiState({
       ),
     );
     setRestoredUserId(userId);
-  }, [userId]);
+  }, [updateTaskWorkspaceTabsState, userId]);
 
   const isRestoringPersistedUiState = Boolean(userId) && restoredUserId !== userId;
 
@@ -286,14 +302,14 @@ export function useTaskUiState({
   }, [isTaskFiltersOpen, userId]);
 
   useEffect(() => {
-    if (!userId || typeof window === "undefined") {
+    if (!canPersistLegacyTaskWorkspace(isMasterWorkspaceEnabled, userId, restoredUserId) || typeof window === "undefined") {
       return;
     }
     window.localStorage.setItem(
       getUserScopedStorageKey(TASK_UI_STORAGE_KEY, userId),
       JSON.stringify(taskWorkspaceTabsState),
     );
-  }, [taskWorkspaceTabsState, userId]);
+  }, [isMasterWorkspaceEnabled, restoredUserId, taskWorkspaceTabsState, userId]);
 
   useEffect(() => {
     if (!userId || typeof window === "undefined") {
@@ -416,38 +432,29 @@ export function useTaskUiState({
     });
   }, []);
 
-  const activeTaskWorkspaceTab = taskWorkspaceTabsState.tabs.find((tab) => tab.id === taskWorkspaceTabsState.activeTabId)
-    ?? taskWorkspaceTabsState.tabs[0]
-    ?? DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0];
+  const activeTaskWorkspaceTab = resolveActiveTaskWorkspaceTab(taskWorkspaceTabsState);
+  const activeTaskUiState = resolveActiveTaskUiState(taskWorkspaceTabsState);
+
+  const replaceTaskWorkspaceTabsState = useCallback((nextState: TaskWorkspaceTabsState) => {
+    updateTaskWorkspaceTabsState(normalizeTaskWorkspaceTabsState(nextState));
+  }, [updateTaskWorkspaceTabsState]);
+
+  const getTaskWorkspaceTabsState = useCallback(() => taskWorkspaceTabsStateRef.current, []);
+
+  const applyTaskUiStateUpdate = useCallback((expectedTaskTabId: string, updater: SetStateAction<TaskUiState>) => {
+    const current = taskWorkspaceTabsStateRef.current;
+    if (current.activeTabId !== expectedTaskTabId || !current.tabs.some((tab) => tab.id === expectedTaskTabId)) {
+      return undefined;
+    }
+    return updateTaskWorkspaceTabsState((latest) => updateActiveTaskUiState(latest, updater));
+  }, [updateTaskWorkspaceTabsState]);
 
   const setTaskUiState = useCallback<Dispatch<SetStateAction<TaskUiState>>>((updater) => {
-    setTaskWorkspaceTabsState((current) => {
-      const activeTabId = current.activeTabId;
-      const nextTabs = current.tabs.map((tab) => {
-        if (tab.id !== activeTabId) {
-          return tab;
-        }
-        const nextTaskUiState = typeof updater === "function"
-          ? (updater as (value: TaskUiState) => TaskUiState)(tab.taskUiState)
-          : updater;
-        if (Object.is(nextTaskUiState, tab.taskUiState)) {
-          return tab;
-        }
-        return {
-          ...tab,
-          taskUiState: nextTaskUiState,
-        };
-      });
-
-      return {
-        ...current,
-        tabs: nextTabs,
-      };
-    });
-  }, []);
+    updateTaskWorkspaceTabsState((current) => updateActiveTaskUiState(current, updater));
+  }, [updateTaskWorkspaceTabsState]);
 
   const setTaskWorkspaceRailHidden = useCallback((isRailHidden: boolean) => {
-    setTaskWorkspaceTabsState((current) => ({
+    updateTaskWorkspaceTabsState((current) => ({
       ...current,
       tabs: current.tabs.map((tab) => (
         tab.id === current.activeTabId
@@ -455,77 +462,49 @@ export function useTaskUiState({
           : tab
       )),
     }));
-  }, []);
+  }, [updateTaskWorkspaceTabsState]);
 
   const setActiveTaskWorkspaceTab = useCallback((tabId: string) => {
-    setTaskWorkspaceTabsState((current) => (
+    updateTaskWorkspaceTabsState((current) => (
       current.tabs.some((tab) => tab.id === tabId)
         ? { ...current, activeTabId: tabId }
         : current
     ));
-  }, []);
+  }, [updateTaskWorkspaceTabsState]);
 
   const createTaskWorkspaceTab = useCallback((seedState?: Partial<TaskWorkspaceTab>) => {
-    setTaskWorkspaceTabsState((current) => {
+    updateTaskWorkspaceTabsState((current) => {
       const nextIndex = current.tabs.length + 1;
       const id = seedState?.id && seedState.id.trim().length > 0 ? seedState.id : `workspace-${Date.now()}`;
+      const currentActiveTab = current.tabs.find((tab) => tab.id === current.activeTabId)
+        ?? current.tabs[0]
+        ?? DEFAULT_TASK_WORKSPACE_TABS_STATE.tabs[0];
       const nextTab: TaskWorkspaceTab = {
         id,
         isRailHidden: seedState?.isRailHidden === true,
         kind: "tasks",
         label: seedState?.label?.trim() ? seedState.label.trim() : `Tab ${nextIndex}`,
-        taskUiState: seedState?.taskUiState ?? activeTaskWorkspaceTab.taskUiState,
+        taskUiState: seedState?.taskUiState ?? currentActiveTab.taskUiState,
       };
-      return {
-        activeTabId: id,
-        tabs: [...current.tabs, nextTab],
-        uiStateVersion: current.uiStateVersion,
-      };
+      return createTaskWorkspaceTabState(current, nextTab);
     });
-  }, [activeTaskWorkspaceTab.taskUiState]);
+  }, [updateTaskWorkspaceTabsState]);
 
   const closeTaskWorkspaceTab = useCallback((tabId: string) => {
-    setTaskWorkspaceTabsState((current) => {
-      const targetTab = current.tabs.find((tab) => tab.id === tabId);
-      if (current.tabs.length <= 1 || !targetTab) {
-        return current;
-      }
-
-      const nextTabs = current.tabs.filter((tab) => tab.id !== tabId);
-      const nextActiveTabId = current.activeTabId === tabId
-        ? nextTabs[Math.max(0, current.tabs.findIndex((tab) => tab.id === tabId) - 1)]?.id ?? nextTabs[0].id
-        : current.activeTabId;
-
-      return {
-        ...current,
-        activeTabId: nextActiveTabId,
-        tabs: nextTabs,
-      };
-    });
-  }, []);
+    updateTaskWorkspaceTabsState((current) => closeTaskWorkspaceTabState(current, tabId));
+  }, [updateTaskWorkspaceTabsState]);
 
   const renameTaskWorkspaceTab = useCallback((tabId: string, label: string) => {
-    const trimmedLabel = label.trim();
-    if (!trimmedLabel) {
-      return;
-    }
-    setTaskWorkspaceTabsState((current) => ({
-      ...current,
-      tabs: current.tabs.map((tab) => (
-        tab.id === tabId
-          ? { ...tab, label: trimmedLabel }
-          : tab
-      )),
-    }));
-  }, []);
+    updateTaskWorkspaceTabsState((current) => renameTaskWorkspaceTabState(current, tabId, label));
+  }, [updateTaskWorkspaceTabsState]);
 
   const moveTaskWorkspaceTab = useCallback((tabId: string, direction: -1 | 1) => {
-    setTaskWorkspaceTabsState((current) => reorderTaskWorkspaceTabs(current, tabId, direction));
-  }, []);
+    updateTaskWorkspaceTabsState((current) => reorderTaskWorkspaceTabs(current, tabId, direction));
+  }, [updateTaskWorkspaceTabsState]);
 
   const reorderTaskWorkspaceTab = useCallback((tabId: string, targetIndex: number) => {
-    setTaskWorkspaceTabsState((current) => reorderTaskWorkspaceTabToIndex(current, tabId, targetIndex));
-  }, []);
+    updateTaskWorkspaceTabsState((current) => reorderTaskWorkspaceTabToIndex(current, tabId, targetIndex));
+  }, [updateTaskWorkspaceTabsState]);
 
   const syncTaskUiSettingsToCloud = useCallback(async ({ allowBeforeReady = false }: { allowBeforeReady?: boolean } = {}) => {
     if (!supabase || !userId || (!allowBeforeReady && (!hudCloudReadyRef.current || !hudCloudSupportedRef.current))) {
@@ -861,16 +840,20 @@ export function useTaskUiState({
     reorderTaskWorkspaceTab,
     setActivePage,
     setActiveTaskWorkspaceTab,
+    replaceTaskWorkspaceTabsState,
+    getTaskWorkspaceTabsState,
+    applyTaskUiStateUpdate,
     setFocusedTaskIdsByDate,
     setHudUiState,
     setTaskWorkspaceRailHidden,
     setTaskTableLayoutPreferences,
+    setIsDailyPlanningCollapsed,
     setIsTaskFiltersOpen,
     setTaskRouting,
     taskWorkspaceTabsState,
     setTaskUiState,
     taskTableLayoutPreferences,
     taskRouting,
-    taskUiState: activeTaskWorkspaceTab.taskUiState,
+    taskUiState: activeTaskUiState,
   };
 }

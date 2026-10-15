@@ -1,7 +1,7 @@
 "use client";
 
 import { BookOpen, Check, ChevronDown, Eye, EyeOff, Folder, Search, Trash2, X } from "lucide-react";
-import { memo, startTransition, useEffect, useRef, useState } from "react";
+import { memo, startTransition, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { ReactNode, RefObject } from "react";
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from "react";
 import type { AgentPlanColumnId } from "@/components/ui/agent-plan";
@@ -44,47 +44,68 @@ const MENU_ROW_DETAIL_CLASS = "max-w-[11rem] text-right text-[12px] leading-5 te
 
 const TaskSearchBox = memo(function TaskSearchBox({
   hidden,
+  onDraftEditingChange,
   onSearchChange,
   onSearchSubmit,
   search,
 }: {
   hidden?: boolean;
+  onDraftEditingChange?: (isEditing: boolean) => void;
   onSearchChange: (search: string) => void;
   onSearchSubmit?: (search: string) => void;
   search: string;
 }) {
   const isFocusedRef = useRef(false);
+  const isUnsafeDraftRef = useRef(false);
   const [searchDraft, setSearchDraft] = useState(search);
   const searchInputRef = useRef<HTMLInputElement | null>(null);
+  const setUnsafeDraft = useCallback((isEditing: boolean) => {
+    if (isUnsafeDraftRef.current === isEditing) return;
+    isUnsafeDraftRef.current = isEditing;
+    onDraftEditingChange?.(isEditing);
+  }, [onDraftEditingChange]);
   const [searchController] = useState(() => createTaskSearchCommitController(onSearchChange, {
       clearTimeout: (handle) => window.clearTimeout(handle as number),
       setTimeout: (callback, delayMs) => window.setTimeout(callback, delayMs),
     }, TASK_SEARCH_COMMIT_DELAY_MS));
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    if (hidden && isFocusedRef.current) {
+      isFocusedRef.current = false;
+      searchController.publish(searchDraft);
+      setUnsafeDraft(search !== searchDraft);
+      return;
+    }
     if (isFocusedRef.current) {
       return;
     }
     if (search === searchDraft) {
+      setUnsafeDraft(false);
       return;
     }
     searchController.dispose();
     // Restored workspace-tab search is an external controlled-value update.
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setSearchDraft(search);
-  }, [search, searchController, searchDraft]);
+    setUnsafeDraft(false);
+  }, [hidden, search, searchController, searchDraft, setUnsafeDraft]);
 
   useEffect(() => {
-    return () => searchController.dispose();
-  }, [searchController]);
+    return () => {
+      searchController.dispose();
+      setUnsafeDraft(false);
+    };
+  }, [searchController, setUnsafeDraft]);
 
   const handleSearchDraftChange = (nextValue: string) => {
     setSearchDraft(nextValue);
+    setUnsafeDraft(true);
     searchController.schedule(nextValue);
   };
 
   const handleClearSearch = () => {
     setSearchDraft("");
+    setUnsafeDraft(true);
     searchController.publish("");
     searchInputRef.current?.focus();
   };
@@ -104,9 +125,12 @@ const TaskSearchBox = memo(function TaskSearchBox({
         }}
         onBlur={() => {
           isFocusedRef.current = false;
+          searchController.publish(searchDraft);
+          setUnsafeDraft(search !== searchDraft);
         }}
         onFocus={() => {
           isFocusedRef.current = true;
+          setUnsafeDraft(true);
         }}
         onKeyDown={(event) => {
           if (event.key !== "Enter" || !onSearchSubmit) {
@@ -1513,6 +1537,7 @@ export function TaskOperationsHeader({
   onToggleRail,
   onExpandAllColumns,
   onShrinkAllColumns,
+  onSearchDraftEditingChange,
   onSearchChange,
   onSearchSubmit,
   onViewChange,
@@ -1579,6 +1604,7 @@ export function TaskOperationsHeader({
   onToggleRail: () => void;
   onExpandAllColumns: () => void;
   onShrinkAllColumns: () => void;
+  onSearchDraftEditingChange?: (isEditing: boolean) => void;
   onSearchChange: (search: string) => void;
   onSearchSubmit?: (search: string) => void;
   onViewChange: (view: TaskViewMode) => void;
@@ -1662,6 +1688,7 @@ export function TaskOperationsHeader({
           <div className="flex w-full max-w-[56rem] flex-wrap items-center gap-3">
             <TaskSearchBox
               hidden={hideSearch}
+              onDraftEditingChange={onSearchDraftEditingChange}
               onSearchChange={onSearchChange}
               onSearchSubmit={onSearchSubmit}
               search={search}

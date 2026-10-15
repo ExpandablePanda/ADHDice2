@@ -111,6 +111,53 @@ export type HomeTodoRoutinesPerSection = typeof HOME_ROUTINES_PER_SECTION_OPTION
 export const DEFAULT_HOME_TODO_ROUTINES_PER_SECTION: HomeTodoRoutinesPerSection = 3;
 export type HomeTodoSyncStatus = "loading" | "saving" | "synced" | "local";
 
+export type HomeTodoHydrationStatus = "inactive" | "loading" | "ready-local" | "ready-remote";
+
+export type HomeTodoHydrationReadiness = {
+  generation: number;
+  ownerId: string | null;
+  remoteReady: boolean;
+  status: HomeTodoHydrationStatus;
+};
+
+export function isHomeTodoHydratedForUser(
+  readiness: HomeTodoHydrationReadiness,
+  userId: string | null,
+) {
+  return Boolean(
+    userId
+    && readiness.ownerId === userId
+    && (readiness.status === "ready-local" || readiness.status === "ready-remote"),
+  );
+}
+
+export function canSyncHomeTodoStateToRemote(
+  readiness: HomeTodoHydrationReadiness,
+  userId: string | null,
+  currentGeneration: number,
+) {
+  return isHomeTodoHydratedForUser(readiness, userId)
+    && readiness.status === "ready-remote"
+    && readiness.remoteReady
+    && readiness.generation === currentGeneration;
+}
+
+export function canReconcileHomeTodoMemberships({
+  homeHydration,
+  taskDataOwnerId,
+  taskDataReady,
+  userId,
+}: {
+  homeHydration: HomeTodoHydrationReadiness;
+  taskDataOwnerId: string | null;
+  taskDataReady: boolean;
+  userId: string | null;
+}) {
+  return isHomeTodoHydratedForUser(homeHydration, userId)
+    && taskDataReady
+    && taskDataOwnerId === userId;
+}
+
 export const EMPTY_HOME_TODO_STATE: HomeTodoStateV8 = {
   clientUpdatedAt: new Date(0).toISOString(),
   schemaVersion: 8,
@@ -153,6 +200,22 @@ export type HomeRoutineGroup = {
   tasks: HomeRoutineTask[];
 };
 
+export type HomeFolderTaskHierarchyNode = {
+  children: HomeFolderTaskHierarchyNode[];
+  depth: number;
+  isQualifying: boolean;
+  task: Task;
+};
+
+export type HomeFolderTaskHierarchyGroup = {
+  childFolders: HomeFolderTaskHierarchyGroup[];
+  folder: TaskContentFolderRow | null;
+  folderId: string | null;
+  isUnfiled: boolean;
+  qualifyingTaskCount: number;
+  taskRoots: HomeFolderTaskHierarchyNode[];
+};
+
 export type HomeTodoTaskMetadata = TaskCreationMetadata;
 
 export type HomeTodoTaskCreator = (
@@ -190,6 +253,7 @@ export function normalizeHomeTodoRoutineSectionNames(value: unknown): Record<str
 }
 
 const DEFAULT_HOME_ROUTINE_SECTION_ID = "routine-section-default";
+export const HOME_ROUTINE_UNSECTIONED_ID = "__home-routine-unsectioned__";
 
 function normalizeHomeRoutineSectionName(value: unknown, fallback: string) {
   const name = typeof value === "string" ? value.trim() : "";
@@ -225,7 +289,7 @@ function normalizeHomeRoutineSectionDefinitions(value: unknown): HomeRoutineSect
     const candidate = entry as { id?: unknown; name?: unknown };
     if (typeof candidate.id !== "string" || !candidate.id.trim()) continue;
     const id = candidate.id.trim();
-    if (seen.has(id)) continue;
+    if (seen.has(id) || id === HOME_ROUTINE_UNSECTIONED_ID) continue;
     seen.add(id);
     sections.push({
       id,
@@ -264,11 +328,13 @@ function ensureRoutineSectionsForTaskIds(
   routineSectionIdByTaskId: Record<string, string>,
   fallbackToLastSection: boolean,
 ) {
-  const sections = routineSections.length || !routineTaskIds.length
+  const hasExplicitUnsectionedAssignments = routineTaskIds.some((taskId) => routineSectionIdByTaskId[taskId] === HOME_ROUTINE_UNSECTIONED_ID);
+  const sections = routineSections.length || !routineTaskIds.length || hasExplicitUnsectionedAssignments && routineSections.length === 0
     ? routineSections
     : [{ id: DEFAULT_HOME_ROUTINE_SECTION_ID, name: "Section 1" }];
-  const validSectionIds = new Set(sections.map((section) => section.id));
-  const fallbackSectionId = (fallbackToLastSection ? sections[sections.length - 1] : sections[0])?.id;
+  const validSectionIds = new Set([...sections.map((section) => section.id), HOME_ROUTINE_UNSECTIONED_ID]);
+  const fallbackSectionId = (fallbackToLastSection ? sections[sections.length - 1] : sections[0])?.id
+    ?? (hasExplicitUnsectionedAssignments ? HOME_ROUTINE_UNSECTIONED_ID : undefined);
   const assignments: Record<string, string> = {};
   for (const taskId of routineTaskIds) {
     const assignedSectionId = routineSectionIdByTaskId[taskId];
@@ -295,6 +361,23 @@ export function reconcileHomeRoutineSectionAssignments(
   );
 }
 
+export function deleteHomeRoutineSection(
+  routineSections: readonly HomeRoutineSectionDefinition[],
+  routineSectionIdByTaskId: Readonly<Record<string, string>>,
+  routineTaskIds: readonly string[],
+  sectionId: string,
+) {
+  if (!routineSections.some((section) => section.id === sectionId)) return null;
+  const nextAssignments = { ...routineSectionIdByTaskId };
+  for (const taskId of routineTaskIds) {
+    if (nextAssignments[taskId] === sectionId) nextAssignments[taskId] = HOME_ROUTINE_UNSECTIONED_ID;
+  }
+  return {
+    routineSections: routineSections.filter((section) => section.id !== sectionId),
+    routineSectionIdByTaskId: nextAssignments,
+  };
+}
+
 export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
   return state.taskIds.length > 0
     || Object.keys(state.taskDayOffsets).length > 0
@@ -305,10 +388,6 @@ export function hasMeaningfulHomeTodoState(state: HomeTodoState) {
     || state.urgentTaskIds.length > 0
     || state.scratchpadText.trim().length > 0
     || state.scratchpadItems.length > 0;
-}
-
-export function shouldPersistHomeRoutineReconciliation(syncStatus: HomeTodoSyncStatus) {
-  return syncStatus !== "loading";
 }
 
 function formatOrdinalDay(day: number) {
@@ -405,20 +484,32 @@ export function buildHomeRoutineSections<T>(
     { ...routineSectionIdByTaskId },
     false,
   ).routineSections;
+  const normalizedAssignments = ensureRoutineSectionsForTaskIds(
+    routineTaskIds.map((taskId) => String(taskId)),
+    normalizedSections,
+    { ...routineSectionIdByTaskId },
+    false,
+  ).routineSectionIdByTaskId;
   const groupIdsBySectionId = new Map(normalizedSections.map((section) => [section.id, [] as T[]]));
+  groupIdsBySectionId.set(HOME_ROUTINE_UNSECTIONED_ID, []);
   const fallbackSectionId = normalizedSections[0]?.id;
   for (const taskId of routineTaskIds) {
-    const sectionId = routineSectionIdByTaskId[String(taskId)] ?? fallbackSectionId;
+    const sectionId = normalizedAssignments[String(taskId)] ?? fallbackSectionId;
     const groupIds = sectionId ? groupIdsBySectionId.get(sectionId) ?? groupIdsBySectionId.get(fallbackSectionId ?? "") : undefined;
     groupIds?.push(taskId);
   }
   let startIndex = 0;
-  return normalizedSections.map((section, sectionIndex) => {
+  const views = normalizedSections.map((section, sectionIndex) => {
     const groupIds = groupIdsBySectionId.get(section.id) ?? [];
     const view = { id: section.id, groupIds, label: section.name, sectionIndex, startIndex };
     startIndex += groupIds.length;
     return view;
   });
+  const unsectionedGroupIds = groupIdsBySectionId.get(HOME_ROUTINE_UNSECTIONED_ID) ?? [];
+  if (unsectionedGroupIds.length) {
+    views.push({ id: HOME_ROUTINE_UNSECTIONED_ID, groupIds: unsectionedGroupIds, label: "Unsectioned", sectionIndex: views.length, startIndex });
+  }
+  return views;
 }
 
 export function formatHomeRoutineDueLabel(task: Pick<Task, "due_on" | "due_time">) {
@@ -810,6 +901,168 @@ export function buildHomeTaskRowHierarchy(
     ? getTaskContentFolderPath(taskContentFolders, rootTask.task_content_folder_id)
     : [];
   return [...folderPath, ...parentHierarchy];
+}
+
+const HOME_FOLDER_TASK_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+
+function compareHomeFolderTaskTitles(left: Task, right: Task) {
+  const leftTitle = left.title || "Untitled task";
+  const rightTitle = right.title || "Untitled task";
+  return HOME_FOLDER_TASK_COLLATOR.compare(leftTitle, rightTitle)
+    || leftTitle.localeCompare(rightTitle, undefined, { numeric: true, sensitivity: "variant" })
+    || left.id.localeCompare(right.id);
+}
+
+function compareHomeFolderNames(left: TaskContentFolderRow, right: TaskContentFolderRow) {
+  return HOME_FOLDER_TASK_COLLATOR.compare(left.name, right.name)
+    || left.name.localeCompare(right.name, undefined, { numeric: true, sensitivity: "variant" })
+    || left.id.localeCompare(right.id);
+}
+
+/**
+ * Projects an already-qualified Home task set into canonical Folder and Task
+ * ancestry. Ancestors added for context remain nonqualifying and never pull in
+ * their unrelated children.
+ */
+export function buildHomeFolderTaskHierarchyProjection(
+  qualifyingTasks: readonly Task[],
+  tasks: readonly Task[],
+  folders: readonly TaskContentFolderRow[],
+  taskHierarchy: TaskHierarchyAdapter<Task> = buildTaskHierarchyAdapter(tasks),
+): HomeFolderTaskHierarchyGroup[] {
+  const taskById = taskHierarchy.taskById;
+  const qualifyingTaskIds = new Set<string>();
+  for (const task of qualifyingTasks) {
+    if (taskById.has(task.id)) qualifyingTaskIds.add(task.id);
+  }
+
+  const includedTaskIds = new Set(qualifyingTaskIds);
+  for (const taskId of qualifyingTaskIds) {
+    for (const ancestor of taskHierarchy.getParentChain(taskId)) includedTaskIds.add(ancestor.id);
+  }
+
+  const visitedTaskIds = new Set<string>();
+  function projectTask(task: Task, depth: number): HomeFolderTaskHierarchyNode | null {
+    if (!includedTaskIds.has(task.id) || visitedTaskIds.has(task.id)) return null;
+    visitedTaskIds.add(task.id);
+    const children = taskHierarchy.getChildren(task.id)
+      .map((child) => projectTask(child, depth + 1))
+      .filter((child): child is HomeFolderTaskHierarchyNode => child !== null)
+      .sort((left, right) => compareHomeFolderTaskTitles(left.task, right.task));
+    return {
+      children,
+      depth,
+      isQualifying: qualifyingTaskIds.has(task.id),
+      task,
+    };
+  }
+
+  const taskRoots = taskHierarchy.rootNodes
+    .map((node) => projectTask(node.task, 0))
+    .filter((node): node is HomeFolderTaskHierarchyNode => node !== null);
+  for (const taskId of [...includedTaskIds].sort()) {
+    if (visitedTaskIds.has(taskId)) continue;
+    const task = taskById.get(taskId);
+    if (task) {
+      const node = projectTask(task, 0);
+      if (node) taskRoots.push(node);
+    }
+  }
+  taskRoots.sort((left, right) => compareHomeFolderTaskTitles(left.task, right.task));
+
+  const folderById = new Map(folders.map((folder) => [folder.id, folder]));
+  const parentFolderIdById = new Map<string, string | null>();
+  for (const folder of folders) {
+    const parentId = folder.parent_folder_id ?? null;
+    parentFolderIdById.set(folder.id, parentId && folderById.has(parentId) && parentId !== folder.id ? parentId : null);
+  }
+
+  // Break malformed Folder cycles deterministically while retaining every Folder.
+  const settledFolderIds = new Set<string>();
+  for (const folder of folders) {
+    if (settledFolderIds.has(folder.id)) continue;
+    const path: string[] = [];
+    const pathIndexById = new Map<string, number>();
+    let currentId: string | null = folder.id;
+    while (currentId && !settledFolderIds.has(currentId)) {
+      const cycleStart = pathIndexById.get(currentId);
+      if (cycleStart !== undefined) {
+        const cycleRootId = path.slice(cycleStart).sort()[0];
+        if (cycleRootId) parentFolderIdById.set(cycleRootId, null);
+        break;
+      }
+      pathIndexById.set(currentId, path.length);
+      path.push(currentId);
+      currentId = parentFolderIdById.get(currentId) ?? null;
+    }
+    for (const folderId of path) settledFolderIds.add(folderId);
+  }
+
+  const rootsByFolderId = new Map<string | null, HomeFolderTaskHierarchyNode[]>();
+  for (const node of taskRoots) {
+    const ancestry = taskHierarchy.getParentChain(node.task.id);
+    const rootTask = ancestry.at(-1) ?? node.task;
+    const requestedFolderId = rootTask.task_content_folder_id ?? null;
+    const folderId = requestedFolderId && folderById.has(requestedFolderId) ? requestedFolderId : null;
+    const roots = rootsByFolderId.get(folderId) ?? [];
+    roots.push(node);
+    rootsByFolderId.set(folderId, roots);
+  }
+
+  const requiredFolderIds = new Set<string>();
+  for (const folderId of rootsByFolderId.keys()) {
+    let currentId = folderId;
+    while (currentId && !requiredFolderIds.has(currentId)) {
+      requiredFolderIds.add(currentId);
+      currentId = parentFolderIdById.get(currentId) ?? null;
+    }
+  }
+
+  const childFolderIdsByParentId = new Map<string | null, string[]>();
+  for (const folderId of requiredFolderIds) {
+    const parentId = parentFolderIdById.get(folderId) ?? null;
+    const children = childFolderIdsByParentId.get(parentId) ?? [];
+    children.push(folderId);
+    childFolderIdsByParentId.set(parentId, children);
+  }
+
+  function countQualifyingTasks(nodes: readonly HomeFolderTaskHierarchyNode[]): number {
+    return nodes.reduce((count, node) => count + Number(node.isQualifying) + countQualifyingTasks(node.children), 0);
+  }
+
+  function buildFolderGroup(folderId: string): HomeFolderTaskHierarchyGroup {
+    const folder = folderById.get(folderId)!;
+    const roots = (rootsByFolderId.get(folderId) ?? []).sort((left, right) => compareHomeFolderTaskTitles(left.task, right.task));
+    const childFolders = (childFolderIdsByParentId.get(folderId) ?? [])
+      .map((childId) => folderById.get(childId)!)
+      .sort(compareHomeFolderNames)
+      .map((child) => buildFolderGroup(child.id));
+    return {
+      childFolders,
+      folder,
+      folderId,
+      isUnfiled: false,
+      qualifyingTaskCount: countQualifyingTasks(roots) + childFolders.reduce((count, child) => count + child.qualifyingTaskCount, 0),
+      taskRoots: roots,
+    };
+  }
+
+  const namedFolders = (childFolderIdsByParentId.get(null) ?? [])
+    .map((folderId) => folderById.get(folderId)!)
+    .sort(compareHomeFolderNames)
+    .map((folder) => buildFolderGroup(folder.id));
+  const unfiledTaskRoots = rootsByFolderId.get(null) ?? [];
+  if (unfiledTaskRoots.length) {
+    namedFolders.push({
+      childFolders: [],
+      folder: null,
+      folderId: null,
+      isUnfiled: true,
+      qualifyingTaskCount: countQualifyingTasks(unfiledTaskRoots),
+      taskRoots: unfiledTaskRoots.sort((left, right) => compareHomeFolderTaskTitles(left.task, right.task)),
+    });
+  }
+  return namedFolders;
 }
 
 export function getHomeTodoSearchText(
