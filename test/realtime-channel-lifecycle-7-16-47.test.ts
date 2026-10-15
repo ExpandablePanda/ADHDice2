@@ -332,7 +332,7 @@ test("On-Time and Home hooks retain fixed topics, filters, handlers, flush, and 
   assert.match(homeSource, /adhdice_home_todo_state:\$\{userId\}:\$\{createBrowserUuidV4\(\)\}/);
   assert.match(homeSource, /table: "adhdice_home_todo_state"/);
   assert.match(homeSource, /filter: `user_id=eq\.\$\{userId\}`/);
-  assert.match(homeSource, /if \(row\.state\) applyRemote/);
+  assert.match(homeSource, /if \(row\.state\) \{[\s\S]*?applyRemote\([\s\S]*?row\.restore_generation[\s\S]*?row\.state_revision/);
   assert.match(homeSource, /if \(dirtyRef\.current && ownerGenerationRef\.current === ownerGeneration\) void flush\(userId, ownerGeneration\);[\s\S]*?ownerGenerationRef\.current \+= 1;\s*stopRealtimeChannel\(\);/);
   assert.match(homeSource, /schemaVersion: 8/);
   assert.doesNotMatch(homeSource, /removeChannel\(channelRef\.current\)/);

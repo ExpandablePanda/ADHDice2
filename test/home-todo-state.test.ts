@@ -1650,7 +1650,7 @@ test("Home todo renders explicit Routine sections, settings, and the recovered t
   assert.match(hookSource, /hasMeaningfulHomeTodoState\(cached\)/);
   assert.match(hookSource, /cacheKey\(ownerId\)/);
   assert.match(hookSource, /persistCache\(next, userId\)/);
-  assert.match(hookSource, /state: outgoing,\s*user_id: ownerId/);
+  assert.match(hookSource, /rpc\("save_home_todo_state"[\s\S]*p_expected_restore_generation: expectedRestoreGeneration[\s\S]*p_state: outgoing/);
   assert.match(logicalDaySource, /export function getCalendarDayKey/);
   assert.match(logicalDaySource, /export function getLogicalDayKey/);
   assert.match(taskAppSource, /calendarNowMs=\{logicalDayNow\}/);

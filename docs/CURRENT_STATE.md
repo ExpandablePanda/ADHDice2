@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.164`.
+- Current working app version: `7.16.165`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,27 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-14 7.16.165 Home Backup and Recovery Foundation
+
+Home Todo is the first domain in a shared private recovery-point store. The
+PostgreSQL migration defines versioned payload validation, SHA-256 integrity
+checks, database-side snapshots, per-user retention, protected points, storage
+measurements, and owner-scoped preview and restore contracts. Home writes now
+use a restore-generation-guarded RPC so an older local cache cannot overwrite a
+restored server state. A separate opt-in SQL script prepares one four-hour
+pg_cron job; neither the migration nor the schedule has been applied or
+activated in production. Deployment prerequisites, capacity limits, and
+rollback are documented in `docs/architecture/home-backup-recovery.md`.
+
+Focused Home state, Realtime, and recovery checks passed; recovery SQL was also
+applied to a disposable local PostgreSQL 16 database for transaction, RLS,
+retention, storage, and restore-conflict coverage. Targeted ESLint passed. The
+Next.js 16.2.4 production build passed and skipped type validation. The full
+typecheck remains red with 287 repository diagnostics; the changed Home
+recovery files have no reported diagnostics. `git diff --check` passed.
+Browser QA remains Andrew's manual check. No production database or Cron state
+was changed.
 
 ## 2026-10-14 7.16.164 Home Todo hydration and data-loss protection
 

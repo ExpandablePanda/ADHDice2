@@ -24,6 +24,11 @@ import {
   type HomeTodoHydrationReadiness,
   type HomeTodoSyncStatus,
 } from "@/lib/home-todo-state";
+import {
+  homeTodoRecoveryConflictCacheKey,
+  parseHomeTodoRecoveryCache,
+  shouldPreferRemoteHomeTodoState,
+} from "@/lib/home-todo-recovery";
 import { createBrowserSupabaseClient } from "@/lib/supabase";
 import { startSerializedRealtimeChannel } from "@/lib/realtime-channel-lifecycle";
 import { createBrowserUuidV4 } from "@/lib/browser-uuid";
@@ -66,7 +71,16 @@ export function useHomeTodoState(userId: string | null) {
   const ownerGenerationRef = useRef(0);
   const renderedUserIdRef = useRef(userId);
   const hydrationRef = useRef<HomeTodoHydrationReadiness>(hydrationState);
-  const pendingRemoteRef = useRef<{ ownerId: string; generation: number; state: unknown; updatedAt: string | null } | null>(null);
+  const pendingRemoteRef = useRef<{
+    ownerId: string;
+    generation: number;
+    state: unknown;
+    updatedAt: string | null;
+    stateRevision: number;
+    restoreGeneration: number;
+  } | null>(null);
+  const stateRevisionRef = useRef(0);
+  const restoreGenerationRef = useRef(0);
 
   const canMutateForOwner = useCallback((ownerId: string | null) => Boolean(
     ownerId
@@ -97,6 +111,8 @@ export function useHomeTodoState(userId: string | null) {
     writeTimerRef.current = null;
     dirtyRef.current = false;
     pendingRemoteRef.current = null;
+    stateRevisionRef.current = 0;
+    restoreGenerationRef.current = 0;
     hydrationRef.current = {
       generation: ownerGenerationRef.current,
       ownerId: userId,
@@ -108,11 +124,37 @@ export function useHomeTodoState(userId: string | null) {
   const persistCache = useCallback((next: HomeTodoState, ownerId: string) => {
     if (!canMutateForOwner(ownerId)) return;
     try {
-      window.localStorage.setItem(cacheKey(ownerId), JSON.stringify(next));
+      window.localStorage.setItem(cacheKey(ownerId), JSON.stringify({
+        cacheVersion: 1,
+        state: next,
+        stateRevision: stateRevisionRef.current,
+        restoreGeneration: restoreGenerationRef.current,
+      }));
     } catch {
       // Cache is best effort.
     }
   }, [canMutateForOwner]);
+
+  const preserveSupersededCache = useCallback((
+    ownerId: string,
+    localGeneration: number,
+    remoteGeneration: number,
+    snapshot: HomeTodoState,
+  ) => {
+    if (!hasMeaningfulHomeTodoState(snapshot)) return;
+    const key = homeTodoRecoveryConflictCacheKey(ownerId, localGeneration, remoteGeneration);
+    try {
+      if (window.localStorage.getItem(key)) return;
+      window.localStorage.setItem(key, JSON.stringify({
+        cacheVersion: 1,
+        state: snapshot,
+        stateRevision: stateRevisionRef.current,
+        restoreGeneration: localGeneration,
+      }));
+    } catch {
+      // Preserve the server restore even when localStorage is unavailable.
+    }
+  }, []);
 
   const setOwnerSyncStatus = useCallback((ownerId: string | null, status: HomeTodoSyncStatus) => {
     setSyncStatusState({ ownerId, status });
@@ -126,23 +168,67 @@ export function useHomeTodoState(userId: string | null) {
       return;
     }
     const outgoing = stateRef.current;
+    const expectedRestoreGeneration = restoreGenerationRef.current;
     setOwnerSyncStatus(ownerId, "saving");
-    const { error } = await client.from("adhdice_home_todo_state").upsert({
-      client_updated_at: outgoing.clientUpdatedAt,
-      state: outgoing,
-      user_id: ownerId,
+    const { data, error } = await client.rpc("save_home_todo_state", {
+      p_client_updated_at: outgoing.clientUpdatedAt,
+      p_expected_restore_generation: expectedRestoreGeneration,
+      p_state: outgoing,
     });
     if (ownerGenerationRef.current !== generation || renderedUserIdRef.current !== ownerId) return;
     if (error) {
-      if (isMissingTableError(error)) remoteSupportedRef.current = false;
+      if (isMissingTableError(error) || error.code === "PGRST202") remoteSupportedRef.current = false;
       setOwnerSyncStatus(ownerId, "local");
       return;
     }
+    const result = data && typeof data === "object" ? data as Record<string, unknown> : null;
+    if (result?.status === "restore_conflict") {
+      const remoteGeneration = Number.isSafeInteger(result.restore_generation)
+        ? Number(result.restore_generation)
+        : expectedRestoreGeneration;
+      if (result.state && typeof result.state === "object") {
+        preserveSupersededCache(ownerId, expectedRestoreGeneration, remoteGeneration, stateRef.current);
+        const remote = normalizeHomeTodoState(result.state);
+        const remoteUpdatedAt = typeof result.client_updated_at === "string"
+          ? result.client_updated_at
+          : remote.clientUpdatedAt;
+        if (timestamp(remoteUpdatedAt) > timestamp(remote.clientUpdatedAt)) {
+          remote.clientUpdatedAt = new Date(remoteUpdatedAt).toISOString();
+        }
+        restoreGenerationRef.current = remoteGeneration;
+        stateRevisionRef.current = Number.isSafeInteger(result.state_revision) ? Number(result.state_revision) : 0;
+        dirtyRef.current = false;
+        stateRef.current = remote;
+        stateOwnerRef.current = ownerId;
+        setState(remote);
+        setStateOwnerId(ownerId);
+        persistCache(remote, ownerId);
+        setOwnerSyncStatus(ownerId, "synced");
+      } else {
+        preserveSupersededCache(ownerId, expectedRestoreGeneration, remoteGeneration, stateRef.current);
+        remoteSupportedRef.current = false;
+        setOwnerSyncStatus(ownerId, "local");
+      }
+      return;
+    }
+    if (result?.status !== "saved") {
+      setOwnerSyncStatus(ownerId, "local");
+      return;
+    }
+    const savedGeneration = Number.isSafeInteger(result.restore_generation)
+      ? Number(result.restore_generation)
+      : expectedRestoreGeneration;
+    if (savedGeneration === restoreGenerationRef.current) {
+      stateRevisionRef.current = Number.isSafeInteger(result.state_revision)
+        ? Number(result.state_revision)
+        : stateRevisionRef.current;
+    }
     if (stateOwnerRef.current === ownerId && stateRef.current.clientUpdatedAt === outgoing.clientUpdatedAt) {
       dirtyRef.current = false;
+      persistCache(outgoing, ownerId);
       setOwnerSyncStatus(ownerId, "synced");
     }
-  }, [canSyncForOwner, setOwnerSyncStatus]);
+  }, [canSyncForOwner, persistCache, preserveSupersededCache, setOwnerSyncStatus]);
 
   const scheduleWrite = useCallback((ownerId: string) => {
     const generation = ownerGenerationRef.current;
@@ -155,7 +241,7 @@ export function useHomeTodoState(userId: string | null) {
   }, [canSyncForOwner, flush]);
 
   const commitState = useCallback((value: unknown) => {
-    if (!canMutateForOwner(userId)) return false;
+    if (!userId || !canMutateForOwner(userId)) return false;
     const current = stateRef.current;
     const normalized = normalizeHomeTodoState(value);
     const nextTimestamp = new Date(Math.max(Date.now(), timestamp(current.clientUpdatedAt) + 1)).toISOString();
@@ -175,10 +261,24 @@ export function useHomeTodoState(userId: string | null) {
     return true;
   }, [canMutateForOwner, persistCache, scheduleWrite, setOwnerSyncStatus, userId]);
 
-  const applyRemote = useCallback((value: unknown, remoteClientUpdatedAt: string | null, ownerId: string, generation: number) => {
+  const applyRemote = useCallback((
+    value: unknown,
+    remoteClientUpdatedAt: string | null,
+    ownerId: string,
+    generation: number,
+    remoteRestoreGeneration: number,
+    remoteStateRevision: number,
+  ) => {
     if (ownerGenerationRef.current !== generation || renderedUserIdRef.current !== ownerId) return;
     if (!isHomeTodoHydratedForUser(hydrationRef.current, ownerId)) {
-      pendingRemoteRef.current = { generation, ownerId, state: value, updatedAt: remoteClientUpdatedAt };
+      pendingRemoteRef.current = {
+        generation,
+        ownerId,
+        state: value,
+        updatedAt: remoteClientUpdatedAt,
+        stateRevision: remoteStateRevision,
+        restoreGeneration: remoteRestoreGeneration,
+      };
       return;
     }
     const remote = normalizeHomeTodoState(value);
@@ -186,7 +286,23 @@ export function useHomeTodoState(userId: string | null) {
       remote.clientUpdatedAt = new Date(remoteClientUpdatedAt).toISOString();
     }
     if (stateOwnerRef.current !== ownerId) return;
+    if (remoteRestoreGeneration !== restoreGenerationRef.current) {
+      preserveSupersededCache(ownerId, restoreGenerationRef.current, remoteRestoreGeneration, stateRef.current);
+      restoreGenerationRef.current = remoteRestoreGeneration;
+      stateRevisionRef.current = remoteStateRevision;
+      hydrationRef.current = { ...hydrationRef.current, remoteReady: true, status: "ready-remote" };
+      setHydrationState(hydrationRef.current);
+      dirtyRef.current = false;
+      stateRef.current = remote;
+      stateOwnerRef.current = ownerId;
+      setState(remote);
+      setStateOwnerId(ownerId);
+      persistCache(remote, ownerId);
+      setOwnerSyncStatus(ownerId, "synced");
+      return;
+    }
     if (timestamp(remote.clientUpdatedAt) <= timestamp(stateRef.current.clientUpdatedAt)) {
+      stateRevisionRef.current = Math.max(stateRevisionRef.current, remoteStateRevision);
       hydrationRef.current = { ...hydrationRef.current, remoteReady: true, status: "ready-remote" };
       setHydrationState(hydrationRef.current);
       if (timestamp(stateRef.current.clientUpdatedAt) > timestamp(remote.clientUpdatedAt) && hasMeaningfulHomeTodoState(stateRef.current)) {
@@ -198,6 +314,8 @@ export function useHomeTodoState(userId: string | null) {
     }
     hydrationRef.current = { ...hydrationRef.current, remoteReady: true, status: "ready-remote" };
     setHydrationState(hydrationRef.current);
+    stateRevisionRef.current = remoteStateRevision;
+    restoreGenerationRef.current = remoteRestoreGeneration;
     dirtyRef.current = false;
     stateRef.current = remote;
     stateOwnerRef.current = ownerId;
@@ -205,7 +323,7 @@ export function useHomeTodoState(userId: string | null) {
     setStateOwnerId(ownerId);
     persistCache(remote, ownerId);
     setOwnerSyncStatus(ownerId, "synced");
-  }, [persistCache, scheduleWrite, setOwnerSyncStatus]);
+  }, [persistCache, preserveSupersededCache, scheduleWrite, setOwnerSyncStatus]);
 
   useEffect(() => {
     const ownerGeneration = ownerGenerationRef.current + 1;
@@ -232,11 +350,18 @@ export function useHomeTodoState(userId: string | null) {
     remoteSupportedRef.current = true;
     dirtyRef.current = false;
     let cached = { ...EMPTY_HOME_TODO_STATE };
+    let cachedGeneration = 0;
+    let cachedRevision = 0;
     try {
-      cached = normalizeHomeTodoState(JSON.parse(window.localStorage.getItem(cacheKey(userId)) ?? "null"));
+      const cache = parseHomeTodoRecoveryCache(JSON.parse(window.localStorage.getItem(cacheKey(userId)) ?? "null"));
+      cached = cache.state;
+      cachedGeneration = cache.restoreGeneration;
+      cachedRevision = cache.stateRevision;
     } catch {
       // Invalid cache normalizes to empty.
     }
+    restoreGenerationRef.current = cachedGeneration;
+    stateRevisionRef.current = cachedRevision;
     stateRef.current = cached;
     stateOwnerRef.current = userId;
 
@@ -271,12 +396,19 @@ export function useHomeTodoState(userId: string | null) {
       const pending = pendingRemoteRef.current;
       pendingRemoteRef.current = null;
       if (pending?.ownerId === userId && pending.generation === ownerGeneration) {
-        applyRemote(pending.state, pending.updatedAt, userId, ownerGeneration);
+        applyRemote(
+          pending.state,
+          pending.updatedAt,
+          userId,
+          ownerGeneration,
+          pending.restoreGeneration,
+          pending.stateRevision,
+        );
       }
     };
     void client
       .from("adhdice_home_todo_state")
-      .select("state,client_updated_at")
+      .select("state,client_updated_at,state_revision,restore_generation")
       .eq("user_id", userId)
       .maybeSingle()
       .then(({ data, error }) => {
@@ -289,30 +421,56 @@ export function useHomeTodoState(userId: string | null) {
           const pending = pendingRemoteRef.current;
           pendingRemoteRef.current = null;
           if (pending?.ownerId === userId && pending.generation === ownerGeneration) {
-            applyRemote(pending.state, pending.updatedAt, userId, ownerGeneration);
+            applyRemote(
+              pending.state,
+              pending.updatedAt,
+              userId,
+              ownerGeneration,
+              pending.restoreGeneration,
+              pending.stateRevision,
+            );
           }
           return;
         }
         let hydratedState = cached;
-        let syncStatusAfterRead: "synced" | "saving" = "synced";
+        let syncStatusAfterRead: HomeTodoSyncStatus = "synced";
         let isDirty = false;
         let shouldPersistHydratedState = false;
         if (data) {
           const remote = normalizeHomeTodoState(data.state);
+          const remoteGeneration = Number.isSafeInteger(data.restore_generation) ? data.restore_generation : 0;
+          const remoteRevision = Number.isSafeInteger(data.state_revision) ? data.state_revision : 0;
           const remoteTimestamp = timestamp(data.client_updated_at ?? remote.clientUpdatedAt);
-          if (remoteTimestamp > timestamp(cached.clientUpdatedAt)) {
+          const preferRemote = shouldPreferRemoteHomeTodoState(
+            { state: cached, restoreGeneration: cachedGeneration },
+            { state: remote, restoreGeneration: remoteGeneration },
+          );
+          if (preferRemote) {
+            if (cachedGeneration !== remoteGeneration) {
+              preserveSupersededCache(userId, cachedGeneration, remoteGeneration, cached);
+            }
             if (data.client_updated_at && timestamp(data.client_updated_at) > timestamp(remote.clientUpdatedAt)) {
               remote.clientUpdatedAt = new Date(data.client_updated_at).toISOString();
             }
             hydratedState = remote;
             shouldPersistHydratedState = true;
+            restoreGenerationRef.current = remoteGeneration;
+            stateRevisionRef.current = remoteRevision;
           } else if (timestamp(cached.clientUpdatedAt) > remoteTimestamp) {
             syncStatusAfterRead = "saving";
             isDirty = true;
+          } else {
+            restoreGenerationRef.current = remoteGeneration;
+            stateRevisionRef.current = remoteRevision;
           }
         } else if (hasMeaningfulHomeTodoState(cached)) {
-          syncStatusAfterRead = "saving";
-          isDirty = true;
+          if (cachedGeneration === 0) {
+            syncStatusAfterRead = "saving";
+            isDirty = true;
+          } else {
+            remoteSupportedRef.current = false;
+            syncStatusAfterRead = "local";
+          }
         }
         stateRef.current = hydratedState;
         stateOwnerRef.current = userId;
@@ -338,8 +496,22 @@ export function useHomeTodoState(userId: string | null) {
             table: "adhdice_home_todo_state",
           }, (payload) => {
             if (!isCurrentChannel()) return;
-            const row = payload.new as { client_updated_at?: string; state?: unknown };
-            if (row.state) applyRemote(row.state, row.client_updated_at ?? null, userId, ownerGeneration);
+            const row = payload.new as {
+              client_updated_at?: string;
+              restore_generation?: number;
+              state?: unknown;
+              state_revision?: number;
+            };
+            if (row.state) {
+              applyRemote(
+                row.state,
+                row.client_updated_at ?? null,
+                userId,
+                ownerGeneration,
+                Number.isSafeInteger(row.restore_generation) ? row.restore_generation! : 0,
+                Number.isSafeInteger(row.state_revision) ? row.state_revision! : 0,
+              );
+            }
           })
           .subscribe();
       },
@@ -356,7 +528,7 @@ export function useHomeTodoState(userId: string | null) {
       ownerGenerationRef.current += 1;
       stopRealtimeChannel();
     };
-  }, [applyRemote, flush, persistCache, scheduleWrite, setOwnerSyncStatus, userId]);
+  }, [applyRemote, flush, persistCache, preserveSupersededCache, scheduleWrite, setOwnerSyncStatus, userId]);
 
   const updateTaskIds = useCallback((updater: (taskIds: string[]) => string[]) => {
     if (!canMutateForOwner(userId)) return;

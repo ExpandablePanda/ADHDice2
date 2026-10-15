@@ -245,6 +245,8 @@ export type HomeTodoStateRow = {
   user_id: string;
   state: Record<string, unknown>;
   client_updated_at: string;
+  state_revision: number;
+  restore_generation: number;
   created_at: string;
   updated_at: string;
 };
@@ -3442,6 +3444,39 @@ export type Database = {
     };
     Views: Record<string, never>;
     Functions: {
+      save_home_todo_state: {
+        Args: {
+          p_client_updated_at: string;
+          p_expected_restore_generation: number;
+          p_state: Record<string, unknown>;
+        };
+        Returns: Record<string, unknown>;
+      };
+      create_home_recovery_point: {
+        Args: { p_app_version?: string };
+        Returns: Record<string, unknown>;
+      };
+      list_home_recovery_points: {
+        Args: { p_limit?: number };
+        Returns: unknown[];
+      };
+      preview_home_recovery_point: {
+        Args: { p_recovery_point_id: string };
+        Returns: Record<string, unknown>;
+      };
+      restore_home_recovery_point: {
+        Args: {
+          p_confirm_restore: boolean;
+          p_expected_restore_generation: number | null;
+          p_expected_state_revision: number | null;
+          p_recovery_point_id: string;
+        };
+        Returns: Record<string, unknown>;
+      };
+      home_recovery_status: {
+        Args: Record<string, never>;
+        Returns: Record<string, unknown>;
+      };
       adhdice_get_latest_manual_task_commands: {
         Args: {
           p_entity_ids: string[];
