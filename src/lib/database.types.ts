@@ -3448,6 +3448,7 @@ export type Database = {
         Args: {
           p_client_updated_at: string;
           p_expected_restore_generation: number;
+          p_expected_state_revision: number;
           p_state: Record<string, unknown>;
         };
         Returns: Record<string, unknown>;

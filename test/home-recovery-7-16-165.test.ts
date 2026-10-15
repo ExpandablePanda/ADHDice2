@@ -17,6 +17,7 @@ import { EMPTY_HOME_TODO_STATE, normalizeHomeTodoState } from "../src/lib/home-t
 const repositoryRoot = process.cwd();
 const migrationPath = join(repositoryRoot, "supabase/20261014000000_home_backup_recovery_foundation_7_16_165.sql");
 const migration = readFileSync(migrationPath, "utf8");
+const schemaSnapshot = readFileSync(join(repositoryRoot, "supabase/schema.sql"), "utf8");
 const cronActivation = readFileSync(join(repositoryRoot, "supabase/activate_home_recovery_cron.sql"), "utf8");
 const rollback = readFileSync(join(repositoryRoot, "supabase/rollback_home_backup_recovery_7_16_165.sql"), "utf8");
 const hookSource = readFileSync(join(repositoryRoot, "src/hooks/useHomeTodoState.ts"), "utf8");
@@ -42,6 +43,10 @@ test("legacy Home caches normalize as generation zero and server restore generat
     { state: restored, restoreGeneration: 1 },
   ), false);
   assert.equal(homeTodoRecoveryConflictCacheKey("user-a", 0, 1), "adhdice-home-todo-conflict:user-a:0:1");
+  assert.equal(
+    homeTodoRecoveryConflictCacheKey("user-a", 1, 1, 4, 5),
+    "adhdice-home-todo-conflict:user-a:1:1:revision:4:5",
+  );
 });
 
 test("Home persistence is wired to the revision-guarded RPC and retains data on network errors", () => {
@@ -54,6 +59,8 @@ test("Home persistence is wired to the revision-guarded RPC and retains data on 
 
   assert.match(flush, /rpc\(\"save_home_todo_state\"/);
   assert.match(flush, /p_expected_restore_generation: expectedRestoreGeneration/);
+  assert.match(flush, /p_expected_state_revision: expectedStateRevision/);
+  assert.match(flush, /result\?\.status === "restore_conflict" \|\| result\?\.status === "state_conflict"/);
   assert.doesNotMatch(flush, /\.from\(\"adhdice_home_todo_state\"\)\.upsert/);
   const errorBlockStart = flush.indexOf("if (error) {");
   const errorBlockEnd = flush.indexOf("\n    const result", errorBlockStart);
@@ -86,10 +93,23 @@ test("recovery SQL keeps payloads private, verifies before rotation, and leaves 
   assert.match(rollback, /restore_generation > 0/);
   assert.match(rollback, /fix forward/i);
   assert.match(migration, /p_expected_state_revision is distinct from v_current\.state_revision/);
+  assert.match(migration, /status', 'state_conflict'/);
+  assert.match(migration, /pre_restore_checkpoint_verification_failed/);
+  assert.match(migration, /pre_restore_checkpoint_owner_mismatch/);
   assert.match(migration, /missing_task_references/);
   assert.match(migration, /p_confirm_restore is distinct from true/);
   assert.match(migration, /state_revision = state_revision \+ 1/);
   assert.match(migration, /restore_generation = restore_generation \+ 1/);
+  const recoveryMarker = "alter table public.adhdice_home_todo_state\n  add column if not exists state_revision";
+  const snapshotStart = schemaSnapshot.indexOf(recoveryMarker);
+  const migrationStart = migration.indexOf(recoveryMarker);
+  assert.notEqual(snapshotStart, -1);
+  assert.notEqual(migrationStart, -1);
+  assert.equal(
+    schemaSnapshot.slice(snapshotStart, schemaSnapshot.lastIndexOf("commit;")),
+    migration.slice(migrationStart, migration.lastIndexOf("commit;")),
+    "schema.sql must retain the unapplied migration source exactly",
+  );
 });
 
 const configuredHost = process.env.ADHDICE_HOME_RECOVERY_PGHOST ?? process.env.ADHDICE_SQL_COMPILE_PGHOST;
@@ -154,6 +174,13 @@ function homeState(taskIds: string[], scratchpadText: string) {
   };
 }
 
+function homeRowSnapshot(database: string, ownerId: string) {
+  return parseLastJson(runSql(database,
+    "select jsonb_build_object('state', state, 'client_updated_at', client_updated_at, 'state_revision', state_revision, 'restore_generation', restore_generation) " +
+    "from public.adhdice_home_todo_state where user_id = '" + ownerId + "';"
+  ));
+}
+
 async function runAsync(command: string, args: string[]) {
   const result = await execFileAsync(command, args, {
     cwd: repositoryRoot,
@@ -211,7 +238,7 @@ test("Home recovery database integration", {
     run(psql, [...connectionArgs(database), "-X", "-v", "ON_ERROR_STOP=1", "-f", setupPath]);
     run(psql, [...connectionArgs(database), "-X", "-v", "ON_ERROR_STOP=1", "-f", migrationPath]);
 
-    const concurrentCapture = "select public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.165')->>'status';";
+    const concurrentCapture = "select public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.166')->>'status';";
     const captureArgs = [...connectionArgs(database), "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", concurrentCapture];
     const simultaneousCaptureResults = await Promise.all([
       runAsync(psql, captureArgs),
@@ -231,8 +258,8 @@ test("Home recovery database integration", {
 
     assert.equal(runSql(database, "select has_table_privilege('authenticated', 'public.adhdice_recovery_points', 'select')::text;"), "false");
     const userAList = parseLastJson(runSql(database, userSql(userA, "select public.list_home_recovery_points(10);")));
-    const userBCreate = parseLastJson(runSql(database, userSql(userB, "select public.create_home_recovery_point('7.16.165');")));
-    const userCCreate = parseLastJson(runSql(database, userSql(userC, "select public.create_home_recovery_point('7.16.165');")));
+    const userBCreate = parseLastJson(runSql(database, userSql(userB, "select public.create_home_recovery_point('7.16.166');")));
+    const userCCreate = parseLastJson(runSql(database, userSql(userC, "select public.create_home_recovery_point('7.16.166');")));
     assert.equal(userBCreate.status, "unchanged");
     assert.equal(userCCreate.status, "unchanged");
     const userBPointId = userBCreate.recovery_point_id as string;
@@ -242,23 +269,35 @@ test("Home recovery database integration", {
     assert.doesNotMatch(JSON.stringify(userAList), /"payload":/);
     assert.throws(() => runSql(database, userSql(userA, "select count(*) from public.adhdice_recovery_points;")), /permission denied/i);
 
-    runSql(database, "do $$ declare i integer; begin for i in 1..10 loop update public.adhdice_home_todo_state set state = jsonb_set(state, '{scratchpadText}', to_jsonb(('history-' || i)::text), true), client_updated_at = clock_timestamp(), state_revision = state_revision + 1 where user_id = '" + userA + "'; perform public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.165'); end loop; end $$;");
+    runSql(database, "do $$ declare i integer; begin for i in 1..10 loop update public.adhdice_home_todo_state set state = jsonb_set(state, '{scratchpadText}', to_jsonb(('history-' || i)::text), true), client_updated_at = clock_timestamp(), state_revision = state_revision + 1 where user_id = '" + userA + "'; perform public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.166'); end loop; end $$;");
     assert.equal(runSql(database, "select count(*) from public.adhdice_recovery_points where owner_id = '" + userA + "';"), "10");
     const protectedId = runSql(database, "select id::text from public.adhdice_recovery_points where owner_id = '" + userA + "' order by created_at, id limit 1;");
     runSql(database, "update public.adhdice_recovery_points set is_protected = true, protected_at = now(), protected_reason = 'retention-test' where id = '" + protectedId + "';");
     runSql(database, "update public.adhdice_home_todo_state set state = jsonb_set(state, '{scratchpadText}', to_jsonb('after-protection'::text), true), client_updated_at = clock_timestamp(), state_revision = state_revision + 1 where user_id = '" + userA + "';");
-    assert.equal(parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.165');")).status, "created");
+    assert.equal(parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.166');")).status, "created");
     assert.equal(runSql(database, "select count(*) from public.adhdice_recovery_points where owner_id = '" + userA + "' and id = '" + protectedId + "' and is_protected;"), "1");
     runSql(database, "update public.adhdice_recovery_points set is_protected = true, protected_at = coalesce(protected_at, now()), protected_reason = coalesce(protected_reason, 'retention-test') where owner_id = '" + userA + "';");
     runSql(database, "update public.adhdice_home_todo_state set state = jsonb_set(state, '{scratchpadText}', to_jsonb('all-protected'::text), true), client_updated_at = clock_timestamp(), state_revision = state_revision + 1 where user_id = '" + userA + "';");
-    const blockedRetention = parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.165');"));
+    const blockedRetention = parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userA + "', 'manual', '7.16.166');"));
     assert.equal(blockedRetention.status, "failed");
     assert.match(String(blockedRetention.reason), /retention_blocked_by_protected_points/);
+    assert.equal(runSql(database, "select count(*) from public.adhdice_recovery_points where owner_id = '" + userA + "';"), "10");
+    const retentionRestorePreview = parseLastJson(runSql(database, userSql(userA,
+      "select public.preview_home_recovery_point('" + protectedId + "');"
+    )));
+    const retentionRestoreBefore = homeRowSnapshot(database, userA);
+    const retentionRestore = parseLastJson(runSql(database, userSql(userA,
+      "select public.restore_home_recovery_point('" + protectedId + "', " + Number(retentionRestorePreview.current_state_revision) + ", " + Number(retentionRestorePreview.current_restore_generation) + ", true);"
+    )));
+    assert.equal(retentionRestore.status, "restore_failed");
+    assert.equal(retentionRestore.reason, "pre_restore_checkpoint_failed");
+    assert.match(String((retentionRestore.pre_restore_checkpoint as Record<string, unknown>).reason), /retention_blocked_by_protected_points/);
+    assert.deepEqual(homeRowSnapshot(database, userA), retentionRestoreBefore);
     assert.equal(runSql(database, "select count(*) from public.adhdice_recovery_points where owner_id = '" + userA + "';"), "10");
 
     runSql(database, "update public.adhdice_recovery_settings set max_recovery_bytes = 1, warning_recovery_bytes = 0 where singleton;");
     runSql(database, "update public.adhdice_home_todo_state set state = jsonb_set(state, '{scratchpadText}', to_jsonb('budget-exhaustion'::text), true), client_updated_at = clock_timestamp(), state_revision = state_revision + 1 where user_id = '" + userB + "';");
-    const budgetFailure = parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userB + "', 'manual', '7.16.165');"));
+    const budgetFailure = parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userB + "', 'manual', '7.16.166');"));
     assert.equal(budgetFailure.status, "failed");
     assert.match(String(budgetFailure.reason), /recovery_storage_limit_reached/);
     assert.equal(runSql(database, "select count(*) from public.adhdice_recovery_points where owner_id = '" + userB + "';"), "1");
@@ -268,10 +307,48 @@ test("Home recovery database integration", {
 
     runSql(database, "update public.adhdice_recovery_settings set max_database_bytes = pg_database_size(current_database()) where singleton;");
     runSql(database, "update public.adhdice_home_todo_state set state = jsonb_set(state, '{scratchpadText}', to_jsonb('database-capacity'::text), true), client_updated_at = clock_timestamp(), state_revision = state_revision + 1 where user_id = '" + userB + "';");
-    const databaseFailure = parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userB + "', 'manual', '7.16.165');"));
+    const databaseFailure = parseLastJson(runSql(database, "select public.adhdice_capture_home_recovery_point('" + userB + "', 'manual', '7.16.166');"));
     assert.equal(databaseFailure.status, "failed");
     assert.match(String(databaseFailure.reason), /database_capacity_reached/);
     runSql(database, "update public.adhdice_recovery_settings set max_database_bytes = 419430400 where singleton;");
+
+    const storageRestorePreview = parseLastJson(runSql(database, userSql(userB,
+      "select public.preview_home_recovery_point('" + userBPointId + "');"
+    )));
+    const storageRestoreBefore = homeRowSnapshot(database, userB);
+    runSql(database, "update public.adhdice_recovery_settings set max_recovery_bytes = 1, warning_recovery_bytes = 0 where singleton;");
+    const storageBlockedRestore = parseLastJson(runSql(database, userSql(userB,
+      "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(storageRestorePreview.current_state_revision) + ", " + Number(storageRestorePreview.current_restore_generation) + ", true);"
+    )));
+    assert.equal(storageBlockedRestore.status, "restore_failed");
+    assert.equal(storageBlockedRestore.reason, "pre_restore_checkpoint_failed");
+    assert.match(String((storageBlockedRestore.pre_restore_checkpoint as Record<string, unknown>).reason), /recovery_storage_limit_reached/);
+    assert.deepEqual(homeRowSnapshot(database, userB), storageRestoreBefore);
+    assert.equal(runSql(database, "select count(*) from public.adhdice_recovery_points where owner_id = '" + userB + "';"), "1");
+    runSql(database, "update public.adhdice_recovery_settings set max_recovery_bytes = 52428800, warning_recovery_bytes = 41943040 where singleton;");
+    const safeRetryCheckpoint = parseLastJson(runSql(database,
+      "select public.adhdice_capture_home_recovery_point('" + userB + "', 'protected', '7.16.166', 'pre_restore');"
+    ));
+    assert.equal(safeRetryCheckpoint.status, "created");
+    const safeRetry = parseLastJson(runSql(database, userSql(userB,
+      "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(storageRestorePreview.current_state_revision) + ", " + Number(storageRestorePreview.current_restore_generation) + ", true);"
+    )));
+    assert.equal(safeRetry.status, "restored");
+    assert.equal(safeRetry.restore_generation, 1);
+    assert.equal((safeRetry.pre_restore_checkpoint as Record<string, unknown>).status, "unchanged");
+    assert.equal(
+      (safeRetry.pre_restore_checkpoint as Record<string, unknown>).recovery_point_id,
+      safeRetryCheckpoint.recovery_point_id,
+    );
+    assert.equal(runSql(database,
+      "select count(*) from public.adhdice_recovery_points where id = '" + String(safeRetryCheckpoint.recovery_point_id) + "' and owner_id = '" + userB + "' and verification_status = 'verified' and is_protected and protected_at is not null and nullif(trim(protected_reason), '') is not null;"
+    ), "1");
+    const safeRetryState = homeRowSnapshot(database, userB);
+    const repeatedRestore = parseLastJson(runSql(database, userSql(userB,
+      "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(storageRestorePreview.current_state_revision) + ", " + Number(storageRestorePreview.current_restore_generation) + ", true);"
+    )));
+    assert.equal(repeatedRestore.status, "restore_conflict");
+    assert.deepEqual(homeRowSnapshot(database, userB), safeRetryState);
 
     const userCPreview = parseLastJson(runSql(database, userSql(userC, "select public.preview_home_recovery_point('" + userCPointId + "');")));
     assert.equal(userCPreview.restorable, true);
@@ -289,11 +366,11 @@ test("Home recovery database integration", {
     const changedState = homeState([], "changed-before-restore");
     changedState.clientUpdatedAt = "2026-10-14T13:00:00.000Z";
     const savedChange = parseLastJson(runSql(database, userSql(userB,
-      "select public.save_home_todo_state(" + jsonLiteral(changedState) + ", '2026-10-14T13:00:00Z', 0);"
+      "select public.save_home_todo_state(" + jsonLiteral(changedState) + ", '2026-10-14T13:00:00Z', " + Number(userBPointPreview.current_restore_generation) + ", " + Number(userBPointPreview.current_state_revision) + ");"
     )));
     assert.equal(savedChange.status, "saved");
     const stalePreviewRestore = parseLastJson(runSql(database, userSql(userB,
-      "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(userBPointPreview.current_state_revision) + ", 0, true);"
+      "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(userBPointPreview.current_state_revision) + ", " + Number(userBPointPreview.current_restore_generation) + ", true);"
     )));
     assert.equal(stalePreviewRestore.status, "restore_conflict");
 
@@ -302,7 +379,7 @@ test("Home recovery database integration", {
       "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(freshPreview.current_state_revision) + ", " + Number(freshPreview.current_restore_generation) + ", true);"
     )));
     assert.equal(restored.status, "restored");
-    assert.equal(restored.restore_generation, 1);
+    assert.equal(restored.restore_generation, 2);
     assert.deepEqual((restored.state as Record<string, unknown>).taskIds, [taskB]);
     assert.throws(
       () => run(psql, [...connectionArgs(database), "-X", "-v", "ON_ERROR_STOP=1", "-f", join(repositoryRoot, "supabase/rollback_home_backup_recovery_7_16_165.sql")]),
@@ -314,22 +391,44 @@ test("Home recovery database integration", {
     const staleCache = homeState([], "stale-cache");
     staleCache.clientUpdatedAt = "2099-01-01T00:00:00.000Z";
     const staleSave = parseLastJson(runSql(database, userSql(userB,
-      "select public.save_home_todo_state(" + jsonLiteral(staleCache) + ", '2099-01-01T00:00:00Z', 0);"
+      "select public.save_home_todo_state(" + jsonLiteral(staleCache) + ", '2099-01-01T00:00:00Z', 0, 0);"
     )));
     assert.equal(staleSave.status, "restore_conflict");
-    assert.equal(staleSave.restore_generation, 1);
+    assert.equal(staleSave.restore_generation, 2);
     assert.deepEqual((staleSave.state as Record<string, unknown>).taskIds, [taskB]);
 
     const preRestoreId = preRestoreCheckpoint.recovery_point_id as string;
     const freshBPreview = parseLastJson(runSql(database, userSql(userB, "select public.preview_home_recovery_point('" + preRestoreId + "');")));
     const expectedRevision = Number(freshBPreview.current_state_revision);
+    const staleClientA = homeState([], "same-generation-client-a");
+    staleClientA.clientUpdatedAt = "2026-10-14T14:00:00.000Z";
+    const staleClientB = homeState([], "same-generation-client-b");
+    staleClientB.clientUpdatedAt = "2026-10-14T14:01:00.000Z";
+    const staleClientSaveSql = (state: ReturnType<typeof homeState>) => userSql(userB,
+      "select public.save_home_todo_state(" + jsonLiteral(state) + ", '" + state.clientUpdatedAt + "', " + Number(freshBPreview.current_restore_generation) + ", " + expectedRevision + ");"
+    );
+    const staleClientSaveArgs = (sql: string) => [...connectionArgs(database), "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql];
+    const [staleClientAOutput, staleClientBOutput] = await Promise.all([
+      runAsync(psql, staleClientSaveArgs(staleClientSaveSql(staleClientA))),
+      runAsync(psql, staleClientSaveArgs(staleClientSaveSql(staleClientB))),
+    ]);
+    const staleClientResults = [parseLastJson(staleClientAOutput), parseLastJson(staleClientBOutput)];
+    assert.deepEqual(staleClientResults.map((result) => result.status).sort(), ["saved", "state_conflict"]);
+    const winningSave = staleClientResults.find((result) => result.status === "saved")!;
+    const rejectedSave = staleClientResults.find((result) => result.status === "state_conflict")!;
+    assert.deepEqual(rejectedSave.state, winningSave.state);
+    assert.equal(rejectedSave.state_revision, expectedRevision + 1);
+    assert.equal(rejectedSave.restore_generation, Number(freshBPreview.current_restore_generation));
+
+    const racePreview = parseLastJson(runSql(database, userSql(userB, "select public.preview_home_recovery_point('" + preRestoreId + "');")));
+    const raceExpectedRevision = Number(racePreview.current_state_revision);
     const concurrentState = homeState([], "simultaneous-client-write");
-    concurrentState.clientUpdatedAt = "2026-10-14T14:00:00.000Z";
+    concurrentState.clientUpdatedAt = "2026-10-14T14:02:00.000Z";
     const raceSaveSql = userSql(userB,
-      "select public.save_home_todo_state(" + jsonLiteral(concurrentState) + ", '2026-10-14T14:00:00Z', 1);"
+      "select public.save_home_todo_state(" + jsonLiteral(concurrentState) + ", '2026-10-14T14:02:00Z', " + Number(racePreview.current_restore_generation) + ", " + raceExpectedRevision + ");"
     );
     const raceRestoreSql = userSql(userB,
-      "select public.restore_home_recovery_point('" + preRestoreId + "', " + expectedRevision + ", 1, true);"
+      "select public.restore_home_recovery_point('" + preRestoreId + "', " + raceExpectedRevision + ", " + Number(racePreview.current_restore_generation) + ", true);"
     );
     const raceArgs = (sql: string) => [...connectionArgs(database), "-X", "-A", "-t", "-v", "ON_ERROR_STOP=1", "-c", sql];
     const [raceSaveOutput, raceRestoreOutput] = await Promise.all([
@@ -343,6 +442,49 @@ test("Home recovery database integration", {
       || (raceSave.status === "restore_conflict" && raceRestore.status === "restored"),
       "concurrent Home save and restore must serialize as a save-wins conflict or a restore-wins generation conflict",
     );
+
+    const protectedUnchanged = parseLastJson(runSql(database,
+      "select public.adhdice_capture_home_recovery_point('" + userB + "', 'protected', '7.16.166', 'pre_restore');"
+    ));
+    assert.equal(protectedUnchanged.status, "created");
+    const unchangedRestorePreview = parseLastJson(runSql(database, userSql(userB,
+      "select public.preview_home_recovery_point('" + userBPointId + "');"
+    )));
+    const unchangedRestore = parseLastJson(runSql(database, userSql(userB,
+      "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(unchangedRestorePreview.current_state_revision) + ", " + Number(unchangedRestorePreview.current_restore_generation) + ", true);"
+    )));
+    assert.equal(unchangedRestore.status, "restored");
+    assert.equal((unchangedRestore.pre_restore_checkpoint as Record<string, unknown>).status, "unchanged");
+    assert.equal(
+      (unchangedRestore.pre_restore_checkpoint as Record<string, unknown>).recovery_point_id,
+      protectedUnchanged.recovery_point_id,
+    );
+    assert.equal(runSql(database,
+      "select count(*) from public.adhdice_recovery_points where id = '" + String(protectedUnchanged.recovery_point_id) + "' and owner_id = '" + userB + "' and verification_status = 'verified' and is_protected and protected_at is not null and nullif(trim(protected_reason), '') is not null;"
+    ), "1");
+
+    const atomicPreview = parseLastJson(runSql(database, userSql(userB,
+      "select public.preview_home_recovery_point('" + userBPointId + "');"
+    )));
+    const atomicBefore = homeRowSnapshot(database, userB);
+    const recoveryPointCountBeforeAtomicFailure = runSql(database,
+      "select count(*) from public.adhdice_recovery_points where owner_id = '" + userB + "';"
+    );
+    runSql(database,
+      "create function public.reject_home_recovery_restore() returns trigger language plpgsql as $$ begin raise exception 'restore_atomicity_test'; end $$; " +
+      "create trigger reject_home_recovery_restore before update on public.adhdice_home_todo_state for each row execute function public.reject_home_recovery_restore();"
+    );
+    assert.throws(() => run(psql, [
+      ...connectionArgs(database), "-X", "-v", "ON_ERROR_STOP=1", "-c",
+      userSql(userB,
+        "select public.restore_home_recovery_point('" + userBPointId + "', " + Number(atomicPreview.current_state_revision) + ", " + Number(atomicPreview.current_restore_generation) + ", true);"
+      ),
+    ]), /restore_atomicity_test/);
+    runSql(database, "drop trigger reject_home_recovery_restore on public.adhdice_home_todo_state; drop function public.reject_home_recovery_restore();");
+    assert.deepEqual(homeRowSnapshot(database, userB), atomicBefore);
+    assert.equal(runSql(database,
+      "select count(*) from public.adhdice_recovery_points where owner_id = '" + userB + "';"
+    ), recoveryPointCountBeforeAtomicFailure);
 
     const corruptPointId = runSql(database, "select id::text from public.adhdice_recovery_points where owner_id = '" + userA + "' order by created_at desc, id desc limit 1;");
     runSql(database, "update public.adhdice_recovery_points set payload = '{\"homeTodo\":{\"state\":{\"schemaVersion\":8,\"taskIds\":[]}}}'::jsonb where id = '" + corruptPointId + "';");

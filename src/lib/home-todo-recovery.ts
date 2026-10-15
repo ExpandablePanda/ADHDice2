@@ -43,6 +43,16 @@ export function shouldPreferRemoteHomeTodoState(
   return remoteTimestamp > localTimestamp;
 }
 
-export function homeTodoRecoveryConflictCacheKey(ownerId: string, localGeneration: number, remoteGeneration: number) {
-  return "adhdice-home-todo-conflict:" + ownerId + ":" + localGeneration + ":" + remoteGeneration;
+export function homeTodoRecoveryConflictCacheKey(
+  ownerId: string,
+  localGeneration: number,
+  remoteGeneration: number,
+  localStateRevision?: number,
+  remoteStateRevision?: number,
+) {
+  const key = "adhdice-home-todo-conflict:" + ownerId + ":" + localGeneration + ":" + remoteGeneration;
+  if (Number.isSafeInteger(localStateRevision) && Number.isSafeInteger(remoteStateRevision)) {
+    return key + ":revision:" + localStateRevision + ":" + remoteStateRevision;
+  }
+  return key;
 }

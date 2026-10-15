@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-14
+Last reviewed: 2026-10-15
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.165`.
+- Current working app version: `7.16.166`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.166 Home Recovery Safety and Deployment Hardening
+
+Home restore now verifies its pre-restore point by owner, exact current state,
+payload integrity, verified status, and retention protection before it can
+change Home. Storage-limit or blocked-retention failures return an explicit
+restore failure and preserve Home state, revision, and generation. Unexpected
+database errors remain transactional. Home saves now compare the expected state
+revision as well as restore generation; same-generation stale clients receive
+the server state and preserve their local cache as a conflict.
+
+The recovery PostgreSQL integration suite passed (4/4) on a disposable local
+PostgreSQL 16 instance. Focused Home state and Realtime lifecycle checks passed
+(108/108), targeted ESLint passed, and the Next.js 16.2.4 production build
+passed while skipping type validation. An additional workspace domain contract
+test remains red on an existing table-name assertion in unchanged loader code.
+The full typecheck was not run. Browser QA remains Andrew's manual check.
+
+The source migration remains unapplied according to the ADHDice production
+migration ledger. Recovery remains unavailable in Settings and scheduled
+capture remains disabled. See
+`docs/architecture/home-backup-recovery.md` for deployment coordination and
+the recovery contract.
 
 ## 2026-10-14 7.16.165 Home Backup and Recovery Foundation
 

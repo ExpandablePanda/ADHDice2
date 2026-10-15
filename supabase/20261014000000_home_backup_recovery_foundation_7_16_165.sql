@@ -290,7 +290,7 @@ $function$;
 create or replace function public.adhdice_capture_home_recovery_point(
   p_owner_id uuid,
   p_trigger text,
-  p_app_version text default '7.16.165',
+  p_app_version text default '7.16.166',
   p_protected_reason text default null
 )
 returns jsonb
@@ -454,10 +454,13 @@ begin
 end;
 $function$;
 
+drop function if exists public.save_home_todo_state(jsonb, timestamptz, bigint);
+
 create or replace function public.save_home_todo_state(
   p_state jsonb,
   p_client_updated_at timestamptz,
-  p_expected_restore_generation bigint
+  p_expected_restore_generation bigint,
+  p_expected_state_revision bigint
 )
 returns jsonb
 language plpgsql
@@ -470,7 +473,9 @@ declare
   v_saved public.adhdice_home_todo_state%rowtype;
 begin
   if v_owner_id is null then raise exception 'authentication_required' using errcode = '28000'; end if;
-  if p_expected_restore_generation is null or not public.adhdice_home_recovery_state_compatible(p_state) then
+  if p_expected_restore_generation is null
+     or p_expected_state_revision is null
+     or not public.adhdice_home_recovery_state_compatible(p_state) then
     raise exception 'invalid_home_state' using errcode = '22023';
   end if;
   perform pg_catalog.pg_advisory_xact_lock(731655, hashtext(v_owner_id::text));
@@ -488,6 +493,15 @@ begin
         'restore_generation', v_current.restore_generation
       );
     end if;
+    if v_current.state_revision <> p_expected_state_revision then
+      return jsonb_build_object(
+        'status', 'state_conflict',
+        'state', v_current.state,
+        'client_updated_at', v_current.client_updated_at,
+        'state_revision', v_current.state_revision,
+        'restore_generation', v_current.restore_generation
+      );
+    end if;
     update public.adhdice_home_todo_state
       set state = p_state,
           client_updated_at = p_client_updated_at,
@@ -496,8 +510,8 @@ begin
       where user_id = v_owner_id
       returning * into v_saved;
   else
-    if p_expected_restore_generation <> 0 then
-      return jsonb_build_object('status', 'restore_conflict', 'state', null, 'state_revision', null, 'restore_generation', 0);
+    if p_expected_restore_generation <> 0 or p_expected_state_revision <> 0 then
+      return jsonb_build_object('status', 'restore_conflict', 'state', null, 'client_updated_at', null, 'state_revision', null, 'restore_generation', 0);
     end if;
     insert into public.adhdice_home_todo_state (
       user_id, state, client_updated_at, state_revision, restore_generation, updated_at
@@ -515,7 +529,7 @@ begin
 end;
 $function$;
 
-create or replace function public.create_home_recovery_point(p_app_version text default '7.16.165')
+create or replace function public.create_home_recovery_point(p_app_version text default '7.16.166')
 returns jsonb
 language plpgsql
 security definer
@@ -644,6 +658,7 @@ declare
   v_restore_time timestamptz := clock_timestamp();
   v_restored_state jsonb;
   v_pre_restore jsonb;
+  v_pre_restore_point public.adhdice_recovery_points%rowtype;
   v_saved public.adhdice_home_todo_state%rowtype;
 begin
   if v_owner_id is null then raise exception 'authentication_required' using errcode = '28000'; end if;
@@ -697,8 +712,46 @@ begin
 
   if v_current.user_id is not null then
     v_pre_restore := public.adhdice_capture_home_recovery_point(
-      v_owner_id, 'protected', '7.16.165', 'pre_restore'
+      v_owner_id, 'protected', '7.16.166', 'pre_restore'
     );
+    if coalesce(v_pre_restore->>'status', '') not in ('created', 'unchanged')
+       or nullif(v_pre_restore->>'recovery_point_id', '') is null then
+      return jsonb_build_object(
+        'status', 'restore_failed',
+        'reason', 'pre_restore_checkpoint_failed',
+        'pre_restore_checkpoint', coalesce(v_pre_restore, jsonb_build_object('status', 'failed'))
+      );
+    end if;
+
+    select * into v_pre_restore_point
+    from public.adhdice_recovery_points
+    where id::text = v_pre_restore->>'recovery_point_id'
+      and owner_id = v_owner_id;
+    if not found then
+      return jsonb_build_object(
+        'status', 'restore_failed',
+        'reason', 'pre_restore_checkpoint_owner_mismatch',
+        'pre_restore_checkpoint', v_pre_restore
+      );
+    end if;
+    if v_pre_restore_point.verification_status <> 'verified'
+       or not v_pre_restore_point.is_protected
+       or v_pre_restore_point.protected_at is null
+       or nullif(trim(v_pre_restore_point.protected_reason), '') is null
+       or public.adhdice_home_recovery_point_integrity_valid(
+         v_pre_restore_point.payload,
+         v_pre_restore_point.domain_manifest,
+         v_pre_restore_point.payload_schema_version,
+         v_pre_restore_point.payload_bytes,
+         v_pre_restore_point.checksum
+       ) is distinct from true
+       or v_pre_restore_point.payload->'homeTodo'->'state' is distinct from v_current.state then
+      return jsonb_build_object(
+        'status', 'restore_failed',
+        'reason', 'pre_restore_checkpoint_verification_failed',
+        'pre_restore_checkpoint', v_pre_restore
+      );
+    end if;
   end if;
 
   v_restored_state := jsonb_set(
@@ -799,7 +852,7 @@ begin
     if not public.adhdice_home_recovery_checkpoint_due(v_owner_id, v_started_at) then
       continue;
     end if;
-    v_result := public.adhdice_capture_home_recovery_point(v_owner_id, 'scheduled', '7.16.165');
+    v_result := public.adhdice_capture_home_recovery_point(v_owner_id, 'scheduled', '7.16.166');
     case v_result->>'status'
       when 'created' then v_created := v_created + 1;
       when 'unchanged' then v_unchanged := v_unchanged + 1;
@@ -823,14 +876,14 @@ revoke all on function public.adhdice_home_recovery_record_attempt(uuid, text, t
 revoke all on function public.adhdice_home_recovery_checkpoint_due(uuid, timestamptz) from public, anon, authenticated, service_role;
 revoke all on function public.adhdice_capture_home_recovery_point(uuid, text, text, text) from public, anon, authenticated, service_role;
 revoke all on function public.run_home_recovery_checkpoint_cycle() from public, anon, authenticated, service_role;
-revoke all on function public.save_home_todo_state(jsonb, timestamptz, bigint) from public, anon;
+revoke all on function public.save_home_todo_state(jsonb, timestamptz, bigint, bigint) from public, anon;
 revoke all on function public.create_home_recovery_point(text) from public, anon;
 revoke all on function public.list_home_recovery_points(integer) from public, anon;
 revoke all on function public.preview_home_recovery_point(uuid) from public, anon;
 revoke all on function public.restore_home_recovery_point(uuid, bigint, bigint, boolean) from public, anon;
 revoke all on function public.home_recovery_status() from public, anon;
 
-grant execute on function public.save_home_todo_state(jsonb, timestamptz, bigint) to authenticated;
+grant execute on function public.save_home_todo_state(jsonb, timestamptz, bigint, bigint) to authenticated;
 grant execute on function public.create_home_recovery_point(text) to authenticated;
 grant execute on function public.list_home_recovery_points(integer) to authenticated;
 grant execute on function public.preview_home_recovery_point(uuid) to authenticated;

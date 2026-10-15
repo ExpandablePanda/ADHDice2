@@ -1,13 +1,15 @@
 # Home Backup and Recovery Foundation
 
-Last reviewed: 2026-10-14
+Last reviewed: 2026-10-15
 Role: current implementation and deployment contract
 
 ## Scope
 
 Version 7.16.165 adds one shared, versioned recovery-point store and registers
-Home Todo as its first domain. A point contains the full persisted Home Todo
-JSON state, including ordered To-do, Urgent, and Routine IDs, section
+Home Todo as its first domain. Version 7.16.166 hardens pre-restore checkpoint
+verification and concurrent writes within one restore generation. A point
+contains the full persisted Home Todo JSON state, including ordered To-do,
+Urgent, and Routine IDs, section
 assignments, day offsets, Scratchpad data, and other fields already present in
 that row. Health, Journal, Focus, Task History, economy, and whole-app restore
 are outside this foundation.
@@ -27,8 +29,13 @@ Any later storage or retention error rolls the entire snapshot change back;
 the previous verified point remains. Protected points are not eligible for
 rotation. Restore compares the current Home row revision and restore
 generation from preview, validates the selected point and its Task references,
-attempts a protected pre-restore point, then changes only the Home row and
-increments its server revision and restore generation atomically.
+then creates or reuses a pre-restore point. Before changing Home, it verifies
+that the point belongs to the owner, contains the exact current state, passes
+payload integrity checks, is marked verified, and is protected from retention.
+Checkpoint failure returns `restore_failed` without changing Home, its revision,
+or restore generation. Unexpected errors propagate so PostgreSQL rolls back the
+restore transaction. A successful restore then increments the server revision
+and restore generation atomically.
 
 The common point table and domain manifest allow later domains to join this
 recovery system. New domains need an explicit payload version and validator;
@@ -37,9 +44,13 @@ they do not get a parallel backup table or browser download flow.
 ## Home write and stale-cache protection
 
 Home state writes use save_home_todo_state instead of direct table upserts.
-The RPC compares the caller's expected restore generation with the current
-server generation while holding an owner lock. A mismatch returns the current
-server snapshot as a restore conflict and does not write the submitted cache.
+The RPC compares both the caller's expected restore generation and state
+revision with the current server row while holding an owner lock. A restore
+generation mismatch returns the current server snapshot as a restore conflict;
+a state revision mismatch within the current generation returns a state
+conflict. Neither case writes the submitted cache. The browser preserves the
+superseded local state under an owner-scoped conflict key before adopting the
+server snapshot.
 
 The Home browser cache now stores a versioned envelope with the server
 revision and restore generation. Pre-7.16.165 raw-state caches are read as
@@ -51,8 +62,9 @@ server save. Restore itself is not wired to a Settings screen in this release.
 
 The revision also closes the old direct-write route for authenticated users.
 Do not apply the migration while relying on 7.16.164 clients to continue
-syncing: those clients do not know the RPC contract. Deployment requires a
-coordinated database-first/app release and a plan for existing open clients.
+syncing: those clients write directly, and 7.16.165 clients do not send the
+expected state revision. Deployment requires a coordinated database-first/app
+release and a plan for existing open clients.
 
 ## Approved limits and measurement
 
@@ -82,12 +94,13 @@ table budget. No capacity path deletes live Tasks or any other ADHDice data.
 ## Migration and activation
 
 The source migration is
-supabase/20261014000000_home_backup_recovery_foundation_7_16_165.sql.
-It has **not** been applied to any production database. Applying it creates the
-tables and functions and revokes authenticated direct Home writes; that is a
-production behavior change and needs its separate release review.
+supabase/20261014000000_home_backup_recovery_foundation_7_16_165.sql. It was
+absent from the ADHDice production project's migration ledger when checked on
+2026-10-14. Applying it creates the tables and functions and revokes
+authenticated direct Home writes; that is a production behavior change and
+needs its separate release review.
 
-The project currently has no pg_cron extension. To prepare deployment:
+The project has no installed pg_cron extension. To prepare deployment:
 
 1. Review the migration and its table-allocation measurements against a
    disposable PostgreSQL database.
@@ -95,8 +108,9 @@ The project currently has no pg_cron extension. To prepare deployment:
    backup retention policy, and maintenance process for relation bloat.
 3. In the Supabase Dashboard, enable pg_cron from **Integrations → Cron** (or
    **Database → Extensions**, depending on the Dashboard surface).
-4. Apply the recovery migration only after approval and before shipping a
-   client that calls save_home_todo_state.
+4. Apply the recovery migration only after approval and coordinate it with the
+   7.16.166 client release. The new save RPC requires an expected state
+   revision; older clients that do not send one cannot save through it.
 5. Keep automatic capture disabled until a separate activation review. After
    that review, execute
    supabase/activate_home_recovery_cron.sql as postgres. It creates one job
@@ -106,8 +120,8 @@ The project currently has no pg_cron extension. To prepare deployment:
 6. Verify the single job in cron.job, then inspect cron.job_run_details and
    home_recovery_status() after its first approved run.
 
-This ticket creates the activation script only. It does not enable
-pg_cron, apply the migration, or schedule any production job. Supabase
+The 7.16.166 hardening does not enable pg_cron, apply the migration, schedule
+any production job, or expose recovery in Settings. Supabase
 documents that Cron uses the pg_cron extension and supports SQL/function
 jobs managed through the Dashboard or SQL:
 [Cron](https://supabase.com/docs/guides/cron),

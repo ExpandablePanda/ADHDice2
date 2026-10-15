@@ -140,15 +140,22 @@ export function useHomeTodoState(userId: string | null) {
     localGeneration: number,
     remoteGeneration: number,
     snapshot: HomeTodoState,
+    stateConflictRevisions?: { local: number; remote: number },
   ) => {
     if (!hasMeaningfulHomeTodoState(snapshot)) return;
-    const key = homeTodoRecoveryConflictCacheKey(ownerId, localGeneration, remoteGeneration);
+    const key = homeTodoRecoveryConflictCacheKey(
+      ownerId,
+      localGeneration,
+      remoteGeneration,
+      stateConflictRevisions?.local,
+      stateConflictRevisions?.remote,
+    );
     try {
       if (window.localStorage.getItem(key)) return;
       window.localStorage.setItem(key, JSON.stringify({
         cacheVersion: 1,
         state: snapshot,
-        stateRevision: stateRevisionRef.current,
+        stateRevision: stateConflictRevisions?.local ?? stateRevisionRef.current,
         restoreGeneration: localGeneration,
       }));
     } catch {
@@ -169,10 +176,12 @@ export function useHomeTodoState(userId: string | null) {
     }
     const outgoing = stateRef.current;
     const expectedRestoreGeneration = restoreGenerationRef.current;
+    const expectedStateRevision = stateRevisionRef.current;
     setOwnerSyncStatus(ownerId, "saving");
     const { data, error } = await client.rpc("save_home_todo_state", {
       p_client_updated_at: outgoing.clientUpdatedAt,
       p_expected_restore_generation: expectedRestoreGeneration,
+      p_expected_state_revision: expectedStateRevision,
       p_state: outgoing,
     });
     if (ownerGenerationRef.current !== generation || renderedUserIdRef.current !== ownerId) return;
@@ -182,12 +191,23 @@ export function useHomeTodoState(userId: string | null) {
       return;
     }
     const result = data && typeof data === "object" ? data as Record<string, unknown> : null;
-    if (result?.status === "restore_conflict") {
+    if (result?.status === "restore_conflict" || result?.status === "state_conflict") {
       const remoteGeneration = Number.isSafeInteger(result.restore_generation)
         ? Number(result.restore_generation)
         : expectedRestoreGeneration;
+      const remoteRevision = Number.isSafeInteger(result.state_revision)
+        ? Number(result.state_revision)
+        : expectedStateRevision;
       if (result.state && typeof result.state === "object") {
-        preserveSupersededCache(ownerId, expectedRestoreGeneration, remoteGeneration, stateRef.current);
+        preserveSupersededCache(
+          ownerId,
+          expectedRestoreGeneration,
+          remoteGeneration,
+          stateRef.current,
+          result.status === "state_conflict"
+            ? { local: expectedStateRevision, remote: remoteRevision }
+            : undefined,
+        );
         const remote = normalizeHomeTodoState(result.state);
         const remoteUpdatedAt = typeof result.client_updated_at === "string"
           ? result.client_updated_at
@@ -196,7 +216,7 @@ export function useHomeTodoState(userId: string | null) {
           remote.clientUpdatedAt = new Date(remoteUpdatedAt).toISOString();
         }
         restoreGenerationRef.current = remoteGeneration;
-        stateRevisionRef.current = Number.isSafeInteger(result.state_revision) ? Number(result.state_revision) : 0;
+        stateRevisionRef.current = remoteRevision;
         dirtyRef.current = false;
         stateRef.current = remote;
         stateOwnerRef.current = ownerId;
