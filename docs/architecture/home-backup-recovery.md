@@ -58,7 +58,21 @@ generation zero. When a remote row has a different generation, the server row
 wins regardless of either clientUpdatedAt value. A superseded meaningful
 local cache is copied to an owner-scoped conflict key before the visible cache
 is updated. Network failures leave the local state dirty and do not claim a
-server save. Restore itself is not wired to a Settings screen in this release.
+server save.
+
+Version 7.16.167 adds a Home-only Backup & Recovery section to Settings. It
+reads status, recovery-point metadata, and previews only through the
+authenticated owner-scoped RPCs above; manual capture also calls its existing
+RPC. It never reads or writes recovery tables directly. Preview list changes
+are compared with the preceding saved point, because the preview contract does
+not expose the live Home state. Preview and download do not activate Home
+hydration or modify Home state. Restore remains disabled in the interface.
+
+The owner status RPC does not expose the Cron catalog or configured interval.
+Settings shows the four-hour policy interval and any recorded scheduled
+attempt, but labels scheduler activation as unverifiable and does not claim
+automatic backups are active. A missing recovery RPC is reported as
+unavailable; it is not shown as an empty recovery-point list.
 
 The revision also closes the old direct-write route for authenticated users.
 Do not apply the migration while relying on 7.16.164 clients to continue
@@ -109,7 +123,7 @@ The project has no installed pg_cron extension. To prepare deployment:
 3. In the Supabase Dashboard, enable pg_cron from **Integrations → Cron** (or
    **Database → Extensions**, depending on the Dashboard surface).
 4. Apply the recovery migration only after approval and coordinate it with the
-   7.16.166 client release. The new save RPC requires an expected state
+   7.16.167 client release. The new save RPC requires an expected state
    revision; older clients that do not send one cannot save through it.
 5. Keep automatic capture disabled until a separate activation review. After
    that review, execute
@@ -120,8 +134,8 @@ The project has no installed pg_cron extension. To prepare deployment:
 6. Verify the single job in cron.job, then inspect cron.job_run_details and
    home_recovery_status() after its first approved run.
 
-The 7.16.166 hardening does not enable pg_cron, apply the migration, schedule
-any production job, or expose recovery in Settings. Supabase
+The 7.16.166 hardening and 7.16.167 Settings interface do not enable pg_cron,
+apply the migration, or schedule any production job. Supabase
 documents that Cron uses the pg_cron extension and supports SQL/function
 jobs managed through the Dashboard or SQL:
 [Cron](https://supabase.com/docs/guides/cron),

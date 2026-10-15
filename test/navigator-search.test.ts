@@ -81,6 +81,18 @@ test("navigation search matches destination titles and aliases without searching
   assert.equal(foodResults.some((target) => target.title === "Custom Nutrition Library"), true);
   assert.deepEqual(findTarget("brain").breadcrumb, ["Tasks", "Brainstorm"]);
   assert.deepEqual(findTarget("timezone").breadcrumb, ["Settings", "Day Reset", "Time Zone"]);
+  assert.equal(findTarget("backup recovery").title, "Backup & Recovery");
+  assert.deepEqual(findTarget("backup recovery").action, {
+    kind: "page-shell",
+    page: "Settings",
+    pageKey: "settings",
+    shellId: "settings-backup-recovery",
+  });
+  assert.deepEqual(findTarget("manual backup").action, {
+    kind: "settings-section",
+    page: "Settings",
+    section: "backup-recovery",
+  });
   assert.doesNotMatch(readFileSync(new URL("../src/lib/navigator-search.ts", import.meta.url), "utf8"), /Task\[\]|supabase|from\("/);
 });
 

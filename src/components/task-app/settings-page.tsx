@@ -12,6 +12,7 @@ import { ThemeToggle } from "./theme-toggle";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, runCurrentProjectionBackfillOperator, type ProjectionBackfillOperatorClient } from "@/lib/task-current-projection-backfill-operator";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
+import { SettingsHomeBackupRecovery } from "./settings-home-backup-recovery";
 
 type ThemeMode = "light" | "dark";
 
@@ -100,6 +101,7 @@ export function SettingsPage({
       "day-reset": "settings-day-reset",
       economy: "settings-economy",
       "import-export": "settings-import-export",
+      "backup-recovery": "settings-backup-recovery",
     };
     let firstFrame: number | null = null;
     let secondFrame: number | null = null;
@@ -287,6 +289,15 @@ export function SettingsPage({
       <PageShellBody>
         <p className={sectionTitle} data-settings-section="import-export" data-style-component="SettingsPage" data-style-role="ui.section.label" id="settings-section-import-export">Import / export</p>
         <div className="px-5 py-4"><button className="ui-pill-button-strong-light" onClick={handleExportJSON} type="button">Export tasks JSON</button><textarea className="mt-4 min-h-40 w-full rounded-[1.2rem] bg-white px-4 py-3 text-sm text-[#27304c] outline-none dark:bg-white/8 dark:text-white" onChange={(event) => setImportText(event.target.value)} placeholder="Paste exported tasks JSON here..." value={importText} /><div className="mt-3 flex items-center justify-between gap-3"><button className="ui-pill-button-strong-light" onClick={() => { void handleImportJSON(); }} type="button">Import JSON</button>{importStatus ? <p className="text-right text-xs text-[#7d88a1] dark:text-white/55">{importStatus}</p> : null}</div></div>
+      </PageShellBody>
+      </PageShellSurface>
+      </PageShell>
+
+      <PageShell id="settings-backup-recovery" label="Backup & Recovery">
+      <PageShellSurface className={sectionClass}>
+      <PageShellBody>
+        <p className={sectionTitle} data-settings-section="backup-recovery" data-style-component="SettingsPage" data-style-role="ui.section.label" id="settings-section-backup-recovery">Backup &amp; Recovery</p>
+        <SettingsHomeBackupRecovery client={client} key={userId ?? "no-authenticated-user"} tasks={tasks} userId={userId} />
       </PageShellBody>
       </PageShellSurface>
       </PageShell>

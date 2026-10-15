@@ -34,7 +34,7 @@ export function getMasterTabLabel(tab: MasterWorkspaceTab) {
   }
   if (destination.kind === "health-tab") return `Health · ${destination.tab}`;
   if (destination.kind === "settings-section") {
-    return ({ appearance: "Appearance", "day-reset": "Day Reset", economy: "Economy", "import-export": "Import / Export" })[destination.section];
+    return ({ appearance: "Appearance", "day-reset": "Day Reset", economy: "Economy", "import-export": "Import / Export", "backup-recovery": "Backup & Recovery" })[destination.section];
   }
   return destination.page;
 }

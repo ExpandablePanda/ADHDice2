@@ -2,7 +2,7 @@ import type { HealthTab } from "@/lib/health-utils";
 import { getRegisteredPageShellPages } from "@/lib/page-shell-layout";
 import type { AppPage, TasksSurface, TaskViewMode } from "@/lib/task-ui-state";
 
-export type NavigatorSettingsSection = "appearance" | "day-reset" | "economy" | "import-export";
+export type NavigatorSettingsSection = "appearance" | "day-reset" | "economy" | "import-export" | "backup-recovery";
 
 export type NavigatorSearchAction =
   | { kind: "page"; page: AppPage }
@@ -56,6 +56,7 @@ const SETTINGS_SECTION_TARGETS: Array<{ id: NavigatorSettingsSection; title: str
   { id: "day-reset", title: "Day Reset", keywords: ["day start", "timezone", "time zone"] },
   { id: "economy", title: "Economy", keywords: ["xp", "points", "tokens", "reset economy"] },
   { id: "import-export", title: "Import / Export", keywords: ["json", "tasks export", "tasks import"] },
+  { id: "backup-recovery", title: "Backup & Recovery", keywords: ["home backup", "home recovery", "recovery points", "download backup", "scratchpad backup"] },
 ];
 
 const SETTINGS_CHILD_TARGETS: Array<{
@@ -71,6 +72,9 @@ const SETTINGS_CHILD_TARGETS: Array<{
   { id: "economy-reset", section: "economy", title: "Reset Economy", keywords: ["reset xp", "reset points", "free roll"] },
   { id: "import-export-export-tasks", section: "import-export", title: "Export Tasks", keywords: ["export json", "download"] },
   { id: "import-export-import-json", section: "import-export", title: "Import JSON", keywords: ["import tasks", "upload"] },
+  { id: "backup-recovery-status", section: "backup-recovery", title: "Refresh Recovery Status", keywords: ["refresh backup", "recovery availability", "scheduler status"] },
+  { id: "backup-recovery-create-home", section: "backup-recovery", title: "Create Home Backup", keywords: ["manual backup", "snapshot now"] },
+  { id: "backup-recovery-download-home", section: "backup-recovery", title: "Download Home-only Backup", keywords: ["download recovery point", "export home backup"] },
 ];
 
 const PAGE_SHELL_LABELS: Readonly<Record<string, string>> = {
@@ -119,6 +123,7 @@ const PAGE_SHELL_LABELS: Readonly<Record<string, string>> = {
   "settings-day-reset": "Day Reset",
   "settings-economy": "Economy",
   "settings-import-export": "Import / Export",
+  "settings-backup-recovery": "Backup & Recovery",
   "notes-scratch-paper": "Scratch Paper",
   "notes-library": "Notes Library",
   "notes-voice-memos": "Voice Memos",

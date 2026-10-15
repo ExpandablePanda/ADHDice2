@@ -76,6 +76,21 @@ test("initializes one Home panel and migrates the previous page", () => {
   assert.equal(initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food").panels[0].tabs[0].presentation.healthSection, "Food");
 });
 
+test("Backup & Recovery Settings destinations remain valid in Master Workspace state", () => {
+  const initial = initializeMasterWorkspaceState("Settings", DEFAULT_TASK_WORKSPACE_TABS_STATE);
+  const selected = replaceFocusedMasterTabDestination(initial, {
+    kind: "settings-section",
+    page: "Settings",
+    section: "backup-recovery",
+  });
+  assert.equal(selected.panels[0].tabs[0].destination.kind, "settings-section");
+  assert.deepEqual(normalizeMasterWorkspaceState(selected).panels[0].tabs[0].destination, {
+    kind: "settings-section",
+    page: "Settings",
+    section: "backup-recovery",
+  });
+});
+
 test("Health master tabs own independent section snapshots and focused selection updates its destination", () => {
   const initialized = initializeMasterWorkspaceState("Health", DEFAULT_TASK_WORKSPACE_TABS_STATE, "Food");
   const panelId = initialized.panels[0].id;

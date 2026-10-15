@@ -113,7 +113,7 @@ export type MasterWorkspaceStorage = Pick<Storage, "getItem" | "setItem" | "remo
 
 const VALID_TASK_SURFACES = new Set(["tasks", "attention", "paths", "report", "on_time", "brainstorm", "completed_milestones"]);
 const VALID_TASK_VIEWS = new Set(["table", "list", "cards", "matrix", "calendar"]);
-const VALID_SETTINGS_SECTIONS = new Set(["appearance", "day-reset", "economy", "import-export"]);
+const VALID_SETTINGS_SECTIONS = new Set(["appearance", "day-reset", "economy", "import-export", "backup-recovery"]);
 const VALID_JOURNAL_WORKSPACE_MODES = new Set(["entry", "history", "split-history-left", "split-history-right"]);
 const VALID_SCRATCH_PAPER_FILTERS = new Set(["all", "active", "resolved", "trashed"]);
 const DEFAULT_NOTES_WORKSPACE_VIEW: MasterNotesWorkspaceView = {
@@ -156,7 +156,7 @@ function normalizeDestination(value: unknown): MasterTabDestination {
         : { kind: "page", page: "Home" };
     case "settings-section":
       return page === "Settings" && typeof candidate.section === "string" && VALID_SETTINGS_SECTIONS.has(candidate.section)
-        ? { kind: "settings-section", page: "Settings", section: candidate.section as "appearance" | "day-reset" | "economy" | "import-export" }
+        ? { kind: "settings-section", page: "Settings", section: candidate.section as "appearance" | "day-reset" | "economy" | "import-export" | "backup-recovery" }
         : { kind: "page", page: "Home" };
     case "page-shell": {
       if (!isAppPage(page) || typeof candidate.pageKey !== "string" || typeof candidate.shellId !== "string") {

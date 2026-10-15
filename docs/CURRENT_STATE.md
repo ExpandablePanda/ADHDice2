@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.166`.
+- Current working app version: `7.16.167`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,31 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-15 7.16.167 Settings Home Backup & Recovery
+
+Settings now provides a reorderable Home-only recovery dashboard. It reads
+availability, owner-scoped point metadata, status, and previews through the
+existing authenticated RPCs. Manual capture uses the existing capture RPC;
+downloads include explicit Home-only scope and recovery schema/version
+metadata. Previews show ordered Home Todo, Urgent, and Routine memberships,
+missing Task references, and membership/order changes against the preceding
+saved recovery point. Preview browsing does not activate Home hydration or
+write Home state. Restore remains disabled.
+
+Settings distinguishes missing recovery RPCs from an available empty list.
+The database status contract does not reveal the Cron catalog or runtime
+interval setting, so automatic capture is never reported as active; any
+recorded scheduled attempt and the next eligibility threshold are shown with
+that limitation. The recovery migration and Cron activation remain
+production deployment work outside this interface ticket.
+
+Focused Settings recovery, existing Home recovery, Navigator, and Master
+Workspace checks passed (71 passed, one disposable-PostgreSQL integration
+case skipped because no local server was configured). Targeted ESLint and
+`git diff --check` passed. The Next.js 16.2.4 production build passed and
+skipped type validation. Browser QA remains Andrew's manual check; no
+production migration or Cron change was made.
 
 ## 2026-10-15 7.16.166 Home Recovery Safety and Deployment Hardening
 
