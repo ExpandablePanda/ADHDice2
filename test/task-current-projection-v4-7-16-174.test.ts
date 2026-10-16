@@ -29,3 +29,19 @@ test("V4 refresh selects V3 projections as stale and the writer prevents algorit
   assert.match(patch, /projection\.updated_at <= excluded\.updated_at/);
   assert.match(patch, /adhdice_get_task_current_projection_source_fences/);
 });
+
+test("the V4 migration matches production P0001 stale-fence SQLSTATEs exactly", () => {
+  const staleFenceErrors = [...patch.matchAll(/raise exception '([^']+)' using errcode = '([^']+)'/gi)]
+    .filter(([, message]) => /stale|older than the stored projection/i.test(message));
+
+  assert.deepEqual(staleFenceErrors.map(([, message, code]) => ({ message, code })), [
+    { message: "Current Task projection canonical Task revision is stale.", code: "P0001" },
+    { message: "Current Task projection History sync epoch is stale.", code: "P0001" },
+    { message: "Current Task projection entity History frontier is stale.", code: "P0001" },
+    { message: "Current Task projection logical-day settings revision is stale.", code: "P0001" },
+    { message: "Current Task projection logical date is stale.", code: "P0001" },
+    { message: "Current Task projection schedule or behavior source fence is stale.", code: "P0001" },
+    { message: "Current Task projection candidate is older than the stored projection or would downgrade the current algorithm.", code: "P0001" },
+  ]);
+  assert.doesNotMatch(patch, /using errcode = '40001'/i);
+});

@@ -160,20 +160,20 @@ begin
     raise exception 'Current Task projection entity kind does not match the canonical Task.' using errcode = '42501';
   end if;
   if v_candidate.canonical_task_revision is distinct from v_task.canonical_revision then
-    raise exception 'Current Task projection canonical Task revision is stale.' using errcode = '40001';
+    raise exception 'Current Task projection canonical Task revision is stale.' using errcode = 'P0001';
   end if;
   select state.sync_epoch into v_sync_epoch
     from public.adhdice_task_history_sync_state state
    where state.user_id = p_user_id;
   if not found or v_candidate.history_sync_epoch is distinct from v_sync_epoch then
-    raise exception 'Current Task projection History sync epoch is stale.' using errcode = '40001';
+    raise exception 'Current Task projection History sync epoch is stale.' using errcode = 'P0001';
   end if;
   select coalesce(max(changes.sequence), 0) into v_latest_history_revision
     from public.adhdice_task_history_changes changes
    where changes.user_id = p_user_id
      and changes.entity_id = v_candidate.entity_id;
   if v_candidate.history_source_revision is distinct from v_latest_history_revision then
-    raise exception 'Current Task projection entity History frontier is stale.' using errcode = '40001';
+    raise exception 'Current Task projection entity History frontier is stale.' using errcode = 'P0001';
   end if;
   select profile.timezone, profile.day_start_time::text, profile.settings_revision
     into v_profile_timezone, v_profile_day_start_time, v_profile_settings_revision
@@ -184,12 +184,12 @@ begin
     raise exception 'Current Task projection logical-day authority is unavailable.' using errcode = '55000';
   end if;
   if v_candidate.logical_day_settings_revision is distinct from v_profile_settings_revision then
-    raise exception 'Current Task projection logical-day settings revision is stale.' using errcode = '40001';
+    raise exception 'Current Task projection logical-day settings revision is stale.' using errcode = 'P0001';
   end if;
   if v_candidate.projected_logical_date is distinct from public.adhdice_effective_logical_date(
     pg_catalog.clock_timestamp(), v_profile_timezone, v_profile_day_start_time
   ) then
-    raise exception 'Current Task projection logical date is stale.' using errcode = '40001';
+    raise exception 'Current Task projection logical date is stale.' using errcode = 'P0001';
   end if;
   if v_candidate.history_source_fingerprint is null
      or v_candidate.history_source_fingerprint !~ '^sha256:[0-9a-f]{64}$'
@@ -209,7 +209,7 @@ begin
   if not found
      or v_candidate.schedule_boundary_revision is distinct from v_source_fences.schedule_boundary_revision
      or v_candidate.behavior_policy_revision is distinct from v_source_fences.behavior_policy_revision then
-    raise exception 'Current Task projection schedule or behavior source fence is stale.' using errcode = '40001';
+    raise exception 'Current Task projection schedule or behavior source fence is stale.' using errcode = 'P0001';
   end if;
   insert into public.adhdice_task_current_projections as projection
   select v_candidate.*
@@ -259,7 +259,7 @@ begin
      )
   returning pg_catalog.to_jsonb(projection.*) into v_written;
   if not found then
-    raise exception 'Current Task projection candidate is older than the stored projection or would downgrade the current algorithm.' using errcode = '40001';
+    raise exception 'Current Task projection candidate is older than the stored projection or would downgrade the current algorithm.' using errcode = 'P0001';
   end if;
   return v_written;
 end;

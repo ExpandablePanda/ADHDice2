@@ -256,6 +256,43 @@ test("stale writer fences are retryable and do not become a canonical failure", 
   });
 });
 
+test("production P0001 stale-fence messages are retryable while arbitrary P0001 errors are not", async () => {
+  const productionMessages = [
+    "Current Task projection canonical Task revision is stale.",
+    "Current Task projection History sync epoch is stale.",
+    "Current Task projection entity History frontier is stale.",
+    "Current Task projection logical-day settings revision is stale.",
+    "Current Task projection logical date is stale.",
+    "Current Task projection schedule or behavior source fence is stale.",
+    "Current Task projection candidate is older than the stored projection or would downgrade the current algorithm.",
+  ];
+
+  for (const message of productionMessages) {
+    const result = await rebuildCurrentTaskProjection({
+      adminClient,
+      userId: "owner-1",
+      taskId: "task-1",
+      dependencies: dependencies(async () => ({ data: null, error: { code: "P0001", message } })),
+    });
+    assert.deepEqual(result, { status: "retryable", reason: "stale_projection_fence", message });
+  }
+
+  const unrelatedResult = await rebuildCurrentTaskProjection({
+    adminClient,
+    userId: "owner-1",
+    taskId: "task-1",
+    dependencies: dependencies(async () => ({
+      data: null,
+      error: { code: "P0001", message: "Unrelated profile revision is stale." },
+    })),
+  });
+  assert.deepEqual(unrelatedResult, {
+    status: "failed",
+    reason: "projection_write_failed",
+    message: "Unrelated profile revision is stale.",
+  });
+});
+
 test("schedule and behavior source-fence races reject the old calculated candidate", async () => {
   for (const field of ["schedule_boundary_revision", "behavior_policy_revision"] as const) {
     const calculatedFences = {

@@ -11,6 +11,7 @@ import { PageShellHeader } from "./page-shell-header";
 import { ThemeToggle } from "./theme-toggle";
 import { StyleLabLauncher } from "@/components/style-lab/style-lab-launcher";
 import { CURRENT_PROJECTION_BACKFILL_BATCH_SIZE, runCurrentProjectionBackfillOperator, type ProjectionBackfillOperatorClient } from "@/lib/task-current-projection-backfill-operator";
+import { CURRENT_TASK_PROJECTION_ALGORITHM_VERSION } from "@/lib/task-current-projection";
 import { taskRolloverCoordinator } from "@/lib/task-rollover-coordinator";
 import { SettingsHomeBackupRecovery } from "./settings-home-backup-recovery";
 
@@ -37,6 +38,9 @@ type SettingsPageProps = {
 };
 
 const ACCENT_PRESETS = ["#6f57f6", "#e05597", "#e05050", "#e08830", "#22b87a", "#2196c8", "#7b4fe0", "#5070e0"];
+const CURRENT_PROJECTION_ALGORITHM_DISPLAY = CURRENT_TASK_PROJECTION_ALGORITHM_VERSION
+  .replace("task-current-projection-algorithm-", "")
+  .toUpperCase();
 
 export function SettingsPage({
   accentColor,
@@ -235,7 +239,7 @@ export function SettingsPage({
             <p className="mt-1 text-xs text-[#7d88a1] dark:text-white/55">Inspect registered UI roles and preview semantic styling locally.</p>
             <div className="mt-3"><StyleLabLauncher /></div>
             <div className="mt-4 border-t border-[#e5e0f5] pt-4 dark:border-white/10">
-              <p className="text-xs text-[#7d88a1] dark:text-white/55">Temporary Current Task Projection operator; the current algorithm is V3.</p>
+              <p className="text-xs text-[#7d88a1] dark:text-white/55">Temporary Current Task Projection operator; the current algorithm is {CURRENT_PROJECTION_ALGORITHM_DISPLAY}.</p>
               <div className="mt-3 flex flex-wrap gap-2">
                 <button
                   className="ui-pill-button-strong-light transition disabled:cursor-not-allowed disabled:opacity-60"

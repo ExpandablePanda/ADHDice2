@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.175`.
+- Current working app version: `7.16.176`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,25 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-16 7.16.176 V4 Source and Deployment Parity
+
+The checked-in V4 migration now matches the verified production projection
+writer: all seven intentional stale-fence errors use `P0001`. Production
+verification confirmed the V4 migration is installed and the
+`task-state-command` and `task-current-projection-backfill` Edge Functions are
+at versions 59 and 13, respectively.
+
+Production has 401 eligible canonical Tasks, Steps, and Substeps with valid V4
+projections. The remaining 183 V3 `repair_required` projections belong only to
+permanently deleted Tasks and are correctly excluded by the rebuild candidate
+query. No projection repair or rebuild is needed for those excluded tombstones.
+
+The Lawall Active Status V4 correction passed Safari QA, and the 7.16.175
+drag-and-drop scroll correction passed Safari QA. These production and browser
+results were verified outside this source-only implementation; no SQL,
+Supabase mutation, Edge deployment, or projection rebuild was performed for
+7.16.176.
 
 ## 2026-10-16 7.16.175 Urgent Drag-and-Drop Scroll Correction
 
@@ -27,8 +46,8 @@ unmount. Existing reorder callbacks and drop-zone context remain unchanged.
 
 Source inspection confirmed the fixed preview's containing-block mismatch and
 identified unclipped owner bounds plus the flow-changing placeholder as the
-scroll and targeting defects. Safari behavior remains pending Andrew's manual
-QA. Focused SortableList regressions passed (10/10), targeted ESLint passed,
+scroll and targeting defects. Safari QA later passed, as recorded under
+7.16.176. Focused SortableList regressions passed (10/10), targeted ESLint passed,
 and the Next.js 16.2.4 production build passed while skipping type validation.
 `git diff --check` passed. No browser automation was run.
 
@@ -45,11 +64,10 @@ Canonical Task State commits already rebuild one affected projection through
 projections. Server-side generation therefore needs the updated
 `task-state-command` Edge Function. Existing projections need the updated
 `task-current-projection-backfill` function and the bounded logical-day refresh
-to converge. Apply the SQL patch first, deploy both functions, then release
-7.16.174 and allow the authenticated workspace refresh to drain stale rows.
-The patch and Edge sources are source-only here: no SQL, deployment, or
-projection rebuild was run. Production convergence and Safari behavior remain
-unverified pending deployment and Andrew's manual QA.
+to converge. Deployment followed the SQL patch, Edge Function update, and
+7.16.174 client release order. Production installation, Edge Function
+versions, convergence counts, and Safari QA were verified later and are
+recorded under 7.16.176.
 
 Focused engine/projection tests passed (88/88); the broader production-path
 projection and Edge suites passed (93 passed, one disposable-PostgreSQL case

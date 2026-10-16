@@ -77,10 +77,21 @@ function errorMessage(error: unknown, fallback: string) {
   return error instanceof Error && error.message ? error.message : fallback;
 }
 
+const CURRENT_TASK_PROJECTION_STALE_FENCE_MESSAGES = new Set([
+  "Current Task projection canonical Task revision is stale.",
+  "Current Task projection History sync epoch is stale.",
+  "Current Task projection entity History frontier is stale.",
+  "Current Task projection logical-day settings revision is stale.",
+  "Current Task projection logical date is stale.",
+  "Current Task projection schedule or behavior source fence is stale.",
+  "Current Task projection candidate is older than the stored projection or would downgrade the current algorithm.",
+]);
+
 function staleFenceError(error: { code?: string | null; message?: string } | null) {
   if (!error) return false;
-  return error.code === "40001"
-    || /stale|older than the stored projection|revision|frontier|sync epoch|logical date/i.test(error.message ?? "");
+  if (error.code === "40001") return true;
+  if (error.code === "P0001") return CURRENT_TASK_PROJECTION_STALE_FENCE_MESSAGES.has(error.message?.trim() ?? "");
+  return /stale|older than the stored projection|revision|frontier|sync epoch|logical date/i.test(error.message ?? "");
 }
 
 function projectionLogicalDate(readModel: CanonicalTaskStateReadModel, projectedAt: string | Date) {
