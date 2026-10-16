@@ -123,11 +123,12 @@ test("the production applySnapshot path updates state before safe persistence an
   const applySource = healthHookSource.slice(applyStart, applyEnd);
 
   assert.ok(applyStart >= 0);
-  assert.match(applySource, /setAwards\(nextSnapshot\.awards\);[\s\S]*?const persistenceResult = persistLocalHealthState\(nextSnapshot\);/);
+  assert.match(applySource, /setAwards\(nextSnapshot\.awards\);[\s\S]*?const persistenceResult = healthJournalCachePreservationBlockedRef\.current[\s\S]*?: persistLocalHealthState\(nextSnapshot\);/);
   assert.match(applySource, /persistLocalHealthState\(nextSnapshot\)/);
-  assert.match(healthHookSource, /const localState = readLocalHealthState\(userId\);[\s\S]*?applySnapshot\(localState\.snapshot, \{ persistenceMode: "local" \}\);/);
+  assert.match(healthHookSource, /const localState = readLocalHealthState\(userId\);[\s\S]*?applySnapshot\(validatedLocalSnapshot, \{ persistenceMode: "local", remoteAuthority: "preserve" \}\);/);
   assert.match(healthHookSource, /const snapshotToApply = hydratedFavorites === remoteSnapshot\.favorites/);
-  assert.match(healthHookSource, /setStorageMode\("remote"\);\s*applySnapshot\(snapshotToApply, \{ persistenceMode: "remote" \}\);/);
+  assert.match(healthHookSource, /remoteAuthority: journalReadsComplete \? "update" : "invalidate"/);
+  assert.match(applySource, /remoteAuthority === "invalidate"[\s\S]*?persistenceMode === "remote"/);
   assert.doesNotMatch(healthHookSource, /window\.localStorage\.setItem/);
 });
 
@@ -143,6 +144,13 @@ test("cache failures never delete Health keys and local-only success messaging s
   assert.match(healthHookSource, /Health updated in memory, but \$\{storageProblem\}/);
   assert.match(healthHookSource, /This local-only change may not survive a refresh/);
   assert.match(healthHookSource, /Supabase saved this Health change, but \$\{storageProblem\}/);
+});
+
+test("failed Journal recovery persistence is surfaced and protects the cached records", () => {
+  assert.match(healthHookSource, /source === "journal-pending"[\s\S]*?healthJournalCachePreservationBlockedRef\.current = !result\.ok/);
+  assert.match(healthHookSource, /Journal recovery state could not be saved because \$\{storageProblem\}[\s\S]*?no Journal record was deleted or uploaded/);
+  assert.match(healthHookSource, /const persistenceResult = healthJournalCachePreservationBlockedRef\.current[\s\S]*?: persistLocalHealthState\(nextSnapshot\)/);
+  assert.match(healthHookSource, /const pendingWriteResult = persistHealthJournalPendingMutations\(userId, validatedJournalPendingMutations\);[\s\S]*?rememberHealthLocalPersistenceFailure\(pendingWriteResult, "local", "journal-pending"\)/);
 });
 
 test("meal-plan pending mutation recovery remains a separate, replayable journal", () => {

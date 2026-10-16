@@ -93,6 +93,7 @@ import {
   getHealthJournalPendingMutationKey,
   normalizeHealthJournalPendingMutations,
   quarantineHealthJournalPendingUpsert,
+  quarantineUnownedHealthJournalPendingUpsert,
   recordHealthJournalPendingDelete,
   recordHealthJournalPendingUpsert,
   replayHealthJournalPendingUpsertMutation,
@@ -318,6 +319,10 @@ type LocalHealthState = {
 };
 
 type HealthPersistenceMode = "local" | "remote";
+type HealthSnapshotApplyOptions = {
+  persistenceMode?: HealthPersistenceMode;
+  remoteAuthority?: "invalidate" | "preserve" | "update";
+};
 type HealthLocalPersistenceFailure = {
   mode: HealthPersistenceMode;
   reason: "quota" | "storage";
@@ -345,6 +350,31 @@ function buildEmptyState(userId: string): HealthStateSnapshot {
     workouts: [],
     weightEntries: [],
   };
+}
+
+function countUnresolvedHealthJournalQuarantine(journal: HealthJournalPendingMutationJournal) {
+  return Object.values(journal).filter((mutation) => mutation.operation === "upsert" && mutation.intent === "unknown").length;
+}
+
+function formatHealthLocalPersistenceFailure(failure: HealthLocalPersistenceFailure) {
+  const storageProblem = failure.reason === "quota"
+    ? "browser storage is full"
+    : "the browser could not update its local cache";
+  if (failure.source === "meal-plan-pending") {
+    return `Meal Plan remains visible, but its pending recovery record could not be saved because ${storageProblem}. This change may not survive a refresh; no Health data was deleted.`;
+  }
+  if (failure.source === "journal-pending") {
+    return `Journal recovery state could not be saved because ${storageProblem}. It may not survive a refresh; no Journal record was deleted or uploaded.`;
+  }
+  return failure.mode === "remote"
+    ? `Supabase saved this Health change, but ${storageProblem}. The cloud-backed data remains authoritative; no Health data was deleted.`
+    : `Health updated in memory, but ${storageProblem}. This local-only change may not survive a refresh; no Health data was deleted.`;
+}
+
+function consumeHealthLocalPersistenceFailureMessage(failureRef: { current: HealthLocalPersistenceFailure | null }) {
+  const failure = failureRef.current;
+  failureRef.current = null;
+  return failure ? formatHealthLocalPersistenceFailure(failure) : null;
 }
 
 function isMissingHealthPersistence(message: string) {
@@ -611,6 +641,9 @@ export function useHealth(
   const journalSignalOccurrencesRemoteEnabledRef = useRef(true);
   const mealPlanPendingMutationsRef = useRef<HealthMealPlanPendingMutationJournal>({});
   const journalPendingMutationsRef = useRef<HealthJournalPendingMutationJournal>({});
+  const journalPendingOwnerRef = useRef<string | null>(null);
+  const unpersistedJournalPendingByOwnerRef = useRef<Record<string, { failure: HealthLocalPersistenceFailure; journal: HealthJournalPendingMutationJournal }>>({});
+  const healthJournalCachePreservationBlockedRef = useRef(false);
   const healthLocalPersistenceFailureRef = useRef<HealthLocalPersistenceFailure | null>(null);
   const healthOperationGenerationRef = useRef(0);
   const healthOwnerRef = useRef<Pick<HealthOperationOwner, "active" | "userId">>({ active, userId });
@@ -650,8 +683,24 @@ export function useHealth(
     mode: HealthPersistenceMode,
     source: HealthLocalPersistenceFailure["source"],
   ) {
+    if (source === "journal-pending") {
+      healthJournalCachePreservationBlockedRef.current = !result.ok;
+      const ownerId = journalPendingOwnerRef.current;
+      if (ownerId) {
+        if (result.ok) {
+          delete unpersistedJournalPendingByOwnerRef.current[ownerId];
+        } else {
+          unpersistedJournalPendingByOwnerRef.current[ownerId] = {
+            failure: { mode, reason: result.reason, source },
+            journal: journalPendingMutationsRef.current,
+          };
+        }
+      }
+    }
     if (!result.ok) {
       healthLocalPersistenceFailureRef.current = { mode, reason: result.reason, source };
+    } else if (healthLocalPersistenceFailureRef.current?.source === source) {
+      healthLocalPersistenceFailureRef.current = null;
     }
   }
 
@@ -663,29 +712,7 @@ export function useHealth(
       return;
     }
 
-    const storageProblem = failure.reason === "quota"
-      ? "browser storage is full"
-      : "the browser could not update its local cache";
-    if (failure.source === "meal-plan-pending") {
-      setMessage({
-        tone: "warn",
-        text: `Meal Plan remains visible, but its pending recovery record could not be saved because ${storageProblem}. This change may not survive a refresh; no Health data was deleted.`,
-      });
-      return;
-    }
-    if (failure.source === "journal-pending") {
-      setMessage({
-        tone: "warn",
-        text: `Journal remains visible, but its pending recovery record could not be saved because ${storageProblem}. This local-only change may not survive a refresh; no Health data was deleted.`,
-      });
-      return;
-    }
-    setMessage({
-      tone: "warn",
-      text: failure.mode === "remote"
-        ? `Supabase saved this Health change, but ${storageProblem}. The cloud-backed data remains authoritative; no Health data was deleted.`
-        : `Health updated in memory, but ${storageProblem}. This local-only change may not survive a refresh; no Health data was deleted.`,
-    });
+    setMessage({ tone: "warn", text: formatHealthLocalPersistenceFailure(failure) });
   }
 
   function recordMealPlanPendingMutation(mutation: HealthMealPlanPendingMutation) {
@@ -843,14 +870,18 @@ export function useHealth(
     } satisfies HealthStateSnapshot;
   }
 
-  function applySnapshot(snapshot: HealthStateSnapshot, options?: { persistenceMode?: HealthPersistenceMode }) {
+  function applySnapshot(snapshot: HealthStateSnapshot, options?: HealthSnapshotApplyOptions) {
     const nextSnapshot = {
       ...snapshot,
       checkIns: [...snapshot.checkIns].sort(sortHealthJournalEntries),
       journalSignalOccurrences: [...snapshot.journalSignalOccurrences].sort(sortHealthJournalSignalOccurrences),
     };
     healthSnapshotRef.current = nextSnapshot;
-    if (healthRemoteAuthorityRef.current?.userId === nextSnapshot.profile.user_id) {
+    const persistenceMode = options?.persistenceMode ?? (storageMode === "remote" ? "remote" : "local");
+    if (options?.remoteAuthority === "invalidate") {
+      healthRemoteAuthorityRef.current = null;
+    } else if ((options?.remoteAuthority === "update" || (!options?.remoteAuthority && persistenceMode === "remote"))
+      && healthRemoteAuthorityRef.current?.userId === nextSnapshot.profile.user_id) {
       healthRemoteAuthorityRef.current.snapshot = nextSnapshot;
     }
     setProfile(nextSnapshot.profile);
@@ -871,17 +902,17 @@ export function useHealth(
     setWorkouts(sortHealthWorkouts(nextSnapshot.workouts));
     setImportAudits(nextSnapshot.importAudits);
     setAwards(nextSnapshot.awards);
-    const persistenceResult = persistLocalHealthState(nextSnapshot);
+    const persistenceResult = healthJournalCachePreservationBlockedRef.current
+      ? { ok: false as const, reason: healthLocalPersistenceFailureRef.current?.reason ?? "storage" as const }
+      : persistLocalHealthState(nextSnapshot);
     if (persistenceResult.ok) {
-      if (healthLocalPersistenceFailureRef.current?.source !== "meal-plan-pending") {
+      if (healthLocalPersistenceFailureRef.current?.source === "health-cache") {
         healthLocalPersistenceFailureRef.current = null;
       }
     } else {
-      rememberHealthLocalPersistenceFailure(
-        persistenceResult,
-        options?.persistenceMode ?? (storageMode === "remote" ? "remote" : "local"),
-        "health-cache",
-      );
+      if (!healthJournalCachePreservationBlockedRef.current) {
+        rememberHealthLocalPersistenceFailure(persistenceResult, persistenceMode, "health-cache");
+      }
     }
     return persistenceResult;
   }
@@ -1019,7 +1050,7 @@ export function useHealth(
     if (!isCurrentOperation(operation)) return snapshot;
     const nextSnapshot = buildHealthSnapshot({ ...snapshot, awards: nextAwards });
     if (!isCurrentOperation(operation)) return snapshot;
-    applySnapshot(nextSnapshot);
+    applySnapshot(nextSnapshot, { persistenceMode: options?.persistRemotely ? "remote" : "local" });
     if (!options?.silent) {
       setHealthSuccessMessage({
         tone: "good",
@@ -1031,6 +1062,12 @@ export function useHealth(
 
   useEffect(() => {
     if (!userId) {
+      if (journalPendingOwnerRef.current && healthJournalCachePreservationBlockedRef.current) {
+        unpersistedJournalPendingByOwnerRef.current[journalPendingOwnerRef.current] = {
+          failure: healthLocalPersistenceFailureRef.current ?? { mode: "local", reason: "storage", source: "journal-pending" },
+          journal: journalPendingMutationsRef.current,
+        };
+      }
       healthSnapshotRef.current = null;
       healthRemoteAuthorityRef.current = null;
       healthHydrationInFlightRef.current = null;
@@ -1074,6 +1111,8 @@ export function useHealth(
       journalSignalOccurrencesRemoteEnabledRef.current = true;
       mealPlanPendingMutationsRef.current = {};
       journalPendingMutationsRef.current = {};
+      journalPendingOwnerRef.current = null;
+      healthJournalCachePreservationBlockedRef.current = false;
       healthLocalPersistenceFailureRef.current = null;
       return;
     }
@@ -1099,15 +1138,66 @@ export function useHealth(
     symptomEntriesRemoteEnabledRef.current = true;
     journalRemoteEnabledRef.current = true;
     journalSignalOccurrencesRemoteEnabledRef.current = true;
-    healthLocalPersistenceFailureRef.current = null;
+    const inMemoryJournalPending = unpersistedJournalPendingByOwnerRef.current[userId];
+    const isSameJournalPendingOwner = journalPendingOwnerRef.current === userId;
+    if (!isSameJournalPendingOwner) {
+      healthLocalPersistenceFailureRef.current = inMemoryJournalPending?.failure ?? null;
+      healthJournalCachePreservationBlockedRef.current = Boolean(inMemoryJournalPending);
+    }
     const localState = readLocalHealthState(userId);
     mealPlanPendingMutationsRef.current = localState.mealPlanPendingMutations;
-    journalPendingMutationsRef.current = localState.journalPendingMutations;
-    applySnapshot(localState.snapshot, { persistenceMode: "local" });
+    let validatedJournalPendingMutations = isSameJournalPendingOwner
+      ? journalPendingMutationsRef.current
+      : inMemoryJournalPending?.journal ?? localState.journalPendingMutations;
+    const pendingMutationsAtHydrationStart = validatedJournalPendingMutations;
+    journalPendingOwnerRef.current = userId;
+    const quarantineOwnerMismatch = <T extends { id: string; user_id: string }>(
+      entity: HealthJournalPendingEntity,
+      rows: readonly T[],
+    ) => rows.filter((row) => {
+      if (row.user_id === userId) return true;
+      const nextJournal = quarantineUnownedHealthJournalPendingUpsert(
+        validatedJournalPendingMutations,
+        { entity, row } as HealthJournalPendingUpsert,
+        userId,
+      );
+      validatedJournalPendingMutations = nextJournal;
+      return false;
+    });
+    for (const mutation of Object.values(validatedJournalPendingMutations)) {
+      if (mutation.operation === "upsert" && mutation.row.user_id !== userId) {
+        const nextJournal = quarantineUnownedHealthJournalPendingUpsert(validatedJournalPendingMutations, mutation, userId);
+        validatedJournalPendingMutations = nextJournal;
+      }
+    }
+    const validatedLocalSnapshot: HealthStateSnapshot = {
+      ...localState.snapshot,
+      checkIns: quarantineOwnerMismatch("checkin", localState.snapshot.checkIns),
+      journalSignals: quarantineOwnerMismatch("signal", localState.snapshot.journalSignals),
+      journalSignalValues: quarantineOwnerMismatch("signal_value", localState.snapshot.journalSignalValues),
+      journalSignalOccurrences: quarantineOwnerMismatch("signal_occurrence", localState.snapshot.journalSignalOccurrences),
+      symptoms: quarantineOwnerMismatch("symptom", localState.snapshot.symptoms),
+      symptomEntries: quarantineOwnerMismatch("symptom_entry", localState.snapshot.symptomEntries),
+    };
+    journalPendingMutationsRef.current = validatedJournalPendingMutations;
+    if (validatedJournalPendingMutations !== pendingMutationsAtHydrationStart
+      || healthJournalCachePreservationBlockedRef.current) {
+      const pendingWriteResult = persistHealthJournalPendingMutations(userId, validatedJournalPendingMutations);
+      rememberHealthLocalPersistenceFailure(pendingWriteResult, "local", "journal-pending");
+    }
+    applySnapshot(validatedLocalSnapshot, { persistenceMode: "local", remoteAuthority: "preserve" });
 
     if (!client) {
       setStorageMode("local");
       foodLibraryLoadedUserIdRef.current = userId;
+      const warningParts = [];
+      const unresolvedQuarantineCount = countUnresolvedHealthJournalQuarantine(journalPendingMutationsRef.current);
+      if (unresolvedQuarantineCount > 0) {
+        warningParts.push(`${unresolvedQuarantineCount} ambiguous cached Journal ${unresolvedQuarantineCount === 1 ? "record remains" : "records remain"} held locally. They were not restored, reassigned, or uploaded.`);
+      }
+      const persistenceWarning = consumeHealthLocalPersistenceFailureMessage(healthLocalPersistenceFailureRef);
+      if (persistenceWarning) warningParts.push(persistenceWarning);
+      if (warningParts.length > 0) setMessage({ tone: "warn", text: warningParts.join(" ") });
       return;
     }
 
@@ -1117,7 +1207,15 @@ export function useHealth(
     if (!forceRemoteHydration && cachedRemoteAuthority?.client === client && cachedRemoteAuthority.userId === userId) {
       setStorageMode("remote");
       setJournalStatisticsDataError(null);
-      applySnapshot(cachedRemoteAuthority.snapshot, { persistenceMode: "remote" });
+      applySnapshot(cachedRemoteAuthority.snapshot, { persistenceMode: "remote", remoteAuthority: "update" });
+      const cacheReuseWarningParts: string[] = [];
+      const unresolvedQuarantineCount = countUnresolvedHealthJournalQuarantine(journalPendingMutationsRef.current);
+      if (unresolvedQuarantineCount > 0) {
+        cacheReuseWarningParts.push(`${unresolvedQuarantineCount} ambiguous cached Journal ${unresolvedQuarantineCount === 1 ? "record remains" : "records remain"} held locally. They were not restored, reassigned, or uploaded.`);
+      }
+      const localPersistenceWarning = consumeHealthLocalPersistenceFailureMessage(healthLocalPersistenceFailureRef);
+      if (localPersistenceWarning) cacheReuseWarningParts.push(localPersistenceWarning);
+      if (cacheReuseWarningParts.length > 0) setMessage({ tone: "warn", text: cacheReuseWarningParts.join(" ") });
       foodLibraryLoadedUserIdRef.current = userId;
       setIsLoading(false);
       return;
@@ -1169,6 +1267,16 @@ export function useHealth(
         return;
       }
 
+      const journalReadsComplete = [
+        checkInsResult,
+        journalSignalsResult,
+        journalSignalValuesResult,
+        journalSignalOccurrencesResult,
+        symptomsResult,
+        symptomEntriesResult,
+      ].every((result) => !result.error && (result.data ?? []).every((row) => row.user_id === userId));
+      if (!journalReadsComplete) healthRemoteAuthorityRef.current = null;
+
       const errors = [
         profileResult.error,
         checkInsResult.error,
@@ -1186,10 +1294,27 @@ export function useHealth(
       const journalStatisticsDataErrors = [
         checkInsResult.error,
         journalSignalsResult.error,
+        journalSignalValuesResult.error,
         journalSignalOccurrencesResult.error,
         symptomsResult.error,
         symptomEntriesResult.error,
       ].filter((error): error is { message: string } => error !== null);
+      const remoteJournalRows = [
+        ...(checkInsResult.data ?? []),
+        ...(journalSignalsResult.data ?? []),
+        ...(journalSignalValuesResult.data ?? []),
+        ...(journalSignalOccurrencesResult.data ?? []),
+        ...(symptomsResult.data ?? []),
+        ...(symptomEntriesResult.data ?? []),
+      ];
+      const remoteJournalOwnershipMismatchCount = remoteJournalRows.filter((row) => row.user_id !== userId).length;
+      if (remoteJournalOwnershipMismatchCount > 0) {
+        journalStatisticsDataErrors.push({ message: `${remoteJournalOwnershipMismatchCount} remote Journal record(s) did not match the active owner.` });
+        journalRemoteEnabledRef.current = false;
+        symptomDefinitionsRemoteEnabledRef.current = false;
+        symptomEntriesRemoteEnabledRef.current = false;
+        journalSignalOccurrencesRemoteEnabledRef.current = false;
+      }
       if (journalStatisticsDataErrors.length > 0) {
         setJournalStatisticsDataError(
           `Could not load required Journal statistics data: ${journalStatisticsDataErrors.map((error) => error.message).join("; ")}`,
@@ -1203,20 +1328,57 @@ export function useHealth(
       symptomEntriesRemoteEnabledRef.current = !symptomEntriesResult.error;
       journalRemoteEnabledRef.current = journalPersistenceErrors.length === 0;
       journalSignalOccurrencesRemoteEnabledRef.current = !journalSignalOccurrencePersistenceError;
+      if (checkInsResult.error) journalRemoteEnabledRef.current = false;
+      const journalReadWarningParts: string[] = [];
+      let hasJournalReadWarning = false;
+      if (symptomPersistenceErrors.length > 0) {
+        const hasMissingSymptomPersistence = symptomPersistenceErrors.some((error) => error && isMissingHealthSymptomPersistence(error.message));
+        journalReadWarningParts.push(hasMissingSymptomPersistence
+          ? "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied. Existing Health data remains connected."
+          : symptomPersistenceErrors[0]?.message ?? "Symptom tracking could not connect and is using local storage.");
+        hasJournalReadWarning ||= !hasMissingSymptomPersistence;
+      }
+      if (journalPersistenceErrors.length > 0) {
+        const hasMissingJournalPersistence = journalPersistenceErrors.some((error) => error && isMissingHealthPersistence(error.message));
+        journalReadWarningParts.push(hasMissingJournalPersistence
+          ? "Journal is using local storage until its Health Journal migration is applied."
+          : journalPersistenceErrors[0]?.message ?? "Journal could not connect and is using local storage.");
+        hasJournalReadWarning ||= !hasMissingJournalPersistence;
+      }
+      if (journalSignalOccurrencePersistenceError) {
+        const isMissingOccurrencePersistence = isMissingHealthPersistence(journalSignalOccurrencePersistenceError.message);
+        journalReadWarningParts.push(isMissingOccurrencePersistence
+          ? "Feeling Occurrences are using local storage until the 7.12.41 and 7.16.112 Health Journal migrations are applied."
+          : journalSignalOccurrencePersistenceError.message);
+        hasJournalReadWarning ||= !isMissingOccurrencePersistence;
+      }
+      if (remoteJournalOwnershipMismatchCount > 0) {
+        symptomDefinitionsRemoteEnabledRef.current = false;
+        symptomEntriesRemoteEnabledRef.current = false;
+        journalRemoteEnabledRef.current = false;
+        journalSignalOccurrencesRemoteEnabledRef.current = false;
+        journalReadWarningParts.push("Remote Journal records did not match the signed-in owner. They were excluded and remote authority will be re-read.");
+        hasJournalReadWarning = true;
+      }
 
       if (errors.length > 0) {
         const firstError = errors[0];
+        const localPersistenceWarning = consumeHealthLocalPersistenceFailureMessage(healthLocalPersistenceFailureRef);
+        const unresolvedQuarantineCount = countUnresolvedHealthJournalQuarantine(journalPendingMutationsRef.current);
+        const unresolvedQuarantineWarning = unresolvedQuarantineCount > 0
+          ? `${unresolvedQuarantineCount} ambiguous cached Journal ${unresolvedQuarantineCount === 1 ? "record remains" : "records remain"} held locally. They were not restored, reassigned, or uploaded.`
+          : null;
         setJournalStatisticsDataError(
           `Could not refresh required Journal statistics data: ${firstError?.message ?? "Health data loading failed."}`,
         );
         if (firstError && isMissingHealthPersistence(firstError.message)) {
           setStorageMode("local");
           setMessage({
-            text: "Health is running in local mode until its Supabase tables are migrated. Apply the base Health migration, then the 7.5.22, 7.7.0, and 7.7.1 Health migrations.",
-            tone: "neutral",
+            text: ["Health is running in local mode until its Supabase tables are migrated. Apply the base Health migration, then the 7.5.22, 7.7.0, and 7.7.1 Health migrations.", unresolvedQuarantineWarning, localPersistenceWarning].filter(Boolean).join(" "),
+            tone: localPersistenceWarning || unresolvedQuarantineWarning ? "warn" : "neutral",
           });
         } else if (firstError) {
-          setMessage({ tone: "warn", text: firstError.message });
+          setMessage({ tone: "warn", text: [firstError.message, unresolvedQuarantineWarning, localPersistenceWarning].filter(Boolean).join(" ") });
         }
         foodLibraryLoadedUserIdRef.current = userId;
         setIsLoading(false);
@@ -1242,34 +1404,6 @@ export function useHealth(
         });
       }
 
-      if (symptomPersistenceErrors.length > 0) {
-        const hasMissingSymptomPersistence = symptomPersistenceErrors.some((error) => error && isMissingHealthSymptomPersistence(error.message));
-        setMessage({
-          text: hasMissingSymptomPersistence
-            ? "Symptom tracking is using local storage until the 7.12.7, 7.12.21, and 7.16.112 Health Journal migrations are applied. Existing Health data remains connected."
-            : symptomPersistenceErrors[0]?.message ?? "Symptom tracking could not connect and is using local storage.",
-          tone: hasMissingSymptomPersistence ? "neutral" : "warn",
-        });
-      }
-
-      if (journalPersistenceErrors.length > 0) {
-        const hasMissingJournalPersistence = journalPersistenceErrors.some((error) => error && isMissingHealthPersistence(error.message));
-        setMessage({
-          text: hasMissingJournalPersistence
-            ? "Journal is using local storage until its Health Journal migration is applied."
-            : journalPersistenceErrors[0]?.message ?? "Journal could not connect and is using local storage.",
-          tone: hasMissingJournalPersistence ? "neutral" : "warn",
-        });
-      }
-      if (journalSignalOccurrencePersistenceError) {
-        setMessage({
-          text: isMissingHealthPersistence(journalSignalOccurrencePersistenceError.message)
-            ? "Feeling Occurrences are using local storage until the 7.12.41 and 7.16.112 Health Journal migrations are applied."
-            : journalSignalOccurrencePersistenceError.message,
-          tone: isMissingHealthPersistence(journalSignalOccurrencePersistenceError.message) ? "neutral" : "warn",
-        });
-      }
-
       const latestLocalSymptoms = healthSnapshotRef.current?.symptoms ?? localState.snapshot.symptoms;
       const latestLocalSymptomEntries = healthSnapshotRef.current?.symptomEntries ?? localState.snapshot.symptomEntries;
       const latestLocalJournalSignals = healthSnapshotRef.current?.journalSignals ?? localState.snapshot.journalSignals;
@@ -1278,14 +1412,12 @@ export function useHealth(
       const latestLocalCheckIns = healthSnapshotRef.current?.checkIns ?? localState.snapshot.checkIns;
       const pendingMutationsAtHydrationStart = journalPendingMutationsRef.current;
       let quarantinedJournal = pendingMutationsAtHydrationStart;
-      let quarantinedJournalRowCount = 0;
-      function quarantineMissingLocalJournalRows(localRows: readonly HealthJournalPendingUpsert[], remoteRows: readonly { id: string }[]) {
-        const remoteIds = new Set(remoteRows.map((row) => row.id));
+      function quarantineMissingLocalJournalRows(localRows: readonly HealthJournalPendingUpsert[], remoteRows: readonly { id: string; user_id: string }[]) {
+        const remoteIds = new Set(remoteRows.filter((row) => row.user_id === userId).map((row) => row.id));
         for (const mutation of localRows) {
           const next = quarantineHealthJournalPendingUpsert(quarantinedJournal, mutation, remoteIds);
           if (next !== quarantinedJournal) {
             quarantinedJournal = next;
-            quarantinedJournalRowCount += 1;
           }
         }
       }
@@ -1310,22 +1442,7 @@ export function useHealth(
       if (quarantinedJournal !== pendingMutationsAtHydrationStart) {
         journalPendingMutationsRef.current = quarantinedJournal;
         const pendingWriteResult = persistHealthJournalPendingMutations(userId, quarantinedJournal);
-        if (!pendingWriteResult.ok) {
-          healthLocalPersistenceFailureRef.current = {
-            mode: "local",
-            reason: pendingWriteResult.reason,
-            source: "journal-pending",
-          };
-          setMessage({
-            tone: "warn",
-            text: "Journal hydration stopped because ambiguous cached records could not be preserved locally. No recovery writes were made.",
-          });
-          return;
-        }
-        setMessage({
-          tone: "warn",
-          text: `${quarantinedJournalRowCount} cached Journal ${quarantinedJournalRowCount === 1 ? "record was" : "records were"} held locally because remote data could not confirm them. They were not restored or uploaded.`,
-        });
+        rememberHealthLocalPersistenceFailure(pendingWriteResult, "local", "journal-pending");
       }
       const pendingMutationOrder: Record<HealthJournalPendingEntity, number> = {
         checkin: 0,
@@ -1343,18 +1460,18 @@ export function useHealth(
       });
       const completedPendingMutations: { key: string; mutation: HealthJournalPendingMutation }[] = [];
       let journalRecoveryError: { message: string } | null = null;
-      let ambiguousPendingMutationCount = 0;
       const blockedParentEntryIds = new Set(Object.values(pendingMutationsAtHydrationStart)
         .filter((mutation) => mutation.entity === "checkin" && mutation.operation === "delete")
         .map((mutation) => mutation.operation === "delete" ? mutation.id : ""));
       const deletedParentEntryIds = new Set<string>();
-      const confirmedParentEntryIds = new Set((checkInsResult.data ?? []).map((entry) => entry.id));
+      const confirmedParentEntryIds = new Set((checkInsResult.data ?? []).filter((entry) => entry.user_id === userId).map((entry) => entry.id));
       const pendingReplayClient = createHealthJournalPendingReplayClient(client);
 
       for (const [key] of pendingMutations) {
         if (!isActive || !isCurrentOperation(hydrationOperation)) return;
         const mutation = journalPendingMutationsRef.current[key];
         if (!mutation) continue;
+        if (mutation.operation === "upsert" && mutation.intent === "unknown") continue;
         const parentEntryId = mutation.operation === "delete"
           ? mutation.journalEntryId
           : "journal_entry_id" in mutation.row && typeof mutation.row.journal_entry_id === "string"
@@ -1365,7 +1482,6 @@ export function useHealth(
           if (deletedParentEntryIds.has(parentEntryId)) {
             completedPendingMutations.push({ key, mutation });
           } else {
-            ambiguousPendingMutationCount += 1;
             journalRecoveryError ??= { message: "A pending Journal Entry deletion is still being retried; related Feeling writes remain held locally." };
           }
           continue;
@@ -1373,7 +1489,6 @@ export function useHealth(
 
         if (mutation.operation === "delete") {
           if (mutation.entity === "symptom") {
-            ambiguousPendingMutationCount += 1;
             journalRecoveryError ??= { message: "Symptom definition deletion is not a supported Journal tombstone operation; the pending record remains held locally." };
             continue;
           }
@@ -1410,13 +1525,7 @@ export function useHealth(
           persist: (nextJournal) => {
             journalPendingMutationsRef.current = nextJournal;
             const result = persistHealthJournalPendingMutations(userId, nextJournal);
-            if (!result.ok) {
-              healthLocalPersistenceFailureRef.current = {
-                mode: "local",
-                reason: result.reason,
-                source: "journal-pending",
-              };
-            }
+            rememberHealthLocalPersistenceFailure(result, "local", "journal-pending");
             return result.ok;
           },
           remote: pendingReplayClient,
@@ -1429,7 +1538,6 @@ export function useHealth(
           if (confirmedMutation) completedPendingMutations.push({ key, mutation: confirmedMutation });
           if (mutation.entity === "checkin") confirmedParentEntryIds.add(mutation.row.id);
         } else {
-          ambiguousPendingMutationCount += 1;
           journalRecoveryError ??= replayResult.error ?? { message: `Journal ${mutation.entity.replaceAll("_", " ")} ${mutation.row.id} remains held locally.` };
         }
       }
@@ -1441,38 +1549,22 @@ export function useHealth(
       if (nextPendingJournalMutations !== journalPendingMutationsRef.current) {
         journalPendingMutationsRef.current = nextPendingJournalMutations;
         const pendingWriteResult = persistHealthJournalPendingMutations(userId, nextPendingJournalMutations);
+        rememberHealthLocalPersistenceFailure(pendingWriteResult, "local", "journal-pending");
         if (!pendingWriteResult.ok) {
-          healthLocalPersistenceFailureRef.current = {
-            mode: "local",
-            reason: pendingWriteResult.reason,
-            source: "journal-pending",
-          };
           journalRecoveryError ??= { message: "Completed Journal recovery could not be cleared from local storage; it will be checked again safely." };
         }
-      }
-      if (journalRecoveryError) {
-        setMessage({
-          tone: "warn",
-          text: `Some explicitly pending Journal writes remain queued locally and will retry on a later Health hydration: ${journalRecoveryError.message}`,
-        });
-      }
-      if (ambiguousPendingMutationCount > 0) {
-        setMessage({
-          tone: "warn",
-          text: `${ambiguousPendingMutationCount} ambiguous cached Journal record${ambiguousPendingMutationCount === 1 ? " was" : "s were"} held locally. They were not restored or uploaded.`,
-        });
       }
 
       const pendingMutationsForProjection = {
         ...pendingMutationsAtHydrationStart,
         ...journalPendingMutationsRef.current,
       };
-      const remoteCheckIns = (checkInsResult.data ?? []).map(normalizeHealthCheckIn);
-      const remoteJournalSignals = (journalSignalsResult.data ?? []).map(normalizeHealthJournalSignal);
-      const remoteJournalSignalValues = journalSignalValuesResult.data ?? [];
-      const remoteJournalSignalOccurrences = (journalSignalOccurrencesResult.data ?? []).map(normalizeHealthJournalSignalOccurrence);
-      const remoteSymptoms = symptomsResult.data ?? [];
-      const remoteSymptomEntries = normalizeHealthSymptomEntries(symptomEntriesResult.data ?? []);
+      const remoteCheckIns = (checkInsResult.data ?? []).filter((row) => row.user_id === userId).map(normalizeHealthCheckIn);
+      const remoteJournalSignals = (journalSignalsResult.data ?? []).filter((row) => row.user_id === userId).map(normalizeHealthJournalSignal);
+      const remoteJournalSignalValues = (journalSignalValuesResult.data ?? []).filter((row) => row.user_id === userId);
+      const remoteJournalSignalOccurrences = (journalSignalOccurrencesResult.data ?? []).filter((row) => row.user_id === userId).map(normalizeHealthJournalSignalOccurrence);
+      const remoteSymptoms = (symptomsResult.data ?? []).filter((row) => row.user_id === userId);
+      const remoteSymptomEntries = normalizeHealthSymptomEntries((symptomEntriesResult.data ?? []).filter((row) => row.user_id === userId));
 
       const remoteWorkouts = sortHealthWorkouts(workoutsResult.data ?? []);
       const latestLocalWorkouts = healthSnapshotRef.current?.workouts ?? localState.snapshot.workouts;
@@ -1613,19 +1705,43 @@ export function useHealth(
         return;
       }
       setStorageMode("remote");
-      applySnapshot(snapshotToApply, { persistenceMode: "remote" });
-      healthRemoteAuthorityRef.current = {
-        client,
-        hydratedAt: Date.now(),
-        snapshot: healthSnapshotRef.current ?? snapshotToApply,
-        userId,
-      };
+      applySnapshot(snapshotToApply, {
+        persistenceMode: "remote",
+        remoteAuthority: journalReadsComplete ? "update" : "invalidate",
+      });
+      if (journalReadsComplete) {
+        healthRemoteAuthorityRef.current = {
+          client,
+          hydratedAt: Date.now(),
+          snapshot: healthSnapshotRef.current ?? snapshotToApply,
+          userId,
+        };
+      } else {
+        healthRemoteAuthorityRef.current = null;
+      }
       await claimEligibleAwards(snapshotToApply, hydrationOperation, { persistRemotely: true, silent: true });
       if (!isActive || !isCurrentOperation(hydrationOperation)) {
         return;
       }
       if (isWorkspacePerformanceDiagnosticsEnabled()) {
         console.info(`[health] hydrated pages=${healthPageCount} user=${userId}`);
+      }
+      const hydrationWarningParts: string[] = [];
+      const unresolvedQuarantineCount = countUnresolvedHealthJournalQuarantine(journalPendingMutationsRef.current);
+      if (unresolvedQuarantineCount > 0) {
+        hydrationWarningParts.push(`${unresolvedQuarantineCount} ambiguous cached Journal ${unresolvedQuarantineCount === 1 ? "record remains" : "records remain"} held locally. They were not restored, reassigned, or uploaded.`);
+      }
+      if (journalRecoveryError) {
+        hydrationWarningParts.push(`Some explicitly pending Journal writes remain queued locally and will retry on a later Health hydration: ${journalRecoveryError.message}`);
+      }
+      hydrationWarningParts.push(...journalReadWarningParts);
+      const localPersistenceWarning = consumeHealthLocalPersistenceFailureMessage(healthLocalPersistenceFailureRef);
+      if (localPersistenceWarning) hydrationWarningParts.push(localPersistenceWarning);
+      if (hydrationWarningParts.length > 0) {
+        const hasWarning = unresolvedQuarantineCount > 0 || Boolean(journalRecoveryError)
+          || hasJournalReadWarning
+          || Boolean(localPersistenceWarning);
+        setMessage({ tone: hasWarning ? "warn" : "neutral", text: hydrationWarningParts.join(" ") });
       }
       if (journalStatisticsDataErrors.length === 0) setJournalStatisticsDataError(null);
       foodLibraryLoadedUserIdRef.current = userId;

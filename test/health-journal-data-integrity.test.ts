@@ -11,15 +11,19 @@ import type {
   HealthSymptomEntry,
 } from "../src/lib/database.types.ts";
 import {
+  normalizeHealthJournalPendingMutations,
   quarantineHealthJournalPendingUpsert,
+  quarantineUnownedHealthJournalPendingUpsert,
   recordHealthJournalPendingDelete,
   recordHealthJournalPendingUpsert,
+  replayHealthJournalPendingUpsertMutation,
   replayHealthJournalPendingMutations,
   type HealthJournalPendingMutationJournal,
 } from "../src/lib/health-journal-pending-mutations.ts";
 import { deleteHealthJournalRecordWithTombstone } from "../src/lib/health-journal-tombstones.ts";
 
 const hookSource = readFileSync(new URL("../src/hooks/useHealth.ts", import.meta.url), "utf8");
+const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 
 function checkIn(overrides: Partial<HealthCheckIn> = {}): HealthCheckIn {
   return {
@@ -153,7 +157,79 @@ test("ambiguous cached records are quarantined locally without being projected o
   assert.equal(mutation?.operation, "upsert");
   assert.equal(mutation?.operation === "upsert" ? mutation.intent : null, "unknown");
   assert.deepEqual(replayHealthJournalPendingMutations("checkin", [], ambiguous, "user-1"), []);
-  assert.match(hookSource, /held locally[\s\S]*They were not restored or uploaded/);
+  assert.match(hookSource, /ambiguous cached Journal[\s\S]*held locally[\s\S]*They were not restored, reassigned, or uploaded/);
+});
+
+test("owner-mismatched cached rows stay quarantined without replacing same-ID owned pending writes", async () => {
+  const foreignCreate = recordHealthJournalPendingUpsert({}, {
+    entity: "checkin",
+    intent: "create",
+    row: checkIn({ reflection: "foreign pending create", user_id: "user-2" }),
+  });
+  assert.deepEqual(replayHealthJournalPendingMutations("checkin", [], foreignCreate, "user-1"), []);
+  const foreignCreateMutation = Object.values(foreignCreate)[0];
+  assert.equal(foreignCreateMutation?.operation === "upsert" ? foreignCreateMutation.row.user_id : null, "user-2");
+
+  const ownedCreate = recordHealthJournalPendingUpsert({}, { entity: "checkin", intent: "create", row: checkIn() });
+  const foreignRow = checkIn({ reflection: "foreign cached record", user_id: "user-2" });
+  const quarantined = quarantineUnownedHealthJournalPendingUpsert(ownedCreate, { entity: "checkin", row: foreignRow }, "user-1");
+  const normalized = normalizeHealthJournalPendingMutations(JSON.parse(JSON.stringify(quarantined)));
+  const ownerQuarantine = Object.entries(normalized).find(([, mutation]) => mutation.operation === "upsert" && mutation.intent === "unknown");
+
+  assert.equal(normalized["checkin:entry-1"]?.operation, "upsert");
+  assert.equal(normalized["checkin:entry-1"]?.operation === "upsert" ? normalized["checkin:entry-1"].intent : null, "create");
+  assert.equal(ownerQuarantine?.[0].startsWith("quarantine:owner-user-1:"), true);
+  assert.equal(ownerQuarantine?.[1].operation === "upsert" ? ownerQuarantine[1].row.user_id : null, "user-2");
+  assert.deepEqual(replayHealthJournalPendingMutations("checkin", [], normalized, "user-1").map((row) => row.user_id), ["user-1"]);
+  const secondForeignVersion = quarantineUnownedHealthJournalPendingUpsert(
+    normalized,
+    { entity: "checkin", row: checkIn({ reflection: "another ambiguous version", user_id: "user-2" }) },
+    "user-1",
+  );
+  assert.equal(Object.values(secondForeignVersion).filter((candidate) => candidate.operation === "upsert" && candidate.intent === "unknown").length, 2);
+
+  let remoteCalls = 0;
+  const mutation = ownerQuarantine?.[1];
+  assert.equal(mutation?.operation, "upsert");
+  if (mutation?.operation !== "upsert") return;
+  const replay = await replayHealthJournalPendingUpsertMutation({
+    journal: normalized,
+    key: ownerQuarantine[0],
+    mutation,
+    persist: () => true,
+    remote: {
+      read: async () => { remoteCalls += 1; return { data: null, error: null }; },
+      insert: async () => { remoteCalls += 1; return { data: null, error: null }; },
+      update: async () => { remoteCalls += 1; return { data: null, error: null }; },
+    },
+    userId: "user-1",
+  });
+  assert.equal(replay.status, "held");
+  assert.equal(remoteCalls, 0);
+});
+
+test("an unknown quarantined Journal record survives a same-ID tombstone", () => {
+  const quarantined = quarantineHealthJournalPendingUpsert({}, { entity: "checkin", row: checkIn({ user_id: "user-2" }) }, new Set());
+  const withTombstone = recordHealthJournalPendingDelete(quarantined, "checkin", "entry-1");
+  const values = Object.values(withTombstone);
+  assert.equal(values.some((mutation) => mutation.operation === "delete" && mutation.id === "entry-1"), true);
+  assert.equal(values.some((mutation) => mutation.operation === "upsert" && mutation.intent === "unknown" && mutation.row.user_id === "user-2"), true);
+});
+
+test("Health hydration preserves local quarantine state across navigation and split-panel reuse", () => {
+  assert.match(hookSource, /journalPendingOwnerRef\.current === userId[\s\S]*?journalPendingMutationsRef\.current/);
+  assert.match(hookSource, /applySnapshot\(validatedLocalSnapshot, \{ persistenceMode: "local", remoteAuthority: "preserve" \}\)/);
+  assert.match(hookSource, /const journalReadsComplete = \[[\s\S]*?\]\.every\(\(result\) => !result\.error && \(result\.data \?\? \[\]\)\.every\(\(row\) => row\.user_id === userId\)\)/);
+  assert.match(hookSource, /remoteAuthority: journalReadsComplete \? "update" : "invalidate"/);
+  assert.match(hookSource, /applySnapshot\(cachedRemoteAuthority\.snapshot, \{ persistenceMode: "remote", remoteAuthority: "update" \}\)/);
+  assert.match(hookSource, /applySnapshot\(nextSnapshot, \{ persistenceMode: options\?\.persistRemotely \? "remote" : "local" \}\)/);
+  assert.match(hookSource, /function applySnapshot\([\s\S]*?remoteAuthority === "invalidate"[\s\S]*?persistenceMode === "remote"/);
+  assert.match(hookSource, /consumeHealthLocalPersistenceFailureMessage\(healthLocalPersistenceFailureRef\)/);
+  assert.match(hookSource, /if \(!client\)[\s\S]*?countUnresolvedHealthJournalQuarantine[\s\S]*?if \(warningParts\.length > 0\)/);
+  assert.match(hookSource, /cachedRemoteAuthority\?\.client === client[\s\S]*?countUnresolvedHealthJournalQuarantine[\s\S]*?if \(cacheReuseWarningParts\.length > 0\)/);
+  assert.match(hookSource, /const hydrationWarningParts: string\[\] = \[\][\s\S]*?countUnresolvedHealthJournalQuarantine[\s\S]*?if \(hydrationWarningParts\.length > 0\)/);
+  assert.match(taskAppSource, /\} = useHealth\([\s\S]*?isMasterPanelPageActive\("Health"\) \|\| batchIntakeHealthActive\)/);
+  assert.equal((taskAppSource.match(/\buseHealth\(/g) ?? []).length, 1);
 });
 
 test("a failed tombstone RPC cannot produce a confirmed deletion", async () => {

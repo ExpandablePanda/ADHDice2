@@ -70,6 +70,33 @@ function entityKey(entity: HealthJournalPendingEntity, row: { id: string; journa
     : row.id;
 }
 
+function getHealthJournalQuarantineKey(
+  entity: HealthJournalPendingEntity,
+  row: { id: string; journal_entry_id?: string; signal_id?: string; user_id?: string | null },
+  reason: string,
+) {
+  const identity = entityKey(entity, row);
+  return `quarantine:${reason}:${entity}:${row.user_id ?? "missing-owner"}:${identity}`;
+}
+
+function getAvailableHealthJournalQuarantineKey(
+  journal: HealthJournalPendingMutationJournal,
+  entity: HealthJournalPendingEntity,
+  row: HealthJournalPendingUpsert["row"],
+  reason: string,
+) {
+  const baseKey = getHealthJournalQuarantineKey(entity, row, reason);
+  let key = baseKey;
+  let suffix = 1;
+  while (journal[key]) {
+    const existing = journal[key];
+    if (existing.operation === "upsert" && JSON.stringify(existing.row) === JSON.stringify(row)) return key;
+    key = `${baseKey}:${suffix}`;
+    suffix += 1;
+  }
+  return key;
+}
+
 export function getHealthJournalPendingMutationKey(
   entity: HealthJournalPendingEntity,
   rowOrId: { id: string; journal_entry_id?: string; signal_id?: string } | string,
@@ -312,13 +339,43 @@ export function quarantineHealthJournalPendingUpsert(
   const key = getHealthJournalPendingMutationKey(mutation.entity, mutation.row);
   const hasExistingIntent = Object.values(journal).some((existing) => {
     if (existing.entity !== mutation.entity) return false;
-    if (existing.operation === "delete") return existing.id === mutation.row.id;
-    return getHealthJournalPendingMutationKey(existing.entity, existing.row) === key;
+    if (existing.operation === "delete") return false;
+    return getHealthJournalPendingMutationKey(existing.entity, existing.row) === key
+      && JSON.stringify(existing.row) === JSON.stringify(mutation.row);
   });
   if (hasExistingIntent) return journal;
+  const quarantineKey = getAvailableHealthJournalQuarantineKey(journal, mutation.entity, mutation.row, "remote-unconfirmed");
+  if (journal[quarantineKey]) return journal;
   return {
     ...journal,
-    [key]: { ...mutation, intent: "unknown", operation: "upsert" },
+    [quarantineKey]: {
+      ...mutation,
+      intent: "unknown",
+      operation: "upsert",
+    },
+  };
+}
+
+export function quarantineUnownedHealthJournalPendingUpsert(
+  journal: HealthJournalPendingMutationJournal,
+  mutation: HealthJournalPendingUpsert,
+  userId: string,
+): HealthJournalPendingMutationJournal {
+  if (mutation.row.user_id === userId) return journal;
+  const key = getHealthJournalPendingMutationKey(mutation.entity, mutation.row);
+  const existing = journal[key];
+  if (existing?.operation === "upsert" && existing.row.user_id !== userId) {
+    if (existing.intent !== "unknown") {
+      journal = { ...journal, [key]: { ...existing, intent: "unknown", operation: "upsert" } };
+    }
+    if (JSON.stringify(existing.row) === JSON.stringify(mutation.row)) return journal;
+  }
+
+  const quarantineKey = getAvailableHealthJournalQuarantineKey(journal, mutation.entity, mutation.row, `owner-${userId}`);
+  if (journal[quarantineKey]) return journal;
+  return {
+    ...journal,
+    [quarantineKey]: { ...mutation, intent: "unknown", operation: "upsert" },
   };
 }
 
@@ -332,6 +389,13 @@ export function recordHealthJournalPendingDelete(
   const nextJournal = { ...journal };
   for (const [existingKey, mutation] of Object.entries(nextJournal)) {
     if (mutation.entity === entity && mutation.operation === "upsert" && mutation.row.id === id) {
+      if (mutation.intent === "unknown") {
+        if (!existingKey.startsWith("quarantine:")) {
+          const quarantineKey = getAvailableHealthJournalQuarantineKey(nextJournal, entity, mutation.row, "preserved-before-delete");
+          if (!nextJournal[quarantineKey]) nextJournal[quarantineKey] = mutation;
+        }
+        continue;
+      }
       delete nextJournal[existingKey];
     }
   }
@@ -356,11 +420,12 @@ export function clearHealthJournalPendingMutationsForEntry(
 ): HealthJournalPendingMutationJournal {
   const nextJournal = { ...journal };
   for (const [key, mutation] of Object.entries(nextJournal)) {
-    if (mutation.entity === "checkin" && (mutation.operation === "delete" ? mutation.id : mutation.row.id) === journalEntryId) {
+    if (mutation.entity === "checkin" && (mutation.operation === "delete" ? mutation.id : mutation.row.id) === journalEntryId
+      && (mutation.operation === "delete" || mutation.intent !== "unknown")) {
       delete nextJournal[key];
     } else if (mutation.operation === "delete" && mutation.journalEntryId === journalEntryId) {
       delete nextJournal[key];
-    } else if (mutation.operation === "upsert" && "journal_entry_id" in mutation.row && mutation.row.journal_entry_id === journalEntryId) {
+    } else if (mutation.operation === "upsert" && mutation.intent !== "unknown" && "journal_entry_id" in mutation.row && mutation.row.journal_entry_id === journalEntryId) {
       delete nextJournal[key];
     }
   }
@@ -385,7 +450,7 @@ export function normalizeHealthJournalPendingMutations(value: unknown): HealthJo
   if (!value || typeof value !== "object" || Array.isArray(value)) return {};
   const validEntities: HealthJournalPendingEntity[] = ["checkin", "signal", "signal_value", "signal_occurrence", "symptom", "symptom_entry"];
   const journal: HealthJournalPendingMutationJournal = {};
-  for (const candidate of Object.values(value)) {
+  for (const [storedKey, candidate] of Object.entries(value)) {
     if (!candidate || typeof candidate !== "object") continue;
     const mutation = candidate as Partial<HealthJournalPendingMutation>;
     if (!mutation.entity || !validEntities.includes(mutation.entity)) continue;
@@ -396,7 +461,7 @@ export function normalizeHealthJournalPendingMutations(value: unknown): HealthJo
         ...(typeof mutation.journalEntryId === "string" ? { journalEntryId: mutation.journalEntryId } : {}),
         operation: "delete",
       };
-      journal[getHealthJournalPendingMutationKey(normalized.entity, normalized.id)] = normalized;
+      journal[storedKey.startsWith("quarantine:") ? storedKey : getHealthJournalPendingMutationKey(normalized.entity, normalized.id)] = normalized;
       continue;
     }
     if (mutation.operation !== "upsert" || !mutation.row || typeof mutation.row !== "object") continue;
@@ -414,7 +479,9 @@ export function normalizeHealthJournalPendingMutations(value: unknown): HealthJo
             ? { submissionState: "confirmed" }
             : {}),
     } as HealthJournalPendingMutation;
-    journal[getHealthJournalPendingMutationKey(normalized.entity, row as { id: string; journal_entry_id?: string; signal_id?: string })] = normalized;
+    journal[storedKey.startsWith("quarantine:")
+      ? storedKey
+      : getHealthJournalPendingMutationKey(normalized.entity, row as { id: string; journal_entry_id?: string; signal_id?: string })] = normalized;
   }
   return journal;
 }
@@ -443,6 +510,7 @@ export function replayHealthJournalPendingMutations<T extends { id: string; jour
       continue;
     }
     const row = mutation.row as unknown as T & { user_id?: string };
+    if (userId && row.user_id !== userId) continue;
     if (deletedIds.has(row.id)) continue;
     if (row.journal_entry_id && deletedEntryIds.has(row.journal_entry_id)) continue;
     if (mutation.intent === "create" && mutation.submissionState === "never_submitted") {

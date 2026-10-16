@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.177`.
+- Current working app version: `7.16.178`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,29 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-16 7.16.178 Health Hydration Integrity and Repeating Journal Warning
+
+Health snapshot application now tracks remote-authority provenance explicitly:
+local cache hydration cannot replace a reusable remote snapshot, while remote
+mutations continue to update it. Incomplete or owner-mismatched Journal reads
+invalidate that authority and keep the local fallback available. Locally cached
+Journal rows and pending writes with a different owner remain quarantined under
+their original owner and are excluded from projection and automatic upload.
+Tombstones and explicit pending-write recovery remain intact. Journal cache
+persistence failures are surfaced, and unresolved quarantines are warned about
+again on Health hydration or cache reuse.
+
+Focused Journal, Health storage, and Master Workspace regressions passed
+(147/147). The targeted ESLint command reports the existing
+`react-hooks/set-state-in-effect` error in the unchanged sign-out reset path;
+the same target set passed with that rule disabled, with one existing effect
+dependency warning. The Next.js 16.2.4 Webpack production build passed and
+skipped type validation; the default Turbopack build could not bind its worker
+port in the sandbox. `git diff --check` passed. Safari Health navigation,
+quarantine warning lifecycle, and split-panel behavior remain for Andrew's
+manual QA. No browser automation, SQL, Supabase deployment, or remote data
+writes were performed.
 
 ## 2026-10-16 7.16.177 Production Master Workspace Enablement
 

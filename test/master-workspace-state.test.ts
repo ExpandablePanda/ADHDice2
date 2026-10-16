@@ -1109,6 +1109,8 @@ test("Health section snapshots survive both saved workspace panels", () => {
   assert.equal(saveMasterWorkspaceState(storage, "health-split-user", rightJournal), true);
   const restored = loadMasterWorkspaceState(storage, "health-split-user");
   assert.equal(restored.panels.length, 2);
+  assert.equal(restored.panels[0]?.tabs[0]?.destination.page, "Health");
+  assert.equal(restored.panels[1]?.tabs[0]?.destination.page, "Health");
   assert.equal(restored.panels[0].tabs[0].presentation.healthSection, "Food");
   assert.equal(restored.panels[1].tabs[0].presentation.healthSection, "Journal");
   assert.equal(restored.focusedPanelId, "health-right");
