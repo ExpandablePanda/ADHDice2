@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.176`.
+- Current working app version: `7.16.177`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,22 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-16 7.16.177 Production Master Workspace Enablement
+
+An explicit `NEXT_PUBLIC_ADHDICE_MASTER_TABS=true` now enables the existing
+Master Workspace in both development and production builds. Missing or false
+flags keep the legacy navigation and Tasks persistence path active, including
+for native builds that do not set the flag. The GitHub Pages build sets the
+flag explicitly. Existing authenticated readiness, user-scoped restoration,
+split-panel Task state ownership, and unsaved-draft guards remain in place.
+
+Master Workspace controller, state, shortcuts, Health, and split UI regressions
+passed (100/100). Targeted ESLint and `git diff --check` passed. Next.js 16.2.4
+static production builds passed with the flag explicitly enabled and unset; the
+focused unset-flag regression confirms legacy Tasks persistence remains the
+fallback. Production build type validation was skipped. Andrew's manual Safari
+QA remains outstanding.
 
 ## 2026-10-16 7.16.176 V4 Source and Deployment Parity
 
