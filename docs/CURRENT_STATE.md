@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-15
+Last reviewed: 2026-10-16
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.173`.
+- Current working app version: `7.16.174`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,31 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-16 7.16.174 Active Status Projection Convergence
+
+The current Task projection calculator advances from algorithm V3 to V4.
+Persisted V3 projections now fail runtime freshness checks. The additive
+`supabase/patch_task_current_projection_algorithm_v4_7_16_174.sql` patch
+allows V4 rows, keeps the revision/source-fenced writer, and makes the bounded
+owner-scoped logical-day refresh select V3 rows for rebuild.
+
+Canonical Task State commits already rebuild one affected projection through
+`task-state-command`; the client reconciliation path only rereads persisted
+projections. Server-side generation therefore needs the updated
+`task-state-command` Edge Function. Existing projections need the updated
+`task-current-projection-backfill` function and the bounded logical-day refresh
+to converge. Apply the SQL patch first, deploy both functions, then release
+7.16.174 and allow the authenticated workspace refresh to drain stale rows.
+The patch and Edge sources are source-only here: no SQL, deployment, or
+projection rebuild was run. Production convergence and Safari behavior remain
+unverified pending deployment and Andrew's manual QA.
+
+Focused engine/projection tests passed (88/88); the broader production-path
+projection and Edge suites passed (93 passed, one disposable-PostgreSQL case
+skipped because no test host was configured). Targeted ESLint and the
+production build passed; the build skipped type validation. `git diff --check`
+passed. Browser QA remains Andrew's manual responsibility.
 
 ## 2026-10-15 7.16.173 Daily Until Complete Active Status
 
