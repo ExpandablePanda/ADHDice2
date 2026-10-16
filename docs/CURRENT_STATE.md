@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.174`.
+- Current working app version: `7.16.175`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,24 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-16 7.16.175 Urgent Drag-and-Drop Scroll Correction
+
+The shared `SortableList` now renders its floating preview and insertion marker
+through a document-level portal, so fixed-position coordinates escape the
+contained PageShell and the marker does not change list layout. Auto-scroll
+uses each scroll owner's visible intersection with the viewport and vertical
+clipping ancestors, falls back through nested scroll owners and the document
+scroller, and recalculates drop targeting after every scroll. Pointer capture
+and both animation-frame loops are released on drop, cancellation, Escape, and
+unmount. Existing reorder callbacks and drop-zone context remain unchanged.
+
+Source inspection confirmed the fixed preview's containing-block mismatch and
+identified unclipped owner bounds plus the flow-changing placeholder as the
+scroll and targeting defects. Safari behavior remains pending Andrew's manual
+QA. Focused SortableList regressions passed (10/10), targeted ESLint passed,
+and the Next.js 16.2.4 production build passed while skipping type validation.
+`git diff --check` passed. No browser automation was run.
 
 ## 2026-10-16 7.16.174 Active Status Projection Convergence
 
