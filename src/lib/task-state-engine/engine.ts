@@ -98,6 +98,10 @@ function isIndependentDailyRecurrence(recurrence: TaskRecurrence) {
     && recurrence.untilComplete !== true;
 }
 
+function isDailyUntilCompleteRecurrence(recurrence: TaskRecurrence) {
+  return recurrence.kind === "rolling" && recurrence.untilComplete === true;
+}
+
 function normalizeLegacySuccessfulHistory(
   task: TaskStateEngineInput["task"],
   history: readonly TaskStateHistoryRow[],
@@ -194,6 +198,10 @@ export function findUnresolvedMissedOccurrence(
       // A later successful day stops an older Missed fact from owning the
       // current Active Status, while the original row remains in History.
       && (!independentDaily || ![...laterSuccessfulDates].some((date) => date > row.logicalDate))
+      // Daily Until Complete also releases an earlier Missed condition after
+      // a later successful day; the Missed row remains canonical History.
+      && (!isDailyUntilCompleteRecurrence(task.recurrence)
+        || ![...laterSuccessfulDates].some((date) => date > row.logicalDate))
       && (!inferred || ![...laterNonMissedDates].some((date) => date > row.logicalDate))
       // A fixed success may intentionally satisfy the next occurrence rather
       // than this missed date. It still ends the active Missed condition while
@@ -730,6 +738,13 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
   const activeOccurrenceIdentity = task.activeOccurrenceDueOn
     ? occurrenceIdentity(task.id, task.activeOccurrenceDueOn)
     : null;
+  const latestSuccessfulHistoryDate = [...recurrenceByDate.values()]
+    .filter((row) => SUCCESS.has(row.outcome))
+    .reduce<string | null>((latest, row) => latest === null || row.logicalDate > latest ? row.logicalDate : latest, null);
+  const dailyUntilCompleteMissedClearedBySuccess = isDailyUntilCompleteRecurrence(task.recurrence)
+    && !unresolvedMissed.hasUnresolved
+    && latestSuccessfulHistoryDate !== null
+    && [...recurrenceByDate.values()].some((row) => row.outcome === "missed" && row.logicalDate < latestSuccessfulHistoryDate);
   const concreteActiveMissedOccurrence = unresolvedMissed.hasUnresolved
     && !unresolvedMissed.ambiguous
     && (
@@ -744,7 +759,8 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
       || Boolean(task.dueOn && !hasResolvedActiveMissedOccurrence && task.dueOn <= today)
       || Boolean(task.activeStatusLogicalDate && task.activeStatusLogicalDate <= today)
       || Boolean(task.activeOccurrenceDueOn && task.activeOccurrenceDueOn <= today)
-    );
+    )
+    && !dailyUntilCompleteMissedClearedBySuccess;
   const activeMissedOccurrence = behaviorPolicy.unresolvedOccurrence === "missed"
     && (concreteActiveMissedOccurrence || explicitActiveMissedOccurrence);
 

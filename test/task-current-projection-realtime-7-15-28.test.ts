@@ -71,6 +71,13 @@ test("one-entity reconciliation uses the named read columns and preserves local 
   }
 });
 
+test("canonical History mutation reconciles the Task row before refreshing its shared projection", () => {
+  assert.match(
+    workspaceSource,
+    /taskEntityReconciliationRef\.current = async \(taskId: string\) => \{\s*await requestTaskEntityReconciliation\(taskId, "history_mutation"\);\s*await requestTaskProjectionReconciliation\(taskId\);\s*\};/,
+  );
+});
+
 test("fresh immediate reconciliation merges once and completes without a retry", async () => {
   let loadCount = 0;
   const attempts: ProjectionReconciliationAttempt[] = [];

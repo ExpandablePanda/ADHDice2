@@ -21,6 +21,10 @@ import type {
   CanonicalTaskStateColumns,
 } from "../src/lib/task-state-canonical/types.ts";
 import { resolveActiveTaskStatuses } from "../src/lib/task-state-canonical/active-status-read.ts";
+import {
+  resolveCurrentTaskProjectionReads,
+  type CurrentTaskProjectionReadRow,
+} from "../src/lib/task-current-projection-read.ts";
 import { evaluateTaskState } from "../src/lib/task-state-engine/engine.ts";
 
 const USER_ID = "00000000-0000-0000-0000-000000000001";
@@ -756,4 +760,116 @@ test("7.15.33 makes empty Calendar overrides neutral and preserves non-empty aut
     }],
   });
   assert.notEqual(withNotDue.nextDueDate, withoutCalendar.nextDueDate);
+});
+
+test("a persisted V3 Missed projection is rejected and the V4 Daily Until Complete rebuild converges to Not Due", () => {
+  const id = "a22b5204-45cc-4451-8ab9-d8214f10a924";
+  const currentLogicalDate = "2026-10-15";
+  const projectedAt = "2026-10-15T16:00:00.000Z";
+  const schedule = boundary(id, {
+    anchor_date: "2026-10-14",
+    repeat_days_of_week: [],
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    schedule_model: "rolling",
+  }, {
+    effective_from_logical_date: "2026-01-01",
+    historical_scope_known: true,
+    id: `boundary-${id}`,
+    idempotence_identity: `boundary-${id}`,
+  });
+  const sourceTask = task(id, {
+    active_occurrence_due_on: "2026-10-14",
+    active_status_logical_date: "2026-10-14",
+    canonical_schedule_boundary: schedule,
+    due_on: "2026-10-16",
+    repeat_frequency: "daily_until_complete",
+    repeat_interval: 1,
+    status: "missed",
+  });
+  const missedFact = fact(id, "2026-10-14", "missed", 1, {
+    id: "history-missed-2026-10-14",
+    occurrence_id: "occurrence-missed-2026-10-14",
+    scheduled_due_on: "2026-10-14",
+  });
+  const doneFact = fact(id, "2026-10-15", "done", 2, {
+    id: "history-done-2026-10-15",
+    occurrence_id: "occurrence-done-2026-10-15",
+    scheduled_due_on: "2026-10-15",
+  });
+  const source = readModel(sourceTask, [missedFact, doneFact], [
+    occurrence(id, "2026-10-14", {
+      id: "occurrence-missed-2026-10-14",
+      occurrence_key: `task:${id}:occurrence:2026-10-14`,
+      resolved_history_id: missedFact.id,
+      resolved_logical_date: "2026-10-14",
+      resolved_outcome: "missed",
+    }),
+    occurrence(id, "2026-10-15", {
+      id: "occurrence-done-2026-10-15",
+      occurrence_key: `task:${id}:occurrence:2026-10-15`,
+      resolved_history_id: doneFact.id,
+      resolved_logical_date: "2026-10-15",
+      resolved_outcome: "done",
+    }),
+  ]);
+  const historyFence = {
+    syncEpoch: "fixture-history-epoch",
+    sourceRevision: 2,
+    frontier: {
+      sequence: 2,
+      historyFactId: doneFact.id,
+      logicalDate: "2026-10-15",
+      operation: "upsert" as const,
+      rowRevision: 2,
+    },
+  };
+  const canonicalResult = evaluateTaskState(buildCanonicalTaskStateEngineInput(source, {
+    logicalDayRollover: DAY_START,
+    now: projectedAt,
+    timezone: TIMEZONE,
+  }));
+  assert.equal(canonicalResult.activeStatus, "not_due");
+  assert.equal(canonicalResult.nextDueDate, "2026-10-16");
+
+  const projectionInput = {
+    behaviorContext: {},
+    historyFence,
+    projectedAt,
+    readModel: source,
+  } satisfies BuildCurrentTaskProjectionInput;
+  const rebuiltProjection = buildCurrentTaskProjection(projectionInput);
+  assert.equal(rebuiltProjection.validity, "valid");
+  assert.equal(rebuiltProjection.display_status, "not_due");
+  assert.equal(rebuiltProjection.next_due_on, "2026-10-16");
+
+  const persistedMissedProjection: CurrentTaskProjectionReadRow = {
+    ...rebuiltProjection,
+    display_status: "missed",
+    projection_algorithm_version: "task-current-projection-algorithm-v3",
+    updated_at: "2026-10-15T15:00:00.000Z",
+  };
+  const read = (projection: CurrentTaskProjectionReadRow) => resolveCurrentTaskProjectionReads({
+    historySyncEpoch: historyFence.syncEpoch,
+    legacyCurrentRead: {
+      dueOnByTaskId: { [id]: canonicalResult.nextDueDate },
+      statusesByTaskId: { [id]: canonicalResult.activeStatus },
+    },
+    logicalDaySettingsRevision: 1,
+    projectionsByTaskId: { [id]: projection },
+    taskHistoryStreakSummaries: {},
+    tasks: [sourceTask],
+    todayKey: currentLogicalDate,
+  });
+
+  const beforeRefresh = read(persistedMissedProjection);
+  assert.deepEqual(beforeRefresh.staleProjectionTaskIds, [id]);
+  assert.deepEqual(beforeRefresh.freshProjectionTaskIds, []);
+  assert.equal(beforeRefresh.displayStatusByTaskId[id], "not_due");
+
+  const afterRefresh = read(rebuiltProjection as CurrentTaskProjectionReadRow);
+  assert.deepEqual(afterRefresh.freshProjectionTaskIds, [id]);
+  assert.deepEqual(afterRefresh.staleProjectionTaskIds, []);
+  assert.equal(afterRefresh.displayStatusByTaskId[id], "not_due");
+  assert.equal(afterRefresh.dueOnByTaskId[id], "2026-10-16");
 });

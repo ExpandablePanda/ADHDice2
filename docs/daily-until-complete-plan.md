@@ -12,6 +12,7 @@ This document records the current product rules for the `Daily Until Complete` r
 - The Repeat menu labels the option exactly `Daily Until Complete` and exposes it with the normal repeat choices.
 - The option is valid for tasks, Steps, and nested descendants.
 - Successful `Done` or `Did My Best` outcomes advance to the next eligible occurrence through the existing recurrence engine.
+- A later successful outcome clears earlier Daily Until Complete Missed conditions from current Active Status; earlier Missed History remains preserved. The task is Not Due before the next due date and Pending when that due logical day begins.
 - The option continues until the user marks the task `Complete`; ordinary success does not permanently finish it.
 - Current repeat summaries and client next-due helpers support `repeat_interval`, including `Every X days until complete` when the interval is greater than one.
 - Client support for the documented repeat behavior does not prove deployed rollover RPC parity.

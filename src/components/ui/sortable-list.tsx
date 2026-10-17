@@ -2,9 +2,14 @@
 
 import { GripVertical } from "lucide-react";
 import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
-  getSortableListDragAutoScrollDelta,
-  reorderListItems,
+  getSortableListDragAutoScrollTarget,
+  getSortableListDragPreviewTop,
+  getSortableListDropIndicatorTop,
+  getSortableListReorderCommit,
+  getSortableListVisibleScrollBounds,
+  type SortableListReorderContext,
 } from "@/lib/list-reorder";
 
 type DragState = {
@@ -17,12 +22,15 @@ type DragState = {
   sourceIndex: number;
   targetIndex: number;
   dropZoneId: string | null;
+  dropIndicator: { left: number; top: number; width: number } | null;
 };
 
-type SortableReorderContext = {
-  dropZoneId: string | null;
-  sourceIndex: number;
-  targetIndex: number;
+type AutoScrollCandidate = {
+  bounds: { top: number; bottom: number };
+  clientHeight: number;
+  owner: HTMLElement;
+  scrollHeight: number;
+  scrollTop: number;
 };
 
 function getDropIndex(midpoints: readonly number[], pointerY: number, sourceIndex: number) {
@@ -38,16 +46,73 @@ function getDropZoneIndex(rawIndex: number, itemCount: number) {
 function isScrollableElement(element: HTMLElement) {
   if (typeof window === "undefined") return false;
   const computedStyle = window.getComputedStyle(element);
-  return /(auto|scroll|overlay)/.test(computedStyle.overflowY) && element.scrollHeight > element.clientHeight;
+  return /^(auto|scroll|overlay)$/.test(computedStyle.overflowY) && element.scrollHeight > element.clientHeight;
 }
 
-function findNearestScrollableContainer(root: HTMLElement) {
+function getScrollableContainerCandidates(root: HTMLElement) {
+  const candidates: HTMLElement[] = [];
   let current: HTMLElement | null = root;
   while (current) {
-    if (isScrollableElement(current)) return current;
+    if (isScrollableElement(current)) candidates.push(current);
     current = current.parentElement;
   }
-  return null;
+
+  const documentScroller = document.scrollingElement;
+  if (
+    documentScroller instanceof HTMLElement
+    && !candidates.includes(documentScroller)
+    && documentScroller.scrollHeight > documentScroller.clientHeight
+  ) {
+    candidates.push(documentScroller);
+  }
+  return candidates;
+}
+
+function getVisibleScrollBounds(owner: HTMLElement) {
+  const isDocumentScroller = owner === document.scrollingElement;
+  const ownerRect = owner.getBoundingClientRect();
+  const scrollPortTop = isDocumentScroller ? 0 : ownerRect.top + owner.clientTop;
+  const scrollPortBottom = isDocumentScroller ? window.innerHeight : scrollPortTop + owner.clientHeight;
+  const clipBounds: { top: number; bottom: number }[] = [];
+
+  if (!isDocumentScroller) {
+    let ancestor = owner.parentElement;
+    while (ancestor) {
+      const style = window.getComputedStyle(ancestor);
+      const clipsOverflow = /^(auto|scroll|hidden|clip|overlay)$/.test(style.overflowY);
+      const containValues = style.contain.split(/\s+/);
+      const clipsPaint = containValues.includes("paint") || containValues.includes("content") || containValues.includes("strict");
+      if (clipsOverflow || clipsPaint) {
+        const rect = ancestor.getBoundingClientRect();
+        const top = rect.top + ancestor.clientTop;
+        clipBounds.push({ bottom: top + ancestor.clientHeight, top });
+      }
+      ancestor = ancestor.parentElement;
+    }
+  }
+
+  return getSortableListVisibleScrollBounds({
+    clipBounds,
+    scrollPortBottom,
+    scrollPortTop,
+    viewportBottom: window.innerHeight,
+    viewportTop: 0,
+  });
+}
+
+function getAutoScrollCandidates(root: HTMLElement): AutoScrollCandidate[] {
+  return getScrollableContainerCandidates(root)
+    .map((owner) => {
+      const bounds = getVisibleScrollBounds(owner);
+      return bounds ? {
+        bounds,
+        clientHeight: owner.clientHeight,
+        owner,
+        scrollHeight: owner.scrollHeight,
+        scrollTop: owner.scrollTop,
+      } : null;
+    })
+    .filter((candidate): candidate is AutoScrollCandidate => candidate !== null);
 }
 
 export function SortableList<T>({
@@ -65,7 +130,7 @@ export function SortableList<T>({
   getId: (item: T) => string;
   getLabel: (item: T) => string;
   items: readonly T[];
-  onReorder: (items: T[], context: SortableReorderContext) => void;
+  onReorder: (items: T[], context: SortableListReorderContext) => void;
   renderAfterItems?: ReactNode;
   renderBeforeItem?: (item: T, index: number) => ReactNode;
 }) {
@@ -76,9 +141,9 @@ export function SortableList<T>({
   const holdRef = useRef<number | null>(null);
   const frameRef = useRef<number | null>(null);
   const autoScrollFrameRef = useRef<number | null>(null);
+  const capturedPointerRef = useRef<{ element: HTMLButtonElement; pointerId: number } | null>(null);
   const pendingYRef = useRef<number | null>(null);
   const pointerYRef = useRef<number | null>(null);
-  const scrollOwnerRef = useRef<HTMLElement | null>(null);
   const suppressClickRef = useRef(false);
   const updateDrag = useCallback((next: DragState | null) => {
     dragRef.current = next;
@@ -86,11 +151,13 @@ export function SortableList<T>({
   }, []);
 
   const getDropState = useCallback((current: DragState, pointerY: number) => {
-    const rows = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-sortable-row]") ?? []);
-    const midpoints = rows.map((row) => {
+    const root = rootRef.current;
+    const rows = Array.from(root?.querySelectorAll<HTMLElement>("[data-sortable-row]") ?? []);
+    const rowBounds = rows.map((row) => {
       const rect = row.getBoundingClientRect();
-      return rect.top + rect.height / 2;
+      return { bottom: rect.bottom, top: rect.top };
     });
+    const midpoints = rowBounds.map(({ bottom, top }) => top + (bottom - top) / 2);
     const dropZone = Array.from(rootRef.current?.querySelectorAll<HTMLElement>("[data-sortable-drop-index]") ?? [])
       .map((element) => {
         const rawIndex = Number.parseInt(element.dataset.sortableDropIndex ?? "", 10);
@@ -100,12 +167,22 @@ export function SortableList<T>({
           : null;
       })
       .find((candidate) => candidate && pointerY >= candidate.top && pointerY <= candidate.bottom);
+    const targetIndex = dropZone
+      ? getDropZoneIndex(dropZone.rawIndex, snapshotRef.current.length)
+      : getDropIndex(midpoints, pointerY, current.sourceIndex);
+    const rootRect = root?.getBoundingClientRect();
+    const indicatorTop = getSortableListDropIndicatorTop({
+      rows: rowBounds,
+      sourceIndex: current.sourceIndex,
+      targetIndex,
+    });
     return {
       dropZoneId: dropZone?.id ?? null,
+      dropIndicator: indicatorTop === null || !rootRect
+        ? null
+        : { left: rootRect.left, top: indicatorTop, width: rootRect.width },
       pointerY,
-      targetIndex: dropZone
-        ? getDropZoneIndex(dropZone.rawIndex, snapshotRef.current.length)
-        : getDropIndex(midpoints, pointerY, current.sourceIndex),
+      targetIndex,
     };
   }, []);
 
@@ -119,7 +196,17 @@ export function SortableList<T>({
   const cancelAutoScroll = useCallback(() => {
     if (autoScrollFrameRef.current !== null) window.cancelAnimationFrame(autoScrollFrameRef.current);
     autoScrollFrameRef.current = null;
-    scrollOwnerRef.current = null;
+  }, []);
+
+  const releaseCapturedPointer = useCallback(() => {
+    const captured = capturedPointerRef.current;
+    capturedPointerRef.current = null;
+    if (!captured?.element.isConnected || !captured.element.hasPointerCapture(captured.pointerId)) return;
+    try {
+      captured.element.releasePointerCapture(captured.pointerId);
+    } catch {
+      // The browser may already have released capture while dispatching cancellation.
+    }
   }, []);
 
   const cancelDrag = useCallback(() => {
@@ -131,17 +218,22 @@ export function SortableList<T>({
     pendingYRef.current = null;
     pointerYRef.current = null;
     updateDrag(null);
-  }, [cancelAutoScroll, updateDrag]);
+    releaseCapturedPointer();
+  }, [cancelAutoScroll, releaseCapturedPointer, updateDrag]);
 
   const finish = useCallback((pointerId: number, cancelled = false) => {
     const current = dragRef.current;
     if (!current || current.pointerId !== pointerId) return;
-    if (current.active && !cancelled && (current.targetIndex !== current.sourceIndex || current.dropZoneId !== null)) {
-      onReorder(reorderListItems(snapshotRef.current, current.sourceIndex, current.targetIndex), {
-        dropZoneId: current.dropZoneId,
-        sourceIndex: current.sourceIndex,
-        targetIndex: current.targetIndex,
-      });
+    const commit = getSortableListReorderCommit({
+      active: current.active,
+      cancelled,
+      dropZoneId: current.dropZoneId,
+      items: snapshotRef.current,
+      sourceIndex: current.sourceIndex,
+      targetIndex: current.targetIndex,
+    });
+    if (commit) {
+      onReorder(commit.items, commit.context);
       suppressClickRef.current = true;
       window.setTimeout(() => {
         suppressClickRef.current = false;
@@ -162,32 +254,31 @@ export function SortableList<T>({
   const runAutoScroll = () => {
     autoScrollFrameRef.current = null;
     const current = dragRef.current;
-    const owner = scrollOwnerRef.current;
+    const root = rootRef.current;
     const pointerY = pointerYRef.current;
-    if (!current?.active || !owner?.isConnected || pointerY === null) return;
-    const rect = owner.getBoundingClientRect();
-    const delta = getSortableListDragAutoScrollDelta({
-      clientHeight: owner.clientHeight,
-      pointerY,
-      scrollHeight: owner.scrollHeight,
-      scrollTop: owner.scrollTop,
-      viewportBottom: rect.bottom,
-      viewportTop: rect.top,
-    });
-    if (!delta) return;
-    const previousScrollTop = owner.scrollTop;
-    const maxScrollTop = Math.max(0, owner.scrollHeight - owner.clientHeight);
-    owner.scrollTop = Math.max(0, Math.min(maxScrollTop, previousScrollTop + delta));
-    if (owner.scrollTop === previousScrollTop) return;
+    if (!current?.active || !root?.isConnected || pointerY === null) return;
+
+    const candidates = getAutoScrollCandidates(root);
+    let remainingCandidates = candidates;
+    let didScroll = false;
+    while (remainingCandidates.length) {
+      const target = getSortableListDragAutoScrollTarget(remainingCandidates, pointerY);
+      if (!target) break;
+      const candidate = remainingCandidates[target.index]!;
+      const owner = candidate.owner;
+      const previousScrollTop = owner.scrollTop;
+      const maxScrollTop = Math.max(0, owner.scrollHeight - owner.clientHeight);
+      owner.scrollTop = Math.max(0, Math.min(maxScrollTop, previousScrollTop + target.delta));
+      if (owner.scrollTop !== previousScrollTop) {
+        didScroll = true;
+        break;
+      }
+      remainingCandidates = remainingCandidates.slice(target.index + 1);
+    }
+
+    if (!didScroll) return;
     processPointerMove(pointerY);
-    if (dragRef.current?.active && getSortableListDragAutoScrollDelta({
-      clientHeight: owner.clientHeight,
-      pointerY,
-      scrollHeight: owner.scrollHeight,
-      scrollTop: owner.scrollTop,
-      viewportBottom: rect.bottom,
-      viewportTop: rect.top,
-    })) {
+    if (dragRef.current?.active && getSortableListDragAutoScrollTarget(getAutoScrollCandidates(root), pointerY)) {
       autoScrollFrameRef.current = window.requestAnimationFrame(runAutoScroll);
     }
   };
@@ -197,18 +288,7 @@ export function SortableList<T>({
     const root = rootRef.current;
     const pointerY = pointerYRef.current;
     if (!current?.active || !root || pointerY === null) return;
-    const owner = scrollOwnerRef.current ?? findNearestScrollableContainer(root);
-    scrollOwnerRef.current = owner;
-    if (!owner) return;
-    const rect = owner.getBoundingClientRect();
-    if (!getSortableListDragAutoScrollDelta({
-      clientHeight: owner.clientHeight,
-      pointerY,
-      scrollHeight: owner.scrollHeight,
-      scrollTop: owner.scrollTop,
-      viewportBottom: rect.bottom,
-      viewportTop: rect.top,
-    })) {
+    if (!getSortableListDragAutoScrollTarget(getAutoScrollCandidates(root), pointerY)) {
       cancelAutoScroll();
       return;
     }
@@ -225,33 +305,6 @@ export function SortableList<T>({
       processPointerMove(y);
     });
   }, [processPointerMove]);
-
-  const renderDropShadow = () => {
-    if (!drag?.active || (drag.targetIndex === drag.sourceIndex && drag.dropZoneId === null)) return null;
-    return (
-      <div
-        aria-hidden="true"
-        className="pointer-events-none my-2 flex min-h-14 items-center rounded-[1.1rem] border-2 border-dashed border-[#bbaeff] bg-[#f8f5ff] px-4 text-sm font-medium text-[#6f57f6] opacity-80 dark:border-[#8b76dd] dark:bg-[#241d3d] dark:text-[#cabfff]"
-        data-sortable-placeholder
-      >
-        Drop “{drag.label}” here
-      </div>
-    );
-  };
-
-  const shouldRenderDropShadowBefore = (index: number) => {
-    if (!drag?.active || (drag.targetIndex === drag.sourceIndex && drag.dropZoneId === null) || index === drag.sourceIndex) return false;
-    const remainingBeforeIndex = items.slice(0, index).reduce((count, _, itemIndex) => count + (itemIndex === drag.sourceIndex ? 0 : 1), 0);
-    return remainingBeforeIndex === drag.targetIndex;
-  };
-
-  const shouldRenderDropShadowAfter = () => (
-    Boolean(
-      drag?.active
-      && (drag.targetIndex !== drag.sourceIndex || drag.dropZoneId !== null)
-      && drag.targetIndex >= items.length - 1,
-    )
-  );
 
   return (
     <div
@@ -270,7 +323,6 @@ export function SortableList<T>({
         return (
           <Fragment key={id}>
             {renderBeforeItem?.(item, index)}
-            {shouldRenderDropShadowBefore(index) ? renderDropShadow() : null}
             <div
               className={drag?.active && drag.id === id ? "rounded-[1.1rem] opacity-35 ring-2 ring-dashed ring-[#bbaeff]" : ""}
               data-sortable-row={id}
@@ -296,15 +348,32 @@ export function SortableList<T>({
                       sourceIndex: index,
                       targetIndex: index,
                       dropZoneId: null,
+                      dropIndicator: null,
                     };
                     pointerYRef.current = event.clientY;
                     updateDrag(next);
                     const handle = event.currentTarget;
                     if (event.pointerType === "mouse") {
-                      handle.setPointerCapture(event.pointerId);
+                      event.preventDefault();
+                      try {
+                        handle.setPointerCapture(event.pointerId);
+                        if (handle.hasPointerCapture(event.pointerId)) {
+                          capturedPointerRef.current = { element: handle, pointerId: event.pointerId };
+                        }
+                      } catch {
+                        // Keep the drag usable if a browser declines pointer capture.
+                      }
                     } else {
                       holdRef.current = window.setTimeout(() => {
-                        if (handle.isConnected) handle.setPointerCapture(event.pointerId);
+                        holdRef.current = null;
+                        if (!handle.isConnected) return;
+                        try {
+                          handle.setPointerCapture(event.pointerId);
+                        } catch {
+                          return;
+                        }
+                        if (!handle.hasPointerCapture(event.pointerId)) return;
+                        capturedPointerRef.current = { element: handle, pointerId: event.pointerId };
                         const current = dragRef.current;
                         if (current?.pointerId === event.pointerId) {
                           updateDrag({ ...current, active: true });
@@ -338,15 +407,33 @@ export function SortableList<T>({
           </Fragment>
         );
       })}
-      {shouldRenderDropShadowAfter() ? renderDropShadow() : null}
+      {drag?.active
+      && (drag.targetIndex !== drag.sourceIndex || drag.dropZoneId !== null)
+      && drag.dropIndicator
+      && typeof document !== "undefined"
+        ? createPortal(
+          <div
+            aria-hidden="true"
+            className="pointer-events-none fixed z-40 border-t-2 border-dashed border-[#9d88fa] dark:border-[#b4a2ff]"
+            data-sortable-placeholder
+            style={drag.dropIndicator}
+          />,
+          document.body,
+        )
+        : null}
       {renderAfterItems}
       {drag?.active ? (
-        <div
-          className="pointer-events-none fixed left-1/2 z-50 w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 rounded-[1rem] border border-[#cfc3ed] bg-white px-4 py-2 text-sm font-medium text-[#5f587d] shadow-xl dark:bg-[#201a35]"
-          style={{ top: drag.pointerY - drag.pointerOffsetY }}
-        >
-          {drag.label}
-        </div>
+        typeof document === "undefined"
+          ? null
+          : createPortal(
+            <div
+              className="pointer-events-none fixed left-1/2 z-50 w-[min(22rem,calc(100vw-2rem))] -translate-x-1/2 rounded-[1rem] border border-[#cfc3ed] bg-white px-4 py-2 text-sm font-medium text-[#5f587d] shadow-xl dark:bg-[#201a35]"
+              style={{ top: getSortableListDragPreviewTop(drag.pointerY, drag.pointerOffsetY) }}
+            >
+              {drag.label}
+            </div>,
+            document.body,
+          )
       ) : null}
     </div>
   );

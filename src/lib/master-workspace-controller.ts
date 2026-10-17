@@ -200,7 +200,7 @@ export function isMasterWorkspaceFeatureEnabled(
   nodeEnvironment: string | undefined,
   featureFlag: string | undefined,
 ): boolean {
-  return nodeEnvironment === "development" && featureFlag === "true";
+  return (nodeEnvironment === "development" || nodeEnvironment === "production") && featureFlag === "true";
 }
 
 export function restoreMasterWorkspaceForUser(

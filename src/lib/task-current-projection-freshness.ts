@@ -15,8 +15,8 @@ export type CurrentTaskProjectionFreshnessContext = {
 };
 
 /**
- * Pure future-consumer gate for a materialized current Task projection.
- * Runtime consumers intentionally do not call this until the cutover ticket.
+ * Runtime consumers accept a projection only when its algorithm version and
+ * canonical source fences match the current Task read context.
  */
 export function isCurrentTaskProjectionFresh(
   projection: Pick<

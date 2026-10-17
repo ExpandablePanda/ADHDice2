@@ -44,7 +44,7 @@ import { normalizeTaskType } from "./task-type-domain.ts";
 export const LEGACY_TASK_PROJECTION_SCHEMA_VERSION = "task-current-projection-schema-v1" as const;
 export const LEGACY_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v1" as const;
 export const CURRENT_TASK_PROJECTION_SCHEMA_VERSION = "task-current-projection-schema-v2" as const;
-export const CURRENT_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v3" as const;
+export const CURRENT_TASK_PROJECTION_ALGORITHM_VERSION = "task-current-projection-algorithm-v4" as const;
 
 type CanonicalTask = Task & Partial<CanonicalTaskStateColumns>;
 
