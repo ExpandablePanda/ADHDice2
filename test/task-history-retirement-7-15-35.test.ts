@@ -107,8 +107,10 @@ test("switching workspace owners resets full-History readiness before current pr
   assert.match(authenticatedStart, /setIsCurrentTaskProjectionReadReady\(false\)/);
 });
 
-test("developer projection controls use the current-projection name and keep V3 in explanatory copy", () => {
-  assert.match(settingsSource, /Temporary Current Task Projection operator; the current algorithm is V3/);
+test("developer projection controls derive their readable algorithm label from the current version", () => {
+  assert.match(settingsSource, /CURRENT_TASK_PROJECTION_ALGORITHM_VERSION/);
+  assert.match(settingsSource, /CURRENT_PROJECTION_ALGORITHM_DISPLAY = CURRENT_TASK_PROJECTION_ALGORITHM_VERSION/);
+  assert.match(settingsSource, /Temporary Current Task Projection operator; the current algorithm is \{CURRENT_PROJECTION_ALGORITHM_DISPLAY\}/);
   assert.match(settingsSource, /Rebuild Current Projections · 10/);
   assert.match(settingsSource, /Rebuild Current Projections · 50/);
   assert.doesNotMatch(settingsSource, /Rebuild V2 Projections/);

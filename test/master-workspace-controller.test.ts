@@ -645,17 +645,19 @@ test("refresh preserves nested Tasks snapshots for both master tabs", () => {
   assert.equal(afterRefresh.panels[0].tabs[1].presentation.tasksWorkspace?.tabs[0].taskUiState.selectedBucket, "attention");
 });
 
-test("legacy Tasks storage is untouched in Master Tabs mode and writes remain user fenced otherwise", () => {
+test("legacy Tasks storage remains the production fallback when the feature flag is absent", () => {
   const storage = memoryStorage();
   const legacyKey = "adhdice-task-ui:user-a";
   const legacyValue = JSON.stringify({ activeTabId: "legacy", tabs: [{ id: "legacy" }] });
   storage.values.set(legacyKey, legacyValue);
+  const productionWorkspaceEnabled = isMasterWorkspaceFeatureEnabled("production", "true");
+  const productionWorkspaceDisabled = isMasterWorkspaceFeatureEnabled("production", undefined);
 
-  if (canPersistLegacyTaskWorkspace(true, "user-a", "user-a")) storage.setItem(legacyKey, "master snapshot");
+  if (canPersistLegacyTaskWorkspace(productionWorkspaceEnabled, "user-a", "user-a")) storage.setItem(legacyKey, "master snapshot");
   assert.equal(storage.values.get(legacyKey), legacyValue);
-  assert.equal(canPersistLegacyTaskWorkspace(false, "user-a", "user-a"), true);
-  assert.equal(canPersistLegacyTaskWorkspace(false, "user-b", "user-a"), false);
-  assert.equal(canPersistLegacyTaskWorkspace(true, "user-a", null), false);
+  assert.equal(canPersistLegacyTaskWorkspace(productionWorkspaceDisabled, "user-a", "user-a"), true);
+  assert.equal(canPersistLegacyTaskWorkspace(productionWorkspaceDisabled, "user-b", "user-a"), false);
+  assert.equal(canPersistLegacyTaskWorkspace(productionWorkspaceEnabled, "user-a", null), false);
 });
 
 test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
@@ -868,9 +870,12 @@ test("account switching restores isolated state and blocks writes for the previo
   assert.equal(restoreMasterWorkspaceForUser(storage, "user-a", "Home", DEFAULT_TASK_WORKSPACE_TABS_STATE).state.panels[0].tabs[0].destination.page, "Notes");
 });
 
-test("the shell gate is explicit and remains disabled outside development", () => {
-  assert.equal(isMasterWorkspaceFeatureEnabled("production", "true"), false);
+test("the shell gate enables only explicit development and production builds", () => {
+  assert.equal(isMasterWorkspaceFeatureEnabled("production", "true"), true);
+  assert.equal(isMasterWorkspaceFeatureEnabled("production", undefined), false);
+  assert.equal(isMasterWorkspaceFeatureEnabled("production", "false"), false);
+  assert.equal(isMasterWorkspaceFeatureEnabled("development", "true"), true);
   assert.equal(isMasterWorkspaceFeatureEnabled("development", undefined), false);
   assert.equal(isMasterWorkspaceFeatureEnabled("development", "false"), false);
-  assert.equal(isMasterWorkspaceFeatureEnabled("development", "true"), true);
+  assert.equal(isMasterWorkspaceFeatureEnabled("test", "true"), false);
 });

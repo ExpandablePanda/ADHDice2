@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-15
+Last reviewed: 2026-10-16
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.171`.
+- Current working app version: `7.16.178`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,119 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-16 7.16.178 Health Hydration Integrity and Repeating Journal Warning
+
+Health snapshot application now tracks remote-authority provenance explicitly:
+local cache hydration cannot replace a reusable remote snapshot, while remote
+mutations continue to update it. Incomplete or owner-mismatched Journal reads
+invalidate that authority and keep the local fallback available. Locally cached
+Journal rows and pending writes with a different owner remain quarantined under
+their original owner and are excluded from projection and automatic upload.
+Tombstones and explicit pending-write recovery remain intact. Journal cache
+persistence failures are surfaced, and unresolved quarantines are warned about
+again on Health hydration or cache reuse.
+
+Focused Journal, Health storage, and Master Workspace regressions passed
+(147/147). The targeted ESLint command reports the existing
+`react-hooks/set-state-in-effect` error in the unchanged sign-out reset path;
+the same target set passed with that rule disabled, with one existing effect
+dependency warning. The Next.js 16.2.4 Webpack production build passed and
+skipped type validation; the default Turbopack build could not bind its worker
+port in the sandbox. `git diff --check` passed. Safari Health navigation,
+quarantine warning lifecycle, and split-panel behavior remain for Andrew's
+manual QA. No browser automation, SQL, Supabase deployment, or remote data
+writes were performed.
+
+## 2026-10-16 7.16.177 Production Master Workspace Enablement
+
+An explicit `NEXT_PUBLIC_ADHDICE_MASTER_TABS=true` now enables the existing
+Master Workspace in both development and production builds. Missing or false
+flags keep the legacy navigation and Tasks persistence path active, including
+for native builds that do not set the flag. The GitHub Pages build sets the
+flag explicitly. Existing authenticated readiness, user-scoped restoration,
+split-panel Task state ownership, and unsaved-draft guards remain in place.
+
+Master Workspace controller, state, shortcuts, Health, and split UI regressions
+passed (100/100). Targeted ESLint and `git diff --check` passed. Next.js 16.2.4
+static production builds passed with the flag explicitly enabled and unset; the
+focused unset-flag regression confirms legacy Tasks persistence remains the
+fallback. Production build type validation was skipped. Andrew's manual Safari
+QA remains outstanding.
+
+## 2026-10-16 7.16.176 V4 Source and Deployment Parity
+
+The checked-in V4 migration now matches the verified production projection
+writer: all seven intentional stale-fence errors use `P0001`. Production
+verification confirmed the V4 migration is installed and the
+`task-state-command` and `task-current-projection-backfill` Edge Functions are
+at versions 59 and 13, respectively.
+
+Production has 401 eligible canonical Tasks, Steps, and Substeps with valid V4
+projections. The remaining 183 V3 `repair_required` projections belong only to
+permanently deleted Tasks and are correctly excluded by the rebuild candidate
+query. No projection repair or rebuild is needed for those excluded tombstones.
+
+The Lawall Active Status V4 correction passed Safari QA, and the 7.16.175
+drag-and-drop scroll correction passed Safari QA. These production and browser
+results were verified outside this source-only implementation; no SQL,
+Supabase mutation, Edge deployment, or projection rebuild was performed for
+7.16.176.
+
+## 2026-10-16 7.16.175 Urgent Drag-and-Drop Scroll Correction
+
+The shared `SortableList` now renders its floating preview and insertion marker
+through a document-level portal, so fixed-position coordinates escape the
+contained PageShell and the marker does not change list layout. Auto-scroll
+uses each scroll owner's visible intersection with the viewport and vertical
+clipping ancestors, falls back through nested scroll owners and the document
+scroller, and recalculates drop targeting after every scroll. Pointer capture
+and both animation-frame loops are released on drop, cancellation, Escape, and
+unmount. Existing reorder callbacks and drop-zone context remain unchanged.
+
+Source inspection confirmed the fixed preview's containing-block mismatch and
+identified unclipped owner bounds plus the flow-changing placeholder as the
+scroll and targeting defects. Safari QA later passed, as recorded under
+7.16.176. Focused SortableList regressions passed (10/10), targeted ESLint passed,
+and the Next.js 16.2.4 production build passed while skipping type validation.
+`git diff --check` passed. No browser automation was run.
+
+## 2026-10-16 7.16.174 Active Status Projection Convergence
+
+The current Task projection calculator advances from algorithm V3 to V4.
+Persisted V3 projections now fail runtime freshness checks. The additive
+`supabase/patch_task_current_projection_algorithm_v4_7_16_174.sql` patch
+allows V4 rows, keeps the revision/source-fenced writer, and makes the bounded
+owner-scoped logical-day refresh select V3 rows for rebuild.
+
+Canonical Task State commits already rebuild one affected projection through
+`task-state-command`; the client reconciliation path only rereads persisted
+projections. Server-side generation therefore needs the updated
+`task-state-command` Edge Function. Existing projections need the updated
+`task-current-projection-backfill` function and the bounded logical-day refresh
+to converge. Deployment followed the SQL patch, Edge Function update, and
+7.16.174 client release order. Production installation, Edge Function
+versions, convergence counts, and Safari QA were verified later and are
+recorded under 7.16.176.
+
+Focused engine/projection tests passed (88/88); the broader production-path
+projection and Edge suites passed (93 passed, one disposable-PostgreSQL case
+skipped because no test host was configured). Targeted ESLint and the
+production build passed; the build skipped type validation. `git diff --check`
+passed. Browser QA remains Andrew's manual responsibility.
+
+## 2026-10-15 7.16.173 Daily Until Complete Active Status
+
+Daily Until Complete now clears an earlier Missed condition from current Active
+Status after a later Done or Did My Best outcome. The earlier Missed row remains
+in canonical History. The shared current-status projection is requested after a
+successful History mutation reconciles its Task row, keeping Home, Table, List,
+and Edit Task on the same projection without a page reload.
+
+Focused engine and projection reconciliation regressions cover the October 14
+Missed, October 15 success, and October 16 next-due sequence. Build, lint, and
+focused test results are recorded with the release commit; browser QA remains
+Andrew's manual responsibility.
 
 ## 2026-10-15 7.16.171 Side, Main, and iOS Integration
 

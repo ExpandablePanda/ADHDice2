@@ -1466,6 +1466,7 @@ export function useWorkspaceData({
 
     taskEntityReconciliationRef.current = async (taskId: string) => {
       await requestTaskEntityReconciliation(taskId, "history_mutation");
+      await requestTaskProjectionReconciliation(taskId);
     };
 
     function shouldReconnectTaskChannel() {
