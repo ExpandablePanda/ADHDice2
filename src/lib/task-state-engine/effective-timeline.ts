@@ -194,6 +194,7 @@ function currentCanonicalDelayEffectiveDueOn(
 }
 
 function checkpointForReplay(
+  task: TaskStateSnapshot,
   rows: TaskStateHistoryRow[],
   replay: TaskTimelineReplayRequest | undefined,
 ): TaskTimelineCheckpoint | null {
@@ -201,6 +202,12 @@ function checkpointForReplay(
   const includeChangedDate = replay.kind !== "outcome";
   const checkpoint = rows
     .filter((row) => SUCCESSFUL_OUTCOMES.has(row.outcome))
+    .filter((row) => !(
+      task.historicalScheduleAnchorProven
+      && task.historicalScheduleBoundaryEffectiveFromLogicalDate
+      && row.logicalDate < task.historicalScheduleBoundaryEffectiveFromLogicalDate
+      && !row.occurrenceIdentity
+    ))
     .filter((row) => includeChangedDate
       ? row.logicalDate <= replay.changedLogicalDate
       : row.logicalDate < replay.changedLogicalDate)
@@ -217,6 +224,16 @@ function checkpointForReplay(
   }
   if (replay.manualDueOn !== undefined) {
     return { kind: "schedule_boundary", logicalDate: replay.changedLogicalDate, occurrenceDueOn: replay.manualDueOn };
+  }
+  if ((replay.kind === "recurrence" || replay.kind === "due_date")
+    && task.historicalScheduleAnchorProven
+    && task.historicalScheduleAnchor
+    && task.historicalScheduleBoundaryEffectiveFromLogicalDate) {
+    return {
+      kind: "schedule_boundary",
+      logicalDate: task.historicalScheduleBoundaryEffectiveFromLogicalDate,
+      occurrenceDueOn: task.historicalScheduleAnchor,
+    };
   }
   return { kind: "task_snapshot", logicalDate: null, occurrenceDueOn: null };
 }
@@ -428,7 +445,7 @@ export function buildTaskEffectiveTimeline(
   const recurrenceRows = rows.filter((row) => row.recurrenceAuthoritative !== false);
   const recurrenceByDate = authoritativeRowsByDate(recurrenceRows);
   const recurrenceExplicitRows = [...recurrenceByDate.values()];
-  const replayCheckpoint = checkpointForReplay(recurrenceExplicitRows, input.replay);
+  const replayCheckpoint = checkpointForReplay(input.task, recurrenceExplicitRows, input.replay);
   const currentDelayEffectiveDueOn = currentCanonicalDelayEffectiveDueOn(input.task, recurrenceExplicitRows);
   const initialDueOn = initialOccurrenceDueOn(
     input.task,

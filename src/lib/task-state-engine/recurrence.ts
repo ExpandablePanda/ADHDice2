@@ -272,6 +272,7 @@ export function resolveSuccessfulOccurrenceTarget(input: {
   history?: readonly TaskStateHistoryRow[];
   allowImplicitTarget?: boolean;
   requirePriorMissed?: boolean;
+  provenScheduleBoundaryEffectiveFromLogicalDate?: string | null;
 }): SuccessfulOccurrenceTarget {
   const explicitDueOn = input.occurrenceDueOn ?? occurrenceDateFromIdentity(input.occurrenceIdentity);
   if (input.occurrenceIdentity || explicitDueOn) {
@@ -283,7 +284,16 @@ export function resolveSuccessfulOccurrenceTarget(input: {
 
   if (!input.allowImplicitTarget) return { occurrenceDueOn: null, occurrenceIdentity: null };
 
-  const history = input.history ?? [];
+  const fullHistory = input.history ?? [];
+  const boundaryDate = input.provenScheduleBoundaryEffectiveFromLogicalDate ?? null;
+  if (boundaryDate && input.logicalDate < boundaryDate) {
+    return { occurrenceDueOn: null, occurrenceIdentity: null };
+  }
+  // Historical due metadata without an occurrence identity can describe the
+  // prior schedule. It must not consume dates on a newly proven schedule.
+  const history = boundaryDate
+    ? fullHistory.filter((row) => row.logicalDate >= boundaryDate || Boolean(row.occurrenceIdentity))
+    : fullHistory;
   const priorMissed = history.some((row) => row.outcome === "missed" && row.logicalDate < input.logicalDate);
   if (input.requirePriorMissed && !priorMissed) return { occurrenceDueOn: null, occurrenceIdentity: null };
 

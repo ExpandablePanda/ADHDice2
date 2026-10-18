@@ -1006,6 +1006,61 @@ test("replay selects the last success checkpoint for a recurrence edit", () => {
   assert.deepEqual(replayed.replayCheckpoint, { kind: "success", logicalDate: "2026-08-08", occurrenceDueOn: "2026-08-08" });
 });
 
+test("a proven schedule boundary outranks pre-boundary legacy successes without identities", () => {
+  const result = buildTaskEffectiveTimeline({
+    task: task({
+      dueOn: "2026-10-18",
+      historicalScheduleAnchor: "2026-10-18",
+      historicalScheduleAnchorProven: true,
+      historicalScheduleBoundaryEffectiveFromLogicalDate: "2026-10-17",
+      recurrence: { kind: "weekly", intervalWeeks: 1, weekdays: [0], anchorDate: "2026-10-18" },
+    }),
+    history: [
+      history("2026-09-18", "done", { occurrenceDueOn: null }),
+      history("2026-10-16", "done", { occurrenceDueOn: "2026-10-18" }),
+    ],
+    logicalDate: "2026-10-17",
+    calendarStart: "2026-09-18",
+    calendarEnd: "2026-10-25",
+    replay: { changedLogicalDate: "2026-10-17", kind: "recurrence" },
+  });
+
+  assert.deepEqual(result.replayCheckpoint, {
+    kind: "schedule_boundary",
+    logicalDate: "2026-10-17",
+    occurrenceDueOn: "2026-10-18",
+  });
+  assert.equal(result.days["2026-10-18"]?.state, "scheduled");
+  assert.equal(result.nextDueOn, "2026-10-18");
+});
+
+test("explicitly identified handled occurrences still advance a proven weekly schedule", () => {
+  const result = buildTaskEffectiveTimeline({
+    task: task({
+      dueOn: "2026-10-18",
+      historicalScheduleAnchor: "2026-10-18",
+      historicalScheduleAnchorProven: true,
+      historicalScheduleBoundaryEffectiveFromLogicalDate: "2026-10-17",
+      recurrence: { kind: "weekly", intervalWeeks: 1, weekdays: [0], anchorDate: "2026-10-18" },
+    }),
+    history: [history("2026-10-18", "done", {
+      occurrenceDueOn: "2026-10-18",
+      occurrenceIdentity: `task:${TASK_ID}:occurrence:2026-10-18`,
+    })],
+    logicalDate: "2026-10-19",
+    calendarStart: "2026-10-18",
+    calendarEnd: "2026-10-25",
+    replay: { changedLogicalDate: "2026-10-19", kind: "recurrence" },
+  });
+
+  assert.deepEqual(result.replayCheckpoint, {
+    kind: "success",
+    logicalDate: "2026-10-18",
+    occurrenceDueOn: "2026-10-18",
+  });
+  assert.equal(result.nextDueOn, "2026-10-25");
+});
+
 test("manual due-date replay preserves earlier History and derives the future obligation", () => {
   const historyRows = [history("2026-08-08", "done", { occurrenceDueOn: "2026-08-08" })];
   const before = structuredClone(historyRows);

@@ -541,7 +541,10 @@ function engineInputForScheduleBoundary(
       ...engineInput.task,
       dueOn,
       historicalScheduleAnchor: dueOn,
-      historicalScheduleAnchorProven: dueOn !== null,
+      historicalScheduleAnchorProven: boundary.anchor_confidence === "proven",
+      historicalScheduleBoundaryEffectiveFromLogicalDate: boundary.anchor_confidence === "proven"
+        ? boundary.effective_from_logical_date
+        : null,
       recurrence: recurrenceFromBoundary(boundary),
     },
   };
