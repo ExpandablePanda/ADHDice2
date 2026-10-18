@@ -110,8 +110,15 @@ function normalizeLegacySuccessfulHistory(
   if (task.recurrence.kind === "none" || task.recurrence.kind === "rolling" && task.recurrence.intervalDays === 1) {
     return normalized;
   }
+  const provenBoundaryDate = task.historicalScheduleAnchorProven
+    ? task.historicalScheduleBoundaryEffectiveFromLogicalDate
+    : null;
   for (const row of [...normalized].sort((left, right) => left.logicalDate.localeCompare(right.logicalDate))) {
     if (!SUCCESS.has(row.outcome) || row.occurrenceIdentity || row.occurrenceDueOn) continue;
+    // Legacy History before a proven schedule boundary belongs to its prior
+    // schedule. It remains a factual outcome, but cannot be assigned one of
+    // the newly selected schedule's future occurrences.
+    if (provenBoundaryDate && row.logicalDate < provenBoundaryDate) continue;
     const target = resolveSuccessfulOccurrenceTarget({
       taskId: task.id,
       recurrence: task.recurrence,
@@ -121,6 +128,7 @@ function normalizeLegacySuccessfulHistory(
       history: normalized,
       allowImplicitTarget: true,
       requirePriorMissed: true,
+      provenScheduleBoundaryEffectiveFromLogicalDate: provenBoundaryDate,
     });
     if (!target.occurrenceIdentity || !target.occurrenceDueOn) continue;
     const current = normalized.find((candidate) => candidate.id === row.id);
@@ -401,6 +409,9 @@ export function evaluateTaskState(input: TaskStateEngineInput) {
         occurrenceDueOn: action.occurrenceDueOn ?? existingRecurrenceActionRow?.occurrenceDueOn ?? activeActionOccurrenceDueOn,
         history: rows,
         allowImplicitTarget: !historicalOverride,
+        provenScheduleBoundaryEffectiveFromLogicalDate: task.historicalScheduleAnchorProven
+          ? task.historicalScheduleBoundaryEffectiveFromLogicalDate
+          : null,
       })
     : { occurrenceDueOn: null, occurrenceIdentity: null };
   const actionOccurrenceIdentity = successfulActionTarget.occurrenceIdentity

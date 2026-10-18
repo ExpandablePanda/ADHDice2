@@ -94,6 +94,8 @@ export type TaskStateSnapshot = {
   historicalScheduleAnchor?: string | null;
   /** True only when the canonical boundary proves the historical schedule anchor. */
   historicalScheduleAnchorProven?: boolean;
+  /** Effective date of the proven boundary that established the schedule anchor. */
+  historicalScheduleBoundaryEffectiveFromLogicalDate?: string | null;
   activeStatusLogicalDate?: string | null;
   activeOccurrenceDueOn?: string | null;
   /** Optional persisted comparison inputs. Undefined means the source model cannot expose them. */

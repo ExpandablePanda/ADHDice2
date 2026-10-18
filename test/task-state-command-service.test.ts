@@ -1998,6 +1998,187 @@ test("trusted repeat planner replays from the last success with the proposed cad
   assert.equal(plan.normalizedResult.compatibilityProjection.status, "not_due");
 });
 
+test("proven weekly schedule replay keeps the 32 historical outcomes outside its new occurrence chain", () => {
+  const priorBoundary = {
+    ...boundary("unscheduled"),
+    id: "boundary-before-prospective-weekly",
+    effective_from_logical_date: "2026-09-15",
+    boundary_sequence: 1,
+  };
+  const taskRow = task({ due_on: null, status: "pending", repeat_frequency: "none" });
+  const doneDates = new Set([
+    "2026-09-18", "2026-09-19", "2026-09-20", "2026-09-21", "2026-09-22", "2026-09-23", "2026-09-24",
+    "2026-09-25", "2026-09-26", "2026-09-27", "2026-09-28", "2026-09-29", "2026-09-30", "2026-10-01",
+    "2026-10-02", "2026-10-03", "2026-10-04", "2026-10-14", "2026-10-15", "2026-10-16",
+  ]);
+  const metadataDates = new Map([
+    // These historical cursors make the old inferred chain consume Oct 18
+    // through Nov 29, so the identity-less Oct 16 Done would bind to Dec 6.
+    ["2026-09-19", "2026-10-18"],
+    ["2026-09-20", "2026-10-25"],
+    ["2026-09-21", "2026-11-01"],
+    ["2026-09-22", "2026-11-08"],
+    ["2026-09-23", "2026-11-15"],
+    ["2026-09-24", "2026-11-22"],
+    ["2026-09-25", "2026-11-29"],
+  ]);
+  const dates = Array.from({ length: 32 }, (_, index) => (
+    new Date(Date.UTC(2026, 8, 15 + index)).toISOString().slice(0, 10)
+  ));
+  const historyFacts = dates.map((logicalDate) => {
+    const outcome = doneDates.has(logicalDate) ? "done" : "missed";
+    const fact = canonicalHistoryFact(logicalDate, outcome, priorBoundary.id);
+    return {
+      ...fact,
+      id: `history-fixture-${logicalDate}`,
+      // Sep 18 and Oct 16 are the reproduced identity-less successes. Other
+      // rows retain old scheduled_due_on metadata, including future Sundays.
+      scheduled_due_on: logicalDate === "2026-09-18" || logicalDate === "2026-10-16"
+        ? null
+        : metadataDates.get(logicalDate) ?? logicalDate,
+    };
+  }) as CanonicalTaskStateReadModel["historyFacts"];
+  const readModel = {
+    ...trustedReadModel(taskRow, priorBoundary),
+    historyFacts,
+  } as CanonicalTaskStateReadModel;
+  const historyBefore = structuredClone(readModel.historyFacts);
+  const schedule = {
+    schedule_model: "fixed" as const,
+    repeat_frequency: "weekly" as const,
+    repeat_interval: 1,
+    repeat_days_of_week: [0],
+    anchor_date: "2026-10-18",
+  };
+  const scheduleDay = {
+    ...logicalDay,
+    identity: "user-1:2026-10-17:America/New_York:06:00:3",
+    logicalDate: "2026-10-17",
+  };
+  const context = {
+    now: "2026-10-17T12:00:00.000Z",
+    timezone: scheduleDay.timezone,
+    logicalDayRollover: scheduleDay.dayStartTime,
+  };
+  const engineInput = buildCanonicalTaskStateEngineInput(readModel, context);
+  assert.equal(engineInput.history.length, 32);
+  assert.equal(engineInput.history.filter((row) => row.outcome === "done").length, 20);
+  assert.equal(engineInput.history.filter((row) => row.outcome === "missed").length, 12);
+  assert.equal(engineInput.history.find((row) => row.logicalDate === "2026-09-18")?.occurrenceIdentity, null);
+  assert.equal(engineInput.history.find((row) => row.logicalDate === "2026-10-16")?.occurrenceDueOn, null);
+
+  const proposedTask = {
+    ...engineInput.task,
+    dueOn: "2026-10-18",
+    historicalScheduleAnchor: "2026-10-18",
+    historicalScheduleAnchorProven: true,
+    historicalScheduleBoundaryEffectiveFromLogicalDate: "2026-10-17",
+    recurrence: { kind: "weekly" as const, intervalWeeks: 1, weekdays: [0], anchorDate: "2026-10-18" },
+  };
+  const replayedEngine = evaluateTaskState({
+    ...engineInput,
+    task: proposedTask,
+    action: { type: "change_schedule", changedLogicalDate: "2026-10-17", replayKind: "recurrence" },
+  });
+  assert.equal(replayedEngine.nextDueDate, "2026-10-18");
+  assert.deepEqual(replayedEngine.timeline.replayCheckpoint, {
+    kind: "schedule_boundary",
+    logicalDate: "2026-10-17",
+    occurrenceDueOn: "2026-10-18",
+  });
+
+  const repeatCommand = buildTrustedTaskStateCommand({
+    intent: {
+      type: "set_repeat",
+      task_id: taskRow.id,
+      replay_identity: "table:repeat:prospective-sunday-2026-10-18",
+      logical_date: "2026-10-17",
+      schedule,
+    },
+    userId: taskRow.user_id,
+    readModel,
+    logicalDay: scheduleDay,
+    now: context.now,
+  });
+  const repeatPlan = planTaskStateCommand({ task: taskRow, engineInput }, repeatCommand);
+
+  assert.equal(repeatPlan.normalizedResult.compatibilityProjection.dueOn, "2026-10-18");
+  assert.equal(repeatPlan.normalizedResult.historyFact, null);
+  assert.deepEqual(repeatPlan.normalizedResult.automaticHistoryFacts, []);
+  assert.deepEqual(readModel.historyFacts, historyBefore);
+
+  const repeatBoundary = repeatPlan.normalizedResult.scheduleBoundary!;
+  const repeatedTask = {
+    ...taskRow,
+    due_on: "2026-10-18",
+    status: "pending",
+    repeat_frequency: "weekly" as const,
+    repeat_interval: 1,
+    repeat_days_of_week: [0],
+    revision: 5,
+    canonical_revision: 5,
+  };
+  const repeatedReadModel = {
+    ...readModel,
+    task: repeatedTask,
+    scheduleBoundaries: [repeatBoundary],
+  };
+  const repeatedEngineInput = buildCanonicalTaskStateEngineInput(repeatedReadModel, context);
+  assert.equal(repeatedEngineInput.task.historicalScheduleBoundaryEffectiveFromLogicalDate, "2026-10-17");
+  const dueDateCommand = buildTrustedTaskStateCommand({
+    intent: {
+      type: "set_due_date",
+      task_id: taskRow.id,
+      replay_identity: "table:due-date:prospective-sunday-2026-10-18",
+      logical_date: "2026-10-17",
+      schedule,
+    },
+    userId: taskRow.user_id,
+    readModel: repeatedReadModel,
+    logicalDay: scheduleDay,
+    now: context.now,
+  });
+  const dueDatePlan = planTaskStateCommand({ task: repeatedTask, engineInput: repeatedEngineInput }, dueDateCommand);
+  assert.equal(dueDatePlan.normalizedResult.compatibilityProjection.dueOn, "2026-10-18");
+  assert.deepEqual(readModel.historyFacts, historyBefore);
+
+  const dueDateBoundary = dueDatePlan.normalizedResult.scheduleBoundary!;
+  const dueDateTask = { ...repeatedTask, revision: 6, canonical_revision: 6 };
+  const dueDateReadModel = {
+    ...repeatedReadModel,
+    task: dueDateTask,
+    scheduleBoundaries: [dueDateBoundary],
+  };
+  const completionDay = {
+    ...scheduleDay,
+    identity: "user-1:2026-10-18:America/New_York:06:00:3",
+    logicalDate: "2026-10-18",
+  };
+  const completionNow = "2026-10-18T12:00:00.000Z";
+  const completionCommand = buildTrustedTaskStateCommand({
+    intent: {
+      type: "set_outcome",
+      task_id: taskRow.id,
+      replay_identity: "table:done:2026-10-18",
+      logical_date: "2026-10-18",
+      outcome: "done",
+    },
+    userId: taskRow.user_id,
+    readModel: dueDateReadModel,
+    logicalDay: completionDay,
+    now: completionNow,
+  });
+  const completionEngineInput = buildCanonicalTaskStateEngineInput(dueDateReadModel, {
+    now: completionNow,
+    timezone: completionDay.timezone,
+    logicalDayRollover: completionDay.dayStartTime,
+  });
+  const completionPlan = planTaskStateCommand({ task: dueDateTask, engineInput: completionEngineInput }, completionCommand);
+  assert.equal(completionPlan.normalizedResult.historyFact?.logical_date, "2026-10-18");
+  assert.equal(completionPlan.normalizedResult.compatibilityProjection.dueOn, "2026-10-25");
+  assert.deepEqual(readModel.historyFacts, historyBefore);
+});
+
 test("trusted Calendar override planner evaluates the proposed override before commit", () => {
   const planningState = state({ due_on: "2026-08-10" });
   planningState.engineInput = {

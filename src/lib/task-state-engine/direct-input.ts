@@ -328,6 +328,9 @@ function buildTaskStateEngineInput(
       dueOn,
       historicalScheduleAnchor,
       historicalScheduleAnchorProven: boundary?.anchor_confidence === "proven",
+      historicalScheduleBoundaryEffectiveFromLogicalDate: boundary?.anchor_confidence === "proven"
+        ? boundary.effective_from_logical_date
+        : null,
       activeStatusLogicalDate: task.workflow_logical_date ?? task.active_status_logical_date,
       activeOccurrenceDueOn: task.workflow_state === "in_progress"
         ? task.active_occurrence_due_on

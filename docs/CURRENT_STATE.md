@@ -5,7 +5,7 @@ Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.178`.
+- Current working app version: `7.16.179`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,28 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-18 7.16.179 Proven Schedule Replay Boundary
+
+Legacy successful History before a newly selected proven schedule boundary no
+longer receives implicit occurrence identities or consumes occurrence dates
+through historical `scheduled_due_on` metadata. Schedule replay uses the
+proven boundary anchor when earlier successes lack explicit occurrence
+identities. Explicit occurrence identities remain replayable, and saved
+History remains unchanged.
+
+The canonical 32-outcome regression reproduces 20 Done and 12 Missed facts,
+including the Sep 18 and Oct 16 identity-less successes and historical
+scheduled-date metadata. `set_repeat` and the subsequent `set_due_date` both
+retain the Oct 18 Sunday anchor; a valid Oct 18 completion advances to Oct 25.
+Canonical planner tests passed (65/65), Task State Engine recurrence tests
+passed (81/81), recurrence authority tests passed (7/7), and History projection
+tests passed (5/5). The Effective Timeline suite passed 58/60; its remaining
+failures are in the unchanged weekday Missed-streak and standard manual-due
+replay assertions. Targeted ESLint reported no errors and six warnings in
+unchanged code. `git diff --check` passed. No browser, build, typecheck, SQL,
+History write, or Edge deployment was performed; the updated
+`task-state-command` Edge Function is required before production uses this fix.
 
 ## 2026-10-16 7.16.178 Health Hydration Integrity and Repeating Journal Warning
 
