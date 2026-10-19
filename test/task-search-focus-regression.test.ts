@@ -5,6 +5,7 @@ import test from "node:test";
 import vm from "node:vm";
 import ts from "typescript";
 import { createTaskSearchCommitController } from "../src/lib/task-search-controller.ts";
+import { getMasterWorkspaceTransitionBlockReason } from "../src/lib/master-workspace-controller.ts";
 import { createJiti } from "jiti";
 
 const tableModule = await createJiti(import.meta.url, {
@@ -23,6 +24,7 @@ type ElementNode = {
 };
 
 type SearchInputProps = Record<string, unknown> & {
+  onBlur?: () => void;
   onChange: (event: { target: { value: string } }) => void;
   onFocus: () => void;
   onKeyDown?: (event: { key: string; preventDefault: () => void }) => void;
@@ -30,6 +32,7 @@ type SearchInputProps = Record<string, unknown> & {
 };
 
 const source = readFileSync(new URL("../src/components/task-app/tasks-page.tsx", import.meta.url), "utf8");
+const taskAppSource = readFileSync(new URL("../src/components/task-app.tsx", import.meta.url), "utf8");
 const tableSource = readFileSync(new URL("../src/components/ui/task-management-table-v2.tsx", import.meta.url), "utf8");
 const Fragment = Symbol("Fragment");
 const jsx = (type: unknown, props: Record<string, unknown>) => ({ type, props });
@@ -49,6 +52,20 @@ function createHookRuntime() {
     return instance;
   }
 
+  function runEffect(effect: () => void | (() => void), dependencies?: unknown[]) {
+    assert.ok(activeInstance);
+    const index = hookIndex++;
+    const previous = activeInstance.deps[index];
+    const changed = !previous
+      || !dependencies
+      || dependencies.length !== previous.length
+      || dependencies.some((dependency, dependencyIndex) => !Object.is(dependency, previous[dependencyIndex]));
+    if (!changed) return;
+    activeInstance.cleanups[index]?.();
+    activeInstance.deps[index] = dependencies ?? [];
+    activeInstance.cleanups[index] = effect() ?? undefined;
+  }
+
   return {
     bindRerender(callback: () => void) {
       rerender = callback;
@@ -56,19 +73,8 @@ function createHookRuntime() {
     react: {
       memo: (component: unknown) => component,
       startTransition: (callback: () => void) => callback(),
-      useEffect(effect: () => void | (() => void), dependencies?: unknown[]) {
-        assert.ok(activeInstance);
-        const index = hookIndex++;
-        const previous = activeInstance.deps[index];
-        const changed = !previous
-          || !dependencies
-          || dependencies.length !== previous.length
-          || dependencies.some((dependency, dependencyIndex) => !Object.is(dependency, previous[dependencyIndex]));
-        if (!changed) return;
-        activeInstance.cleanups[index]?.();
-        activeInstance.deps[index] = dependencies ?? [];
-        activeInstance.cleanups[index] = effect() ?? undefined;
-      },
+      useEffect: runEffect,
+      useLayoutEffect: runEffect,
       useRef<T>(value: T) {
         assert.ok(activeInstance);
         const index = hookIndex++;
@@ -254,6 +260,7 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
   const nodes = new Map<string, ElementNode>();
   let rendered: ElementNode[] = [];
   let submittedSearch = "";
+  const searchDraftEditingChanges: boolean[] = [];
   const props: Record<string, unknown> = {
     actionLabel: "Focus",
     activeCount: 1,
@@ -291,6 +298,7 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
       render();
     },
     onSearchSubmit: (value: string) => { submittedSearch = value; },
+    onSearchDraftEditingChange: (isEditing: boolean) => searchDraftEditingChanges.push(isEditing),
     onViewChange: () => undefined,
     onToggleKeyboardShortcutsMenu: () => undefined,
     onToggleListColumn: () => undefined,
@@ -324,6 +332,7 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
   const inputProps = input.props as SearchInputProps;
   inputProps.onFocus();
   inputProps.onChange({ target: { value: "a" } });
+  assert.deepEqual(searchDraftEditingChanges, []);
   await new Promise((resolve) => setTimeout(resolve, 220));
 
   const committedInput = findInput(rendered);
@@ -337,8 +346,25 @@ test("Tasks header search keeps focus and DOM identity across the 180ms commit",
   assert.ok(latestInput);
   assert.equal(latestInput, input);
   assert.equal((latestInput.props as SearchInputProps).value, "ab");
+  (latestInput.props as SearchInputProps).onBlur?.();
+  assert.equal(committedSearch, "ab");
+  assert.equal(searchDraftEditingChanges.length, 0);
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Tasks", "Today", searchDraftEditingChanges.some(Boolean), {}, false), null);
   (latestInput.props as SearchInputProps).onKeyDown?.({ key: "Enter", preventDefault() {} });
   assert.equal(submittedSearch, "ab");
+
+  const clearButton = findButtons(rendered).find((button) => button.props["aria-label"] === "Clear search");
+  assert.ok(clearButton);
+  (clearButton.props.onClick as () => void)();
+  assert.equal(committedSearch, "");
+  assert.equal(searchDraftEditingChanges.length, 0);
+  const clearedInput = findInput(rendered);
+  assert.ok(clearedInput);
+});
+
+test("TaskApp does not route Tasks search state into the editor navigation guard", () => {
+  assert.doesNotMatch(taskAppSource, /isTasksSearchDraftOpen|reportLeftSearchDraft|reportRightSearchDraft|onSearchDraftEditingChange/);
+  assert.match(taskAppSource, /hasUnsafeTasksDraft:[^\n]*hasAnyTaskPanelDraft\(taskPanelDraftOwnerKeys\)/);
 });
 
 test("Lists rail search is entered from active All and restores navigation-only hierarchy behavior", () => {

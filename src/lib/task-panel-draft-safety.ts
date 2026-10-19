@@ -1,4 +1,4 @@
-export type TaskPanelDraftSource = "list" | "search" | "table" | "workspace";
+export type TaskPanelDraftSource = "list" | "table" | "workspace";
 
 export function getTaskPanelDraftSourceKey(ownerKey: string, source: TaskPanelDraftSource) {
   return `${ownerKey}::${source}`;
@@ -12,10 +12,19 @@ export function updateTaskPanelDraftOwnerKeys(current: string[], ownerSourceKey:
     : current.filter((ownerKey) => ownerKey !== ownerSourceKey);
 }
 
+export function hasAnyTaskPanelDraft(ownerKeys: string[]) {
+  return ownerKeys.some((key) => !key.endsWith("::search"));
+}
+
 export function hasTaskPanelDraftForOwner(ownerKeys: string[], ownerKey: string) {
-  return ownerKeys.some((key) => key === ownerKey || key.startsWith(`${ownerKey}::`));
+  const ownerPrefix = `${ownerKey}::`;
+  return ownerKeys.some((key) => key === ownerKey || (
+    key.startsWith(ownerPrefix) && !key.endsWith("::search")
+  ));
 }
 
 export function hasTaskPanelDraftOutsideOwner(ownerKeys: string[], ownerKey: string) {
-  return ownerKeys.some((key) => key !== ownerKey && !key.startsWith(`${ownerKey}::`));
+  return ownerKeys.some((key) => key !== ownerKey
+    && !key.startsWith(`${ownerKey}::`)
+    && !key.endsWith("::search"));
 }

@@ -161,7 +161,7 @@ export function MasterWorkspaceTabBar({
         </div>
       </div>
       {splitCloseBlockedReason || transitionBlockedReason ? (
-        <p aria-live="polite" className="mx-auto mt-1.5 max-w-[1680px] text-[11px] text-[#7d88a1] dark:text-white/50">
+        <p aria-live="polite" className="pointer-events-none fixed bottom-4 left-1/2 z-50 w-max max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-center text-xs text-amber-900 shadow-lg dark:border-amber-200/20 dark:bg-[#30253d] dark:text-amber-100">
           {splitCloseBlockedReason ?? transitionBlockedReason}
         </p>
       ) : null}

@@ -85,6 +85,10 @@ test("Master Workspace exposes split navigation in both panels and duplicates an
   assert.match(controllerSource, /const updateTasksWorkspace = useCallback/);
 });
 
+test("Master Workspace navigation warnings overlay the page without shifting layout", () => {
+  assert.match(tabBarSource, /aria-live="polite" className="[^"]*fixed bottom-4/);
+});
+
 test("sticky tab controls and Shortcut Mode keep the shared HUD, overlays, and panel docks", () => {
   assert.equal((taskAppSource.match(/<CommandCenterHeader\b/g) ?? []).length, 1);
   assert.equal((taskAppSource.match(/useWorkspaceData\(/g) ?? []).length, 1);

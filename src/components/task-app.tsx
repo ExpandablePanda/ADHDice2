@@ -153,6 +153,7 @@ import { areHealthCustomFoodEditingSessionDraftsEqual, type HealthCustomFoodEdit
 import { areHealthRecipeEditingSessionDraftsEqual, areHealthSavedMealEditingSessionDraftsEqual, type HealthRecipeEditingSessionDraft, type HealthSavedMealEditingSessionDraft } from "@/lib/health-library-definition-editing-session";
 import { areHealthMealPlanEditingSessionDraftsEqual, type HealthMealPlanEditingSessionDraft } from "@/lib/health-meal-plan-editing-session";
 import {
+  hasAnyTaskPanelDraft,
   getTaskPanelDraftSourceKey,
   hasTaskPanelDraftForOwner,
   hasTaskPanelDraftOutsideOwner,
@@ -1991,7 +1992,6 @@ export function TaskApp() {
   const [splitRightDraggedListColumnId, setSplitRightDraggedListColumnId] = useState<AgentPlanColumnId | null>(null);
   const splitRightListColumnMenuRef = useRef<HTMLDivElement | null>(null);
   const splitRightKeyboardShortcutsMenuRef = useRef<HTMLDivElement | null>(null);
-  const [isTasksSearchDraftOpen, setIsTasksSearchDraftOpen] = useState(false);
   const [isTasksWorkspaceRenameDraftOpen, setIsTasksWorkspaceRenameDraftOpen] = useState(false);
   const [isTasksListDraftOpen, setIsTasksListDraftOpen] = useState(false);
   const [isTasksTableDraftOpen, setIsTasksTableDraftOpen] = useState(false);
@@ -5974,7 +5974,9 @@ export function TaskApp() {
       && taskEditorPanelOwner.masterTabId === masterTabId);
     const ownsPanelDraft = taskPanelDraftOwnerKeys.some((key) => {
       const [ownerKey, source] = key.split("::");
-      return Boolean(ownerKey?.startsWith(ownerPrefix) && (includeInlineRename || source !== "workspace"));
+      return Boolean(ownerKey?.startsWith(ownerPrefix)
+        && source !== "search"
+        && (includeInlineRename || source !== "workspace"));
     });
     return ownsSharedEditor || ownsPanelDraft;
   }, [sharedTaskEditorOverlayTaskId, taskEditorPanelOwner, taskPanelDraftOwnerKeys]);
@@ -5987,7 +5989,7 @@ export function TaskApp() {
     activePage,
     healthDraftSafetyBySection,
     hasUnsafeNotesDraft,
-    hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksSearchDraftOpen || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen || isSplitRightTasksWorkspaceDraftOpen || isSplitRightTasksListDraftOpen || isSplitRightTasksTableDraftOpen || taskPanelDraftOwnerKeys.length > 0,
+    hasUnsafeTasksDraft: Boolean(sharedTaskEditorOverlayTaskId) || isTasksWorkspaceRenameDraftOpen || isTasksListDraftOpen || isTasksTableDraftOpen || isSplitRightTasksWorkspaceDraftOpen || isSplitRightTasksListDraftOpen || isSplitRightTasksTableDraftOpen || hasAnyTaskPanelDraft(taskPanelDraftOwnerKeys),
     hasUnsafeTasksDraftForPanel,
     hasUnsafeTasksDraftForSplit,
     initialHealthSection: legacyHealthTabPreference,
@@ -6231,10 +6233,6 @@ export function TaskApp() {
     setIsTasksWorkspaceRenameDraftOpen(isEditing);
     reportTaskPanelDraft(leftTaskPanelOwnerKey, "workspace", isEditing);
   }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
-  const reportLeftSearchDraft = useCallback((isEditing: boolean) => {
-    setIsTasksSearchDraftOpen(isEditing);
-    reportTaskPanelDraft(leftTaskPanelOwnerKey, "search", isEditing);
-  }, [leftTaskPanelOwnerKey, reportTaskPanelDraft]);
   const reportLeftTableDraft = useCallback((isEditing: boolean) => {
     setIsTasksTableDraftOpen(isEditing);
     reportTaskPanelDraft(leftTaskPanelOwnerKey, "table", isEditing);
@@ -6246,10 +6244,6 @@ export function TaskApp() {
   const reportRightWorkspaceDraft = useCallback((isEditing: boolean) => {
     setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
     if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "workspace", isEditing);
-  }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
-  const reportRightSearchDraft = useCallback((isEditing: boolean) => {
-    setIsSplitRightTasksWorkspaceDraftOpen(isEditing);
-    if (rightTaskPanelOwnerKey) reportTaskPanelDraft(rightTaskPanelOwnerKey, "search", isEditing);
   }, [reportTaskPanelDraft, rightTaskPanelOwnerKey]);
   const reportRightTableDraft = useCallback((isEditing: boolean) => {
     setIsSplitRightTasksTableDraftOpen(isEditing);
@@ -8670,7 +8664,6 @@ export function TaskApp() {
     onSearchSubmit: handleTaskOperationsSearchSubmit,
     onExpandAllColumns: () => setExpandAllColumnsToken((current) => current + 1),
     onShrinkAllColumns: () => setShrinkAllColumnsToken((current) => current + 1),
-    onSearchDraftEditingChange: setIsTasksSearchDraftOpen,
     onSearchChange: handleTaskOperationsSearchChange,
     onViewChange: (view: TaskUiState["view"]) => setTaskUiState((prev) => ({ ...prev, view })),
     onToggleKeyboardShortcutsMenu: () => setIsKeyboardShortcutsMenuOpen((current) => !current),
@@ -9072,7 +9065,6 @@ export function TaskApp() {
             onTabChange={setActiveTaskWorkspaceTab}
             operationsHeaderProps={{
               ...panelTaskOperationsHeaderProps,
-              onSearchDraftEditingChange: reportLeftSearchDraft,
             }}
             pathsWorkspacePanel={(
               <PathsWorkspace
@@ -9898,7 +9890,6 @@ export function TaskApp() {
                 return { ...current, visibleColumnsByView: { ...current.visibleColumnsByView, table: columns } };
               }),
               onSearchChange: updateSplitRightSearch,
-              onSearchDraftEditingChange: reportRightSearchDraft,
               onSearchSubmit: updateSplitRightSearch,
               onSelectBucket: updateRightBucket,
               onSelectDirectoryEntry: (entry: typeof allTaskListDirectoryEntries[number]) => {

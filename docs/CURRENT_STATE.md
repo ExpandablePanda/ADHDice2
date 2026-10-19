@@ -1,11 +1,11 @@
 # Current State
 
-Last reviewed: 2026-10-16
+Last reviewed: 2026-10-19
 Role: active working
 
 ## Current Release
 
-- Current working app version: `7.16.179`.
+- Current working app version: `7.16.180`.
 - Current release group: `7.16.x`.
 - Version surfaces that should stay aligned for code-changing implementation work:
   - `package.json`
@@ -13,6 +13,20 @@ Role: active working
   - `public/app-version.json`
   - `src/lib/app-version.ts`
   - visible `APP_VERSION` / `HUD_VERSION` constants in `src/components/task-app.tsx`
+
+## 2026-10-19 7.16.180 Tasks Search Navigation Guard
+
+The Tasks search field no longer reports focus or query edits as an unsafe Task
+editor draft. Search commits remain debounced while typing and publish on blur
+or clear, while genuine Task editor and inline-edit drafts continue to block
+navigation. Search-only draft keys are ignored by panel-level draft checks.
+Genuine navigation warnings now use a fixed status notice and do not change
+workspace layout. Focused search, split UI, and navigation guard regressions
+passed (48/48). ESLint passed for the tab bar, draft-safety helper, and focused
+tests. The changed-path run still reports the same 11 `react-hooks/set-state-in-effect`
+findings in `task-app.tsx` and five React Hooks findings in `tasks-page.tsx`
+that are present on `HEAD`. `git diff --check` passed. Browser QA remains
+unverified.
 
 ## 2026-10-18 7.16.179 Proven Schedule Replay Boundary
 

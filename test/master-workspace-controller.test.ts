@@ -24,6 +24,7 @@ import {
 } from "../src/lib/master-workspace-state.ts";
 import { DEFAULT_TASK_WORKSPACE_TABS_STATE, updateActiveTaskUiState, type TaskUiState, type TaskWorkspaceTabsState } from "../src/lib/task-ui-state.ts";
 import {
+  hasAnyTaskPanelDraft,
   getTaskPanelDraftSourceKey,
   hasTaskPanelDraftForOwner,
   hasTaskPanelDraftOutsideOwner,
@@ -663,7 +664,20 @@ test("legacy Tasks storage remains the production fallback when the feature flag
 test("unsafe Task editor drafts block Tasks master-tab transitions", () => {
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", true), true);
   assert.equal(isTasksMasterTabTransitionBlocked("Tasks", false), false);
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Tasks", "Today", true, {}, false), "Save or close the unfinished Tasks editor before switching pages.");
+  assert.equal(getMasterWorkspaceTransitionBlockReason("Tasks", "Today", false, {}, false), null);
   assert.equal(isTasksMasterTabTransitionBlocked("Home", true), false);
+});
+
+test("stale Tasks search draft keys do not block navigation or count as editor drafts", () => {
+  const ownerKey = "left-panel:tasks-tab:workspace-tab";
+  const searchDraftKeys = [`${ownerKey}::search`];
+
+  assert.equal(hasAnyTaskPanelDraft(searchDraftKeys), false);
+  assert.equal(hasTaskPanelDraftForOwner(searchDraftKeys, ownerKey), false);
+  assert.equal(hasTaskPanelDraftOutsideOwner(searchDraftKeys, "right-panel:other-tab:workspace-tab"), false);
+  assert.equal(isTasksMasterTabTransitionBlocked("Tasks", hasAnyTaskPanelDraft(searchDraftKeys)), false);
+  assert.equal(hasAnyTaskPanelDraft([getTaskPanelDraftSourceKey(ownerKey, "table")]), true);
 });
 
 test("Close Split protects drafts in the removed panel and retains the left panel unchanged", () => {
